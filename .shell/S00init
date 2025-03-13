@@ -118,6 +118,7 @@ init_buildroot() {
     mkdir -p $MOD/data
     mkdir -p $MOD/opt/config
     mkdir -p $MOD/root/printer_data
+    mkdir -p $MOD/opt/klipper
     
     mount --bind /data $MOD/data
     mount --bind /opt/config $MOD/opt/config

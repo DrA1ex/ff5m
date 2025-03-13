@@ -51,8 +51,8 @@ if TYPE_CHECKING:
     from .announcements import Announcements
     from .proc_stats import ProcStats
     from .dbus_manager import DbusManager
-    from dbus_next.aio.proxy_object import ProxyInterface
-    from dbus_next.signature import Variant
+    from dbus_fast.aio.proxy_object import ProxyInterface
+    from dbus_fast.signature import Variant
     SudoReturn = Union[Awaitable[Tuple[str, bool]], Tuple[str, bool]]
     SudoCallback = Callable[[], SudoReturn]
 
@@ -1608,6 +1608,7 @@ class SupervisordCliProvider(BaseProvider):
         service_info["properties"] = dict(spv_config[section_name])
         return service_info
 
+
 # Simple service restarting provider, based on custom script (default path: /etc/init.d/)
 class SimpleProvider(BaseProvider):
     def __init__(self, config: ConfigHelper) -> None:
@@ -1621,6 +1622,7 @@ class SimpleProvider(BaseProvider):
         path = os.path.join(self.script_path, service_name)
         cmd = f"{path} {action}"
         return await self.shell_cmd.exec_cmd(cmd, timeout=self.script_timeout)
+
 
 
 # Install validation

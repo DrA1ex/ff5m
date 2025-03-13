@@ -578,7 +578,7 @@ class History:
     ) -> Dict[str, Any]:
         fm = self.file_manager
         mtime = job.get("metadata", {}).get("modified", None)
-        job["exists"] = fm.check_file_exists("gcodes", job['filename'])
+        job["exists"] = fm.check_file_exists("gcodes", job['filename'], mtime)
         job["job_id"] = job_id
         job.pop("instance_id", None)
         return job

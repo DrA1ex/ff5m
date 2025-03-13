@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     FlexCallback = Callable[..., Optional[Coroutine]]
     _T = TypeVar("_T", Sentinel, Any)
 
-API_VERSION = (1, 4, 0)
+API_VERSION = (1, 5, 0)
 SERVER_COMPONENTS = ['application', 'websockets', 'klippy_connection']
 CORE_COMPONENTS = [
     'dbus_manager', 'database', 'file_manager', 'authorization',
@@ -194,6 +194,13 @@ class Server:
         # Asynchronous Optional Component Initialization
         if optional_comps:
             await asyncio.gather(*optional_comps)
+
+        # Wait until all components are initialized to start the file
+        # observer.  This allows other components to register gcode file
+        # processors before metadata is processed for gcode files that
+        # do not have a metadata entry.
+        file_manager: FileManager = self.lookup_component("file_manager")
+        file_manager.start_file_observer()
 
         if not self.warnings:
             await self.event_loop.run_in_thread(self.config.create_backup)

@@ -11,8 +11,9 @@ import logging
 from enum import Enum
 from ...utils.source_info import normalize_project_name, load_distribution_info
 from ...utils.versions import PyVersion, GitVersion
+from ...utils.sysdeps_parser import SysDepsParser
 from ...utils import pip_utils, json_wrapper
-from .app_deploy import AppDeploy, Channel, DISTRO_ALIASES
+from .app_deploy import AppDeploy, Channel
 
 # Annotation imports
 from typing import (
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from ...confighelper import ConfigHelper
     from ...utils.source_info import PackageInfo
     from ...components.file_manager.file_manager import FileManager
-    from .update_manager import CommandHelper
 
 class PackageSource(Enum):
     PIP = 0
@@ -37,8 +37,8 @@ class PackageSource(Enum):
 
 
 class PythonDeploy(AppDeploy):
-    def __init__(self, config: ConfigHelper, cmd_helper: CommandHelper) -> None:
-        super().__init__(config, cmd_helper, "Python Package")
+    def __init__(self, config: ConfigHelper) -> None:
+        super().__init__(config, "Python Package")
         self._configure_virtualenv(config)
         if self.virtualenv is None:
             raise config.error(
@@ -50,6 +50,11 @@ class PythonDeploy(AppDeploy):
         self._configure_managed_services(config)
         self.primary_branch = config.get("primary_branch", None)
         self.project_name = config.get("project_name", self.name)
+        self.extras: str | None = None
+        extras_match = re.match(r"([^[]+)\[([^]]+)\]", self.project_name)
+        if extras_match is not None:
+            self.project_name = extras_match.group(1)
+            self.extras = extras_match.group(2)
         self.source: PackageSource = PackageSource.UNKNOWN
         self.repo_url: str = ""
         self.repo_owner: str = "?"
@@ -59,6 +64,7 @@ class PythonDeploy(AppDeploy):
         self.current_sha: str = "?"
         self.upstream_version: PyVersion = self.current_version
         self.upstream_sha: str = "?"
+        self.rollback_version: PyVersion = self.current_version
         self.rollback_ref: str = "?"
         self.warnings: List[str] = []
         package_info = load_distribution_info(self.virtualenv, self.project_name)
@@ -73,6 +79,7 @@ class PythonDeploy(AppDeploy):
         self.upstream_sha = storage.get("upstream_commit", "?")
         self.upstream_version = PyVersion(storage.get("upstream_version", "?"))
         self.rollback_ref = storage.get("rollback_ref", "?")
+        self.rollback_version = PyVersion(storage.get("rollback_version", "?"))
         if not self.needs_refresh():
             self._log_package_info()
         return storage
@@ -82,17 +89,20 @@ class PythonDeploy(AppDeploy):
         storage["upstream_commit"] = self.upstream_sha
         storage["upstream_version"] = self.upstream_version.full_version
         storage["rollback_ref"] = self.rollback_ref
+        storage["rollback_version"] = self.rollback_version.full_version
         return storage
 
     def get_update_status(self) -> Dict[str, Any]:
         status = super().get_update_status()
         status.update({
             "detected_type": "python_package",
+            "name": self.name,
             "branch": self.primary_branch,
             "owner": self.repo_owner,
             "repo_name": self.repo_name,
             "version": self.current_version.short_version,
             "remote_version": self.upstream_version.short_version,
+            "rollback_version": self.rollback_version.short_version,
             "current_hash": self.current_sha,
             "remote_hash": self.upstream_sha,
             "is_dirty": self.git_version.dirty,
@@ -171,7 +181,8 @@ class PythonDeploy(AppDeploy):
         release_info = package_info.release_info
         metadata = package_info.metadata
         if release_info is not None:
-            self.current_sha = release_info.get("commit_sha", self.current_sha)
+            if self.current_sha == "?":
+                self.current_sha = release_info.get("commit_sha", "?")
             self.git_version = GitVersion(release_info.get("git_version", "?"))
             pkg_verson = release_info.get("package_version", "")
         if "Version" in metadata:
@@ -198,20 +209,8 @@ class PythonDeploy(AppDeploy):
         if rinfo is None:
             return []
         dep_info = rinfo.get("system_dependencies", {})
-        for distro_id in DISTRO_ALIASES:
-            if distro_id in dep_info:
-                if not dep_info[distro_id]:
-                    self.log_info(
-                        f"Package release_info contains an empty system "
-                        f"package definition for linux distro '{distro_id}'"
-                    )
-                return dep_info[distro_id]
-        else:
-            self.log_info(
-                "Package release_info has no package definition "
-                f" for linux distro '{DISTRO_ALIASES[0]}'"
-            )
-            return []
+        parser = SysDepsParser()
+        return parser.parse_dependencies(dep_info)
 
     async def _update_local_state(self) -> None:
         self.warnings.clear()
@@ -235,6 +234,7 @@ class PythonDeploy(AppDeploy):
 
     async def refresh(self) -> None:
         try:
+            await self._update_local_state()
             if self.source == PackageSource.PIP:
                 await self._refresh_pip()
             elif self.source == PackageSource.GITHUB:
@@ -335,39 +335,39 @@ class PythonDeploy(AppDeploy):
 
     async def update(self, rollback: bool = False) -> bool:
         project_name = normalize_project_name(self.project_name)
+        if self.extras is not None:
+            project_name = f"{project_name}[{self.extras}]"
         assert self.pip_cmd is not None
-        pip_args: str
-        if not self.upstream_version.is_valid_version():
-            # Can't update without a valid upstream
+        current_version = self.current_version
+        current_ref = self.current_version.tag
+        install_ver = self.rollback_version if rollback else self.upstream_version
+        if (
+            not install_ver.is_valid_version() or
+            (current_version.is_valid_version() and current_version == install_ver)
+        ):
+            # Invalid install version or requested version already installed
             return False
         pip_exec = pip_utils.AsyncPipExecutor(
             self.pip_cmd, self.server, self.cmd_helper.notify_update_response
         )
-        current_ref = self.current_version.tag
+        pip_args = "install -U --upgrade-strategy eager"
         if self.source == PackageSource.PIP:
             # We can't depend on the SHA being available for PyPI packages,
             # so we must compare versions
-            if (
-                self.current_version.is_valid_version() and
-                self.upstream_version <= self.current_version
-            ):
-                return False
-            pip_args = f"install -U {project_name}"
+            pip_args = f"{pip_args} {project_name}"
             if rollback:
                 pip_args += f"=={self.rollback_ref}"
         elif self.source == PackageSource.GITHUB:
-            if self.current_sha == self.upstream_sha:
-                return False
             repo = f"{self.repo_owner}/{self.repo_name}"
-            pip_args = f"install -U git+https://github.com/{repo}"
             if rollback:
-                pip_args += f"@{self.rollback_ref}"
+                repo += f"@{self.rollback_ref}"
             elif self.channel == Channel.DEV:
                 current_ref = self.current_sha
                 if self.primary_branch is not None:
-                    pip_args += f"@{self.primary_branch}"
+                    repo += f"@{self.primary_branch}"
             else:
-                pip_args += f"@{self.upstream_version.tag}"
+                repo += f"@{self.upstream_version.tag}"
+            pip_args = f"{pip_args} '{project_name} @ git+https://github.com/{repo}'"
         else:
             raise self.server.error("Cannot update, package source is unknown")
         await self._update_pip(pip_exec)
@@ -377,9 +377,10 @@ class PythonDeploy(AppDeploy):
         await pip_exec.call_pip(pip_args, 3600, sys_env_vars=self.pip_env_vars)
         await self._update_local_state()
         if not rollback:
+            self.rollback_version = current_version
             self.rollback_ref = current_ref
-        self.upstream_sha = self.current_sha
-        self.upstream_version = self.current_version
+            self.upstream_sha = self.current_sha
+            self.upstream_version = self.current_version
         await self._update_sys_deps(sys_deps)
         self._log_package_info()
         self._save_state()
@@ -393,7 +394,7 @@ class PythonDeploy(AppDeploy):
         pass
 
     async def rollback(self) -> bool:
-        if self.rollback_ref == "?":
+        if self.rollback_ref == "?" or not self.rollback_version.is_valid_version():
             return False
         await self.update(rollback=True)
         return True
@@ -401,6 +402,12 @@ class PythonDeploy(AppDeploy):
     async def _update_sys_deps(self, prev_deps: List[str]) -> None:
         new_deps = self.system_deps
         deps_diff = list(set(new_deps) - set(prev_deps))
+        if new_deps or prev_deps:
+            self.log_debug(
+                f"Pre-update system dependencies: {prev_deps}\n"
+                f"Post-update system dependencies: {new_deps}\n"
+                f"Difference to be installed: {deps_diff}"
+            )
         if deps_diff:
             await self._install_packages(deps_diff)
 
@@ -419,5 +426,6 @@ class PythonDeploy(AppDeploy):
             f"Upstream Version: {self.upstream_version.short_version}\n"
             f"Upstream Commit SHA: {self.upstream_sha}\n"
             f"Converted Git Version: {self.git_version}\n"
+            f"Rollback Version: {self.rollback_version}\n"
             f"Rollback Ref: {self.rollback_ref}\n"
         )
