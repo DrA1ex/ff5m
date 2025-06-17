@@ -375,7 +375,7 @@ This occurs if Klipper or the MCU fails to become ready, often due to a broken c
 ### Why does the printer boot in Failsafe mode but still show Feather?
 Failsafe mode skips all mod code execution to prevent bricking but may still display Feather if the mod partially loads. Use [Dual Boot](https://github.com/DrA1ex/ff5m/blob/main/docs/DUAL_BOOT.md) to skip the mod gracefully and boot into the stock system.
 
-####Why is my nozzle gouging the build plate during the first layer?
+### #Why is my nozzle gouging the build plate during the first layer?
 
 Nozzle gouging, where the nozzle scrapes or digs into the build plate during the first layer, often occurs due to an incorrect Z-offset or bed mesh after installing Forge-X.
 
