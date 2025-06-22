@@ -69,7 +69,7 @@ So don’t do anything if you not clearly understand what you are doing.
 5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod)
 6. Enable [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
 7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).   
-8. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
+8. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
 9. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
 10. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) Bed Mesh, shaper, and Z-offset.
 11. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
