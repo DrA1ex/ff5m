@@ -116,8 +116,6 @@ Custom settings in `printer.cfg` or `printer.base.cfg` may persist after uninsta
 
 ## Network and Connectivity Issues
 
-## Network and Connectivity Issues
-
 ### Why do I get a timeout error when trying to upload G-Code via Slicer?   
 Read the [next article](#why-cant-i-access-mainsail-or-fluidd).   
 
