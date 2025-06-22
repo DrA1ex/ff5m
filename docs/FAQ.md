@@ -186,6 +186,13 @@ If the mod doesn’t load at all, refer to [this instruction](https://github.com
 ## Resource and Performance Issues
 
 ### What causes “Timer Too Close” or MCU errors?
+Complex prints (not necessarily large, but with intricate movement patterns like gyroid infill or fuzzy skin) can overload the printer and cause MCU shutdowns. This isn't fixable - it's an MCU processing overload issue, not memory or CPU-related.    
+
+Flashforge explicitly advises against such prints, so this isn't covered under warranty.    
+The mod (especially Moonraker) may increase resource overhead, potentially making these shutdowns more frequent.   
+
+Some units experience this more often due to defective components (like toolhead electronics). The only fixes are replacing the toolhead circuit or motherboard - but even this doesn't guarantee anything.   
+
 “Timer Too Close” or MCU errors occur due to:
 - **Resource Exhaustion**: High memory or CPU usage, often from running resource-intensive features like Spoolman, or KAMP with “exclude objects” in the slicer.
 - **MCU Issues**: Internal sensor read/write issues or loose wiring.
