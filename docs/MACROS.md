@@ -150,6 +150,10 @@ This document provides a concise overview of the G-code macros defined in the `b
 
 ### Air Circulation
 
+> [!NOTE]  
+> Flashforge uses reversed fan naming conventions ('external' refers to internal fans and vice versa).   
+> The mod maintains this original (reversed) naming to ensure compatibility with the stock interface - changing it would break stock screen functionality
+
 - **AIR_CIRCULATION_INTERNAL**
   - **Description**: Turns on internal air circulation with fan and servo control.
   - **Parameters**: None.
