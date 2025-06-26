@@ -8,13 +8,6 @@ This document provides a concise overview of the G-code macros defined in the `b
 
 ### Bed Leveling and Calibration
 
-- **BED_MESH_CALIBRATE**
-  - **Description**: Calibrates the bed mesh, optionally using KAMP if enabled.
-  - **Parameters**:
-    - `PROFILE` (string, default: none): Name of the bed mesh profile to save.
-    - Other parameters passed to `_BED_MESH_CALIBRATE` or `_KAMP_BED_MESH_CALIBRATE`.
-  - **Defaults**: Uses `printer.mod_params.variables.use_kamp` to decide between KAMP and standard calibration.
-
 - **BED_LEVEL_SCREWS_TUNE**
   - **Description**: Performs bed screw tilt adjustment with temperature control and nozzle cleaning prompts.
   - **Parameters**:
