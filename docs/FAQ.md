@@ -185,7 +185,7 @@ If the mod doesn’t load at all, refer to [this instruction](https://github.com
 
 ## Resource and Performance Issues
 
-### What causes “Timer Too Close” or MCU errors?
+### What causes “Timer Too Close” or MCU errors (E0011)?
 Complex prints (not necessarily large, but with intricate movement patterns like gyroid infill or fuzzy skin) can overload the printer and cause MCU shutdowns. This isn't fixable - it's an MCU processing overload issue, not memory or CPU-related.    
 
 Flashforge explicitly advises against such prints, so this isn't covered under warranty.    
