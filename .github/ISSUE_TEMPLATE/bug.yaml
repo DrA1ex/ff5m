@@ -16,13 +16,13 @@ body:
       label: Checklist
       description: Confirm you’ve completed these steps before submitting.
       options:
+        - label: I have searched for [similar issues](https://github.com/DrA1ex/ff5m/issues?q=is%3Aissue) but haven't found any matching reports.
+          required: true
         - label: I have read the [documentation](https://github.com/DrA1ex/ff5m/tree/main?tab=readme-ov-file#documentation) and did not find an answer.
           required: true
         - label: I have read the [F.A.Q](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md).
           required: true
         - label: I have tried rebooting the printer, and the problem persists.
-          required: true
-        - label: I have searched for similar issues but haven't found any matching reports.
           required: true
 
   - type: dropdown
