@@ -10,6 +10,21 @@ body:
       value: |
         Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
 
+ - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Confirm you’ve completed these steps before submitting.
+      options:
+        - label: I have read the [documentation](https://github.com/DrA1ex/ff5m/tree/main?tab=readme-ov-file#documentation) and did not find an answer.
+          required: true
+        - label: I have read the [F.A.Q](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md).
+          required: true
+        - label: I have tried rebooting the printer, and the problem persists.
+          required: true
+        - label: I have searched for similar issues but haven't found any matching reports.
+          required: true
+
   - type: dropdown
     id: printer_model
     attributes:
@@ -106,19 +121,6 @@ body:
       label: Installation/Uninstallation Logs (if applicable)
       description: If your issue is related to installation or uninstallation, upload the installation log (from USB) or other logs left after flashing the mod.
       placeholder: "e.g., Drag and drop the log file here."
-
-  - type: checkboxes
-    id: checklist
-    attributes:
-      label: Checklist
-      description: Confirm you’ve completed these steps before submitting.
-      options:
-        - label: I have read the [documentation](https://github.com/DrA1ex/ff5m/tree/main?tab=readme-ov-file#documentation) and did not find an answer.
-          required: true
-        - label: I have read the [F.A.Q](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md).
-          required: true
-        - label: I have tried rebooting the printer, and the problem persists.
-          required: true
 
   - type: textarea
     id: additional_info
