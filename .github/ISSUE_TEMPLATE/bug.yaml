@@ -10,7 +10,7 @@ body:
       value: |
         Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
 
- - type: checkboxes
+  - type: checkboxes
     id: checklist
     attributes:
       label: Checklist
