@@ -154,12 +154,12 @@ You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfe
 
 Forge-X is an open-source, free project built for the community, and everyone is welcome to use it without cost. However, developing new features, writing detailed documentation, and providing ongoing support through the community demands a significant amount of time and dedication. If you enjoy using Forge-X and appreciate the effort behind it, consider supporting the project with a donation. Your contributions help ensure the time needed to keep improving the mod, adding new features and maintaining active support.
 
+- **[Boosty](https://boosty.to/dra1ex)**
+
 - **Cryptocurrency Donations**:
   - **BTC**: `17igL1Y1gHSK2FFsn8TQgVKkaVXXJ33Mu6`
   - **TON**: `UQAa8-8q3GrZVVlZWbQgM80l9hol8OacOGfaQ68jVRU_uRbK`
   - **USDT (TRC20)**: `TUmBppbp5vhhpwozzYzYmd9T3GefJsbX5K`
-
-- **[Donate on Donationalerts](https://www.donationalerts.com/r/dra1ex)** (Temporarily unavailable until July 11, 2025)
 
 ## Credits
 
