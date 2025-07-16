@@ -55,6 +55,8 @@ class Resurrector:
         self.heater_bed = self.printer.lookup_object("heater_bed")
         self.bed_mesh = self.printer.lookup_object("bed_mesh")
 
+        self.start_print_macro = self.printer.lookup_object('gcode_macro _START_PRINT')
+
         if os.path.isfile(self.file_path):
             logging.info("[resurrection] Resurrection file exists.")
             self._change_state(ResurrectorState.RESURRECTION)
@@ -93,14 +95,16 @@ class Resurrector:
         stats = self.print_stats.get_status(eventtime)
         stats_state = stats["state"]
 
-        if stats_state in {"complete", "cancelled"} and self.state != ResurrectorState.IDLE:
+        if stats_state == "printing" and self.start_print_macro.variables["print_started"]:
+            self._change_state(ResurrectorState.PRINTING)
+        elif stats_state in {"complete", "cancelled"} and self.state != ResurrectorState.IDLE:
             self._change_state(ResurrectorState.IDLE)
             self._clear(eventtime)
-        elif stats_state == "printing":
-            self._change_state(ResurrectorState.PRINTING)
-            self._dump(eventtime)
-        elif self.state == ResurrectorState.PRINTING:
-            if stats_state == "paused":
+
+        if self.state == ResurrectorState.PRINTING:
+            if stats_state == "printing":
+                self._dump(eventtime)
+            elif stats_state == "paused":
                 self._change_state(ResurrectorState.PAUSED)
                 self._dump(eventtime)
             elif stats_state == "error":
@@ -206,6 +210,8 @@ class Resurrector:
                 f"_PRINT_STATUS S='HOMING...'",
                 f"G28",
                 f"M400",
+
+                f"LOAD_CELL_TARE",
 
                 f"G92 E0",  # Reset extruder position
                 f"G90",  # Absolute toolhead coordinates
