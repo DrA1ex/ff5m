@@ -36,6 +36,7 @@ class Resurrector:
         self.printer.register_event_handler("klippy:ready", self._init)
 
         self.gcode.register_command("RESURRECT", self.cmd_RESURRECT)
+        self.gcode.register_command("RESURRECT_ABORT", self.cmd_RESURRECT_ABORT)
 
     def _init(self):
         mod_params = self.printer.lookup_object("mod_params")
@@ -45,7 +46,7 @@ class Resurrector:
             return
 
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
-        self.printer.register_event_handler("klippy:disconnect", self._shutdown)
+        self.printer.register_event_handler("klippy:disconnect", self._disconnect)
 
         self.toolhead = self.printer.lookup_object("toolhead")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
@@ -65,11 +66,13 @@ class Resurrector:
                 self.gcode.respond_raw("// action:prompt_begin Resurrection")
                 self.gcode.respond_raw("// action:prompt_text Resurrection is available! Would you like to restore the print?")
                 self.gcode.respond_raw("// action:prompt_footer_button Restore|RESURRECT")
+                self.gcode.respond_raw("// action:prompt_footer_button Cleanup|RESURRECT_ABORT")
                 self.gcode.respond_raw("// action:prompt_footer_button Abort|RESPOND TYPE=command MSG=action:prompt_end")
                 self.gcode.respond_raw("// action:prompt_show")
 
                 self.gcode.respond_raw("// Resurrection is available!")
                 self.gcode.respond_raw("// Run RESURRECT to restore the print")
+                self.gcode.respond_raw("// Run RESURRECT_ABORT to perform cleanup")
 
             self.reactor.register_callback(_initial_msg, waketime=self.reactor.monotonic() + 3)
         else:
@@ -78,15 +81,20 @@ class Resurrector:
 
         self._timer = self.reactor.register_timer(self._dump_timer_handler, self.reactor.NOW)
 
-    def _shutdown(self):
+    def _disconnect(self):
+        logging.info("[resurrection] Disconnect...")
         if self._timer:
             self.reactor.unregister_timer(self._timer)
             self._timer = None
 
-            if self.state == ResurrectorState.PRINTING:
-                self._dump(self.reactor.NOW)
+        self._change_state(ResurrectorState.DESTROYED)
 
-            self._change_state(ResurrectorState.DESTROYED)
+    def _shutdown(self):
+        logging.info("[resurrection] Shutdown...")
+        if self.state == ResurrectorState.PRINTING:
+            self._dump(self.reactor.monotonic())
+
+        self._disconnect()
 
     def _dump_timer_handler(self, eventtime):
         if self.state == ResurrectorState.DESTROYED:
@@ -123,19 +131,27 @@ class Resurrector:
 
     def _dump(self, eventtime):
         stats = self.virtual_sdcard.get_status(eventtime)
-
         gcode_file = stats["file_path"]
 
         if gcode_file and os.path.isfile(gcode_file):
+            position = self.toolhead.get_status(eventtime)["position"]
+            extruder_temp = self.extruder.get_status(eventtime)["target"]
+            bed_temp = self.heater_bed.get_status(eventtime)["target"]
+            mesh = self.bed_mesh.get_status(eventtime)["profile_name"]
+
+            if extruder_temp == 0:
+                logging.info("[resurrection] Skip dump due to zeroed extruder temp")
+                return
+
             with open(self.file_path, "w") as f:
                 json.dump({
                     "file_path": gcode_file,
                     "file_position": stats["file_position"],
                     "file_size": stats["file_size"],
-                    "position": self.toolhead.get_status(eventtime)["position"],
-                    "extruder_temp": self.extruder.get_status(eventtime)["target"],
-                    "bed_temp": self.heater_bed.get_status(eventtime)["target"],
-                    "mesh": self.bed_mesh.get_status(eventtime)["profile_name"],
+                    "position": position,
+                    "extruder_temp": extruder_temp,
+                    "bed_temp": bed_temp,
+                    "mesh": mesh,
                 }, f)
         else:
             logging.info("[resurrection] Failed to save resurrection file. G-Code file is invalid")
@@ -146,89 +162,129 @@ class Resurrector:
             logging.info("[resurrection] Clear resurrection file")
             os.remove(self.file_path)
 
+    def _load_resurrection_state(self, gcmd):
+        if not os.path.isfile(self.file_path):
+            gcmd.respond_raw(f"!! The resurrection file missing!")
+            return
+
+        with open(self.file_path, "r") as f:
+            try:
+                state = json.load(f)
+            except Exception as e:
+                gcmd.respond_raw(f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
+                return None
+
+        for key in ["file_path", "file_position", "file_size", "position", "extruder_temp", "bed_temp", "mesh"]:
+            if key not in state:
+                gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
+                return None
+
+        gcode_file = state["file_path"]
+        if not os.path.isfile(gcode_file):
+            gcmd.respond_raw(f"!! Failed to resurrect. File missing: {gcode_file!r}")
+            return None
+
+        expected_file_size = state["file_size"]
+        actual_file_size = os.path.getsize(gcode_file)
+        if actual_file_size != expected_file_size:
+            gcmd.respond_raw(f"!! Failed to resurrect. File size mismatch: {actual_file_size} <> {expected_file_size}")
+            return None
+
+        return state
+
     def cmd_RESURRECT(self, gcmd):
-        if self.state == ResurrectorState.RESURRECTION:
-            self.gcode.run_script_from_command("_PRINT_STATUS S='RESURRECTING...'")
-
-            self._change_state(ResurrectorState.IDLE)
-            gcmd.respond_raw("// action:prompt_end")
-
-            if not os.path.isfile(self.file_path):
-                gcmd.respond_raw(f"!! The resurrection file missing!")
-                return
-
-            with open(self.file_path, "r") as f:
-                try:
-                    state = json.load(f)
-                except Exception as e:
-                    gcmd.respond_raw(f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
-                    return
-
-            for key in ["file_path", "file_position", "file_size", "position", "extruder_temp", "bed_temp", "mesh"]:
-                if key not in state:
-                    gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
-                    return
-
-            gcode_file = state["file_path"]
-            if not os.path.isfile(gcode_file):
-                gcmd.respond_raw(f"!! Failed to resurrect. File missing: {gcode_file!r}")
-                return
-
-            expected_file_size = state["file_size"]
-            actual_file_size = os.path.getsize(gcode_file)
-            if actual_file_size != expected_file_size:
-                gcmd.respond_raw(f"!! Failed to resurrect. File size mismatch: {actual_file_size} <> {expected_file_size}")
-                return
-
-            mesh_name = state["mesh"]
-            meshes = self.bed_mesh.get_status(self.reactor.NOW)["profiles"]
-            if mesh_name not in meshes:
-                if 'auto' in meshes:
-                    gcmd.respond_raw(f"!! Bed mesh missing: {mesh_name!r}. Using 'auto' instead...")
-                    mesh_name = 'auto'
-                else:
-                    gcmd.respond_raw(f"!! Failed to resurrect. Bed mesh missing: {mesh_name!r}")
-                    return
-
-            toolhead_pos = state["position"]
-
-            self.virtual_sdcard.load_file(gcmd, os.path.basename(gcode_file))
-
-            self.gcode.run_script_from_command("\n".join([
-                f"_PRINT_STATUS S='LOADING...'",
-
-                f"_CANCEL_DELAYED_COMMANDS",
-                f"_ENSURE_SERVICES_STARTED",
-
-                f"BED_MESH_PROFILE LOAD={mesh_name}",
-                f"M26 S{state['file_position']!r}",
-
-                f"_PRINT_STATUS S='HEATING...'",
-                f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
-                f"_WAIT_TEMPERATURE CMD=M104 VALUE={state['extruder_temp']}",
-
-                f"_PRINT_STATUS S='HOMING...'",
-                f"G28",
-                f"M400",
-
-                f"LOAD_CELL_TARE",
-
-                f"G92 E0",  # Reset extruder position
-                f"G90",  # Absolute toolhead coordinates
-                f"M83",  # Relative extruder coordinates
-
-                f"_PRINT_STATUS S='POSITIONING...'",
-                f"G1 X{toolhead_pos[0]} Y{toolhead_pos[1]} F6000",
-                f"G1 Z{toolhead_pos[2]} F3000",
-                f"M400",
-
-                f"_PRINT_STATUS S='PRINTING...'",
-            ]))
-
-            self.virtual_sdcard.do_resume()
-            self._change_state(ResurrectorState.PRINTING)
-        else:
+        if self.state != ResurrectorState.RESURRECTION:
             gcmd.respond_raw(f"!! The printer isn’t in a resurrection state!")
+            return
+
+        self.gcode.run_script_from_command("_PRINT_STATUS S='RESURRECTING...'")
+
+        self._change_state(ResurrectorState.IDLE)
+        gcmd.respond_raw("// action:prompt_end")
+
+        state = self._load_resurrection_state(gcmd)
+        if state is None:
+            return
+
+        mesh_name = state["mesh"]
+        meshes = self.bed_mesh.get_status(self.reactor.monotonic())["profiles"]
+        if mesh_name not in meshes:
+            if 'auto' in meshes:
+                gcmd.respond_raw(f"!! Bed mesh missing: {mesh_name!r}. Using 'auto' instead...")
+                mesh_name = 'auto'
+            else:
+                gcmd.respond_raw(f"!! Failed to resurrect. Bed mesh missing: {mesh_name!r}")
+                return
+
+        toolhead_pos = state["position"]
+
+        gcode_file = state["file_path"]
+        self.virtual_sdcard.load_file(gcmd, os.path.basename(gcode_file))
+
+        self.gcode.run_script_from_command("\n".join([
+            f"_PRINT_STATUS S='LOADING...'",
+
+            f"_CANCEL_DELAYED_COMMANDS",
+            f"_ENSURE_SERVICES_STARTED",
+
+            f"BED_MESH_PROFILE LOAD={mesh_name}",
+            f"M26 S{state['file_position']!r}",
+
+            f"_PRINT_STATUS S='HEATING...'",
+            f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
+            f"_WAIT_TEMPERATURE CMD=M104 VALUE={state['extruder_temp']}",
+
+            f"_PRINT_STATUS S='HOMING...'",
+            f"G28",
+            f"M400",
+
+            f"LOAD_CELL_TARE",
+
+            f"G92 E0",  # Reset extruder position
+            f"G90",  # Absolute toolhead coordinates
+            f"M83",  # Relative extruder coordinates
+
+            f"_PRINT_STATUS S='POSITIONING...'",
+            f"G1 X{toolhead_pos[0]} Y{toolhead_pos[1]} F6000",
+            f"G1 Z{toolhead_pos[2]} F3000",
+            f"M400",
+
+            f"_PRINT_STATUS S='PRINTING...'",
+        ]))
+
+        self.virtual_sdcard.do_resume()
+        self._change_state(ResurrectorState.PRINTING)
+
+        self.gcode.respond_raw("// Resurrection finished!")
+
+    def cmd_RESURRECT_ABORT(self, gcmd):
+        if self.state != ResurrectorState.RESURRECTION:
+            gcmd.respond_raw(f"!! The printer isn’t in a resurrection state!")
+            return
+
+        self.gcode.run_script_from_command("_PRINT_STATUS S='ABORTING...'")
+
+        gcmd.respond_raw("// action:prompt_end")
+        state = self._load_resurrection_state(gcmd)
+        if state is None:
+            return
+
+        self.gcode.run_script_from_command("\n".join([
+            f"_PRINT_STATUS S='HEATING...'",
+            f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
+            f"_WAIT_TEMPERATURE CMD=M104 VALUE={state['extruder_temp']}",
+
+            f"_PRINT_STATUS S='HOMING...'",
+            f"G28",
+            f"M400",
+
+            f"TURN_OFF_HEATERS",
+        ]))
+
+        self._clear(self.reactor.monotonic())
+        self._change_state(ResurrectorState.IDLE)
+
+        self.gcode.respond_raw("// Resurrection aborted!")
 
 
 def load_config(config):
