@@ -340,6 +340,13 @@
       "default": 0,
       "label": "Disable Moonraker",
       "order": 30000
+    },
+    {
+      "key": "power_loss_recovery",
+      "type": "bool",
+      "default": 0,
+      "label": "Enable Power Loss Recovery Feature",
+      "order": 30000
     }
   ]
 }

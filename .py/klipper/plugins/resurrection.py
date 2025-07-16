@@ -34,12 +34,19 @@ class Resurrector:
         self.file_path = config.get("filename")
 
         self.printer.register_event_handler("klippy:ready", self._init)
-        self.printer.register_event_handler("klippy:shutdown", self._shutdown)
-        self.printer.register_event_handler("klippy:disconnect", self._shutdown)
 
         self.gcode.register_command("RESURRECT", self.cmd_RESURRECT)
 
     def _init(self):
+        mod_params = self.printer.lookup_object("mod_params")
+
+        if not mod_params.variables['power_loss_recovery']:
+            logging.info("[resurrection] Disabled due to 'power_loss_recovery' parameter.")
+            return
+
+        self.printer.register_event_handler("klippy:shutdown", self._shutdown)
+        self.printer.register_event_handler("klippy:disconnect", self._shutdown)
+
         self.toolhead = self.printer.lookup_object("toolhead")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
         self.print_stats = self.printer.lookup_object("print_stats")
@@ -86,9 +93,7 @@ class Resurrector:
         stats = self.print_stats.get_status(eventtime)
         stats_state = stats["state"]
 
-        logging.info(f"[resurrection] print_stats: {stats_state!r} / {self.state.name!r}")
-
-        if stats_state in {"complete", "cancelled"}:
+        if stats_state in {"complete", "cancelled"} and self.state != ResurrectorState.IDLE:
             self._change_state(ResurrectorState.IDLE)
             self._clear(eventtime)
         elif stats_state == "printing":
@@ -183,6 +188,8 @@ class Resurrector:
 
             toolhead_pos = state["position"]
 
+            self.virtual_sdcard.load_file(gcmd, os.path.basename(gcode_file))
+
             self.gcode.run_script_from_command("\n".join([
                 f"_PRINT_STATUS S='LOADING...'",
 
@@ -190,7 +197,6 @@ class Resurrector:
                 f"_ENSURE_SERVICES_STARTED",
 
                 f"BED_MESH_PROFILE LOAD={mesh_name}",
-                f"M23 {os.path.basename(gcode_file)}",
                 f"M26 S{state['file_position']!r}",
 
                 f"_PRINT_STATUS S='HEATING...'",
