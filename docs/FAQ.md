@@ -181,6 +181,14 @@ If the mod still cannot connect within 5 minutes, the stock screen will load ins
 
 If the mod doesn’t load at all, refer to [this instruction](https://github.com/DrA1ex/ff5m/blob/main/docs/SCREEN.md#switching-to-feather-screen) to switch back to the original stock screen.
 
+### Why did the Wi-Fi credentials get forgotten?
+
+This isn’t a case of forgotten Wi-Fi credentials. They’re saved and preserved after every boot.
+
+The actual issue is with the connection - the Wi-Fi module on the Flashforge is weak. Sometimes, the printer can’t connect in time, and the connection menu doesn’t support reconnecting to known networks. Instead, it always tries to establish a new connection, which is why your credentials don’t auto-fill.
+
+To reconnect, you’ll need to disable Wi-Fi and then enable it again. This will force the printer to connect to the last known network with the saved credentials.
+
 ---
 
 ## Resource and Performance Issues
