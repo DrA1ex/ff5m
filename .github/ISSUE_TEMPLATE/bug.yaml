@@ -8,6 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
+        Please avoid opening GitHub issues unless you're certain you've found a bug. Always check the documentation first, and if still unsure, ask in Telegram or Discord communities first. Each issue requires significant time to investigate and respond to properly.
         Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
 
   - type: checkboxes
