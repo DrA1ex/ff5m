@@ -48,8 +48,12 @@ It's **recommended** to flash the uninstall image first, to ensure there are no 
 
 1. Download the Factory Image:   
    Make sure to select the correct version for your printer (Pro or Non-Pro) based on your specific model. You can access the factory firmware here:  
-   - [2.7.8 Factory images](https://github.com/DrA1ex/zmod_docs/tree/main/%D0%A0%D0%BE%D0%B4%D0%BD%D0%B0%D1%8F_%D0%BF%D1%80%D0%BE%D1%88%D0%B8%D0%B2%D0%BA%D0%B0)  
-   - [3.1.3 Factory images](https://github.com/ghzserg/zmod/tree/main/%D0%A0%D0%BE%D0%B4%D0%BD%D0%B0%D1%8F_%D0%BF%D1%80%D0%BE%D1%88%D0%B8%D0%B2%D0%BA%D0%B0)  
+   - **2.7.8 Factory images**
+     - Non-Pro: [Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz)
+     - Pro: [Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz)   
+   - **3.1.3 Factory images**
+     - Non-Pro: [Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz)   
+     - Pro: [Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz)   
 2. (Optional) Before flashing, check the integrity of the firmware file using the MD5 checksum:  
    - **Version 2.7.8**:  
      - Non-Pro: `608cb3830e69d1ff946bf699d69c491f`  
