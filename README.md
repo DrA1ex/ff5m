@@ -100,10 +100,10 @@ You can reach services using these addresses:
 If you encounter issues:  
 1. First, consult the documentation.
 2. If the problem persists:
-   - Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues)
    - Join the [Telegram Support](https://t.me/+ihE2Ry8kBNkwYzhi) group
-   - Visit the [Discord server](https://discord.gg/K7MH4hAfeX)    
+   - Or, Join the [Discord server](https://discord.gg/K7MH4hAfeX)    
      → Navigate to: Forums → mods-and-projects → Forge-X
+   - Only open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) if you're absolutely certain this is a bug.
 
 ## Why This Mod Was Developed
 This mod was created to address several critical limitations and challenges faced by users of the Flashforge AD5M (Pro) 3D printer. Here are the key reasons behind its development:
