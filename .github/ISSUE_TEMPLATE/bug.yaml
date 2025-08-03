@@ -9,7 +9,8 @@ body:
     attributes:
       value: |
         Please avoid opening GitHub issues unless you're certain you've found a bug. Always check the documentation first, and if still unsure, ask in Telegram or Discord communities first. Each issue requires significant time to investigate and respond to properly.
-        Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
+        
+        **Note:** Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
 
   - type: checkboxes
     id: checklist
@@ -17,13 +18,15 @@ body:
       label: Checklist
       description: Confirm you’ve completed these steps before submitting.
       options:
+        - label: I am sure this is a bug.
+          required: true
+        - label: I have tried rebooting the printer, and the problem persists.
+          required: true
         - label: I have searched for [similar issues](https://github.com/DrA1ex/ff5m/issues?q=is%3Aissue) but haven't found any matching reports.
           required: true
         - label: I have read the [documentation](https://github.com/DrA1ex/ff5m/tree/main?tab=readme-ov-file#documentation) and did not find an answer.
           required: true
         - label: I have read the [F.A.Q](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md).
-          required: true
-        - label: I have tried rebooting the printer, and the problem persists.
           required: true
 
   - type: dropdown
