@@ -106,4 +106,13 @@ case "$key" in
 
         message "Klipper will be restarted to apply changes."
         "$SCRIPTS"/restart_klipper.sh
+    ;;
+    power_loss_recovery)
+        rm -f /opt/config/mod_data/resurrection.json
+
+        screen=$("$CMDS"/zdisplay.sh test)
+        if [ "$screen" != "STOCK" ]; then
+            message "Klipper will be restarted to apply changes."
+            "$SCRIPTS"/restart_klipper.sh
+        fi
 esac

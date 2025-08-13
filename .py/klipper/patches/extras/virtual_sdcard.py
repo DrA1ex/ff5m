@@ -181,6 +181,15 @@ class VirtualSD:
         if filename.startswith('/'):
             filename = filename[1:]
         self._load_file(gcmd, filename)
+
+    def load_file(self, gcmd, filename):
+        if self.work_timer is not None:
+            raise gcmd.error("SD busy")
+        self._reset_file()
+        if filename.startswith('/'):
+            filename = filename[1:]
+        self._load_file(gcmd, filename)
+
     def _load_file(self, gcmd, filename, check_subdirs=False):
         files = self.get_file_list(check_subdirs)
         flist = [f[0] for f in files]
