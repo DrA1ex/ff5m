@@ -169,7 +169,7 @@ Thanks [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) devel
 
 Thanks to the Klipper and Moonraker communities for their ongoing development.
 
-Special thanks to the Russian FlashForge Adventurer 5M Telegram Community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro)
+Thanks to the Russian FlashForge Adventurer 5M Telegram Community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro)
 
 Big thanks [@Zero](https://www.youtube.com/@zerodotcmd) for the awesome logo! 
 
@@ -179,3 +179,16 @@ Thanks for the great open-source fonts:
 - [Roboto Font](https://fonts.google.com/specimen/Roboto)
 - [JetBrains Mono Font](https://www.jetbrains.com/lp/mono)
 - [Typicons Icons Font](https://www.s-ings.com/typicons/)
+
+### Special Thanks
+
+I’m truly thankful for everyone who has supported this project with their donations. Your contributions mean a lot to me and help make this work possible.
+Every contribution, no matter the size, makes a huge difference and shows the strength of our community.
+
+Here are some of the wonderful people:   
+**906Prints, MattArmfield, Stormage, Spud, Luigisvc, slydog43, Никита (motionpix), CHaucke**
+
+#### Anonymous donations
+
+I also want to express my heartfelt gratitude to those who have supported the project anonymously through cryptocurrency.
+
