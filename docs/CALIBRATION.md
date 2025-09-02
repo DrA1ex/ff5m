@@ -87,6 +87,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
    AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=220 BED_TEMP=60 PROFILE=auto
    ```
    - Adjust `EXTRUDER_TEMP` (e.g., 220°C for PLA), `BED_TEMP` (e.g., 60°C).
+   - Use correct mesh `PROFILE` for your setup (`MESH_DATA` - for Stock or `auto` - for others)
 2. **Save**:
    ```
    NEW_SAVE_CONFIG
