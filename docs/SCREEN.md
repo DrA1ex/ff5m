@@ -22,13 +22,21 @@ This is particularly beneficial for users running complex prints or using additi
 
 ### Switching to Feather Screen / Headless
 
-Disabling the stock screen changes how the printer works.
-It no longer loads the `MESH_DATA` profile or applies the **Z-Offset** automatically.
+**Disabling the stock screen completely disables FlashForge's additional software.**  
 
-To apply the Z-Offset, you can use the global mod parameter (prefered), described here: [Configuration](/docs/CONFIGURATION.md).
-Alternatively, you can use the START_PRINT option, described here: [Slicing](/docs/SLICING.md)
+However, the printer still operates via Klipper, so the actual printing process remains largely unchanged, though some workflows may behave differently.
 
-To enable the Feather screen and free up resources, set the following mod parameter:
+Since FlashForge's software won’t start, you can no longer upload G-code or control the printer through FlashPrint or FlashForge Orca, as the required services will not be running.
+
+Instead, you must use the **Moonraker protocol** for uploading files and managing print jobs. Learn more in the [Slicing](/docs/SLICING.md) section.
+
+The printer will also **no longer load** the `MESH_DATA` bed profile and will instead use the `auto` profile. **Be sure** to save your bed mesh using the name `auto`.
+
+FlashForge’s software also handled **Z-Offset** — a feature not native to Klipper. After switching, you’ll need to manage Z-Offset manually. See the [Printing](/docs/PRINTING.md#z-offset) section for details.
+
+The stock screen also controls the camera, so you’ll need to use Forge-X’s camera controls instead. Learn more in the [Camera](/docs/CAMERA.md) section.
+
+To enable the Feather screen and free up system resources, set the following mod parameter:
 
 ```bash
 SET_MOD PARAM="display" VALUE="FEATHER"
@@ -36,7 +44,7 @@ SET_MOD PARAM="display" VALUE="FEATHER"
 
 This will disable the stock screen and activate the Feather screen immediately. **Make sure to wait until the current print finishes before doing this! :)**
 
-If you want to free up more resources or run a custom screen implementation yourself, run this command:
+If you want to free up more resources (usually you don'tt need this) or run a custom screen implementation yourself, run this command:
 
 ```bash
 SET_MOD PARAM="display" VALUE="HEADLESS"
