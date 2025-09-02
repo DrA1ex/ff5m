@@ -67,7 +67,11 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
 
 - `Z_OFFSET`: Manually sets the Z offset.  
   **Default**: 0.0  
-  **Example**: `Z_OFFSET=0.2`  
+  **Example**: `Z_OFFSET=0.2`
+
+- `MESH`: Loads specific mesh instead of default one.
+  **Default**: None  
+  **Example**: `MESH=PLA_profile`
 
 ## MD5 Checksum Validation
 
