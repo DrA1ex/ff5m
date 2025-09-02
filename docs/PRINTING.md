@@ -22,11 +22,15 @@ Enable it on the stock screen: _Settings → Network → Network Mode → **LAN-
 
 To calibrate the printer, use only these macros (or the Stock screen).  
 
+> [!CAUTION]
+> Read about [how bed mesh works](/docs/CALIBRATION.md#before-you-start) before trying to calibrate the printer.
+
 > [!WARNING]  
 > The Stock Screen doesn’t support the `SAVE_CONFIG` macro, which will cause freezing. A reboot is required afterward.
 > Learn how to work around this [here](/docs/FAQ.md#stock-screen-freezes-i-cant-print-anything).
 
 All of these macros are available in the Fluidd/Mainsail main screen in the section **Calibration**:
+
 
 - `BED_LEVEL_SCREWS_TUNE`: Adjusts bed leveling screws (calculates adjustments for **nuts under the bed**).   
   ⚠️ **Recalibrate** the bed mesh after making changes.
