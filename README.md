@@ -68,16 +68,17 @@ So don’t do anything if you not clearly understand what you are doing.
 4. Update slicer [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
 5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod)
 6. Enable [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
-7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).   
-8. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
-9. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
-10. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) Bed Mesh, shaper, and Z-offset.
-11. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
-12. **Optional**: Enable the mod’s [Camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
-13. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)     
-14. **Optional**: Enable [Feather Screen](/docs/SCREEN.md#switching-to-feather-screen).   
-15. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
-16. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).   
+7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).
+8. **⚠️ Mandatory**: Read about [how bed meshed works](/docs/CALIBRATION.md#before-you-start)
+9. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
+10. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
+11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) Bed Mesh, shaper, and Z-offset.
+12. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
+13. **Optional**: Enable the mod’s [Camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
+14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)     
+15. **Optional**: Enable [Feather Screen](/docs/SCREEN.md#switching-to-feather-screen).   
+16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
+17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).   
 
 ## Get Started
 
