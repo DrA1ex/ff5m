@@ -76,7 +76,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
 3. **Check Load Cell**:
    - If your bed height variation exceeds 1 mm, you must perform load cell tare calibration after adjusting the bed screws (see [Forge-X FAQ](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md#resolving-the-issue-by-calibrating-the-load-cell)).
 4. **Recalibrate Load Cells**: Follow the official Flashforge [guide](https://docs.google.com/document/d/1Oou4A56g5HTrxBAMoH-bTnTZZ3IZyGr_3jL9tUYYiow/edit?usp=drivesdk). If you're not using the Stock screen, temporarily reload it with `SKIP_MOD`.   
-5. **Recalibrate Mesh** ⚠️: Run `AUTO_FULL_BED_LEVEL`.
+5. **Recalibrate Mesh** ⚠️
 6. **Save**: `NEW_SAVE_CONFIG`.
 
 ---
@@ -237,6 +237,6 @@ Calibrate Z-offset to ensure proper first-layer adhesion. For STOCK screen, Z-of
 
 ## Post-Calibration
 1. **Verify**: Print Calilantern/50x50x50 mm cube.
-2. **Recalibrate Mesh**: Run `AUTO_FULL_BED_LEVEL` after changes.
+2. **Recalibrate Mesh** after changes.
 3. **Backup**: Use Forge-X Backup and Restore.
 4. **Maintenance**: Recheck belt tension periodically.
