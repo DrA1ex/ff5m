@@ -16,7 +16,51 @@ Edit `user.cfg` via Fluidd/Mainsail (port 80) or manually. Backup config using F
 
 **Notice**: For STOCK screen users, use `NEW_SAVE_CONFIG` instead of `SAVE_CONFIG` or `RESTART` to save changes.
 
-**Note**: Axis/extruder changes invalidate bed mesh. Run `AUTO_FULL_BED_LEVEL` after adjustments.
+## BEFORE YOU START
+
+First, it’s important to understand how calibration works. This is crucial because misunderstanding can lead to printer damage.
+
+If you’re using the Stock screen, you can perform calibrations directly through the screen as usual — Forge-X adds new features without altering existing ones.
+
+However, if you want to go further, here’s what you need to know:
+
+- The printer uses a bed mesh to know where to print. If the mesh doesn’t match your setup (e.g., servo configuration or nozzle height), the printer may print in mid-air, scrape the bed, or even cause hardware damage (broken nozzle, burnt servos or drivers, mechanical issues).
+- The bed mesh only reflects the state when it was taken. If you change anything affecting movement — such as the bed plate, nozzle, or Klipper motion parameters (like `tune_klipper`) — you must redo the mesh.
+- The printer’s build plate is metal and expands when heated. Always take the mesh at the temperature you plan to print with. For example:
+  - 60°C for PLA or 70°C for PETG: a mesh at 65°C may work, but for 40°C or 80°C, you’ll need separate meshes.
+- Bed meshes are stored with specific names. It’s not enough to create a mesh — you must save it with the correct name. Saving with the wrong name after changes can lead to printer damage.
+  - For Stock screens, name the mesh **`MESH_DATA`**
+  - For non-Stock screens (Feather, Guppy, Headless), name it **`auto`**
+- If no mesh is found, the printer will generate one before printing, but I strongly recommend managing this yourself.
+- Temporary meshes (like from KAMP or force-leveling) are saved as **`default`**. You don’t need to save these. If Fluidd or Mainsail prompts you to save, ignore it — the firmware will delete this profile automatically.
+
+To calibrate the bed mesh using Klipper, run:
+
+**For Stock screen:**
+```bash
+AUTO_FULL_BED_LEVEL PROFILE=MESH_DATA BED_TEMP=65
+```
+
+**For other screens:**
+```bash
+AUTO_FULL_BED_LEVEL PROFILE=auto BED_TEMP=65
+```
+
+### Using different meshes for different materials:
+Create slicer profiles with different `START_PRINT` g-code variations.
+
+**Example (using `MESH` parameter):**
+
+```gcode
+START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single] MESH=PLA_profile
+```
+
+**Or use Orca’s variables to set the mesh name by filament type:**   
+The printer will look for a profile named **`<filament_type>_profile`** (e.g., `PLA_profile`, `ABS_profile`):
+
+```gcode
+START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single] MESH={filament_type[0]}_profile
+```
 
 ---
 
