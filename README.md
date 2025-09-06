@@ -79,7 +79,8 @@ So don’t do anything if you not clearly understand what you are doing.
 14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)     
 15. **Optional**: Enable [Feather Screen](/docs/SCREEN.md#switching-to-feather-screen).   
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
-17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).   
+17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
+18. **Optional**: Enable [Power Loss Recovery](docs/PRINTING.md#power-loss-recovery-resurrection).   
 
 ## Get Started
 
