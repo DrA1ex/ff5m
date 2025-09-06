@@ -259,27 +259,46 @@ class Resurrector:
 
         return found
 
+    def _find_line_start(self, f, current_pos):
+        chunk_size = 256  # Optimal size based on performance testing
+        line_start = current_pos
+        
+        while line_start > 0:
+            # Calculate chunk boundaries
+            read_start = max(0, line_start - chunk_size)
+            
+            # Read chunk
+            f.seek(read_start)
+            chunk = f.read(line_start - read_start)
+            
+            # Look for line ending in this chunk
+            found_pos = None
+            for i in range(len(chunk) - 1, -1, -1):
+                if chunk[i:i+1] in (b'\n', b'\r'):
+                    found_pos = read_start + i + 1
+                    break
+                
+            if found_pos is not None:
+                return found_pos
+            
+            # No line ending found, try previous chunk
+            line_start = read_start
+        
+        return 0  # Beginning of file
+
     def _read_line_backwards(self, f):
-        """Read one line backwards from current position"""
-        pos = f.tell()
-        if pos == 0:
+        current_pos = f.tell()
+        if current_pos == 0:
             return None
         
-        # Find start of current line by going backwards
-        line_start = pos
-        while line_start > 0:
-            line_start -= 1
-            f.seek(line_start)
-            char = f.read(1)
-            if char in (b'\n', b'\r'):
-                line_start += 1  # Move past the line ending
-                break
+        # Find where this line starts
+        line_start = self._find_line_start(f, current_pos)
         
         # Read the line
         f.seek(line_start)
-        line = f.read(pos - line_start)
+        line = f.read(current_pos - line_start)
         
-        # Position BEFORE this line for next call
+        # Position for next backwards read
         if line_start > 0:
             f.seek(line_start - 1)
         else:
@@ -328,6 +347,8 @@ class Resurrector:
 
             f"_PRINT_STATUS S='HEATING...'",
             f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
+
+            "M106 P1 S255",  # Enable extruder fan to prevent melting
             f"_WAIT_TEMPERATURE CMD=M104 VALUE={state['extruder_temp']}",
 
             f"_PRINT_STATUS S='HOMING...'",
@@ -336,15 +357,17 @@ class Resurrector:
 
             f"LOAD_CELL_TARE",
 
-            f"G92 E0",  # Reset extruder position
-            f"G90",     # Absolute toolhead coordinates
-            f"M83",     # Relative extruder coordinates
+            f"G92 E0",      # Reset extruder position
+            f"G90",         # Absolute toolhead coordinates
+            f"M83",         # Relative extruder coordinates
 
             f"_PRINT_STATUS S='POSITIONING...'",
             f"_SET_GCODE_OFFSET Z={state['z_offset']}",
             f"G1 X{toolhead_pos[0]} Y{toolhead_pos[1]} F6000",
             f"G1 Z{toolhead_pos[2]} F3000",
             f"M400",
+
+            "M106 P1 S0",   # Disable extruder fan
 
             f"_PRINT_STATUS S='RESTORING STATE...'",
             *cmds,
