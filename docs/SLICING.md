@@ -61,14 +61,6 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
   **Default**: 0  
   **Example**: `SKIP_LEVELING=1`  
 
-- `SKIP_ZOFFSET`: Skips setting the Z offset if set to 1. This is useful when printing from the stock screen, which loads Z-Offset automatically.  
-  **Default**: 1  
-  **Example**: `SKIP_ZOFFSET=0`  
-
-- `Z_OFFSET`: Manually sets the Z offset.  
-  **Default**: 0.0  
-  **Example**: `Z_OFFSET=0.2`
-
 - `MESH`: Loads specific mesh instead of default one.
   **Default**: None  
   **Example**: `MESH=PLA_profile`

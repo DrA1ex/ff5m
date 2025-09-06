@@ -4,7 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import enum, json, logging, os
+import enum, json, logging, os, re
 
 
 class ResurrectorState(enum.Enum):
@@ -39,9 +39,9 @@ class Resurrector:
         self.gcode.register_command("RESURRECT_ABORT", self.cmd_RESURRECT_ABORT)
 
     def _init(self):
-        mod_params = self.printer.lookup_object("mod_params")
+        self.mod_params = self.printer.lookup_object("mod_params")
 
-        if not mod_params.variables['power_loss_recovery']:
+        if not self.mod_params.variables['power_loss_recovery']:
             logging.info("[resurrection] Disabled due to 'power_loss_recovery' parameter.")
             return
 
@@ -55,6 +55,7 @@ class Resurrector:
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
         self.bed_mesh = self.printer.lookup_object("bed_mesh")
+        self.gcode_move = self.printer.lookup_object("gcode_move")
 
         self.start_print_macro = self.printer.lookup_object('gcode_macro _START_PRINT')
 
@@ -76,7 +77,7 @@ class Resurrector:
 
             self.reactor.register_callback(_initial_msg, waketime=self.reactor.monotonic() + 3)
         else:
-            logging.info("[resurrection] Resurrection file doesn't exists")
+            logging.info("[resurrection] Resurrection file doesn't exist")
             self._change_state(ResurrectorState.IDLE)
 
         self._timer = self.reactor.register_timer(self._dump_timer_handler, self.reactor.NOW)
@@ -134,25 +135,33 @@ class Resurrector:
         gcode_file = stats["file_path"]
 
         if gcode_file and os.path.isfile(gcode_file):
-            position = self.toolhead.get_status(eventtime)["position"]
+            t_status = self.toolhead.get_status(eventtime)
+            position = t_status["position"]
+            
             extruder_temp = self.extruder.get_status(eventtime)["target"]
             bed_temp = self.heater_bed.get_status(eventtime)["target"]
             mesh = self.bed_mesh.get_status(eventtime)["profile_name"]
+            z_offset = self.gcode_move.get_status(eventtime)["homing_origin"][2]
 
             if extruder_temp == 0:
                 logging.info("[resurrection] Skip dump due to zeroed extruder temp")
                 return
 
-            with open(self.file_path, "w") as f:
-                json.dump({
-                    "file_path": gcode_file,
-                    "file_position": stats["file_position"],
-                    "file_size": stats["file_size"],
-                    "position": position,
-                    "extruder_temp": extruder_temp,
-                    "bed_temp": bed_temp,
-                    "mesh": mesh,
-                }, f)
+            try:
+                with open(self.file_path, "w") as f:
+                    json.dump({
+                        "file_path": gcode_file,
+                        "file_position": stats["file_position"],
+                        "file_size": stats["file_size"],
+                        "position": position,
+                        "extruder_temp": extruder_temp,
+                        "z_offset": z_offset,
+                        "bed_temp": bed_temp,
+                        "mesh": mesh,
+                    }, f)
+            except (IOError, OSError) as e:
+                logging.error(f"[resurrection] Failed to save resurrection file: {e}")
+                return
         else:
             logging.info("[resurrection] Failed to save resurrection file. G-Code file is invalid")
             self._change_state(ResurrectorState.ERROR)
@@ -160,7 +169,10 @@ class Resurrector:
     def _clear(self, eventtime):
         if os.path.isfile(self.file_path):
             logging.info("[resurrection] Clear resurrection file")
-            os.remove(self.file_path)
+            try:
+                os.remove(self.file_path)
+            except (IOError, OSError) as e:
+                logging.error(f"[resurrection] Failed to remove resurrection file: {e}")
 
     def _load_resurrection_state(self, gcmd):
         if not os.path.isfile(self.file_path):
@@ -170,11 +182,11 @@ class Resurrector:
         with open(self.file_path, "r") as f:
             try:
                 state = json.load(f)
-            except Exception as e:
+            except (json.JSONDecodeError, IOError, OSError) as e:
                 gcmd.respond_raw(f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
                 return None
 
-        for key in ["file_path", "file_position", "file_size", "position", "extruder_temp", "bed_temp", "mesh"]:
+        for key in ["file_path", "file_position", "file_size", "position", "z_offset", "extruder_temp", "bed_temp", "mesh"]:
             if key not in state:
                 gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
                 return None
@@ -191,6 +203,89 @@ class Resurrector:
             return None
 
         return state
+
+    state_cmds = [re.compile(statement) for statement in [
+        r'^SET_VELOCITY_LIMIT .+$',
+        r'^SET_PRESSURE_ADVANCE ADVANCE=.*$',
+        r'^SKEW_PROFILE LOAD=.*$',
+        r"^M73 .*$",
+        r"^M106 S.+$",
+        r"^M106 P1 .+$",
+        r"^M106 P2 .+$"
+    ]]
+
+    def _load_state(self, stats):
+        self.gcode.run_script_from_command("_PRINT_STATUS S='LOADING STATE...'")
+
+        file_path = stats["file_path"]
+        file_position = stats["file_position"]
+
+        # Create a set of compiled regex patterns for O(1) lookup
+        state_patterns = set(self.state_cmds)
+        found = []
+
+        with open(file_path, "rb", buffering=8192) as f:  # Use larger buffer for better performance
+            f.seek(file_position)
+
+            while state_patterns:  # Stop when all patterns found
+                line = self._read_line_backwards(f)
+                
+                if line is None:
+                    break
+                    
+                # Decode line and strip whitespace
+                try:
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                except (UnicodeDecodeError, AttributeError):
+                    continue
+                    
+                # Skip empty lines and comments
+                if not line_str or line_str.startswith(';') or line_str.startswith('#'):
+                    continue
+
+                # Check if line matches any of our state commands
+                # Find the first matching pattern without creating a copy
+                matched_pattern = None
+                for pattern in state_patterns:
+                    if pattern.match(line_str):
+                        matched_pattern = pattern
+                        break
+                
+                if matched_pattern:
+                    logging.info(f"[resurrection] Found CMD: {line_str}")
+                    found.append(line_str)
+                    # Remove this pattern to avoid duplicates - O(1) operation
+                    state_patterns.discard(matched_pattern)
+
+        return found
+
+    def _read_line_backwards(self, f):
+        """Read one line backwards from current position"""
+        pos = f.tell()
+        if pos == 0:
+            return None
+        
+        # Find start of current line by going backwards
+        line_start = pos
+        while line_start > 0:
+            line_start -= 1
+            f.seek(line_start)
+            char = f.read(1)
+            if char in (b'\n', b'\r'):
+                line_start += 1  # Move past the line ending
+                break
+        
+        # Read the line
+        f.seek(line_start)
+        line = f.read(pos - line_start)
+        
+        # Position BEFORE this line for next call
+        if line_start > 0:
+            f.seek(line_start - 1)
+        else:
+            f.seek(0)
+        
+        return line
 
     def cmd_RESURRECT(self, gcmd):
         if self.state != ResurrectorState.RESURRECTION:
@@ -221,11 +316,12 @@ class Resurrector:
         gcode_file = state["file_path"]
         self.virtual_sdcard.load_file(gcmd, os.path.basename(gcode_file))
 
-        self.gcode.run_script_from_command("\n".join([
-            f"_PRINT_STATUS S='LOADING...'",
+        cmds = self._load_state(state)
 
-            f"_CANCEL_DELAYED_COMMANDS",
-            f"_ENSURE_SERVICES_STARTED",
+        self.gcode.run_script_from_command("\n".join([
+            f"_PRINT_STATUS S='PREPARING...'",
+
+            f"_START_PRINT_PREPARE",
 
             f"BED_MESH_PROFILE LOAD={mesh_name}",
             f"M26 S{state['file_position']!r}",
@@ -241,13 +337,17 @@ class Resurrector:
             f"LOAD_CELL_TARE",
 
             f"G92 E0",  # Reset extruder position
-            f"G90",  # Absolute toolhead coordinates
-            f"M83",  # Relative extruder coordinates
+            f"G90",     # Absolute toolhead coordinates
+            f"M83",     # Relative extruder coordinates
 
             f"_PRINT_STATUS S='POSITIONING...'",
+            f"_SET_GCODE_OFFSET Z={state['z_offset']}",
             f"G1 X{toolhead_pos[0]} Y{toolhead_pos[1]} F6000",
             f"G1 Z{toolhead_pos[2]} F3000",
             f"M400",
+
+            f"_PRINT_STATUS S='RESTORING STATE...'",
+            *cmds,
 
             f"_PRINT_STATUS S='PRINTING...'",
         ]))

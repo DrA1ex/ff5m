@@ -41,7 +41,8 @@ So don’t do anything if you not clearly understand what you are doing.
 - **Klipper** with many patches/fixes/plugins specially adapted for AD5M
 - **Moonraker**
 - **Fluidd** & **Mainsail**
-- **GuppyScreen** available as an [add-on](https://t.me/FF_ForgeX/2181)
+- **GuppyScreen**
+- **Power Loss Recovery**
 - **OTA** updates
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
