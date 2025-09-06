@@ -77,7 +77,7 @@ So don’t do anything if you not clearly understand what you are doing.
 12. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
 13. **Optional**: Enable the mod’s [Camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
 14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)     
-15. **Optional**: Enable [Feather Screen](/docs/SCREEN.md#switching-to-feather-screen).   
+15. **Optional**: Enable [Feather/Guppy Screen](/docs/SCREEN.md#switching-to-feather-screen).   
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
 17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
 18. **Optional**: Enable [Power Loss Recovery](docs/PRINTING.md#power-loss-recovery-resurrection).   
