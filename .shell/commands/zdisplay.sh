@@ -33,6 +33,14 @@ display_headless() {
         --params /opt/config/mod/.cfg/init.display.headless.cfg
 }
 
+display_guppy() {
+    chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
+        --mode restore --avoid_writes \
+        --config /opt/config/printer.cfg \
+        --no_data \
+        --params /opt/config/mod/.cfg/init.display.guppy.cfg
+}
+
 test() {
     local display_off=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display_off" "MISSING")
 
@@ -48,6 +56,10 @@ test() {
 apply_display_off() {
     killall "ffstartup-arm" &> /dev/null
     killall "firmwareExe" &> /dev/null
+    
+    # Stop Guppy services if they are running
+    chroot "$MOD" /opt/config/mod/.root/S80guppyscreen stop &> /dev/null
+    chroot "$MOD" /opt/config/mod/.root/S35tslib stop &> /dev/null
     
     if ip addr show wlan0 | grep -q "inet "; then
         killall "wpa_cli" &> /dev/null
@@ -97,6 +109,15 @@ case "$1" in
         display_headless
         apply_display_off
     ;;
+
+    guppy)
+        display_guppy    
+        apply_display_off
+
+        # Start Guppy services
+        chroot "$MOD" /opt/config/mod/.root/S35tslib start
+        chroot "$MOD" /opt/config/mod/.root/S80guppyscreen start
+    ;;
     
     apply)
         if [ "$(test)" != "STOCK" ]; then
@@ -113,7 +134,7 @@ case "$1" in
     ;;
     
     *)
-        echo "Usage: $0 stock|feather|headless|test"; exit 1;
+        echo "Usage: $0 stock|feather|headless|guppy|test"; exit 1;
     ;;
 esac
 

@@ -38,7 +38,8 @@
       "values": {
         "STOCK": 0,
         "FEATHER": 1,
-        "HEADLESS": 2
+        "HEADLESS": 2,
+        "GUPPY": 3
       }
     }
   },
@@ -251,7 +252,8 @@
       "options": {
         "STOCK": "Use Stock Screen",
         "FEATHER": "Use Feather Screen",
-        "HEADLESS": "Use Headless"
+        "HEADLESS": "Use Headless",
+        "GUPPY": "Use Guppy Screen"
       },
       "deprecated": {
         "key": "display_off",

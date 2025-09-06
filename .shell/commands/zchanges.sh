@@ -30,12 +30,14 @@ case "$key" in
             message " - START_PRINT/END_PRINT macro behavior"  "!!"
             message " " " "
             message "Improper handling may cause printer damage. Review the documentation first:" "!!"
-            message "https://github.com/DrA1ex/ff5m/blob/main/docs/PRINTING.md" "->"
+            message "https://github.com/DrA1ex/ff5m/blob/main/docs/SCREEN.md" "->"
 
             sleep 1
             
             if [ "$value" = "FEATHER" ]; then
                 "$SCRIPTS"/commands/zdisplay.sh "feather"
+            elif [ "$value" = "GUPPY" ]; then
+                "$SCRIPTS"/commands/zdisplay.sh "guppy"
             else
                 "$SCRIPTS"/commands/zdisplay.sh "headless"
             fi
@@ -115,4 +117,5 @@ case "$key" in
             message "Klipper will be restarted to apply changes."
             "$SCRIPTS"/restart_klipper.sh
         fi
+    ;;
 esac
