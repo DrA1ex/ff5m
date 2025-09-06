@@ -151,7 +151,7 @@ You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfe
 - [x] Klipper bugfixes related to processing of G-Code containing Unicode symbols (specific for non-English symbols in object names)
 - [x] Mainsail OTA: Fixed and patched implementation to work correctly with navigation, with OTA updates
 - [x] Power-loss recovery for non-Stock screens
-- [x] Integration and adoption of GuppyScreen for AD5M
+- [x] Integration and adaptation of GuppyScreen for AD5M
 
 ## Support Forge-X
 
