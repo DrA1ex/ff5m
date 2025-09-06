@@ -118,6 +118,89 @@ Read this before enabling: [About bed pressure error](/docs/FAQ.md#why-am-i-gett
 > Don’t set `weight_check_max` too low. Legitimate situations, such as the nozzle scratching an overextruded model or the weight of the model itself, can trigger false stops.  
 > Over time, the bed's weight may also increase during long prints (weight of the model itself).
 
+## Power Loss Recovery (Resurrection)
+
+The mod includes a **Power Loss Recovery** feature that automatically saves print progress and can resume printing after an unexpected power loss or printer shutdown. This feature continuously monitors the print status and saves critical information to restore the exact position, temperatures, and settings.
+
+Common scenarios where this is useful include:
+- Unexpected power outages during long prints.
+- Accidental printer shutdown or reboot.
+- System crashes or MCU errors during printing.
+- Voluntary pause and resume across reboots.
+
+### Important Limitations and Considerations:
+
+Due to the inherent limitations of how Klipper works and the mechanical nature of 3D printers, **perfect position restoration is not guaranteed**. This is especially true for Z-height positioning, which may not match exactly.
+
+**Realistic Expectations:**
+- This feature should be considered a **last resort** to salvage long prints rather than a reliable solution
+- Position accuracy, especially Z-height, may be compromised
+- The print may have visible artifacts at the recovery point
+- Layer adhesion at the resume point may be weaker
+
+**Mechanical Risks:**
+- The part may have **detached from the bed** during power loss
+- The part may have **shifted or moved** on the build plate
+- Bed temperature changes may have affected adhesion
+- Nozzle may have cooled and hardened, affecting first layer after recovery
+
+**Safety Recommendations:**
+- **Always monitor the recovery process closely**
+- Be prepared to **stop the print immediately** if something goes wrong
+- Consider the **part may be ruined** and recovery may not be worth the risk
+- For reliable printing, **invest in a UPS (Uninterruptible Power Supply)** instead of relying on recovery
+
+> [!CAUTION]
+> Ensure your printer's mechanical state (bed level, nozzle cleanliness) hasn't changed between the power loss and recovery attempt. Manual intervention may be required. Always monitor this process, and if something goes wrong - power off the printer immediately!
+
+> [!WARNING]
+> **This is not a replacement for stable power!** The best solution is to prevent power loss with a UPS. Recovery should only be used as an emergency measure for very long prints where the time investment justifies the risk.
+
+### How to Enable:
+Enable the Power Loss Recovery feature using the mod parameter:
+```bash
+SET_MOD PARAM=power_loss_recovery VALUE=1
+```
+
+Optionally, you can customize the behavior by adding configuration to your `user.cfg` file:
+```ini
+[resurrection]
+dump_time: 3.0
+```
+
+### Configuration Parameters:
+- `power_loss_recovery`: Enable or disable the resurrection feature (mod parameter, default: 0)
+- `dump_time`: How often to save the print state in seconds (user.cfg, default: 3.0)
+
+### Available G-code Commands:
+- `RESURRECT`: Manually trigger print recovery from the saved state
+- `RESURRECT_ABORT`: Cancel any pending resurrection and delete the saved state file
+
+### How it works:
+- During printing, the mod continuously saves the current position, temperatures, feed rates, and other critical state information.
+- The state is saved every `dump_time` seconds to minimize data loss.
+- After a power loss, the mod detects the saved state file and offers to resume the print.
+- A recovery dialog appears in Fluidd/Mainsail and GuppyScreen interfaces, allowing you to choose whether to resume or cancel the recovery.
+- The recovery process restores extruder and bed temperatures, moves to the last known position, and continues printing.
+- The mod intelligently handles various G-code commands and maintains compatibility with advanced features like bed mesh and KAMP.
+
+### Recovery Process:
+1. **Detection**: On startup, the mod checks for an existing resurrection state file.
+2. **Dialog**: If a saved state is found, a recovery dialog will appear in Fluidd/Mainsail and GuppyScreen with options to resume or cancel.
+3. **Verification**: The mod verifies that the saved state is valid and matches the last print.
+4. **Preparation**: Temperatures are restored, and the printer moves to the saved position.
+5. **Resume**: Printing continues from the exact point where it was interrupted.
+
+> [!NOTE]
+> Resurrection feature is only available for Feather Screen, Headless Mode, and Guppy Screen. Stock Screen has its own built-in power loss recovery system that the mod cannot override.
+
+### State Information Saved:
+- Current XYZ position and feed rates
+- Extruder and bed temperatures
+- Fans, Presure Advance, Speed limits 
+- Active bed mesh and Z-offset
+- G-code file position and progress
+
 ## Bed Mesh Validation
 
 To prevent printing issues caused by an invalid bed mesh, the mod includes a **Bed Mesh Validation** feature. This feature checks the bed mesh before starting a print and ensures it matches the current printer configuration.   
