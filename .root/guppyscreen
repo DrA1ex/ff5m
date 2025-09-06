@@ -1,0 +1,44 @@
+#!/bin/bash
+
+## Guppy screen service management
+##
+## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+case "$1" in
+    start)
+        echo "Starting Guppy services..."
+        /opt/config/mod/.root/S35tslib start
+        /opt/config/mod/.root/S80guppyscreen start
+        echo "Guppy services started"
+    ;;
+    
+    stop)
+        echo "Stopping Guppy services..."
+        /opt/config/mod/.root/S80guppyscreen stop
+        /opt/config/mod/.root/S35tslib stop
+        echo "Guppy services stopped"
+    ;;
+    
+    restart)
+        echo "Restarting Guppy services..."
+        /opt/config/mod/.root/S80guppyscreen stop
+        /opt/config/mod/.root/S35tslib stop
+        /opt/config/mod/.root/S35tslib start
+        /opt/config/mod/.root/S80guppyscreen start
+        echo "Guppy services restarted"
+    ;;
+    
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        echo ""
+        echo "Commands:"
+        echo "  start   - Start both tslib and guppy services"
+        echo "  stop    - Stop both guppy and tslib services"
+        echo "  restart - Restart both services"
+        exit 1
+    ;;
+esac
+
+exit $?

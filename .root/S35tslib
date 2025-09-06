@@ -1,0 +1,76 @@
+#!/bin/sh
+#
+# Starts uinput
+#
+
+mkdir -p /var/run/
+
+BIN=/usr/bin/ts_uinput
+PIDFILE=/var/run/ts_uinput.pid
+NICENESS=9
+
+# variables must be present or ts_uinput will fail.
+
+export TSLIB_TSDEVICE=/dev/input/event0
+export TSLIB_PLUGINDIR=/usr/lib/ts
+export TSLIB_CONFFILE=/etc/ts.conf
+export TSLIB_CALIBFILE=/etc/pointercal
+export TSLIB_FBDEVICE=/dev/fb0
+
+create_link() {
+    DEVICE=$(grep -l "ts_uinput" /sys/class/input/event*/device/name | head -n 1)
+    if [ "$DEVICE" = "" ]; then
+        echo "Unable to obtain input device."
+        return 1
+    fi
+
+    DEVICE=${DEVICE%/device/name}
+    DEVICE="/dev/input/${DEVICE##*/}"
+
+    ln -fns "$DEVICE" /dev/input/guppy
+}
+
+start() {
+    echo "Starting tslib uinput interface..."
+    
+    # First start
+    if ! lsmod | grep -q uinput; then
+        insmod /lib/modules/5.4.61/uinput.ko
+        
+        mkdir -p /tmp/parent_root
+        mount /dev/mmcblk0p6 /tmp/parent_root
+        
+        ln -fns /tmp/parent_root/opt/tslib-1.12/etc/ts.conf /etc/
+        ln -fns /tmp/parent_root/opt/tslib-1.12/etc/pointercal /etc/
+    fi
+    
+    start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN
+    [ $? = 0 ] && sleep 3 && create_link && echo "OK" || echo "FAIL"
+}
+
+stop() {
+    echo "Stopping tslib uinput interface..."
+    start-stop-daemon -K -q -p $PIDFILE
+    [ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+case "$1" in
+    start)
+        start
+    ;;
+    stop)
+        stop
+    ;;
+    restart|reload)
+        restart
+    ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac

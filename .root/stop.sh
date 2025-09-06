@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# Stop display-specific services
+/opt/config/mod/.root/S35tslib stop
+/opt/config/mod/.root/S80guppyscreen stop
+
 /opt/config/mod/.root/S65moonraker stop
 /opt/config/mod/.root/S70httpd stop
 /opt/config/mod/.root/S45ntpd stop

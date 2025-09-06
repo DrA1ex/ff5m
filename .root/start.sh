@@ -56,6 +56,12 @@ else
     echo "Web services disabled as per configuration."
 fi
 
+DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "STOCK")
+if [ "$DISPLAY_MODE" = "GUPPY" ]; then
+    /opt/config/mod/.root/S35tslib start
+    /opt/config/mod/.root/S80guppyscreen start
+fi
+
 if [ -d /etc/init.d ]; then
     echo "Starting user services..."
     

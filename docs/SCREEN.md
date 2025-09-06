@@ -11,16 +11,21 @@ Also, the screen consumes a lot of RAM — about 7-15 MiB—and with the printer
 
 However, we don't have to use the stock screen. To free up resources, we can run the printer headless (in early mod builds) or use the alternative Feather screen implementation.
 
-## Alternative Screen
+## Alternative Screens
 
-To reduce resource usage, the mod provides an alternative Feather screen implementation.
-This lightweight screen consumes minimal resources and is designed to display essential print information, such as print status, temperature, and estimated remaining time.
-While it does not currently support user input, it is highly extensible and customizable.
+If you want to reduce memory usage and don't need the full functionality of the stock screen, you can switch to one of the alternative screens included in the mod. These options use much less memory and focus on displaying the most important information, which is helpful for larger prints or when using extra modifications.
 
-By using the Feather screen, you can significantly reduce resource usage while maintaining essential functionality.
-This is particularly beneficial for users running complex prints or using additional modifications.
+Here's what each option does:
 
-### Switching to Feather Screen / Headless
+### Feather Screen
+
+Feather is a lightweight screen that displays basic information like print status, temperatures, and estimated time remaining. It does not support any user input or printer control — it's just for monitoring.
+
+### Guppy Screen
+
+Guppy is also resource-friendly, but in addition to showing print information, it allows you to control the printer directly from the screen. You can pause, resume, or cancel prints using Guppy, making it a good choice if you want some interactive features while still saving memory.
+
+### Switching to Alternative Screens / Headless
 
 **Disabling the stock screen completely disables FlashForge's additional software.**  
 
@@ -36,15 +41,22 @@ FlashForge’s software also handled **Z-Offset** — a feature not native to Kl
 
 The stock screen also controls the camera, so you’ll need to use Forge-X’s camera controls instead. Learn more in the [Camera](/docs/CAMERA.md) section.
 
+
 To enable the Feather screen and free up system resources, set the following mod parameter:
 
 ```bash
 SET_MOD PARAM="display" VALUE="FEATHER"
 ```
 
-This will disable the stock screen and activate the Feather screen immediately. **Make sure to wait until the current print finishes before doing this! :)**
+To enable the Guppy screen, set the following mod parameter:
 
-If you want to free up more resources (usually you don'tt need this) or run a custom screen implementation yourself, run this command:
+```bash
+SET_MOD PARAM="display" VALUE="GUPPY"
+```
+
+This will disable the stock screen and activate the selected alternative screen immediately. **Make sure to wait until the current print finishes before doing this! :)**
+
+If you want to free up more resources (usually you don't need this) or run a custom screen implementation yourself, run this command:
 
 ```bash
 SET_MOD PARAM="display" VALUE="HEADLESS"
@@ -70,6 +82,15 @@ Then edit the `variables.cfg` file to disable the `display` parameter manually:
 ```bash
 # Enable stock screen using script
 /opt/config/mod/.shell/commands/zdisplay.sh stock
+
+# Enable feather screen using script
+/opt/config/mod/.shell/commands/zdisplay.sh feather
+
+# Enable guppy screen using script
+/opt/config/mod/.shell/commands/zdisplay.sh guppy
+
+# Enable headless mode using script
+/opt/config/mod/.shell/commands/zdisplay.sh headless
 
 # Or change parameter in variables.cfg using this script
 /opt/config/mod/.shell/commands/zconf.sh /opt/config/mod_data/variables.cfg --set "display='STOCK'"

@@ -351,6 +351,16 @@ fix_config() {
             \"no_data\": true,
             \"avoid_writes\": true
         }," >> $BATCH_FILE
+    elif [ "$screen" == "GUPPY" ]; then
+        # Guppy mode enabled
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/init.display.guppy.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
     else
         echo @@ Invalid display parameter: "$screen"
     fi
