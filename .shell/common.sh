@@ -42,6 +42,7 @@ SPLASH_IMG_XZ="/opt/config/mod/splash.img.xz"
 PATH="$BINS:$PATH"
 
 unset LD_PRELOAD
+unset LD_LIBRARY_PATH
 
 mount_data_partition() {
     # mount data - this would otherwise be mounted later by Flashforge's firmware
