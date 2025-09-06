@@ -58,8 +58,7 @@ apply_display_off() {
     killall "firmwareExe" &> /dev/null
     
     # Stop Guppy services if they are running
-    chroot "$MOD" /opt/config/mod/.root/S80guppyscreen stop &> /dev/null
-    chroot "$MOD" /opt/config/mod/.root/S35tslib stop &> /dev/null
+    chroot "$MOD" /opt/config/mod/.root/guppyscreen stop
     
     if ip addr show wlan0 | grep -q "inet "; then
         killall "wpa_cli" &> /dev/null
@@ -115,8 +114,7 @@ case "$1" in
         apply_display_off
 
         # Start Guppy services
-        chroot "$MOD" /opt/config/mod/.root/S35tslib start
-        chroot "$MOD" /opt/config/mod/.root/S80guppyscreen start
+        chroot "$MOD" /opt/config/mod/.root/guppyscreen start
     ;;
     
     apply)
