@@ -5,8 +5,6 @@ This is because FlashForge's firmware is designed to work exclusively with its o
 
 For example, you can't just do `RESTART` or `SAVE_CONFIG` via Klipper's console — it freezes the screen, and you have to reboot the printer afterward because you can't do anything with a frozen firmware application.
 
-You can view the [mod.cfg](/mod.cfg) file with macros that make the screen work with bare Klipper/Moonraker.
-
 Also, the screen consumes a lot of RAM — about 7-15 MiB—and with the printer's limited memory of just 128 MiB, it's a dealbreaker.
 
 However, we don't have to use the stock screen. To free up resources, we can run the printer headless (in early mod builds) or use the alternative Feather screen implementation.
