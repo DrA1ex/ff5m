@@ -84,7 +84,6 @@ boot
 5. If done correctly, you’ll get a shell after the Linux kernel loads. The filesystem will be mounted as read-only, so remount it as read-write:
 
 ```bash
-mount -t proc proc /proc
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
