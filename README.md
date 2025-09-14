@@ -16,20 +16,13 @@ The mod is based on ZMod, which itself is derived from Klipper-mod.
 
 The printer has Linux, but it’s not the Linux you’re used to.  
 **It’s not** like Ubuntu, Debian, Fedora, or other Linux distributions.  
-The printer **isn’t a desktop**. It uses firmware with a Linux core as its base. It’s more like a smart microwave.   
+The printer **isn’t a desktop**. It uses firmware with a Linux core as its base.
 
 So, **read the documentation** before doing anything. Because you risk **completely bricking** your printer.   
-It’s restorable, but **it requires additional hardware** or soldering in exceptional cases.
+It’s restorable though, but **it requires additional hardware** or soldering in exceptional cases.
 
-**Don’t flash one firmware over another** unless you clearly understand what you are doing.   
-**Don’t delete** installation, uninstallation, or recovery **logs** — it’s may help to restore your printer.   
-
-**If nothing’s working** and you **don’t understand why** or what you can do, you’re not an experienced user and not a professional.    
-—- **It’s better to ask for help** before you do anything that **completely bricks** your printer.    
-**You don’t need that**, it takes your time and mine. So better carefully **read the docs first**.
-
-There’s also a tiny chance **you’d have to buy a new motherboard** — probability’s near zero, but it’s not impossible.  
-So don’t do anything if you not clearly understand what you are doing.
+**Don’t flash different mod's firmware over another** unless you clearly understand what you are doing.   
+**Don’t delete** installation, uninstallation, or recovery **logs** — it’s may help to restore your printer.
 
 ## Features
 <p align="center">
@@ -37,18 +30,18 @@ So don’t do anything if you not clearly understand what you are doing.
 <img width="400" src="https://github.com/user-attachments/assets/6f3b9343-d3d1-4f0e-b4cf-9ac1041502b2" />
 </p>
 
-- **Stock** Screen with option to disable it completely and switch to Feather screen version to reduce resource consumption
+- **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
 - **Klipper** with many patches/fixes/plugins specially adapted for AD5M
 - **Moonraker**
 - **Fluidd** & **Mainsail**
-- **GuppyScreen**
-- **Power Loss Recovery**
-- **OTA** updates
+- Adapted **Guppy** and custom **Feather** screens
+- Originally developed **Power Loss Recovery** specially for AD5M
+- **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen.
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
-- Patched **mjpg-streamer** with dramatically reduced memory usage
+- Patched **video streamer** with dramatically reduced memory usage
 - **Timelapse** support via [Moonraker Telegram bot](https://github.com/nlef/moonraker-telegram-bot) installed on external host
-- Adaptive bed meshing with **KAMP**.
+- Adaptive bed meshing with **KAMP** with Smart Parking.
 - Built-in **MD5** checks for gcode files.
 - **Backup** and **Restore** mechanism for printer's configuration
 - Fix for the **Move queue overflow (E0017)** error.
@@ -59,7 +52,7 @@ So don’t do anything if you not clearly understand what you are doing.
 - Easy **Bed Level Screw Tuning**.
 - Customized dedicated Linux environment based on **Buildroot**
 - **Entware** package manager for additional software installation
-- **Dual boot** with stock Flashforge software or Klipper Mod
+- **Dual boot** with stock Flashforge software / Klipper Mod
 
 ## TL;DR
 
