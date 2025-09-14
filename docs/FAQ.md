@@ -112,6 +112,17 @@ Custom settings in `printer.cfg` or `printer.base.cfg` may persist after uninsta
 - **Flash Factory Firmware**: To fully reset all configurations, including user-edited settings in `printer.cfg`, flash the Factory firmware from Flashforge, not just any stock firmware. Find the Factory firmware link in the [Uninstall Guide](/docs/UNINSTALL.md#flashing-factory-firmware).
 - **Use user.cfg for Changes**: Avoid modifying `printer.cfg` directly. Instead, make all Klipper-related changes in `mod_data/user.cfg` to keep custom settings separate and easier to reset.
 
+### Why can't I do an OTA update for Forge-X?
+
+OTA updates are only supported for minor versions (e.g., 1.3.1 → 1.3.4, but not 1.3.4 → 1.4.0). To update to the next major version, you need to flash the latest Forge-X image over your current installation, just like you did when installing Forge-X for the first time.  
+This won’t change any of your current settings, and you won’t need to recalibrate.
+
+### I can't install Forge-X because there isn’t enough free space.
+
+You need to free up space depending on which specific partition the error mentions.  
+- For `/data`: remove old logs or G-code files.  
+- For `/root`: remove old calibration images/logs in **Configuration → mod_data**. If that doesn’t help, use `REMOVE_MOD_SOFT`. After flashing the image, your configuration will persist and you won’t lose anything.
+
 ---
 
 ## Network and Connectivity Issues
@@ -380,7 +391,7 @@ Yes, calibration via the Stock screen works, as it interacts directly with Klipp
 Use a stylus or thin object to press the console button more precisely.
 
 ### Stock screen freezes: I can’t print anything
-The Stock screen does not support Moonraker external control, causing freezes when running `SAVE_CONFIG`, `RESTART`, or `FIRMWARE_RESTART`. Reboot the printer to resolve. Use the `NEW_SAVE_CONFIG` macro for graceful configuration saving (compatibility varies). Consider switching to the Feather screen to avoid this issue, as detailed in the [Screen Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/SCREEN.md).
+The Stock screen does not support Moonraker external control, causing freezes when running `SAVE_CONFIG`, `RESTART`, or `FIRMWARE_RESTART`. Reboot the printer to resolve. Use the `NEW_SAVE_CONFIG` macro for graceful configuration saving. Consider switching to the Feather/Guppy screen to avoid this issue, as detailed in the [Screen Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/SCREEN.md).
 
 ### Feather screen stuck on “Finishing boot...”
 This occurs if Klipper or the MCU fails to become ready, often due to a broken configuration or an unreset MCU after a `reboot` command. Perform a `FIRMWARE_RESET` or power cycle the printer. Access Fluidd or SSH to diagnose the issue.
