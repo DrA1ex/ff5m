@@ -175,12 +175,15 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
 ### Skew Distortion
 - Use the Calilantern model (or similar) to measure and correct skew. Upload the model via Fluidd/Mainsail, print, and follow its instructions for skew compensation. The printer will load a profile named `skew_profile` automatically, so save the profile with this name:
   ```
-  SET_MOD PARAM="disable_skew" VALUE=0
   SET_SKEW XY=140.4,142.8,99.8 XZ=141.6,141.4,99.8 YZ=142.4,140.5,99.5
   SKEW_PROFILE SAVE=skew_profile
   NEW_SAVE_CONFIG
   ```
 - Alternatively, add a `[skew_correction]` section in `user.cfg` with the skew values, then run `NEW_SAVE_CONFIG` to save the configuration.
+- Enable `disable_skew` mod parameter to automatically apply `skew_profile` before print:
+  ```
+  SET_MOD PARAM="disable_skew" VALUE=0
+  ```
 
 ---
 
