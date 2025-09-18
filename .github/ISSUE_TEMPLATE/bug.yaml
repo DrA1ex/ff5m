@@ -8,12 +8,20 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please avoid opening GitHub issues unless you're certain you've found a bug. Always check the documentation first, and if still unsure, ask in Telegram or Discord communities first. Each issue requires significant time to investigate and respond to properly.
+        **Before Opening a GitHub Issue**
+
+        Please ensure you've identified a genuine bug before creating an issue. Always review the documentation first. If you're still unsure, seek help in our Telegram or Discord communities. Each issue requires significant time to investigate and address properly.
         
-        You might think it is a bug, and you may be sure it is, but real bugs make up only about **5% of all issues reported as bugs**.
-        So, from now on, I **will close** this kind of issue **without explanation** and will **block** users who create them.
+        **Important:** Only about **5% of reported issues** are actual bugs. Most are misunderstandings or questions better suited for community discussion.
         
-        **Note:** Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
+        To maintain efficiency:
+        - Issues that do not clearly describe a bug will be **closed without explanation**.
+        - Users who repeatedly submit non-bug issues may be **blocked**.
+        - Incomplete reports that do not follow the provided template will be **closed immediately**, as they waste everyone's time.
+        
+        **How to Report a Bug:**
+        - Follow the issue template closely.
+        - Provide all required details to ensure a swift and accurate response.
 
   - type: checkboxes
     id: checklist
