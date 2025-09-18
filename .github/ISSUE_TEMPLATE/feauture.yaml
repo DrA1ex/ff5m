@@ -3,6 +3,24 @@ description: Suggest a new feature or enhancement for the Forge-X
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before Opening a Feature Requst**
+
+        1. **Verify Originality**: Check documentation and existing requests to ensure your idea is new.
+        2. **Use Communities for Help**: Ask questions in Telegram or Discord, not in feature requests.
+        3. **Provide Details**:
+           - Clearly describe the feature and its purpose.
+           - Explain why it’s needed and its impact.
+           - Suggest possible implementation details.
+           - Follow the provided template completely.
+        
+        **Rules**:
+        - Incomplete or vague requests will be **closed without explanation**.
+        - Repeated low-effort submissions may result in a **block**.
+        - Support or help requests will be redirected to communities and closed.
+
   - type: dropdown
     id: printer_model
     attributes:
