@@ -157,18 +157,18 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
    - X/Y: Measure printed square (e.g., 201x201 mm).
    - Z: Measure height (e.g., 199 mm).
 2. **Calculate Rotation Distance**:
-   - Get current `rotation_distance` from `printer.cfg`/`user.cfg`.
-   - Formula: `new_distance = current_distance * (expected_size / actual_size)`
-     - E.g., X/Y: `40 * (200 / 201) ≈ 39.801`, Z: `8 * (200 / 199) ≈ 8.040`
+   - Get current `rotation_distance` from `printer.base.cfg`/`user.cfg`.
+   - Formula: `new_distance = current_distance * (actual_size / expected_size)`
+     - E.g., X/Y: `40 * (201 / 200) ≈ 40.2`, Z: `8 * (199 / 200) ≈ 7.96`
 3. **Update**:
    - Add to `user.cfg`:
      ```
      [stepper_x]
-     rotation_distance: 39.801
+     rotation_distance: 40.2
      [stepper_y]
-     rotation_distance: 39.801
+     rotation_distance: 40.2
      [stepper_z]
-     rotation_distance: 8.040
+     rotation_distance: 7.96
      ```
    - Run `NEW_SAVE_CONFIG` (or `SAVE_CONFIG` for non-STOCK screens).
 
