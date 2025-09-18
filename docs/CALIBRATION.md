@@ -108,13 +108,13 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
    - Mark 100 mm filament, measure actual extrusion (e.g., 98 mm).
 2. **Calculate**:
    - Get current `rotation_distance` (e.g., `4.7`).
-   - Formula: `new_distance = current_distance * (expected / actual)`
-     - E.g., `4.7 * (100 / 98) ≈ 4.79`
+   - Formula: `new_rotation_distance = old_rotation_distance * (measured_distance / expected_distance)`
+     - E.g., `4.7 * (98 / 100) ≈ 4.6`
 3. **Update**:
    - Add to `user.cfg`:
      ```
      [extruder]
-     rotation_distance: 4.79
+     rotation_distance: 4.6
      ```
    - Run `NEW_SAVE_CONFIG`.
 4. **Note**: `tuning.cfg` has a near-accurate baseline.
