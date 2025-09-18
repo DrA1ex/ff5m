@@ -69,15 +69,22 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
 
 To enable the pause-at-layer feature, add the following commands to your slicer configuration:
 
-### Start G-code
+#### Start G-code
 Add this line before `START_PRINT`:
 ```
 SET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]
 ```
 
-### After Layer Change G-code
+#### After Layer Change G-code
 ```
 SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num + 1}
+```
+
+#### Example
+To make a pause at 20 layer use this command after print started:
+
+```
+SET_PAUSE_AT_LAYER ENABLE=1 LAYER=20 MACRO=PAUSE
 ```
 
 ## MD5 Checksum Validation
