@@ -180,7 +180,7 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
   NEW_SAVE_CONFIG
   ```
 - Alternatively, add a `[skew_correction]` section in `user.cfg` with the skew values, then run `NEW_SAVE_CONFIG` to save the configuration.
-- Enable `disable_skew` mod parameter to automatically apply `skew_profile` before print:
+- Set `disable_skew` mod parameter to '0', to automatically apply `skew_profile` before print:
   ```
   SET_MOD PARAM="disable_skew" VALUE=0
   ```
