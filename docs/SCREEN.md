@@ -54,12 +54,17 @@ SET_MOD PARAM="display" VALUE="GUPPY"
 
 This will disable the stock screen and activate the selected alternative screen immediately. **Make sure to wait until the current print finishes before doing this! :)**
 
+To switch back to the stock screen, run this command:
+
+```bash
+SET_MOD PARAM="display" VALUE="STOCK"
+```
+
 If you want to free up more resources (usually you don't need this) or run a custom screen implementation yourself, run this command:
 
 ```bash
 SET_MOD PARAM="display" VALUE="HEADLESS"
 ```
-
 
 > [!NOTE]
 > You must configure **Wi-Fi** or **Ethernet** before disabling the stock screen.  
