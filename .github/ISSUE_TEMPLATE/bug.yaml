@@ -80,7 +80,9 @@ body:
       options:
         - label: I use Stock screen.
           required: false
-        - label: I use Feather screen.
+        - label: I use Feather screen / Headless.
+          required: false
+        - label: I use Guppy screen.
           required: false
 
   - type: textarea
