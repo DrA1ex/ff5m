@@ -65,6 +65,21 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
   **Default**: None  
   **Example**: `MESH=PLA_profile`
 
+## Pause at Layer
+
+To enable the pause-at-layer feature, add the following commands to your slicer configuration:
+
+### Start G-code
+Add this line before `START_PRINT`:
+```
+SET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]
+```
+
+### After Layer Change G-code
+```
+SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num + 1}
+```
+
 ## MD5 Checksum Validation
 
 One of the main reasons for print failures on the AD5M printer is corrupted G-code files after sending them over the network. To prevent this issue, the mod implements MD5 checksum validation before starting a print. If a file has a corrupted checksum, the print will be canceled automatically, and the G-code file will be deleted to prevent accidentally printing it again.
