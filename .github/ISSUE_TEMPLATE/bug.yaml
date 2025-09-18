@@ -9,7 +9,8 @@ body:
     attributes:
       value: |
         Please avoid opening GitHub issues unless you're certain you've found a bug. Always check the documentation first, and if still unsure, ask in Telegram or Discord communities first. Each issue requires significant time to investigate and respond to properly.
-        You might think it is a bug, and you may be sure it is, but real bugs make up only about 5% of all issues reported as bugs.
+        
+        You might think it is a bug, and you may be sure it is, but real bugs make up only about **5% of all issues reported as bugs**.
         So, from now on, I **will close** this kind of issue **without explanation** and will **block** users who create them.
         
         **Note:** Issues reported without complete information will be closed without explanation. Follow this template as closely as possible — incomplete reports waste everyone’s time.
