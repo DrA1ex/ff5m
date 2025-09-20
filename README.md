@@ -145,6 +145,7 @@ You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfe
 - [x] Mainsail OTA: Fixed and patched implementation to work correctly with navigation, with OTA updates
 - [x] Power-loss recovery for non-Stock screens
 - [x] Integration and adaptation of GuppyScreen for AD5M
+- [ ] A clone of the Bamboo Lab screen, but for the AD5M (only possible with your [support](https://boosty.to/dra1ex))
 
 ## Support Forge-X
 
