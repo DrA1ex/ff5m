@@ -14,7 +14,11 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 
 > [!WARNING]
 > Uninstall other mods, if any are installed.   
-> You can leave the Klipper Mod, but make sure to read [this FAQ section](/docs/FAQ.md#do-i-need-to-uninstall-the-earlier-klipper-mod-before-installing-the-new-mod) first.    
+> You can leave the Klipper Mod, but make sure to read [this FAQ section](/docs/FAQ.md#do-i-need-to-uninstall-the-earlier-klipper-mod-before-installing-the-new-mod) first.
+
+> [!TIP]
+> It is not necessary to uninstall Forge-X before updating minor versions
+> e.g. 1.3.x to 1.4.x
 
 ### Prerequisites
 
