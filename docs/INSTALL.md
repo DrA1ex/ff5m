@@ -18,7 +18,7 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 
 
 > [!TIP]
-> It is not necessary to uninstall Forge-X before major versions
+> It is not necessary to uninstall Forge-X before updating major versions
 > e.g. 1.3.x to 1.4.x
 
 ### Prerequisites
