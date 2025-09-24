@@ -438,6 +438,33 @@ The KAMP purge line length can be adjusted to suit your preferences, such as inc
 
 ---
 
+###  I've changed to a longer nozzle, and now the nozzle hits the bed every time
+
+By default, the Z-axis is calibrated so the standard nozzle just clears the bed at its zero position, enabling prints up to 220mm tall.
+A longer nozzle effectively lowers this zero point, shifting the entire Z-axis reference.
+
+Since the printer's movements are based on this zero, it causes collisions. You must recalibrate the Z-axis in the firmware to account for the offset, and adjust limits to prevent exceeding the reduced build height.
+
+Here’s how to update your configuration (example for a 20mm longer nozzle):
+
+1. **Modify the Printer configuration**  
+   Update the Z-axis settings in your `user.cfg` file to reflect the new nozzle length. For a 20mm offset, adjust the `position_endstop` and `position_max` as follows:
+
+   ```ini
+   [stepper_z]
+   position_endstop: 200   ; Default is 220, reduced by 20mm for the longer nozzle
+   position_max: 210       ; Default is 230, reduced by 20mm to maintain safe travel
+   ```
+
+2. **Update Slicer Settings**  
+   In your slicer software, reduce the maximum Z-height to match the new `position_max` (e.g., 210mm). This ensures the slicer doesn’t generate toolpaths that exceed the printer’s adjusted limits.
+
+3. **Recalibrate the Bed Mesh**  
+  After updating the configuration, home the Z-axis and verify the new zero point. Ensure the nozzle is at the correct height above the bed to avoid collisions during printing.   
+  Clear all existing bed meshes first (as they are now invalid). Then perform a new bed mesh calibration.
+
+---
+
 ## Community Contributions and Updates
 
 ### What is the thumbnail display feature, and how do I use it?
