@@ -457,7 +457,7 @@ Here’s how to update your configuration (example for a 20mm longer nozzle):
    ```
 
 2. **Update Slicer Settings**  
-   In your slicer software, reduce the maximum Z-height to match the new `position_max` (e.g., 210mm). This ensures the slicer doesn’t generate toolpaths that exceed the printer’s adjusted limits.
+   In your slicer software, reduce the maximum Z-height to match the new `Z-Position Max` (e.g., 200mm). This ensures the slicer doesn’t generate toolpaths that exceed the printer’s adjusted limits.
 
 3. **Recalibrate the Bed Mesh**  
   After updating the configuration, home the Z-axis and verify the new zero point. Ensure the nozzle is at the correct height above the bed to avoid collisions during printing.   
