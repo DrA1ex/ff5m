@@ -53,7 +53,9 @@ It's **recommended** to flash the uninstall image first, to ensure there are no 
      - Pro: [Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz)   
    - **3.1.3 Factory images**
      - Non-Pro: [Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz)   
-     - Pro: [Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz)   
+     - Pro: [Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz)
+> [!NOTE]
+> The official 3.1.5 firmware available on the Flashforge website does not include printer config files. To install 3.1.5 while restoring those files it's necessary to first flash the above 3.1.3 firmware and then flash the 3.1.5 firmware.
 2. (Optional) Before flashing, check the integrity of the firmware file using the MD5 checksum:  
    - **Version 2.7.8**:  
      - Non-Pro: `608cb3830e69d1ff946bf699d69c491f`  
