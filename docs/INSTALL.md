@@ -22,7 +22,7 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 > e.g. 1.3.x to 1.4.x
 
 ### Prerequisites
-
+- Stock firmware version minimum **2.6.5** and maximum **3.1.5**. Newer versions are currently not supported and may cause instability - follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade the firmware to a supported version if necessary before proceeding.
 - A USB flash drive formatted to FAT32.
 - At least 512MB free space in the `/data` partition.
 - At least 128MB free space in the `/` partition.
@@ -37,7 +37,6 @@ The mod uses the same installation mechanism as the stock firmware:
 5. The printer will automatically install the update. After the installation is finished, you will see a message at the end of the screen.  
 6. Eject the USB drive and reboot the printer.  
 
-**Note**: The mod installer currently requires the printer to be updated to at least version **2.6.5** of the stock Flashforge firmware.  
 After installation, the printer will boot into the modified firmware by default.
 
 From this point onward, you will receive OTA updates from this repository.
