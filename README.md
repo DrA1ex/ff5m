@@ -156,7 +156,7 @@ Forge-X is an open-source, free project built for the community, and everyone is
 - **[Boosty (Subscribe)](https://boosty.to/dra1ex)**
 
 - **Cryptocurrency Donations**:
-  - **BTC**: `17igL1Y1gHSK2FFsn8TQgVKkaVXXJ33Mu6`
+  - **BTC**: `bc1qnkljte43lgl6xsdc6syz7sn2v9hfhyhwzfwwv5`
   - **ETH (Ethereum Network)**: `0x27Ae1BB12a9e736C208B651F990DB24AE327574A`
   - **TON**: `UQDTa38-fA0KW87hvDg-78Jtp2n5ok5GI1ZZcZN-jKIGWEJB`
   - **USDT (TRC20 Network)**: `TUmBppbp5vhhpwozzYzYmd9T3GefJsbX5K`
