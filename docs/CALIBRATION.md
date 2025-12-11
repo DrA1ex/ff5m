@@ -97,6 +97,10 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
 
 ## Extruder Calibration
 1. **Extrude Filament**:
+   - Set relative extrusion mode
+     ```
+     M83
+     ```
    - Heat nozzle:
      ```
      M104 S220; Set nozzle to 220°C (adjust for filament)
@@ -106,18 +110,18 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
      G1 E100 F100
      ```
    - Mark 100 mm filament, measure actual extrusion (e.g., 98 mm).
-2. **Calculate**:
+3. **Calculate**:
    - Get current `rotation_distance` (e.g., `4.7`).
    - Formula: `new_rotation_distance = old_rotation_distance * (measured_distance / expected_distance)`
      - E.g., `4.7 * (98 / 100) ≈ 4.6`
-3. **Update**:
+4. **Update**:
    - Add to `user.cfg`:
      ```
      [extruder]
      rotation_distance: 4.6
      ```
    - Run `NEW_SAVE_CONFIG`.
-4. **Note**: `tuning.cfg` has a near-accurate baseline.
+5. **Note**: `tuning.cfg` has a near-accurate baseline.
 
 ---
 
