@@ -22,7 +22,8 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 > e.g. 1.3.x to 1.4.x
 
 ### Prerequisites
-- Stock firmware version minimum **2.6.5** and maximum **3.1.5**. Newer versions are currently not supported and may cause instability - follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade the firmware to a supported version if necessary before proceeding.
+- Stock firmware version: minimum **2.6.5**, maximum **3.1.5**. Newer firmware versions are currently unstable — users report many bugs and issues—so using an older version is recommended. You can use newer versions if you want, but **at your own risk**.   
+    - Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a supported version if needed before proceeding.   
 - A USB flash drive formatted to FAT32.
 - At least 512MB free space in the `/data` partition.
 - At least 128MB free space in the `/` partition.
