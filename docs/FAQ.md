@@ -123,6 +123,12 @@ You need to free up space depending on which specific partition the error mentio
 - For `/data`: remove old logs or G-code files.  
 - For `/root`: remove old calibration images/logs in **Configuration → mod_data**. If that doesn’t help, use `REMOVE_MOD_SOFT`. After flashing the image, your configuration will persist and you won’t lose anything.
 
+### How can I disable FlashForge's firmware update notifications?
+
+You can disable network access to the update servers. See how to do it [here](https://t.me/FF_ForgeX/4255) (Use WinSCP / PuTTY / nano via SSH to edit the file).
+
+After uninstalling Forge‑X, this file will revert automatically, so you won’t need to change it back yourself.
+
 ---
 
 ## Network and Connectivity Issues
