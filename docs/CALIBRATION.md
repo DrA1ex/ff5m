@@ -234,7 +234,7 @@ Calibrate Z-offset to ensure proper first-layer adhesion. For STOCK screen, Z-of
      SET_MOD PARAM="load_zoffset" VALUE=1
      ```
    - This ensures Z-offset is loaded before prints and after reboots, similar to STOCK screen behavior.
-7. **Optional**: For nozzle cleaning, enable `load_zoffset_cleaning` it may prevent bed scratches:
+7. **Optional**: For nozzle cleaning, enable `load_zoffset_cleaning` it may prevent bed scratches if the default (0.0) offset is too low for your setup:
    ```
    SET_MOD PARAM="load_zoffset_cleaning" VALUE=1
    ```
