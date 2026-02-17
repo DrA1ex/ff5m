@@ -180,7 +180,7 @@ I’m truly thankful for everyone who has supported this project with their dona
 Every contribution, no matter the size, makes a huge difference and shows the strength of our community.
 
 Here are some of the wonderful people:   
-**906Prints, MattArmfield, Stormage, Spud, Luigisvc, slydog43, Никита (motionpix), CHaucke, Andrew Popow, K3D // Dmitry Sorkin, D T, Kurt LaRue**
+**906Prints, MattArmfield, Stormage, Spud, Luigisvc, slydog43, Никита (motionpix), CHaucke, Andrew Popow, K3D // Dmitry Sorkin, D T, Kurt LaRue, jollyroger1789**
 
 #### Anonymous donations
 
