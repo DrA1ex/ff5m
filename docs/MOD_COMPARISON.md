@@ -67,6 +67,73 @@ radius, though it auto-reverts on dual boot), and it has its own RAM-driven
 known issues on the 128MB T113 (e.g. MCU timeouts during `SHAPER_CALIBRATE` and
 after long idle).
 
+## Runtime architecture: all three are chroot-based
+
+None of the three replaces the stock Linux on the printer's eMMC. The stock
+FlashForge rootfs stays in place; each mod installs a **complete second Buildroot
+rootfs on the `/data` partition (`mmcblk0p7`)** and enters it with `chroot`. The
+difference is how aggressively each one hijacks the boot process.
+
+### xblax — full init hijack
+
+Boot entry `S00klipper_mod` runs from FlashForge's own init (chroot dir
+`/data/.klipper_mod/chroot`):
+
+1. `mount_data` — mounts `mmcblk0p7` → `/data` early.
+2. `prepare_chroot` — bind-mounts into the chroot:
+   - virtual filesystems: `/dev /dev/pts /proc /sys /run /tmp`
+   - `/data` → `chroot/mnt/data`
+   - **stock `/` → `chroot/mnt/orig_root`, remounted read-only** (so the chroot
+     can reach stock kernel modules, e.g. the `8821cu.ko` wifi driver, without
+     being able to corrupt the stock system).
+3. `chroot $chroot_dir /etc/init/init_chroot.sh` — inside the chroot: load
+   kernel modules, swap, hwclock, then run its own `/etc/init.d/rcS`, which
+   starts Klipper / Moonraker / Mainsail / etc.
+4. **`kill -9 $PPID`** — kills the parent stock-init process. Per the script:
+   *"now we have hijacked the init process."* The stock FlashForge software never
+   starts.
+
+So with xblax the chroot **becomes** the system; stock is fully shut out apart
+from the read-only `orig_root` mount for shared kernel bits. Combined with the
+MCU reflash, xblax is effectively an alternative firmware.
+
+### Forge-X — same chroot model, lighter touch
+
+- Mod rootfs at `MOD=/data/.mod/.forge-x` (own Buildroot + Entware).
+- `init_chroot` / `dispose_chroot` (`.shell/common.sh`) bind-mount
+  `/proc /sys /dev /run /tmp` into `$MOD`; `init_buildroot` adds binds for
+  `/data`, `/opt/config`, and `/opt/klipper`.
+- Work is run as `chroot "$MOD" …` (version stamping, Python config backup,
+  `fake-hwclock`, etc.).
+- Unlike xblax it **keeps stock `/opt/klipper`** (bind-mounted in, then overlaid
+  with patched `.py` files) and does **not** reflash the MCU. It keeps a real
+  dual-boot path (`SKIP_MOD` markers, `boot/boot.sh`) so the stock system can
+  still be booted.
+
+### Z-Mod — same family, "minimal intervention"
+
+Z-Mod README: *"installed on top of the stock software. It does not replace the
+original firmware — instead it extends it... minimal intervention in the native
+firmware. All native firmware features are preserved."* (FAQ §"How is Z-Mod
+different from KlipperMod"). It uses the same `/data`-based chroot with native
+Klipper, and explicitly contrasts itself with xblax: *"KlipperMod is essentially
+an alternative firmware implementation."*
+
+### Summary
+
+| | xblax | Forge-X | Z-Mod |
+|---|---|---|---|
+| Chroot into `/data` Buildroot | yes | yes | yes |
+| Stock `/` available in chroot | read-only `orig_root` bind | bind mounts as needed | bind mounts as needed |
+| Kills stock init / hijacks boot | full (`kill -9 $PPID`) | partial (dual boot, can run stock) | partial ("minimal intervention") |
+| Stock `/opt/klipper` | replaced (upstream 0.13) | kept + patched | kept + patched |
+| MCU reflashed | always | no | optional (`UPDATE_MCU`) |
+| Stock UI app | gone | killed in mod mode | preserved / coexists |
+
+Chroot is universal across all three. xblax differs by *fully* hijacking init
+and swapping both Klipper and MCU firmware; Forge-X and Z-Mod chroot more gently
+and keep the native Klipper.
+
 ## Design philosophy
 
 Forge-X (shared with Z-Mod): **do not touch native Klipper or MCU firmware.**
