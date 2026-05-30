@@ -72,13 +72,29 @@ depends on.
 
 ## Why the mod is unaffected
 
-Forge-X is self-contained and, in mod mode:
+Forge-X is self-contained:
 
 - runs its own Moonraker, Klipper overlays, buildroot and runtime;
 - mounts over `/data` and chroots into `/data/.mod/.forge-x`;
-- **kills `firmwareExe`** (`.shell/commands/zdisplay.sh`) — so the one binary
-  that changed never runs;
-- blocks the stock cloud endpoints via `/etc/hosts` (see `.shell/S00init`).
+- blocks the stock cloud endpoints via `/etc/hosts` (`.shell/S00init`) in
+  **every** screen mode — this is the protection that always applies.
+
+### The stock UI (`firmwareExe`) is not killed by default
+
+`firmwareExe` is the stock **touchscreen UI** (Qt app), not the whole stock
+stack. Forge-X has four screen modes (`mod_params.json` /
+`.shell/commands/zdisplay.sh`): `STOCK`, `FEATHER`, `GUPPY`, `HEADLESS`.
+
+- The **default is `STOCK`** (`mod_params.json`: `"default": "STOCK"`;
+  `zdisplay.sh test` also falls back to `STOCK`). In this mode the stock screen —
+  and therefore the changed 5.x `firmwareExe` — **keeps running**.
+- `killall firmwareExe` runs only inside `apply_display_off()`, which is invoked
+  for `FEATHER` / `GUPPY` / `HEADLESS` (and via `apply` when the mode is not
+  `STOCK`). Only then is the changed binary stopped.
+
+So 5.x is safe not because the binary is killed — on the default STOCK screen it
+runs — but because its new MQTT bootstrap, VoxelShare and OTA hosts are pinned to
+`127.0.0.1` in `/etc/hosts` regardless of screen mode.
 
 Everything it depends on — partition layout, USB `.tgz` installer, kernel
 modules, MCU firmware, `/opt/klipper` — is byte-identical between 3.1.3 and

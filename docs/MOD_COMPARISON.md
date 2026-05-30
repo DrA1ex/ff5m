@@ -128,7 +128,7 @@ an alternative firmware implementation."*
 | Kills stock init / hijacks boot | full (`kill -9 $PPID`) | partial (dual boot, can run stock) | partial ("minimal intervention") |
 | Stock `/opt/klipper` | replaced (upstream 0.13) | kept + patched | kept + patched |
 | MCU reflashed | always | no | optional (`UPDATE_MCU`) |
-| Stock UI app | gone | killed in mod mode | preserved / coexists |
+| Stock UI app (`firmwareExe`) | gone | kept on default STOCK screen; killed only in FEATHER/GUPPY/HEADLESS | preserved / coexists |
 
 Chroot is universal across all three. xblax differs by *fully* hijacking init
 and swapping both Klipper and MCU firmware; Forge-X and Z-Mod chroot more gently
