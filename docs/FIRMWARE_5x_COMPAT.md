@@ -119,6 +119,38 @@ patches the known v11 bugs in place:
 | Unicode object-name bugs | `gcode.py` patch |
 | Nozzle collision | `load_cell_tare.py` + bed-collision protection |
 
+## Downgrade / version availability
+
+When (and only when) a downgrade is actually needed:
+
+- **5.0.x → no downgrade.** It is in the verified range; install the mod directly.
+- **5.1.x → optional downgrade** if you want to stay in the verified range.
+  Untested, but the installer accepts it (no signature check), so it is your call.
+- A downgrade is also needed when coming from an unsupported state or recovering a
+  broken install — see `UNINSTALL.md`.
+
+**Available `-Factory` images** (ghzserg/FF mirror, Pro, at time of writing):
+`3.1.3`, `3.2.3`, `3.2.4`, `3.2.5`, `3.2.7`. The 5.0.3 / 5.1.2 images are **not**
+`-Factory` builds. `UNINSTALL.md` historically lists only `2.7.8` and `3.1.3`;
+the newer `3.2.x -Factory` images are equally valid downgrade targets.
+
+### The 3.1.5 "flash 3.1.3 first" rule — verified
+
+`UNINSTALL.md` says the official 3.1.5 image lacks printer config files, so you
+must flash a `-Factory` image (3.1.3) first, then 3.1.5. This is **correct** and
+the mechanism is verifiable:
+
+- `flashforge_init.sh` copies `printer.cfg`, `printer.base.cfg` and `tmc.py` to
+  the system **only if those files exist in the flashed image**.
+- `-Factory` images (e.g. 3.1.3) **contain** all three. The thin images
+  (3.1.5 official, and the 5.0.3 / 5.1.2 images) **contain none of them** —
+  confirmed by extracting each image.
+
+So flashing a thin image onto a printer that has no config (e.g. after a wipe)
+leaves it without `printer.cfg`; seeding it from a `-Factory` image first fixes
+that. The same property is why 5.x images are pure app/cloud updates — they ship
+no config, kernel or MCU changes.
+
 ## Changes applied to the mod
 
 1. **`docs/INSTALL.md`** — raised the documented stock-firmware ceiling and
