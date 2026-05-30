@@ -156,8 +156,31 @@ no config, kernel or MCU changes.
 1. **`docs/INSTALL.md`** — raised the documented stock-firmware ceiling and
    explained the 3.2.x–5.1.x change surface.
 2. **`.shell/S00init`** — extended the existing `/etc/hosts` cloud block to the
-   full telemetry/cloud host set confirmed in stock 5.1.x `firmwareExe`. Kills
-   the MQTT bootstrap, VoxelShare, stock OTA and the sz3dp/polar3d/qvs hosts.
+   full telemetry/cloud host set confirmed in stock 5.1.x `firmwareExe` **and the
+   `nim.tar` NetEase IM libraries**. Blocks the MQTT bootstrap, VoxelShare, stock
+   OTA, the sz3dp/polar3d/qvs hosts, and the NetEase IM (Yunxin) backbone
+   (`*.netease.im`, `*.127.net`, `statistic.live.126.net`).
+
+### Hosts blocked
+
+From stock `firmwareExe` (FlashForge cloud / OTA / video):
+`api.fdmcloud.flashforge.com`, `fdmcloud.flashforge.com`, `api.voxelshare.com`,
+`voxelshare.com`, `update.flashforge.com`, `cloud.flashforge.com`,
+`cloud.sz3dp.com`, `hz.sz3dp.com`, `update.sz3dp.com`, `update.cn.sz3dp.com`,
+`qvs-live.qnvideo.flashforge.com`, `qvs-publish.qnvideo.flashforge.com`,
+`polar3d.com`, `printer2.polar3d.com`.
+
+From `library/nim.tar` (`libnim.so` / `libnim_chatroom.so` = NetEase IM / Yunxin,
+the new Flash Studio messaging backbone): `app.netease.im`, `apptest.netease.im`,
+`lbs.netease.im`, `link.netease.im`, `nos.netease.com`, `nos.netease.im`,
+`nosdn.127.net`, `nosup-hz1.127.net`, `wanproxy.127.net`,
+`statistic.live.126.net`.
+
+**Deliberately not blocked:** `www.baidu.com` — the stock app uses it as a
+connectivity probe; pinning it would make the app misjudge network state without
+preventing any data leak. A hardcoded IP `115.231.29.49:2045` also appears in the
+binary; raw-IP destinations cannot be neutralized via `/etc/hosts` and need a
+router/firewall rule.
 
 ### Known limitation
 
@@ -171,3 +194,18 @@ A router/firewall block is required for a full air-gap.
 *could* carry a newer base Klipper than the 3.x baseline the overlays were
 written against. An OTA update from 3.x to 5.x does not touch it. This was not
 verifiable without a device rootfs dump or physical printer.
+
+### Note on the `/etc/hosts` block and old firmware
+
+The block is purely additive and firmware-agnostic — it appends entries with the
+same `sed '2 i\'` idiom as the pre-existing `qvs.qiniuapi.com` line, runs on
+every boot, and is idempotent (anchored `grep -qE "[[:space:]]host\$"` so apex and
+subdomain are both inserted exactly once and never duplicated). On older stock
+firmware (2.6.5–3.1.x) none of these hosts exist in any running binary, so the
+entries are inert no-ops and do not affect older-version compatibility.
+
+One degenerate edge case: `sed '2 i\'` inserts before line 2, so on an
+`/etc/hosts` with fewer than 2 lines (or empty) the insert is skipped. Real AD5M
+images always ship a multi-line `/etc/hosts`, and the pre-existing upstream
+`qiniuapi` line has the identical behavior, so this is not a regression — just a
+property worth recording.

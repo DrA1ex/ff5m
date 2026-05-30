@@ -164,10 +164,14 @@ initialize() {
 
     # Block stock cloud/telemetry endpoints introduced by stock fw 5.0.x/5.1.x (Flash Studio / MQTT).
     # Kills the MQTT bootstrap (broker config is fetched from api.fdmcloud), VoxelShare model
-    # sharing, and stock OTA auto-update so it can't clobber the mod.
+    # sharing, stock OTA auto-update, and the NetEase IM (Yunxin) cloud layer — the new "Flash
+    # Studio" backbone shipped as libnim.so / libnim_chatroom.so (library/nim.tar). These NetEase
+    # / 127.net / 126.net hosts are SDK-internal defaults reached when the stock app inits IM.
     # NOTE: model uploads also use AlibabaCloud OSS via dynamic signed URLs that cannot be
-    # blocked here — block those at the router/firewall if full air-gap is required.
-    # Host list confirmed by string-analysis of stock 5.1.x firmwareExe.
+    # blocked here — block those at the router/firewall if full air-gap is required. The stock app
+    # also probes www.baidu.com as a connectivity check; it is intentionally NOT blocked so the
+    # app does not misjudge "no internet". Adding it here would not leak data either way.
+    # Host list confirmed by string-analysis of stock 5.1.x firmwareExe and nim.tar libs.
     for host in \
         api.fdmcloud.flashforge.com \
         fdmcloud.flashforge.com \
@@ -182,7 +186,17 @@ initialize() {
         qvs-live.qnvideo.flashforge.com \
         qvs-publish.qnvideo.flashforge.com \
         polar3d.com \
-        printer2.polar3d.com; do
+        printer2.polar3d.com \
+        app.netease.im \
+        apptest.netease.im \
+        lbs.netease.im \
+        link.netease.im \
+        nos.netease.com \
+        nos.netease.im \
+        nosdn.127.net \
+        nosup-hz1.127.net \
+        wanproxy.127.net \
+        statistic.live.126.net; do
         # Anchored match: a substring grep would treat e.g. "voxelshare.com" as already
         # present once "api.voxelshare.com" is added, skipping the apex entry.
         grep -qE "[[:space:]]${host}\$" /etc/hosts || sed -i "2 i\\127.0.0.1 $host" /etc/hosts
