@@ -1,10 +1,12 @@
 # Stock Firmware 5.0.x / 5.1.x Compatibility Analysis
 
-Analysis of FlashForge Adventurer 5M Pro stock firmware versions **5.0.3** and
-**5.1.2** against the last firmware range the mod officially documented
-(**2.6.5 – 3.1.5**, using factory image **3.1.3** as the in-range baseline).
+Analysis of FlashForge Adventurer 5M Pro stock firmware versions **5.0.3**,
+**5.1.2** and **5.1.4** against the last firmware range the mod officially
+documented (**2.6.5 – 3.1.5**, using factory image **3.1.3** as the in-range
+baseline).
 
-**Conclusion: Forge-X is compatible with stock firmware 5.0.x and 5.1.x.**
+**Conclusion: Forge-X is compatible with stock firmware 5.0.x and 5.1.x
+(verified through 5.1.4).**
 
 ## Method
 
@@ -69,6 +71,28 @@ the cloud/telemetry layer (NetEase IM SDK).
 
 All of it is telemetry / remote-model / OTA. None of it is something the mod
 depends on.
+
+## Delta: 5.1.2 → 5.1.4
+
+Stock 5.1.4 (`Adventurer5MPro-5.1.4-2.2.3-20260515.tgz`, from AliyunCloud OSS —
+the source the stock OTA pulls from) was byte-compared against 5.1.2:
+
+| Component | 5.1.2 → 5.1.4 |
+|---|---|
+| kernel, MCU / control-board fw, `nim.tar` NetEase libs | **byte-identical** |
+| installer `flashforge_init.sh`, partition layout, boot, screen images | **byte-identical** |
+| `software/run.sh` | +6 lines — copies the new `ntpclient` to `/opt/` |
+| **new** `software/ntpclient` | standard open-source NTP client (troglobit / L. Doolittle); time sync only, no FlashForge cloud |
+| `software/firmwareExe` | rebuilt; **cloud endpoints reshuffled** (see below) |
+
+Still byte-identical to the 3.1.3 baseline for kernel + MCU firmware. So nothing
+the mod depends on changed, and `ntpclient` is benign — **the mod installs and
+runs the same on 5.1.4**.
+
+The only externally visible change is FlashForge's cloud topology: OTA moved to
+`update.voxelshare.com`, and live video moved to `liveplay`/`livepush`. Those
+new hosts are added to the `/etc/hosts` block (below) so a 5.1.4 printer cannot
+silently re-pull a stock OTA and clobber the mod.
 
 ## Why the mod is unaffected
 
@@ -165,10 +189,17 @@ no config, kernel or MCU changes.
 
 From stock `firmwareExe` (FlashForge cloud / OTA / video):
 `api.fdmcloud.flashforge.com`, `fdmcloud.flashforge.com`, `api.voxelshare.com`,
-`voxelshare.com`, `update.flashforge.com`, `cloud.flashforge.com`,
+`voxelshare.com`, `update.voxelshare.com`, `update.flashforge.com`,
+`cloud.flashforge.com`, `liveplay.flashforge.com`, `livepush.flashforge.com`,
 `cloud.sz3dp.com`, `hz.sz3dp.com`, `update.sz3dp.com`, `update.cn.sz3dp.com`,
 `qvs-live.qnvideo.flashforge.com`, `qvs-publish.qnvideo.flashforge.com`,
 `polar3d.com`, `printer2.polar3d.com`.
+
+Stock **5.1.4** reshuffled these: OTA moved from `update.flashforge.com` to
+`update.voxelshare.com`, and the qvs/qiniu video hosts were replaced by
+`liveplay.flashforge.com` / `livepush.flashforge.com`. The list above is the
+union — the now-unused 5.0.x–5.1.2 hosts are kept so the block still works on
+those older versions (they are inert no-ops on 5.1.4).
 
 From `library/nim.tar` (`libnim.so` / `libnim_chatroom.so` = NetEase IM / Yunxin,
 the new Flash Studio messaging backbone): `app.netease.im`, `apptest.netease.im`,

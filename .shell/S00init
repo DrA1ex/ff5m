@@ -171,14 +171,20 @@ initialize() {
     # blocked here — block those at the router/firewall if full air-gap is required. The stock app
     # also probes www.baidu.com as a connectivity check; it is intentionally NOT blocked so the
     # app does not misjudge "no internet". Adding it here would not leak data either way.
-    # Host list confirmed by string-analysis of stock 5.1.x firmwareExe and nim.tar libs.
+    # Host list confirmed by string-analysis of stock 5.0.x / 5.1.x firmwareExe and nim.tar libs.
+    # Stock 5.1.4 reshuffled the FlashForge cloud hosts: OTA moved from update.flashforge.com to
+    # update.voxelshare.com, and the qvs/qiniu video hosts were replaced by liveplay/livepush.
+    # The old hosts are kept below for back-compat with 5.0.x–5.1.2 (harmless no-ops on 5.1.4).
     for host in \
         api.fdmcloud.flashforge.com \
         fdmcloud.flashforge.com \
         api.voxelshare.com \
         voxelshare.com \
+        update.voxelshare.com \
         update.flashforge.com \
         cloud.flashforge.com \
+        liveplay.flashforge.com \
+        livepush.flashforge.com \
         cloud.sz3dp.com \
         hz.sz3dp.com \
         update.sz3dp.com \
