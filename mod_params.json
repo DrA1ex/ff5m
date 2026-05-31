@@ -22,7 +22,16 @@
       "values": {
         "OFF": 0,
         "MMC": 1,
-        "USB": 2
+        "USB": 2,
+        "ZRAM": 3
+      }
+    },
+    "ZramAlgoEnum": {
+      "type": "str",
+      "values": {
+        "zstd": "zstd",
+        "lzo-rle": "lzo-rle",
+        "lzo": "lzo"
       }
     },
     "CloseDialogsEnum": {
@@ -220,7 +229,19 @@
       "options": {
         "OFF": "not used",
         "MMC": "used on eMMC",
-        "USB": "used on USB"
+        "USB": "used on USB",
+        "ZRAM": "compressed (zram)"
+      }
+    },
+    {
+      "key": "zram_algo",
+      "type": "ZramAlgoEnum",
+      "default": "zstd",
+      "label": "zram compression",
+      "options": {
+        "zstd": "zstd (best ratio ~4x)",
+        "lzo-rle": "lzo-rle (faster, ~2.7x)",
+        "lzo": "lzo (fastest, ~2.7x)"
       }
     },
     {
