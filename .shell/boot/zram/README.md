@@ -11,11 +11,36 @@ Set the SWAP mode to `ZRAM` (mod settings → SWAP) and pick the algorithm
 `init_swap.sh` loads the modules here and brings up `/dev/zram0` as the **primary**
 swap (priority 100); the eMMC swapfile remains as a low-priority overflow.
 
-| algo | ratio (real pages) | CPU |
-|---|---|---|
-| `zstd` (default) | ~4× | moderate |
-| `lzo-rle` | ~2.7× | low |
-| `lzo` | ~2.7× | lowest |
+## Measured results (live AD5M, dual Cortex-A7, 128 MB)
+
+**Before / after:**
+
+| | swap target | compression | flash wear | swap speed |
+|---|---|---|---|---|
+| Before (stock MMC swap) | 64 MB eMMC swapfile | none (1.0×) | yes — wears eMMC | flash I/O (slow, stalls) |
+| After (ZRAM, zstd) | 256 MB zram + eMMC overflow | ~4× | none (it's RAM) | RAM speed |
+
+Concretely, ~36 MB of cold klippy/moonraker pages that sat **uncompressed on eMMC
+flash** compress to **~9 MB in RAM** — same data, ¼ the footprint, zero flash wear.
+
+**Algorithm comparison:**
+
+| algo | ratio (real heap pages) | ratio (code/binary) | compress\* | decompress\* | A7 CPU |
+|---|---|---|---|---|---|
+| eMMC swapfile (baseline) | 1.0× (uncompressed) | 1.0× | flash-bound | flash-bound | — (flash wear) |
+| **zstd** *(default)* | **4.02–4.18×** | 3.54× | ~6.3 MB/s | ~37.5 MB/s | moderate |
+| `lzo-rle` | — | 2.74× | ~7.4 MB/s | ~30 MB/s | low |
+| `lzo` | — | 2.74× | ~8.6–9.6 MB/s | ~82.8 MB/s | lowest |
+
+\* Throughput is **block-I/O-bound** (timed `dd` through the zram block device), so
+treat the MB/s as **relative**, not absolute — real per-page (de)compression is much
+faster. Ratios are from `/sys/block/zram0/mm_stat`; real-heap ratios were measured by
+migrating live cold pages into zram (`swapoff` the eMMC file). `lz4` is unavailable
+(stock kernel lacks `CONFIG_CRYPTO_LZ4`).
+
+**Recommendation:** `zstd` by default — on 128 MB the extra ~30 % ratio (more effective
+RAM) outweighs the CPU cost, and swap is intermittent on a printer. Switch to `lzo-rle`
+(setting → `zram compression`) if swap-time CPU ever contends with klippy during a print.
 
 ## Files
 - `zsmalloc.ko`, `zram.ko` — built for the stock kernel, vermagic
