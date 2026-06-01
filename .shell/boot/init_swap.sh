@@ -184,6 +184,14 @@ activate_zram_swap() {
         return 1
     fi
 
+    # zram is fast RAM-backed swap, so tune the VM to actually use it:
+    #   swappiness=100  - push cold anon pages to (compressed) zram readily,
+    #                     freeing RAM. 100 is the max on the 5.4 kernel.
+    #   page-cluster=0  - disable swap read-ahead; zram is fast random-access, so
+    #                     reading one page at a time avoids decompressing extras.
+    echo 100 > /proc/sys/vm/swappiness  2>/dev/null
+    echo 0   > /proc/sys/vm/page-cluster 2>/dev/null
+
     # Keep a small eMMC swapfile as a LOW-priority overflow safety net. Create it
     # once if missing; add it without disturbing existing swaps (no swapoff -a).
     if [ ! -f "$MOD/root/swap" ]; then
