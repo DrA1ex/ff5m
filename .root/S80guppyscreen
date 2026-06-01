@@ -10,6 +10,10 @@ NICENESS=10
 
 start() {
 	echo "Starting guppyscreen..."
+	# GuppyScreen is multi-threaded (LVGL loop + Moonraker WebSocket client), so
+	# cap glibc malloc arenas like Moonraker. Reclaims RSS on the 128 MB box with
+	# no functional change.
+	export MALLOC_ARENA_MAX=2
 	start-stop-daemon -S -b -m -p $PID_FILE -N $NICENESS --exec /bin/sh -- -c $GUPPYSCREEN
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
