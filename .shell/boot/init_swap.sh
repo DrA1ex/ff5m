@@ -184,13 +184,27 @@ activate_zram_swap() {
         return 1
     fi
 
-    # zram is fast RAM-backed swap, so tune the VM to actually use it:
-    #   swappiness=100  - push cold anon pages to (compressed) zram readily,
-    #                     freeing RAM. 100 is the max on the 5.4 kernel.
-    #   page-cluster=0  - disable swap read-ahead; zram is fast random-access, so
-    #                     reading one page at a time avoids decompressing extras.
-    echo 100 > /proc/sys/vm/swappiness  2>/dev/null
-    echo 0   > /proc/sys/vm/page-cluster 2>/dev/null
+    # zram is fast RAM-backed swap, so tune the VM to actually use it. None of
+    # these reserve any fixed RAM -- they only change reclaim/writeback behaviour:
+    #   swappiness=100            - push cold anon pages to (compressed) zram
+    #                               readily, freeing RAM. 100 is the max on 5.4.
+    #   page-cluster=0            - disable swap read-ahead; zram is fast
+    #                               random-access, so reading one page at a time
+    #                               avoids decompressing extras.
+    #   vfs_cache_pressure=50     - keep cheap in-RAM dentry/inode cache around
+    #                               longer, fewer eMMC metadata re-reads.
+    #   watermark_scale_factor=40 - wake kswapd earlier and let it reclaim
+    #                               longer, so allocating tasks hit far fewer
+    #                               synchronous direct-reclaim stalls.
+    #   dirty_ratio=10 / dirty_background_ratio=5 - cap dirty pages low so
+    #                               writeback to the slow eMMC starts early and
+    #                               in small chunks instead of one big stall.
+    echo 100 > /proc/sys/vm/swappiness             2>/dev/null
+    echo 0   > /proc/sys/vm/page-cluster           2>/dev/null
+    echo 50  > /proc/sys/vm/vfs_cache_pressure     2>/dev/null
+    echo 40  > /proc/sys/vm/watermark_scale_factor 2>/dev/null
+    echo 10  > /proc/sys/vm/dirty_ratio            2>/dev/null
+    echo 5   > /proc/sys/vm/dirty_background_ratio 2>/dev/null
 
     # Keep a small eMMC swapfile as a LOW-priority overflow safety net. Create it
     # once if missing; add it without disturbing existing swaps (no swapoff -a).
