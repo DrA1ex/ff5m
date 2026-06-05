@@ -150,6 +150,75 @@ activate_mmc_swap() {
     fi
 }
 
+activate_zram_swap() {
+    echo "// Creating compressed SWAP on zram..."
+
+    local ZDIR="$(dirname "$0")/zram"
+    local ALGO=$($CFG_SCRIPT $CFG_PATH --get "zram_algo" "zstd")
+    local ZSIZE="${ZRAM_DISKSIZE:-256M}"
+
+    # Loadable zram+zsmalloc modules built for the stock 5.4.61 kernel
+    # (vermagic: "5.4.61 SMP preempt mod_unload ARMv7 p2v8"). The AD5M kernel is
+    # byte-identical across stock 2.6.5-5.1.x, so these load on every supported FW.
+    insmod "$ZDIR/zsmalloc.ko" 2>/dev/null
+    insmod "$ZDIR/zram.ko" 2>/dev/null
+
+    if [ ! -e /dev/zram0 ]; then
+        echo "@@ zram module did not load (kernel mismatch?)"
+        return 1
+    fi
+
+    # (Re)create zram0 as a compressed swap. Touch ONLY zram0 here -- do NOT
+    # `swapoff -a` (that forces tens of MB back into RAM and can fail under
+    # memory pressure on the 128MB board).
+    swapoff /dev/zram0 2>/dev/null
+    echo 1 > /sys/block/zram0/reset 2>/dev/null
+    echo "$ALGO" > /sys/block/zram0/comp_algorithm 2>/dev/null || ALGO="(default)"
+    echo "$ZSIZE" > /sys/block/zram0/disksize
+    mkswap /dev/zram0 >/dev/null 2>&1
+
+    # zram = PRIMARY swap (priority 100). busybox `swapon` has no -p, so use the
+    # static helper (swapon(2) with SWAP_FLAG_PREFER|prio).
+    if ! "$ZDIR/swapon_prio" /dev/zram0 100 >/dev/null 2>&1; then
+        echo "@@ Failed to swapon zram"
+        return 1
+    fi
+
+    # zram is fast RAM-backed swap, so tune the VM to actually use it. None of
+    # these reserve any fixed RAM -- they only change reclaim/writeback behaviour:
+    #   swappiness=100            - push cold anon pages to (compressed) zram
+    #                               readily, freeing RAM. 100 is the max on 5.4.
+    #   page-cluster=0            - disable swap read-ahead; zram is fast
+    #                               random-access, so reading one page at a time
+    #                               avoids decompressing extras.
+    #   vfs_cache_pressure=50     - keep cheap in-RAM dentry/inode cache around
+    #                               longer, fewer eMMC metadata re-reads.
+    #   watermark_scale_factor=40 - wake kswapd earlier and let it reclaim
+    #                               longer, so allocating tasks hit far fewer
+    #                               synchronous direct-reclaim stalls.
+    #   dirty_ratio=10 / dirty_background_ratio=5 - cap dirty pages low so
+    #                               writeback to the slow eMMC starts early and
+    #                               in small chunks instead of one big stall.
+    echo 100 > /proc/sys/vm/swappiness             2>/dev/null
+    echo 0   > /proc/sys/vm/page-cluster           2>/dev/null
+    echo 50  > /proc/sys/vm/vfs_cache_pressure     2>/dev/null
+    echo 40  > /proc/sys/vm/watermark_scale_factor 2>/dev/null
+    echo 10  > /proc/sys/vm/dirty_ratio            2>/dev/null
+    echo 5   > /proc/sys/vm/dirty_background_ratio 2>/dev/null
+
+    # Keep a small eMMC swapfile as a LOW-priority overflow safety net. Create it
+    # once if missing; add it without disturbing existing swaps (no swapoff -a).
+    if [ ! -f "$MOD/root/swap" ]; then
+        fallocate -l "$SWAP_SIZE" "$MOD/root/swap" 2>/dev/null \
+            && chmod 600 "$MOD/root/swap" \
+            && mkswap "$MOD/root/swap" >/dev/null 2>&1
+    fi
+    swapon "$MOD/root/swap" 2>/dev/null   # default (low) priority = overflow
+
+    echo "// zram swap active (algo=$ALGO, size=$ZSIZE); eMMC = overflow"
+    return 0
+}
+
 cleanup_mounts() {
     mount | grep "/dev/sd" | awk '{print $1 " " $3}' | while read -r partition mount; do
         if ! ls "$partition" > /dev/null 2>&1; then
@@ -177,6 +246,12 @@ case "$swap" in
     ;;
     MMC)
         activate_mmc_swap
+    ;;
+    ZRAM)
+        if ! activate_zram_swap; then
+            echo "Falling back to eMMC swap."
+            activate_mmc_swap
+        fi
     ;;
     USB)
         cleanup_mounts
