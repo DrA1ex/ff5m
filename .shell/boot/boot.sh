@@ -22,6 +22,23 @@ fi
 DISPLAY_OFF=0
 [ "$("$CMDS"/zdisplay.sh test)" != "STOCK" ] && DISPLAY_OFF=1
 
+# The stock QT app (firmwareExe) pops a "Please upgrade the slicer software to
+# version V1.7.3 or later." modal on every boot of the stock screen, even at
+# idle with nothing to print. MainWindow::checkAppTip() shows it whenever
+# Config::getCheckAppFrist() (the general/CheckAppFrist flag in Adventurer5M.json)
+# is true, so clearing the flag suppresses the nag for good. Only relevant when
+# the stock screen is in use - on Feather/Headless/Guppy firmwareExe never runs.
+suppress_slicer_nag() {
+    local config_file
+    config_file=$(ls /opt/config/Adventurer5M*.json 2>/dev/null | head -1)
+    [ -f "$config_file" ] || return 0
+
+    grep -q '"CheckAppFrist"[ ]*:[ ]*true' "$config_file" || return 0
+
+    echo "// Suppressing stock slicer-upgrade nag (CheckAppFrist=false)"
+    sed -i 's/\("CheckAppFrist"[ ]*:[ ]*\)true/\1false/' "$config_file"
+}
+
 wifi_init() {
     if [ -f "/etc/wpa_supplicant.conf" ]; then
         echo "Configuration found"
@@ -126,7 +143,9 @@ elif [ "$DISPLAY_OFF" -eq 1 ]; then
     /opt/config/mod/.shell/commands/zdisplay.sh stock --skip-reboot
 
     echo "@@ Failed to initialize mod. Booting into stock firmware..."
+    suppress_slicer_nag
     sleep 1
 else
     echo "// Booting stock firmware..."
+    suppress_slicer_nag
 fi
