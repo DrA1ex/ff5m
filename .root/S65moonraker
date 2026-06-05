@@ -13,7 +13,13 @@ start() {
     echo "Starting Moonraker..."
     rm -rf $PRINTER_DATA_TMP && mkdir -p $PRINTER_DATA_TMP # clean temp
     export TMPDIR=$PRINTER_DATA_TMP # without TMPDIR moonraker writes to /tmp which is a ramdisk
-    
+
+    # Cap glibc per-thread malloc arenas. Moonraker's threadpool otherwise lets
+    # glibc create up to 8*nCPU arenas (16 on the dual-core T113), each growing
+    # its own heap independently and inflating RSS. Capping to 2 reclaims a few
+    # MB of RSS on the 128 MB box with no functional change.
+    export MALLOC_ARENA_MAX=2
+
     start-stop-daemon -S -b -m -p $PID_FILE --exec $PYTHON -- $MOONRAKER -d $PRINTER_DATA
     [ $? = 0 ] && echo "OK" || echo "FAIL"
 }
