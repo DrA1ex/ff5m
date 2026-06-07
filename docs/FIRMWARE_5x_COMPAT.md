@@ -94,6 +94,41 @@ The only externally visible change is FlashForge's cloud topology: OTA moved to
 new hosts are added to the `/etc/hosts` block (below) so a 5.1.4 printer cannot
 silently re-pull a stock OTA and clobber the mod.
 
+## Root password / `/etc/shadow` (unchanged)
+
+A recurring concern is that 4.x/5.x stock firmware "resets the root password."
+Verified against the extracted OTA packages — it does **not** change the password:
+
+- The stock `/etc/shadow` is **byte-identical** across every analyzed version
+  (`md5 8af557345d658bea033bd984db09ef17`):
+
+  | version | `shadow` md5 | root entry |
+  |---|---|---|
+  | 3.1.3 | `8af557345d658bea033bd984db09ef17` | `root:$1$OnclaLQR$TyysbY8rO.awyp7JldE9K.` |
+  | 5.0.3 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
+  | 5.1.2 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
+  | 5.1.4 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
+
+  Same `$1$` MD5-crypt hash and salt throughout, so the stock root password on
+  5.1.4 is the **same** one the mod already uses on 3.x.
+
+- The reset people remember is the on-device installer `flashforge_init.sh` doing
+  `cp $WORK_DIR/shadow /etc/shadow` (under its `# Start AP And Root Password`
+  block). But (a) it copies that *identical* stock `shadow`, not a new password;
+  (b) it runs at **flash time only** — `flashforge_init.sh` is **not** referenced
+  in `inittab`, `preinit` or `rcS` (boot path is `sysinit → /etc/preinit →
+  /etc/init.d/rcS`), so it is **not** a per-boot reset; and (c) 3.1.x runs the
+  exact same `cp` — only the line number differs — so this is not new behavior in
+  5.x.
+
+- **Consequence for the mod:** an OTA flash reverts `/etc/shadow` and
+  `/etc/inittab` to stock. This is identical to 3.x behavior and does not affect
+  Forge-X, which lives on the `/data` partition (`mmcblk0p7`), not in the rootfs
+  that the OTA overwrites.
+
+(Versions on hand: 3.1.3 / 5.0.3 / 5.1.2 / 5.1.4. The 3.1.5 baseline was not
+diffed directly, but 3.1.3 == 5.1.4 makes a 3.1.5 match near-certain.)
+
 ## Why the mod is unaffected
 
 Forge-X is self-contained:
@@ -179,13 +214,21 @@ no config, kernel or MCU changes.
 
 1. **`docs/INSTALL.md`** — raised the documented stock-firmware ceiling and
    explained the 3.2.x–5.1.x change surface.
-2. **`.shell/S00init`** — extended the existing `/etc/hosts` cloud block to the
+2. **`.shell/S00init`** — added an **opt-in** `/etc/hosts` cloud block covering the
    full telemetry/cloud host set confirmed in stock 5.1.x `firmwareExe` **and the
-   `nim.tar` NetEase IM libraries**. Blocks the MQTT bootstrap, VoxelShare, stock
-   OTA, the sz3dp/polar3d/qvs hosts, and the NetEase IM (Yunxin) backbone
-   (`*.netease.im`, `*.127.net`, `statistic.live.126.net`).
+   `nim.tar` NetEase IM libraries**. Gated behind the `block_cloud` mod parameter
+   (default `0`/off), it blocks the MQTT bootstrap, VoxelShare, stock OTA, the
+   sz3dp/polar3d/qvs hosts, and the NetEase IM (Yunxin) backbone (`*.netease.im`,
+   `*.127.net`, `statistic.live.126.net`). The pre-existing unconditional
+   `qvs.qiniuapi.com` camera-privacy pin is left untouched.
 
 ### Hosts blocked
+
+The block is **opt-in** via the `block_cloud` mod parameter (default `0`/off), so
+users who rely on FlashForge cloud, video streaming or model sharing are
+unaffected by default. It operates only at name-resolution level (`/etc/hosts`),
+the same layer as a Pi-hole setup — it does not touch routing/firewall, so it has
+no effect on DHCP or network initialization.
 
 From stock `firmwareExe` (FlashForge cloud / OTA / video):
 `api.fdmcloud.flashforge.com`, `fdmcloud.flashforge.com`, `api.voxelshare.com`,
