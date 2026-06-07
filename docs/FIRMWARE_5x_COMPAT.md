@@ -271,10 +271,20 @@ verifiable without a device rootfs dump or physical printer.
 
 ### Note on the `/etc/hosts` block and old firmware
 
-The block is purely additive and firmware-agnostic — it appends entries with the
-same `sed '2 i\'` idiom as the pre-existing `qvs.qiniuapi.com` line, runs on
-every boot, and is idempotent (anchored `grep -qE "[[:space:]]host\$"` so apex and
-subdomain are both inserted exactly once and never duplicated). On older stock
+The block is firmware-agnostic and idempotent. The host list is processed on
+every init and the `block_cloud` parameter drives the direction:
+
+- **`block_cloud=1`** — appends entries with the same `sed '2 i\'` idiom as the
+  pre-existing `qvs.qiniuapi.com` line, anchored (`grep -qE "[[:space:]]host\$"`)
+  so apex and subdomain are each inserted exactly once and never duplicated.
+- **`block_cloud=0`** (default) — removes any `127.0.0.1 <host>` line previously
+  added, anchored (`sed "/^127\.0\.0\.1[[:space:]]\+host\$/d"`) so e.g. lifting
+  `voxelshare.com` does not touch `api.voxelshare.com`, and unrelated lines
+  (`localhost`, the `qvs.qiniuapi.com` camera pin) are left intact.
+
+Because `/etc/hosts` lives on the persistent rootfs, this symmetric handling is
+what makes the toggle actually reversible — disabling `block_cloud` lifts the
+block on the next init rather than leaving stale entries behind. On older stock
 firmware (2.6.5–3.1.x) none of these hosts exist in any running binary, so the
 entries are inert no-ops and do not affect older-version compatibility.
 
