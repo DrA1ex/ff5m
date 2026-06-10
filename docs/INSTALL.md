@@ -21,13 +21,15 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 > It is not necessary to uninstall Forge-X before updating major versions
 > e.g. 1.3.x to 1.4.x
 
-### Prerequisites
-- Stock firmware version: minimum **2.6.5**, maximum **5.0.x** (verified, incl. 5.0.3/5.0.4). Across **3.2.x–5.1.x** the only changes are to the stock control app (`firmwareExe`/`ffstartup-arm`) and the cloud/telemetry layer (NetEase IM SDK, new MQTT connectivity for "Flash Studio") — the kernel, control-board firmware, partition layout, install mechanism and Klipper are unchanged from 3.1.x, all of which is what the mod actually depends on. The mod blocks the new cloud/telemetry endpoints via `/etc/hosts` in every screen mode, so they are neutralized even on the default STOCK screen where the changed `firmwareExe` still runs (it is only killed if you switch to a FEATHER/GUPPY/HEADLESS screen). The on-device installer (`flashforge_init.sh`) is byte-identical from 5.0.3 through 5.1.4 and performs no firmware-signature check, so the mod still installs. Stock **5.1.4** was analyzed in full (see `FIRMWARE_5x_COMPAT.md`): kernel, MCU firmware, partition layout, installer and Klipper are unchanged — the only changes are the stock `firmwareExe` cloud-host reshuffle (OTA → `update.voxelshare.com`, video → `liveplay`/`livepush`, all blocked) and a new benign `ntpclient`. **5.1.x has not been test-flashed by us** — structurally verified compatible, but use it **at your own risk**.   
-    - **5.0.x needs no downgrade** — it is in the verified range. A downgrade is only relevant if you are on an untested version (5.1.x) and want to drop back to the verified range. Newer `-Factory` images (up to **3.2.7** at time of writing) are available alongside the 2.7.8 / 3.1.3 images listed in [Flashing Factory Firmware](/docs/UNINSTALL.md#flashing-factory-firmware).   
-    - Note the 3.1.5 caveat there: the official 3.1.5 image ships without printer config files, so flash a `-Factory` image (e.g. 3.1.3) first, then 3.1.5 — verified against the installer logic (`flashforge_init.sh` only copies `printer.cfg`/`printer.base.cfg`/`tmc.py` when the image contains them; `-Factory` images do, the thin 5.x / 3.1.5 images do not).   
-- A USB flash drive formatted to FAT32.
-- At least 512MB free space in the `/data` partition.
-- At least 128MB free space in the `/` partition.
+## Prerequisites
+
+* Stock firmware version: minimum **2.6.5**, maximum **5.0.x**. Firmware versions up to **5.0.x** are verified, including **5.0.3/5.0.4**. Newer versions, including **5.1.x**, appear structurally compatible based on firmware analysis, but have not been test-flashed by us, so use them **at your own risk**.   
+  * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
+  * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
+* A USB flash drive formatted to FAT32.
+* At least 512MB free space in the `/data` partition.
+* At least 128MB free space in the `/` partition.
+
 
 ### Flashing the firmware image
 
