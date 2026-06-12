@@ -284,7 +284,6 @@
       "type": "bool",
       "default": 0,
       "label": "Block stock cloud/telemetry",
-      "options": ["not used", "enabled"],
       "order": 100
     },
     {
