@@ -1,5 +1,8 @@
 #!/bin/sh
 
+DROPBEAR_ARGS="-p 22"
+[ -r /etc/default/dropbear ] && . /etc/default/dropbear
+
 if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_HARD ]; then
     echo "Dropbear disabled due to SKIP_MOD mode"
     exit 0
@@ -9,7 +12,7 @@ PID_FILE=/run/dropbear.pid
 
 start() {
     printf "Starting dropbear: "
-    start-stop-daemon -Sbm -p "$PID_FILE" --exec /bin/dropbear -- -F -p 22
+    start-stop-daemon -Sbm -p "$PID_FILE" --exec /bin/dropbear -- -F $DROPBEAR_ARGS
     [ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
