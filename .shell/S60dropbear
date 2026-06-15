@@ -1,6 +1,6 @@
 #!/bin/sh
 
-DROPBEAR_ARGS=-p 22
+DROPBEAR_ARGS="-p 22"
 [ -r /etc/default/dropbear ] && . /etc/default/dropbear
 
 if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_HARD ]; then
