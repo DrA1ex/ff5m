@@ -29,6 +29,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`disable_skew`**: Disables skew correction if set to `1`.  
 
+- **`block_cloud`**: Blocks the stock FlashForge cloud / telemetry endpoints (Flash Studio / MQTT, VoxelShare, stock OTA, NetEase IM) if set to `1`. Default `0` (off) — leave disabled if you use FlashForge cloud, video streaming or model sharing. Blocking is done at name-resolution level (`/etc/hosts`) only. See [FIRMWARE_5x_COMPAT.md](/docs/FIRMWARE_5x_COMPAT.md#hosts-blocked) for the host list and what each one does. Full air-gap additionally requires router-level blocking of AlibabaCloud OSS upload URLs.  
+
 - **`tune_klipper`**: Enables a fix for Communication Timeout (E0011) / Move Queue Overflow (EO017) errors if set to `1`.  
 
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  

@@ -21,12 +21,15 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 > It is not necessary to uninstall Forge-X before updating major versions
 > e.g. 1.3.x to 1.4.x
 
-### Prerequisites
-- Stock firmware version: minimum **2.6.5**, maximum **3.1.5**. Newer firmware versions are currently unstable — users report many bugs and issues — so using an older version is recommended. You can use newer versions if you want, but **at your own risk**.   
-    - Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a supported version if needed before proceeding.   
-- A USB flash drive formatted to FAT32.
-- At least 512MB free space in the `/data` partition.
-- At least 128MB free space in the `/` partition.
+## Prerequisites
+
+* Stock firmware version: minimum **2.6.5**, maximum **5.0.x**. Firmware versions up to **5.0.x** are verified, including **5.0.3/5.0.4**. Newer versions, including **5.1.x**, appear structurally compatible based on firmware analysis, but have not been test-flashed by us, so use them **at your own risk**.   
+  * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
+  * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
+* A USB flash drive formatted to FAT32.
+* At least 512MB free space in the `/data` partition.
+* At least 128MB free space in the `/` partition.
+
 
 ### Flashing the firmware image
 

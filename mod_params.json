@@ -301,6 +301,13 @@
       "order": 100
     },
     {
+      "key": "block_cloud",
+      "type": "bool",
+      "default": 0,
+      "label": "Block stock cloud/telemetry",
+      "order": 100
+    },
+    {
       "key": "weight_check",
       "type": "bool",
       "default": 0,
