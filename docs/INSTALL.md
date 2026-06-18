@@ -23,7 +23,7 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 
 ## Prerequisites
 
-* Stock firmware version: minimum **2.6.5**, maximum **5.0.x**. Firmware versions up to **5.0.x** are verified, including **5.0.3/5.0.4**. Newer versions, including **5.1.x**, appear structurally compatible based on firmware analysis, but have not been test-flashed by us, so use them **at your own risk**.   
+* Stock firmware version: minimum **2.6.5**, maximum **5.1.x**. Firmware versions up to **5.1.x** are verified, including **5.0.3/5.0.4** and **5.1.2–5.1.7**. The **5.1.x** range has been **test-flashed on hardware — the mod installs and runs**, and firmware analysis confirms its kernel, MCU firmware and partition layout are byte-identical to the supported 3.1.3 baseline (see [FIRMWARE_5x_COMPAT.md](/docs/FIRMWARE_5x_COMPAT.md)).   
   * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
   * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
 * A USB flash drive formatted to FAT32.
