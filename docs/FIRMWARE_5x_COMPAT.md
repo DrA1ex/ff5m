@@ -1,12 +1,13 @@
 # Stock Firmware 5.0.x / 5.1.x Compatibility Analysis
 
 Analysis of FlashForge Adventurer 5M Pro stock firmware versions **5.0.3**,
-**5.1.2** and **5.1.4** against the last firmware range the mod officially
-documented (**2.6.5 – 3.1.5**, using factory image **3.1.3** as the in-range
-baseline).
+**5.1.2**, **5.1.4** and **5.1.7** against the last firmware range the mod
+officially documented (**2.6.5 – 3.1.5**, using factory image **3.1.3** as the
+in-range baseline).
 
 **Conclusion: Forge-X is compatible with stock firmware 5.0.x and 5.1.x
-(verified through 5.1.4).**
+(verified through 5.1.7, and test-flashed on 5.1.x hardware — the mod installs
+and runs).**
 
 ## Method
 
@@ -14,7 +15,9 @@ Factory `.tgz` images were obtained from the ghzserg/FF mirror:
 
 - `Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz` (baseline, in supported range)
 - `Adventurer5MPro-5.0.3-2.2.3-20260122.tgz` (target)
-- `Adventurer5MPro-5.1.2-2.2.3-20260418.tgz` (newest available)
+- `Adventurer5MPro-5.1.2-2.2.3-20260418.tgz`
+- `Adventurer5MPro-5.1.4-2.2.3-20260515.tgz`
+- `Adventurer5MPro-5.1.7-2.2.3-20260605.tgz` (newest, from FlashForge official OSS)
 
 The `.tgz` images are plain (uncompressed) tar archives of xz-compressed
 sub-packages — **not encrypted**. Each sub-package was extracted and compared
@@ -94,6 +97,31 @@ The only externally visible change is FlashForge's cloud topology: OTA moved to
 new hosts are added to the `/etc/hosts` block (below) so a 5.1.4 printer cannot
 silently re-pull a stock OTA and clobber the mod.
 
+## Delta: 5.1.4 → 5.1.7
+
+Stock 5.1.7 (`Adventurer5MPro-5.1.7-2.2.3-20260605.tgz`, from FlashForge's
+official OSS — the source the stock OTA pulls from) was byte-compared against
+5.1.4:
+
+| Component | 5.1.4 → 5.1.7 |
+|---|---|
+| kernel (`uImage`/`sunxi.dtb`/`8821cu.ko`), MCU / control-board fw | **byte-identical** |
+| library `nim.tar` (NetEase IM) + `ffstartup-arm` | **byte-identical** |
+| installer `flashforge_init.sh`, `inittab`, `shadow`, boot/screen images | **byte-identical** |
+| `software/run.sh`, `software/ntpclient` | **byte-identical** (`ntpclient` already shipped since 5.1.4) |
+| `software/firmwareExe` | rebuilt, **+354 bytes**; **no host/endpoint change** |
+
+5.1.7 is a **firmwareExe-only maintenance bump**. The `strings` diff of
+`firmwareExe` is tiny and contains **no new hostnames** — the embedded
+FlashForge / NetEase / VoxelShare host set is identical to 5.1.4 (so the
+`/etc/hosts` block below already covers 5.1.7 with no additions). The only
+human-readable changes are a dropped paho-MQTT `SSLSocket.c` https-proxy log
+string (paho is still `1.3.13`, unchanged) and added references to
+`/opt/klipper/klippy/extras/virtual_sdcard.py` and `/root/version`. Kernel, MCU
+firmware and the NetEase SDK are the same bytes as 3.1.3.
+
+**Nothing the mod depends on changed between 5.1.4 and 5.1.7.**
+
 ## Root password / `/etc/shadow` (unchanged)
 
 A recurring concern is that 4.x/5.x stock firmware "resets the root password."
@@ -108,6 +136,7 @@ Verified against the extracted OTA packages — it does **not** change the passw
   | 5.0.3 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
   | 5.1.2 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
   | 5.1.4 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
+  | 5.1.7 | `8af557345d658bea033bd984db09ef17` | *(identical)* |
 
   Same `$1$` MD5-crypt hash and salt throughout, so the stock root password on
   5.1.4 is the **same** one the mod already uses on 3.x.
@@ -126,8 +155,8 @@ Verified against the extracted OTA packages — it does **not** change the passw
   Forge-X, which lives on the `/data` partition (`mmcblk0p7`), not in the rootfs
   that the OTA overwrites.
 
-(Versions on hand: 3.1.3 / 5.0.3 / 5.1.2 / 5.1.4. The 3.1.5 baseline was not
-diffed directly, but 3.1.3 == 5.1.4 makes a 3.1.5 match near-certain.)
+(Versions on hand: 3.1.3 / 5.0.3 / 5.1.2 / 5.1.4 / 5.1.7. The 3.1.5 baseline was
+not diffed directly, but 3.1.3 == 5.1.7 makes a 3.1.5 match near-certain.)
 
 ## Why the mod is unaffected
 
@@ -183,8 +212,8 @@ patches the known v11 bugs in place:
 When (and only when) a downgrade is actually needed:
 
 - **5.0.x → no downgrade.** It is in the verified range; install the mod directly.
-- **5.1.x → optional downgrade** if you want to stay in the verified range.
-  Untested, but the installer accepts it (no signature check), so it is your call.
+- **5.1.x → no downgrade.** Verified through 5.1.7 and test-flashed on 5.1.x
+  hardware (the mod installs and runs); install the mod directly.
 - A downgrade is also needed when coming from an unsupported state or recovering a
   broken install — see `UNINSTALL.md`.
 
@@ -266,8 +295,11 @@ A router/firewall block is required for a full air-gap.
 
 `/opt/klipper` is not in any factory image, so a unit **factory-flashed** on 5.x
 *could* carry a newer base Klipper than the 3.x baseline the overlays were
-written against. An OTA update from 3.x to 5.x does not touch it. This was not
-verifiable without a device rootfs dump or physical printer.
+written against. An OTA update from 3.x to 5.x does not touch it. In practice the
+mod was **test-flashed on 5.1.x hardware and runs**, so the overlays apply
+cleanly there; the exact base-Klipper revision on a unit that shipped
+factory-flashed with 5.x was not separately dumped, but it has not caused a
+problem in testing.
 
 ### Note on the `/etc/hosts` block and old firmware
 
