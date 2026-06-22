@@ -93,6 +93,12 @@ class ShaperCalibrate:
         gcode = self.printer.lookup_object("gcode")
         eventtime = last_report_time = reactor.monotonic()
         while calc_proc.is_alive():
+            # Break as soon as the child has buffered its result: a large result
+            # blocks the child's send() on a full pipe (~64 KB), so the child
+            # never exits and is_alive() stays true forever -- deadlock. poll()
+            # lets us recv() and drain the pipe so the child can finish.
+            if parent_conn.poll():
+                break
             if eventtime > last_report_time + 5.:
                 last_report_time = eventtime
                 gcode.respond_info("Wait for calculations..", log=False)
