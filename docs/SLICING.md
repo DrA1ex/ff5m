@@ -30,9 +30,33 @@ END_PRINT
 
 ### Configuring Moonraker / Klipper connection
 
-To connect to the printer, use the following physical printer settings:
-* Host type: `moonraker`, `klipper` or `klipper (via moonraker)`
-* Hostname, IP or URL: `<printer_ip>:7125`
+Forge-X connects to the printer through Moonraker, so OrcaSlicer should be configured to upload regular G-code files directly to the printer.
+
+> [!TIP]
+> Starting with OrcaSlicer 2.4.0, sliced jobs can optionally be sent as packaged `.gcode.3mf` files instead of plain `.gcode`.
+>
+> Forge-X currently does not support this packaged format. If you use OrcaSlicer 2.4.0 or newer, make sure 3MF output is disabled for this printer profile:
+>
+> **Printer Settings → Basic information → Advanced**
+>
+> Set **G-code flavor** to **Klipper** and turn off **Use 3MF instead of G-code**.
+
+To connect OrcaSlicer to the printer, open the **Physical Printer** settings and use the Moonraker endpoint:
+
+```text
+Host type: moonraker / klipper / klipper (via moonraker)
+Hostname, IP or URL: http://<printer_ip>:7125
+```
+
+In older OrcaSlicer versions, or depending on the build, the same connection type may be listed as:
+
+```text
+Host type: Octo/Klipper
+```
+
+This is also valid for Klipper printers that are accessed through Moonraker.
+
+Click **Test** to verify the connection. Once the test succeeds, OrcaSlicer can upload regular `.gcode` files directly to Forge-X after slicing.
 
 
 
