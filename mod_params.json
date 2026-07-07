@@ -110,6 +110,12 @@
       "order": 20000
     },
     {
+      "key": "klipper_rt",
+      "type": "bool",
+      "default": 0,
+      "label": "Klipper real-time priority (SCHED_RR)"
+    },
+    {
       "key": "tune_klipper",
       "type": "bool",
       "default": 0,

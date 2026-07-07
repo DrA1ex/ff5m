@@ -23,7 +23,7 @@ if [ "$1" = "--hard" ]; then
     kill "$pid"
   done
 
-  /opt/klipper/start.sh 
+  /opt/config/mod/.shell/commands/zstart_klipper.sh
   exit $?
 fi
 

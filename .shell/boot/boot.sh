@@ -132,7 +132,7 @@ if [ "$MOD_CUSTOM_BOOT" -eq 1 ]; then
     /opt/config/mod/.bin/exec/boot_mcu 2>&1
     
     echo "// Start klipper."
-    /opt/klipper/start.sh &> /dev/null
+    /opt/config/mod/.shell/commands/zstart_klipper.sh &> /dev/null
     
     echo "// Boot sequence done!"
 elif [ "$DISPLAY_OFF" -eq 1 ]; then

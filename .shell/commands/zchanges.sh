@@ -77,6 +77,15 @@ case "$key" in
             reboot
         fi
     ;;
+
+    klipper_rt)
+        "$SCRIPTS"/restart_klipper.sh --hard
+        if [ "$value" -eq 1 ]; then
+            message "Klipper real-time scheduling enabled (SCHED_RR)."
+        else
+            message "Klipper real-time scheduling disabled."
+        fi
+    ;;
     
     zssh)
         if [ "$value" -eq 1 ]; then
