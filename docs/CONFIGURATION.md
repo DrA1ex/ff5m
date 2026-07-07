@@ -33,6 +33,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`tune_klipper`**: Enables a fix for Communication Timeout (E0011) / Move Queue Overflow (EO017) errors if set to `1`.  
 
+- **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
+
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  
   **Note**: Requires a [post-processing script](/docs/SLICING.md#md5-checksum-validation) in your slicer. Scripts are available in *Configuration → mod* (`addMD5.sh` or `addMD5.bat`).  
 
