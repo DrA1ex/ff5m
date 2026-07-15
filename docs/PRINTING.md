@@ -331,6 +331,16 @@ SET_MOD PARAM="tune_klipper" VALUE=1
 If you’re planning a long or complex print, it’s a waste of filament if it stops due to low resources.    
 You can reduce resource usage to the bare minimum while ensuring printing still works correctly.
 
+Start by running the `MEM` macro after boot and again while the printer is doing the work that causes the problem. Aim to keep memory use below 75–80%. A *Timer too close*, E0011, or E0017 error is not automatically a memory problem: Klipper timing, a busy CPU, and memory pressure need different fixes.
+
+### Built-in Optimizations
+
+Recent versions apply the following baseline optimization automatically:
+
+- Moonraker and GuppyScreen limit glibc to two malloc arenas. This avoids unused per-thread heaps consuming several megabytes of RAM on the printer’s 128 MB system.
+
+When enabled, the mod camera implementation also uses substantially less memory than the stock camera service. These changes reduce the baseline only; they cannot make an overloaded camera, web UI, or third-party service free.
+
 #### Switch to Feather Screen
 The stock screen consumes 10-20 MB of RAM, while Feather uses only 1-2 MB.
 
@@ -352,15 +362,46 @@ To disable Moonraker before printing and re-enable it afterward, modify your G-c
   START_MOD
   ```   
 
-This stops Moonraker (and related services like Telegram bots or Discord notifications) before the print and restarts it after a successful finish. If you do this, consider disabling SWAP too (see below).
+This stops Moonraker (and related services like Telegram bots or Discord notifications) before the print and restarts it after a successful finish. Test the complete start/end G-code flow before relying on it for an unattended print: a cancelled print will not run `START_MOD` automatically.
 
-#### Disable SWAP (Only if Moonraker is Disabled)
-You can disable *SWAP* completely if Moonraker is off — there’s enough memory for basic operations without it. However, printing might still trigger an out-of-memory error, and shaper calibration will likely be impossible without *SWAP*. Only disable *SWAP* alongside Moonraker, not as a standalone optimization.  
-- **Disable SWAP until next reboot**:  
+### Klipper Timing and CPU Contention
+
+Use these settings for Klipper/MCU timing errors, not as a response to high memory use:
+
+- **`tune_klipper`** adjusts the stock Klipper communication timeout and move-queue settings for E0011/E0017. This is the normal first step for those errors and reboots the printer when changed:
+
   ```
-  SHELL CMD='swapoff -a'
-  ```  
-- **Disable SWAP permanently**:  
+  SET_MOD PARAM=tune_klipper VALUE=1
   ```
-  SET_MOD PARAM=use_swap VALUE=OFF
+
+- **`klipper_rt`** starts Klipper with a low real-time `SCHED_RR` priority. It can help when the CPU is busy with Moonraker, the web UI, or camera streaming and Klipper reports *Timer too close* or an MCU timeout. It restarts Klipper when changed:
+
   ```
+  SET_MOD PARAM=klipper_rt VALUE=1
+  ```
+
+  Leave it off unless CPU contention is the suspected cause. It does not solve out-of-memory failures, and it cannot fix motion workloads that exceed the MCU’s own capacity.
+
+### Swap and Compressed Memory
+
+Swap is a safety net for memory pressure; it is not a way to create free RAM. The default `MMC` mode uses an eMMC swapfile. `ZRAM` stores swapped-out pages compressed in RAM, uses it before the eMMC file, and keeps the eMMC swapfile only as an overflow fallback. This can avoid slow eMMC I/O, but compression also consumes CPU and RAM, so do not enable it as a blanket performance optimization.
+
+For a resource-constrained print where Moonraker has already been stopped, prefer ZRAM over relying on the eMMC swapfile:
+
+```
+SET_MOD PARAM=use_swap VALUE=ZRAM
+```
+
+The default `zstd` compressor provides the best memory reduction. Leave it unchanged unless compression itself is competing for CPU during a print; in that case `lzo-rle` is the lower-CPU alternative:
+
+```
+SET_MOD PARAM=zram_algo VALUE=lzo-rle
+```
+
+Changing the compression algorithm takes effect the next time ZRAM is initialized. Reboot the printer, or select `ZRAM` again with `use_swap`, after changing it.
+
+Avoid turning swap off as a standalone optimization. Without swap, a memory spike can cause an out-of-memory failure, and shaper calibration may not be possible. Use `OFF` only together with disabling Moonraker for a tested, minimal print workflow, and restore the normal setting afterward:
+
+```
+SET_MOD PARAM=use_swap VALUE=OFF
+```

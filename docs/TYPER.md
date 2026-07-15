@@ -17,8 +17,10 @@ source /opt/config/mod/.shell/common.sh
 | Option | Description | Type | Default |
 |--------|-------------|------|---------|
 | `--debug` | Enable debug output | Flag | `false` |
-| `--double-buffered`, `-db` | Enable double buffering | Flag | `false` |
+| `--double-buffered`, `-db` | Enable framebuffer-backed double buffering with heap fallback | Flag | `false` |
 | `--list-fonts` | List loaded fonts and exit | Flag | `false` |
+| `--touch-device` | Normalized Linux input device used in pipe mode | string | `""` |
+| `--event-pipe` | FIFO receiving `tap <action-id>` events | string | `""` |
 
 ## Commands
 
@@ -129,6 +131,26 @@ typer --double-buffered flush
 ```
 Flushes pending changes to the screen.
 
+### `hitbox` and `clear-hitboxes` - Interactive display list
+
+`hitbox` associates a rectangular screen region with a short ASCII action ID.
+`clear-hitboxes` removes the regions from the previous page. Hitboxes do not
+execute commands; a matching touch writes `tap <action-id>` to `--event-pipe`.
+
+```bash
+typer --double-buffered \
+  --touch-device /dev/input/guppy \
+  --event-pipe /tmp/feather-events \
+  batch --pipe /tmp/typer
+
+# Sent as part of a batch frame:
+--batch clear-hitboxes
+--batch hitbox --id print.pause --pos 100 300 --size 250 100
+```
+
+Action IDs are limited to 1–64 characters from `A-Z`, `a-z`, `0-9`, `_`, `.`,
+`:`, and `-`. Later hitboxes take precedence when regions overlap.
+
 ### `batch` - Process multiple commands
 
 Executes multiple commands in a batch, either via command-line arguments or a named pipe.
@@ -176,7 +198,17 @@ Lists all loaded fonts, e.g., `Roboto 12pt`, `JetBrainsMono Bold 16pt`, `Typicon
 - The screen resolution is fixed at 800x480 pixels.
 - In pipe mode, use `--end` to terminate the pipe session.
 - Double buffering (`--double-buffered`) requires explicit `flush` commands to update the screen.
+- Double-buffered mode first uses the non-visible second page of `/dev/fb0` as
+  its backbuffer for both standalone and pipe-mode runs. It does not page-flip;
+  `flush` copies the dirty rectangle to the visible page. Unsupported geometry
+  or mapping failures are reported on stderr and use a heap backbuffer instead.
+  A non-blocking process lock prevents concurrent `typer -db` instances from
+  sharing the scratch page; later instances also fall back to heap with a log.
+  On the Forge-X framebuffer this avoids a persistent 1,536,000-byte anonymous
+  allocation without changing the visible-page or dirty-flush behavior.
 - The program requires access to `/dev/fb0` and sufficient permissions.
+- Feather obtains calibrated 800×480 touch coordinates from `ts_uinput` through
+  `/dev/input/guppy`; `typer` does not duplicate tslib calibration.
 
 ## Copyright
 

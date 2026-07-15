@@ -6,21 +6,23 @@
 
 #include <algorithm>
 #include <csignal>
-#include <fcntl.h>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <ranges>
 #include <string>
-#include <unistd.h>
+#include <string_view>
 #include <vector>
-#include <sys/file.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 #include "../../lib/argparse/argparse.hpp"
 
 #include "../common/text.h"
+#include "interactive.h"
+#include "batch_protocol.h"
+#include "framebuffer.h"
 
 
 #include "../common/fonts/JetBrainsMono12pt.h"
@@ -62,12 +64,6 @@
 #define HEIGHT 480
 
 bool DEBUG = false;
-
-volatile sig_atomic_t TERMINATED = false;
-void terminate_handler(int) {
-    std::cerr << "Terminating..." << std::endl;
-    TERMINATED = true;
-}
 
 std::map<std::string, const Font *> fonts{
     {Roboto8ptb4.name, &Roboto8ptb4},
@@ -197,30 +193,61 @@ void clear(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
     drawer.clear(color);
 }
 
-std::vector<std::vector<std::string>> parse_batch_args(const std::vector<std::string> &args) {
-    if (args.empty()) return {};
-
-    std::vector<std::vector<std::string>> result;
-    result.emplace_back();
-    result.back().emplace_back("--batch");
-
-    for (const auto &arg: args) {
-        auto &last = result.back();
-        if (arg == "--batch") {
-            if (last.size() > 1) {
-                result.emplace_back();
-                result.back().emplace_back("--batch");
-            }
-
-            continue;
-        }
-
-        last.push_back(arg);
+void add_hitbox(const argparse::ArgumentParser &opts) {
+    auto pos = opts.get<std::vector<int>>("--pos");
+    auto size = opts.get<std::vector<int>>("--size");
+    auto action = opts.get<std::string>("--id");
+    auto valid_char = [](unsigned char ch) {
+        return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+            || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.'
+            || ch == ':' || ch == '-';
+    };
+    if (action.empty() || action.size() > 64
+        || !std::all_of(action.begin(), action.end(), valid_char)) {
+        throw std::invalid_argument("Hitbox id must be 1-64 ASCII identifier characters");
+    }
+    if (size[0] <= 0 || size[1] <= 0) {
+        throw std::invalid_argument("Hitbox size must be positive");
     }
 
-    if (result.back().size() == 1) result.pop_back();
+    typer::interactive::register_hitbox(
+        pos[0], pos[1], size[0], size[1], std::move(action));
+}
 
-    return std::move(result);
+void drawButton(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
+    const auto pos = opts.get<std::vector<int>>("--pos");
+    const auto size = opts.get<std::vector<int>>("--size");
+    const auto background = 0xff000000 | opts.get<uint32_t>("--background");
+    const auto border = 0xff000000 | opts.get<uint32_t>("--border");
+    const auto textColor = 0xff000000 | opts.get<uint32_t>("--text-color");
+    const auto lineWidth = std::max<uint8_t>(1, opts.get<uint8_t>("--line-width"));
+    const auto fontName = opts.get("--font");
+    const auto label = opts.get<std::string>("--text");
+
+    if (!fonts.contains(fontName)) {
+        throw std::invalid_argument("Unknown font name: " + fontName);
+    }
+    drawer.fillRect(pos[0], pos[1], size[0], size[1], background);
+    drawer.setStrokeDirection(StrokeDirection::INNER);
+    drawer.strokeRect(pos[0], pos[1], size[0], size[1], border, lineWidth);
+    drawer.setPosition(pos[0] + size[0] / 2, pos[1] + size[1] / 2);
+    drawer.setColor(textColor);
+    drawer.setBackgroundColor(0);
+    drawer.setFont(fonts[fontName]);
+    drawer.setFontScale(1, 1);
+    drawer.setHorizontalAlignment(HorizontalAlign::CENTER);
+    drawer.setVerticalAlignment(VerticalAlignment::MIDDLE);
+    drawer.print(label.c_str());
+
+    if (opts.is_used("--id")) add_hitbox(opts);
+}
+
+void clear_hitboxes() {
+    typer::interactive::clear_hitboxes();
+}
+
+std::vector<std::vector<std::string>> parse_batch_args(const std::vector<std::string> &args) {
+    return typer::batch::split_commands(args);
 }
 
 struct ProgramParser {
@@ -232,6 +259,9 @@ struct ProgramParser {
     argparse::ArgumentParser line_command;
     argparse::ArgumentParser clear_command;
     argparse::ArgumentParser flush_command;
+    argparse::ArgumentParser hitbox_command;
+    argparse::ArgumentParser clear_hitboxes_command;
+    argparse::ArgumentParser button_command;
 };
 
 std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = argparse::default_arguments::all) {
@@ -245,6 +275,9 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
             .line_command = argparse::ArgumentParser("line"),
             .clear_command = argparse::ArgumentParser("clear"),
             .flush_command = argparse::ArgumentParser("flush"),
+            .hitbox_command = argparse::ArgumentParser("hitbox"),
+            .clear_hitboxes_command = argparse::ArgumentParser("clear-hitboxes"),
+            .button_command = argparse::ArgumentParser("button"),
         }
     );
 
@@ -254,6 +287,12 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->program.add_argument("--debug").flag();
     result->program.add_argument("--double-buffered", "-db").flag();
     result->program.add_argument("--list-fonts").help("List loaded fonts and exit.").flag();
+    result->program.add_argument("--touch-device")
+        .default_value("")
+        .help("Read normalized Linux input events from this device.");
+    result->program.add_argument("--event-pipe")
+        .default_value("")
+        .help("Write touch action events to this named pipe.");
 
     // ************ Batch Parser
 
@@ -393,13 +432,45 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->flush_command.add_description("Flush pending changes (for --double-buffered mode)");
     result->program.add_subparser(result->flush_command);
 
+    // ************ Interactive display list
+
+    result->hitbox_command.add_description("Register a touch hitbox for the current screen");
+    result->hitbox_command.add_argument("--pos", "-p")
+        .nargs(2)
+        .scan<'d', int>()
+        .required();
+    result->hitbox_command.add_argument("--size", "-s")
+        .nargs(2)
+        .scan<'d', int>()
+        .required();
+    result->hitbox_command.add_argument("--id")
+        .required();
+    result->program.add_subparser(result->hitbox_command);
+
+    result->clear_hitboxes_command.add_description("Remove all registered touch hitboxes");
+    result->program.add_subparser(result->clear_hitboxes_command);
+
+    // ************ Composite Feather button
+    result->button_command.add_description("Draw and optionally register a button");
+    result->button_command.add_argument("--pos", "-p").nargs(2).scan<'d', int>().required();
+    result->button_command.add_argument("--size", "-s").nargs(2).scan<'d', int>().required();
+    result->button_command.add_argument("--background").scan<'X', uint32_t>().default_value(0u);
+    result->button_command.add_argument("--border").scan<'X', uint32_t>().default_value(0xffffffu);
+    result->button_command.add_argument("--text-color").scan<'X', uint32_t>().default_value(0xffffffu);
+    result->button_command.add_argument("--line-width", "-lw").scan<'d', uint8_t>().default_value((uint8_t) 2);
+    result->button_command.add_argument("--font", "-f").default_value(Roboto12pt.name);
+    result->button_command.add_argument("--text", "-t").default_value("");
+    result->button_command.add_argument("--id");
+    result->program.add_subparser(result->button_command);
+
     return result;
 }
 
 void run_program(const ProgramParser &args, TextDrawer &drawer) {
     auto &[
         program, batch_parser, text_command, fill_command,
-        stroke_command, line_command, clear_command, flush_command
+        stroke_command, line_command, clear_command, flush_command,
+        hitbox_command, clear_hitboxes_command, button_command
     ] = args;
 
     if (program.is_subcommand_used("fill")) {
@@ -414,6 +485,12 @@ void run_program(const ProgramParser &args, TextDrawer &drawer) {
         clear(clear_command, drawer);
     } else if (program.is_subcommand_used("flush")) {
         drawer.flush();
+    } else if (program.is_subcommand_used("hitbox")) {
+        add_hitbox(hitbox_command);
+    } else if (program.is_subcommand_used("clear-hitboxes")) {
+        clear_hitboxes();
+    } else if (program.is_subcommand_used("button")) {
+        drawButton(button_command, drawer);
     } else {
         std::cerr << "Unknown program: " << program << std::endl;
     }
@@ -433,187 +510,18 @@ void process_batch(TextDrawer &drawer, const std::vector<std::string> &batch) {
     }
 }
 
-size_t read_char(int fd, char &out, size_t timeout_usec = 1000000) {
-    constexpr auto delay = 10000;
-
-    size_t elapsed = 0;
-    while (!read(fd, &out, 1)) {
-        if (TERMINATED) return 0;
-
-        usleep(delay);
-        elapsed += delay;
-
-        if (elapsed >= timeout_usec) {
-            if (DEBUG) std::cerr << "Timed out waiting for char" << std::endl;
-            return 0;
-        }
-    }
-
-    return 1;
+void process_draw_frame(TextDrawer &drawer, std::string_view frame) {
+    auto tokens = typer::batch::tokenize(frame);
+    auto batches = parse_batch_args(tokens);
+    for (const auto &batch: batches) process_batch(drawer, batch);
 }
 
-size_t read_escaped_symbol(int fd, std::string &acc) {
-    char ch;
-    if (!read_char(fd, ch)) {
-        std::cerr << "Failed to read escaped symbol. No data available." << std::endl;
-        return 0;
-    }
-
-    if (ch == '"' || ch == '\'' || ch == '\\') {
-        acc += ch;
-
-        if (DEBUG) {
-            std::cout << "Read escaped: \"" << ch << "\"" << std::endl;
-        }
-
-        return 1;
-    }
-
-    std::cerr << "Failed to read escaped symbol. Invalid symbol: \"" << ch << "\""
-        << " (0x" << std::hex << (int) ch << std::dec << ")" << std::endl;
-    return 0;
-}
-
-size_t read_quoted_string(int fd, char open_quote, std::string &acc) {
-    size_t bytesRead = 0;
-    char ch;
-
-    while (read_char(fd, ch)) {
-        if (ch == '\\') {
-            bytesRead += read_escaped_symbol(fd, acc);
-        } else if (ch != open_quote) {
-            bytesRead += 1;
-            acc += ch;
-        } else {
-            if (DEBUG) {
-                std::cout << "Read quoted: \"" << acc << "\"" << std::endl;
-            }
-
-            return bytesRead;
-        }
-    }
-
-    std::cerr << "Failed to read quoted string. No data available." << std::endl;
-    return bytesRead;
-}
-
-size_t read_token(int fd, std::string &acc) {
-    acc.clear();
-    size_t bytesRead = 0;
-
-    char ch;
-    while (read_char(fd, ch)) {
-        if (ch == '"' || ch == '\'') {
-            bytesRead += read_quoted_string(fd, ch, acc);
-        } else if (ch == '\\') {
-            bytesRead += read_escaped_symbol(fd, acc);
-        } else if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\0') {
-            bytesRead += 1;
-            acc += ch;
-        } else if (bytesRead > 0) {
-            if (DEBUG) {
-                std::cout << "Token end: " << std::hex << (int) ch << std::dec << std::endl;
-            }
-            break;
-        }
-    }
-
-    if (DEBUG && bytesRead > 0) {
-        std::cout << "Read token: \"" << acc << "\"" << std::endl;
-    }
-
-    return bytesRead;
-}
-
-size_t read_pipe(int fd, std::vector<std::string> &result, bool &has_next_batch) {
-    result.clear();
-    if (has_next_batch) {
-        result.emplace_back("--batch");
-        has_next_batch = false;
-    }
-
-    size_t char_read = 0;
-    std::string acc;
-    while (auto bytes = read_token(fd, acc)) {
-        if (acc == "--end") {
-            return char_read;
-        }
-
-        if (result.empty() && acc != "--batch") {
-            std::cout << "Invalid batch! Expected first token --batch. Got: " << acc << std::endl;
-            return 0;
-        }
-
-        if (!result.empty() && acc == "--batch") {
-            has_next_batch = true;
-            return char_read;
-        }
-
-        char_read += bytes;
-        if (!acc.empty()) result.push_back(acc);
-    }
-
-    return char_read;
-}
-
-void process_pipe_batches(TextDrawer &drawer, const std::string &pipe) {
-    if (mkfifo(pipe.c_str(), 0666) == -1) {
-        if (errno != EEXIST) {
-            // Ignore error if the pipe already exists
-            throw std::runtime_error("Failed to create named pipe: " + pipe);
-        }
-    }
-
-    std::cout << "Pipe mode enabled!" << std::endl;
-    std::cout << "Usage:" << std::endl
-        << R"(  echo -e --batch clear -c ff0000)" << " > " << pipe << std::endl
-        << R"(  echo -e --batch text -p 400 200 -t \"Hello, World.\")" << " > " << pipe << std::endl
-        << R"(  echo -e --batch flush)" << " > " << pipe << std::endl
-        << R"(  echo -e --end)" << " > " << pipe << std::endl;
-    std::cout << std::endl;
-
-    std::cout << "Wait for pipe..." << std::endl;
-
-    int pipeFd = open(pipe.c_str(), O_RDONLY);
-    if (pipeFd < 0) {
-        std::cerr << "Error opening pipe: " << pipe << std::endl;
-        return;
-    }
-
-    if (flock(pipeFd, LOCK_EX | LOCK_NB) == -1) {
-        std::cerr << "Pipe already in use: " << pipe << std::endl;
-        close(pipeFd);
-        return;
-    }
-
-    signal(SIGTERM, terminate_handler);
-    signal(SIGINT, terminate_handler);
-
-    std::cout << "Reading named pipe: " << pipe << std::endl;
-
-    bool has_next_batch = false;
-    std::vector<std::string> tokens;
-    while (!TERMINATED) {
-        auto count = read_pipe(pipeFd, tokens, has_next_batch);
-        if (count > 0) {
-            std::cout << "Process batch..." << std::endl;
-
-            try {
-                process_batch(drawer, tokens);
-            } catch (const std::exception &e) {
-                std::cerr << "Error while processing batch: " << e.what() << std::endl;
-            }
-
-            tokens.clear();
-        } else {
-            drawer.flush();
-        }
-    }
-
-    close(pipeFd);
-    unlink(pipe.c_str());
-
-    exit(SIGTERM);
+void process_pipe_batches(TextDrawer &drawer, const std::string &pipe,
+                          const std::string &touch_device, const std::string &event_pipe) {
+    typer::interactive::run(
+        pipe, touch_device, event_pipe,
+        [&drawer](std::string_view frame) { process_draw_frame(drawer, frame); },
+        DEBUG);
 }
 
 
@@ -640,21 +548,34 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int fbfd = open("/dev/fb0", O_RDWR);
-    if (fbfd == -1) {
-        std::cerr << "Error: cannot open framebuffer device." << std::endl;
+#ifdef __linux__
+    // Interactive typer belongs to the Klippy process that launched it. Avoid
+    // retaining the framebuffer and backbuffer if Klippy is terminated before
+    // it can run the normal renderer shutdown path.
+    if (main->program.is_subcommand_used("batch") &&
+        !main->batch_parser.get("--pipe").empty()) {
+        auto parent = getppid();
+        if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
+            std::cerr << "Warning: unable to configure parent-death signal" << std::endl;
+        } else if (getppid() != parent) {
+            return 0;
+        }
+    }
+#endif
+
+    const bool double_buffered = main->program.get<bool>("--double-buffered");
+    typer::framebuffer::Device framebuffer(
+        "/dev/fb0", WIDTH, HEIGHT, double_buffered);
+    if (!framebuffer.valid()) {
+        std::cerr << "Error: " << framebuffer.error() << std::endl;
         return 1;
     }
-
-    auto *fbp = (uint32_t *) mmap(nullptr, WIDTH * HEIGHT * 4, PROT_WRITE, MAP_SHARED, fbfd, 0);
-    if (fbp == MAP_FAILED) {
-        std::cerr << "Error: failed to map framebuffer device to memory." << std::endl;
-        close(fbfd);
-        return 1;
+    if (!framebuffer.warning().empty()) {
+        std::cerr << "Warning: " << framebuffer.warning() << std::endl;
     }
 
-    TextDrawer drawer(fbp, WIDTH, HEIGHT);
-    drawer.setDoubleBuffered(main->program.get<bool>("--double-buffered"));
+    TextDrawer drawer(framebuffer.front(), WIDTH, HEIGHT);
+    drawer.setDoubleBuffered(double_buffered, framebuffer.back());
 
     DEBUG = main->program.get<bool>("--debug");
     drawer.setDebug(DEBUG);
@@ -670,16 +591,17 @@ int main(int argc, char *argv[]) {
                 process_batch(drawer, batch);
             }
         } else {
-            process_pipe_batches(drawer, pipe);
+            process_pipe_batches(
+                drawer, pipe,
+                main->program.get("--touch-device"),
+                main->program.get("--event-pipe")
+            );
         }
     } else {
         run_program(*main, drawer);
     }
 
     drawer.flush();
-
-    munmap(fbp, WIDTH * HEIGHT * 4);
-    close(fbfd);
 
     return 0;
 }

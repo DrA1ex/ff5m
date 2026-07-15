@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(root)
 
+include(CTest)
+
 message(STATUS "CMake Build Type: ${CMAKE_BUILD_TYPE}")
 
 add_subdirectory(demo)

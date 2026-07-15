@@ -32,6 +32,12 @@ create_link() {
 
 start() {
     echo "Starting tslib uinput interface..."
+
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        create_link
+        echo "Already running"
+        return 0
+    fi
     
     # First start
     if ! lsmod | grep -q uinput; then
@@ -50,8 +56,15 @@ start() {
 
 stop() {
     echo "Stopping tslib uinput interface..."
+    if [ ! -f "$PIDFILE" ]; then
+        rm -f /dev/input/guppy
+        echo "Not running"
+        return 0
+    fi
     start-stop-daemon -K -q -p $PIDFILE
-    [ $? = 0 ] && echo "OK" || echo "FAIL"
+    result=$?
+    rm -f "$PIDFILE" /dev/input/guppy
+    [ $result = 0 ] && echo "OK" || echo "FAIL"
 }
 
 restart() {

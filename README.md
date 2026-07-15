@@ -84,7 +84,9 @@ To begin, follow the instructions on the [Installation page](/docs/INSTALL.md). 
 
 This modification also includes additional features. It is highly recommended that you thoroughly read the [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages before getting started.
 
-This article might also be useful: [Reducing resource usage](https://github.com/DrA1ex/ff5m/blob/dev/docs/PRINTING.md#reducing-resource-usage).   
+> [!NOTE]
+> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. For recurring memory-pressure, E0011/E0017, or *Timer too close* errors, see [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage). It explains when to reduce running services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
+
 For additional help, check out the [F.A.Q.](/docs/FAQ.md).
 
 You can reach services using these addresses:  
@@ -155,7 +157,7 @@ You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfe
 
 ## TODO
 
-- [x] Feather Screen: Ultra lightweight screen implementation with essential information
+- [x] Feather Screen: Ultra-lightweight interactive UI for essential local control
 - [x] Klipper bugfixes related to processing of G-Code containing Unicode symbols (specific for non-English symbols in object names)
 - [x] Mainsail OTA: Fixed and patched implementation to work correctly with navigation, with OTA updates
 - [x] Power-loss recovery for non-Stock screens

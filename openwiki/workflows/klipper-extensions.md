@@ -93,7 +93,7 @@ RESURRECT_ABORT
 
 ## `feather_screen`: alternative display integration
 
-[`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is loaded only in the Feather configuration (`SET_MOD PARAM=display VALUE=FEATHER`). It starts the bundled `typer` renderer, sends drawing commands through `/tmp/typer`, updates status roughly once per second, and displays network/camera/motor/temperature status, print file/progress/estimated time, and Klipper error/disconnect output.
+[`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is loaded only in the Feather configuration (`SET_MOD PARAM=display VALUE=FEATHER`). It starts the bundled `typer` renderer, sends drawing commands through `/tmp/typer`, and receives named touch actions through `/tmp/feather-events`. The plugin owns the UI state machine and validates printer state before starting files, invoking pause/resume/cancel macros, moving homed axes, controlling heaters/fan, or starting an asynchronous network operation.
 
 Its only registered command is:
 
@@ -101,7 +101,7 @@ Its only registered command is:
 FEATHER_PRINT_STATUS S="PREPARING..."
 ```
 
-Forge-X’s `_PRINT_STATUS` macro calls this command for the Feather workflow. Treat it as an internal UI-status bridge, not a stable slicer macro: use normal `START_PRINT`, pause/cancel, and configuration workflows instead. See [Screen modes and Feather](screens-and-feather.md) for the first-party Feather architecture, selection, operational limitations, and recovery path.
+Forge-X’s `_PRINT_STATUS` macro calls this command for the Feather workflow. Treat it as an internal UI-status bridge, not a stable slicer macro. Interactive controls use the same normal `SDCARD_PRINT_FILE`, `PAUSE`, `RESUME`, `CANCEL_PRINT`, `G28`, and `MOVE_SAFE` paths exposed elsewhere by Forge-X. See [Screen modes and Feather](screens-and-feather.md) for the architecture and safety gates.
 
 ## Change and validation guidance
 

@@ -35,6 +35,10 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
 
+- **`use_swap`**: Selects the swap backend: `MMC` (default eMMC swapfile), `USB`, `ZRAM` (compressed RAM-backed swap with eMMC overflow), or `OFF`. Do not disable swap solely to improve performance; use `OFF` only for a tested minimal workflow with Moonraker disabled. See [Reducing Resource Usage](/docs/PRINTING.md#reducing-resource-usage) for when to use ZRAM and its trade-offs.
+
+- **`zram_algo`**: Selects the compression algorithm used when `use_swap` is `ZRAM`. `zstd` is the default and provides the best compression; `lzo-rle` uses less CPU if compression competes with printing.
+
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  
   **Note**: Requires a [post-processing script](/docs/SLICING.md#md5-checksum-validation) in your slicer. Scripts are available in *Configuration → mod* (`addMD5.sh` or `addMD5.bat`).  
 

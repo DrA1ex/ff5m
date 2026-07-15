@@ -7,6 +7,7 @@
 #pragma once
 
 #include <limits>
+#include <memory>
 #include <string_view>
 
 #include "./fonts/types.h"
@@ -64,6 +65,7 @@ class TextDrawer {
     uint32_t _width;
     uint32_t _height;
 
+    std::unique_ptr<uint32_t[]> _ownedBackBuffer;
     uint32_t *_backBuffer = nullptr;
     Rect _affectedArea{};
 
@@ -110,7 +112,7 @@ public:
 
     void setStrokeDirection(StrokeDirection value);
 
-    void setDoubleBuffered(bool enable);
+    void setDoubleBuffered(bool enable, uint32_t *externalBuffer = nullptr);
     void setDebug(bool enable);
 
     void print(const char *text);

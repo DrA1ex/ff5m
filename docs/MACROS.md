@@ -48,7 +48,19 @@ This document provides a concise overview of the G-code macros defined in the `b
   - **Description**: Loads filament with a specified distance and speed, followed by a beep.
   - **Parameters**:
     - `SPEED` (int, default: 450): Extrusion speed (mm/min).
+    - `MATERIAL` (optional): `PLA`, `PETG`, `ABS`, or `ABS-PC`. When supplied, the material is saved after a successful load and shown by Feather after restarts.
   - **Defaults**: Uses `load_distance` variable (125 mm).
+
+- **SET_MATERIAL**
+  - **Description**: Saves the currently loaded material without changing temperatures or moving filament.
+  - **Parameters**:
+    - `MATERIAL`: `PLA`, `PETG`, `ABS`, `ABS-PC`, or `n/a`.
+
+- **PREHEAT_MATERIAL**
+  - **Description**: Applies the nozzle/bed preset and saves the selected material. This is suitable for a Fluidd macro button.
+  - **Parameters**:
+    - `MATERIAL`: `PLA`, `PETG`, `ABS`, or `ABS-PC`.
+    - `EXTRUDER_TEMP` and `BED_TEMP` (optional): Override the preset temperatures.
 
 - **UNLOAD_FILAMENT**
   - **Description**: Unloads filament with a specified distance and speed, followed by a beep.

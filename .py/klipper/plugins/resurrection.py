@@ -38,6 +38,42 @@ class Resurrector:
         self.gcode.register_command("RESURRECT", self.cmd_RESURRECT)
         self.gcode.register_command("RESURRECT_ABORT", self.cmd_RESURRECT_ABORT)
 
+    def get_status(self, eventtime):
+        """Return a small, path-safe summary for local displays.
+
+        The full recovery payload contains an absolute path and toolhead
+        coordinates.  Neither is part of the public status contract.
+        """
+        result = {
+            "state": self.state.name.lower(),
+            "available": self.state == ResurrectorState.RESURRECTION,
+            "filename": "",
+            "progress": 0.0,
+            "extruder_target": 0.0,
+            "bed_target": 0.0,
+            "mesh": "",
+        }
+        if not result["available"] or not os.path.isfile(self.file_path):
+            return result
+        try:
+            with open(self.file_path, "r") as stream:
+                saved = json.load(stream)
+            file_size = max(0, int(saved.get("file_size", 0)))
+            file_position = max(0, int(saved.get("file_position", 0)))
+            result.update({
+                "filename": os.path.basename(str(saved.get("file_path", ""))),
+                "progress": (min(file_position, file_size) / float(file_size)
+                             if file_size else 0.0),
+                "extruder_target": float(saved.get("extruder_temp", 0.0)),
+                "bed_target": float(saved.get("bed_temp", 0.0)),
+                "mesh": str(saved.get("mesh", "")),
+            })
+        except (ValueError, TypeError, IOError, OSError):
+            logging.exception("[resurrection] Unable to publish recovery status")
+            result["available"] = False
+            result["state"] = "error"
+        return result
+
     def _init(self):
         self.mod_params = self.printer.lookup_object("mod_params")
 

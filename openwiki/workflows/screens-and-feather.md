@@ -1,19 +1,17 @@
 # Screen modes and first-party Feather
 
-# Screen modes and first-party Feather
-
 Forge-X supports four mutually exclusive display modes: **STOCK**, **FEATHER**, **GUPPY**, and **HEADLESS**. The `display` setting changes more than what appears on the 800×480 panel: it rewrites the active Klipper configuration include, chooses who starts networking and Klipper, and changes the supported control/upload workflow.
 
-**Feather is Forge-X’s built-in display implementation.** It is developed in this repository as a small Klipper extension plus the bundled `typer` renderer—not an externally managed touchscreen application. Its purpose is dependable, very-low-resource local monitoring while Moonraker, Fluidd, and Mainsail remain the interactive control surfaces.
+**Feather is Forge-X’s built-in display implementation.** It is developed in this repository as a Klipper extension plus the bundled `typer` renderer—not an externally managed touchscreen application. It provides a bounded local control surface while keeping file management, state validation, and printer actions inside the existing Klipper stack.
 
-> **Mode change boundary:** do not change display mode during a print. Non-stock modes disable the FlashForge application and its companion services. Configure Wi-Fi or Ethernet while stock mode is available and retain a documented recovery route before switching.
+> **Mode change boundary:** do not change display mode during a print. Non-stock modes disable the FlashForge application and its companion services. Feather can configure DHCP networking locally, but retain a documented recovery route before switching modes.
 
 ## Mode comparison
 
 | Mode | Active root config | Local panel behavior | Main interactive control path | Runtime implications |
 |---|---|---|---|---|
 | `STOCK` (default) | [`config/stock.cfg`](../../config/stock.cfg) | Vendor FlashForge application and touch UI | Stock UI/apps, plus Forge-X/Moonraker where compatible | Vendor app starts Klipper and owns stock-screen-specific behavior. It consumes more RAM and can freeze when unsupported direct Klipper actions such as `RESTART` or `SAVE_CONFIG` are used. |
-| `FEATHER` | [`config/feather.cfg`](../../config/feather.cfg) | Forge-X read-only status display | Fluidd/Mainsail/Moonraker for upload and control | First-party, low-resource display. Forge-X starts networking, MCU, and Klipper; vendor app is stopped. |
+| `FEATHER` | [`config/feather.cfg`](../../config/feather.cfg) | Forge-X interactive status/control display | Feather for essential local actions; Fluidd/Mainsail for advanced work | First-party, low-resource display. Forge-X starts touchscreen, MCU, and Klipper even while offline; vendor app is stopped. |
 | `GUPPY` | [`config/guppy.cfg`](../../config/guppy.cfg) | Interactive Guppy touchscreen | Guppy plus Fluidd/Mainsail/Moonraker | Separate Guppy/tslib processes are started in the chroot. |
 | `HEADLESS` | [`config/headless.cfg`](../../config/headless.cfg) | No normal local display UI | Fluidd/Mainsail/Moonraker | Lowest UI footprint; intended for remote operation or a custom display implementation. |
 
@@ -39,33 +37,40 @@ For non-stock modes, `zdisplay.sh` stops `firmwareExe`/`ffstartup-arm`, stops Gu
 At boot, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) checks whether the selected mode is non-stock.
 
 - **Stock:** it leaves the vendor boot/application path active.
-- **Feather, Guppy, Headless:** it brings up Wi-Fi or Ethernet from previously saved stock configuration, using DHCP; on success it marks custom boot, initializes required kernel interfaces, boots the MCU with `boot_mcu`, and starts Klipper directly.
-- **Failure to obtain network:** the boot script changes the config back to stock mode and continues into stock firmware. This fallback exists because Feather/headless operation is not useful without a remote control path.
+- **Feather, Guppy, Headless:** it starts saved Wi-Fi or Ethernet configuration in the background, initializes required kernel interfaces, boots the MCU with `boot_mcu`, and starts Klipper directly without waiting for DHCP.
+- **Feather touch:** `S35tslib` starts before Klipper so `/dev/input/guppy` exists when the plugin launches `typer`. It is reused by Guppy but not started for Headless.
+- **Network failure:** Feather remains available offline and exposes its Network page. It no longer changes the selected display back to stock merely because DHCP or Wi-Fi failed.
 
-Before switching away from stock, provision Wi-Fi or Ethernet in the vendor UI. The documented Wi-Fi source is `/etc/wpa_supplicant.conf`; the implementation supports DHCP only. In non-stock modes, upload and control through FlashPrint/FlashForge Orca are no longer available because their required vendor services are not running. Use the Moonraker workflow described in [`docs/SLICING.md`](../../docs/SLICING.md).
+Saved stock network configuration remains compatible, but Feather can now scan for a WPA/WPA2-PSK network, enter its password, or select Ethernet DHCP locally. The helper stores the chosen transport under `mod_data`, updates Wi-Fi configuration atomically, and never places credentials in process arguments or logs. Static addressing, hidden SSIDs, WPA-Enterprise, and multi-profile management are outside this UI. In non-stock modes, upload through FlashPrint/FlashForge Orca remains unavailable; use the Moonraker workflow in [`docs/SLICING.md`](../../docs/SLICING.md).
 
 The operator-facing configuration implications also change: use an `auto` bed mesh rather than stock `MESH_DATA`, manage Z-offset through Forge-X/Klipper workflows, and use Forge-X camera controls rather than the stock screen’s camera path. See [`docs/SCREEN.md`](../../docs/SCREEN.md), [`docs/PRINTING.md`](../../docs/PRINTING.md), and [`docs/CAMERA.md`](../../docs/CAMERA.md).
 
-## Feather: built-in Forge-X monitoring display
+## Feather: built-in Forge-X interactive display
 
 ### Design goal and boundaries
 
-Feather trades interaction for a small runtime footprint. It displays printer state but provides **no touch input or on-panel print controls**. Use Fluidd/Mainsail, Moonraker APIs, or configured remote tooling to upload, start, pause, resume, and cancel jobs. This constrained scope is intentional: it avoids carrying a full vendor UI or a separate interactive screen application while keeping essential local feedback.
+Feather deliberately limits interaction to operations that can reuse reviewed Forge-X paths: browsing/starting virtual-SD files, pause/resume/cancel, guided filament handling, idle homing and bounded movement, heater/fan control, safe Z/screws/mesh workflows, local power-loss recovery, and DHCP network setup. File deletion, PID/input-shaper tuning, and unrestricted G-code remain in Fluidd/Mainsail or documented console workflows.
 
 The feature consists of three repository-owned pieces:
 
 ```text
 config/feather.cfg
   └─ [feather_screen] enables the Forge-X Klipper extension
-       └─ feather_screen.py reads Klipper status and writes draw batches
-            └─ FIFO /tmp/typer → bundled typer renderer → physical framebuffer
+       ├─ feather_screen.py owns pages, validation, and actions
+       ├─ feather_ui.py owns drawing and fixed 800x480 layout primitives
+       │    ├─ draw FIFO /tmp/typer → typer → framebuffer
+       │    └─ event FIFO /tmp/feather-events ← named hitbox actions
+       └─ /dev/input/guppy ← ts_uinput ← physical touchscreen
 ```
 
 1. [`config/feather.cfg`](../../config/feather.cfg) includes common/headless/client macro layers and declares `[feather_screen]`.
-2. [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is installed as a Forge-X-added Klipper `extras` plugin. On Klippy ready it starts `typer` with double buffering, manages a FIFO at `/tmp/typer`, and refreshes its status state about once per second.
-3. The bundled `typer` executable is exposed as `/root/printer_data/bin/typer`. The plugin sends batched drawing commands rather than rendering a heavy GUI itself.
+2. [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is installed as a Forge-X-added Klipper `extras` plugin. On Klippy ready it starts `typer`, registers the nonblocking event FIFO with the Klipper reactor, and redraws complete pages only on navigation/state changes.
+3. The bundled `typer` executable is exposed as `/root/printer_data/bin/typer`. Its interactive module polls the draw FIFO and calibrated Linux input fd in one thread, maintains only the current page’s hitboxes, and emits opaque action IDs rather than executing printer commands.
+4. [`.shell/commands/znetwork.sh`](../../.shell/commands/znetwork.sh) owns bounded asynchronous Wi-Fi/Ethernet operations. The plugin polls the child process from its existing one-second timer instead of blocking Klipper’s reactor. Scan, Wi-Fi connect and Ethernet DHCP are terminated after 15, 45 and 30 seconds respectively.
 
-The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, and display-status progress. It also observes Forge-X runtime markers for Wi-Fi, Ethernet, camera, and discovered IP address. It presents a toolbar, file caption, progress bar, print status, estimated/elapsed time, and a bounded error/disconnect panel.
+The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, layer metadata, filament sensor, resurrection state, fan and display-status progress. It presents a persistent footer, file caption, progress bar, macro status, estimated/elapsed time, guided workflows and a bounded error/disconnect panel. Full pages redraw on navigation/state changes; footer, temperatures and progress update from the existing one-second timer.
+
+Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
 
 ### How print status reaches Feather
 
@@ -81,28 +86,28 @@ FEATHER_PRINT_STATUS S="PREPARING..."
 
 For a deliberately small custom indicator or status overlay, use the shipped `typer` tool and its documented batch interface; [`docs/TYPER.md`](../../docs/TYPER.md) is the operator/developer reference. The established Feather plugin is the canonical example of safe FIFO ownership, double-buffered drawing, and state refresh.
 
-Do **not** start a second process that writes arbitrary concurrent data to `/tmp/typer` without designing an ownership/serialization scheme. Do not turn Feather into a second control plane: commands affecting printer motion or service state should remain in reviewed Klipper macros or the Moonraker workflow.
+Do **not** start a second process that writes arbitrary concurrent data to `/tmp/typer`. New actions must be registered as hitboxes, revalidate current `print_stats`/homing state in Python, and dispatch through reviewed Klipper macros or a bounded system helper.
 
 ## Guppy versus Feather
 
-Guppy is an optional interactive screen integration, not the implementation base for Feather. On `GUPPY`, the chroot runtime starts tslib and [`.root/S80guppyscreen`](../../.root/S80guppyscreen), which launches `/root/guppyscreen/guppyscreen` at reduced CPU priority and caps allocator arenas. Feather does not use these services: its renderer is launched from the Klipper plugin and has no touchscreen input path.
+Guppy is an optional interactive screen integration, not the implementation base for Feather. Both modes reuse the small `ts_uinput` service and stable `/dev/input/guppy` link. Guppy additionally launches its separate multi-threaded application; Feather reads the normalized input directly from `typer` and keeps semantics in the existing Klipper process.
 
-Choose Guppy when local touch control is required and validate its independent service lifecycle. Choose Feather when the priority is a built-in Forge-X monitoring display and low resource usage; plan remote control before enabling it.
+Choose Guppy for its broader independent UI. Choose Feather when the priority is essential local control with the smallest additional runtime and continued operation without a network.
 
 ## Diagnosis and recovery
 
 1. **Confirm selected mode:** run `GET_MOD PARAM=display`; check the active include in `/opt/config/printer.cfg` only when diagnosing configuration routing.
-2. **Confirm the remote path first:** for non-stock modes, verify a DHCP address and reach Moonraker/Fluidd/Mainsail before treating the panel as the primary diagnostic surface.
-3. **Feather-specific checks:** inspect Klipper logs for plugin/renderer errors, verify `/tmp/typer` ownership, and avoid manually killing `typer` while Klippy owns the display.
+2. **Check the panel and network independently:** Feather can be healthy while offline. Inspect its Network page and `/tmp/net_ip` before diagnosing Moonraker/web access.
+3. **Feather-specific checks:** inspect Klipper logs, verify `/dev/input/guppy`, `/tmp/typer`, and `/tmp/feather-events`, and avoid manually killing `typer` while Klippy owns the display.
 4. **Recover safely:** boot through the documented dual-boot/skip path or use the documented display-off image if access is lost. From a recovered/stock-capable context, restore `STOCK` through `SET_MOD` or `zdisplay.sh stock`; use manual `variables.cfg` editing only as the documented last-resort recovery procedure.
-5. **Validate after changes:** exercise stock mode plus each affected alternative mode; verify DHCP fallback, MCU/Klipper startup, browser control, status/error display, and a safe print lifecycle. Do not test mode changes during production prints.
+5. **Validate after changes:** exercise stock mode plus each affected alternative mode; verify offline startup, DHCP recovery, MCU/Klipper startup, browser control, status/error display, and a safe print lifecycle. Do not test mode changes during production prints.
 
 ## Change guidance
 
 - Preserve the one-root-config invariant: every new mode must have a matching `config` root and `.cfg/init.display.*.cfg` selection delta that removes incompatible roots.
 - Treat `zdisplay.sh`, `boot.sh`, active Klipper config, and documentation as one change surface. A mode is broken if any one of selection, startup, remote control, or recovery is missing.
-- Feather code runs in Klippy’s process and accesses shared screen/runtime resources. Keep refresh work bounded, avoid blocking calls, and validate on the constrained target hardware.
-- Keep first-party Feather distinct from optional external screen integrations in docs and code. Feather’s no-input limitation is an explicit product contract.
+- Feather code runs in Klippy’s process and accesses shared screen/runtime resources. Keep refresh work bounded, run network work asynchronously, avoid full redraws in the one-second status timer, and validate RSS/swap on the constrained target hardware.
+- Keep first-party Feather distinct from optional external screen integrations. Its reviewed action set and idle/printing safety gates are the product boundary.
 
 ## Source entry points
 

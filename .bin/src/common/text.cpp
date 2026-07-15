@@ -18,8 +18,6 @@
 
 TextDrawer::~TextDrawer() {
     flush();
-
-    delete[] _backBuffer;
     _backBuffer = nullptr;
 }
 
@@ -64,13 +62,30 @@ void TextDrawer::setStrokeDirection(StrokeDirection value) {
     _strokeDirection = value;
 }
 
-void TextDrawer::setDoubleBuffered(bool enable) {
-    if (enable && !_backBuffer) {
-        _backBuffer = new uint32_t[_width * _height];
-    } else if (!enable && _backBuffer) {
-        delete[] _backBuffer;
+void TextDrawer::setDoubleBuffered(bool enable, uint32_t *externalBuffer) {
+    if (!enable) {
+        flush();
         _backBuffer = nullptr;
+        _ownedBackBuffer.reset();
+        return;
     }
+
+    if ((externalBuffer != nullptr && _backBuffer == externalBuffer) ||
+        (externalBuffer == nullptr && _ownedBackBuffer &&
+         _backBuffer == _ownedBackBuffer.get())) {
+        return;
+    }
+
+    flush();
+    if (externalBuffer != nullptr) {
+        _ownedBackBuffer.reset();
+        _backBuffer = externalBuffer;
+    } else {
+        _ownedBackBuffer = std::make_unique<uint32_t[]>(_width * _height);
+        _backBuffer = _ownedBackBuffer.get();
+    }
+
+    std::copy(_screen, _screen + _width * _height, _backBuffer);
 }
 
 void TextDrawer::setPosition(int32_t x, int32_t y) {

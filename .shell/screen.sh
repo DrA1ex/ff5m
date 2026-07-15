@@ -15,10 +15,23 @@ load_version() {
     export MOD_VERSION=$(cat /opt/config/mod/version.txt)
     export MOD_VERSION_PATCH=$(cat /tmp/version_patch 2> /dev/null)
 
-    export VERSION_STRING="$MOD_VERSION"
+}
+
+print_versions() {
+    local batches=(
+        --batch fill -p 72 270 -s 311 54 -c 0
+        --batch fill -p 417 270 -s 311 54 -c 0
+        --batch text -ha center -va middle -p 228 286 -c b47aff -f "JetBrainsMono Bold 12pt" -t "v$MOD_VERSION"
+        --batch text -ha center -va middle -p 572 297 -c 35d9e6 -f "JetBrainsMono Bold 12pt" -t "v$FIRMWARE_VERSION"
+    )
+
     if [ -n "$MOD_VERSION_PATCH" ]; then
-        export VERSION_STRING=$(echo -e "${VERSION_STRING}\n${MOD_VERSION_PATCH}")
+        batches+=(
+            --batch text -ha center -va middle -p 228 310 -c b47aff -f "JetBrainsMono Bold 8pt" -t "$MOD_VERSION_PATCH"
+        )
     fi
+
+    "$BINS/typer" -db batch "${batches[@]}"
 }
 
 print_message() {
@@ -26,7 +39,7 @@ print_message() {
     
     "$BINS/typer" -db batch \
         --batch fill -p 0 370 -s 800 50 -c 0 \
-        --batch text -ha center -p 400 400 -c 00f0f0 -f "Roboto 12pt" -t "$text"
+        --batch text -ha center -p 400 400 -c 35d9e6 -f "JetBrainsMono 12pt" -t "$text"
 }
 
 print_progress() {
@@ -37,10 +50,10 @@ print_progress() {
     
     "$BINS/typer" -db batch \
         --batch fill    -c 0         -p 200 420 -s 400 40 \
-        --batch stroke  -c 872187    -p 200 420 -s 400 40 -lw 4 -sd inner \
-        --batch fill    -c 872187    -p 210 430 -s $progress_width 20 \
+        --batch stroke  -c 35d9e6    -p 200 420 -s 400 40 -lw 2 -sd inner \
+        --batch fill    -c b47aff    -p 210 430 -s $progress_width 20 \
         --batch fill    -c 0         -p 610 420 -s 100 60  \
-        --batch text    -c 00f0f0    -p 620 440 -va middle -b 0 -t "${value}%"
+        --batch text    -c 35d9e6    -p 620 440 -va middle -b 0 -f "JetBrainsMono 12pt" -t "${value}%"
 }
 
 print_prepare_status() {
@@ -48,7 +61,7 @@ print_prepare_status() {
     
     "$BINS/typer" -db batch \
         --batch fill -p 205 425 -s 390 30 -c 0 \
-        --batch text -p 400 440 -ha center -va middle -c 00f0f0 -f "JetBrainsMono 8pt" -b 0 -t "${text}"
+        --batch text -p 400 440 -ha center -va middle -c 35d9e6 -f "JetBrainsMono 8pt" -b 0 -t "${text}"
 }
 
 print_time() {
@@ -119,9 +132,7 @@ case "$1" in
             xzcat "$LOAD_IMG_XZ" > /dev/fb0
         fi
         
-        "$BINS/typer" -db batch \
-            --batch text -ha center -p 236 300 -c 00f0f0 -f "JetBrainsMono Bold 12pt" -t "v$VERSION_STRING" \
-            --batch text -ha center -p 592 300 -c 00f0f0 -f "JetBrainsMono Bold 12pt" -t "v$FIRMWARE_VERSION"
+        print_versions
     ;;
     
     draw_splash)
@@ -130,9 +141,7 @@ case "$1" in
             xzcat "$SPLASH_IMG_XZ" > /dev/fb0
         fi
 
-        "$BINS/typer" -db batch \
-            --batch text -ha center -p 236 300 -c 2b8787 -f "JetBrainsMono Bold 12pt" -t "v$VERSION_STRING" \
-            --batch text -ha center -p 592 300 -c 2b8787 -f "JetBrainsMono Bold 12pt" -t "v$FIRMWARE_VERSION"
+        print_versions
 
         if [ -f "$NET_IP_F" ]; then
             print_prepare_status "IP: $(cat "$NET_IP_F")"

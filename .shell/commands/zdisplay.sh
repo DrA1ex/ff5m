@@ -137,6 +137,11 @@ apply_display_off() {
     
     # Stop Guppy services if they are running
     chroot "$MOD" /opt/config/mod/.root/guppyscreen stop
+
+    # Feather reuses tslib's calibrated uinput device without running Guppy.
+    if [ "$(test)" = "FEATHER" ]; then
+        chroot "$MOD" /opt/config/mod/.root/S35tslib start
+    fi
     
     if ip addr show wlan0 | grep -q "inet "; then
         killall "wpa_cli" &> /dev/null

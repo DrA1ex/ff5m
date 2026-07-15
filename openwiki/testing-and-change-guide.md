@@ -2,7 +2,7 @@
 
 ## Validation posture
 
-No repository-owned automated test suite or build/test configuration was identified in the inspected tree. The only GitHub Actions workflow, [`.github/workflows/stale.yml`](../.github/workflows/stale.yml), maintains inactive issues; it does not test firmware, macros, or packages. Therefore the effective validation model is **targeted static review plus controlled on-device testing**.
+The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
 
 This is not a gap to hide: Forge-X changes early boot, services, printer motion, calibration, and low-memory behavior on specific hardware. A unit-like syntax check cannot prove the crucial outcomes.
 

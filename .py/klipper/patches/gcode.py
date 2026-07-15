@@ -110,7 +110,7 @@ class GCodeDispatch:
         self.mux_commands = {}
         self.gcode_help = {}
         # Register commands needed before config file is loaded
-        handlers = ['M108', 'M110', 'M112', 'M115',
+        handlers = ['M108', 'FEATHER_ABORT', 'M110', 'M112', 'M115',
                     'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP']
         for cmd in handlers:
             func = getattr(self, 'cmd_' + cmd)
@@ -238,11 +238,21 @@ class GCodeDispatch:
         self._process_commands(script.split('\n'), need_ack=False)
     def run_script(self, script):
         # Special parser for immediate commands
-        lines = script.split('\n')
-        for line in lines:
-            if self.immediate_cmds_r.match(line):
-                lines.remove(line)
-                self.run_script_from_command(line)
+        lines = []
+        immediate = []
+        for line in script.split('\n'):
+            if self.immediate_cmds_r.match(line.strip()):
+                immediate.append(line)
+            else:
+                lines.append(line)
+        for line in immediate:
+            self.run_script_from_command(line)
+
+        # An immediate-only script has already completed.  Do not wait for the
+        # active dispatcher mutex: M108 exists specifically to interrupt a
+        # yielding _WAIT_TEMPERATURE macro holding that mutex.
+        if not any(line.strip() for line in lines):
+            return
 
         with self.mutex:
             self._process_commands(lines, need_ack=False)
@@ -276,7 +286,7 @@ class GCodeDispatch:
         r'(?P<cmd>[a-zA-Z_][a-zA-Z0-9_]+)(?:\s+|$)'
         r'(?P<args>[^#*;]*?)'
         r'\s*(?:[#*;].*)?$')
-    immediate_cmds = [ "M108", "TONE", "ALARM", "BEEP" ]
+    immediate_cmds = [ "M108", "FEATHER_ABORT", "TONE", "ALARM", "BEEP" ]
     immediate_cmds_r = re.compile(r'^(' + '|'.join(re.escape(cmd) for cmd in immediate_cmds) + r')(?:\s|$)', re.IGNORECASE)
     def _get_extended_params(self, gcmd):
         m = self.extended_r.match(gcmd.get_commandline())
@@ -348,6 +358,31 @@ class GCodeDispatch:
         wait_cmd.variables = dict(wait_cmd.variables)
         wait_cmd.variables["cancel"] = True
         self.respond_raw("Set cancellation flag for _WAIT_TEMPERATURE!")
+
+    cmd_FEATHER_ABORT_help = "Request cooperative cancellation of START_PRINT"
+    def cmd_FEATHER_ABORT(self, gcmd):
+        """Set cancellation flags without waiting for the G-code mutex.
+
+        START_PRINT may hold the dispatcher while G28, leveling, or a
+        temperature wait is running.  The macro observes this flag at safe
+        boundaries; an active temperature wait is interrupted immediately.
+        """
+        flow = self.printer.lookup_object("gcode_macro _PRINT_FLOW", None)
+        if flow is None or "cancel_requested" not in flow.variables:
+            raise self.error("_PRINT_FLOW is not configured")
+        if not flow.variables.get("active", False):
+            self.respond_raw("There is no active START_PRINT flow")
+            return
+        flow.variables = dict(flow.variables)
+        flow.variables["cancel_requested"] = True
+
+        wait_cmd = self.printer.lookup_object(
+            "gcode_macro _WAIT_TEMPERATURE", None)
+        if (wait_cmd is not None
+                and wait_cmd.variables.get("active", False)):
+            wait_cmd.variables = dict(wait_cmd.variables)
+            wait_cmd.variables["cancel"] = True
+        self.respond_raw("Feather cancellation requested")
 
     def cmd_M110(self, gcmd):
         # Set Current Line Number
@@ -441,7 +476,7 @@ class GCodeIO:
         self._dump_debug()
         if self.is_fileinput:
             self.printer.request_exit('error_exit')
-    m112_r = re.compile('^(?:[nN][0-9]+)?\s*[mM]112(?:\s|$)')
+    m112_r = re.compile(r'^(?:[nN][0-9]+)?\s*[mM]112(?:\s|$)')
     def _process_data(self, eventtime):
         # Read input, separate by newline, and add to pending_commands
         try:

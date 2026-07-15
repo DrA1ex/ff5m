@@ -10,6 +10,7 @@
 from fcntl import ioctl
 from struct import pack
 import argparse
+import errno
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
 DISP_LCD_GET_BRIGHTNESS = 0x103
@@ -22,7 +23,13 @@ def backlight_enable(enable=True):
     else:
         ctl = DISP_LCD_BACKLIGHT_DISABLE
     with open("/dev/disp", "wb") as f:
-        ioctl(f, ctl, b"")
+        try:
+            ioctl(f, ctl, b"")
+        except OSError as exc:
+            # Re-enabling an already enabled backlight returns EPERM on this
+            # display driver. It is harmless when a brightness update follows.
+            if not enable or exc.errno != errno.EPERM:
+                raise
 
 def backlight_get():
     with open("/dev/disp", "wb") as f:

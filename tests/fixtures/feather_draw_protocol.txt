@@ -1,0 +1,8 @@
+--batch clear-hitboxes
+--batch clear -c 000000
+--batch fill -p 10 20 -s 30 40 -c a0b1c2
+--batch stroke -p 11 21 -s 31 41 -c 872187 -lw 3 -sd inner
+--batch text -p 100 120 -c ffffff -f "JetBrainsMono 12pt" -ha center -va middle -t "file \"one\" \\ Привет"
+--batch hitbox --id print.pause -p 20 315 -s 175 100
+--batch flush
+--end

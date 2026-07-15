@@ -17,7 +17,44 @@ Here's what each option does:
 
 ### Feather Screen
 
-Feather is a lightweight screen that displays basic information like print status, temperatures, and estimated time remaining. It does not support any user input or printer control — it's just for monitoring.
+Feather is Forge-X's lightweight interactive screen. It displays print status,
+temperatures, and estimated time while also supporting:
+
+- browsing uploaded G-code files and starting a print;
+- pausing, resuming, and cancelling a print;
+- progress, elapsed/estimated time, layer metadata and macro status;
+- guided PLA/PETG/ABS/ABS-PC filament loading during idle or pause;
+- homing and safe XYZ movement while idle;
+- preheat presets plus heater and part-fan control while idle;
+- first-layer Z adjustment, bed-screw guidance and an `auto` bed-mesh workflow;
+- brightness, ECO brightness and sound settings;
+- Wi-Fi scanning/password entry and Ethernet DHCP selection;
+- local Restore/Cleanup/Later handling for Power Loss Recovery.
+
+Feather deliberately remains smaller than a full desktop-style UI. File deletion,
+static IP configuration, enterprise/hidden Wi-Fi, PID/input-shaper tuning and
+unrestricted G-code remain
+available through Fluidd/Mainsail or the documented console workflows.
+
+Every page has a compact footer with actual/target nozzle and bed temperatures,
+network/IP and current printer state. After 60 seconds without touch the panel
+uses the persisted `backlight_eco` value. The first touch after dimming only wakes
+the panel; it never activates the button underneath.
+
+Filament extrusion buttons remain disabled until Klipper reports
+`min_extrude_temp`. Live Z adjustment is intentionally unavailable without layer
+metadata and closes after layer 1. Bed mesh always replaces profile `auto`; once
+the existing leveling macro starts, Feather does not offer an unsafe partial
+cancel.
+
+The dashboard remembers the latest material selected by Feather, `LOAD_MATERIAL`,
+`PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...`. Until a material is selected
+it displays `n/a`. The value is stored with the other Forge-X parameters and
+survives Klipper and printer restarts.
+
+Touch, dim/wake, actions, rejected input, backlight changes, and long Feather
+operations are written to Klipper's normal `printer.log` with the
+`[feather_screen]` prefix. The same log is available from Fluidd for diagnostics.
 
 ### Guppy Screen
 
@@ -67,9 +104,10 @@ SET_MOD PARAM="display" VALUE="HEADLESS"
 ```
 
 > [!NOTE]
-> You must configure **Wi-Fi** or **Ethernet** before disabling the stock screen.  
-> After a reboot, the mod connects to a network automatically, but it uses the configuration created by the stock screen.   
-> **For Wi-Fi** configuration stored here: `/etc/wpa_supplicant.conf`   
+> Feather can boot and control the printer without a network connection. Use its
+> **Network** page to scan for a WPA/WPA2-PSK Wi-Fi network or select Ethernet.
+> Existing stock Wi-Fi configuration is still reused until Feather saves a new
+> network. The active Wi-Fi configuration remains `/etc/wpa_supplicant.conf`.
 
 > [!WARNING]
 > Only DHCP mode is supported!
@@ -114,16 +152,41 @@ To see usage instructions, run:
 /root/printer_data/bin/typer --help
 ```
 
-It's not suitable for a full UI, but it consumes almost no resources and allows you to print any information you need.
+Feather adds interaction without turning `typer` into a printer-control service:
+`typer` only renders and reports named touch hitboxes. The Klipper plugin owns UI
+state, validates printer state, and executes reviewed macros.
 
 Documentation for `typer` is available here: [link](/docs/TYPER.md)   
 
 For examples you can view [feather.cfg](/config/feather.cfg) for macros and [screen.sh](/.shell/screen.sh) script.
 Implementation of Feather itself you can find in [feather_screen.py](/.py/klipper/plugins/feather_screen.py)
+and its renderer/layout helpers in [feather_ui.py](/.py/klipper/plugins/feather_ui.py).
 
 ### Custom Loading and Splash Screens
 
 Set any image as your splash/loading screen.
+
+The checked-in Feather screens are generated reproducibly from
+`.bin/src/splash/generate.py`. Pillow is needed only on the development machine;
+it is not installed on the printer:
+
+```sh
+python3 -m pip install Pillow
+python3 .bin/src/splash/generate.py \
+  --font /path/to/monospace.ttf \
+  --bold-font /path/to/monospace-bold.ttf \
+  --preview-dir docs/images
+```
+
+This updates `splash.img.xz` and `load.img.xz` in the repository root and
+optionally writes the `forge-x-splash.png`, `forge-x-loading.png`, and separate
+`feather-splash.png` previews. The first two are system-wide Forge-X screens;
+Feather branding is intentionally kept separate. The generator validates the
+required `800×480×4` BGRA framebuffer size before XZ compression. The lower
+130 pixels of the loading image stay empty because `screen.sh` uses them for
+five boot-log rows and uptime.
+
+For a custom externally-created image:
 
 - Create PNG image (800×480)
 - Convert to raw bgra with xz compression:

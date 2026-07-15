@@ -185,6 +185,14 @@
       "order": 50002
     },
     {
+      "key": "current_material",
+      "type": "str",
+      "default": "n/a",
+      "label": "Current material",
+      "hidden": true,
+      "order": 50003
+    },
+    {
       "key": "midi_on",
       "type": "str",
       "default": "",

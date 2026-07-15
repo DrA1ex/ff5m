@@ -10,6 +10,7 @@
 
 MOD_CUSTOM_BOOT=0
 source /opt/config/mod/.shell/common.sh
+source /opt/config/mod/.shell/network_common.sh
 
 if [ ! -f /etc/init.d/S00init ]; then
     echo "@@ Missing initialization script. Initialize now."
@@ -49,23 +50,25 @@ wifi_init() {
             modprobe 8821cu
         fi
         
-        if ! ps | grep -q "[n]l80211"; then
-            echo "// Try to connect..."
-            
-            for _ in $(seq 5); do
-                "$SCRIPTS/boot/wifi_connect.sh" 2>&1 | logged /data/logFiles/wifi.log --no-print --send-to-screen
-                ret="${PIPESTATUS[0]}"
-                
-                if [ "$ret" -eq 0 ]; then
-                    MOD_CUSTOM_BOOT=1
-                    echo "// Connected!"
-                    break
-                fi
-                
-                echo "@@ WPA start failed. Retry..."
-                sleep 1
-            done
-        fi
+        echo "// Try to connect..."
+
+        for _ in $(seq 5); do
+            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 | logged /data/logFiles/wifi.log --no-print --send-to-screen
+            ret="${PIPESTATUS[0]}"
+
+            if [ "$ret" -eq 0 ]; then
+                # Retire Ethernet only after Wi-Fi has an address.  Until this
+                # point it remains a working rollback path.
+                network_deactivate_interface eth0
+                rm -f "$ETHERNET_CONNECTED_F"
+                MOD_CUSTOM_BOOT=1
+                echo "// Connected!"
+                break
+            fi
+
+            echo "@@ WPA start failed. Retry..."
+            sleep 1
+        done
         
         #TODO: Create AP if no active network configuration
     fi
@@ -84,13 +87,15 @@ wifi_init() {
 ethernet_init() {
     echo "// Initializing Ethernet connection..."
 
-    echo "Killing processes..."
-    killall wpa_supplicant
-    killall udhcpc
-    
-    # shellcheck disable=SC2015
-    ip link set eth0 up && udhcpc eth0 \
+    # Keep Wi-Fi alive until Ethernet has actually obtained a lease.  This
+    # makes switching modes transactional instead of dropping both links.
+    network_activate_dhcp eth0 25 \
         || { echo "@@ Failed to initialize connection!"; return 1; }
+
+    killall wpa_cli 2>/dev/null || true
+    killall wpa_supplicant 2>/dev/null || true
+    network_deactivate_interface wlan0
+    rm -f "$WIFI_CONNECTED_F"
 
     touch "$ETHERNET_CONNECTED_F"
     sync
@@ -99,27 +104,44 @@ ethernet_init() {
     echo "// Ethernet connection initialized with DHCP"
 }
 
+save_network_ip() {
+    rm -f "$NET_IP_F"
+    IP="$(network_ipv4 "$1")"
+    [ -n "$IP" ] && echo "$IP" > "$NET_IP_F"
+}
+
 if [ "$DISPLAY_OFF" -eq 1 ]; then
     # Init Network
     
     echo "// Network initialization..."
-    CONFIG_FILE=$(ls /opt/config/Adventurer5M*.json 2>/dev/null)
+    CONFIG_FILE=$(ls /opt/config/Adventurer5M*.json 2>/dev/null | head -n 1)
     
-    if [ -f "$CONFIG_FILE" ]; then
+    NETWORK_MODE=""
+    [ -f /opt/config/mod_data/network_mode ] && NETWORK_MODE=$(head -n 1 /opt/config/mod_data/network_mode)
+    case "$NETWORK_MODE" in
+        WIFI|ETHERNET) ;;
+        *) NETWORK_MODE="" ;;
+    esac
+
+    if [ "$NETWORK_MODE" = "ETHERNET" ]; then
+        (ethernet_init && save_network_ip eth0) >> /data/logFiles/wifi.log 2>&1 &
+    elif [ "$NETWORK_MODE" = "WIFI" ]; then
+        (wifi_init && save_network_ip wlan0) >> /data/logFiles/wifi.log 2>&1 &
+    elif [ -f "$CONFIG_FILE" ]; then
         ETHERNET_STATUS=$(grep "ethernetStatus" < "$CONFIG_FILE" | sed 's/.*"ethernetStatus"[ ]*:[ ]*\([^,]*\).*/\1/')
         if [ "$ETHERNET_STATUS" = "true" ]; then
-            ethernet_init
+            (ethernet_init && save_network_ip eth0) >> /data/logFiles/wifi.log 2>&1 &
         else
-            wifi_init
+            (wifi_init && save_network_ip wlan0) >> /data/logFiles/wifi.log 2>&1 &
         fi
     else
         echo "@@ Config file not found"
     fi
 fi
 
-if [ "$MOD_CUSTOM_BOOT" -eq 1 ]; then
-    echo "// Network initialized!"
-    
+if [ "$DISPLAY_OFF" -eq 1 ]; then
+    echo "// Starting alternative display; network initialization continues in background."
+
     touch "$CUSTOM_BOOT_F"
     sync
     
@@ -127,6 +149,11 @@ if [ "$MOD_CUSTOM_BOOT" -eq 1 ]; then
     mount -t devpts devpts /dev/pts
     mount -t configfs none /sys/kernel/config -o rw,relatime
     mount -t debugfs none /sys/kernel/debug -o rw,relatime
+
+    if [ "$("$CMDS"/zdisplay.sh test)" = "FEATHER" ]; then
+        echo "// Starting calibrated Feather touch input..."
+        chroot "$MOD" /opt/config/mod/.root/S35tslib start
+    fi
     
     echo "// MCU booting..."
     /opt/config/mod/.bin/exec/boot_mcu 2>&1
@@ -135,16 +162,6 @@ if [ "$MOD_CUSTOM_BOOT" -eq 1 ]; then
     /opt/config/mod/.shell/commands/zstart_klipper.sh &> /dev/null
     
     echo "// Boot sequence done!"
-elif [ "$DISPLAY_OFF" -eq 1 ]; then
-    # If we're here, we can't initialize network connection
-    # This means Feather is useless without network - skip it
-    
-    echo "?? Switch config to enabled screen..."
-    /opt/config/mod/.shell/commands/zdisplay.sh stock --skip-reboot
-
-    echo "@@ Failed to initialize mod. Booting into stock firmware..."
-    suppress_slicer_nag
-    sleep 1
 else
     echo "// Booting stock firmware..."
     suppress_slicer_nag
