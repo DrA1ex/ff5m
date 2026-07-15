@@ -135,6 +135,21 @@ The existing Klipper implementation for the AD5M is outdated and plagued with bu
 - [Uninstall](/docs/UNINSTALL.md)
 - [Recovery guide](/docs/RECOVERY.md)
 
+### Engineering documentation
+
+The [OpenWiki](openwiki/quickstart.md) provides a code-oriented guide for contributors and advanced users. It complements the operator documentation above; follow the operator guides for installation, calibration, and recovery procedures.
+
+- [Architecture overview](openwiki/architecture.md)
+- [Source map](openwiki/source-map.md)
+- [Chroot environment and web runtime](openwiki/workflows/chroot-and-web-runtime.md)
+- [Configuration and printing workflows](openwiki/workflows/configuration-and-printing.md)
+- [Screen modes and Feather](openwiki/workflows/screens-and-feather.md)
+- [Built-in Klipper patching](openwiki/workflows/klipper-patching.md)
+- [Forge-X Klipper extensions](openwiki/workflows/klipper-extensions.md)
+- [Operations and recovery](openwiki/workflows/operations-and-recovery.md)
+- [Integrations](openwiki/integrations.md)
+- [Testing and change guide](openwiki/testing-and-change-guide.md)
+
 If you encounter any issues, feel free to join Telegram group for support: [Join here](https://t.me/+ihE2Ry8kBNkwYzhi).
 You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfeX) (Navigate to: Forums → mods-and-projects → Forge-X)
 
@@ -185,4 +200,3 @@ Here are some of the wonderful people:
 #### Anonymous donations
 
 I also want to express my heartfelt gratitude to those who have supported the project anonymously through cryptocurrency.
-

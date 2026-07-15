@@ -1,0 +1,6 @@
+{
+  "updatedAt": "2026-07-15T15:00:47Z",
+  "command": "update",
+  "gitHead": "6c718a07edfb0a475dd5f062bbee24efb4ef615f",
+  "scope": "built-in Klipper patching; chroot environment and web runtime; Klipper extensions; screen modes and Feather"
+}
