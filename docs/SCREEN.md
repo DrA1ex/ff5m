@@ -24,10 +24,13 @@ temperatures, and estimated time while also supporting:
 - pausing, resuming, and cancelling a print;
 - progress, elapsed/estimated time, layer metadata and macro status;
 - guided PLA/PETG/ABS/ABS-PC filament loading during idle or pause;
-- homing and safe XYZ movement while idle;
+- homing and safe XYZ movement while idle, using either fixed jog steps or
+  acceleration-limited XY/Z joystick controls;
 - preheat presets plus heater and part-fan control while idle;
 - first-layer Z adjustment, bed-screw guidance and an `auto` bed-mesh workflow;
 - brightness, ECO brightness and sound settings;
+- browsing and editing Forge-X mod parameters with switches, option selectors,
+  and numeric or text input;
 - Wi-Fi scanning/password entry and Ethernet DHCP selection;
 - local Restore/Cleanup/Later handling for Power Loss Recovery.
 
@@ -161,6 +164,11 @@ Documentation for `typer` is available here: [link](/docs/TYPER.md)
 For examples you can view [feather.cfg](/config/feather.cfg) for macros and [screen.sh](/.shell/screen.sh) script.
 Implementation of Feather itself you can find in [feather_screen.py](/.py/klipper/plugins/feather_screen.py)
 and its renderer/layout helpers in [feather_ui.py](/.py/klipper/plugins/feather_ui.py).
+The lightweight mod-parameter editor helpers live in
+[feather_mod_settings.py](/.py/klipper/plugins/feather_mod_settings.py).
+Joystick normalization, inertia and boundary braking are kept in
+[feather_joystick.py](/.py/klipper/plugins/feather_joystick.py); motion remains
+inside the Klipper process and does not add an idle service.
 
 ### Custom Loading and Splash Screens
 

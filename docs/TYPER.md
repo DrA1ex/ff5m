@@ -136,6 +136,10 @@ Flushes pending changes to the screen.
 `hitbox` associates a rectangular screen region with a short ASCII action ID.
 `clear-hitboxes` removes the regions from the previous page. Hitboxes do not
 execute commands; a matching touch writes `tap <action-id>` to `--event-pipe`.
+Add `--continuous` for controls that need pointer coordinates while held. These
+regions write `touch <action-id> begin|move|end <x> <y>`. A stationary press
+emits a `move` heartbeat every 100 ms so the consumer can detect a lost input
+stream and stop safely.
 
 ```bash
 typer --double-buffered \
@@ -146,10 +150,13 @@ typer --double-buffered \
 # Sent as part of a batch frame:
 --batch clear-hitboxes
 --batch hitbox --id print.pause --pos 100 300 --size 250 100
+--batch hitbox --id move.joy.xy --pos 25 75 --size 430 285 --continuous
 ```
 
 Action IDs are limited to 1–64 characters from `A-Z`, `a-z`, `0-9`, `_`, `.`,
 `:`, and `-`. Later hitboxes take precedence when regions overlap.
+Continuous delivery is a transport feature only: `typer` never interprets the
+action or controls printer motion itself.
 
 ### `batch` - Process multiple commands
 

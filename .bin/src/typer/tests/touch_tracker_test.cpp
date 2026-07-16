@@ -99,6 +99,29 @@ void unrelated_events_ignored() {
     TYPER_CHECK(!release(unrelated_tracker));
 }
 
+void continuous_reports_press_move_release() {
+    using namespace typer::interactive;
+    TouchTracker tracker;
+    tracker.process_report(ev_abs, abs_x, 100);
+    tracker.process_report(ev_abs, abs_y, 200);
+    tracker.process_report(ev_key, btn_touch, 1);
+    auto pressed = tracker.process_report(ev_syn, syn_report, 0);
+    TYPER_CHECK(pressed && pressed->phase == TouchPhase::PRESS);
+    TYPER_CHECK(pressed->point.x == 100 && pressed->point.y == 200);
+
+    tracker.process_report(ev_abs, abs_x, 140);
+    tracker.process_report(ev_abs, abs_y, 230);
+    auto moved = tracker.process_report(ev_syn, syn_report, 0);
+    TYPER_CHECK(moved && moved->phase == TouchPhase::MOVE);
+    TYPER_CHECK(moved->point.x == 140 && moved->point.y == 230);
+
+    tracker.process_report(ev_key, btn_touch, 0);
+    auto released = tracker.process_report(ev_syn, syn_report, 0);
+    TYPER_CHECK(released && released->phase == TouchPhase::RELEASE);
+    TYPER_CHECK(!released->tap);
+    TYPER_CHECK(released->start.x == 100 && released->start.y == 200);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -111,5 +134,7 @@ int main(int argc, char **argv) {
         {"swipe_rejected", swipe_rejected},
         {"returned_swipe_rejected", returned_swipe_rejected},
         {"unrelated_events_ignored", unrelated_events_ignored},
+        {"continuous_reports_press_move_release",
+         continuous_reports_press_move_release},
     });
 }

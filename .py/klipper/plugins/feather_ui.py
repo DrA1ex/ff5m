@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import time
+from collections import deque
 
 
 DRAW_PIPE = "/tmp/typer"
@@ -28,6 +29,10 @@ FOOTER_Y = 444
 FOOTER_HEIGHT = 32
 CONTENT_BOTTOM = FOOTER_Y - 2
 MAX_PENDING_DRAW = 256 * 1024
+# Keep each FIFO write below Linux PIPE_BUF.  An atomic frame is either fully
+# accepted or retried, so a page cannot remain half-rendered until a later UI
+# update happens to drain the tail.
+MAX_ATOMIC_DRAW = 3584
 COLOR_BG = "030607"
 COLOR_PANEL = "050c0f"
 COLOR_CYAN = "35d9e6"
@@ -64,6 +69,9 @@ class Page(enum.Enum):
     RECOVERY_PROMPT = 22
     RECOVERY_CONFIRM = 23
     MESSAGE = 24
+    MOD_SETTINGS = 26
+    MOD_ENUM = 27
+    MOD_VALUE = 28
 
 
 class PrintState(enum.Enum):
@@ -108,6 +116,7 @@ class FeatherRenderer:
         self._buttons = {}
         self._generation = 0
         self._pending_draw = bytearray()
+        self._pending_frames = deque()
         self._retry_scheduled = False
         self._retry_scheduler = None
         self._busy_label = None
@@ -186,6 +195,7 @@ class FeatherRenderer:
             args, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         self.draw_fd = os.open(DRAW_PIPE, os.O_RDWR | os.O_NONBLOCK)
         self._pending_draw = bytearray()
+        self._pending_frames.clear()
         self._retry_scheduled = False
         self._busy_label = None
         self._last_footer = None
@@ -208,6 +218,7 @@ class FeatherRenderer:
                     self.process.kill()
             self.process = None
         self._pending_draw = bytearray()
+        self._pending_frames.clear()
         self._retry_scheduled = False
         self._busy_label = None
         self._last_footer = None
@@ -217,16 +228,39 @@ class FeatherRenderer:
     def send(self, commands):
         if self.draw_fd is None or not commands:
             return
-        payload = "\n".join(commands + ["--batch flush", "--end", ""]).encode("utf-8")
-        if len(self._pending_draw) + len(payload) > MAX_PENDING_DRAW:
+        payloads = self._encode_frames(commands)
+        pending_size = (len(self._pending_draw)
+                        + sum(len(frame) for frame in self._pending_frames))
+        if pending_size + sum(len(payload) for payload in payloads) > MAX_PENDING_DRAW:
             logging.error("[feather_screen] pending draw data exceeded %d bytes; "
                           "restarting renderer", MAX_PENDING_DRAW)
             self._pending_draw = bytearray()
+            self._pending_frames.clear()
             if self.process is not None and self.process.poll() is None:
                 self.process.terminate()
             return
-        self._pending_draw.extend(payload)
+        self._pending_frames.extend(payloads)
         self._drain_draw_queue()
+
+    @staticmethod
+    def _encode_frames(commands):
+        suffix = ["--batch flush", "--end", ""]
+        frames = []
+        current = []
+        size = len("\n".join(suffix).encode("utf-8"))
+        for command in commands:
+            line_size = len((str(command) + "\n").encode("utf-8"))
+            if current and size + line_size > MAX_ATOMIC_DRAW:
+                frames.append(bytearray(
+                    "\n".join(current + suffix).encode("utf-8")))
+                current = []
+                size = len("\n".join(suffix).encode("utf-8"))
+            current.append(str(command))
+            size += line_size
+        if current:
+            frames.append(bytearray(
+                "\n".join(current + suffix).encode("utf-8")))
+        return frames
 
     def _schedule_draw_retry(self):
         if self._retry_scheduled or self._retry_scheduler is None:
@@ -239,21 +273,25 @@ class FeatherRenderer:
         self._drain_draw_queue()
 
     def _drain_draw_queue(self):
-        if self.draw_fd is None or not self._pending_draw:
+        if self.draw_fd is None:
             return
-        try:
-            while self._pending_draw:
+        while self._pending_draw or self._pending_frames:
+            if not self._pending_draw:
+                self._pending_draw = self._pending_frames.popleft()
+            try:
                 written = os.write(self.draw_fd, self._pending_draw)
                 if written == 0:
                     raise OSError("typer draw pipe closed")
                 del self._pending_draw[:written]
-            # Do not retain a large allocation after an earlier partial write.
-            self._pending_draw = bytearray()
-        except OSError as error:
-            if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                self._schedule_draw_retry()
+                if not self._pending_draw:
+                    # Do not retain a large allocation after an earlier write.
+                    self._pending_draw = bytearray()
+            except OSError as error:
+                if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    self._schedule_draw_retry()
+                    return
+                logging.exception("[feather_screen] unable to draw")
                 return
-            logging.exception("[feather_screen] unable to draw")
 
     def decode_action(self, action):
         """Reject taps emitted for a page that has already been replaced."""
@@ -333,9 +371,14 @@ class FeatherRenderer:
         return value[:max_chars - len(ellipsis)] + ellipsis
 
     @staticmethod
-    def hitbox(action, x, y, width, height):
-        return "--batch hitbox --id %s -p %d %d -s %d %d" % (
+    def hitbox(action, x, y, width, height, continuous=False):
+        command = "--batch hitbox --id %s -p %d %d -s %d %d" % (
             action, x, y, width, height)
+        return command + (" --continuous" if continuous else "")
+
+    def action_hitbox(self, action, x, y, width, height, continuous=False):
+        return self.hitbox(self._wire_action(action), x, y, width, height,
+                           continuous)
 
     @classmethod
     def composite_button(cls, action, x, y, width, height, label, state, font,

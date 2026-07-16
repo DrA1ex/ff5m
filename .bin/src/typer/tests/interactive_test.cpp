@@ -68,6 +68,18 @@ void action_length_limit() {
     TYPER_CHECK(action_at(5, 5).empty());
 }
 
+void continuous_hitbox_flag() {
+    using namespace typer::interactive;
+    clear_hitboxes();
+    register_hitbox(10, 20, 100, 80, "move.xy", true);
+    register_hitbox(30, 40, 20, 20, "normal", false);
+    TYPER_CHECK(continuous_at(10, 20));
+    TYPER_CHECK(action_at(15, 25) == "move.xy");
+    TYPER_CHECK(!continuous_at(35, 45));
+    TYPER_CHECK(action_at(35, 45) == "normal");
+    TYPER_CHECK(!continuous_at(500, 500));
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -79,5 +91,6 @@ int main(int argc, char **argv) {
         {"clear_registry", clear_registry},
         {"registry_limit", registry_limit},
         {"action_length_limit", action_length_limit},
+        {"continuous_hitbox_flag", continuous_hitbox_flag},
     });
 }

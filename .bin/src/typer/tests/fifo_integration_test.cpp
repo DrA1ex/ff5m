@@ -74,6 +74,7 @@ void fragmented_frames_and_touch_dispatch() {
 
     clear_hitboxes();
     register_hitbox(100, 200, 100, 100, "42:dialog.confirm");
+    register_hitbox(300, 200, 150, 150, "42:move.joy.xy", true);
     std::mutex frames_mutex;
     std::vector<std::string> frames;
     std::exception_ptr worker_error;
@@ -140,6 +141,35 @@ void fragmented_frames_and_touch_dispatch() {
         }
     }
     TYPER_CHECK(event == "tap 42:dialog.confirm\n");
+
+    TestInputEvent continuous_touch[] = {
+        {{}, EV_ABS, ABS_X, 350},
+        {{}, EV_ABS, ABS_Y, 250},
+        {{}, EV_KEY, BTN_TOUCH, 1},
+        {{}, EV_SYN, SYN_REPORT, 0},
+        {{}, EV_ABS, ABS_X, 390},
+        {{}, EV_ABS, ABS_Y, 280},
+        {{}, EV_SYN, SYN_REPORT, 0},
+        {{}, EV_KEY, BTN_TOUCH, 0},
+        {{}, EV_SYN, SYN_REPORT, 0},
+    };
+    write_all(touch_writer, continuous_touch, sizeof(continuous_touch));
+    event.clear();
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        pollfd fd{event_reader, POLLIN, 0};
+        if (poll(&fd, 1, 5) > 0 && (fd.revents & POLLIN)) {
+            char buffer[256];
+            auto count = read(event_reader, buffer, sizeof(buffer));
+            if (count > 0) event.append(buffer, static_cast<size_t>(count));
+        }
+        if (event.find("touch 42:move.joy.xy end 390 280\n")
+                != std::string::npos) break;
+    }
+    TYPER_CHECK(event.find("touch 42:move.joy.xy begin 350 250\n") == 0);
+    TYPER_CHECK(event.find("touch 42:move.joy.xy move 390 280\n")
+                != std::string::npos);
+    TYPER_CHECK(event.find("touch 42:move.joy.xy end 390 280\n")
+                != std::string::npos);
 
     request_stop();
     worker.join();

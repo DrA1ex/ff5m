@@ -58,8 +58,9 @@ config/feather.cfg
   └─ [feather_screen] enables the Forge-X Klipper extension
        ├─ feather_screen.py owns pages, validation, and actions
        ├─ feather_ui.py owns drawing and fixed 800x480 layout primitives
+       ├─ feather_joystick.py owns touch normalization and motion ramps
        │    ├─ draw FIFO /tmp/typer → typer → framebuffer
-       │    └─ event FIFO /tmp/feather-events ← named hitbox actions
+       │    └─ event FIFO /tmp/feather-events ← tap or held-pointer actions
        └─ /dev/input/guppy ← ts_uinput ← physical touchscreen
 ```
 
@@ -68,7 +69,7 @@ config/feather.cfg
 3. The bundled `typer` executable is exposed as `/root/printer_data/bin/typer`. Its interactive module polls the draw FIFO and calibrated Linux input fd in one thread, maintains only the current page’s hitboxes, and emits opaque action IDs rather than executing printer commands.
 4. [`.shell/commands/znetwork.sh`](../../.shell/commands/znetwork.sh) owns bounded asynchronous Wi-Fi/Ethernet operations. The plugin polls the child process from its existing one-second timer instead of blocking Klipper’s reactor. Scan, Wi-Fi connect and Ethernet DHCP are terminated after 15, 45 and 30 seconds respectively.
 
-The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, layer metadata, filament sensor, resurrection state, fan and display-status progress. It presents a persistent footer, file caption, progress bar, macro status, estimated/elapsed time, guided workflows and a bounded error/disconnect panel. Full pages redraw on navigation/state changes; footer, temperatures and progress update from the existing one-second timer.
+The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, layer metadata, filament sensor, resurrection state, fan and display-status progress. It presents a persistent footer, file caption, progress bar, macro status, estimated/elapsed time, guided workflows and a bounded error/disconnect panel. Full pages redraw on navigation/state changes; footer, temperatures and progress update from the existing one-second timer. The Move page can also register continuous hitboxes: `typer` supplies coordinates and heartbeats while Feather queues short native toolhead segments with the configured velocity, half acceleration, a bounded queue horizon, and `MOVE_SAFE`-equivalent limits.
 
 Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
 
@@ -86,7 +87,7 @@ FEATHER_PRINT_STATUS S="PREPARING..."
 
 For a deliberately small custom indicator or status overlay, use the shipped `typer` tool and its documented batch interface; [`docs/TYPER.md`](../../docs/TYPER.md) is the operator/developer reference. The established Feather plugin is the canonical example of safe FIFO ownership, double-buffered drawing, and state refresh.
 
-Do **not** start a second process that writes arbitrary concurrent data to `/tmp/typer`. New actions must be registered as hitboxes, revalidate current `print_stats`/homing state in Python, and dispatch through reviewed Klipper macros or a bounded system helper.
+Do **not** start a second process that writes arbitrary concurrent data to `/tmp/typer`. New actions must be registered as hitboxes and revalidate current `print_stats`/homing state in Python. Normal actions dispatch through reviewed Klipper macros or a bounded system helper. Direct toolhead access is reserved for the joystick planner, which must retain its acceleration, queue-horizon, watchdog, homing, and boundary tests.
 
 ## Guppy versus Feather
 

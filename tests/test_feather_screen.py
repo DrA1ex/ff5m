@@ -1,4 +1,5 @@
 import importlib.util
+import enum
 import errno
 import json
 import pathlib
@@ -13,6 +14,14 @@ SPEC = importlib.util.spec_from_file_location("feather_screen", MODULE_PATH)
 FEATHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FEATHER)
 UI = __import__("feather_ui")
+MOD_UI = __import__("feather_mod_settings")
+
+MOD_PARAMS_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
+                   "plugins" / "mod_params.py")
+MOD_PARAMS_SPEC = importlib.util.spec_from_file_location(
+    "feather_mod_params", MOD_PARAMS_PATH)
+MOD_PARAMS = importlib.util.module_from_spec(MOD_PARAMS_SPEC)
+MOD_PARAMS_SPEC.loader.exec_module(MOD_PARAMS)
 
 RESURRECTION_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
                      "plugins" / "resurrection.py")
@@ -49,6 +58,66 @@ class Reactor:
 
     def monotonic(self):
         return self.now
+
+    def register_callback(self, callback, when=None):
+        callback(self.now if when is None else when)
+
+
+class ModManager:
+    def __init__(self, params, variables):
+        self.params = params
+        self.variables = dict(variables)
+        self.updated = []
+
+    def set_value(self, key, value):
+        param = next(param for param in self.params if param.key == key)
+        kind = MOD_UI.parameter_kind(param)
+        if kind == "bool":
+            value = bool(int(value))
+        elif kind == "enum":
+            value = param.type[str(value)].value
+        elif kind == "int":
+            value = int(value)
+        elif kind == "float":
+            value = float(value)
+        else:
+            value = str(value)
+        self.variables[key] = value
+        self.updated.append((key, value))
+        return value
+
+
+def mod_param(key, param_type, default, label, description="Description",
+              options=None, readonly=False, hidden=False):
+    return type("Param", (), {
+        "key": key, "type": param_type, "default": default,
+        "label": label, "description": description, "options": options,
+        "readonly": readonly, "hidden": hidden, "warning": None,
+    })()
+
+
+def mod_controller(params, variables):
+    controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    controller.renderer = FEATHER.FeatherRenderer()
+    controller.draw_batches = []
+    controller.renderer.send = controller.draw_batches.append
+    controller.params = ModManager(params, variables)
+    controller.reactor = Reactor()
+    controller.print_stats = StatusObject({"state": "standby"})
+    controller.virtual_sdcard = type("SD", (), {"is_active": lambda self: False})()
+    controller.print_state = FEATHER.PrintState.IDLE
+    controller.page = FEATHER.Page.MOD_SETTINGS
+    controller.previous_page = FEATHER.Page.SETTINGS
+    controller.mod_page = 0
+    controller.mod_parameter = None
+    controller.mod_edit_value = ""
+    controller.mod_enum_selection = None
+    controller.mod_keyboard_shift = False
+    controller.mod_keyboard_symbols = False
+    controller.toast_until = 0
+    controller.toast_message = ""
+    controller._toast = lambda message: None
+    return controller
 
 
 class FeatherUtilitiesTest(unittest.TestCase):
@@ -140,6 +209,12 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.CALIBRATION_CONFIRM,
                                 "cal.material.PETG"))
         self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))
+        self.assertTrue(allowed(FEATHER.Page.SETTINGS, "settings.mod"))
+        self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
+        self.assertFalse(allowed(FEATHER.Page.MOD_ENUM, "mod.item.12"))
+        self.assertTrue(allowed(FEATHER.Page.MOD_ENUM, "mod.option.2"))
+        self.assertTrue(allowed(FEATHER.Page.MOD_VALUE, "mod.key.hash"))
+        self.assertFalse(allowed(FEATHER.Page.MOD_SETTINGS, "mod.save"))
 
     def test_network_status_parser_is_bounded_to_public_fields(self):
         parsed = FEATHER.FeatherScreen.parse_network_status(
@@ -158,6 +233,58 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(normalize(None), "n/a")
         self.assertEqual(normalize("abs/pc"), "ABS-PC")
         self.assertEqual(normalize("custom"), "n/a")
+
+    def test_visible_mod_parameters_have_screen_descriptions(self):
+        declaration = json.loads((pathlib.Path(__file__).parents[1] /
+                                  "mod_params.json").read_text(encoding="utf-8"))
+        visible = [item for item in declaration["parameters"]
+                   if not item.get("hidden", False)]
+        self.assertTrue(visible)
+        self.assertTrue(all(item.get("description") for item in visible))
+
+    def test_mod_value_validation_is_type_specific_and_bounded(self):
+        integer = mod_param("count", int, 0, "Count")
+        decimal = mod_param("offset", float, 0.0, "Offset")
+        text = mod_param("name", str, "", "Name")
+        self.assertEqual(MOD_UI.validate_value(integer, "-12"), -12)
+        self.assertEqual(MOD_UI.validate_value(decimal, ".25"), 0.25)
+        self.assertEqual(MOD_UI.validate_value(text, "hello world"),
+                         "hello world")
+        with self.assertRaisesRegex(ValueError, "whole number"):
+            MOD_UI.validate_value(integer, "1.5")
+        with self.assertRaisesRegex(ValueError, "printable ASCII"):
+            MOD_UI.validate_value(text, "bad\nvalue")
+        with self.assertRaisesRegex(ValueError, "too long"):
+            MOD_UI.validate_value(text, "x" * 65)
+
+    def test_mod_boolean_switch_uses_declared_semantic_labels(self):
+        parameter = mod_param("disable_priming", bool, False, "Priming",
+                              options=["YES", "NO"])
+        self.assertEqual(MOD_UI.bool_labels(parameter), ("YES", "NO"))
+        parameter.options = None
+        self.assertEqual(MOD_UI.bool_labels(parameter), ("OFF", "ON"))
+
+    def test_mod_params_public_setter_preserves_types_and_notifies(self):
+        Display = enum.Enum("Display", {"FEATHER": 1, "GUPPY": 3})
+        parameter = MOD_PARAMS.Parameter(
+            key="display", type=Display, default=1, label="Display")
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.params_map = {"display": parameter}
+        manager.variables = {"display": 1}
+        saved = []
+        notified = []
+        manager._save_all = lambda: saved.append(dict(manager.variables))
+        manager.changes_gcode_present = True
+        manager.reactor = Reactor()
+        manager._notify_changed = lambda param: notified.append(param.key)
+
+        result = manager.set_value("display", "GUPPY")
+
+        self.assertEqual(result, "GUPPY")
+        self.assertEqual(manager.variables["display"], 3)
+        self.assertEqual(saved, [{"display": 3}])
+        self.assertEqual(notified, ["display"])
 
     def test_screws_output_parser(self):
         parse = FEATHER.FeatherScreen.parse_screw_result
@@ -327,6 +454,47 @@ class RendererStateTest(unittest.TestCase):
             retries[0](0.0)
         self.assertFalse(renderer._pending_draw)
         self.assertIn(b"--batch clear", writes[1])
+
+    def test_large_draw_is_split_into_atomic_complete_frames(self):
+        commands = [
+            "--batch text -p 10 %d -t %s" % (index, "x" * 90)
+            for index in range(48)
+        ]
+        frames = FEATHER.FeatherRenderer._encode_frames(commands)
+        self.assertGreater(len(frames), 1)
+        self.assertTrue(all(len(frame) <= UI.MAX_ATOMIC_DRAW
+                            for frame in frames))
+        self.assertTrue(all(frame.endswith(b"--batch flush\n--end\n")
+                            for frame in frames))
+        joined = b"\n".join(frames)
+        for command in commands:
+            self.assertIn(command.encode("utf-8"), joined)
+
+    def test_atomic_draw_frames_resume_after_fifo_becomes_writable(self):
+        renderer = FEATHER.FeatherRenderer()
+        renderer.draw_fd = 7
+        retries = []
+        renderer.set_retry_scheduler(retries.append)
+        commands = ["--batch text -t %s" % ("x" * 100) for _ in range(48)]
+        accepted = []
+        calls = 0
+
+        def write(_fd, payload):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise BlockingIOError(errno.EAGAIN, "full")
+            accepted.append(bytes(payload))
+            return len(payload)
+
+        with mock.patch("os.write", side_effect=write):
+            renderer.send(commands)
+            self.assertEqual(len(retries), 1)
+            self.assertTrue(renderer._pending_draw)
+            retries[0](0.0)
+        self.assertFalse(renderer._pending_draw)
+        self.assertFalse(renderer._pending_frames)
+        self.assertGreater(len(accepted), 1)
 
     def test_pending_draw_memory_is_bounded_and_renderer_is_restarted(self):
         renderer = FEATHER.FeatherRenderer()
@@ -516,6 +684,31 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-p 140 158", homing_update)
         self.assertIn("-p 365 158", homing_update)
 
+    def test_joystick_move_page_registers_two_continuous_regions(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.move_mode = "joystick"
+        controller.joystick = type("Planner", (), {
+            "xy_speed": 600.0, "z_speed": 25.0})()
+        controller.toolhead = StatusObject({
+            "position": (1.0, 2.0, 3.0, 0.0), "homed_axes": "xyz"})
+        controller._require_idle = lambda: None
+
+        controller._render_move()
+        drawing = "\n".join(batches[0])
+
+        self.assertIn("[STEP|&gt;JOY]".replace("&gt;", ">"), drawing)
+        self.assertIn("UP / Z-", drawing)
+        self.assertIn("DOWN / Z+", drawing)
+        self.assertIn("--id 1:move.joy.xy", drawing)
+        self.assertIn("--id 1:move.joy.z", drawing)
+        self.assertEqual(drawing.count("--continuous"), 2)
+        self.assertNotIn("--continuous", UI.FeatherRenderer.hitbox(
+            "normal", 0, 0, 10, 10))
+
 
 class ControllerSafetyTest(unittest.TestCase):
     def test_every_page_routes_to_a_renderer(self):
@@ -541,6 +734,9 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.CALIBRATION_PROGRESS: "_render_calibration_progress",
             FEATHER.Page.CALIBRATION_RESULT: "_render_calibration_result",
             FEATHER.Page.SETTINGS: "_render_settings",
+            FEATHER.Page.MOD_SETTINGS: "_render_mod_settings",
+            FEATHER.Page.MOD_ENUM: "_render_mod_enum",
+            FEATHER.Page.MOD_VALUE: "_render_mod_value",
             FEATHER.Page.NETWORK_HOME: "_render_network_home",
             FEATHER.Page.WIFI_SCAN: "_render_wifi_scan",
             FEATHER.Page.WIFI_PASSWORD: "_render_keyboard",
@@ -608,6 +804,102 @@ class ControllerSafetyTest(unittest.TestCase):
         drawing = "\n".join(batches[0])
         self.assertIn('-t " -5"', drawing)
         self.assertIn('-t "+5"', drawing)
+        self.assertIn("MOD PARAMETERS", drawing)
+        self.assertIn("[ OFF | &gt;ON&lt; ]".replace("&gt;", ">")
+                      .replace("&lt;", "<"), drawing)
+
+    def test_mod_settings_list_scrolls_and_uses_ascii_toggles(self):
+        params = [mod_param("flag%d" % index, bool, False,
+                            "Feature %d" % index,
+                            "Feature description %d." % index)
+                  for index in range(7)]
+        controller = mod_controller(params, {param.key: False for param in params})
+
+        controller._render_mod_settings()
+        first = "\n".join(controller.draw_batches[-1])
+        self.assertIn("01-05 / 07", first)
+        self.assertIn("[ &gt;OFF&lt; | ON ]".replace("&gt;", ">")
+                      .replace("&lt;", "<"), first)
+        self.assertIn("--id 1:mod.next", first)
+        self.assertNotIn("--id 1:mod.prev", first)
+
+        controller._handle_mod_action("mod.next")
+        second = "\n".join(controller.draw_batches[-1])
+        self.assertIn("06-07 / 07", second)
+        self.assertIn("--id 2:mod.prev", second)
+        self.assertNotIn("--id 2:mod.next", second)
+
+    def test_mod_boolean_toggle_updates_without_opening_an_editor(self):
+        flag = mod_param("camera", bool, False, "Alt camera")
+        controller = mod_controller([flag], {"camera": False})
+
+        controller._handle_mod_action("mod.item.0")
+
+        self.assertEqual(controller.params.updated, [("camera", True)])
+        self.assertIsNone(controller.mod_parameter)
+        self.assertIn("[ OFF | &gt;ON&lt; ]".replace("&gt;", ">")
+                      .replace("&lt;", "<"),
+                      "\n".join(controller.draw_batches[-1]))
+
+    def test_mod_enum_selection_is_staged_until_apply(self):
+        Display = enum.Enum("Display", {"STOCK": 0, "FEATHER": 1,
+                                         "HEADLESS": 2, "GUPPY": 3})
+        param = mod_param("display", Display, 1, "Display",
+                          "Choose the active local screen.",
+                          {"STOCK": "Stock", "FEATHER": "Feather",
+                           "HEADLESS": "Headless", "GUPPY": "Guppy"})
+        controller = mod_controller([param], {"display": 1})
+
+        controller._handle_mod_action("mod.item.0")
+        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
+        self.assertEqual(controller.params.updated, [])
+        controller._handle_mod_action("mod.option.3")
+        drawing = "\n".join(controller.draw_batches[-1])
+        self.assertIn("GUPPY // GUPPY  [SELECTED]", drawing)
+        controller._handle_mod_action("mod.apply")
+
+        self.assertEqual(controller.params.updated, [("display", 3)])
+        self.assertEqual(controller.page, FEATHER.Page.MOD_SETTINGS)
+
+    def test_mod_numeric_editor_rejects_decimal_for_integer(self):
+        param = mod_param("park_dz", int, 50, "Park offset")
+        controller = mod_controller([param], {"park_dz": 50})
+        controller._handle_mod_action("mod.item.0")
+        self.assertEqual(controller.page, FEATHER.Page.MOD_VALUE)
+        controller.mod_edit_value = ""
+        controller._handle_mod_action("mod.key.7")
+        controller._handle_mod_action("mod.dot")
+        controller._handle_mod_action("mod.key.5")
+        self.assertEqual(controller.mod_edit_value, "75")
+        controller._handle_mod_action("mod.save")
+        self.assertEqual(controller.params.updated, [("park_dz", 75)])
+
+    def test_mod_string_editor_supports_shift_symbols_space_and_backspace(self):
+        param = mod_param("midi_on", str, "", "Startup MIDI")
+        controller = mod_controller([param], {"midi_on": ""})
+        controller._handle_mod_action("mod.item.0")
+        controller._handle_mod_action("mod.shift")
+        controller._handle_mod_action("mod.key.a")
+        controller._handle_mod_action("mod.space")
+        controller._handle_mod_action("mod.symbols")
+        controller._handle_mod_action("mod.key.hash")
+        controller._handle_mod_action("mod.backspace")
+        controller._handle_mod_action("mod.key.dot")
+        controller._handle_mod_action("mod.save")
+
+        self.assertEqual(controller.params.updated, [("midi_on", "A .")])
+
+    def test_mod_page_hitboxes_stay_above_persistent_footer(self):
+        params = [mod_param("flag%d" % index, bool, False,
+                            "Feature %d" % index)
+                  for index in range(5)]
+        controller = mod_controller(params, {param.key: False for param in params})
+        controller._render_mod_settings()
+        footer = (0, UI.FOOTER_Y, UI.SCREEN_WIDTH, UI.FOOTER_HEIGHT)
+        for action, spec in controller.renderer._buttons.items():
+            if action == "nav.back":
+                continue
+            self.assertFalse(UI.rectangles_overlap(spec[:4], footer), action)
 
     def test_eco_wake_consumes_first_touch(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

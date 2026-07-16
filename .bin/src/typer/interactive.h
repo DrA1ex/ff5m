@@ -15,18 +15,36 @@ struct TouchPoint {
     int y;
 };
 
+enum class TouchPhase {
+    PRESS,
+    MOVE,
+    RELEASE,
+};
+
+struct TouchReport {
+    TouchPhase phase;
+    TouchPoint point;
+    TouchPoint start;
+    bool tap;
+};
+
 class TouchTracker {
 public:
     std::optional<TouchPoint> process(uint16_t type, uint16_t code, int32_t value);
+    std::optional<TouchReport> process_report(
+        uint16_t type, uint16_t code, int32_t value);
 
 private:
     int x_ = 0, y_ = 0, start_x_ = 0, start_y_ = 0, max_distance_ = 0;
+    int reported_x_ = 0, reported_y_ = 0;
     bool down_ = false, starting_ = false, released_ = false;
 };
 
-void register_hitbox(int x, int y, int width, int height, std::string action);
+void register_hitbox(int x, int y, int width, int height, std::string action,
+                     bool continuous = false);
 void clear_hitboxes();
 [[nodiscard]] std::string action_at(int x, int y);
+[[nodiscard]] bool continuous_at(int x, int y);
 void request_stop();
 
 void run(const std::string &draw_pipe,

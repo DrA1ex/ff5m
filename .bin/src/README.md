@@ -194,6 +194,7 @@ and patched G-code modules from the repository root:
 PYTHONDONTWRITEBYTECODE=1 \
   python3 -m unittest \
     tests/test_feather_screen.py \
+    tests/test_feather_joystick.py \
     tests/test_feather_workflows.py \
     tests/test_gcode_patch.py \
     tests/test_network_scripts.py \
@@ -211,15 +212,21 @@ The suite checks page routing, stale and repeated actions, button states, footer
 layout, ECO wake behavior, heater limits, filament safety, first-layer Z limits,
 bed-screw parsing, mesh commands, file/path safety, print transitions, fragmented
 C++ tap events, network credentials/timeouts, recovery status, and immediate
-G-code command serialization. Network tests also verify transactional interface
-switching, persisted boot mode, DNS cleanup, and shell syntax.
+G-code command serialization. They also cover mod-parameter switches, option and
+value editors, scrolling, atomic splitting of large draw frames, continuous
+touch delivery, joystick inertia, and boundary braking. Network tests verify
+transactional interface switching, persisted boot mode, DNS cleanup, and shell
+syntax.
 
 Syntax-check the Klipper plugins separately:
 
 ```shell
 python3 -m py_compile \
+  .py/klipper/plugins/feather_joystick.py \
+  .py/klipper/plugins/feather_mod_settings.py \
   .py/klipper/plugins/feather_ui.py \
   .py/klipper/plugins/feather_screen.py \
+  .py/klipper/plugins/mod_params.py \
   .py/klipper/plugins/resurrection.py
 ```
 

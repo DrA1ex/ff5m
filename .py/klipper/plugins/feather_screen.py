@@ -16,11 +16,15 @@ import time
 
 try:
     from .feather_ui import FeatherRenderer, Page, PrintState
+    from . import feather_mod_settings as mod_ui
+    from . import feather_joystick as joystick_ui
 except (ImportError, ValueError):
     # Host tests load this file directly rather than as a Klipper package.
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
     from feather_ui import FeatherRenderer, Page, PrintState
+    import feather_mod_settings as mod_ui
+    import feather_joystick as joystick_ui
 
 
 NETWORK_HELPER = "/root/printer_data/scripts/commands/znetwork.sh"
@@ -48,7 +52,7 @@ EXACT_ACTIONS = {
     Page.PRINTING: ("print.pause", "print.filament", "print.cancel", "print.z"),
     Page.PAUSED: ("print.resume", "print.filament", "print.cancel", "print.z"),
     Page.CANCEL_CONFIRM: ("nav.back", "print.cancel.back", "print.cancel.confirm"),
-    Page.CONTROL_MOVE: ("nav.back",),
+    Page.CONTROL_MOVE: ("nav.back", "move.mode", "move.joy.xy", "move.joy.z"),
     Page.CONTROL_HEAT: ("nav.back",),
     Page.FILAMENT_MATERIAL: ("nav.back", "filament.PLA", "filament.PETG",
                              "filament.ABS", "filament.ABS-PC"),
@@ -61,7 +65,12 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.eco.minus",
-                    "settings.eco.plus", "settings.sound"),
+                    "settings.eco.plus", "settings.sound", "settings.mod"),
+    Page.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next"),
+    Page.MOD_ENUM: ("nav.back", "mod.cancel", "mod.apply"),
+    Page.MOD_VALUE: ("nav.back", "mod.cancel", "mod.save", "mod.backspace",
+                     "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
+                     "mod.space"),
     Page.NETWORK_HOME: ("nav.back", "net.scan", "net.ethernet", "net.retry"),
     Page.WIFI_SCAN: ("nav.back", "net.prev", "net.next", "net.rescan"),
     Page.WIFI_PASSWORD: ("nav.back", "net.connect", "net.password.toggle"),
@@ -132,8 +141,22 @@ class FeatherScreen:
         self.file_entries = []
         self.selected_file = None
         self.jog_step = 1.0
+        self.move_mode = "step"
+        self.joystick = None
+        self.joystick_timer = None
+        self.joystick_queued = False
+        self.joystick_action = None
+        self.joystick_suppressed = None
         self.z_step = 0.01
         self.z_session_adjust = 0.0
+
+        self.mod_page = 0
+        self.mod_parameter = None
+        self.mod_edit_value = ""
+        self.mod_enum_selection = None
+        self.mod_keyboard_shift = False
+        self.mod_keyboard_symbols = False
+        self.mod_update_pending = False
 
         self.network_process = None
         self.network_stopping = []
@@ -202,6 +225,9 @@ class FeatherScreen:
             "filament_switch_sensor e0_sensor", None)
         self.resurrection = self.printer.lookup_object("resurrection", None)
         self.gcode.register_output_handler(self._handle_gcode_output)
+        self._create_joystick_planner()
+        self.joystick_timer = self.reactor.register_timer(
+            self._joystick_tick, self.reactor.NEVER)
 
         self.renderer.start()
         self.event_handle = self.reactor.register_fd(
@@ -218,9 +244,13 @@ class FeatherScreen:
 
     def _shutdown(self):
         self.print_state = PrintState.DESTROYED
+        self._stop_joystick()
+        if self.joystick_timer is not None:
+            self.reactor.unregister_timer(self.joystick_timer)
+            self.joystick_timer = None
         if self.timer is not None:
             self.reactor.unregister_timer(self.timer)
-            self.timer = None
+        self.timer = None
         if self.event_handle is not None:
             self.reactor.unregister_fd(self.event_handle)
             self.event_handle = None
@@ -269,7 +299,9 @@ class FeatherScreen:
             logging.warning("[feather_screen] oversized partial touch event discarded")
             self.event_partial = ""
         for line in lines:
-            if line.startswith("tap "):
+            if line.startswith("touch "):
+                self._handle_continuous_touch(line)
+            elif line.startswith("tap "):
                 now = self.reactor.monotonic()
                 idle_for = max(0.0, now - self.last_touch_time)
                 raw_action = line[4:].strip()
@@ -289,9 +321,67 @@ class FeatherScreen:
                 else:
                     logging.info("[feather_screen] stale touch ignored: %s", raw_action)
 
+    def _handle_continuous_touch(self, line):
+        fields = line.split()
+        if len(fields) != 5 or fields[2] not in ("begin", "move", "end"):
+            logging.warning("[feather_screen] invalid continuous touch event: %r",
+                            line[:MAX_TOUCH_EVENT])
+            return
+        raw_action, phase = fields[1], fields[2]
+        try:
+            x = max(0, min(799, int(fields[3])))
+            y = max(0, min(479, int(fields[4])))
+        except ValueError:
+            logging.warning("[feather_screen] invalid continuous coordinates")
+            return
+        now = self.reactor.monotonic()
+        self.last_touch_time = now
+
+        if raw_action == self.joystick_suppressed:
+            if phase == "end":
+                self.joystick_suppressed = None
+            return
+        decode = getattr(self.renderer, "decode_action", lambda value: value)
+        action = decode(raw_action)
+        if phase == "begin":
+            logging.info("[feather_screen] continuous begin action=%s x=%d y=%d",
+                         action if action is not None else raw_action, x, y)
+            if self._wake_if_dimmed():
+                self.joystick_suppressed = raw_action
+                return
+            if (action not in ("move.joy.xy", "move.joy.z")
+                    or self.page != Page.CONTROL_MOVE
+                    or self.move_mode != "joystick"
+                    or not self._action_allowed(self.page, action)
+                    or self.print_state != PrintState.IDLE
+                    or self.command_depth > 0):
+                self.joystick_suppressed = raw_action
+                return
+            homed = str(self.toolhead.get_status(now).get("homed_axes", ""))
+            required = "xy" if action == "move.joy.xy" else "z"
+            if any(axis not in homed for axis in required):
+                self.joystick_suppressed = raw_action
+                self._toast("HOME %s BEFORE MOVING" % required.upper())
+                return
+            self.joystick_action = action
+        elif action is None or action != self.joystick_action:
+            return
+
+        if phase == "end":
+            logging.info("[feather_screen] continuous end action=%s", action)
+            self.joystick.release()
+            self.joystick_action = None
+        elif action == "move.joy.xy":
+            self.joystick.set_xy(x, y, now, 240, 220, 125)
+        else:
+            self.joystick.set_z(y, now, 220, 125)
+        if self.joystick_timer is not None:
+            self.reactor.update_timer(self.joystick_timer, self.reactor.NOW)
+
     def _handle_touch_action(self, action):
-        if (getattr(self, "command_depth", 0) > 0 and action not in
-                ("print.cancel", "print.cancel.confirm")):
+        if (getattr(self, "mod_update_pending", False)
+                or (getattr(self, "command_depth", 0) > 0 and action not in
+                    ("print.cancel", "print.cancel.confirm"))):
             logging.info("[feather_screen] touch ignored while command is active: %s",
                          action)
             notice = getattr(self.renderer, "busy_notice", None)
@@ -426,6 +516,8 @@ class FeatherScreen:
                 self._handle_calibration_action(action)
             elif action.startswith("settings."):
                 self._handle_settings_action(action)
+            elif action.startswith("mod."):
+                self._handle_mod_action(action)
             elif action.startswith("recovery."):
                 self._handle_recovery_action(action)
             elif action.startswith("net.") or action.startswith("key."):
@@ -445,10 +537,17 @@ class FeatherScreen:
                 or (page == Page.CONTROL_HEAT and action.startswith("heat."))
                 or (page == Page.CALIBRATION_CONFIRM and
                     action.startswith("cal.material."))
+                or (page == Page.MOD_SETTINGS and action.startswith("mod.item."))
+                or (page == Page.MOD_ENUM and action.startswith("mod.option."))
+                or (page == Page.MOD_VALUE and action.startswith("mod.key."))
                 or (page == Page.WIFI_SCAN and action.startswith("net.item"))
                 or (page == Page.WIFI_PASSWORD and action.startswith("key.")))
 
     def _show_page(self, page):
+        if (self.page == Page.CONTROL_MOVE
+                and (page != Page.CONTROL_MOVE
+                     or getattr(self, "joystick_action", None) is not None)):
+            self._stop_joystick()
         self.previous_page = self.page
         self.page = page
         if page == Page.IDLE_HOME:
@@ -485,6 +584,12 @@ class FeatherScreen:
             self._render_calibration_result()
         elif page == Page.SETTINGS:
             self._render_settings()
+        elif page == Page.MOD_SETTINGS:
+            self._render_mod_settings()
+        elif page == Page.MOD_ENUM:
+            self._render_mod_enum()
+        elif page == Page.MOD_VALUE:
+            self._render_mod_value()
         elif page == Page.NETWORK_HOME:
             self._render_network_home()
         elif page == Page.WIFI_SCAN:
@@ -518,6 +623,11 @@ class FeatherScreen:
         elif self.page in (Page.CONTROL_MOVE, Page.CONTROL_HEAT,
                            Page.CALIBRATION_HOME, Page.SETTINGS):
             self._show_page(Page.CONTROL_HOME)
+        elif self.page == Page.MOD_SETTINGS:
+            self._show_page(Page.SETTINGS)
+        elif self.page in (Page.MOD_ENUM, Page.MOD_VALUE):
+            self.mod_parameter = None
+            self._show_page(Page.MOD_SETTINGS)
         elif self.page == Page.FILAMENT_ACTION:
             self._finish_filament(False)
         elif self.page == Page.CALIBRATION_Z:
@@ -1025,10 +1135,109 @@ class FeatherScreen:
                 "35d9e6" if index == self.busy_phase % 5 else "263238"))
         self.renderer.send(commands)
 
+    def _create_joystick_planner(self):
+        now = self.reactor.monotonic()
+        status = self.toolhead.get_status(now)
+        kinematics = self.toolhead.get_kinematics()
+        axis_maximum = status.get("axis_maximum", (110.0, 110.0, 230.0))
+        z_maximum = max(0.0, float(axis_maximum[2]) - 10.0)
+        xy_speed = float(status.get("max_velocity", 600.0))
+        xy_accel = float(status.get("max_accel", 20000.0)) * 0.5
+        z_speed = float(getattr(kinematics, "max_z_velocity", 25.0))
+        z_accel = float(getattr(kinematics, "max_z_accel", 500.0)) * 0.5
+        self.joystick = joystick_ui.JoystickPlanner(
+            xy_speed, xy_accel, z_speed, z_accel,
+            ((-110.0, 110.0), (-110.0, 110.0), (0.0, z_maximum)))
+        logging.info(
+            "[feather_screen] joystick limits xy=%.1f/%.1f z=%.1f/%.1f "
+            "bounds=-110..110,-110..110,0..%.1f",
+            xy_speed, xy_accel, z_speed, z_accel, z_maximum)
+
+    def _stop_joystick(self):
+        planner = getattr(self, "joystick", None)
+        if planner is not None:
+            planner.stop()
+        self.joystick_action = None
+        self.joystick_suppressed = None
+        timer = getattr(self, "joystick_timer", None)
+        if timer is not None:
+            try:
+                self.reactor.update_timer(timer, self.reactor.NEVER)
+            except Exception:
+                pass
+        if (getattr(self, "joystick_queued", False)
+                and getattr(self, "print_state", None) != PrintState.DESTROYED):
+            try:
+                # Finalizing the lookahead makes the last short segment end at
+                # zero velocity instead of leaving an open-ended move queue.
+                self.toolhead.flush_step_generation()
+            except Exception:
+                logging.exception("[feather_screen] joystick stop flush failed")
+        self.joystick_queued = False
+
+    def _queue_joystick_segment(self, segment):
+        # Move captures these limits at construction time. Restore the global
+        # toolhead settings immediately so Fluidd and later G-code retain the
+        # configured printer limits.
+        saved_accel = self.toolhead.max_accel
+        try:
+            self.toolhead.max_accel = min(saved_accel, segment.acceleration)
+            self.toolhead._calc_junction_deviation()
+            self.toolhead.manual_move(segment.position, segment.speed)
+        finally:
+            self.toolhead.max_accel = saved_accel
+            self.toolhead._calc_junction_deviation()
+        self.joystick_queued = True
+
+    def _joystick_tick(self, eventtime):
+        try:
+            planner = self.joystick
+            if (planner is None or self.page != Page.CONTROL_MOVE
+                    or self.move_mode != "joystick"
+                    or self.print_state != PrintState.IDLE):
+                self._stop_joystick()
+                return self.reactor.NEVER
+            if planner.watchdog(eventtime):
+                logging.warning("[feather_screen] joystick touch watchdog released")
+                self.joystick_action = None
+            homed = str(self.toolhead.get_status(eventtime).get("homed_axes", ""))
+            if (planner.held and self.joystick_action == "move.joy.xy"
+                    and ("x" not in homed or "y" not in homed)):
+                planner.release()
+            if (planner.held and self.joystick_action == "move.joy.z"
+                    and "z" not in homed):
+                planner.release()
+
+            print_time, estimated_time, _empty = self.toolhead.check_busy(eventtime)
+            if print_time - estimated_time > joystick_ui.MAX_QUEUE_AHEAD:
+                return eventtime + 0.02
+            segment = planner.advance(self.toolhead.get_position(),
+                                      joystick_ui.PERIOD)
+            if segment is None:
+                if self.joystick_queued:
+                    self.toolhead.flush_step_generation()
+                    self.joystick_queued = False
+                return self.reactor.NEVER
+            self._queue_joystick_segment(segment)
+            return eventtime + joystick_ui.PERIOD
+        except Exception:
+            logging.exception("[feather_screen] joystick motion failed")
+            self._stop_joystick()
+            return self.reactor.NEVER
+
     def _render_move(self):
         self._require_idle()
         snapshot = self._move_status_snapshot(self.reactor.monotonic())
         commands = self.renderer.begin_page("Move", back=True)
+        if getattr(self, "move_mode", "step") == "joystick":
+            commands += self._joystick_move_commands(snapshot)
+        else:
+            commands += self._step_move_commands(snapshot)
+        self.renderer.send(commands)
+        self._last_move = snapshot
+
+    def _step_move_commands(self, snapshot):
+        commands = []
         # XY pad and a separate Z rocker. The center is informational, not a
         # hidden homing action.
         commands += self.renderer.button("move.yp", 140, 78, 100, 68, "Y+")
@@ -1059,12 +1268,76 @@ class FeatherScreen:
                 "%g" % step,
                 state="selected" if step == self.jog_step else "enabled",
                 font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.motors", 30, 350, 400, 58,
+        commands += self.renderer.button("move.motors", 30, 350, 190, 58,
                                          "DISABLE MOTORS",
-                                         font="JetBrainsMono 12pt")
+                                         font="JetBrainsMono 8pt")
+        commands += self.renderer.button("move.mode", 235, 350, 195, 58,
+                                         "[>STEP|JOY]",
+                                         state="selected",
+                                         font="JetBrainsMono 8pt")
         commands += self._move_status_commands(snapshot, axes=True)
-        self.renderer.send(commands)
-        self._last_move = snapshot
+        return commands
+
+    def _joystick_move_commands(self, snapshot):
+        commands = [
+            self.renderer.fill(25, 75, 430, 285, "050c0f"),
+            self.renderer.stroke(25, 75, 430, 285, "35d9e6", 2),
+            self.renderer.fill(240, 87, 1, 261, "295c66"),
+            self.renderer.fill(37, 220, 406, 1, "295c66"),
+            self.renderer.text(240, 92, "Y+", "35d9e6", "JetBrainsMono 8pt",
+                               "center", "middle"),
+            self.renderer.text(240, 343, "Y-", "35d9e6", "JetBrainsMono 8pt",
+                               "center", "middle"),
+            self.renderer.text(43, 220, "X-", "35d9e6", "JetBrainsMono 8pt",
+                               "left", "middle"),
+            self.renderer.text(437, 220, "X+", "35d9e6", "JetBrainsMono 8pt",
+                               "right", "middle"),
+            self.renderer.text(240, 220, "+", "b47aff", "JetBrainsMono 16pt",
+                               "center", "middle"),
+            self.renderer.fill(485, 75, 110, 285, "050c0f"),
+            self.renderer.stroke(485, 75, 110, 285, "b47aff", 2),
+            self.renderer.fill(540, 87, 1, 261, "295c66"),
+            self.renderer.fill(497, 220, 86, 1, "295c66"),
+            self.renderer.text(540, 92, "UP / Z-", "b47aff",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(540, 343, "DOWN / Z+", "b47aff",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(540, 220, "+", "b47aff", "JetBrainsMono 16pt",
+                               "center", "middle"),
+            self.renderer.fill(615, 75, 160, 285, "050c0f"),
+            self.renderer.stroke(615, 75, 160, 285, "295c66", 1),
+            self.renderer.text(695, 94, snapshot[3],
+                               "35d9e6" if snapshot[3] == "HOMED: XYZ"
+                               else "f2c94c", "JetBrainsMono 8pt",
+                               "center", "middle"),
+            self.renderer.text(695, 125, "X %6.1f" % snapshot[0], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 151, "Y %6.1f" % snapshot[1], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 177, "Z %6.1f" % snapshot[2], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 208, "XY MAX %.0f" % self.joystick.xy_speed,
+                               "56656c", "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 231, "Z MAX %.0f" % self.joystick.z_speed,
+                               "56656c", "JetBrainsMono 8pt", "center", "middle"),
+        ]
+        commands += self.renderer.button("move.homeall", 627, 255, 136, 42,
+                                         "HOME ALL", font="JetBrainsMono 8pt")
+        commands += self.renderer.button("move.homexy", 627, 307, 136, 42,
+                                         "HOME XY", font="JetBrainsMono 8pt")
+        commands += self.renderer.button("move.mode", 25, 375, 205, 55,
+                                         "[STEP|>JOY]", state="selected",
+                                         font="JetBrainsMono 8pt")
+        commands += self.renderer.button("move.motors", 245, 375, 210, 55,
+                                         "DISABLE MOTORS",
+                                         font="JetBrainsMono 8pt")
+        commands += [
+            self.renderer.text(485, 402, "HOLD + DRAG", "56656c",
+                               "JetBrainsMono 8pt", "left", "middle"),
+            self.renderer.action_hitbox("move.joy.xy", 25, 75, 430, 285, True),
+            self.renderer.action_hitbox("move.joy.z", 485, 75, 110, 285, True),
+        ]
+        return commands
 
     def _move_status_snapshot(self, eventtime):
         status = self.toolhead.get_status(eventtime)
@@ -1110,11 +1383,35 @@ class FeatherScreen:
         if values == previous:
             return
         self._last_move = values
+        if getattr(self, "move_mode", "step") == "joystick":
+            self.renderer.send(self._joystick_position_commands(values))
+            return
         axes_changed = previous is None or values[4:] != previous[4:]
         self.renderer.send(self._move_status_commands(values, axes=axes_changed))
 
+    def _joystick_position_commands(self, values):
+        return [
+            self.renderer.fill(620, 80, 150, 112, "050c0f"),
+            self.renderer.text(695, 94, values[3],
+                               "35d9e6" if values[3] == "HOMED: XYZ"
+                               else "f2c94c", "JetBrainsMono 8pt",
+                               "center", "middle"),
+            self.renderer.text(695, 125, "X %6.1f" % values[0], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 151, "Y %6.1f" % values[1], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(695, 177, "Z %6.1f" % values[2], "d9e4e8",
+                               "JetBrainsMono 8pt", "center", "middle"),
+        ]
+
     def _handle_move_action(self, action):
         self._require_idle()
+        if action == "move.mode":
+            self._stop_joystick()
+            self.move_mode = ("joystick" if self.move_mode == "step"
+                              else "step")
+            self._render_move()
+            return
         if action.startswith("move.step"):
             steps = (0.1, 1.0, 10.0)
             if action == "move.step.minus":
@@ -1131,6 +1428,7 @@ class FeatherScreen:
             "move.motors": "M84",
         }
         if action in commands:
+            self._stop_joystick()
             if action.startswith("move.home"):
                 self._run_blocking_gcode(commands[action], "HOMING...")
             else:
@@ -1740,22 +2038,43 @@ class FeatherScreen:
         eco = int(self._setting("backlight_eco", 10))
         sound = bool(self._setting("sound", 1))
         commands = self.renderer.begin_page("Settings", back=True)
-        rows = (("Brightness: %d%%" % brightness, "settings.brightness", 100),
-                ("ECO brightness: %d%%" % eco, "settings.eco", 225))
-        for label, prefix, y in rows:
-            commands.append(self.renderer.text(400, y, label, "ffffff", "Roboto 12pt",
-                                               "center"))
-            commands += self.renderer.button(prefix + ".minus", 140, y + 35,
-                                             200, 60, "-5")
-            commands += self.renderer.button(prefix + ".plus", 460, y + 35,
-                                             200, 60, "+5")
-        commands += self.renderer.button("settings.sound", 220, 365, 360, 60,
-                                         "SOUND: %s" % ("ON" if sound else "OFF"),
-                                         state="selected" if sound else "enabled")
+        rows = (("SCREEN BRIGHTNESS", brightness, "settings.brightness", 67),
+                ("ECO BRIGHTNESS", eco, "settings.eco", 151))
+        for label, value, prefix, y in rows:
+            commands += [
+                self.renderer.fill(25, y, 750, 70, "050c0f"),
+                self.renderer.stroke(25, y, 750, 70, "295c66", 1),
+                self.renderer.text(44, y + 22, label, "35d9e6",
+                                   "JetBrainsMono Bold 8pt"),
+                self.renderer.text(425, y + 36, "%d%%" % value, "d9e4e8",
+                                   "JetBrainsMono 12pt", "center"),
+            ]
+            commands += self.renderer.button(prefix + ".minus", 525, y + 12,
+                                             105, 46, "-5")
+            commands += self.renderer.button(prefix + ".plus", 650, y + 12,
+                                             105, 46, "+5")
+        commands += [
+            self.renderer.fill(25, 235, 750, 66, "050c0f"),
+            self.renderer.stroke(25, 235, 750, 66, "295c66", 1),
+            self.renderer.text(44, 268, "SOUND FEEDBACK", "35d9e6",
+                               "JetBrainsMono Bold 8pt"),
+        ]
+        toggle = "[ OFF | >ON< ]" if sound else "[ >OFF< | ON ]"
+        commands += self.renderer.button("settings.sound", 550, 245, 205, 46,
+                                         toggle, font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "settings.mod", 25, 317, 750, 100, "MOD PARAMETERS",
+            subtitle="EDIT ALL FORGE-X OPTIONS", layout="row",
+            font="JetBrainsMono Bold 12pt")
         self.renderer.send(commands)
 
     def _handle_settings_action(self, action):
         self._require_idle()
+        if action == "settings.mod":
+            self.mod_page = 0
+            self.mod_parameter = None
+            self._show_page(Page.MOD_SETTINGS)
+            return
         if action == "settings.sound":
             key, value = "sound", 0 if self._setting("sound", 1) else 1
         else:
@@ -1766,6 +2085,318 @@ class FeatherScreen:
         if key == "backlight":
             self._set_backlight(value)
         self._render_settings()
+
+    def _mod_parameters(self):
+        return mod_ui.visible_parameters(self.params)
+
+    def _render_mod_settings(self):
+        self._require_idle()
+        parameters = self._mod_parameters()
+        total = len(parameters)
+        page_count = max(1, (total + mod_ui.VISIBLE_ROWS - 1)
+                         // mod_ui.VISIBLE_ROWS)
+        self.mod_page = max(0, min(getattr(self, "mod_page", 0), page_count - 1))
+        start = self.mod_page * mod_ui.VISIBLE_ROWS
+        visible = parameters[start:start + mod_ui.VISIBLE_ROWS]
+        commands = self.renderer.begin_page("Mod settings", back=True)
+        first = start + 1 if total else 0
+        last = min(total, start + len(visible))
+        commands.append(self.renderer.text(
+            25, 72, "MOD PARAMETERS // %02d-%02d / %02d" % (first, last, total),
+            "35d9e6", "JetBrainsMono 8pt"))
+
+        row_x, row_width, row_height = 25, 690, 64
+        for row, param in enumerate(visible):
+            absolute = start + row
+            action = "mod.item.%d" % absolute
+            y = 88 + row * 66
+            title = self.renderer.truncate_text(
+                str(param.label).upper(), 430, "JetBrainsMono Bold 8pt")
+            detail = self.renderer.truncate_text(
+                mod_ui.description(param), 430, "JetBrainsMono 8pt")
+            commands += [
+                self.renderer.fill(row_x, y, row_width, row_height, "050c0f"),
+                self.renderer.stroke(row_x, y, row_width, row_height,
+                                     "295c66", 1),
+                self.renderer.text(40, y + 14, title, "35d9e6",
+                                   "JetBrainsMono Bold 8pt"),
+                self.renderer.text(40, y + 32, param.key, "56656c",
+                                   "JetBrainsMono 8pt"),
+                self.renderer.text(40, y + 50, detail, "d9e4e8",
+                                   "JetBrainsMono 8pt"),
+            ]
+            kind = mod_ui.parameter_kind(param)
+            value = mod_ui.display_value(self.params, param)
+            state = "disabled" if getattr(param, "readonly", False) else "enabled"
+            if kind == "bool":
+                false_label, true_label = mod_ui.bool_labels(param)
+                label = ("[ %s | >%s< ]" % (false_label, true_label)
+                         if value == "ON" else
+                         "[ >%s< | %s ]" % (false_label, true_label))
+                commands += self.renderer.button(
+                    action, 500, y + 9, 200, 46, label, state=state,
+                    font="JetBrainsMono 8pt")
+            else:
+                label = self.renderer.truncate_text(value, 130,
+                                                    "JetBrainsMono 8pt") + " >"
+                commands += self.renderer.button(
+                    action, 520, y + 9, 180, 46, label, state=state,
+                    font="JetBrainsMono 8pt")
+
+        previous_state = "enabled" if self.mod_page > 0 else "disabled"
+        next_state = "enabled" if self.mod_page + 1 < page_count else "disabled"
+        commands += self.renderer.button("mod.prev", 728, 88, 52, 48, "^",
+                                         state=previous_state,
+                                         font="JetBrainsMono 12pt")
+        commands += self.renderer.button("mod.next", 728, 365, 52, 48, "v",
+                                         state=next_state,
+                                         font="JetBrainsMono 12pt")
+        track_y, track_height = 146, 209
+        commands += [self.renderer.stroke(749, track_y, 10, track_height,
+                                          "295c66", 1)]
+        thumb_height = max(18, track_height // page_count)
+        thumb_y = (track_y if page_count == 1 else
+                   track_y + (track_height - thumb_height) * self.mod_page
+                   // (page_count - 1))
+        commands.append(self.renderer.fill(751, thumb_y + 2, 6,
+                                           max(4, thumb_height - 4), "35d9e6"))
+        self.renderer.send(commands)
+
+    def _open_mod_parameter(self, index):
+        parameters = self._mod_parameters()
+        if index < 0 or index >= len(parameters):
+            raise RuntimeError("Parameter is no longer available")
+        param = parameters[index]
+        if getattr(param, "readonly", False):
+            raise RuntimeError("This parameter is read-only")
+        kind = mod_ui.parameter_kind(param)
+        if kind == "bool":
+            current = bool(self.params.variables.get(param.key, param.default))
+            self._set_mod_value(param, "0" if current else "1")
+            self._render_mod_settings()
+            self._toast("UPDATED: %s" % param.label)
+            return
+        self.mod_parameter = param
+        self.mod_edit_value = mod_ui.current_edit_value(self.params, param)
+        self.mod_keyboard_shift = False
+        self.mod_keyboard_symbols = False
+        if kind == "enum":
+            self.mod_enum_selection = self.mod_edit_value
+            self._show_page(Page.MOD_ENUM)
+        else:
+            self.mod_enum_selection = None
+            self._show_page(Page.MOD_VALUE)
+
+    def _set_mod_value(self, param, value):
+        setter = getattr(self.params, "set_value", None)
+        if setter is None:
+            raise RuntimeError("Mod parameter API is unavailable")
+        logging.info("[feather_screen] mod parameter update key=%s", param.key)
+        self.mod_update_pending = True
+        self.renderer.busy_notice("APPLYING")
+        try:
+            result = setter(param.key, value)
+        except Exception:
+            self.mod_update_pending = False
+            self.renderer.clear_busy_notice()
+            raise
+        self.reactor.register_callback(self._finish_mod_update)
+        return result
+
+    def _finish_mod_update(self, eventtime):
+        self.mod_update_pending = False
+        self.renderer.clear_busy_notice()
+        logging.info("[feather_screen] mod parameter update finished")
+
+    def _handle_mod_action(self, action):
+        self._require_idle()
+        if action == "mod.prev":
+            self.mod_page = max(0, self.mod_page - 1)
+            self._render_mod_settings()
+            return
+        if action == "mod.next":
+            self.mod_page += 1
+            self._render_mod_settings()
+            return
+        if action.startswith("mod.item."):
+            self._open_mod_parameter(int(action.rsplit(".", 1)[1]))
+            return
+        if action == "mod.cancel":
+            self.mod_parameter = None
+            self._show_page(Page.MOD_SETTINGS)
+            return
+        param = self.mod_parameter
+        if param is None:
+            raise RuntimeError("No parameter selected")
+        kind = mod_ui.parameter_kind(param)
+        if action.startswith("mod.option."):
+            options = mod_ui.enum_names(param)
+            index = int(action.rsplit(".", 1)[1])
+            if index < 0 or index >= len(options):
+                raise RuntimeError("Unknown option")
+            self.mod_enum_selection = options[index]
+            self._render_mod_enum()
+            return
+        if action == "mod.apply":
+            value = mod_ui.validate_value(param, self.mod_enum_selection)
+            self._set_mod_value(param, value)
+            self.mod_parameter = None
+            self._show_page(Page.MOD_SETTINGS)
+            self._toast("UPDATED: %s" % param.label)
+            return
+        if action == "mod.save":
+            value = mod_ui.validate_value(param, self.mod_edit_value)
+            self._set_mod_value(param, value)
+            self.mod_parameter = None
+            self._show_page(Page.MOD_SETTINGS)
+            self._toast("UPDATED: %s" % param.label)
+            return
+        if action == "mod.backspace":
+            self.mod_edit_value = self.mod_edit_value[:-1]
+        elif action == "mod.sign" and kind in ("int", "float"):
+            self.mod_edit_value = (self.mod_edit_value[1:]
+                                   if self.mod_edit_value.startswith("-")
+                                   else "-" + self.mod_edit_value)
+        elif action == "mod.dot" and kind == "float":
+            if "." not in self.mod_edit_value:
+                self.mod_edit_value += "."
+        elif action == "mod.shift" and kind == "str":
+            self.mod_keyboard_shift = not self.mod_keyboard_shift
+        elif action == "mod.symbols" and kind == "str":
+            self.mod_keyboard_symbols = not self.mod_keyboard_symbols
+        elif action == "mod.space" and kind == "str":
+            if len(self.mod_edit_value) < mod_ui.MAX_VALUE_LENGTH:
+                self.mod_edit_value += " "
+        elif action.startswith("mod.key."):
+            token = action[len("mod.key."):]
+            character = mod_ui.key_character(token, self.mod_keyboard_shift)
+            if character is not None and len(self.mod_edit_value) < mod_ui.MAX_VALUE_LENGTH:
+                self.mod_edit_value += character
+        self._render_mod_value()
+
+    def _render_mod_enum(self):
+        param = self.mod_parameter
+        if param is None:
+            self._show_page(Page.MOD_SETTINGS)
+            return
+        commands = self.renderer.begin_page(str(param.label), back=True)
+        description = self._wrap(mod_ui.description(param), 58, 2)
+        for index, line in enumerate(description):
+            commands.append(self.renderer.text(25, 76 + index * 20, line,
+                                               "d9e4e8", "JetBrainsMono 8pt"))
+        if param.key == "display":
+            commands.append(self.renderer.text(
+                25, 108, "CHANGING DISPLAY RESTARTS KLIPPER.", "f2c94c",
+                "JetBrainsMono 8pt"))
+        options = mod_ui.enum_names(param)
+        for index, name in enumerate(options[:4]):
+            selected = name == self.mod_enum_selection
+            detail = mod_ui.option_description(param, name).upper()
+            label = name.upper()
+            if detail:
+                label += " // " + detail
+            if selected:
+                label += "  [SELECTED]"
+            commands += self.renderer.button(
+                "mod.option.%d" % index, 25, 120 + index * 66, 750, 58,
+                label, state="selected" if selected else "enabled",
+                font="JetBrainsMono 8pt")
+        commands += self.renderer.button("mod.cancel", 25, 390, 360, 47,
+                                         "CANCEL", state="danger",
+                                         font="JetBrainsMono Bold 8pt")
+        commands += self.renderer.button("mod.apply", 415, 390, 360, 47,
+                                         "APPLY",
+                                         font="JetBrainsMono Bold 8pt")
+        self.renderer.send(commands)
+
+    def _render_mod_value(self):
+        param = self.mod_parameter
+        if param is None:
+            self._show_page(Page.MOD_SETTINGS)
+            return
+        kind = mod_ui.parameter_kind(param)
+        commands = self.renderer.begin_page("Edit value", back=True)
+        commands += [
+            self.renderer.text(25, 73, str(param.label).upper(), "35d9e6",
+                               "JetBrainsMono Bold 12pt"),
+            self.renderer.text(25, 98, param.key, "56656c",
+                               "JetBrainsMono 8pt"),
+            self.renderer.text(280, 98,
+                               self.renderer.truncate_text(
+                                   mod_ui.description(param), 490,
+                                   "JetBrainsMono 8pt"),
+                               "d9e4e8", "JetBrainsMono 8pt"),
+            self.renderer.fill(25, 120, 750, 53, "050c0f"),
+            self.renderer.stroke(25, 120, 750, 53, "35d9e6", 2),
+            self.renderer.text(42, 147,
+                               self.renderer.truncate_text(
+                                   self.mod_edit_value or "_", 710,
+                                   "JetBrainsMono 12pt"),
+                               "35d9e6", "JetBrainsMono 12pt"),
+        ]
+        if kind in ("int", "float"):
+            commands += self._render_mod_numeric_keys(kind)
+        else:
+            commands += self._render_mod_text_keys()
+        self.renderer.send(commands)
+
+    def _render_mod_numeric_keys(self, kind):
+        commands = []
+        rows = (("1", "2", "3"), ("4", "5", "6"),
+                ("7", "8", "9"), ("sign", "0", "dot"))
+        for row, keys in enumerate(rows):
+            for column, token in enumerate(keys):
+                label = "-" if token == "sign" else "." if token == "dot" else token
+                action = "mod.%s" % token if token in ("sign", "dot") else "mod.key.%s" % token
+                state = "disabled" if token == "dot" and kind == "int" else "enabled"
+                commands += self.renderer.button(
+                    action, 25 + column * 155, 185 + row * 47, 140, 40,
+                    label, state=state, font="JetBrainsMono 12pt")
+        commands += self.renderer.button("mod.backspace", 500, 185, 275, 181,
+                                         "BACKSPACE", font="JetBrainsMono 8pt")
+        commands += self.renderer.button("mod.cancel", 25, 383, 360, 54,
+                                         "CANCEL", state="danger",
+                                         font="JetBrainsMono Bold 8pt")
+        commands += self.renderer.button("mod.save", 415, 383, 360, 54,
+                                         "SAVE", font="JetBrainsMono Bold 8pt")
+        return commands
+
+    def _render_mod_text_keys(self):
+        commands = []
+        if self.mod_keyboard_symbols:
+            rows = mod_ui.SYMBOL_KEYS[:10], mod_ui.SYMBOL_KEYS[10:20]
+        else:
+            rows = tuple(tuple((char, char.upper() if self.mod_keyboard_shift else char)
+                               for char in row) for row in ALPHA_KEY_ROWS)
+        for row, keys in enumerate(rows):
+            key_width = 68
+            total_width = len(keys) * key_width + max(0, len(keys) - 1) * 7
+            x = (800 - total_width) // 2
+            for token, label in keys:
+                commands += self.renderer.button(
+                    "mod.key.%s" % token, x, 181 + row * 49, key_width, 42,
+                    label, font="JetBrainsMono 8pt")
+                x += key_width + 7
+        controls_y = 328
+        commands += self.renderer.button(
+            "mod.shift", 25, controls_y, 120, 43, "SHIFT",
+            state="selected" if self.mod_keyboard_shift else "enabled",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "mod.symbols", 155, controls_y, 100, 43,
+            "ABC" if self.mod_keyboard_symbols else "123",
+            state="selected" if self.mod_keyboard_symbols else "enabled",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button("mod.space", 265, controls_y, 300, 43,
+                                         "SPACE", font="JetBrainsMono 8pt")
+        commands += self.renderer.button("mod.backspace", 575, controls_y, 200, 43,
+                                         "BACKSPACE", font="JetBrainsMono 8pt")
+        commands += self.renderer.button("mod.cancel", 25, 383, 360, 54,
+                                         "CANCEL", state="danger",
+                                         font="JetBrainsMono Bold 8pt")
+        commands += self.renderer.button("mod.save", 415, 383, 360, 54,
+                                         "SAVE", font="JetBrainsMono Bold 8pt")
+        return commands
 
     def _render_network_home(self):
         self._require_idle()

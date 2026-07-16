@@ -28,6 +28,7 @@ class Parameter:
     type: Type
     default: Any
     label: str
+    description: Optional[str] = None
     options: Union[List[str], Dict[Any, str], None] = None
     readonly: bool = False
     hidden: bool = False
@@ -114,6 +115,7 @@ class ModParamManagement:
                 type=param_type,
                 default=param_data["default"],
                 label=param_data["label"],
+                description=param_data.get("description"),
                 options=param_data.get("options"),
                 readonly=param_data.get("readonly", False),
                 hidden=param_data.get("hidden", False),
@@ -218,6 +220,33 @@ class ModParamManagement:
             msg = "Unable to save variable"
             logging.exception(msg)
             raise self.gcode.error(msg)
+
+    def set_value(self, key: str, value: Any, force: bool = False):
+        """Set a parameter without passing user text through the G-code parser.
+
+        Feather uses this path for its on-screen editors so arbitrary string
+        values cannot break quoting or turn into additional G-code commands.
+        Change hooks retain the same reactor scheduling as SET_MOD.
+        """
+        if key not in self.params_map:
+            raise ValueError('Unknown parameter: "%s"' % key)
+        param = self.params_map[key]
+        if param.readonly and not force:
+            raise ValueError('Updating readonly parameter "%s" is forbidden.' % key)
+        try:
+            if param.type == str:
+                new_value = str(value)
+            else:
+                new_value = self._load_param(param, str(value))
+        except Exception:
+            raise ValueError('Failed to update parameter "%s"' % key)
+        if new_value != self.variables[key]:
+            self.variables[key] = new_value
+            self._save_all()
+            if self.changes_gcode_present:
+                self.reactor.register_callback(
+                    lambda _, __param=param: self._notify_changed(__param))
+        return self._transform(param, self.variables[key])
 
     def _format_label(self, param: Parameter, value: Any):
         if param.options:

@@ -263,6 +263,129 @@ class PrintWorkflowTest(unittest.TestCase):
 
 
 class MotionHeatSettingsTest(unittest.TestCase):
+    def test_continuous_touch_updates_planner_and_release(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.command_depth = 0
+        controller.dimmed = False
+        controller.last_touch_time = 0.0
+        controller.joystick_suppressed = None
+        controller.joystick_action = None
+        controller.joystick_timer = object()
+        updates = []
+        controller.reactor.NOW = 0.0
+        controller.reactor.update_timer = (
+            lambda timer, when: updates.append((timer, when)))
+        controller.renderer = type("Renderer", (), {
+            "decode_action": lambda self, action: action.split(":", 1)[-1],
+        })()
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+
+        class Planner:
+            def __init__(self):
+                self.events = []
+
+            def set_xy(self, *args):
+                self.events.append(("xy", args[0], args[1]))
+
+            def set_z(self, *args):
+                self.events.append(("z", args[0]))
+
+            def release(self):
+                self.events.append(("release",))
+
+        controller.joystick = Planner()
+        controller._handle_continuous_touch(
+            "touch 7:move.joy.xy begin 365 220")
+        controller._handle_continuous_touch(
+            "touch 7:move.joy.xy move 400 180")
+        controller._handle_continuous_touch(
+            "touch 7:move.joy.xy end 400 180")
+
+        self.assertEqual(controller.joystick.events,
+                         [("xy", 365, 220), ("xy", 400, 180), ("release",)])
+        self.assertIsNone(controller.joystick_action)
+        self.assertEqual(len(updates), 3)
+
+    def test_dimmed_joystick_gesture_only_wakes_until_release(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.command_depth = 0
+        controller.dimmed = True
+        controller.last_touch_time = 0.0
+        controller.joystick_suppressed = None
+        controller.joystick_action = None
+        controller.renderer = type("Renderer", (), {
+            "decode_action": lambda self, action: action.split(":", 1)[-1],
+        })()
+        controller._wake_if_dimmed = lambda: True
+        controller.joystick = mock.Mock()
+
+        controller._handle_continuous_touch(
+            "touch 8:move.joy.z begin 540 100")
+        controller._handle_continuous_touch(
+            "touch 8:move.joy.z move 540 90")
+        controller._handle_continuous_touch(
+            "touch 8:move.joy.z end 540 90")
+
+        controller.joystick.assert_not_called()
+        self.assertIsNone(controller.joystick_suppressed)
+
+    def test_joystick_tick_queues_direct_motion_and_restores_toolhead_accel(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.joystick_action = "move.joy.xy"
+        controller.joystick_queued = False
+        controller.joystick_timer = object()
+        controller.reactor.NEVER = 1.0e30
+
+        class Toolhead:
+            def __init__(self):
+                self.max_accel = 20000.0
+                self.requested_accel_to_decel = 5000.0
+                self.max_accel_to_decel = 5000.0
+                self.position = [0.0, 0.0, 100.0, 0.0]
+                self.moves = []
+                self.flushes = 0
+
+            def _calc_junction_deviation(self):
+                self.max_accel_to_decel = min(
+                    self.requested_accel_to_decel, self.max_accel)
+
+            def get_status(self, eventtime):
+                return {"homed_axes": "xyz"}
+
+            def check_busy(self, eventtime):
+                return 0.0, 0.0, True
+
+            def get_position(self):
+                return list(self.position)
+
+            def manual_move(self, position, speed):
+                self.moves.append((list(position), speed, self.max_accel))
+                self.position[:3] = position
+
+            def flush_step_generation(self):
+                self.flushes += 1
+
+        controller.toolhead = Toolhead()
+        controller.joystick = FEATHER.joystick_ui.JoystickPlanner(
+            600.0, 10000.0, 25.0, 250.0,
+            ((-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)))
+        controller.joystick.set_xy(365, 220, 100.0, 240, 220, 125)
+
+        next_wake = controller._joystick_tick(100.0)
+
+        self.assertAlmostEqual(next_wake, 100.05)
+        self.assertEqual(len(controller.toolhead.moves), 1)
+        self.assertEqual(controller.toolhead.moves[0][2], 10000.0)
+        self.assertEqual(controller.toolhead.max_accel, 20000.0)
+        self.assertTrue(controller.joystick_queued)
+
     def test_heat_page_draws_values_immediately_and_refreshes_fan(self):
         controller = base_controller()
         controller.renderer = FEATHER.FeatherRenderer()

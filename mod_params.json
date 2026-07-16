@@ -58,6 +58,7 @@
       "type": "AutoRebootEnum",
       "default": "OFF",
       "label": "Auto-restart",
+      "description": "Restart automatically after print completion.",
       "options": {
         "OFF": "disabled",
         "SIMPLE_90": "after 1.5 minutes",
@@ -70,6 +71,7 @@
       "type": "CloseDialogsEnum",
       "default": "OFF",
       "label": "Dialogs",
+      "description": "Choose how stock dialogs are closed.",
       "options": {
         "OFF": "do not close",
         "SLOW": "close after 20 seconds (slowly)",
@@ -82,6 +84,7 @@
       "type": "bool",
       "default": 0,
       "label": "Nozzle priming before print",
+      "description": "Control the purge line before printing.",
       "options": ["YES", "NO"],
       "order": 20000
     },
@@ -90,6 +93,7 @@
       "type": "bool",
       "default": 0,
       "label": "Nozzle cleaning before calibration",
+      "description": "Control nozzle cleaning before calibration.",
       "options": ["YES", "NO"],
       "order": 20000
     },
@@ -98,6 +102,7 @@
       "type": "bool",
       "default": 0,
       "label": "Allow stock firmware to control LED",
+      "description": "Give chamber LED control to stock firmware.",
       "options": ["YES", "NO"],
       "order": 100
     },
@@ -106,6 +111,7 @@
       "type": "bool",
       "default": 1,
       "label": "SKEW correction",
+      "description": "Enable or disable configured skew correction.",
       "options": ["YES", "NO"],
       "order": 20000
     },
@@ -113,13 +119,15 @@
       "key": "klipper_rt",
       "type": "bool",
       "default": 0,
-      "label": "Klipper real-time priority (SCHED_RR)"
+      "label": "Klipper real-time priority (SCHED_RR)",
+      "description": "Give Klipper low real-time CPU priority."
     },
     {
       "key": "tune_klipper",
       "type": "bool",
       "default": 0,
       "label": "Tune klipper parameters",
+      "description": "Apply Forge-X Klipper compatibility tuning.",
       "deprecated": {
         "key": "fix_e0017",
         "mapping": {
@@ -133,6 +141,7 @@
       "type": "bool",
       "default": 1,
       "label": "MD5 verification",
+      "description": "Verify supported G-code file checksums.",
       "warning": "To make the checksum validation work, you need to add a post-processing script to your slicer.\nScripts can be downloaded from 'Configuration -> mod' (addMD5.sh or addMD5.bat)"
     },
     {
@@ -140,6 +149,7 @@
       "type": "int",
       "default": 0,
       "label": "Allowed threshold weight on load cell",
+      "description": "Set the allowed load-cell threshold.",
       "order": 100
     },
     {
@@ -147,6 +157,7 @@
       "type": "bool",
       "default": 0,
       "label": "Load Z-OFFSET",
+      "description": "Load the saved Z offset during startup.",
       "order": 10000
     },
     {
@@ -154,6 +165,7 @@
       "type": "bool",
       "default": 0,
       "label": "Load Z-OFFSET during cleaning",
+      "description": "Apply saved Z offset while cleaning.",
       "order": 10001
     },
     {
@@ -161,6 +173,7 @@
       "type": "float",
       "default": 0,
       "label": "Z-OFFSET",
+      "description": "Set the saved nozzle-to-bed Z offset.",
       "order": 10002
     },
     {
@@ -168,6 +181,7 @@
       "type": "bool",
       "default": 1,
       "label": "Sound indication",
+      "description": "Enable local sound feedback.",
       "order": 50000
     },
     {
@@ -175,6 +189,7 @@
       "type": "int",
       "default": 50,
       "label": "Screen brightness",
+      "description": "Set normal display brightness percent.",
       "order": 50001
     },
     {
@@ -182,6 +197,7 @@
       "type": "int",
       "default": 10,
       "label": "Screen brightness in ECO mode",
+      "description": "Set dimmed display brightness percent.",
       "order": 50002
     },
     {
@@ -189,6 +205,7 @@
       "type": "str",
       "default": "n/a",
       "label": "Current material",
+      "description": "Last selected filament material.",
       "hidden": true,
       "order": 50003
     },
@@ -197,6 +214,7 @@
       "type": "str",
       "default": "",
       "label": "MIDI on startup",
+      "description": "Set the MIDI sequence played at startup.",
       "order": 50010
     },
     {
@@ -204,6 +222,7 @@
       "type": "str",
       "default": "",
       "label": "MIDI when starting print",
+      "description": "Set the MIDI sequence played at print start.",
       "order": 50011
     },
     {
@@ -211,6 +230,7 @@
       "type": "str",
       "default": "",
       "label": "MIDI when completing print",
+      "description": "Set the MIDI sequence played after printing.",
       "order": 50012
     },
     {
@@ -218,6 +238,7 @@
       "type": "bool",
       "default": 0,
       "label": "Mesh bed before printing",
+      "description": "Run bed meshing before each print.",
       "order": 100
     },
     {
@@ -225,6 +246,7 @@
       "type": "bool",
       "default": 1,
       "label": "Motors",
+      "description": "Choose motor behavior after print completion.",
       "options": ["Do not turn off", "Turn off automatically"],
       "order": 30000
     },
@@ -233,6 +255,7 @@
       "type": "bool",
       "default": 0,
       "label": "Use KAMP",
+      "description": "Use adaptive meshing and purging.",
       "order": 20000
     },
     {
@@ -240,6 +263,7 @@
       "type": "SwapEnum",
       "default": "MMC",
       "label": "SWAP",
+      "description": "Select the swap storage backend.",
       "options": {
         "OFF": "not used",
         "MMC": "used on eMMC",
@@ -252,6 +276,7 @@
       "type": "ZramAlgoEnum",
       "default": "zstd",
       "label": "zram compression",
+      "description": "Select the zram compression algorithm.",
       "options": {
         "zstd": "zstd (best ratio ~4x)",
         "lzo-rle": "lzo-rle (faster, ~2.7x)",
@@ -263,6 +288,7 @@
       "type": "LinePurgeEnum",
       "default": "ORCA",
       "label": "Purge algorithm",
+      "description": "Select the purge-line implementation.",
       "order": 20000
     },
     {
@@ -270,6 +296,7 @@
       "type": "int",
       "default": 50,
       "label": "Parking offset after print completion, mm",
+      "description": "Set Z lift after a completed print, in mm.",
       "order": 20000
     },
     {
@@ -277,6 +304,7 @@
       "type": "int",
       "default": 120,
       "label": "Cooldown temperature for CLEAR_NOZZLE, Cº",
+      "description": "Set nozzle-cleaning cooldown temperature.",
       "order": 20000
     },
     {
@@ -284,6 +312,7 @@
       "type": "DisplayEnum",
       "default": "STOCK",
       "label": "Display",
+      "description": "Choose the active local screen.",
       "options": {
         "STOCK": "Use Stock Screen",
         "FEATHER": "Use Feather Screen",
@@ -303,6 +332,7 @@
       "type": "bool",
       "default": 0,
       "label": "Alt. camera",
+      "description": "Enable the low-memory camera service.",
       "options": ["not used", "enabled"],
       "order": 100
     },
@@ -311,6 +341,7 @@
       "type": "bool",
       "default": 0,
       "label": "SSH tunnel",
+      "description": "Enable the remote SSH tunnel service.",
       "options": ["not used", "enabled"],
       "order": 100
     },
@@ -319,6 +350,7 @@
       "type": "bool",
       "default": 0,
       "label": "Block stock cloud/telemetry",
+      "description": "Block stock cloud and telemetry hosts.",
       "order": 100
     },
     {
@@ -326,6 +358,7 @@
       "type": "bool",
       "default": 0,
       "label": "Bed collision protection",
+      "description": "Enable load-cell collision protection.",
       "order": 10
     },
     {
@@ -333,6 +366,7 @@
       "type": "int",
       "default": 1200,
       "label": "Bed collision protection, weight",
+      "description": "Set collision detection weight threshold.",
       "order": 11
     },
     {
@@ -340,6 +374,7 @@
       "type": "bool",
       "default": 0,
       "label": "Bed Mesh Validation",
+      "description": "Validate bed mesh measurements.",
       "order": 12
     },
     {
@@ -347,6 +382,7 @@
       "type": "bool",
       "default": 0,
       "label": "Clear before Bed Mesh Validation",
+      "description": "Clean the nozzle before mesh validation.",
       "order": 13
     },
     {
@@ -354,6 +390,7 @@
       "type": "float",
       "default": 0.2,
       "label": "Bed Mesh Validation Z-Offset Tolerance",
+      "description": "Set allowed mesh Z-offset variation.",
       "order": 14
     },
     {
@@ -361,6 +398,7 @@
       "type": "bool",
       "default": 0,
       "label": "Firmware parameter tuning",
+      "description": "Apply tuned Forge-X printer parameters.",
       "order": 15,
       "warning": "!! After changing the value, be sure to recreate the bed mesh and adjust the Z-Offset.\n!! If you have performed dimension calibration, it must also be updated.\n!! Additionally, you may need to recalibrate the flow and Pressure Advance.\n!! Printing with an old bed mesh or Z-Offset may damage the printer!\nYou can view the changing parameters in the Configuration -> 'mod' -> 'tuning.cfg' section."
     },
@@ -369,6 +407,7 @@
       "type": "bool",
       "default": 1,
       "label": "Use filament switch sensor",
+      "description": "Pause when the filament sensor triggers.",
       "order": 100
     },
     {
@@ -376,6 +415,7 @@
       "type": "bool",
       "default": 0,
       "label": "Disable Web UI",
+      "description": "Disable local HTTP web interfaces.",
       "order": 30000
     },
     {
@@ -383,6 +423,7 @@
       "type": "bool",
       "default": 0,
       "label": "Disable Moonraker",
+      "description": "Disable the Moonraker API service.",
       "order": 30000
     },
     {
@@ -390,6 +431,7 @@
       "type": "bool",
       "default": 0,
       "label": "Enable Power Loss Recovery Feature",
+      "description": "Offer recovery after unexpected power loss.",
       "order": 30000
     }
   ]

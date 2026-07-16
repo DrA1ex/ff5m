@@ -211,7 +211,8 @@ void add_hitbox(const argparse::ArgumentParser &opts) {
     }
 
     typer::interactive::register_hitbox(
-        pos[0], pos[1], size[0], size[1], std::move(action));
+        pos[0], pos[1], size[0], size[1], std::move(action),
+        opts.get<bool>("--continuous"));
 }
 
 void drawButton(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
@@ -445,6 +446,10 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
         .required();
     result->hitbox_command.add_argument("--id")
         .required();
+
+    result->hitbox_command.add_argument("--continuous")
+        .help("Emit begin/move/end coordinates while the control is held.")
+        .flag();
     result->program.add_subparser(result->hitbox_command);
 
     result->clear_hitboxes_command.add_description("Remove all registered touch hitboxes");
@@ -461,6 +466,7 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->button_command.add_argument("--font", "-f").default_value(Roboto12pt.name);
     result->button_command.add_argument("--text", "-t").default_value("");
     result->button_command.add_argument("--id");
+    result->button_command.add_argument("--continuous").flag();
     result->program.add_subparser(result->button_command);
 
     return result;

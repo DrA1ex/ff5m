@@ -132,16 +132,28 @@ check_and_fix_eth0_mac() {
 
 
 apply_display_off() {
+    local display_mode
+    display_mode="$(test)"
+
     killall "ffstartup-arm" &> /dev/null
     killall "firmwareExe" &> /dev/null
     
     # Stop Guppy services if they are running
     chroot "$MOD" /opt/config/mod/.root/guppyscreen stop
 
-    # Feather reuses tslib's calibrated uinput device without running Guppy.
-    if [ "$(test)" = "FEATHER" ]; then
-        chroot "$MOD" /opt/config/mod/.root/S35tslib start
-    fi
+    # Start the selected alternative display before restarting Klipper.  This
+    # function may be invoked by Klipper through SET_MOD; anything placed after
+    # the hard restart is not guaranteed to run because the caller is stopped.
+    case "$display_mode" in
+        FEATHER)
+            # Feather only needs tslib's calibrated uinput device.
+            chroot "$MOD" /opt/config/mod/.root/S35tslib start
+        ;;
+        GUPPY)
+            # Guppy owns its UI process and shares the same tslib device.
+            chroot "$MOD" /opt/config/mod/.root/guppyscreen start
+        ;;
+    esac
     
     if ip addr show wlan0 | grep -q "inet "; then
         killall "wpa_cli" &> /dev/null
@@ -196,9 +208,6 @@ case "$1" in
     guppy)
         display_guppy    
         apply_display_off
-
-        # Start Guppy services
-        chroot "$MOD" /opt/config/mod/.root/guppyscreen start
     ;;
     
     apply)

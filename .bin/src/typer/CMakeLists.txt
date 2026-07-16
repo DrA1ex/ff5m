@@ -56,7 +56,8 @@ if(BUILD_TESTING)
             negative_coordinates
             clear_registry
             registry_limit
-            action_length_limit)
+            action_length_limit
+            continuous_hitbox_flag)
 
     add_executable(typer_touch_tracker_test
             tests/touch_tracker_test.cpp
@@ -69,7 +70,8 @@ if(BUILD_TESTING)
             tap_keeps_press_origin
             swipe_rejected
             returned_swipe_rejected
-            unrelated_events_ignored)
+            unrelated_events_ignored
+            continuous_reports_press_move_release)
 
     add_executable(typer_batch_protocol_test
             tests/batch_protocol_test.cpp

@@ -101,7 +101,7 @@ Its only registered command is:
 FEATHER_PRINT_STATUS S="PREPARING..."
 ```
 
-Forge-X’s `_PRINT_STATUS` macro calls this command for the Feather workflow. Treat it as an internal UI-status bridge, not a stable slicer macro. Interactive controls use the same normal `SDCARD_PRINT_FILE`, `PAUSE`, `RESUME`, `CANCEL_PRINT`, `G28`, and `MOVE_SAFE` paths exposed elsewhere by Forge-X. See [Screen modes and Feather](screens-and-feather.md) for the architecture and safety gates.
+Forge-X’s `_PRINT_STATUS` macro calls this command for the Feather workflow. Treat it as an internal UI-status bridge, not a stable slicer macro. Interactive controls use the same normal `SDCARD_PRINT_FILE`, `PAUSE`, `RESUME`, `CANCEL_PRINT`, `G28`, and `MOVE_SAFE` paths exposed elsewhere by Forge-X. The held joystick is the narrow exception: it queues short native toolhead segments so release latency stays bounded, while reusing `MOVE_SAFE` boundaries and half of the configured acceleration. See [Screen modes and Feather](screens-and-feather.md) for the architecture and safety gates.
 
 ## Change and validation guidance
 
