@@ -40,7 +40,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`use_kamp`**: Enables KAMP (Klipper Adaptive Meshing and Purging) if set to `1`.
 
-  > [!DANGER]
+  > [!CAUTION]
   > Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
 
 - **`camera`**: Enables the alternative camera implementation if set to `1`.  
