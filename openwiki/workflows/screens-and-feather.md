@@ -2,7 +2,7 @@
 
 Forge-X supports four mutually exclusive display modes: **STOCK**, **FEATHER**, **GUPPY**, and **HEADLESS**. The `display` setting changes more than what appears on the 800×480 panel: it rewrites the active Klipper configuration include, chooses who starts networking and Klipper, and changes the supported control/upload workflow.
 
-**Feather is Forge-X’s built-in display implementation.** It is developed in this repository as a Klipper extension plus the bundled `typer` renderer—not an externally managed touchscreen application. It provides a bounded local control surface while keeping file management, state validation, and printer actions inside the existing Klipper stack.
+**Feather is Forge-X’s built-in display implementation.** It is developed in this repository as a Klipper extension plus the bundled `typer` renderer—not an externally managed touchscreen application. It provides a bounded local control surface while keeping file management, state validation, and printer actions inside the existing Klipper stack. For process ownership, boot/restart sequencing, FIFO protocol, temporary runtime files, and the Typer/tslib input path, see [Feather runtime, Typer, and Klipper plugin wiring](feather-runtime.md).
 
 > **Mode change boundary:** do not change display mode during a print. Non-stock modes disable the FlashForge application and its companion services. Feather can configure DHCP networking locally, but retain a documented recovery route before switching modes.
 

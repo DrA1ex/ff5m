@@ -4,7 +4,7 @@
 
 Forge-X deploys six **added Klipper `extras` modules** from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into stock Klipper’s `extras/` directory at boot. They are extensions—not the replacement stock-module patches described in [Built-in Klipper patching](klipper-patching.md). A plugin runs only when its matching configuration section is included by the active Klipper configuration.
 
-The normal shared configuration, [`macros/base.cfg`](../../macros/base.cfg), loads `load_cell_tare`, `md5_check`, `tone_player`, and `mod_params`. The alternative-display configuration [`macros/headless.cfg`](../../macros/headless.cfg) loads `resurrection`; Feather additionally loads `feather_screen` through [`config/feather.cfg`](../../config/feather.cfg).
+The normal shared configuration, [`macros/base.cfg`](../../macros/base.cfg), loads `load_cell_tare`, `md5_check`, `tone_player`, and `mod_params`. The alternative-display configuration [`macros/headless.cfg`](../../macros/headless.cfg) loads `resurrection`; Feather additionally loads `feather_screen` through [`config/feather.cfg`](../../config/feather.cfg). Its runtime ownership, FIFO protocol, and Typer lifecycle are documented in [Feather runtime, Typer, and Klipper plugin wiring](feather-runtime.md).
 
 > **Usage boundary:** use the documented top-level macros and settings for normal operation. Some plugin commands are internal plumbing called by Forge-X macros; invoking them directly can bypass preparation or safety checks. Settings are persisted in printer-side `mod_data`, so do not edit that state as a substitute for its G-code interface.
 
