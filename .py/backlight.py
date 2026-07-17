@@ -2,6 +2,7 @@
 
 ## Configuration management, backup and restore
 ##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ## Copyright (C) 2024, Tristan <https://github.com/consp>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license

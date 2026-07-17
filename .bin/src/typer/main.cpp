@@ -1,6 +1,6 @@
 // Screen typer
 //
-// Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+// Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 //
 // This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -283,7 +283,7 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     );
 
     result->program.add_description("Flashforge AD5M screen drawing utility");
-    result->program.add_epilog("Copyright (C) 2025, Alexander K <https://github.com/drA1ex>");
+    result->program.add_epilog("Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>");
 
     result->program.add_argument("--debug").flag();
     result->program.add_argument("--double-buffered", "-db").flag();

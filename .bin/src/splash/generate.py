@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+#
+## Generate the 800x480 BGRA/XZ boot screens used by /dev/fb0.
+##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
 """Generate the 800x480 BGRA/XZ boot screens used by /dev/fb0."""
 
 import argparse

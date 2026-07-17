@@ -3,6 +3,10 @@
 ## This module deliberately contains no Klipper state or business logic.  Keeping
 ## it separate makes the 800x480 layout testable without starting another
 ## process on the printer.
+##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 import enum
 import logging

@@ -2,6 +2,10 @@
 
 ## Lightweight network control for the interactive Feather screen.
 ## This script intentionally uses only BusyBox/POSIX tools available on AD5M.
+##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 # Klipper's service environment does not include the sbin directories. Network
 # tools exist there on the stock image, so use an explicit deterministic PATH.

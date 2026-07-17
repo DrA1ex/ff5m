@@ -3,6 +3,10 @@
 # Shared, dependency-free network lifecycle helpers.  The stock udhcpc script
 # only replaces routes for the interface it configures, so every mode switch
 # must explicitly retire the previous interface after the new one is usable.
+#
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 export PATH

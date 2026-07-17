@@ -1,3 +1,9 @@
+# Native printer soft-float cross-toolchain.
+#
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license
+
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 

@@ -3,7 +3,7 @@
 # Changes:
 # - Fix exception handleing repeatative error print 
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
