@@ -11,6 +11,7 @@
 import enum
 import json
 import logging
+import math
 import os
 import errno
 import re
@@ -121,6 +122,7 @@ class Page(enum.Enum):
     MOD_SETTINGS = 26
     MOD_ENUM = 27
     MOD_VALUE = 28
+    ERROR = 29
 
 
 class PrintState(enum.Enum):
@@ -151,6 +153,8 @@ class FeatherRenderer:
     # buttons reserve a visible margin on both sides.
     FONT_ADVANCE = {8: 11, 12: 16, 16: 22, 20: 28, 28: 38}
     BUTTON_TEXT_PADDING = 16
+    HINT_TEXT_PADDING = 20
+    DIALOG_TEXT_PADDING = 28
     FONT_PATTERN = re.compile(
         r"^(Roboto(?: Bold| Thin)?|JetBrainsMono(?: Bold| Thin)?) (\d+)pt$")
 
@@ -488,6 +492,38 @@ class FeatherRenderer:
                 self.stroke(x, y, width, height, border, line_width))
         return commands
 
+    def filled_circle(self, center_x, center_y, radius, color=COLOR_CYAN):
+        """Draw a compact filled circle using horizontal one-pixel spans."""
+        radius = max(1, int(radius))
+        commands = []
+        for offset_y in range(-radius, radius + 1):
+            half_width = int(math.sqrt(
+                max(0, radius * radius - offset_y * offset_y)))
+            commands.append(self.fill(
+                int(center_x) - half_width, int(center_y) + offset_y,
+                half_width * 2 + 1, 1, color))
+        return commands
+
+    def hint_box(self, message, center_x, y, max_width=740, min_width=180,
+                 height=44, border=COLOR_VIOLET,
+                 background=COLOR_BG, font="JetBrainsMono 8pt"):
+        """Draw a centered one-line hint with guaranteed inner padding."""
+        font = self.normalize_font(font)
+        available = max(1, int(max_width) - 2 * self.HINT_TEXT_PADDING)
+        label = self.truncate_text(str(message).upper(), available, font)
+        width = min(
+            int(max_width),
+            max(int(min_width),
+                self.text_width(label, font) + 2 * self.HINT_TEXT_PADDING))
+        x = int(center_x) - width // 2
+        commands = self.panel(
+            x, int(y), width, int(height), border=border,
+            background=background, line_width=2)
+        commands.append(self.text(
+            int(center_x), int(y) + int(height) // 2, label, COLOR_TEXT,
+            font, "center", "middle"))
+        return commands
+
     def section_panel(self, title, x, y, width, height, border="295c66"):
         """Draw a titled content panel with consistent Feather spacing."""
         commands = self.panel(
@@ -791,6 +827,9 @@ class FeatherRenderer:
             x + width // 2, y + 34, str(title).upper(), border,
             "JetBrainsMono Bold 16pt", "center", "middle"))
         for index, line in enumerate(tuple(lines)[:4]):
+            line = self.truncate_text(
+                str(line), width - 2 * self.DIALOG_TEXT_PADDING,
+                "JetBrainsMono 8pt")
             commands.append(self.text(
                 x + width // 2, y + 78 + index * 24, line, COLOR_TEXT,
                 "JetBrainsMono 8pt", "center", "middle"))
@@ -857,10 +896,12 @@ class FeatherRenderer:
             self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
         ]
         if self._busy_label is not None:
+            busy_label = self.truncate_text(
+                self._busy_label, 132, "JetBrainsMono Bold 8pt")
             commands += [
-                self.fill(646, 9, 136, 38, COLOR_PANEL),
-                self.stroke(646, 9, 136, 38, COLOR_AMBER, 2),
-                self.text(714, 28, self._busy_label, COLOR_AMBER,
+                self.fill(622, 9, 160, 38, COLOR_PANEL),
+                self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
+                self.text(702, 28, busy_label, COLOR_AMBER,
                           "JetBrainsMono Bold 8pt", "center", "middle"),
             ]
         if self._footer_values is not None and not self._footer_drawn:
@@ -893,22 +934,21 @@ class FeatherRenderer:
         self.send(self._footer_commands(values))
 
     def toast(self, message):
-        self.send([
-            self.fill(150, 401, 500, 40, COLOR_BG),
-            self.stroke(150, 401, 500, 40, COLOR_VIOLET, 2),
-            self.text(400, 421, str(message).upper(), COLOR_TEXT,
-                      "JetBrainsMono 8pt", "center"),
-        ])
+        self.send(self.hint_box(
+            message, 400, 397, max_width=740, min_width=180, height=44,
+            border=COLOR_VIOLET, background=COLOR_BG,
+            font="JetBrainsMono 8pt"))
 
     def busy_notice(self, label="KLIPPER BUSY"):
         label = str(label).upper()
         if label == self._busy_label:
             return
         self._busy_label = label
+        label = self.truncate_text(label, 132, "JetBrainsMono Bold 8pt")
         self.send([
-            self.fill(646, 9, 136, 38, COLOR_PANEL),
-            self.stroke(646, 9, 136, 38, COLOR_AMBER, 2),
-            self.text(714, 28, label, COLOR_AMBER,
+            self.fill(622, 9, 160, 38, COLOR_PANEL),
+            self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
+            self.text(702, 28, label, COLOR_AMBER,
                       "JetBrainsMono Bold 8pt", "center", "middle"),
         ])
 
@@ -923,7 +963,7 @@ class FeatherRenderer:
                 "nav.menu", x, y, width, height, label, state, font,
                 subtitle, False, layout))
         else:
-            self.send([self.fill(646, 9, 136, 38, COLOR_PANEL)])
+            self.send([self.fill(622, 9, 160, 38, COLOR_PANEL)])
 
     def loader(self, message, phase=0):
         """Draw a non-interactive busy overlay for a yielding G-code call."""
@@ -941,6 +981,37 @@ class FeatherRenderer:
             color = COLOR_CYAN if index == phase % 5 else "263238"
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
         self.send(commands)
+
+    def startup_modal(self, phase=0):
+        """Draw the pre-ready Klipper loading modal and its pulse frame."""
+        self._buttons = {}
+        self._toggles = {}
+        commands = [
+            "--batch clear-hitboxes",
+            self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, "010203"),
+        ]
+        commands += self.panel(
+            150, 120, 500, 250, border=COLOR_CYAN,
+            background=COLOR_PANEL, line_width=2)
+        commands += [
+            self.text(400, 170, "KLIPPER IS LOADING", COLOR_CYAN,
+                      "JetBrainsMono Bold 16pt", "center", "middle"),
+        ]
+        commands += self.startup_pulse(phase)
+        commands += [
+            self.text(400, 300, "PLEASE WAIT", COLOR_TEXT,
+                      "JetBrainsMono 12pt", "center", "middle"),
+            self.text(400, 335, "INITIALIZING PRINTER SERVICES", COLOR_DIM,
+                      "JetBrainsMono 8pt", "center", "middle"),
+        ]
+        self.send(commands)
+
+    def startup_pulse(self, phase=0):
+        """Redraw only the animated startup indicator's small dirty area."""
+        pulse = (8, 12, 16, 12)[int(phase) % 4]
+        commands = [self.fill(374, 206, 53, 53, COLOR_PANEL)]
+        commands += self.filled_circle(400, 232, pulse, COLOR_VIOLET)
+        return commands
 
     def applying_modal(self, message="APPLYING CHANGES"):
         """Dim the page and draw a non-interactive modal progress panel."""

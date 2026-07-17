@@ -10,7 +10,8 @@ Feather is not an init service and neither is Typer. The long-lived owner is the
 display=FEATHER
   -> printer.cfg includes config/feather.cfg
   -> [feather_screen] loads the feather_screen Klipper extra
-  -> klippy:ready starts /root/printer_data/bin/typer
+  -> config load starts /root/printer_data/bin/typer
+  -> Feather shows Klipper startup/recovery state
   -> Typer renders /dev/fb0 and transports touch events
 ```
 
@@ -36,7 +37,7 @@ A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feathe
 
 ## Klippy and Typer lifecycle
 
-At `klippy:ready`, `FeatherScreen._init()` resolves Klipper objects (toolhead, heaters, virtual SD, print statistics, pause state, display status, optional resurrection, and others), creates timers, then starts `FeatherRenderer`. The renderer executes Typer as a Klippy child:
+When Klipper constructs `[feather_screen]` during config load, Feather starts `FeatherRenderer` immediately rather than leaving the previous framebuffer content visible until `klippy:ready`. The renderer executes Typer as a Klippy child:
 
 ```sh
 /root/printer_data/bin/typer \
@@ -46,9 +47,11 @@ At `klippy:ready`, `FeatherScreen._init()` resolves Klipper objects (toolhead, h
   batch --pipe /tmp/typer
 ```
 
-The event FIFO is registered with Klipper's reactor. The plugin renders an initial recovery or home page and uses its existing periodic timer for state refresh. If Typer dies, the timer rate-limits restart attempts to once per five seconds.
+The event FIFO is registered with Klipper's reactor. Before `klippy:ready`, a short reactor timer redraws a modal startup panel with a pulsating circle and an explicit `KLIPPER IS LOADING` message. This makes the not-yet-ready state visible and keeps the touch transport alive without allowing printer actions.
 
-Pipe-mode Typer configures Linux `PR_SET_PDEATHSIG=SIGTERM`, so it exits if Klippy dies before normal cleanup. On Klippy shutdown/disconnect, Feather unregisters fds and timers, stops network and joystick work, draws a best-effort error panel, and terminates Typer. `FeatherRenderer.stop()` allows two seconds before escalating to `kill()`.
+At `klippy:ready`, `FeatherScreen._init()` resolves Klipper objects (toolhead, heaters, virtual SD, print statistics, pause state, display status, optional resurrection, and others), stops the startup animation, creates the normal timers, and renders an initial recovery or home page. The existing periodic timer then owns state refresh. If Typer dies, the timer rate-limits restart attempts to once per five seconds.
+
+Pipe-mode Typer configures Linux `PR_SET_PDEATHSIG=SIGTERM`, so it exits if the Klippy process actually dies. A Klippy shutdown or disconnect event does not necessarily end that process, so Feather stops operational timers, network work, and joystick motion but deliberately keeps Typer and its event FIFO available for recovery UI. It classifies common MCU communication, scheduling, and shutdown messages, displays an explicit error panel, and offers `FIRMWARE_RESTART` when that is the appropriate recovery command. A config error detected before `klippy:ready` offers `RESTART`; a plain disconnect is displayed as a waiting state instead of looking like an unresponsive last page. If the process exits or Feather performs normal renderer cleanup, `FeatherRenderer.stop()` allows two seconds before escalating to `kill()`.
 
 ## Runtime files and devices
 
@@ -98,6 +101,8 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 
 `FeatherScreen._process_touch_events()` handles partial FIFO reads, validates generation and format, wakes a dimmed panel on the first touch, debounces actions, and applies page/state gates. Continuous motion is further limited to the Move page, idle state, correct homing, and active joystick mode; actual motion remains inside Klipper's planner/toolhead path.
 
+Startup and error pages clear the normal page hitboxes. The only actionable shutdown control is the generation-tagged `FIRMWARE_RESTART` button that Feather exposes after classifying an MCU recovery condition; it still routes through Klipper's normal G-code command path.
+
 ## Component boundaries
 
 | Component | Owns | Does not own |
@@ -116,6 +121,7 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 - Keep one interactive Typer owner of `/dev/fb0`; manual `typer -db` invocations can overwrite the UI or force heap fallback.
 - Never add blocking I/O to Feather reactor callbacks. Use non-blocking FIFO retries, timers, or bounded child helpers.
 - New UI actions require a hitbox plus page/state validation in the Klipper plugin; do not treat Typer events as trusted printer commands.
+- Preserve padding through the shared hint/dialog primitives. Dynamic hint widths include their horizontal inset, and dialog lines are clipped to the padded content area.
 - For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/guppy`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
 
 Primary implementation references: [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py), [`feather_ui.py`](../../.py/klipper/plugins/feather_ui.py), [`typer/main.cpp`](../../.bin/src/typer/main.cpp), [`typer/interactive.cpp`](../../.bin/src/typer/interactive.cpp), and [`S35tslib`](../../.root/S35tslib). For Typer's command interface, see [`docs/TYPER.md`](../../docs/TYPER.md).

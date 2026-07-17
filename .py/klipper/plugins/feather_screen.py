@@ -34,6 +34,7 @@ DISP_LCD_SET_BRIGHTNESS = 0x102
 DISP_LCD_BACKLIGHT_ENABLE = 0x104
 REFRESH_TIME = 1.0
 ACTION_DEBOUNCE = 0.08
+STARTUP_ANIMATION_PERIOD = 0.16
 MOVE_CAUTION_Z = 5.0
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
 JOYSTICK_XY_PAD = (30, 96, 420, 266)
@@ -101,6 +102,7 @@ EXACT_ACTIONS = {
     Page.RECOVERY_PROMPT: ("recovery.restore", "recovery.cleanup", "recovery.later"),
     Page.RECOVERY_CONFIRM: ("nav.back", "recovery.confirm"),
     Page.MESSAGE: ("message.ok",),
+    Page.ERROR: ("error.restart", "error.firmware_restart"),
 }
 ALPHA_KEY_ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm")
 SYMBOL_KEY_ROWS = (
@@ -138,6 +140,8 @@ class FeatherScreen:
         self.print_state = PrintState.INACTIVE
         self.state_time = self.reactor.monotonic()
         self.timer = None
+        self.startup_timer = None
+        self.startup_phase = 0
         self.event_handle = None
         self.event_partial = ""
         self.renderer_retry_at = 0.0
@@ -227,6 +231,9 @@ class FeatherScreen:
 
         self.message = ""
         self.message_return = Page.IDLE_HOME
+        self.error_message = ""
+        self.error_category = ""
+        self.error_recovery = None
 
         self._last_progress = None
         self._last_time = None
@@ -239,6 +246,66 @@ class FeatherScreen:
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
         self.printer.register_event_handler("klippy:disconnect", self._shutdown)
         self.gcode.register_command("FEATHER_PRINT_STATUS", self.cmd_FEATHER_PRINT_STATUS)
+        self._start_pre_ready_ui()
+
+    def _ensure_renderer_started(self):
+        if self.renderer.active:
+            if self.event_handle is None:
+                self.event_handle = self.reactor.register_fd(
+                    self.renderer.event_fd, self._process_touch_events)
+            return False
+        if self.event_handle is not None:
+            try:
+                self.reactor.unregister_fd(self.event_handle)
+            except Exception:
+                pass
+            self.event_handle = None
+        self.renderer.stop()
+        self.renderer.start()
+        self.event_handle = self.reactor.register_fd(
+            self.renderer.event_fd, self._process_touch_events)
+        return True
+
+    def _start_pre_ready_ui(self):
+        try:
+            self._enable_backlight()
+            self._ensure_renderer_started()
+            self.renderer.startup_modal(self.startup_phase)
+        except Exception:
+            logging.exception("[feather_screen] unable to draw startup modal")
+        if self.startup_timer is None:
+            self.startup_timer = self.reactor.register_timer(
+                self._startup_tick, self.reactor.NOW)
+
+    def _startup_tick(self, eventtime):
+        if self.print_state != PrintState.INACTIVE or self.error_message:
+            self.startup_timer = None
+            return self.reactor.NEVER
+        message, category = self.printer.get_state_message()
+        if str(category).lower() in ("error", "shutdown", "disconnect"):
+            self.startup_timer = None
+            self._show_error(message or "Klipper is not ready", category)
+            return self.reactor.NEVER
+        try:
+            restarted = self._ensure_renderer_started()
+            self.startup_phase = (self.startup_phase + 1) % 4
+            if restarted:
+                self.renderer.startup_modal(self.startup_phase)
+            else:
+                self.renderer.send(
+                    self.renderer.startup_pulse(self.startup_phase))
+        except Exception:
+            logging.exception("[feather_screen] startup animation failed")
+        return eventtime + STARTUP_ANIMATION_PERIOD
+
+    def _stop_startup_animation(self):
+        if self.startup_timer is None:
+            return
+        try:
+            self.reactor.unregister_timer(self.startup_timer)
+        except Exception:
+            pass
+        self.startup_timer = None
 
     def _init(self):
         self.params = self.printer.lookup_object("mod_params")
@@ -276,9 +343,8 @@ class FeatherScreen:
         self.joystick_timer = self.reactor.register_timer(
             self._joystick_tick, self.reactor.NEVER)
 
-        self.renderer.start()
-        self.event_handle = self.reactor.register_fd(
-            self.renderer.event_fd, self._process_touch_events)
+        self._ensure_renderer_started()
+        self._stop_startup_animation()
         self.print_state = PrintState.IDLE
         self.recovery_status = (self.resurrection.get_status(self.reactor.monotonic())
                                 if self.resurrection is not None else None)
@@ -290,17 +356,17 @@ class FeatherScreen:
         self.timer = self.reactor.register_timer(self._update, self.reactor.NOW)
 
     def _shutdown(self):
+        # Suppress any final ToolHead flush after the MCU has already stopped.
         self.print_state = PrintState.DESTROYED
+        self._stop_startup_animation()
         self._stop_joystick()
+        self.print_state = PrintState.INACTIVE
         if self.joystick_timer is not None:
             self.reactor.unregister_timer(self.joystick_timer)
             self.joystick_timer = None
         if self.timer is not None:
             self.reactor.unregister_timer(self.timer)
         self.timer = None
-        if self.event_handle is not None:
-            self.reactor.unregister_fd(self.event_handle)
-            self.event_handle = None
         if self.network_process is not None:
             self._retire_network_process(self.network_process)
             self.network_process = None
@@ -318,9 +384,8 @@ class FeatherScreen:
         self._cleanup_network_credentials()
         if self.renderer.active:
             msg, category = self.printer.get_state_message()
-            self._render_error(msg.split("\n")[0] if category == "shutdown"
-                               else "Disconnected")
-        self.renderer.stop()
+            message = msg if str(msg).strip() else "Klipper disconnected"
+            self._show_error(message, category)
 
     def cmd_FEATHER_PRINT_STATUS(self, gcmd):
         status = gcmd.get("S")
@@ -583,6 +648,8 @@ class FeatherScreen:
                 self._handle_mod_action(action)
             elif action.startswith("recovery."):
                 self._handle_recovery_action(action)
+            elif action.startswith("error."):
+                self._handle_error_action(action)
             elif action.startswith("net.") or action.startswith("key."):
                 self._handle_network_action(action)
             elif action == "message.ok":
@@ -667,6 +734,8 @@ class FeatherScreen:
             self._render_recovery_confirm()
         elif page == Page.MESSAGE:
             self._render_message()
+        elif page == Page.ERROR:
+            self._render_error()
 
     def _go_back(self):
         if self.page == Page.FILE_BROWSER and self.current_directory:
@@ -3588,27 +3657,95 @@ class FeatherScreen:
         self.renderer.toast(self.toast_message)
 
     def _show_message(self, message, return_page):
+        recovery = self._classify_error(message)
+        if recovery is not None:
+            self._show_error(message, "runtime", recovery)
+            return
         self.message = self._shorten(message, 100)
         self.message_return = return_page
         self._show_page(Page.MESSAGE)
 
     def _render_message(self):
         commands = self.renderer.begin_page("Message")
-        lines = self._wrap(self.message, 36, 5)
-        y = 150
-        for line in lines:
-            commands.append(self.renderer.text(400, y, line, "ffffff", "Roboto 12pt",
-                                               "center", "middle"))
-            y += 38
-        commands += self.renderer.button("message.ok", 285, 365, 230, 75, "OK")
+        commands += self.renderer.dialog(
+            "Message", self._wrap(self.message, 48, 4),
+            (("message.ok", "OK", "enabled"),),
+            x=90, y=95, width=620, height=300, tone="info")
         self.renderer.send(commands)
 
-    def _render_error(self, message):
-        self.renderer.send([
-            "--batch clear-hitboxes", self.renderer.fill(0, 0, 800, 480),
-            self.renderer.stroke(120, 120, 560, 240, "ff00ff", 6),
-            self.renderer.text(400, 240, self._shorten(message, 80), "00f0f0",
-                               "Roboto 12pt", "center", "middle")])
+    @staticmethod
+    def _classify_error(message, category=""):
+        text = ("%s %s" % (category, message)).lower()
+        markers = (
+            "mcu shutdown",
+            "mcu '",
+            "lost communication with mcu",
+            "unable to connect to mcu",
+            "timer too close",
+            "unable to obtain 'endstop_state'",
+            "shutdown due to",
+            "printer is shutdown",
+            "can not update mcu",
+            "missed scheduling",
+        )
+        category = str(category).lower()
+        if category == "shutdown":
+            return "firmware_restart"
+        if any(marker in text for marker in markers):
+            return "firmware_restart"
+        if category == "error":
+            return "restart"
+        return None
+
+    def _show_error(self, message, category="", recovery=None):
+        self.error_message = self._shorten(str(message).replace("\n", " "), 220)
+        self.error_category = str(category or "")
+        self.error_recovery = (
+            recovery if recovery is not None
+            else self._classify_error(self.error_message, self.error_category))
+        self._show_page(Page.ERROR)
+
+    def _render_error(self):
+        commands = self.renderer.begin_page("Klipper error")
+        lines = list(self._wrap(self.error_message, 58, 3))
+        if self.error_recovery == "firmware_restart":
+            lines.append("Check the printer, then restart the MCU.")
+            buttons = (("error.firmware_restart",
+                        "FIRMWARE RESTART", "danger"),)
+            title = "MCU RESTART REQUIRED"
+        elif self.error_recovery == "restart":
+            lines.append("Correct the issue, then restart Klipper.")
+            buttons = (("error.restart", "RESTART", "danger"),)
+            title = "KLIPPER ERROR"
+        else:
+            lines.append("Waiting for Klipper to reconnect.")
+            buttons = ()
+            title = "KLIPPER IS NOT READY"
+        commands += self.renderer.dialog(
+            title, tuple(lines), buttons,
+            x=80, y=85, width=640, height=325, tone="danger")
+        self.renderer.send(commands)
+
+    def _handle_error_action(self, action):
+        commands = {
+            "error.restart": "RESTART",
+            "error.firmware_restart": "FIRMWARE_RESTART",
+        }
+        command = commands.get(action)
+        if command is None:
+            return
+        self.error_message = ""
+        self.error_category = ""
+        self.error_recovery = None
+        self.startup_phase = 0
+        if self.timer is not None:
+            try:
+                self.reactor.unregister_timer(self.timer)
+            except Exception:
+                pass
+            self.timer = None
+        self._start_pre_ready_ui()
+        self._run_script(command)
 
     def _update(self, eventtime):
         if self.print_state == PrintState.DESTROYED:

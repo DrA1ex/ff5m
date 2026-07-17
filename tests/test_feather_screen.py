@@ -376,6 +376,52 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(
             set(renderer._buttons), {"dialog.close", "dialog.apply"})
 
+    def test_hints_and_dialog_lines_keep_horizontal_padding(self):
+        renderer = FEATHER.FeatherRenderer()
+        long_text = "X" * 120
+
+        hint = "\n".join(renderer.hint_box(
+            long_text, 400, 397, max_width=740))
+        dialog = "\n".join(renderer.dialog(
+            "Notice", (long_text,), (), x=80, y=90, width=640, height=240))
+
+        self.assertNotIn(long_text, hint)
+        hint_panel = re.search(
+            r"--batch fill -p (\d+) 397 -s (\d+) 44", hint)
+        self.assertIsNotNone(hint_panel)
+        self.assertGreaterEqual(int(hint_panel.group(1)), 30)
+        self.assertLessEqual(int(hint_panel.group(2)), 740)
+        hint_label = re.search(r'-t "([^"]+)"', hint).group(1)
+        dialog_label = re.findall(r'-t "([^"]+)"', dialog)[1]
+        self.assertGreaterEqual(
+            int(hint_panel.group(2))
+            - renderer.text_width(hint_label, "JetBrainsMono 8pt"), 40)
+        self.assertLessEqual(
+            renderer.text_width(hint_label, "JetBrainsMono 8pt"), 700)
+        self.assertLessEqual(
+            renderer.text_width(dialog_label, "JetBrainsMono 8pt"), 584)
+
+    def test_startup_modal_draws_pulsing_circle_and_loading_text(self):
+        renderer = FEATHER.FeatherRenderer()
+        batches = []
+        renderer.send = batches.append
+
+        renderer.startup_modal(0)
+        renderer.startup_modal(2)
+
+        first = "\n".join(batches[0])
+        expanded = "\n".join(batches[1])
+        self.assertIn("KLIPPER IS LOADING", first)
+        self.assertIn("PLEASE WAIT", first)
+        self.assertIn("-p 392 232 -s 17 1", first)
+        self.assertIn("-p 384 232 -s 33 1", expanded)
+        self.assertIn("--batch clear-hitboxes", first)
+
+        pulse = "\n".join(renderer.startup_pulse(1))
+        self.assertIn("-p 388 232 -s 25 1", pulse)
+        self.assertNotIn("--batch clear-hitboxes", pulse)
+        self.assertNotIn("-p 0 0 -s 800 480", pulse)
+
     def test_local_dialog_preserves_existing_controls_and_hitboxes(self):
         renderer = FEATHER.FeatherRenderer()
         renderer.button("outside", 10, 10, 100, 40, "OUTSIDE")
@@ -1240,6 +1286,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.RECOVERY_PROMPT: "_render_recovery_prompt",
             FEATHER.Page.RECOVERY_CONFIRM: "_render_recovery_confirm",
             FEATHER.Page.MESSAGE: "_render_message",
+            FEATHER.Page.ERROR: "_render_error",
         }
         for method in set(routes.values()):
             setattr(controller, method,
@@ -1793,6 +1840,107 @@ class ControllerSafetyTest(unittest.TestCase):
             controller._run_calibration(0)
         self.assertEqual(controller.calibration_error, "macro failed")
         self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+
+    def test_mcu_failures_are_classified_for_firmware_restart(self):
+        classify = FEATHER.FeatherScreen._classify_error
+        self.assertEqual(
+            classify("MCU 'mcu' shutdown: Timer too close"),
+            "firmware_restart")
+        self.assertEqual(
+            classify("Lost communication with MCU 'mcu'"),
+            "firmware_restart")
+        self.assertEqual(
+            classify("ADC out of range", "shutdown"),
+            "firmware_restart")
+        self.assertEqual(
+            classify("Option 'foo' is not valid", "error"),
+            "restart")
+        self.assertIsNone(classify("Klipper disconnected", "disconnect"))
+        self.assertIsNone(classify("Home X before moving"))
+
+    def test_error_page_offers_firmware_restart_with_padded_dialog(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.error_message = "MCU 'mcu' shutdown: Timer too close"
+        controller.error_recovery = "firmware_restart"
+
+        controller._render_error()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn("MCU RESTART REQUIRED", drawing)
+        self.assertIn("FIRMWARE RESTART", drawing)
+        self.assertIn("error.firmware_restart", drawing)
+        self.assertIn("--batch fill -p 80 85 -s 640 325", drawing)
+
+    def test_firmware_restart_action_switches_to_animated_startup(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.error_message = "shutdown"
+        controller.error_category = "shutdown"
+        controller.error_recovery = "firmware_restart"
+        controller.startup_phase = 3
+        controller.startup_timer = None
+        controller.timer = None
+        started = []
+        controller._start_pre_ready_ui = lambda: started.append(True)
+        controller.gcode = GCodeRecorder()
+        controller.reactor = Reactor()
+        controller.command_depth = 0
+
+        controller._handle_error_action("error.firmware_restart")
+
+        self.assertEqual(started, [True])
+        self.assertEqual(controller.gcode.commands, ["FIRMWARE_RESTART"])
+        self.assertEqual(controller.startup_phase, 0)
+        self.assertEqual(controller.error_message, "")
+
+    def test_startup_tick_advances_pulse_until_klipper_is_ready(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        pulses = []
+        controller.renderer = type("Renderer", (), {
+            "active": True,
+            "startup_pulse": lambda self, phase: ["pulse %d" % phase],
+            "send": lambda self, commands: pulses.append(commands),
+        })()
+        controller.printer = type("Printer", (), {
+            "get_state_message": lambda self: ("Printer is not ready", "startup"),
+        })()
+        controller.reactor = type("Reactor", (), {"NEVER": 1.0e30})()
+        controller.event_handle = object()
+        controller.print_state = FEATHER.PrintState.INACTIVE
+        controller.error_message = ""
+        controller.startup_phase = 0
+
+        wake = controller._startup_tick(10.0)
+        self.assertEqual(pulses, [["pulse 1"]])
+        self.assertAlmostEqual(wake, 10.0 + FEATHER.STARTUP_ANIMATION_PERIOD)
+
+        controller.print_state = FEATHER.PrintState.IDLE
+        self.assertEqual(controller._startup_tick(11.0),
+                         controller.reactor.NEVER)
+
+    def test_startup_tick_replaces_animation_with_config_error(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        shown = []
+        controller.renderer = type("Renderer", (), {"active": True})()
+        controller.reactor = type("Reactor", (), {"NEVER": 1.0e30})()
+        controller.printer = type("Printer", (), {
+            "get_state_message": lambda self: (
+                "Option 'foo' is not valid", "error"),
+        })()
+        controller.event_handle = object()
+        controller.print_state = FEATHER.PrintState.INACTIVE
+        controller.error_message = ""
+        controller.startup_timer = object()
+        controller._show_error = (
+            lambda message, category: shown.append((message, category)))
+
+        wake = controller._startup_tick(10.0)
+
+        self.assertEqual(wake, controller.reactor.NEVER)
+        self.assertEqual(controller.startup_timer, None)
+        self.assertEqual(shown, [("Option 'foo' is not valid", "error")])
 
 
 class ResurrectionStatusTest(unittest.TestCase):
