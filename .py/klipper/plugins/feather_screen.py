@@ -34,6 +34,7 @@ DISP_LCD_SET_BRIGHTNESS = 0x102
 DISP_LCD_BACKLIGHT_ENABLE = 0x104
 REFRESH_TIME = 1.0
 ACTION_DEBOUNCE = 0.08
+MOVE_CAUTION_Z = 5.0
 MAX_TOUCH_EVENT = 256
 FILE_ROWS = 5
 VALID_GCODE_EXTS = (".gcode", ".g", ".gco")
@@ -158,6 +159,8 @@ class FeatherScreen:
         self.joystick_drawn_cursor = None
         self.joystick_drawn_inertia = None
         self.joystick_feedback_at = 0.0
+        self.move_caution_acknowledged = False
+        self.move_caution_signature = None
         self.z_step = 0.01
         self.z_session_adjust = 0.0
 
@@ -1326,7 +1329,8 @@ class FeatherScreen:
 
     def _render_move(self):
         self._require_idle()
-        snapshot = self._move_status_snapshot(self.reactor.monotonic())
+        now = self.reactor.monotonic()
+        snapshot = self._move_status_snapshot(now)
         commands = self.renderer.begin_page("Move", back=True)
         if getattr(self, "move_mode", "step") == "joystick":
             self.joystick_drawn_cursor = None
@@ -1335,6 +1339,10 @@ class FeatherScreen:
             commands += self._joystick_move_commands(snapshot)
         else:
             commands += self._step_move_commands(snapshot)
+        caution = self._move_caution_state(snapshot, now)
+        self.move_caution_signature = caution
+        if caution[0]:
+            commands += self._move_caution_commands(caution[1])
         self.renderer.send(commands)
         self._last_move = snapshot
 
@@ -1381,9 +1389,9 @@ class FeatherScreen:
         return commands
 
     def _joystick_move_commands(self, snapshot):
-        commands = [
-            self.renderer.fill(25, 75, 430, 285, "050c0f"),
-            self.renderer.stroke(25, 75, 430, 285, "35d9e6", 2),
+        commands = []
+        commands += self.renderer.panel(25, 75, 430, 285, "35d9e6")
+        commands += [
             self.renderer.fill(240, 87, 1, 261, "295c66"),
             self.renderer.fill(37, 220, 406, 1, "295c66"),
             self.renderer.text(240, 92, "Y+", "35d9e6", "JetBrainsMono 8pt",
@@ -1396,8 +1404,9 @@ class FeatherScreen:
                                "right", "middle"),
             self.renderer.text(240, 220, "+", "b47aff", "JetBrainsMono 16pt",
                                "center", "middle"),
-            self.renderer.fill(485, 75, 110, 285, "050c0f"),
-            self.renderer.stroke(485, 75, 110, 285, "b47aff", 2),
+        ]
+        commands += self.renderer.panel(485, 75, 110, 285, "b47aff")
+        commands += [
             self.renderer.fill(540, 87, 1, 261, "295c66"),
             self.renderer.fill(497, 220, 86, 1, "295c66"),
             self.renderer.text(540, 92, "UP / Z-", "b47aff",
@@ -1406,8 +1415,10 @@ class FeatherScreen:
                                "JetBrainsMono 8pt", "center", "middle"),
             self.renderer.text(540, 220, "+", "b47aff", "JetBrainsMono 16pt",
                                "center", "middle"),
-            self.renderer.fill(615, 75, 160, 285, "050c0f"),
-            self.renderer.stroke(615, 75, 160, 285, "295c66", 1),
+        ]
+        commands += self.renderer.panel(
+            615, 75, 160, 285, "295c66", line_width=1)
+        commands += [
             self.renderer.text(695, 94, snapshot[3],
                                "35d9e6" if snapshot[3] == "HOMED: XYZ"
                                else "f2c94c", "JetBrainsMono 8pt",
@@ -1451,6 +1462,52 @@ class FeatherScreen:
                 round(position[2], 2), state,
                 "x" in homed and "y" in homed, "z" in homed)
 
+    def _bed_mesh_profile_state(self, eventtime):
+        mesh = getattr(self, "bed_mesh", None)
+        if mesh is None:
+            return None, False
+        try:
+            status = mesh.get_status(eventtime)
+        except Exception:
+            logging.exception("[feather_screen] unable to read bed mesh status")
+            return None, False
+        profile = str(status.get("profile_name", "") or "").strip().lower()
+        profiles = status.get("profiles", {})
+        available = (
+            isinstance(profiles, dict)
+            and any(str(name).strip().lower() == "auto" for name in profiles)
+        )
+        return profile, available
+
+    def _move_caution_state(self, values, eventtime):
+        profile, auto_available = self._bed_mesh_profile_state(eventtime)
+        unsafe = (
+            bool(values[5])
+            and float(values[2]) < MOVE_CAUTION_Z
+            and profile is not None
+            and profile != "auto"
+        )
+        if not unsafe:
+            self.move_caution_acknowledged = False
+        visible = unsafe and not getattr(
+            self, "move_caution_acknowledged", False)
+        return visible, auto_available if visible else None
+
+    def _move_caution_commands(self, auto_available):
+        lines = (
+            "Z IS BELOW 5 MM",
+            "XY MOTION MAY SCRATCH THE BED",
+            "LOAD BED PROFILE 'AUTO'?",
+        )
+        buttons = (
+            ("move.caution.dismiss", "CLOSE", "enabled"),
+            ("move.caution.auto", "LOAD AUTO",
+             "warning" if auto_available else "disabled"),
+        )
+        return self.renderer.dialog(
+            "CAUTION", lines, buttons, x=25, y=75, width=430, height=285,
+            tone="warning")
+
     def _move_status_commands(self, values, axes=False):
         missing = values[3] != "HOMED: XYZ"
         commands = [
@@ -1481,10 +1538,18 @@ class FeatherScreen:
 
     def _update_move_status(self, eventtime):
         values = self._move_status_snapshot(eventtime)
+        caution = self._move_caution_state(values, eventtime)
+        if caution != getattr(self, "move_caution_signature", caution):
+            if caution[0]:
+                self._stop_joystick()
+            self._render_move()
+            return
         previous = getattr(self, "_last_move", None)
         if values == previous:
             return
         self._last_move = values
+        if caution[0]:
+            return
         if getattr(self, "move_mode", "step") == "joystick":
             self.renderer.send(self._joystick_position_commands(values))
             return
@@ -1588,6 +1653,14 @@ class FeatherScreen:
         cursor = getattr(self, "joystick_cursor", None)
         drawn = getattr(self, "joystick_drawn_cursor", None)
         values = self._move_status_snapshot(eventtime, position)
+        caution = self._move_caution_state(values, eventtime)
+        if caution != getattr(self, "move_caution_signature", caution):
+            if caution[0]:
+                self._stop_joystick()
+            self._render_move()
+            return
+        if caution[0]:
+            return
         inertia = self._joystick_inertia_snapshot()
         commands = []
         if cursor != drawn:
@@ -1605,6 +1678,22 @@ class FeatherScreen:
 
     def _handle_move_action(self, action):
         self._require_idle()
+        if action == "move.caution.dismiss":
+            self._stop_joystick()
+            self.move_caution_acknowledged = True
+            self._render_move()
+            return
+        if action == "move.caution.auto":
+            self._stop_joystick()
+            _profile, available = self._bed_mesh_profile_state(
+                self.reactor.monotonic())
+            if not available:
+                raise RuntimeError("Bed mesh profile 'auto' is not available")
+            self._run_script("BED_MESH_PROFILE LOAD=auto")
+            self.move_caution_acknowledged = True
+            self._render_move()
+            self._toast("BED PROFILE AUTO LOADED")
+            return
         if action == "move.mode":
             self._stop_joystick()
             if self.move_mode == "step":

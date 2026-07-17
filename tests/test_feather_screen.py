@@ -329,6 +329,26 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
 
 class RendererStateTest(unittest.TestCase):
+    def test_dialog_composes_panel_text_and_modal_buttons(self):
+        renderer = FEATHER.FeatherRenderer()
+
+        commands = renderer.dialog(
+            "Caution", ("FIRST LINE", "SECOND LINE"),
+            (("dialog.close", "CLOSE", "enabled"),
+             ("dialog.apply", "APPLY", "warning")),
+            x=25, y=75, width=430, height=285)
+        drawing = "\n".join(commands)
+
+        self.assertEqual(commands[0], "--batch clear-hitboxes")
+        self.assertIn("--batch fill -p 25 75 -s 430 285", drawing)
+        self.assertIn("--batch stroke -p 25 75 -s 430 285", drawing)
+        self.assertIn("CAUTION", drawing)
+        self.assertIn("FIRST LINE", drawing)
+        self.assertIn("--id 0:dialog.close", drawing)
+        self.assertIn("--id 0:dialog.apply", drawing)
+        self.assertEqual(
+            set(renderer._buttons), {"dialog.close", "dialog.apply"})
+
     def test_bundled_themes_are_loaded_and_recolor_all_known_roles(self):
         renderer = FEATHER.FeatherRenderer()
         self.assertEqual(set(renderer.theme_names()), {
@@ -823,6 +843,41 @@ class RendererStateTest(unittest.TestCase):
         self.assertNotIn("--continuous", UI.FeatherRenderer.hitbox(
             "normal", 0, 0, 10, 10))
 
+    def test_low_z_move_page_uses_caution_dialog_until_auto_is_loaded(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.move_mode = "joystick"
+        controller.move_caution_acknowledged = False
+        controller.joystick = type("Planner", (), {
+            "xy_speed": 600.0, "z_speed": 25.0})()
+        controller.toolhead = StatusObject({
+            "position": (1.0, 2.0, 4.99, 0.0), "homed_axes": "xyz"})
+        controller.bed_mesh = StatusObject({
+            "profile_name": "", "profiles": {"auto": {"points": []}}})
+        controller._require_idle = lambda: None
+
+        controller._render_move()
+        warning = "\n".join(batches[-1])
+
+        self.assertIn("CAUTION", warning)
+        self.assertIn("Z IS BELOW 5 MM", warning)
+        self.assertIn("XY MOTION MAY SCRATCH THE BED", warning)
+        self.assertIn("LOAD AUTO", warning)
+        self.assertEqual(
+            set(controller.renderer._buttons),
+            {"move.caution.dismiss", "move.caution.auto"})
+
+        controller.bed_mesh.status["profile_name"] = "auto"
+        controller._render_move()
+        safe = "\n".join(batches[-1])
+
+        self.assertNotIn("CAUTION", safe)
+        self.assertIn("--id 2:move.joy.xy", safe)
+        self.assertFalse(controller.move_caution_acknowledged)
+
     def test_joystick_feedback_tracks_cursor_and_position_in_realtime(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
@@ -864,6 +919,45 @@ class RendererStateTest(unittest.TestCase):
 
 
 class ControllerSafetyTest(unittest.TestCase):
+    def test_move_caution_loads_existing_auto_bed_profile(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.gcode = GCodeRecorder()
+        controller.bed_mesh = StatusObject({
+            "profile_name": "", "profiles": {"auto": {"points": []}}})
+        controller.move_caution_acknowledged = False
+        controller._require_idle = lambda: None
+        controller._stop_joystick = lambda: None
+        controller._render_move = lambda: None
+        notices = []
+        controller._toast = notices.append
+
+        controller._handle_move_action("move.caution.auto")
+
+        self.assertEqual(
+            controller.gcode.commands, ["BED_MESH_PROFILE LOAD=auto"])
+        self.assertTrue(controller.move_caution_acknowledged)
+        self.assertEqual(notices, ["BED PROFILE AUTO LOADED"])
+
+    def test_move_caution_dismissal_resets_after_z_becomes_safe(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.bed_mesh = StatusObject({
+            "profile_name": "", "profiles": {"auto": {"points": []}}})
+        controller.move_caution_acknowledged = False
+        low = (0.0, 0.0, 4.99, "HOMED: XYZ", True, True)
+        safe = (0.0, 0.0, 5.0, "HOMED: XYZ", True, True)
+
+        self.assertEqual(controller._move_caution_state(low, 0),
+                         (True, True))
+        controller.move_caution_acknowledged = True
+        self.assertEqual(controller._move_caution_state(low, 0),
+                         (False, None))
+        self.assertEqual(controller._move_caution_state(safe, 0),
+                         (False, None))
+        self.assertFalse(controller.move_caution_acknowledged)
+        self.assertEqual(controller._move_caution_state(low, 0),
+                         (True, True))
+
     def test_every_page_routes_to_a_renderer(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.page = FEATHER.Page.IDLE_HOME

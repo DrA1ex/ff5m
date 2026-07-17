@@ -479,6 +479,15 @@ class FeatherRenderer:
         return "--batch stroke -p %d %d -s %d %d -c %s -lw %d -sd inner" % (
             x, y, width, height, self.color(color), line_width)
 
+    def panel(self, x, y, width, height, border=COLOR_CYAN,
+              background=COLOR_PANEL, line_width=2):
+        """Draw a reusable filled panel with an optional inner border."""
+        commands = [self.fill(x, y, width, height, background)]
+        if border is not None and line_width > 0:
+            commands.append(
+                self.stroke(x, y, width, height, border, line_width))
+        return commands
+
     def text(self, x, y, value, color=COLOR_CYAN,
              font="JetBrainsMono 12pt", h_align="left", v_align="middle"):
         font = self.normalize_font(font)
@@ -667,6 +676,47 @@ class FeatherRenderer:
                                      height, label, state, font, subtitle,
                                      True, layout)
 
+    def dialog(self, title, lines, buttons, x=160, y=130, width=480,
+               height=220, tone="warning"):
+        """Build a modal dialog from standard panel, text, and button primitives.
+
+        ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
+        existing hitboxes makes a dialog genuinely modal even when it only
+        covers one control region visually.
+        """
+        tones = {
+            "warning": COLOR_AMBER,
+            "danger": COLOR_RED,
+            "info": COLOR_CYAN,
+        }
+        border = tones.get(tone, COLOR_CYAN)
+        self._buttons = {}
+        self._toggles = {}
+        commands = ["--batch clear-hitboxes"]
+        commands += self.panel(
+            x, y, width, height, border=border, background=COLOR_PANEL)
+        commands.append(self.text(
+            x + width // 2, y + 34, str(title).upper(), border,
+            "JetBrainsMono Bold 16pt", "center", "middle"))
+        for index, line in enumerate(tuple(lines)[:4]):
+            commands.append(self.text(
+                x + width // 2, y + 78 + index * 24, line, COLOR_TEXT,
+                "JetBrainsMono 8pt", "center", "middle"))
+        button_specs = tuple(buttons)
+        if button_specs:
+            gap = 12
+            margin = 18
+            button_width = max(
+                1, (width - 2 * margin - gap * (len(button_specs) - 1))
+                // len(button_specs))
+            button_y = y + height - 58
+            for index, (action, label, state) in enumerate(button_specs):
+                commands += self.button(
+                    action, x + margin + index * (button_width + gap),
+                    button_y, button_width, 42, label, state=state,
+                    font="JetBrainsMono 8pt")
+        return commands
+
     def flash_button(self, action):
         spec = self._buttons.get(action)
         if spec is None:
@@ -804,18 +854,20 @@ class FeatherRenderer:
         """Dim the page and draw a non-interactive modal progress panel."""
         self._buttons = {}
         self._toggles = {}
-        self.send([
+        commands = [
             "--batch clear-hitboxes",
             self.fill(0, HEADER_BOTTOM + 1, SCREEN_WIDTH,
                       CONTENT_BOTTOM - HEADER_BOTTOM - 1, "010203"),
-            self.fill(160, 145, 480, 180, COLOR_PANEL),
-            self.stroke(160, 145, 480, 180, COLOR_CYAN, 2),
+        ]
+        commands += self.panel(160, 145, 480, 180)
+        commands += [
             self.text(400, 205, str(message).upper(), COLOR_TEXT,
                       "JetBrainsMono Bold 16pt", "center", "middle"),
             self.text(400, 260, "PLEASE WAIT", COLOR_DIM,
                       "JetBrainsMono 12pt", "center", "middle"),
             self.fill(310, 292, 180, 8, COLOR_CYAN),
-        ])
+        ]
+        self.send(commands)
 
 
 def rectangles_overlap(first, second):
