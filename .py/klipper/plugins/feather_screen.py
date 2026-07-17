@@ -65,9 +65,11 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.eco.minus",
-                    "settings.eco.plus", "settings.sound", "settings.mod"),
+                    "settings.eco.plus", "settings.sound", "settings.theme",
+                    "settings.mod"),
     Page.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next"),
-    Page.MOD_ENUM: ("nav.back", "mod.cancel", "mod.apply"),
+    Page.MOD_ENUM: ("nav.back", "mod.cancel", "mod.apply",
+                    "mod.enum.prev", "mod.enum.next"),
     Page.MOD_VALUE: ("nav.back", "mod.cancel", "mod.save", "mod.backspace",
                      "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
                      "mod.space"),
@@ -152,8 +154,10 @@ class FeatherScreen:
 
         self.mod_page = 0
         self.mod_parameter = None
+        self.mod_return_page = Page.MOD_SETTINGS
         self.mod_edit_value = ""
         self.mod_enum_selection = None
+        self.mod_enum_page = 0
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
         self.mod_update_pending = False
@@ -206,6 +210,11 @@ class FeatherScreen:
 
     def _init(self):
         self.params = self.printer.lookup_object("mod_params")
+        self._enable_backlight()
+        self._set_backlight(self._setting("backlight", 100))
+        self.renderer.ensure_user_theme_directory()
+        self.renderer.reload_themes()
+        self.renderer.set_theme(self._setting("feather_theme", "DEFAULT"))
         self.filament_material = self._current_material()
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
@@ -317,8 +326,10 @@ class FeatherScreen:
                     self.page.name, self.dimmed, idle_for,
                     getattr(self, "command_depth", 0), self.pending_action)
                 self.last_touch_time = now
-                if self._wake_if_dimmed():
-                    continue
+                # A normal tap both wakes the panel and activates its target.
+                # Typer has already delivered a complete, current-generation
+                # hitbox event, so discarding it only forces a second tap.
+                self._wake_if_dimmed()
                 if action is not None:
                     self._handle_touch_action(action)
                 else:
@@ -633,7 +644,8 @@ class FeatherScreen:
             self._show_page(Page.SETTINGS)
         elif self.page in (Page.MOD_ENUM, Page.MOD_VALUE):
             self.mod_parameter = None
-            self._show_page(Page.MOD_SETTINGS)
+            self._show_page(getattr(
+                self, "mod_return_page", Page.MOD_SETTINGS))
         elif self.page == Page.FILAMENT_ACTION:
             self._finish_filament(False)
         elif self.page == Page.CALIBRATION_Z:
@@ -2043,6 +2055,7 @@ class FeatherScreen:
         brightness = int(self._setting("backlight", 50))
         eco = int(self._setting("backlight_eco", 10))
         sound = bool(self._setting("sound", 1))
+        theme = str(getattr(self.renderer, "theme_name", "DEFAULT"))
         commands = self.renderer.begin_page("Settings", back=True)
         rows = (("SCREEN BRIGHTNESS", brightness, "settings.brightness", 67),
                 ("ECO BRIGHTNESS", eco, "settings.eco", 151))
@@ -2068,13 +2081,24 @@ class FeatherScreen:
         commands += self.renderer.toggle("settings.sound", 679, 249, 76, 38,
                                          sound)
         commands += self.renderer.button(
-            "settings.mod", 25, 317, 750, 100, "MOD PARAMETERS",
-            subtitle="EDIT ALL FORGE-X OPTIONS", layout="row",
-            font="JetBrainsMono Bold 12pt")
+            "settings.theme", 25, 317, 360, 100, "COLOR THEME",
+            subtitle=theme.replace("_", " "), layout="center",
+            font="JetBrainsMono Bold 8pt")
+        commands += self.renderer.button(
+            "settings.mod", 415, 317, 360, 100, "MOD PARAMETERS",
+            subtitle="ALL FORGE-X OPTIONS", layout="center",
+            font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 
     def _handle_settings_action(self, action):
         self._require_idle()
+        if action == "settings.theme":
+            parameters = self._mod_parameters()
+            for index, param in enumerate(parameters):
+                if param.key == "feather_theme":
+                    self._open_mod_parameter(index, Page.SETTINGS)
+                    return
+            raise RuntimeError("Feather theme parameter is unavailable")
         if action == "settings.mod":
             self.mod_page = 0
             self.mod_parameter = None
@@ -2177,13 +2201,14 @@ class FeatherScreen:
                                            max(4, thumb_height - 4), "35d9e6"))
         self.renderer.send(commands)
 
-    def _open_mod_parameter(self, index):
+    def _open_mod_parameter(self, index, return_page=Page.MOD_SETTINGS):
         parameters = self._mod_parameters()
         if index < 0 or index >= len(parameters):
             raise RuntimeError("Parameter is no longer available")
         param = parameters[index]
         if getattr(param, "readonly", False):
             raise RuntimeError("This parameter is read-only")
+        self.mod_return_page = return_page
         kind = mod_ui.parameter_kind(param)
         if kind == "bool":
             current = bool(self.params.variables.get(param.key, param.default))
@@ -2205,8 +2230,9 @@ class FeatherScreen:
         self.mod_edit_value = mod_ui.current_edit_value(self.params, param)
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
-        if kind == "enum":
+        if kind == "enum" or param.key == "feather_theme":
             self.mod_enum_selection = self.mod_edit_value
+            self.mod_enum_page = 0
             self._show_page(Page.MOD_ENUM)
         else:
             self.mod_enum_selection = None
@@ -2300,30 +2326,46 @@ class FeatherScreen:
             self._render_mod_settings()
             return
         if action.startswith("mod.item."):
-            self._open_mod_parameter(int(action.rsplit(".", 1)[1]))
+            self._open_mod_parameter(
+                int(action.rsplit(".", 1)[1]), Page.MOD_SETTINGS)
             return
         if action == "mod.cancel":
             self.mod_parameter = None
-            self._show_page(Page.MOD_SETTINGS)
+            self._show_page(getattr(
+                self, "mod_return_page", Page.MOD_SETTINGS))
             return
         param = self.mod_parameter
         if param is None:
             raise RuntimeError("No parameter selected")
         kind = mod_ui.parameter_kind(param)
         if action.startswith("mod.option."):
-            options = mod_ui.enum_names(param)
+            options = (list(self.renderer.theme_names(reload=True))
+                       if param.key == "feather_theme"
+                       else mod_ui.enum_names(param))
             index = int(action.rsplit(".", 1)[1])
             if index < 0 or index >= len(options):
                 raise RuntimeError("Unknown option")
             self.mod_enum_selection = options[index]
             self._render_mod_enum()
             return
+        if action == "mod.enum.prev":
+            self.mod_enum_page = max(0, self.mod_enum_page - 1)
+            self._render_mod_enum()
+            return
+        if action == "mod.enum.next":
+            self.mod_enum_page += 1
+            self._render_mod_enum()
+            return
         if action == "mod.apply":
             value = mod_ui.validate_value(param, self.mod_enum_selection)
 
             def complete():
+                if param.key == "feather_theme":
+                    self.renderer.set_theme(value)
+                return_page = getattr(
+                    self, "mod_return_page", Page.MOD_SETTINGS)
                 self.mod_parameter = None
-                self._show_page(Page.MOD_SETTINGS)
+                self._show_page(return_page)
                 self._toast("UPDATED: %s" % param.label)
 
             self._set_mod_value(param, value, complete)
@@ -2332,8 +2374,10 @@ class FeatherScreen:
             value = mod_ui.validate_value(param, self.mod_edit_value)
 
             def complete():
+                return_page = getattr(
+                    self, "mod_return_page", Page.MOD_SETTINGS)
                 self.mod_parameter = None
-                self._show_page(Page.MOD_SETTINGS)
+                self._show_page(return_page)
                 self._toast("UPDATED: %s" % param.label)
 
             self._set_mod_value(param, value, complete)
@@ -2375,25 +2419,57 @@ class FeatherScreen:
             commands.append(self.renderer.text(
                 25, 108, "CHANGING DISPLAY RESTARTS KLIPPER.", "f2c94c",
                 "JetBrainsMono 8pt"))
-        options = mod_ui.enum_names(param)
-        for index, name in enumerate(options[:4]):
+        if param.key == "feather_theme":
+            options = list(self.renderer.theme_names(reload=True))
+            if self.mod_enum_selection not in options:
+                self.mod_enum_selection = "DEFAULT"
+        else:
+            options = mod_ui.enum_names(param)
+        page_count = max(1, (len(options) + 3) // 4)
+        self.mod_enum_page = max(
+            0, min(getattr(self, "mod_enum_page", 0), page_count - 1))
+        start = self.mod_enum_page * 4
+        for row, name in enumerate(options[start:start + 4]):
+            index = start + row
             selected = name == self.mod_enum_selection
-            detail = mod_ui.option_description(param, name).upper()
+            detail = (self.renderer.theme_description(name).upper()
+                      if param.key == "feather_theme"
+                      else mod_ui.option_description(param, name).upper())
             label = name.upper()
             if detail:
                 label += " // " + detail
             if selected:
                 label += "  [SELECTED]"
             commands += self.renderer.button(
-                "mod.option.%d" % index, 25, 120 + index * 66, 750, 58,
+                "mod.option.%d" % index, 25, 120 + row * 66, 750, 58,
                 label, state="selected" if selected else "enabled",
                 font="JetBrainsMono 8pt")
-        commands += self.renderer.button("mod.cancel", 25, 390, 360, 47,
-                                         "CANCEL", state="danger",
-                                         font="JetBrainsMono Bold 8pt")
-        commands += self.renderer.button("mod.apply", 415, 390, 360, 47,
-                                         "APPLY",
-                                         font="JetBrainsMono Bold 8pt")
+        if page_count > 1:
+            commands += self.renderer.button(
+                "mod.enum.prev", 25, 390, 120, 47, "<",
+                state="enabled" if self.mod_enum_page > 0 else "disabled",
+                font="JetBrainsMono Bold 8pt")
+            commands += self.renderer.button(
+                "mod.cancel", 155, 390, 220, 47, "CANCEL", state="danger",
+                font="JetBrainsMono Bold 8pt")
+            commands += self.renderer.button(
+                "mod.apply", 425, 390, 220, 47, "APPLY",
+                font="JetBrainsMono Bold 8pt")
+            commands += self.renderer.button(
+                "mod.enum.next", 655, 390, 120, 47, ">",
+                state=("enabled" if self.mod_enum_page + 1 < page_count
+                       else "disabled"),
+                font="JetBrainsMono Bold 8pt")
+            commands.append(self.renderer.text(
+                750, 80, "%d/%d" % (self.mod_enum_page + 1, page_count),
+                "56656c", "JetBrainsMono 8pt", "right", "middle"))
+        else:
+            commands += self.renderer.button(
+                "mod.cancel", 25, 390, 360, 47, "CANCEL", state="danger",
+                font="JetBrainsMono Bold 8pt")
+            commands += self.renderer.button(
+                "mod.apply", 415, 390, 360, 47, "APPLY",
+                font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 
     def _render_mod_value(self):
@@ -2922,8 +2998,7 @@ class FeatherScreen:
     def _current_material(self):
         return self._normalize_material(self._setting("current_material", "n/a"))
 
-    def _set_backlight(self, value):
-        value = max(1, min(100, int(value)))
+    def _enable_backlight(self):
         try:
             with open("/dev/disp", "wb") as device:
                 try:
@@ -2933,6 +3008,14 @@ class FeatherScreen:
                     # the backlight is already on. Brightness is still writable.
                     if exc.errno != errno.EPERM:
                         raise
+            logging.info("[feather_screen] backlight enabled")
+        except Exception:
+            logging.exception("[feather_screen] backlight enable failed")
+
+    def _set_backlight(self, value):
+        value = max(1, min(100, int(value)))
+        try:
+            with open("/dev/disp", "wb") as device:
                 hardware_value = int(1 + value * (255 / 100.0))
                 payload = struct.pack("=LL", 0, hardware_value)
                 fcntl.ioctl(device, DISP_LCD_SET_BRIGHTNESS, payload)
@@ -3056,6 +3139,12 @@ class FeatherScreen:
             return None
         if not self.renderer.active:
             self._restart_renderer(eventtime)
+        if (not getattr(self, "mod_update_pending", False)
+                and self.renderer.set_theme(
+                    self._setting("feather_theme", "DEFAULT"))):
+            logging.info("[feather_screen] color theme changed to %s",
+                         self.renderer.theme_name)
+            self._show_page(self.page)
         self._reap_network_processes(eventtime)
         self._poll_network_process(eventtime)
         if not self.dimmed and eventtime - self.last_touch_time >= self.dim_timeout:

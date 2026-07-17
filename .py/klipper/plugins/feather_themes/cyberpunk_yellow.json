@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "CYBERPUNK_YELLOW",
+  "description": "Hazard yellow on black",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "080700",
+    "panel": "121002",
+    "primary": "ffe600",
+    "primary_dark": "514900",
+    "secondary": "ff9f1c",
+    "secondary_dark": "875300",
+    "warning": "ffd166",
+    "danger": "ff3b30",
+    "danger_background": "260800",
+    "text": "fff8cc",
+    "bright": "fffde8",
+    "dim": "8a8150",
+    "border": "665c00",
+    "muted": "36320d",
+    "success": "7cff6b",
+    "pressed_background": "514900",
+    "overlay": "030300"
+  }
+}

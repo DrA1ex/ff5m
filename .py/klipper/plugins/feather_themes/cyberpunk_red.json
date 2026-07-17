@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "CYBERPUNK_RED",
+  "description": "Neon red on black",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "080204",
+    "panel": "140407",
+    "primary": "ff304f",
+    "primary_dark": "5c1020",
+    "secondary": "ff6b81",
+    "secondary_dark": "8f2035",
+    "warning": "ffb000",
+    "danger": "ff0033",
+    "danger_background": "260006",
+    "text": "ffe5e8",
+    "bright": "fff7f8",
+    "dim": "8a4c57",
+    "border": "5c1724",
+    "muted": "32131a",
+    "success": "44ff99",
+    "pressed_background": "45101a",
+    "overlay": "030102"
+  }
+}

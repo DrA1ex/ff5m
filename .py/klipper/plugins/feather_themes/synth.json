@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "SYNTH",
+  "description": "Magenta and violet",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "090314",
+    "panel": "140726",
+    "primary": "ff4fd8",
+    "primary_dark": "68195a",
+    "secondary": "8b5cf6",
+    "secondary_dark": "45227f",
+    "warning": "ffd166",
+    "danger": "ff3864",
+    "danger_background": "260510",
+    "text": "f5e8ff",
+    "bright": "fff8ff",
+    "dim": "80658f",
+    "border": "51236c",
+    "muted": "2e173d",
+    "success": "42f5c5",
+    "pressed_background": "4d1768",
+    "overlay": "040108"
+  }
+}

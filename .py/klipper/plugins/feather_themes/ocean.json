@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "OCEAN",
+  "description": "Deep blue and aqua",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "02080d",
+    "panel": "04131c",
+    "primary": "35baf6",
+    "primary_dark": "0b3a52",
+    "secondary": "7ad7f0",
+    "secondary_dark": "246b85",
+    "warning": "ffc857",
+    "danger": "ff5d73",
+    "danger_background": "21080d",
+    "text": "dceff7",
+    "bright": "f4fcff",
+    "dim": "557787",
+    "border": "164b66",
+    "muted": "173441",
+    "success": "4dd6a8",
+    "pressed_background": "0d4c6b",
+    "overlay": "010407"
+  }
+}

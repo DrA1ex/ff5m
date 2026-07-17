@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "DEFAULT",
+  "description": "Cyan Forge-X palette",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "030607",
+    "panel": "050c0f",
+    "primary": "35d9e6",
+    "primary_dark": "244c66",
+    "secondary": "b47aff",
+    "secondary_dark": "872187",
+    "warning": "f2c94c",
+    "danger": "ff4d5a",
+    "danger_background": "120708",
+    "text": "d9e4e8",
+    "bright": "ffffff",
+    "dim": "56656c",
+    "border": "295c66",
+    "muted": "263238",
+    "success": "56c596",
+    "pressed_background": "103238",
+    "overlay": "010203"
+  }
+}

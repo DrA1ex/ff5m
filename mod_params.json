@@ -185,6 +185,14 @@
       "order": 50000
     },
     {
+      "key": "feather_theme",
+      "type": "str",
+      "default": "DEFAULT",
+      "label": "Feather color theme",
+      "description": "Choose the color palette used on every Feather screen.",
+      "order": 49999
+    },
+    {
       "key": "backlight",
       "type": "int",
       "default": 50,

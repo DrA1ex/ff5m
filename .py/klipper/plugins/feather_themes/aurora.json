@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "AURORA",
+  "description": "Mint and lavender",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "03070d",
+    "panel": "07131b",
+    "primary": "55e6c1",
+    "primary_dark": "176253",
+    "secondary": "a58cff",
+    "secondary_dark": "51458a",
+    "warning": "ffd36a",
+    "danger": "ff6b8a",
+    "danger_background": "210812",
+    "text": "e5f7f5",
+    "bright": "f8ffff",
+    "dim": "647d82",
+    "border": "24616a",
+    "muted": "19343b",
+    "success": "65f095",
+    "pressed_background": "185d65",
+    "overlay": "010307"
+  }
+}

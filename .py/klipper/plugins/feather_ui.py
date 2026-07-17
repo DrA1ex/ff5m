@@ -9,6 +9,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import enum
+import json
 import logging
 import os
 import errno
@@ -45,6 +46,50 @@ COLOR_AMBER = "f2c94c"
 COLOR_RED = "ff4d5a"
 COLOR_TEXT = "d9e4e8"
 COLOR_DIM = "56656c"
+
+DEFAULT_THEME = "DEFAULT"
+THEME_NAME_ALIASES = {
+    "CYBERPANK_RED": "CYBERPUNK_RED",
+    "CYBERPANK_YELLOW": "CYBERPUNK_YELLOW",
+}
+THEME_DIRECTORY = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)), "feather_themes")
+USER_THEME_DIRECTORY = "/opt/config/mod_data/themes"
+THEME_SCHEMA_VERSION = 1
+COLOR_ROLES = {
+    "030607": "background",
+    "050c0f": "panel",
+    "35d9e6": "primary",
+    "00f0f0": "primary",
+    "b47aff": "secondary",
+    "872187": "secondary_dark",
+    "f2c94c": "warning",
+    "ffb000": "warning",
+    "ff9000": "warning",
+    "ff4d5a": "danger",
+    "ff3030": "danger",
+    "d9e4e8": "text",
+    "ffffff": "bright",
+    "56656c": "dim",
+    "606060": "dim",
+    "295c66": "border",
+    "263238": "muted",
+    "56c596": "success",
+    "244c66": "primary_dark",
+    "120708": "danger_background",
+    "103238": "pressed_background",
+    "010203": "overlay",
+    "ff00ff": "secondary",
+}
+FALLBACK_THEME = {
+    "background": "030607", "panel": "050c0f", "primary": "35d9e6",
+    "primary_dark": "244c66", "secondary": "b47aff",
+    "secondary_dark": "872187", "warning": "f2c94c", "danger": "ff4d5a",
+    "danger_background": "120708", "text": "d9e4e8", "bright": "ffffff",
+    "dim": "56656c", "border": "295c66", "muted": "263238",
+    "success": "56c596", "pressed_background": "103238",
+    "overlay": "010203",
+}
 
 
 class Page(enum.Enum):
@@ -109,8 +154,15 @@ class FeatherRenderer:
     FONT_PATTERN = re.compile(
         r"^(Roboto(?: Bold| Thin)?|JetBrainsMono(?: Bold| Thin)?) (\d+)pt$")
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, theme_directories=None):
         self.debug = debug
+        self._theme_directories = tuple(
+            theme_directories or (THEME_DIRECTORY, USER_THEME_DIRECTORY))
+        self._themes = {}
+        self._theme_descriptions = {}
+        self._theme_name = DEFAULT_THEME
+        self._palette = dict(FALLBACK_THEME)
+        self.reload_themes()
         self.process = None
         self.draw_fd = None
         self.event_fd = None
@@ -205,6 +257,14 @@ class FeatherRenderer:
         self._busy_label = None
         self._last_footer = None
         self._footer_drawn = False
+        # Typer's double buffer initially contains whatever was left in the
+        # framebuffer. Clear the complete panel before the first partial page
+        # render so neither the persistent footer nor the outer margins can
+        # expose pixels from the previous screen owner.
+        self.send([
+            "--batch clear-hitboxes",
+            "--batch clear -c %s" % self.color(COLOR_BG),
+        ])
         logging.info("[feather_screen] typer started with touch input")
 
     def stop(self):
@@ -316,21 +376,112 @@ class FeatherRenderer:
     def generation(self):
         return self._generation
 
+    @property
+    def theme_name(self):
+        return self._theme_name
+
+    def reload_themes(self):
+        themes = {DEFAULT_THEME: dict(FALLBACK_THEME)}
+        descriptions = {DEFAULT_THEME: "cyan Forge-X palette"}
+        for directory in self._theme_directories:
+            if not os.path.isdir(directory):
+                continue
+            for filename in sorted(os.listdir(directory)):
+                lowered = filename.lower()
+                if (not lowered.endswith(".json")
+                        or lowered.endswith(".schema.json")):
+                    continue
+                path = os.path.join(directory, filename)
+                try:
+                    with open(path, "r", encoding="utf-8") as stream:
+                        data = json.load(stream)
+                    name, description, colors = self._validate_theme(data)
+                    themes[name] = colors
+                    descriptions[name] = description
+                except Exception as exc:
+                    logging.warning("[feather_screen] invalid theme %s: %s",
+                                    path, exc)
+        self._themes = themes
+        self._theme_descriptions = descriptions
+        if self._theme_name not in themes:
+            self._theme_name = DEFAULT_THEME
+        self._palette = themes[self._theme_name]
+        return tuple(themes)
+
+    def ensure_user_theme_directory(self):
+        if USER_THEME_DIRECTORY not in self._theme_directories:
+            return
+        try:
+            os.makedirs(USER_THEME_DIRECTORY, exist_ok=True)
+        except OSError as exc:
+            logging.warning("[feather_screen] unable to create theme directory: %s",
+                            exc)
+
     @staticmethod
-    def fill(x, y, width, height, color=COLOR_BG):
+    def _validate_theme(data):
+        if not isinstance(data, dict):
+            raise ValueError("root must be an object")
+        if data.get("schema_version") != THEME_SCHEMA_VERSION:
+            raise ValueError("unsupported schema_version")
+        name = str(data.get("name", "")).strip().upper()
+        if re.match(r"^[A-Z][A-Z0-9_]{0,31}$", name) is None:
+            raise ValueError("invalid theme name")
+        description = str(data.get("description", "")).strip()
+        if not description or len(description) > 80:
+            raise ValueError("description must contain 1-80 characters")
+        colors = data.get("colors")
+        if not isinstance(colors, dict):
+            raise ValueError("colors must be an object")
+        missing = sorted(set(FALLBACK_THEME) - set(colors))
+        if missing:
+            raise ValueError("missing colors: %s" % ", ".join(missing))
+        normalized = {}
+        for role in FALLBACK_THEME:
+            value = str(colors[role]).strip().lower()
+            if re.match(r"^[0-9a-f]{6}$", value) is None:
+                raise ValueError("invalid %s color" % role)
+            normalized[role] = value
+        return name, description, normalized
+
+    def theme_names(self, reload=False):
+        if reload:
+            self.reload_themes()
+        return tuple(self._themes)
+
+    def theme_description(self, name):
+        return self._theme_descriptions.get(str(name).upper(), "")
+
+    def set_theme(self, name):
+        normalized = str(name or DEFAULT_THEME).strip().upper()
+        normalized = normalized.replace("-", "_").replace(" ", "_")
+        normalized = THEME_NAME_ALIASES.get(normalized, normalized)
+        if normalized not in self._themes:
+            self.reload_themes()
+        if normalized not in self._themes:
+            logging.warning("[feather_screen] unknown theme %r; using DEFAULT",
+                            name)
+            normalized = DEFAULT_THEME
+        changed = normalized != self._theme_name
+        self._theme_name = normalized
+        self._palette = self._themes[normalized]
+        return changed
+
+    def color(self, value):
+        normalized = str(value).lower()
+        role = COLOR_ROLES.get(normalized)
+        return self._palette.get(role, normalized) if role else normalized
+
+    def fill(self, x, y, width, height, color=COLOR_BG):
         return "--batch fill -p %d %d -s %d %d -c %s" % (
-            x, y, width, height, color)
+            x, y, width, height, self.color(color))
 
-    @staticmethod
-    def stroke(x, y, width, height, color=COLOR_CYAN, line_width=2):
+    def stroke(self, x, y, width, height, color=COLOR_CYAN, line_width=2):
         return "--batch stroke -p %d %d -s %d %d -c %s -lw %d -sd inner" % (
-            x, y, width, height, color, line_width)
+            x, y, width, height, self.color(color), line_width)
 
-    @classmethod
-    def text(cls, x, y, value, color=COLOR_CYAN,
-             font="JetBrainsMono 12pt",
-             h_align="left", v_align="middle"):
-        font = cls.normalize_font(font)
+    def text(self, x, y, value, color=COLOR_CYAN,
+             font="JetBrainsMono 12pt", h_align="left", v_align="middle"):
+        font = self.normalize_font(font)
         value = str(value)
         # argparse treats a text value beginning with '-' as another option.
         # A leading space is visually harmless with centered text and keeps
@@ -338,7 +489,8 @@ class FeatherRenderer:
         if value.startswith("-"):
             value = " " + value
         return "--batch text -p %d %d -c %s -f %s -ha %s -va %s -t %s" % (
-            x, y, color, cls.quote(font), h_align, v_align, cls.quote(value))
+            x, y, self.color(color), self.quote(font), h_align, v_align,
+            self.quote(value))
 
     @classmethod
     def normalize_font(cls, font):
@@ -442,56 +594,58 @@ class FeatherRenderer:
     def block_input(self):
         self.send(["--batch clear-hitboxes"])
 
-    @classmethod
-    def composite_button(cls, action, x, y, width, height, label, state, font,
+    def _button_colors(self, state):
+        return tuple(self.color(color) for color in self.BUTTON_COLORS[state])
+
+    def composite_button(self, action, x, y, width, height, label, state, font,
                          include_hitbox=True):
-        background, border, text_color = cls.BUTTON_COLORS[state]
+        background, border, text_color = self._button_colors(state)
         display_label = str(label)
         if display_label.startswith("-"):
             display_label = " " + display_label
         command = ("--batch button -p %d %d -s %d %d --background %s "
                    "--border %s --text-color %s -lw 2 -f %s -t %s" %
                    (x, y, width, height, background, border, text_color,
-                    cls.quote(cls.normalize_font(font)), cls.quote(display_label)))
+                    self.quote(self.normalize_font(font)),
+                    self.quote(display_label)))
         if include_hitbox and state not in ("disabled", "busy"):
             command += " --id %s" % action
         return [command]
 
-    @classmethod
-    def _button_commands(cls, action, x, y, width, height, label, state,
+    def _button_commands(self, action, x, y, width, height, label, state,
                          font, subtitle=None, include_hitbox=True,
                          layout="center"):
-        background, border, text_color = cls.BUTTON_COLORS[state]
+        background, border, text_color = self._button_colors(state)
         if layout == "center" and subtitle is None:
-            return cls.composite_button(action, x, y, width, height, label,
-                                        state, font, include_hitbox)
+            return self.composite_button(action, x, y, width, height, label,
+                                         state, font, include_hitbox)
         commands = [
-            cls.fill(x, y, width, height, background),
-            cls.stroke(x, y, width, height, border, 2),
+            self.fill(x, y, width, height, background),
+            self.stroke(x, y, width, height, border, 2),
         ]
         if layout == "row":
-            commands.append(cls.text(x + 24, y + height // 2, label,
-                                     text_color, font, "left", "middle"))
+            commands.append(self.text(x + 24, y + height // 2, label,
+                                      text_color, font, "left", "middle"))
             if subtitle is not None:
                 lines = subtitle if isinstance(subtitle, (tuple, list)) else (subtitle,)
                 start_y = y + height // 2 - (13 if len(lines) > 1 else 0)
                 for index, line in enumerate(lines[:2]):
-                    commands.append(cls.text(
+                    commands.append(self.text(
                         x + 285, start_y + index * 26, line,
                         COLOR_TEXT, "JetBrainsMono 8pt", "left", "middle"))
-            commands.append(cls.text(x + width - 24, y + height // 2, ">",
-                                     text_color, "JetBrainsMono 16pt",
-                                     "right", "middle"))
+            commands.append(self.text(x + width - 24, y + height // 2, ">",
+                                      text_color, "JetBrainsMono 16pt",
+                                      "right", "middle"))
         else:
             label_y = y + height // 2 if subtitle is None else y + height // 2 - 14
-            commands.append(cls.text(x + width // 2, label_y, label, text_color,
-                                     font, "center", "middle"))
+            commands.append(self.text(x + width // 2, label_y, label,
+                                      text_color, font, "center", "middle"))
             if subtitle is not None:
-                commands.append(cls.text(x + width // 2, y + height // 2 + 24,
-                                         subtitle, COLOR_DIM,
-                                         "JetBrainsMono 8pt", "center", "middle"))
+                commands.append(self.text(
+                    x + width // 2, y + height // 2 + 24, subtitle, COLOR_DIM,
+                    "JetBrainsMono 8pt", "center", "middle"))
         if include_hitbox and state not in ("disabled", "busy"):
-            commands.append(cls.hitbox(action, x, y, width, height))
+            commands.append(self.hitbox(action, x, y, width, height))
         return commands
 
     def button(self, action, x, y, width, height, label, active=None,

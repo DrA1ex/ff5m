@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/drA1ex/ff5m/feather-theme.schema.json",
+  "$comment": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. This file may be distributed under the terms of the GNU GPLv3 license.",
+  "title": "Feather color theme",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "name",
+    "description",
+    "colors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,31}$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "copyright": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "background",
+        "panel",
+        "primary",
+        "primary_dark",
+        "secondary",
+        "secondary_dark",
+        "warning",
+        "danger",
+        "danger_background",
+        "text",
+        "bright",
+        "dim",
+        "border",
+        "muted",
+        "success",
+        "pressed_background",
+        "overlay"
+      ],
+      "properties": {
+        "background": { "$ref": "#/$defs/color" },
+        "panel": { "$ref": "#/$defs/color" },
+        "primary": { "$ref": "#/$defs/color" },
+        "primary_dark": { "$ref": "#/$defs/color" },
+        "secondary": { "$ref": "#/$defs/color" },
+        "secondary_dark": { "$ref": "#/$defs/color" },
+        "warning": { "$ref": "#/$defs/color" },
+        "danger": { "$ref": "#/$defs/color" },
+        "danger_background": { "$ref": "#/$defs/color" },
+        "text": { "$ref": "#/$defs/color" },
+        "bright": { "$ref": "#/$defs/color" },
+        "dim": { "$ref": "#/$defs/color" },
+        "border": { "$ref": "#/$defs/color" },
+        "muted": { "$ref": "#/$defs/color" },
+        "success": { "$ref": "#/$defs/color" },
+        "pressed_background": { "$ref": "#/$defs/color" },
+        "overlay": { "$ref": "#/$defs/color" }
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "color": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{6}$"
+    }
+  }
+}

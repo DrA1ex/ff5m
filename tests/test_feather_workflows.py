@@ -473,13 +473,14 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "SET_MOD PARAM=sound VALUE=0"])
         self.assertEqual(backlight, [100])
 
-    def test_backlight_ignores_repeated_enable_and_sets_brightness(self):
+    def test_backlight_enable_is_separate_from_brightness(self):
         controller = base_controller()
         device = mock.mock_open()
         enable_error = PermissionError(FEATHER.errno.EPERM, "already enabled")
         with mock.patch("builtins.open", device), mock.patch.object(
                 FEATHER.fcntl, "ioctl",
                 side_effect=[enable_error, 0]) as ioctl:
+            controller._enable_backlight()
             controller._set_backlight(65)
         self.assertEqual(controller.gcode.commands, [])
         self.assertEqual(ioctl.call_count, 2)
@@ -822,7 +823,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(controller.event_partial, "")
         self.assertIn("oversized partial touch event", "\n".join(logs.output))
 
-    def test_first_cpp_tap_after_dim_only_wakes_screen(self):
+    def test_first_cpp_tap_after_dim_wakes_and_dispatches(self):
         controller = base_controller()
         controller.renderer = type("Renderer", (), {"event_fd": 7})()
         controller.event_partial = ""
@@ -836,7 +837,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         with mock.patch("os.read", return_value=b"tap nav.files\n"):
             controller._process_touch_events(1)
         self.assertEqual(backlight, [65])
-        self.assertEqual(actions, [])
+        self.assertEqual(actions, ["nav.files"])
 
     def test_touch_feedback_precedes_deferred_action(self):
         controller = base_controller()

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "FOREST",
+  "description": "Green and lime",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "030804",
+    "panel": "07140a",
+    "primary": "63d471",
+    "primary_dark": "1c5527",
+    "secondary": "b4e33d",
+    "secondary_dark": "5c781c",
+    "warning": "e8c547",
+    "danger": "ef6461",
+    "danger_background": "210908",
+    "text": "e2f0e4",
+    "bright": "f7fff8",
+    "dim": "607864",
+    "border": "285c32",
+    "muted": "1b3420",
+    "success": "72ef8b",
+    "pressed_background": "245c31",
+    "overlay": "010402"
+  }
+}

@@ -9,6 +9,7 @@ import enum
 import errno
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -142,6 +143,7 @@ def mod_controller(params, variables):
     controller.previous_page = FEATHER.Page.SETTINGS
     controller.mod_page = 0
     controller.mod_parameter = None
+    controller.mod_return_page = FEATHER.Page.MOD_SETTINGS
     controller.mod_edit_value = ""
     controller.mod_enum_selection = None
     controller.mod_keyboard_shift = False
@@ -181,13 +183,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(normalize("Roboto Bold 14pt"),
                          "JetBrainsMono Bold 12pt")
         self.assertEqual(normalize("JetBrainsMono 11pt"), "JetBrainsMono 12pt")
-        command = FEATHER.FeatherRenderer.text(
+        command = FEATHER.FeatherRenderer().text(
             10, 10, "Visible", font="Roboto 10pt")
         self.assertIn('-f "JetBrainsMono 8pt"', command)
         self.assertNotIn("10pt", command)
 
     def test_leading_minus_is_not_parsed_as_a_typer_option(self):
-        command = FEATHER.FeatherRenderer.text(10, 10, "-5")
+        command = FEATHER.FeatherRenderer().text(10, 10, "-5")
         self.assertIn('-t " -5"', command)
 
     def test_wifi_password_validation(self):
@@ -327,14 +329,84 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
 
 class RendererStateTest(unittest.TestCase):
+    def test_bundled_themes_are_loaded_and_recolor_all_known_roles(self):
+        renderer = FEATHER.FeatherRenderer()
+        self.assertEqual(set(renderer.theme_names()), {
+            "DEFAULT", "CYBERPUNK_RED", "CYBERPUNK_YELLOW", "OCEAN",
+            "DARK", "SYNTH", "FOREST", "AURORA"})
+        renderer.set_theme("OCEAN")
+        for source, role in UI.COLOR_ROLES.items():
+            self.assertEqual(renderer.color(source),
+                             renderer._themes["OCEAN"][role])
+        page = "\n".join(renderer.begin_page("Themes"))
+        self.assertIn("-c 02080d", page)
+        self.assertIn("-c 35baf6", page)
+        self.assertNotIn("-c 35d9e6", page)
+
+    def test_every_screen_color_is_assigned_to_a_theme_role(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        colors = {value.lower() for value in
+                  re.findall(r'"([0-9a-fA-F]{6})"', source)}
+        self.assertEqual(colors - set(UI.COLOR_ROLES), set())
+
+    def test_user_theme_directory_can_add_and_override_themes(self):
+        with tempfile.TemporaryDirectory() as user_directory:
+            custom = {
+                "schema_version": 1,
+                "name": "CUSTOM_BLUE",
+                "description": "User supplied blue",
+                "colors": dict(UI.FALLBACK_THEME, primary="123abc"),
+            }
+            override = {
+                "schema_version": 1,
+                "name": "OCEAN",
+                "description": "User override",
+                "colors": dict(UI.FALLBACK_THEME, primary="abcdef"),
+            }
+            pathlib.Path(user_directory, "custom.json").write_text(
+                json.dumps(custom), encoding="utf-8")
+            pathlib.Path(user_directory, "override.json").write_text(
+                json.dumps(override), encoding="utf-8")
+            pathlib.Path(user_directory, "invalid.json").write_text(
+                '{"schema_version": 1, "name": "BROKEN"}', encoding="utf-8")
+
+            with self.assertLogs(level="WARNING") as logs:
+                renderer = FEATHER.FeatherRenderer(
+                    theme_directories=(UI.THEME_DIRECTORY, user_directory))
+            self.assertIn("CUSTOM_BLUE", renderer.theme_names())
+            self.assertIn("invalid theme", "\n".join(logs.output))
+            renderer.set_theme("CUSTOM_BLUE")
+            self.assertEqual(renderer.color("35d9e6"), "123abc")
+            renderer.set_theme("OCEAN")
+            self.assertEqual(renderer.color("35d9e6"), "abcdef")
+            self.assertEqual(renderer.theme_description("OCEAN"),
+                             "User override")
+
+    def test_theme_schema_rejects_missing_and_invalid_colors(self):
+        valid = {
+            "schema_version": 1,
+            "name": "VALID",
+            "description": "Valid test theme",
+            "colors": dict(UI.FALLBACK_THEME),
+        }
+        name, description, colors = FEATHER.FeatherRenderer._validate_theme(valid)
+        self.assertEqual((name, description), ("VALID", "Valid test theme"))
+        self.assertEqual(colors["primary"], UI.COLOR_CYAN)
+
+        invalid = dict(valid)
+        invalid["colors"] = dict(valid["colors"], primary="not-a-color")
+        with self.assertRaisesRegex(ValueError, "invalid primary"):
+            FEATHER.FeatherRenderer._validate_theme(invalid)
+
     def test_python_renderer_matches_cpp_protocol_fixture(self):
         fixture = pathlib.Path(__file__).parent / "fixtures" / "feather_draw_protocol.txt"
+        renderer = FEATHER.FeatherRenderer()
         commands = [
             "--batch clear-hitboxes",
             "--batch clear -c 000000",
-            FEATHER.FeatherRenderer.fill(10, 20, 30, 40, "a0b1c2"),
-            FEATHER.FeatherRenderer.stroke(11, 21, 31, 41, "872187", 3),
-            FEATHER.FeatherRenderer.text(
+            renderer.fill(10, 20, 30, 40, "a0b1c2"),
+            renderer.stroke(11, 21, 31, 41, "872187", 3),
+            renderer.text(
                 100, 120, 'file "one" \\ Привет', "ffffff", "Roboto 12pt",
                 "center", "middle"),
             FEATHER.FeatherRenderer.hitbox("print.pause", 20, 315, 175, 100),
@@ -447,7 +519,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(color(0.3, -0.2, 0.3), "ff4d5a")
 
     def test_row_subtitle_has_space_after_long_calibration_label(self):
-        commands = FEATHER.FeatherRenderer._button_commands(
+        commands = FEATHER.FeatherRenderer()._button_commands(
             "cal.screws", 30, 185, 740, 90, "BED SCREWS", "enabled",
             "JetBrainsMono 16pt", "LEVEL BED USING ADJUSTMENT SCREWS",
             True, "row")
@@ -543,6 +615,7 @@ class RendererStateTest(unittest.TestCase):
     def test_renderer_waits_for_old_typer_before_recreating_fifos(self):
         renderer = FEATHER.FeatherRenderer()
         events = []
+        writes = []
         process = type("Process", (), {})()
         with mock.patch("subprocess.call",
                         side_effect=lambda *args, **kwargs: events.append("kill")), \
@@ -553,6 +626,9 @@ class RendererStateTest(unittest.TestCase):
                 mock.patch.object(renderer, "_make_fifo",
                                   side_effect=lambda path: events.append("fifo:" + path)), \
                 mock.patch("os.open", side_effect=(10, 11)), \
+                mock.patch("os.write",
+                           side_effect=lambda _fd, data:
+                           writes.append(bytes(data)) or len(data)), \
                 mock.patch("subprocess.Popen", return_value=process):
             renderer.start()
         self.assertEqual(events[:4], ["kill", "wait",
@@ -560,6 +636,9 @@ class RendererStateTest(unittest.TestCase):
                                       "unlink:/tmp/feather-events"])
         self.assertLess(events.index("unlink:/tmp/feather-events"),
                         events.index("fifo:/tmp/feather-events"))
+        initial_frame = b"".join(writes)
+        self.assertIn(b"--batch clear-hitboxes", initial_frame)
+        self.assertIn(b"--batch clear -c 030607", initial_frame)
 
     def test_button_press_feedback_redraws_without_duplicate_hitbox(self):
         renderer = FEATHER.FeatherRenderer()
@@ -837,6 +916,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn('-t " -5"', drawing)
         self.assertIn('-t "+5"', drawing)
         self.assertIn("MOD PARAMETERS", drawing)
+        self.assertIn("COLOR THEME", drawing)
+        self.assertIn("DEFAULT", drawing)
         self.assertIn("--batch stroke -p 679 249 -s 76 38 -c 35d9e6 -lw 2",
                       drawing)
         self.assertIn("--batch fill -p 722 254 -s 28 28 -c 35d9e6", drawing)
@@ -879,6 +960,47 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("--batch fill -p 667 106 -s 28 28 -c 35d9e6", drawing)
         self.assertNotIn('[ OFF |', drawing)
         self.assertNotIn('[ >OFF< |', drawing)
+
+    def test_theme_parameter_uses_dynamic_paginated_picker(self):
+        theme = mod_param("feather_theme", str, "DEFAULT",
+                          "Feather color theme")
+        controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
+
+        controller._handle_mod_action("mod.item.0")
+        first = "\n".join(controller.draw_batches[-1])
+        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
+        self.assertIn("1/2", first)
+        self.assertIn("CYBERPUNK_RED", first)
+        self.assertIn("--id 1:mod.enum.next", first)
+
+        controller._handle_mod_action("mod.enum.next")
+        second = "\n".join(controller.draw_batches[-1])
+        self.assertIn("2/2", second)
+        options = list(controller.renderer.theme_names())
+        ocean_index = options.index("OCEAN")
+        self.assertGreaterEqual(ocean_index, 4)
+        controller._handle_mod_action("mod.option.%d" % ocean_index)
+        controller._handle_mod_action("mod.apply")
+
+        self.assertEqual(controller.params.updated,
+                         [("feather_theme", "OCEAN")])
+        self.assertEqual(controller.renderer.theme_name, "OCEAN")
+        drawing = "\n".join(controller.draw_batches[-1])
+        self.assertIn("-c 02080d", drawing)
+
+    def test_settings_opens_theme_picker_and_returns_to_settings(self):
+        theme = mod_param("feather_theme", str, "DEFAULT",
+                          "Feather color theme")
+        controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
+        controller.page = FEATHER.Page.SETTINGS
+
+        controller._handle_settings_action("settings.theme")
+
+        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
+        self.assertEqual(controller.mod_return_page, FEATHER.Page.SETTINGS)
+        controller._handle_mod_action("mod.option.3")
+        controller._handle_mod_action("mod.apply")
+        self.assertEqual(controller.page, FEATHER.Page.SETTINGS)
 
     def test_toggle_thumb_is_centered_and_animates_between_halves(self):
         renderer = FEATHER.FeatherRenderer()
@@ -1016,7 +1138,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 continue
             self.assertFalse(UI.rectangles_overlap(spec[:4], footer), action)
 
-    def test_eco_wake_consumes_first_touch(self):
+    def test_eco_wake_restores_backlight_once(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.dimmed = True
         values = []

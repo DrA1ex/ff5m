@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "DARK",
+  "description": "Neutral monochrome",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "050505",
+    "panel": "0d0f10",
+    "primary": "c4ccd4",
+    "primary_dark": "42494f",
+    "secondary": "8b98a5",
+    "secondary_dark": "59636d",
+    "warning": "d0a85c",
+    "danger": "d66767",
+    "danger_background": "1e0b0b",
+    "text": "d7dadd",
+    "bright": "ffffff",
+    "dim": "6d7378",
+    "border": "353a3e",
+    "muted": "24282b",
+    "success": "7dbb8a",
+    "pressed_background": "33383c",
+    "overlay": "020202"
+  }
+}
