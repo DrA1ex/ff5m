@@ -77,7 +77,7 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
   **Default**: 0  
   **Example**: `FORCE_KAMP=1`  
 
-  > [!DANGER]
+  > [!CAUTION]
   > Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
 
 - `FORCE_LEVELING`: Forces the bed leveling process if set to 1.  
