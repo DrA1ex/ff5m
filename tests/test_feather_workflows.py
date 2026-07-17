@@ -279,6 +279,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.joystick_suppressed = None
         controller.joystick_action = None
         controller.joystick_timer = object()
+        controller.joystick_timer_active = False
         updates = []
         controller.reactor.NOW = 0.0
         controller.reactor.update_timer = (
@@ -312,7 +313,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(controller.joystick.events,
                          [("xy", 365, 220), ("xy", 400, 180), ("release",)])
         self.assertIsNone(controller.joystick_action)
-        self.assertEqual(len(updates), 3)
+        # Raw touch updates only replace the latest vector. The fixed-rate
+        # motion loop is started once instead of being forced to NOW for every
+        # coordinate report.
+        self.assertEqual(len(updates), 1)
+        self.assertTrue(controller.joystick_timer_active)
 
     def test_dimmed_joystick_gesture_only_wakes_until_release(self):
         controller = base_controller()
@@ -354,9 +359,16 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 self.max_accel = 20000.0
                 self.requested_accel_to_decel = 5000.0
                 self.max_accel_to_decel = 5000.0
+                self.buffer_time_start = 0.250
+                self.buffer_time_low = 1.000
                 self.position = [0.0, 0.0, 100.0, 0.0]
                 self.moves = []
                 self.flushes = 0
+                self.move_queue = type("MoveQueue", (), {
+                    "queue": [],
+                    "set_flush_time": lambda queue, duration: setattr(
+                        queue, "junction_flush", duration),
+                })()
 
             def _calc_junction_deviation(self):
                 self.max_accel_to_decel = min(
@@ -366,7 +378,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 return {"homed_axes": "xyz"}
 
             def check_busy(self, eventtime):
-                return 0.0, 0.0, True
+                pending = sum(getattr(move, "min_move_t", 0.0)
+                              for move in self.move_queue.queue)
+                return 0.0, -pending, not self.move_queue.queue
 
             def get_position(self):
                 return list(self.position)
@@ -374,9 +388,13 @@ class MotionHeatSettingsTest(unittest.TestCase):
             def manual_move(self, position, speed):
                 self.moves.append((list(position), speed, self.max_accel))
                 self.position[:3] = position
+                self.move_queue.queue.append(
+                    type("Move", (), {
+                        "min_move_t": FEATHER.joystick_ui.PERIOD})())
 
             def flush_step_generation(self):
                 self.flushes += 1
+                self.move_queue.queue[:] = []
 
         controller.toolhead = Toolhead()
         controller.joystick = FEATHER.joystick_ui.JoystickPlanner(
@@ -386,11 +404,97 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
         next_wake = controller._joystick_tick(100.0)
 
-        self.assertAlmostEqual(next_wake, 100.05)
-        self.assertEqual(len(controller.toolhead.moves), 1)
-        self.assertEqual(controller.toolhead.moves[0][2], 10000.0)
+        self.assertAlmostEqual(
+            next_wake, 100.0 + FEATHER.joystick_ui.PERIOD)
+        self.assertGreaterEqual(len(controller.toolhead.moves), 2)
+        self.assertLessEqual(len(controller.toolhead.moves),
+                             FEATHER.joystick_motion.MAX_REFILL_SEGMENTS)
+        self.assertGreater(controller.toolhead.moves[0][2], 0.0)
+        self.assertEqual(controller.toolhead.moves[0][2],
+                         controller.joystick.xy_accel)
         self.assertEqual(controller.toolhead.max_accel, 20000.0)
         self.assertTrue(controller.joystick_queued)
+
+    def test_joystick_start_waits_for_short_toolhead_tail(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.joystick_action = "move.joy.xy"
+        controller.joystick_timer_active = True
+        controller.joystick_busy_since = None
+        controller.reactor.NEVER = 1.0e30
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller._update_joystick_feedback = lambda *args, **kwargs: None
+        notices = []
+        controller._toast = notices.append
+
+        class Planner:
+            held = True
+
+            def __init__(self):
+                self.released = False
+
+            def watchdog(self, eventtime):
+                return False
+
+            def is_moving(self):
+                return not self.released
+
+            def release(self):
+                self.held = False
+                self.released = True
+
+        class BusyStream:
+            active = False
+
+            def start(self, eventtime):
+                raise FEATHER.joystick_motion.StreamBusy()
+
+        controller.joystick = Planner()
+        controller.joystick_stream = BusyStream()
+
+        retry = controller._joystick_tick(100.0)
+
+        self.assertAlmostEqual(
+            retry, 100.0 + FEATHER.joystick_ui.QUEUE_RETRY)
+        self.assertFalse(controller.joystick.released)
+        self.assertEqual(controller.joystick_action, "move.joy.xy")
+        self.assertEqual(notices, [])
+
+        stopped = controller._joystick_tick(
+            100.0 + FEATHER.joystick_motion.START_BUSY_GRACE + 0.001)
+
+        self.assertEqual(stopped, controller.reactor.NEVER)
+        self.assertTrue(controller.joystick.released)
+        self.assertIsNone(controller.joystick_action)
+        self.assertEqual(notices, ["TOOLHEAD BUSY"])
+
+    def test_joystick_speed_is_half_the_configured_toolhead_limit(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+
+        class Kinematics:
+            max_z_velocity = 25.0
+            max_z_accel = 500.0
+
+        class Toolhead:
+            def get_status(self, eventtime):
+                return {
+                    "axis_maximum": (125.0, 125.0, 230.0),
+                    "max_velocity": 600.0,
+                    "max_accel": 20000.0,
+                }
+
+            def get_kinematics(self):
+                return Kinematics()
+
+        controller.toolhead = Toolhead()
+        controller._create_joystick_planner()
+
+        self.assertEqual(controller.joystick.xy_speed, 300.0)
+        self.assertEqual(controller.joystick.z_speed, 12.5)
+        self.assertEqual(controller.joystick.xy_accel, 10000.0)
+        self.assertEqual(controller.joystick.z_accel, 250.0)
 
     def test_heat_page_draws_values_immediately_and_refreshes_fan(self):
         controller = base_controller()

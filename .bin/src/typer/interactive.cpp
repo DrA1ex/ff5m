@@ -45,6 +45,7 @@ namespace {
 constexpr size_t MAX_DRAW_FRAME = 256 * 1024;
 constexpr size_t MAX_HITBOXES = 128;
 constexpr size_t MAX_ACTION_LENGTH = 128;
+constexpr int CONTINUOUS_HEARTBEAT_MS = 25;
 
 struct Hitbox {
     int x;
@@ -297,7 +298,8 @@ void run(const std::string &draw_pipe, const std::string &touch_device,
             {.fd = touch_fd, .events = POLLIN, .revents = 0},
         };
         auto ready = poll(fds, touch_fd >= 0 ? 2 : 1,
-                          touch_dispatch.active() ? 100 : 1000);
+                          touch_dispatch.active()
+                          ? CONTINUOUS_HEARTBEAT_MS : 1000);
         if (ready < 0) {
             if (errno == EINTR) continue;
             std::cerr << "Poll failed: " << strerror(errno) << std::endl;

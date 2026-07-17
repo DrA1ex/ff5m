@@ -18,6 +18,7 @@ try:
     from .feather_ui import FeatherRenderer, Page, PrintState
     from . import feather_mod_settings as mod_ui
     from . import feather_joystick as joystick_ui
+    from . import feather_motion as joystick_motion
 except (ImportError, ValueError):
     # Host tests load this file directly rather than as a Klipper package.
     import sys
@@ -25,6 +26,7 @@ except (ImportError, ValueError):
     from feather_ui import FeatherRenderer, Page, PrintState
     import feather_mod_settings as mod_ui
     import feather_joystick as joystick_ui
+    import feather_motion as joystick_motion
 
 
 NETWORK_HELPER = "/root/printer_data/scripts/commands/znetwork.sh"
@@ -145,10 +147,17 @@ class FeatherScreen:
         self.jog_step = 1.0
         self.move_mode = "step"
         self.joystick = None
+        self.joystick_stream = None
         self.joystick_timer = None
         self.joystick_queued = False
         self.joystick_action = None
         self.joystick_suppressed = None
+        self.joystick_timer_active = False
+        self.joystick_busy_since = None
+        self.joystick_cursor = None
+        self.joystick_drawn_cursor = None
+        self.joystick_drawn_inertia = None
+        self.joystick_feedback_at = 0.0
         self.z_step = 0.01
         self.z_session_adjust = 0.0
 
@@ -219,6 +228,7 @@ class FeatherScreen:
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
         self.toolhead = self.printer.lookup_object("toolhead")
+        self.input_shaper = self.printer.lookup_object("input_shaper", None)
         self.idle_timeout = self.printer.lookup_object("idle_timeout")
         self.pause_resume = self.printer.lookup_object("pause_resume")
         self.display_status = self.printer.lookup_object("display_status")
@@ -238,6 +248,8 @@ class FeatherScreen:
         self.resurrection = self.printer.lookup_object("resurrection", None)
         self.gcode.register_output_handler(self._handle_gcode_output)
         self._create_joystick_planner()
+        self.joystick_stream = joystick_motion.LowLatencyToolheadStream(
+            self.toolhead, self.input_shaper)
         self.joystick_timer = self.reactor.register_timer(
             self._joystick_tick, self.reactor.NEVER)
 
@@ -385,12 +397,15 @@ class FeatherScreen:
             logging.info("[feather_screen] continuous end action=%s", action)
             self.joystick.release()
             self.joystick_action = None
+            self.joystick_cursor = None
         elif action == "move.joy.xy":
             self.joystick.set_xy(x, y, now, 240, 220, 125)
+            self.joystick_cursor = (action, x, y)
         else:
             self.joystick.set_z(y, now, 220, 125)
-        if self.joystick_timer is not None:
-            self.reactor.update_timer(self.joystick_timer, self.reactor.NOW)
+            self.joystick_cursor = (action, 540, y)
+        self._start_joystick_timer()
+        self._update_joystick_feedback(now, force=phase in ("begin", "end"))
 
     def _handle_touch_action(self, action):
         if getattr(self, "mod_update_pending", False):
@@ -1159,9 +1174,11 @@ class FeatherScreen:
         kinematics = self.toolhead.get_kinematics()
         axis_maximum = status.get("axis_maximum", (110.0, 110.0, 230.0))
         z_maximum = max(0.0, float(axis_maximum[2]) - 10.0)
-        xy_speed = float(status.get("max_velocity", 600.0))
+        xy_speed = (float(status.get("max_velocity", 600.0))
+                    * joystick_ui.MAX_SPEED_SCALE)
         xy_accel = float(status.get("max_accel", 20000.0)) * 0.5
-        z_speed = float(getattr(kinematics, "max_z_velocity", 25.0))
+        z_speed = (float(getattr(kinematics, "max_z_velocity", 25.0))
+                   * joystick_ui.MAX_SPEED_SCALE)
         z_accel = float(getattr(kinematics, "max_z_accel", 500.0)) * 0.5
         self.joystick = joystick_ui.JoystickPlanner(
             xy_speed, xy_accel, z_speed, z_accel,
@@ -1171,40 +1188,50 @@ class FeatherScreen:
             "bounds=-110..110,-110..110,0..%.1f",
             xy_speed, xy_accel, z_speed, z_accel, z_maximum)
 
+    def _start_joystick_timer(self):
+        timer = getattr(self, "joystick_timer", None)
+        if timer is None or getattr(self, "joystick_timer_active", False):
+            return
+        self.joystick_timer_active = True
+        self.reactor.update_timer(timer, self.reactor.NOW)
+
     def _stop_joystick(self):
         planner = getattr(self, "joystick", None)
         if planner is not None:
             planner.stop()
         self.joystick_action = None
         self.joystick_suppressed = None
+        self.joystick_timer_active = False
+        self.joystick_busy_since = None
+        self.joystick_cursor = None
+        self.joystick_drawn_cursor = None
+        self.joystick_drawn_inertia = None
+        self.joystick_feedback_at = 0.0
         timer = getattr(self, "joystick_timer", None)
         if timer is not None:
             try:
                 self.reactor.update_timer(timer, self.reactor.NEVER)
             except Exception:
                 pass
-        if (getattr(self, "joystick_queued", False)
+        stream = getattr(self, "joystick_stream", None)
+        if (stream is not None and getattr(stream, "active", False)
                 and getattr(self, "print_state", None) != PrintState.DESTROYED):
             try:
-                # Finalizing the lookahead makes the last short segment end at
-                # zero velocity instead of leaving an open-ended move queue.
-                self.toolhead.flush_step_generation()
+                stream.finish()
             except Exception:
                 logging.exception("[feather_screen] joystick stop flush failed")
         self.joystick_queued = False
 
+    def _get_joystick_stream(self):
+        stream = getattr(self, "joystick_stream", None)
+        if stream is None:
+            stream = joystick_motion.LowLatencyToolheadStream(
+                self.toolhead, getattr(self, "input_shaper", None))
+            self.joystick_stream = stream
+        return stream
+
     def _queue_joystick_segment(self, segment):
-        # Move captures these limits at construction time. Restore the global
-        # toolhead settings immediately so Fluidd and later G-code retain the
-        # configured printer limits.
-        saved_accel = self.toolhead.max_accel
-        try:
-            self.toolhead.max_accel = min(saved_accel, segment.acceleration)
-            self.toolhead._calc_junction_deviation()
-            self.toolhead.manual_move(segment.position, segment.speed)
-        finally:
-            self.toolhead.max_accel = saved_accel
-            self.toolhead._calc_junction_deviation()
+        self._get_joystick_stream().queue_segment(segment)
         self.joystick_queued = True
 
     def _joystick_tick(self, eventtime):
@@ -1218,25 +1245,79 @@ class FeatherScreen:
             if planner.watchdog(eventtime):
                 logging.warning("[feather_screen] joystick touch watchdog released")
                 self.joystick_action = None
+                self.joystick_cursor = None
             homed = str(self.toolhead.get_status(eventtime).get("homed_axes", ""))
             if (planner.held and self.joystick_action == "move.joy.xy"
                     and ("x" not in homed or "y" not in homed)):
                 planner.release()
+                self.joystick_action = None
+                self.joystick_cursor = None
             if (planner.held and self.joystick_action == "move.joy.z"
                     and "z" not in homed):
                 planner.release()
+                self.joystick_action = None
+                self.joystick_cursor = None
 
-            print_time, estimated_time, _empty = self.toolhead.check_busy(eventtime)
-            if print_time - estimated_time > joystick_ui.MAX_QUEUE_AHEAD:
-                return eventtime + 0.02
-            segment = planner.advance(self.toolhead.get_position(),
-                                      joystick_ui.PERIOD)
-            if segment is None:
-                if self.joystick_queued:
-                    self.toolhead.flush_step_generation()
+            stream = self._get_joystick_stream()
+            if not stream.active:
+                try:
+                    stream.start(eventtime)
+                except joystick_motion.StreamBusy:
+                    if not planner.is_moving():
+                        self.joystick_busy_since = None
+                        self.joystick_timer_active = False
+                        self._update_joystick_feedback(eventtime)
+                        return self.reactor.NEVER
+                    if getattr(self, "joystick_busy_since", None) is None:
+                        self.joystick_busy_since = eventtime
+                        logging.info(
+                            "[feather_screen] joystick waiting for "
+                            "toolhead tail")
+                    if (eventtime - self.joystick_busy_since
+                            < joystick_motion.START_BUSY_GRACE):
+                        self._update_joystick_feedback(eventtime)
+                        return eventtime + joystick_ui.QUEUE_RETRY
+                    planner.release()
+                    self.joystick_action = None
+                    self.joystick_cursor = None
+                    self.joystick_busy_since = None
+                    self.joystick_timer_active = False
+                    self._toast("TOOLHEAD BUSY")
+                    return self.reactor.NEVER
+                except joystick_motion.StreamUnavailable:
+                    planner.release()
+                    self.joystick_action = None
+                    self.joystick_cursor = None
+                    self.joystick_timer_active = False
+                    self.move_mode = "step"
+                    self._toast("JOYSTICK NOT SUPPORTED")
+                    self._render_move()
+                    return self.reactor.NEVER
+            self.joystick_busy_since = None
+            if stream.ahead(eventtime) >= joystick_motion.MAX_AHEAD:
+                self._update_joystick_feedback(eventtime)
+                return eventtime + joystick_ui.QUEUE_RETRY
+
+            position = self.toolhead.get_position()
+            queued_position = None
+            for _index in range(joystick_motion.MAX_REFILL_SEGMENTS):
+                if not stream.wants_segment(eventtime):
+                    break
+                segment = planner.advance(position, joystick_ui.PERIOD)
+                if segment is None:
+                    if planner.held:
+                        self._update_joystick_feedback(
+                            eventtime, position=queued_position)
+                        return eventtime + joystick_ui.PERIOD
+                    stream.finish()
                     self.joystick_queued = False
-                return self.reactor.NEVER
-            self._queue_joystick_segment(segment)
+                    self.joystick_timer_active = False
+                    self._update_joystick_feedback(eventtime)
+                    return self.reactor.NEVER
+                self._queue_joystick_segment(segment)
+                position = segment.position
+                queued_position = position
+            self._update_joystick_feedback(eventtime, position=queued_position)
             return eventtime + joystick_ui.PERIOD
         except Exception:
             logging.exception("[feather_screen] joystick motion failed")
@@ -1248,6 +1329,9 @@ class FeatherScreen:
         snapshot = self._move_status_snapshot(self.reactor.monotonic())
         commands = self.renderer.begin_page("Move", back=True)
         if getattr(self, "move_mode", "step") == "joystick":
+            self.joystick_drawn_cursor = None
+            self.joystick_drawn_inertia = None
+            self.joystick_feedback_at = 0.0
             commands += self._joystick_move_commands(snapshot)
         else:
             commands += self._step_move_commands(snapshot)
@@ -1334,11 +1418,10 @@ class FeatherScreen:
                                "JetBrainsMono 8pt", "center", "middle"),
             self.renderer.text(695, 177, "Z %6.1f" % snapshot[2], "d9e4e8",
                                "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 208, "XY MAX %.0f" % self.joystick.xy_speed,
-                               "56656c", "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 231, "Z MAX %.0f" % self.joystick.z_speed,
-                               "56656c", "JetBrainsMono 8pt", "center", "middle"),
         ]
+        inertia = self._joystick_inertia_snapshot()
+        commands += self._joystick_inertia_commands(inertia)
+        self.joystick_drawn_inertia = inertia
         commands += self.renderer.button("move.homeall", 627, 255, 136, 42,
                                          "HOME ALL", font="JetBrainsMono 8pt")
         commands += self.renderer.button("move.homexy", 627, 307, 136, 42,
@@ -1357,9 +1440,10 @@ class FeatherScreen:
         ]
         return commands
 
-    def _move_status_snapshot(self, eventtime):
+    def _move_status_snapshot(self, eventtime, position=None):
         status = self.toolhead.get_status(eventtime)
-        position = status.get("position", (0.0, 0.0, 0.0, 0.0))
+        if position is None:
+            position = status.get("position", (0.0, 0.0, 0.0, 0.0))
         homed = str(status.get("homed_axes", "")).lower()
         missing = "".join(axis.upper() for axis in "xyz" if axis not in homed)
         state = "HOMED: XYZ" if not missing else "NOT HOMED: %s" % missing
@@ -1422,12 +1506,114 @@ class FeatherScreen:
                                "JetBrainsMono 8pt", "center", "middle"),
         ]
 
+    def _joystick_inertia_snapshot(self):
+        planner = getattr(self, "joystick", None)
+        state = (planner.inertia() if planner is not None
+                 and callable(getattr(planner, "inertia", None)) else {})
+        velocity = state.get("velocity", (0.0, 0.0, 0.0))
+        return (
+            round(float(state.get("xy_speed", 0.0)), 1),
+            round(float(velocity[0]), 1),
+            round(float(velocity[1]), 1),
+            round(float(state.get("z_speed", 0.0)), 1),
+            round(float(state.get("acceleration_magnitude", 0.0))),
+        )
+
+    def _joystick_inertia_commands(self, inertia):
+        xy_speed, vx, vy, vz, acceleration = inertia
+        return [
+            self.renderer.fill(620, 194, 150, 57, "050c0f"),
+            self.renderer.text(
+                695, 202, "INERTIA %5.1f" % xy_speed, "35d9e6",
+                "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(
+                695, 222, "VX %+4.0f VY %+4.0f" % (vx, vy), "d9e4e8",
+                "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(
+                695, 242, "VZ %+4.1f A %4.0f" % (vz, acceleration),
+                "56656c", "JetBrainsMono 8pt", "center", "middle"),
+        ]
+
+    @staticmethod
+    def _joystick_cursor_geometry(cursor):
+        if cursor is None:
+            return None
+        action, x, y = cursor
+        if action == "move.joy.xy":
+            return (action, max(47, min(433, int(x))),
+                    max(105, min(335, int(y))), 240, 220, "35d9e6")
+        return (action, 540, max(105, min(335, int(y))),
+                540, 220, "b47aff")
+
+    def _joystick_indicator_commands(self, previous, current):
+        commands = []
+        old = self._joystick_cursor_geometry(previous)
+        if old is not None:
+            _action, x, y, center_x, center_y, _color = old
+            left, top, size = x - 10, y - 10, 21
+            commands.append(self.renderer.fill(
+                left, top, size, size, "050c0f"))
+            if left <= center_x < left + size:
+                commands.append(self.renderer.fill(
+                    center_x, top, 1, size, "295c66"))
+            if top <= center_y < top + size:
+                commands.append(self.renderer.fill(
+                    left, center_y, size, 1, "295c66"))
+            if (left <= center_x < left + size
+                    and top <= center_y < top + size):
+                commands.append(self.renderer.text(
+                    center_x, center_y, "+", "b47aff",
+                    "JetBrainsMono 16pt", "center", "middle"))
+
+        new = self._joystick_cursor_geometry(current)
+        if new is not None:
+            _action, x, y, _center_x, _center_y, color = new
+            commands += [
+                self.renderer.fill(x - 8, y - 8, 17, 17, color),
+                self.renderer.stroke(x - 8, y - 8, 17, 17, "ffffff", 1),
+            ]
+        return commands
+
+    def _update_joystick_feedback(self, eventtime, position=None, force=False):
+        if (self.page != Page.CONTROL_MOVE
+                or getattr(self, "move_mode", "step") != "joystick"):
+            return
+        renderer = getattr(self, "renderer", None)
+        if renderer is None or getattr(renderer, "send", None) is None:
+            return
+        deadline = getattr(self, "joystick_feedback_at", 0.0)
+        if not force and eventtime < deadline:
+            return
+
+        cursor = getattr(self, "joystick_cursor", None)
+        drawn = getattr(self, "joystick_drawn_cursor", None)
+        values = self._move_status_snapshot(eventtime, position)
+        inertia = self._joystick_inertia_snapshot()
+        commands = []
+        if cursor != drawn:
+            commands += self._joystick_indicator_commands(drawn, cursor)
+            self.joystick_drawn_cursor = cursor
+        if values != getattr(self, "_last_move", None):
+            commands += self._joystick_position_commands(values)
+            self._last_move = values
+        if inertia != getattr(self, "joystick_drawn_inertia", None):
+            commands += self._joystick_inertia_commands(inertia)
+            self.joystick_drawn_inertia = inertia
+        self.joystick_feedback_at = eventtime + joystick_ui.FEEDBACK_PERIOD
+        if commands:
+            self.renderer.send(commands)
+
     def _handle_move_action(self, action):
         self._require_idle()
         if action == "move.mode":
             self._stop_joystick()
-            self.move_mode = ("joystick" if self.move_mode == "step"
-                              else "step")
+            if self.move_mode == "step":
+                if not self._get_joystick_stream().supported():
+                    self._toast("JOYSTICK NOT SUPPORTED")
+                    return
+                self.move_mode = "joystick"
+            else:
+                self.move_mode = "step"
             self._render_move()
             return
         if action.startswith("move.step"):

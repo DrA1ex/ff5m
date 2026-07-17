@@ -33,30 +33,62 @@ class JoystickPlannerTest(unittest.TestCase):
         self.assertAlmostEqual((diagonal[0] ** 2 + diagonal[1] ** 2) ** 0.5,
                                1.0)
 
+    def test_xy_diagonal_updates_both_axes_in_the_same_segment(self):
+        planner = self.planner()
+        planner.set_xy(300, 100, 0.0, 200, 200, 100)
+        segment = planner.advance((0.0, 0.0, 100.0))
+        self.assertGreater(segment.position[0], 0.0)
+        self.assertGreater(segment.position[1], 0.0)
+        self.assertGreater(planner.velocity[0], 0.0)
+        self.assertGreater(planner.velocity[1], 0.0)
+
+    def test_realtime_loop_uses_fixed_short_segments(self):
+        self.assertEqual(JOYSTICK.PERIOD, 0.010)
+        self.assertEqual(JOYSTICK.FEEDBACK_PERIOD, 0.05)
+        self.assertEqual(JOYSTICK.MAX_SPEED_SCALE, 0.5)
+
     def test_z_control_is_inverted_for_bed_coordinates(self):
         self.assertLess(JOYSTICK.vertical_input(100, 200, 100), 0.0)
         self.assertGreater(JOYSTICK.vertical_input(300, 200, 100), 0.0)
         self.assertEqual(JOYSTICK.vertical_input(205, 200, 100), 0.0)
 
-    def test_velocity_changes_are_limited_by_half_configured_acceleration(self):
+    def test_full_force_builds_velocity_and_acceleration_gradually(self):
         planner = self.planner()
         planner.set_xy(300, 200, 0.0, 200, 200, 100)
-        segment = planner.advance((0.0, 0.0, 100.0), 0.05)
-        self.assertIsNotNone(segment)
-        self.assertAlmostEqual(planner.velocity[0], 500.0)
-        self.assertAlmostEqual(segment.acceleration, 10000.0)
-        planner.release()
-        planner.advance(segment.position, 0.05)
-        self.assertAlmostEqual(planner.velocity[0], 0.0)
+        position = (0.0, 0.0, 100.0)
+        velocities = []
+        accelerations = []
+        for _index in range(10):
+            segment = planner.advance(position, 0.01)
+            position = segment.position
+            velocities.append(planner.velocity[0])
+            accelerations.append(planner.acceleration[0])
 
-    def test_z_uses_its_own_speed_and_acceleration_limits(self):
+        self.assertTrue(all(
+            velocities[index] > velocities[index - 1]
+            for index in range(1, len(velocities))))
+        self.assertTrue(all(
+            accelerations[index] >= accelerations[index - 1]
+            for index in range(1, 5)))
+        self.assertLess(velocities[0], velocities[-1])
+        self.assertLessEqual(max(accelerations), planner.xy_force)
+        self.assertLess(max(accelerations), planner.xy_accel)
+
+    def test_z_uses_its_own_force_drag_and_speed_limits(self):
         planner = self.planner()
         planner.set_z(300, 0.0, 200, 100)
-        segment = planner.advance((0.0, 0.0, 100.0), 0.05)
-        self.assertAlmostEqual(planner.velocity[2], 12.5)
-        self.assertAlmostEqual(segment.acceleration, 250.0)
-        planner.advance(segment.position, 0.05)
-        self.assertAlmostEqual(planner.velocity[2], 25.0)
+        position = (0.0, 0.0, 100.0)
+        first = planner.advance(position, 0.01)
+        self.assertGreater(planner.velocity[2], 0.0)
+        self.assertLess(planner.velocity[2], planner.z_speed)
+        self.assertLessEqual(abs(planner.acceleration[2]), planner.z_force)
+        self.assertEqual(first.acceleration, planner.z_accel)
+        position = first.position
+        for _index in range(200):
+            segment = planner.advance(position, 0.01)
+            position = segment.position if segment is not None else position
+        self.assertLessEqual(planner.velocity[2], planner.z_speed)
+        self.assertGreater(planner.velocity[2], planner.z_speed * 0.95)
 
     def test_switching_levers_never_creates_mixed_xyz_segment(self):
         planner = self.planner()
@@ -68,26 +100,132 @@ class JoystickPlannerTest(unittest.TestCase):
         planner.set_z(300, 0.05, 200, 100)
         braking = planner.advance(first.position, 0.05)
         self.assertEqual(braking.position[2], first.position[2])
-        self.assertAlmostEqual(planner.velocity[0], 0.0)
+        self.assertGreater(planner.velocity[0], 0.0)
 
-        z_motion = planner.advance(braking.position, 0.05)
+        position = braking.position
+        for _index in range(20):
+            braking = planner.advance(position, 0.05)
+            if braking is None:
+                break
+            position = braking.position
+            if abs(planner.velocity[0]) <= JOYSTICK.VELOCITY_EPSILON:
+                break
+            self.assertEqual(braking.position[2], first.position[2])
+        z_motion = planner.advance(position, 0.05)
         self.assertEqual(z_motion.position[0], braking.position[0])
         self.assertGreater(z_motion.position[2], braking.position[2])
+
+    def test_xy_does_not_clamp_inactive_axes_after_homing(self):
+        planner = self.planner()
+        planner.set_xy(100, 200, 0.0, 200, 200, 100)
+        position = (110.01, 110.04, 220.0)
+
+        segment = planner.advance(position, 0.025)
+
+        self.assertLess(segment.position[0], position[0])
+        self.assertEqual(segment.position[1], position[1])
+        self.assertEqual(segment.position[2], position[2])
+        self.assertEqual(segment.acceleration, planner.xy_accel)
+
+    def test_half_stick_applies_half_force_and_half_terminal_speed(self):
+        full = self.planner()
+        half = self.planner()
+        full.set_xy(300, 200, 0.0, 200, 200, 100)
+        # radial_input maps this point to approximately 50% after dead-zone.
+        half.set_xy(256, 200, 0.0, 200, 200, 100)
+        full_position = [0.0, 0.0, 100.0]
+        half_position = [0.0, 0.0, 100.0]
+        for _index in range(30):
+            full_segment = full.advance(full_position, 0.01)
+            half_segment = half.advance(half_position, 0.01)
+            full_position = full_segment.position
+            half_position = half_segment.position
+
+        self.assertGreater(full.velocity[0], half.velocity[0])
+        self.assertAlmostEqual(
+            half.velocity[0] / full.velocity[0], 0.5, delta=0.08)
+
+    def test_release_uses_smooth_fast_braking_without_reversing(self):
+        planner = self.planner()
+        planner.set_xy(300, 200, 0.0, 200, 200, 100)
+        position = [0.0, 0.0, 100.0]
+        for _index in range(30):
+            segment = planner.advance(position, 0.01)
+            position = segment.position
+        release_speed = planner.velocity[0]
+        planner.release()
+        speeds = []
+        for _index in range(30):
+            segment = planner.advance(position, 0.01)
+            position = segment.position if segment is not None else position
+            speeds.append(planner.velocity[0])
+            if segment is None:
+                break
+
+        self.assertGreater(speeds[0], release_speed)
+        self.assertTrue(all(value >= 0.0 for value in speeds))
+        self.assertAlmostEqual(speeds[-1], 0.0)
+        self.assertLessEqual(len(speeds), 22)
+
+    def test_reverse_force_brakes_before_changing_direction(self):
+        planner = self.planner()
+        planner.set_xy(300, 200, 0.0, 200, 200, 100)
+        position = [0.0, 0.0, 100.0]
+        for _index in range(25):
+            segment = planner.advance(position, 0.01)
+            position = segment.position
+        initial_speed = planner.velocity[0]
+        initial_acceleration = planner.acceleration[0]
+
+        planner.set_xy(100, 200, 0.25, 200, 200, 100)
+        first = planner.advance(position, 0.01)
+        position = first.position
+        self.assertGreater(planner.velocity[0], 0.0)
+        self.assertLessEqual(
+            abs(planner.acceleration[0] - initial_acceleration),
+            planner.xy_jerk * 0.01 + 0.01)
+        for _index in range(60):
+            segment = planner.advance(position, 0.01)
+            position = segment.position if segment is not None else position
+            if planner.velocity[0] < 0.0:
+                break
+        self.assertGreater(initial_speed, 0.0)
+        self.assertLess(planner.velocity[0], 0.0)
+
+    def test_inertia_reports_velocity_and_acceleration(self):
+        planner = self.planner()
+        planner.set_xy(300, 100, 0.0, 200, 200, 100)
+        planner.advance((0.0, 0.0, 100.0), 0.01)
+
+        inertia = planner.inertia()
+
+        self.assertGreater(inertia["xy_speed"], 0.0)
+        self.assertGreater(inertia["velocity"][0], 0.0)
+        self.assertGreater(inertia["velocity"][1], 0.0)
+        self.assertGreater(inertia["acceleration_magnitude"], 0.0)
 
     def test_braking_keeps_segments_inside_move_safe_boundaries(self):
         planner = self.planner()
         planner.set_xy(300, 200, 0.0, 200, 200, 100)
         position = [0.0, 0.0, 100.0]
         velocities = []
+        positions = []
         for _index in range(100):
             segment = planner.advance(position, 0.05)
             if segment is None:
                 break
             position = segment.position
             velocities.append(planner.velocity[0])
+            positions.append(position[0])
         self.assertLessEqual(position[0], 109.5)
         self.assertTrue(any(value < 590.0 for value in velocities[-8:]))
         self.assertEqual(planner.velocity[0], 0.0)
+        self.assertTrue(all(
+            positions[index] >= positions[index - 1]
+            for index in range(1, len(positions))))
+        for _index in range(20):
+            self.assertIsNone(planner.advance(position, 0.05))
+            self.assertEqual(planner.velocity[0], 0.0)
         # The last segment must decelerate naturally rather than reaching the
         # boundary with speed and relying on the emergency position clamp.
         self.assertGreater(len(velocities), 5)
@@ -126,8 +264,8 @@ class JoystickPlannerTest(unittest.TestCase):
     def test_lost_touch_heartbeat_releases_control(self):
         planner = self.planner()
         planner.set_xy(300, 200, 10.0, 200, 200, 100)
-        self.assertFalse(planner.watchdog(10.3))
-        self.assertTrue(planner.watchdog(10.36))
+        self.assertFalse(planner.watchdog(10.14))
+        self.assertTrue(planner.watchdog(10.16))
         self.assertFalse(planner.held)
         self.assertEqual(planner.target, [0.0, 0.0, 0.0])
 

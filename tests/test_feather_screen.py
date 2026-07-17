@@ -814,11 +814,53 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("[STEP|&gt;JOY]".replace("&gt;", ">"), drawing)
         self.assertIn("UP / Z-", drawing)
         self.assertIn("DOWN / Z+", drawing)
+        self.assertIn("INERTIA", drawing)
+        self.assertIn("VX", drawing)
+        self.assertIn("VZ", drawing)
         self.assertIn("--id 1:move.joy.xy", drawing)
         self.assertIn("--id 1:move.joy.z", drawing)
         self.assertEqual(drawing.count("--continuous"), 2)
         self.assertNotIn("--continuous", UI.FeatherRenderer.hitbox(
             "normal", 0, 0, 10, 10))
+
+    def test_joystick_feedback_tracks_cursor_and_position_in_realtime(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.toolhead = StatusObject({
+            "position": (1.0, 2.0, 3.0, 0.0), "homed_axes": "xyz"})
+        controller._last_move = (1.0, 2.0, 3.0, "HOMED: XYZ", True, True)
+        controller.joystick_cursor = ("move.joy.xy", 320, 180)
+        controller.joystick_drawn_cursor = None
+        controller.joystick_feedback_at = 0.0
+        controller.joystick = type("Planner", (), {
+            "inertia": lambda self: {
+                "velocity": (42.0, -18.0, 1.5),
+                "xy_speed": 45.7,
+                "z_speed": 1.5,
+                "acceleration_magnitude": 850.0,
+            },
+        })()
+
+        controller._update_joystick_feedback(
+            1.0, position=(2.0, 3.0, 4.0))
+
+        live = "\n".join(batches[-1])
+        self.assertIn("--batch fill -p 312 172 -s 17 17", live)
+        self.assertIn('X    2.0', live)
+        self.assertIn('Y    3.0', live)
+        self.assertIn('Z    4.0', live)
+        self.assertIn('INERTIA  45.7', live)
+        self.assertIn('VX  +42 VY  -18', live)
+        self.assertIn('VZ +1.5 A  850', live)
+
+        controller.joystick_cursor = None
+        controller._update_joystick_feedback(1.1, force=True)
+        released = "\n".join(batches[-1])
+        self.assertIn("--batch fill -p 310 170 -s 21 21", released)
 
 
 class ControllerSafetyTest(unittest.TestCase):

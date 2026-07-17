@@ -11,12 +11,21 @@
 import math
 
 
-PERIOD = 0.05
-MAX_QUEUE_AHEAD = 0.20
-TOUCH_WATCHDOG = 0.35
+# Motion runs from a fixed clock rather than the raw touch event rate. Keeping
+# only a few short segments queued makes release and direction changes visible
+# at the toolhead without starving Klipper's lookahead.
+PERIOD = 0.010
+QUEUE_RETRY = 0.005
+FEEDBACK_PERIOD = 0.05
+TOUCH_WATCHDOG = 0.15
+MAX_SPEED_SCALE = 0.5
 DEAD_ZONE = 0.12
 EDGE_MARGIN = 0.5
 VELOCITY_EPSILON = 0.02
+ACCELERATION_EPSILON = 0.5
+FORCE_TIME_CONSTANT = 0.20
+STOP_FORCE_MULTIPLIER = 1.8
+JERK_RISE_TIME = 0.05
 
 
 def _clamp(value, minimum, maximum):
@@ -56,6 +65,26 @@ def _approach_vector(current, target, delta):
                  for index in range(len(current)))
 
 
+def _magnitude(values):
+    return math.sqrt(sum(value * value for value in values))
+
+
+def _limit_vector(values, limit):
+    magnitude = _magnitude(values)
+    if magnitude <= limit or magnitude == 0.0:
+        return tuple(values)
+    scale = limit / magnitude
+    return tuple(value * scale for value in values)
+
+
+def _braking_acceleration(velocity, limit, dt):
+    speed = _magnitude(velocity)
+    if speed <= VELOCITY_EPSILON:
+        return tuple(0.0 for _value in velocity)
+    magnitude = min(limit, speed / dt)
+    return tuple(-value / speed * magnitude for value in velocity)
+
+
 def _boundary_velocity(value, current, position, minimum, maximum,
                        acceleration, dt):
     """Cap the next velocity so this segment plus braking fit in bounds.
@@ -80,7 +109,6 @@ def _boundary_velocity(value, current, position, minimum, maximum,
     maximum_next = max(
         0.0, (-accel_dt + math.sqrt(max(0.0, discriminant))) * 0.5)
     return direction * min(abs(value), maximum_next)
-    return 0.0
 
 
 class Segment:
@@ -97,20 +125,36 @@ class JoystickPlanner:
         self.z_speed = float(z_speed)
         self.z_accel = float(z_accel)
         self.limits = tuple((float(low), float(high)) for low, high in limits)
+        # Full deflection applies a force. Linear drag makes the terminal
+        # velocity equal to the configured speed without turning the stick
+        # position into an instantaneous velocity command.
+        self.xy_force = min(
+            self.xy_accel, self.xy_speed / FORCE_TIME_CONSTANT)
+        self.z_force = min(
+            self.z_accel, self.z_speed / FORCE_TIME_CONSTANT)
+        self.xy_drag = self.xy_force / max(self.xy_speed, 0.1)
+        self.z_drag = self.z_force / max(self.z_speed, 0.1)
+        self.xy_brake = min(
+            self.xy_accel, self.xy_force * STOP_FORCE_MULTIPLIER)
+        self.z_brake = min(
+            self.z_accel, self.z_force * STOP_FORCE_MULTIPLIER)
+        self.xy_jerk = self.xy_force / JERK_RISE_TIME
+        self.z_jerk = self.z_force / JERK_RISE_TIME
         self.target = [0.0, 0.0, 0.0]
         self.velocity = [0.0, 0.0, 0.0]
+        self.acceleration = [0.0, 0.0, 0.0]
         self.last_touch = 0.0
         self.held = False
 
     def set_xy(self, x, y, now, center_x, center_y, radius):
         nx, ny = radial_input(x, y, center_x, center_y, radius)
-        self.target[:] = [nx * self.xy_speed, ny * self.xy_speed, 0.0]
+        self.target[:] = [nx, ny, 0.0]
         self.last_touch = float(now)
         self.held = True
 
     def set_z(self, y, now, center_y, radius):
         nz = vertical_input(y, center_y, radius)
-        self.target[:] = [0.0, 0.0, nz * self.z_speed]
+        self.target[:] = [0.0, 0.0, nz]
         self.last_touch = float(now)
         self.held = True
 
@@ -131,66 +175,172 @@ class JoystickPlanner:
     def stop(self):
         self.release()
         self.velocity[:] = [0.0, 0.0, 0.0]
+        self.acceleration[:] = [0.0, 0.0, 0.0]
+
+    def inertia(self):
+        return {
+            "velocity": tuple(self.velocity),
+            "acceleration": tuple(self.acceleration),
+            "xy_speed": math.hypot(self.velocity[0], self.velocity[1]),
+            "z_speed": self.velocity[2],
+            "acceleration_magnitude": _magnitude(self.acceleration),
+        }
+
+    def _advance_group(self, indices, control, speed_limit, force_limit,
+                       drag, brake_limit, jerk_limit, dt):
+        old_velocity = tuple(self.velocity[index] for index in indices)
+        old_acceleration = tuple(
+            self.acceleration[index] for index in indices)
+        if _magnitude(control) > VELOCITY_EPSILON:
+            desired_acceleration = tuple(
+                force_limit * control[offset] - drag * old_velocity[offset]
+                for offset in range(len(indices)))
+            desired_acceleration = _limit_vector(
+                desired_acceleration, brake_limit)
+        else:
+            desired_acceleration = _braking_acceleration(
+                old_velocity, brake_limit, dt)
+
+        next_acceleration = _approach_vector(
+            old_acceleration, desired_acceleration, jerk_limit * dt)
+        next_velocity = tuple(
+            old_velocity[offset]
+            + (old_acceleration[offset] + next_acceleration[offset])
+            * 0.5 * dt for offset in range(len(indices)))
+        next_velocity = _limit_vector(next_velocity, speed_limit)
+
+        # Braking must settle exactly at zero instead of integrating through
+        # zero and producing a low-speed oscillation.
+        if _magnitude(control) <= VELOCITY_EPSILON:
+            dot = sum(old_velocity[offset] * next_velocity[offset]
+                      for offset in range(len(indices)))
+            if dot <= 0.0 or _magnitude(next_velocity) <= VELOCITY_EPSILON:
+                next_velocity = tuple(0.0 for _index in indices)
+                next_acceleration = tuple(0.0 for _index in indices)
+
+        for offset, index in enumerate(indices):
+            self.velocity[index] = next_velocity[offset]
+            self.acceleration[index] = next_acceleration[offset]
 
     def advance(self, position, dt=PERIOD):
         dt = max(0.001, min(0.2, float(dt)))
         position = [float(value) for value in position[:3]]
-        desired = list(self.target)
+        control = list(self.target)
         # XY and Z use very different kinematic acceleration limits.  When the
         # operator switches levers before the previous axis group has stopped,
         # finish that deceleration first instead of creating a mixed XYZ move
         # whose single acceleration value could only be correct for one group.
         xy_moving = math.hypot(self.velocity[0], self.velocity[1]) > VELOCITY_EPSILON
         z_moving = abs(self.velocity[2]) > VELOCITY_EPSILON
-        if xy_moving and abs(desired[2]) > VELOCITY_EPSILON:
-            desired[:] = [0.0, 0.0, 0.0]
-        elif z_moving and math.hypot(desired[0], desired[1]) > VELOCITY_EPSILON:
-            desired[:] = [0.0, 0.0, 0.0]
-        # Reserve enough vector acceleration to brake both planar axes at a
-        # corner.  This is intentionally conservative for single-axis motion.
-        boundary_xy_accel = self.xy_accel / math.sqrt(2.0)
-        for axis in (0, 1):
-            desired[axis] = _boundary_velocity(
-                desired[axis], self.velocity[axis], position[axis],
-                self.limits[axis][0], self.limits[axis][1],
-                boundary_xy_accel, dt)
-        desired[2] = _boundary_velocity(
-            desired[2], self.velocity[2], position[2], self.limits[2][0],
-            self.limits[2][1], self.z_accel, dt)
+        if xy_moving and abs(control[2]) > VELOCITY_EPSILON:
+            control[:] = [0.0, 0.0, 0.0]
+        elif z_moving and math.hypot(control[0], control[1]) > VELOCITY_EPSILON:
+            control[:] = [0.0, 0.0, 0.0]
 
         old_velocity = tuple(self.velocity)
-        next_xy = _approach_vector(old_velocity[:2], desired[:2],
-                                   self.xy_accel * dt)
-        next_z = _approach_vector(old_velocity[2:], desired[2:],
-                                  self.z_accel * dt)
-        next_velocity = [next_xy[0], next_xy[1], next_z[0]]
+        self._advance_group(
+            (0, 1), control[:2], self.xy_speed, self.xy_force,
+            self.xy_drag, self.xy_brake, self.xy_jerk, dt)
+        self._advance_group(
+            (2,), control[2:], self.z_speed, self.z_force,
+            self.z_drag, self.z_brake, self.z_jerk, dt)
+        next_velocity = list(self.velocity)
+
+        # Reserve enough vector braking force for both planar axes at a corner.
+        boundary_xy_accel = self.xy_brake / math.sqrt(2.0)
+        for axis in (0, 1):
+            next_velocity[axis] = _boundary_velocity(
+                next_velocity[axis], old_velocity[axis], position[axis],
+                self.limits[axis][0], self.limits[axis][1],
+                boundary_xy_accel, dt)
+        next_velocity[2] = _boundary_velocity(
+            next_velocity[2], old_velocity[2], position[2],
+            self.limits[2][0], self.limits[2][1], self.z_brake, dt)
+
+        boundary_settled = [False, False, False]
+        for axis in range(3):
+            # Boundary braking may carry negative acceleration into the next
+            # integration step.  Never let it reverse the axis against a stick
+            # that is still held outward; reaching the wall is a settled stop,
+            # not an elastic collision.
+            if (control[axis] > VELOCITY_EPSILON
+                    and old_velocity[axis] >= 0.0
+                    and next_velocity[axis] < 0.0):
+                next_velocity[axis] = 0.0
+                boundary_settled[axis] = True
+            elif (control[axis] < -VELOCITY_EPSILON
+                    and old_velocity[axis] <= 0.0
+                    and next_velocity[axis] > 0.0):
+                next_velocity[axis] = 0.0
+                boundary_settled[axis] = True
 
         target_position = [
             position[index] + (old_velocity[index] + next_velocity[index])
             * 0.5 * dt for index in range(3)
         ]
         clamped = False
+        clamped_axes = [False, False, False]
         for axis, (minimum, maximum) in enumerate(self.limits):
+            axis_active = (
+                abs(control[axis]) > VELOCITY_EPSILON
+                or abs(old_velocity[axis]) > VELOCITY_EPSILON
+                or abs(next_velocity[axis]) > VELOCITY_EPSILON
+            )
+            if not axis_active:
+                # Homing and probing may leave an axis a fraction beyond the
+                # joystick's conservative EDGE_MARGIN.  Never pull unrelated
+                # axes into that margin (an XY gesture must not become XYZ).
+                target_position[axis] = position[axis]
+                continue
             safe_minimum = minimum + EDGE_MARGIN
             safe_maximum = maximum - EDGE_MARGIN
-            value = _clamp(target_position[axis], safe_minimum, safe_maximum)
+            if position[axis] > safe_maximum:
+                value = (target_position[axis]
+                         if target_position[axis] < position[axis]
+                         else position[axis])
+            elif position[axis] < safe_minimum:
+                value = (target_position[axis]
+                         if target_position[axis] > position[axis]
+                         else position[axis])
+            else:
+                value = _clamp(
+                    target_position[axis], safe_minimum, safe_maximum)
             if value != target_position[axis]:
                 next_velocity[axis] = 0.0
+                clamped_axes[axis] = True
                 clamped = True
             target_position[axis] = value
 
         self.velocity[:] = next_velocity
+        for axis in range(3):
+            if clamped_axes[axis] or boundary_settled[axis]:
+                # Treat a final range clamp as a settled stop, not an elastic
+                # collision whose stored acceleration could bounce inward.
+                self.acceleration[axis] = 0.0
+                continue
+            actual_acceleration = (
+                next_velocity[axis] - old_velocity[axis]) / dt
+            if (abs(actual_acceleration - self.acceleration[axis])
+                    > ACCELERATION_EPSILON):
+                self.acceleration[axis] = actual_acceleration
         distance = math.sqrt(sum((target_position[index] - position[index]) ** 2
                                  for index in range(3)))
         if distance < 0.000001:
-            if not self.held:
+            if (not self.held
+                    or _magnitude(self.target) <= VELOCITY_EPSILON):
                 self.velocity[:] = [0.0, 0.0, 0.0]
+                self.acceleration[:] = [0.0, 0.0, 0.0]
             return None
         speed = max(distance / dt,
                     math.sqrt(sum(value * value for value in old_velocity)),
                     math.sqrt(sum(value * value for value in next_velocity)),
                     0.1)
         uses_z = abs(target_position[2] - position[2]) > 0.000001
+        # Segment acceleration is a transport allowance for Klipper's
+        # lookahead, not the joystick's physical acceleration.  The latter is
+        # already encoded in each endpoint and velocity above.  Keeping the
+        # allowance at the configured axis limit prevents a slowly ramping
+        # gesture from being held in lookahead for hundreds of milliseconds.
         acceleration = self.z_accel if uses_z else self.xy_accel
         if clamped and not self.held:
             self.target[:] = [0.0, 0.0, 0.0]
