@@ -396,6 +396,11 @@ class FeatherScreen:
             if self._wake_if_dimmed():
                 self.joystick_suppressed = raw_action
                 return
+            if (action == "move.joy.xy"
+                    and getattr(self, "move_caution_signature",
+                                (False, None))[0]):
+                self.joystick_suppressed = raw_action
+                return
             if (action not in ("move.joy.xy", "move.joy.z")
                     or self.page != Page.CONTROL_MOVE
                     or self.move_mode != "joystick"
@@ -1377,8 +1382,8 @@ class FeatherScreen:
         commands += self.renderer.button("move.xm", 30, 158, 100, 68, "X-")
         commands += self.renderer.button("move.xp", 250, 158, 100, 68, "X+")
         commands += self.renderer.button("move.ym", 140, 238, 100, 68, "Y-")
-        commands += self.renderer.button("move.zp", 365, 78, 65, 68, "Z+")
-        commands += self.renderer.button("move.zm", 365, 238, 65, 68, "Z-")
+        commands += self.renderer.button("move.zm", 365, 78, 65, 68, "Z-")
+        commands += self.renderer.button("move.zp", 365, 238, 65, 68, "Z+")
         commands.append(self.renderer.fill(445, 65, 1, 360, "295c66"))
 
         commands += self.renderer.button("move.homeall", 465, 170, 145, 50,
@@ -1405,8 +1410,7 @@ class FeatherScreen:
                                          "DISABLE MOTORS",
                                          font="JetBrainsMono 8pt")
         commands += self.renderer.button("move.mode", 235, 350, 195, 58,
-                                         "[>STEP|JOY]",
-                                         state="selected",
+                                         "JOY MODE",
                                          font="JetBrainsMono 8pt")
         commands += self._move_status_commands(snapshot, axes=True)
         return commands
@@ -1531,7 +1535,7 @@ class FeatherScreen:
 
     def _move_caution_commands(self, auto_state):
         if auto_state == "active":
-            profile_line = "BED PROFILE 'AUTO' IS ACTIVE"
+            profile_line = "BED PROFILE 'AUTO' IS LOADED"
         elif auto_state == "available":
             profile_line = "LOAD BED PROFILE 'AUTO'?"
         else:
@@ -1541,13 +1545,34 @@ class FeatherScreen:
             "XY MOTION MAY SCRATCH THE BED",
             profile_line,
         )
-        buttons = [("move.caution.dismiss", "CONTINUE", "enabled")]
+        if auto_state == "active":
+            buttons = [
+                ("move.caution.unload", "UNLOAD", "warning"),
+                ("move.caution.dismiss", "OK", "enabled"),
+            ]
+        else:
+            buttons = [("move.caution.dismiss", "CONTINUE", "enabled")]
         if auto_state == "available":
-            buttons.append(("move.caution.auto", "LOAD AUTO", "warning"))
+            buttons.append(("move.caution.auto", "LOAD", "warning"))
         return self.renderer.dialog(
             "CAUTION", lines, tuple(buttons),
             x=30, y=96, width=420, height=266,
-            tone="warning")
+            tone="warning", modal=False)
+
+    def _sync_move_caution_overlay(self, values, caution):
+        previous = getattr(self, "move_caution_signature", caution)
+        if caution == previous:
+            return False
+        if caution[0]:
+            self.move_caution_signature = caution
+            self.renderer.send(self._move_caution_commands(caution[1]))
+            return False
+        if getattr(self, "joystick_action", None) == "move.joy.z":
+            # Do not invalidate an active continuous touch merely to remove
+            # the overlay. It is cleared after the Z gesture has ended.
+            return False
+        self._render_move(snapshot=values, caution=caution)
+        return True
 
     def _move_status_commands(self, values, axes=False):
         missing = values[3] != "HOMED: XYZ"
@@ -1580,17 +1605,12 @@ class FeatherScreen:
     def _update_move_status(self, eventtime):
         values = self._move_status_snapshot(eventtime)
         caution = self._move_caution_state(values, eventtime)
-        if caution != getattr(self, "move_caution_signature", caution):
-            if caution[0]:
-                self._stop_joystick()
-            self._render_move(snapshot=values, caution=caution)
+        if self._sync_move_caution_overlay(values, caution):
             return
         previous = getattr(self, "_last_move", None)
         if values == previous:
             return
         self._last_move = values
-        if caution[0]:
-            return
         if getattr(self, "move_mode", "step") == "joystick":
             self.renderer.send(self._joystick_position_commands(values))
             return
@@ -1741,12 +1761,11 @@ class FeatherScreen:
         drawn = getattr(self, "joystick_drawn_cursor", None)
         values = self._move_status_snapshot(eventtime, position)
         caution = self._move_caution_state(values, eventtime)
-        if caution != getattr(self, "move_caution_signature", caution):
-            if caution[0]:
-                self._stop_joystick()
-            self._render_move(snapshot=values, caution=caution)
+        if self._sync_move_caution_overlay(values, caution):
             return
-        if caution[0]:
+        active_cursor = cursor or drawn
+        if (caution[0] and active_cursor is not None
+                and active_cursor[0] == "move.joy.xy"):
             return
         inertia = self._joystick_inertia_snapshot()
         commands = []
@@ -1780,6 +1799,18 @@ class FeatherScreen:
             self.move_caution_acknowledged = True
             self._render_move()
             self._toast("BED PROFILE AUTO LOADED")
+            return
+        if action == "move.caution.unload":
+            self._stop_joystick()
+            self._run_script("BED_MESH_CLEAR")
+            self.move_caution_acknowledged = True
+            self._render_move()
+            self._toast("BED PROFILE UNLOADED")
+            return
+        if (getattr(self, "move_caution_signature", (False, None))[0]
+                and action in (
+                    "move.xp", "move.xm", "move.yp", "move.ym",
+                    "move.homeall", "move.homexy")):
             return
         if action == "move.mode":
             self._stop_joystick()

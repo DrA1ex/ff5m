@@ -249,7 +249,7 @@ class JoystickPlannerTest(unittest.TestCase):
 
     def test_z_brakes_before_both_inverted_control_limits(self):
         for touch_y, start_z, expected_limit in (
-                (300, 100.0, 219.5), (100, 100.0, 0.5)):
+                (300, 100.0, 219.5), (100, 100.0, 0.0)):
             planner = self.planner()
             planner.set_z(touch_y, 0.0, 200, 100)
             position = [0.0, 0.0, start_z]

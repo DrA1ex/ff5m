@@ -319,6 +319,60 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(len(updates), 1)
         self.assertTrue(controller.joystick_timer_active)
 
+    def test_low_z_warning_blocks_new_xy_touch_without_interrupting_z(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.command_depth = 0
+        controller.dimmed = False
+        controller.last_touch_time = 0.0
+        controller.joystick_suppressed = None
+        controller.joystick_action = None
+        controller.joystick_timer = object()
+        controller.joystick_timer_active = False
+        controller.move_caution_signature = (True, "active")
+        controller.reactor.NOW = 0.0
+        controller.reactor.update_timer = lambda timer, when: None
+        controller.renderer = type("Renderer", (), {
+            "decode_action": lambda self, action: action.split(":", 1)[-1],
+        })()
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+
+        class Planner:
+            def __init__(self):
+                self.events = []
+
+            def set_xy(self, *args):
+                self.events.append(("xy",))
+
+            def set_z(self, *args):
+                self.events.append(("z", args[0]))
+
+            def release(self):
+                self.events.append(("release",))
+
+        controller.joystick = Planner()
+        controller._update_joystick_feedback = lambda *args, **kwargs: None
+
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.xy begin 240 229")
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.xy move 300 229")
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.xy end 300 229")
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.z begin 510 180")
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.z move 510 160")
+        controller._handle_continuous_touch(
+            "touch 9:move.joy.z end 510 160")
+
+        self.assertEqual(
+            controller.joystick.events,
+            [("z", 180), ("z", 160), ("release",)])
+        self.assertIsNone(controller.joystick_action)
+        self.assertIsNone(controller.joystick_suppressed)
+
     def test_dimmed_joystick_gesture_only_wakes_until_release(self):
         controller = base_controller()
         controller.page = FEATHER.Page.CONTROL_MOVE
@@ -542,6 +596,20 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller._handle_move_action("move.zp")
         self.assertEqual(controller.gcode.commands,
                          ["MOVE_SAFE X=-10 F=6000", "MOVE_SAFE Z=10 F=600"])
+
+    def test_low_z_warning_blocks_step_xy_but_keeps_step_z_available(self):
+        controller = base_controller()
+        controller.jog_step = 1.0
+        controller.move_caution_signature = (True, "available")
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+
+        controller._handle_move_action("move.xp")
+        controller._handle_move_action("move.yp")
+        controller._handle_move_action("move.homeall")
+        controller._handle_move_action("move.zm")
+
+        self.assertEqual(
+            controller.gcode.commands, ["MOVE_SAFE Z=-1 F=600"])
 
     def test_preheat_fan_and_cooldown_commands(self):
         controller = base_controller()

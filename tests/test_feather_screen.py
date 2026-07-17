@@ -376,6 +376,20 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(
             set(renderer._buttons), {"dialog.close", "dialog.apply"})
 
+    def test_local_dialog_preserves_existing_controls_and_hitboxes(self):
+        renderer = FEATHER.FeatherRenderer()
+        renderer.button("outside", 10, 10, 100, 40, "OUTSIDE")
+
+        commands = renderer.dialog(
+            "Caution", ("LOCAL OVERLAY",),
+            (("dialog.ok", "OK", "enabled"),),
+            x=30, y=96, width=420, height=266, modal=False)
+        drawing = "\n".join(commands)
+
+        self.assertNotIn("--batch clear-hitboxes", drawing)
+        self.assertEqual(
+            set(renderer._buttons), {"outside", "dialog.ok"})
+
     def test_bundled_themes_are_loaded_and_recolor_all_known_roles(self):
         renderer = FEATHER.FeatherRenderer()
         self.assertEqual(set(renderer.theme_names()), {
@@ -805,6 +819,12 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertIn("HOME ALL", drawing)
         self.assertIn("HOME XY", drawing)
+        self.assertIn("JOY MODE", drawing)
+        self.assertNotIn("[>STEP|JOY]", drawing)
+        self.assertIn('-p 365 78 -s 65 68', drawing)
+        self.assertIn('"Z-" --id 1:move.zm', drawing)
+        self.assertIn('-p 365 238 -s 65 68', drawing)
+        self.assertIn('"Z+" --id 1:move.zp', drawing)
         self.assertIn("NOT HOMED: Z", drawing)
         self.assertIn("X  123.45   Y   67.89", drawing)
         self.assertIn("Z    4.20", drawing)
@@ -900,20 +920,28 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("CAUTION", warning)
         self.assertIn("Z IS BELOW 5 MM", warning)
         self.assertIn("XY MOTION MAY SCRATCH THE BED", warning)
-        self.assertIn("LOAD AUTO", warning)
-        self.assertEqual(
-            set(controller.renderer._buttons),
-            {"move.caution.dismiss", "move.caution.auto"})
+        self.assertIn("LOAD BED PROFILE 'AUTO'?", warning)
+        self.assertIn('"LOAD"', warning)
+        self.assertEqual(warning.count("--batch clear-hitboxes"), 1)
+        self.assertIn("--id 1:move.caution.dismiss", warning)
+        self.assertIn("--id 1:move.caution.auto", warning)
+        self.assertIn("--id 1:move.joy.z", warning)
+        self.assertIn("--id 1:move.joy.xy", warning)
 
         controller.bed_mesh.status["profile_name"] = "auto"
         controller._render_move()
         safe = "\n".join(batches[-1])
 
         self.assertIn("CAUTION", safe)
-        self.assertIn("BED PROFILE 'AUTO' IS ACTIVE", safe)
-        self.assertEqual(
-            set(controller.renderer._buttons),
-            {"move.caution.dismiss"})
+        self.assertIn("BED PROFILE 'AUTO' IS LOADED", safe)
+        self.assertEqual(safe.count("--batch clear-hitboxes"), 1)
+        self.assertIn("UNLOAD", safe)
+        self.assertIn('"OK"', safe)
+        self.assertIn("--id 2:move.caution.unload", safe)
+        self.assertIn("--id 2:move.caution.dismiss", safe)
+        self.assertIn("--id 2:move.homez", safe)
+        self.assertIn("--id 2:move.joy.z", safe)
+        self.assertIn("--id 2:move.joy.xy", safe)
         self.assertFalse(controller.move_caution_acknowledged)
 
     def test_joystick_feedback_tracks_cursor_and_position_in_realtime(self):
@@ -1051,6 +1079,8 @@ class RendererStateTest(unittest.TestCase):
     def test_low_z_queued_position_is_used_for_immediate_caution(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
         controller.page = FEATHER.Page.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.move_caution_signature = (False, None)
@@ -1069,9 +1099,53 @@ class RendererStateTest(unittest.TestCase):
         controller._update_joystick_feedback(
             1.0, position=(1.0, 2.0, 4.9), force=True)
 
-        self.assertEqual(stopped, [True])
-        self.assertEqual(rendered[-1][0][2], 4.9)
-        self.assertEqual(rendered[-1][1], (True, "active"))
+        self.assertEqual(stopped, [])
+        self.assertEqual(rendered, [])
+        self.assertEqual(controller.move_caution_signature, (True, "active"))
+        self.assertIn("CAUTION", "\n".join(batches[0]))
+        self.assertNotIn("--batch clear-hitboxes", "\n".join(batches[0]))
+
+    def test_low_z_overlay_keeps_z_feedback_live(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.move_caution_signature = (True, "active")
+        controller.move_caution_acknowledged = False
+        controller.toolhead = StatusObject({
+            "position": (1.0, 2.0, 4.8, 0.0), "homed_axes": "xyz"})
+        controller.bed_mesh = StatusObject({
+            "profile_name": "auto", "profiles": {"auto": {"points": []}}})
+        controller._last_move = (
+            1.0, 2.0, 4.9, "HOMED: XYZ", True, True)
+        controller.joystick_cursor = ("move.joy.z", 510, 150)
+        controller.joystick_drawn_cursor = None
+        controller.joystick_feedback_at = 0.0
+        controller.joystick_drawn_inertia = 0.0
+        controller.joystick = type("Planner", (), {
+            "inertia": lambda self: {"velocity": (0.0, 0.0, -2.0)},
+        })()
+
+        controller._update_joystick_feedback(
+            1.0, position=(1.0, 2.0, 4.8), force=True)
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("--batch stroke -p 498 138 -s 25 25", drawing)
+        self.assertIn('"  2.0"', drawing)
+        self.assertIn('"   4.8"', drawing)
+
+    def test_step_mode_caution_uses_same_overlay_geometry_as_joystick(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.move_mode = "step"
+
+        commands = controller._move_caution_commands("available")
+        drawing = "\n".join(commands)
+
+        self.assertIn("-p 30 96 -s 420 266", drawing)
+        self.assertNotIn("--batch clear-hitboxes", drawing)
 
 
 class ControllerSafetyTest(unittest.TestCase):
@@ -1094,6 +1168,25 @@ class ControllerSafetyTest(unittest.TestCase):
             controller.gcode.commands, ["BED_MESH_PROFILE LOAD=auto"])
         self.assertTrue(controller.move_caution_acknowledged)
         self.assertEqual(notices, ["BED PROFILE AUTO LOADED"])
+
+    def test_move_caution_can_unload_active_bed_profile(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.gcode = GCodeRecorder()
+        controller.move_caution_acknowledged = False
+        controller._require_idle = lambda: None
+        controller._stop_joystick = lambda: None
+        rendered = []
+        controller._render_move = lambda: rendered.append(True)
+        notices = []
+        controller._toast = notices.append
+
+        controller._handle_move_action("move.caution.unload")
+
+        self.assertEqual(controller.gcode.commands, ["BED_MESH_CLEAR"])
+        self.assertTrue(controller.move_caution_acknowledged)
+        self.assertEqual(rendered, [True])
+        self.assertEqual(notices, ["BED PROFILE UNLOADED"])
 
     def test_move_caution_dismissal_resets_after_z_becomes_safe(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

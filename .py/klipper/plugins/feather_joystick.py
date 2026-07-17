@@ -86,7 +86,8 @@ def _braking_acceleration(velocity, limit, dt):
 
 
 def _boundary_velocity(value, current, position, minimum, maximum,
-                       acceleration, dt):
+                       acceleration, dt, minimum_margin=EDGE_MARGIN,
+                       maximum_margin=EDGE_MARGIN):
     """Cap the next velocity so this segment plus braking fit in bounds.
 
     The usual sqrt(2*a*d) cap only describes the speed allowed *at the current
@@ -98,9 +99,9 @@ def _boundary_velocity(value, current, position, minimum, maximum,
     if direction == 0.0:
         return 0.0
     if direction > 0.0:
-        distance = max(0.0, maximum - EDGE_MARGIN - position)
+        distance = max(0.0, maximum - maximum_margin - position)
     else:
-        distance = max(0.0, position - minimum - EDGE_MARGIN)
+        distance = max(0.0, position - minimum - minimum_margin)
     toward_edge = max(0.0, current * direction)
     accel_dt = acceleration * dt
     discriminant = (accel_dt * accel_dt
@@ -255,7 +256,8 @@ class JoystickPlanner:
                 boundary_xy_accel, dt)
         next_velocity[2] = _boundary_velocity(
             next_velocity[2], old_velocity[2], position[2],
-            self.limits[2][0], self.limits[2][1], self.z_brake, dt)
+            self.limits[2][0], self.limits[2][1], self.z_brake, dt,
+            minimum_margin=0.0)
 
         boundary_settled = [False, False, False]
         for axis in range(3):
@@ -292,7 +294,9 @@ class JoystickPlanner:
                 # axes into that margin (an XY gesture must not become XYZ).
                 target_position[axis] = position[axis]
                 continue
-            safe_minimum = minimum + EDGE_MARGIN
+            # Z=0 is the physical lower limit and must remain reachable.
+            # XY and the upper Z end retain their conservative margin.
+            safe_minimum = minimum + (0.0 if axis == 2 else EDGE_MARGIN)
             safe_maximum = maximum - EDGE_MARGIN
             if position[axis] > safe_maximum:
                 value = (target_position[axis]

@@ -765,12 +765,14 @@ class FeatherRenderer:
                                      True, layout)
 
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
-               height=220, tone="warning"):
+               height=220, tone="warning", modal=True):
         """Build a modal dialog from standard panel, text, and button primitives.
 
         ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
         existing hitboxes makes a dialog genuinely modal even when it only
-        covers one control region visually.
+        covers one control region visually. Set ``modal`` to false for a
+        localized overlay whose caller will explicitly re-register the
+        controls that remain available.
         """
         tones = {
             "warning": COLOR_AMBER,
@@ -778,9 +780,11 @@ class FeatherRenderer:
             "info": COLOR_CYAN,
         }
         border = tones.get(tone, COLOR_CYAN)
-        self._buttons = {}
-        self._toggles = {}
-        commands = ["--batch clear-hitboxes"]
+        commands = []
+        if modal:
+            self._buttons = {}
+            self._toggles = {}
+            commands.append("--batch clear-hitboxes")
         commands += self.panel(
             x, y, width, height, border=border, background=COLOR_PANEL)
         commands.append(self.text(
