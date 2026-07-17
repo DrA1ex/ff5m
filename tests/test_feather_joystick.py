@@ -167,6 +167,62 @@ class JoystickPlannerTest(unittest.TestCase):
         self.assertAlmostEqual(speeds[-1], 0.0)
         self.assertLessEqual(len(speeds), 22)
 
+    def test_release_after_xy_turn_brakes_straight_without_orbiting(self):
+        planner = self.planner()
+        position = [0.0, 0.0, 100.0]
+        planner.set_xy(300, 200, 0.0, 200, 200, 100)
+        for _index in range(30):
+            position = planner.advance(position, 0.01).position
+        planner.set_xy(200, 100, 0.3, 200, 200, 100)
+        for _index in range(30):
+            position = planner.advance(position, 0.01).position
+
+        release_velocity = tuple(planner.velocity[:2])
+        release_position = tuple(position[:2])
+        planner.release()
+        headings = []
+        for _index in range(60):
+            segment = planner.advance(position, 0.01)
+            if segment is None:
+                break
+            position = segment.position
+            velocity = tuple(planner.velocity[:2])
+            if JOYSTICK._magnitude(velocity) > JOYSTICK.VELOCITY_EPSILON:
+                cross = (release_velocity[0] * velocity[1]
+                         - release_velocity[1] * velocity[0])
+                headings.append(cross)
+
+        self.assertTrue(headings)
+        self.assertTrue(all(abs(value) < 0.000001 for value in headings))
+        displacement = (
+            position[0] - release_position[0],
+            position[1] - release_position[1],
+        )
+        self.assertAlmostEqual(
+            release_velocity[0] * displacement[1]
+            - release_velocity[1] * displacement[0], 0.0, places=5)
+        self.assertEqual(planner.velocity[:2], [0.0, 0.0])
+
+    def test_orthogonal_force_never_reverses_uncommanded_axis(self):
+        planner = self.planner()
+        position = [-80.0, -80.0, 100.0]
+        planner.set_xy(300, 200, 0.0, 200, 200, 100)
+        for _index in range(30):
+            position = planner.advance(position, 0.01).position
+
+        planner.set_xy(200, 100, 0.3, 200, 200, 100)
+        x_velocities = []
+        for _index in range(100):
+            segment = planner.advance(position, 0.01)
+            if segment is None:
+                break
+            position = segment.position
+            x_velocities.append(planner.velocity[0])
+
+        self.assertTrue(x_velocities)
+        self.assertTrue(all(value >= 0.0 for value in x_velocities))
+        self.assertAlmostEqual(x_velocities[-1], 0.0)
+
     def test_reverse_force_brakes_before_changing_direction(self):
         planner = self.planner()
         planner.set_xy(300, 200, 0.0, 200, 200, 100)

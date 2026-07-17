@@ -1203,8 +1203,12 @@ class FeatherScreen:
         now = self.reactor.monotonic()
         status = self.toolhead.get_status(now)
         kinematics = self.toolhead.get_kinematics()
+        axis_minimum = status.get("axis_minimum", (-110.0, -110.0, 0.0))
         axis_maximum = status.get("axis_maximum", (110.0, 110.0, 230.0))
-        z_maximum = max(0.0, float(axis_maximum[2]) - 10.0)
+        x_limits = (float(axis_minimum[0]), float(axis_maximum[0]))
+        y_limits = (float(axis_minimum[1]), float(axis_maximum[1]))
+        z_minimum = max(0.0, float(axis_minimum[2]))
+        z_maximum = max(z_minimum, float(axis_maximum[2]) - 10.0)
         xy_speed = (float(status.get("max_velocity", 600.0))
                     * joystick_ui.MAX_SPEED_SCALE)
         xy_accel = float(status.get("max_accel", 20000.0)) * 0.5
@@ -1213,11 +1217,13 @@ class FeatherScreen:
         z_accel = float(getattr(kinematics, "max_z_accel", 500.0)) * 0.5
         self.joystick = joystick_ui.JoystickPlanner(
             xy_speed, xy_accel, z_speed, z_accel,
-            ((-110.0, 110.0), (-110.0, 110.0), (0.0, z_maximum)))
+            (x_limits, y_limits, (z_minimum, z_maximum)))
         logging.info(
             "[feather_screen] joystick limits xy=%.1f/%.1f z=%.1f/%.1f "
-            "bounds=-110..110,-110..110,0..%.1f",
-            xy_speed, xy_accel, z_speed, z_accel, z_maximum)
+            "bounds=%.1f..%.1f,%.1f..%.1f,%.1f..%.1f",
+            xy_speed, xy_accel, z_speed, z_accel,
+            x_limits[0], x_limits[1], y_limits[0], y_limits[1],
+            z_minimum, z_maximum)
 
     def _start_joystick_timer(self):
         timer = getattr(self, "joystick_timer", None)

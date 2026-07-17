@@ -77,12 +77,29 @@ def _limit_vector(values, limit):
     return tuple(value * scale for value in values)
 
 
-def _braking_acceleration(velocity, limit, dt):
+def _straight_braking(velocity, acceleration, limit, jerk, dt):
+    """Brake without allowing retained lateral acceleration to turn motion."""
     speed = _magnitude(velocity)
     if speed <= VELOCITY_EPSILON:
-        return tuple(0.0 for _value in velocity)
-    magnitude = min(limit, speed / dt)
-    return tuple(-value / speed * magnitude for value in velocity)
+        zero = tuple(0.0 for _value in velocity)
+        return zero, zero
+    direction = tuple(value / speed for value in velocity)
+    parallel_acceleration = sum(
+        acceleration[index] * direction[index]
+        for index in range(len(velocity)))
+    desired_acceleration = -min(limit, speed / dt)
+    acceleration_delta = _clamp(
+        desired_acceleration - parallel_acceleration, -jerk * dt, jerk * dt)
+    next_parallel_acceleration = parallel_acceleration + acceleration_delta
+    next_speed = speed + (
+        parallel_acceleration + next_parallel_acceleration) * 0.5 * dt
+    if next_speed <= VELOCITY_EPSILON:
+        zero = tuple(0.0 for _value in velocity)
+        return zero, zero
+    return (
+        tuple(value * next_speed for value in direction),
+        tuple(value * next_parallel_acceleration for value in direction),
+    )
 
 
 def _boundary_velocity(value, current, position, minimum, maximum,
@@ -198,26 +215,39 @@ class JoystickPlanner:
                 for offset in range(len(indices)))
             desired_acceleration = _limit_vector(
                 desired_acceleration, brake_limit)
+            next_acceleration = _approach_vector(
+                old_acceleration, desired_acceleration, jerk_limit * dt)
+            next_velocity = tuple(
+                old_velocity[offset]
+                + (old_acceleration[offset] + next_acceleration[offset])
+                * 0.5 * dt for offset in range(len(indices)))
+            next_velocity = list(_limit_vector(next_velocity, speed_limit))
+            next_acceleration = list(next_acceleration)
+
+            # A component with no stick force may coast and decay, but it must
+            # never cross zero and accelerate in the opposite direction. That
+            # retained transverse acceleration was the source of circular
+            # "fly-off" paths after sharp XY direction changes.
+            for offset, value in enumerate(control):
+                old_value = old_velocity[offset]
+                next_value = next_velocity[offset]
+                settles = (
+                    abs(value) <= VELOCITY_EPSILON
+                    and old_value * next_value <= 0.0
+                )
+                opposes_held_input = (
+                    value > VELOCITY_EPSILON
+                    and old_value >= 0.0 and next_value < 0.0
+                ) or (
+                    value < -VELOCITY_EPSILON
+                    and old_value <= 0.0 and next_value > 0.0
+                )
+                if settles or opposes_held_input:
+                    next_velocity[offset] = 0.0
+                    next_acceleration[offset] = 0.0
         else:
-            desired_acceleration = _braking_acceleration(
-                old_velocity, brake_limit, dt)
-
-        next_acceleration = _approach_vector(
-            old_acceleration, desired_acceleration, jerk_limit * dt)
-        next_velocity = tuple(
-            old_velocity[offset]
-            + (old_acceleration[offset] + next_acceleration[offset])
-            * 0.5 * dt for offset in range(len(indices)))
-        next_velocity = _limit_vector(next_velocity, speed_limit)
-
-        # Braking must settle exactly at zero instead of integrating through
-        # zero and producing a low-speed oscillation.
-        if _magnitude(control) <= VELOCITY_EPSILON:
-            dot = sum(old_velocity[offset] * next_velocity[offset]
-                      for offset in range(len(indices)))
-            if dot <= 0.0 or _magnitude(next_velocity) <= VELOCITY_EPSILON:
-                next_velocity = tuple(0.0 for _index in indices)
-                next_acceleration = tuple(0.0 for _index in indices)
+            next_velocity, next_acceleration = _straight_braking(
+                old_velocity, old_acceleration, brake_limit, jerk_limit, dt)
 
         for offset, index in enumerate(indices):
             self.velocity[index] = next_velocity[offset]

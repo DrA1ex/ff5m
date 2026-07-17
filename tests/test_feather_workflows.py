@@ -554,7 +554,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
         class Toolhead:
             def get_status(self, eventtime):
                 return {
-                    "axis_maximum": (125.0, 125.0, 230.0),
+                    "axis_minimum": (0.0, 0.0, 0.0),
+                    "axis_maximum": (220.0, 220.0, 230.0),
                     "max_velocity": 600.0,
                     "max_accel": 20000.0,
                 }
@@ -569,6 +570,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(controller.joystick.z_speed, 12.5)
         self.assertEqual(controller.joystick.xy_accel, 10000.0)
         self.assertEqual(controller.joystick.z_accel, 250.0)
+        self.assertEqual(
+            controller.joystick.limits,
+            ((0.0, 220.0), (0.0, 220.0), (0.0, 220.0)))
 
     def test_heat_page_draws_values_immediately_and_refreshes_fan(self):
         controller = base_controller()
