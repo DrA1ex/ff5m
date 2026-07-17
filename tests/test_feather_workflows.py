@@ -267,6 +267,26 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertIn('"FEATHER_ABORT"', gcode)
         self.assertIn("flow.variables[\"cancel_requested\"] = True", gcode)
 
+    def test_screw_tune_cleans_or_uses_cooldown_and_repeat_only_probes(self):
+        root = pathlib.Path(__file__).parents[1]
+        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
+        tune = macros.split("[gcode_macro BED_LEVEL_SCREWS_TUNE]", 1)[1].split(
+            "[gcode_macro BED_LEVEL_SCREWS_PROBE]", 1)[0]
+        probe = macros.split("[gcode_macro BED_LEVEL_SCREWS_PROBE]", 1)[1].split(
+            "[gcode_macro _CHECK_BED_MESH]", 1)[0]
+        self.assertIn(
+            "CLEAR_NOZZLE EXTRUDER_TEMP={extruder_temp} BED_TEMP={bed_temp}",
+            tune)
+        self.assertIn("M104 S{cooldown_t}", tune)
+        self.assertIn(
+            "_WAIT_TEMPERATURE CMD=M104 VALUE={cooldown_t}", tune)
+        self.assertIn("BED_LEVEL_SCREWS_PROBE", tune)
+        self.assertIn("LOAD_CELL_TARE", probe)
+        self.assertIn("SCREWS_TILT_CALCULATE", probe)
+        self.assertNotIn("_WAIT_TEMPERATURE", probe)
+        self.assertNotIn("CLEAR_NOZZLE", probe)
+        self.assertNotIn("G28", probe)
+
 
 class MotionHeatSettingsTest(unittest.TestCase):
     def test_continuous_touch_updates_planner_and_release(self):

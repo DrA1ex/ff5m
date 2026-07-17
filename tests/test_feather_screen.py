@@ -1289,6 +1289,54 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("PROFILE AUTO", drawing)
         self.assertIn("cal.mesh -p 30 295 -s 740 90", drawing)
 
+    def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_kind = "screws"
+        controller.calibration_material = "PETG"
+        controller.calibration_clean_nozzle = True
+        controller._render_calibration_confirm()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("CLEAR_NOZZLE", drawing)
+        self.assertIn("cal.clean.skip", drawing)
+        self.assertIn("WITHOUT CLEANING", drawing)
+        self.assertIn("probe cooldown temperature", drawing)
+        self.assertIn("cal.material.PETG", drawing)
+
+        controller.calibration_clean_nozzle = False
+        controller._render_calibration_confirm()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("cal.clean.skip", drawing)
+        self.assertIn("--border b47aff", drawing)
+
+    def test_screw_calibration_marks_only_current_phase_with_accent(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "screws"
+        controller.calibration_clean_nozzle = True
+        controller.calibration_repeat_probe = False
+        drawing = "\n".join(controller._calibration_stage_commands(
+            "BED SCREWS: HEATING"))
+        self.assertIn("stroke -p 55 225 -s 128 38 -c 35d9e6", drawing)
+        self.assertIn("stroke -p 195 225 -s 128 38 -c b47aff", drawing)
+        self.assertIn("stroke -p 335 225 -s 128 38 -c 263238", drawing)
+        self.assertEqual(drawing.count("-c b47aff"), 2)
+
+    def test_screw_repeat_progress_contains_only_probe_and_done(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "screws"
+        controller.calibration_repeat_probe = True
+        drawing = "\n".join(controller._calibration_stage_commands(
+            "BED SCREWS: PROBING"))
+        self.assertIn('-t "PROBE"', drawing)
+        self.assertIn('-t "DONE"', drawing)
+        self.assertNotIn('-t "PREP"', drawing)
+        self.assertNotIn('-t "HEAT"', drawing)
+        self.assertEqual(drawing.count("-c b47aff"), 2)
+
     def test_settings_buttons_use_compact_signed_step_labels(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
@@ -1691,6 +1739,45 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands,
                          ["AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=245 BED_TEMP=68 PROFILE=auto"])
         self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+
+    def test_screw_calibration_passes_selected_cleaning_path(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "screws"
+        controller.calibration_material = "PETG"
+        controller.calibration_clean_nozzle = False
+        controller.calibration_repeat_probe = False
+        controller.calibration_error = None
+        controller.gcode = GCodeRecorder()
+        controller._require_idle = lambda: None
+        controller._limited_preheat = lambda material: (245, 68)
+        pages = []
+        controller._show_page = pages.append
+        controller._run_calibration(0)
+        self.assertEqual(controller.gcode.commands, [
+            "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=245 BED_TEMP=68 CLEAN=0"])
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+
+    def test_screw_repeat_starts_probe_immediately_without_confirm(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "screws"
+        controller.calibration_results = [{"name": "old"}]
+        controller.calibration_mesh = []
+        controller.calibration_error = None
+        controller.reactor = DeferredReactor()
+        controller._require_idle = lambda: None
+        pages = []
+        controller._show_page = pages.append
+        controller._handle_calibration_action("cal.repeat")
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertTrue(controller.calibration_repeat_probe)
+        self.assertEqual(controller.calibration_results, [])
+        self.assertEqual(controller.print_status_text, "BED SCREWS: PROBING")
+        self.assertEqual(len(controller.reactor.callbacks), 1)
+
+        controller.gcode = GCodeRecorder()
+        controller._show_page = pages.append
+        controller._run_calibration(0)
+        self.assertEqual(controller.gcode.commands, ["BED_LEVEL_SCREWS_PROBE"])
 
     def test_calibration_error_returns_result_page(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

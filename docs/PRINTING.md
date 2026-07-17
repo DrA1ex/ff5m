@@ -29,13 +29,18 @@ To calibrate the printer, use only these macros (or the Stock screen).
 > The Stock Screen doesn’t support the `SAVE_CONFIG` macro, which will cause freezing. A reboot is required afterward.
 > Learn how to work around this [here](/docs/FAQ.md#stock-screen-freezes-i-cant-print-anything).
 
-All of these macros are available in the Fluidd/Mainsail main screen in the section **Calibration**:
+The full calibration workflows are available in the Fluidd/Mainsail main screen in the section **Calibration**. The probing-only helper described below is intentionally not a general standalone button because it requires an already prepared printer.
 
 
 - `BED_LEVEL_SCREWS_TUNE`: Adjusts bed leveling screws (calculates adjustments for **nuts under the bed**).   
   ⚠️ **Recalibrate** the bed mesh after making changes.
-  - `EXTRUDER_TEMP` temperature of the nozzle (default `130`)   
+  - `EXTRUDER_TEMP` nozzle temperature used by `CLEAR_NOZZLE` (default `230`)
   - `BED_TEMP` temperature of the bed (default `80`)
+  - `CLEAN` runs `CLEAR_NOZZLE` when `1` (default); when `0`, cleaning is skipped, `EXTRUDER_TEMP` is ignored, and the nozzle is heated only to `clear_cooldown_temp` (default `120`)
+
+- `BED_LEVEL_SCREWS_PROBE`: Repeats only load-cell tare and corner probing after the printer has already been prepared by `BED_LEVEL_SCREWS_TUNE`.
+  - Does not select material, clean the nozzle, home, or wait for heating.
+  - Use it for repeated measurements while adjusting the screws. If the printer has cooled down or lost homing, run `BED_LEVEL_SCREWS_TUNE` again.
 
 - `AUTO_FULL_BED_LEVEL`: Bed meshing.  
   - `EXTRUDER_TEMP` temperature of the nozzle (default `240`)  

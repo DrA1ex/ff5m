@@ -55,6 +55,8 @@ Recent macro history shows why targeted review matters:
 
 - `CLEAR_NOZZLE` was changed to reset the mesh first, preventing mesh-validation + cleaning from affecting measured Z and potentially scratching hardware.
 - Its cooldown condition was tightened so cooldown occurs only when target is below current extruder temperature.
+- `BED_LEVEL_SCREWS_TUNE` now owns full screw-calibration preparation: it either calls `CLEAR_NOZZLE` or, with `CLEAN=0`, homes and holds the nozzle at `clear_cooldown_temp`, then delegates measurement to `BED_LEVEL_SCREWS_PROBE`.
+- `BED_LEVEL_SCREWS_PROBE` intentionally performs only load-cell tare and corner probing. Feather uses it for **Repeat** while the printer remains homed and at calibration temperatures; it must not be exposed as an unguarded general-purpose calibration button.
 - `AUTO_FULL_BED_LEVEL` received a stock/non-stock default-profile correction.
 - Interactive `LOAD_MATERIAL` prompts and KAMP Smart Parking were added nearby.
 

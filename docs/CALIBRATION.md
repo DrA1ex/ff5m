@@ -65,14 +65,25 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
 ---
 
 ## Bed Leveling Screws
-1. **Prepare**:
-   - Run `CLEAR_NOZZLE` to ensure the nozzle is clean.
-2. **Run**:
+1. **Prepare and run the first measurement**:
+   ```gcode
+   BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=220 BED_TEMP=60
    ```
-   BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=130 BED_TEMP=60
-   ```
-   - Adjust screws per instructions.
-   - Repeat `BED_LEVEL_SCREWS_TUNE` until values are adequate.
+   - The default `CLEAN=1` path homes the printer and runs `CLEAR_NOZZLE` at the specified material temperatures before probing.
+   - To deliberately skip nozzle cleaning, use:
+     ```gcode
+     BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=220 BED_TEMP=60 CLEAN=0
+     ```
+     In this mode, `EXTRUDER_TEMP` is ignored: the printer still homes and heats the bed, but the nozzle is held only at the configured `clear_cooldown_temp` (120°C by default).
+2. **Adjust and repeat**:
+   - Adjust the nuts under the bed according to the reported directions.
+   - While the printer remains homed and at the calibration temperatures, repeat only the corner measurement:
+     ```gcode
+     BED_LEVEL_SCREWS_PROBE
+     ```
+   - `BED_LEVEL_SCREWS_PROBE` performs load-cell tare and `SCREWS_TILT_CALCULATE` only. It does not clean, home, select material, or wait for heating.
+   - If the printer is no longer homed or has cooled down, run the full `BED_LEVEL_SCREWS_TUNE` workflow again.
+   - On Feather, selecting PLA/PETG/ABS uses the cleaning path; **Without cleaning** uses the cooldown-temperature path; **Repeat** runs only `BED_LEVEL_SCREWS_PROBE`.
 3. **Check Load Cell**:
    - If your bed height variation exceeds 1 mm, you must perform load cell tare calibration after adjusting the bed screws (see [Forge-X FAQ](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md#resolving-the-issue-by-calibrating-the-load-cell)).
 4. **Recalibrate Load Cells**: Follow the official Flashforge [guide](https://docs.google.com/document/d/1Oou4A56g5HTrxBAMoH-bTnTZZ3IZyGr_3jL9tUYYiow/edit?usp=drivesdk). If you're not using the Stock screen, temporarily reload it with `SKIP_MOD`.   

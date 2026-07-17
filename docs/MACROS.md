@@ -9,11 +9,18 @@ This document provides a concise overview of the G-code macros defined in the `b
 ### Bed Leveling and Calibration
 
 - **BED_LEVEL_SCREWS_TUNE**
-  - **Description**: Performs bed screw tilt adjustment with temperature control and nozzle cleaning prompts.
+  - **Description**: Fully prepares the printer and calculates bed screw adjustments. By default, it homes and runs `CLEAR_NOZZLE` at the selected material temperatures before probing.
   - **Parameters**:
-    - `EXTRUDER_TEMP` (float, default: 130): Target extruder temperature (°C).
+    - `EXTRUDER_TEMP` (float, default: 230): Target extruder temperature used by `CLEAR_NOZZLE` (°C).
     - `BED_TEMP` (float, default: 80): Target bed temperature (°C).
-  - **Defaults**: Cleans nozzle and adjusts screws after heating.
+    - `CLEAN` (int, default: 1): Run `CLEAR_NOZZLE` before probing. With `CLEAN=0`, the macro skips cleaning, ignores `EXTRUDER_TEMP`, homes the printer, and heats the nozzle only to `clear_cooldown_temp` (120°C by default).
+  - **Defaults**: Clears the active bed mesh, prepares the printer, then calls `BED_LEVEL_SCREWS_PROBE`.
+
+- **BED_LEVEL_SCREWS_PROBE**
+  - **Description**: Repeats only load-cell tare and corner probing with `SCREWS_TILT_CALCULATE`.
+  - **Parameters**: None.
+  - **Preconditions**: The printer must already be homed and remain at the required calibration temperatures. Normally, run `BED_LEVEL_SCREWS_TUNE` once before using this macro.
+  - **Defaults**: Does not select material, clean the nozzle, home, or wait for heaters. Use it for subsequent checks after adjusting the bed screws.
 
 - **_CHECK_BED_MESH**
   - **Description**: Validates the bed mesh by probing multiple points and checking tolerances.

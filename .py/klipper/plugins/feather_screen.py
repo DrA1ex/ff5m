@@ -82,7 +82,7 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_HOME: ("nav.back", "cal.z", "cal.screws", "cal.mesh"),
     Page.CALIBRATION_Z: ("nav.back", "z.step.001", "z.step.005", "z.closer",
                          "z.farther", "z.reset", "z.load.toggle"),
-    Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm"),
+    Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.eco.minus",
@@ -214,6 +214,8 @@ class FeatherScreen:
         self.filament_original_target = 0.0
         self.calibration_kind = None
         self.calibration_material = "PLA"
+        self.calibration_clean_nozzle = True
+        self.calibration_repeat_probe = False
         self.calibration_results = []
         self.calibration_mesh = []
         self.calibration_error = None
@@ -2176,22 +2178,30 @@ class FeatherScreen:
         elif action in ("cal.screws", "cal.mesh"):
             self._require_idle()
             self.calibration_kind = action.split(".", 1)[1]
-            self.calibration_material = "PLA"
+            current_material = self._current_material()
+            self.calibration_material = (
+                current_material if current_material in ("PLA", "PETG", "ABS")
+                else "PLA")
+            self.calibration_clean_nozzle = True
+            self.calibration_repeat_probe = False
             self._show_page(Page.CALIBRATION_CONFIRM)
         elif action.startswith("cal.material."):
             self.calibration_material = action.rsplit(".", 1)[1]
+            self.calibration_clean_nozzle = True
+            self.calibration_repeat_probe = False
+            self._render_calibration_confirm()
+        elif action == "cal.clean.skip":
+            self.calibration_clean_nozzle = False
+            self.calibration_repeat_probe = False
             self._render_calibration_confirm()
         elif action == "cal.confirm":
-            self._require_idle()
-            self.calibration_results = []
-            self.calibration_mesh = []
-            self.calibration_error = None
-            self.print_status_text = ("RESETTING Z" if self.calibration_kind == "zreset"
-                                      else "CALIBRATION: STARTING")
-            self._show_page(Page.CALIBRATION_PROGRESS)
-            self.reactor.register_callback(self._run_calibration)
+            self._start_calibration(repeat_probe=False)
         elif action == "cal.repeat":
-            self._show_page(Page.CALIBRATION_CONFIRM)
+            if self.calibration_kind == "screws":
+                self._start_calibration(repeat_probe=True)
+            else:
+                self.calibration_repeat_probe = False
+                self._show_page(Page.CALIBRATION_CONFIRM)
         elif action == "cal.done":
             self._show_page(Page.CALIBRATION_HOME)
         elif action.startswith("z.step."):
@@ -2208,6 +2218,22 @@ class FeatherScreen:
             self._require_idle()
             self.calibration_kind = "zreset"
             self._show_page(Page.CALIBRATION_CONFIRM)
+
+    def _start_calibration(self, repeat_probe=False):
+        self._require_idle()
+        self.calibration_repeat_probe = bool(
+            repeat_probe and self.calibration_kind == "screws")
+        self.calibration_results = []
+        self.calibration_mesh = []
+        self.calibration_error = None
+        if self.calibration_kind == "zreset":
+            self.print_status_text = "RESETTING Z"
+        elif self.calibration_repeat_probe:
+            self.print_status_text = "BED SCREWS: PROBING"
+        else:
+            self.print_status_text = "CALIBRATION: STARTING"
+        self._show_page(Page.CALIBRATION_PROGRESS)
+        self.reactor.register_callback(self._run_calibration)
 
     def _apply_z_adjust(self, delta):
         now = self.reactor.monotonic()
@@ -2239,7 +2265,8 @@ class FeatherScreen:
         if kind == "zreset":
             text = "Reset saved and current Z offset to zero?"
         elif kind == "screws":
-            text = "Printer will heat, home and probe. Clean the nozzle first."
+            text = ("Select material to run CLEAR_NOZZLE before probing, "
+                    "or continue without cleaning.")
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
         for index, line in enumerate(self._wrap(text, 52, 3)):
@@ -2248,11 +2275,26 @@ class FeatherScreen:
         if kind in ("screws", "mesh"):
             for index, material in enumerate(("PLA", "PETG", "ABS")):
                 commands += self.renderer.button("cal.material.%s" % material,
-                                                 115 + index * 195, 190, 180, 60,
+                                                 115 + index * 195, 170, 180, 55,
                                                  material,
-                                                 state="selected" if material ==
-                                                 self.calibration_material else "enabled")
-        commands += self.renderer.button("cal.confirm", 220, 300, 360, 100,
+                                                 state=("selected" if
+                                                        material ==
+                                                        self.calibration_material and
+                                                        (kind != "screws" or
+                                                         getattr(
+                                                             self,
+                                                             "calibration_clean_nozzle",
+                                                             True))
+                                                        else "enabled"))
+        if kind == "screws":
+            commands += self.renderer.button(
+                "cal.clean.skip", 115, 240, 570, 52, "WITHOUT CLEANING",
+                state=("enabled" if getattr(
+                    self, "calibration_clean_nozzle", True) else "selected"))
+            commands.append(self.renderer.text(
+                400, 305, "Nozzle will be held at probe cooldown temperature",
+                "56656c", "JetBrainsMono 8pt", "center"))
+        commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START" if kind != "zreset" else "RESET",
                                          state="danger" if kind == "zreset" else "enabled",
                                          font="Roboto Bold 16pt")
@@ -2263,7 +2305,7 @@ class FeatherScreen:
             self.print_status_text or "Calibration running...")
         commands = self.renderer.begin_page("Calibration")
         commands.append(self.renderer.text(400, 142, self._shorten(label, 44),
-                                           "35d9e6", "JetBrainsMono Bold 12pt",
+                                           "b47aff", "JetBrainsMono Bold 12pt",
                                            "center"))
         commands += self._calibration_stage_commands(label)
         if self.calibration_kind == "mesh":
@@ -2280,7 +2322,7 @@ class FeatherScreen:
         self._last_calibration_label = label
         commands = [self.renderer.fill(40, 105, 720, 205, "030607"),
                     self.renderer.text(400, 142, self._shorten(label, 44),
-                                       "35d9e6", "JetBrainsMono Bold 12pt",
+                                       "b47aff", "JetBrainsMono Bold 12pt",
                                        "center")]
         commands += self._calibration_stage_commands(label)
         self.renderer.send(commands)
@@ -2288,26 +2330,50 @@ class FeatherScreen:
     def _calibration_stage_commands(self, label):
         text = str(label).upper()
         if self.calibration_kind == "screws":
-            stages = ("PREP", "HOME", "HEAT", "PROBE", "DONE")
+            repeat_probe = getattr(self, "calibration_repeat_probe", False)
+            clean_nozzle = getattr(self, "calibration_clean_nozzle", True)
+            if repeat_probe:
+                stages = ("PROBE", "DONE")
+            elif clean_nozzle:
+                stages = ("PREP", "HEAT", "CLEAN", "PROBE", "DONE")
+            else:
+                stages = ("PREP", "HOME", "HEAT", "PROBE", "DONE")
         else:
             stages = ("PREP", "HEAT", "CLEAN", "HOME", "LEVEL")
-        index = 0
-        markers = (("COMPLETE", 5), ("LEVEL", 4), ("PROB", 4),
-                   ("HOM", 3), ("CLEAN", 2), ("HEAT", 2),
-                   ("PREP", 1), ("START", 1))
-        for marker, value in markers:
-            if marker in text:
-                index = value
-                break
+
+        phase = stages[0]
+        if "COMPLETE" in text:
+            phase = stages[-1]
+        elif "PROB" in text:
+            phase = "PROBE"
+        elif "LEVEL" in text:
+            phase = "LEVEL"
+        elif any(marker in text for marker in ("CLEAN", "COOL")):
+            phase = "CLEAN"
+        elif "DONE!" in text and "CLEAN" in stages:
+            phase = "CLEAN"
+        elif "HOM" in text:
+            phase = "HOME"
+        elif "HEAT" in text:
+            phase = "HEAT"
+        elif any(marker in text for marker in ("PREP", "START")):
+            phase = "PREP"
+        current = stages.index(phase) if phase in stages else 0
+
+        left, right, gap = 55, 745, 12
+        width = (right - left - gap * (len(stages) - 1)) // len(stages)
         commands = []
         for position, stage in enumerate(stages):
-            x = 55 + position * 142
-            reached = position < index
-            active = position == max(0, index - 1) and index < 5
-            color = "35d9e6" if reached else ("f2c94c" if active else "263238")
-            commands += [self.renderer.fill(x, 225, 118, 38, "050c0f"),
-                         self.renderer.stroke(x, 225, 118, 38, color, 2),
-                         self.renderer.text(x + 59, 244, stage, color,
+            x = left + position * (width + gap)
+            if position == current:
+                color = "b47aff"
+            elif position < current:
+                color = "35d9e6"
+            else:
+                color = "263238"
+            commands += [self.renderer.fill(x, 225, width, 38, "050c0f"),
+                         self.renderer.stroke(x, 225, width, 38, color, 2),
+                         self.renderer.text(x + width // 2, 244, stage, color,
                                             "JetBrainsMono 8pt", "center", "middle")]
         return commands
 
@@ -2318,10 +2384,20 @@ class FeatherScreen:
                 self._run_script(
                     "SET_GCODE_OFFSET Z=0 MOVE=1\nSET_MOD PARAM=z_offset VALUE=0")
             else:
-                nozzle, bed = self._limited_preheat(self.calibration_material)
                 if self.calibration_kind == "screws":
-                    command = "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=130 BED_TEMP=%.0f" % bed
+                    if getattr(self, "calibration_repeat_probe", False):
+                        command = "BED_LEVEL_SCREWS_PROBE"
+                    else:
+                        nozzle, bed = self._limited_preheat(
+                            self.calibration_material)
+                        clean = int(getattr(
+                            self, "calibration_clean_nozzle", True))
+                        command = (
+                            "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=%.0f "
+                            "BED_TEMP=%.0f CLEAN=%d" % (nozzle, bed, clean))
                 else:
+                    nozzle, bed = self._limited_preheat(
+                        self.calibration_material)
                     command = ("AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=%.0f BED_TEMP=%.0f "
                                "PROFILE=auto" % (nozzle, bed))
                 self._run_script(command)
