@@ -56,6 +56,9 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 
 ## TL;DR
 
+> [!DANGER]
+> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
+
 1. Uninstall any other installed mods first (⚠️ make a backup!).   
 2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
 3. Update slicer [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
