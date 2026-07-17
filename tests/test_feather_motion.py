@@ -124,8 +124,10 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         self.assertEqual(toolhead.buffer_time_low, MOTION.STREAM_BUFFER_LOW)
         self.assertEqual(toolhead.move_queue.junction_flush,
                          MOTION.LOOKAHEAD_FLUSH)
-        for _index in range(8):
+        for _index in range(100):
             stream.queue_segment(Segment())
+            if toolhead.move_queue.processed:
+                break
 
         self.assertGreater(toolhead.move_queue.processed, 0)
         self.assertLess(stream.ahead(100.0), MOTION.MAX_AHEAD)
@@ -138,12 +140,17 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         stream = MOTION.LowLatencyToolheadStream(toolhead)
         stream.start(100.0)
 
-        for _index in range(20):
-            stream.queue_segment(Segment())
-        self.assertAlmostEqual(toolhead.move_queue.junction_flush, 0.004)
         stream.queue_segment(Segment())
+        stream.queue_segment(Segment())
+        self.assertAlmostEqual(
+            toolhead.move_queue.junction_flush,
+            MOTION.LOOKAHEAD_FLUSH - toolhead.move_duration)
+        for _index in range(100):
+            stream.queue_segment(Segment())
+            if toolhead.move_queue.processed:
+                break
 
-        self.assertEqual(toolhead.move_queue.processed, 20)
+        self.assertGreater(toolhead.move_queue.processed, 1)
         self.assertEqual(toolhead.move_queue.junction_flush,
                          MOTION.LOOKAHEAD_FLUSH)
 

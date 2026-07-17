@@ -14,14 +14,14 @@ import logging
 # provides the MCU with its required ~100 ms generation window.
 # The AD5M MCU needs materially more than ToolHead.MIN_KIN_TIME during the
 # first step-generation pass. Keep the proven stock 250 ms startup allowance,
-# then maintain a bounded 300 ms rolling horizon. This is still far below the
+# then maintain a bounded 200 ms rolling horizon. This is still far below the
 # stock one-to-two-second buffering, while leaving enough room for a delayed
 # host timer without starving the MCU.
 START_BUFFER = 0.250
-STREAM_BUFFER_LOW = 0.150
-LOOKAHEAD_FLUSH = 0.080
-TARGET_AHEAD = 0.300
-MAX_AHEAD = 0.450
+STREAM_BUFFER_LOW = 0.080
+LOOKAHEAD_FLUSH = 0.040
+TARGET_AHEAD = 0.200
+MAX_AHEAD = 0.340
 BUSY_TOLERANCE = 0.020
 START_BUSY_GRACE = 0.750
 MAX_REFILL_SEGMENTS = 16
