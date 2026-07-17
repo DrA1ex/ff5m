@@ -35,15 +35,19 @@ DISP_LCD_BACKLIGHT_ENABLE = 0x104
 REFRESH_TIME = 1.0
 ACTION_DEBOUNCE = 0.08
 MOVE_CAUTION_Z = 5.0
-JOYSTICK_XY_PANEL = (12, 64, 376, 364)
-JOYSTICK_XY_PAD = (30, 96, 340, 266)
-JOYSTICK_XY_CENTER = (200, 229)
+JOYSTICK_XY_PANEL = (12, 64, 456, 364)
+JOYSTICK_XY_PAD = (30, 96, 420, 266)
+JOYSTICK_XY_CENTER = (240, 229)
 JOYSTICK_XY_RADIUS = 138
-JOYSTICK_XY_CURSOR_BOUNDS = (64, 132, 336, 326)
-JOYSTICK_Z_PANEL = (398, 64, 180, 364)
-JOYSTICK_Z_CENTER = (443, 229)
+JOYSTICK_XY_CURSOR_BOUNDS = (84, 134, 396, 324)
+JOYSTICK_XY_GRID = (70, 120, 340, 218)
+JOYSTICK_XY_VERTICAL = (240, 120, 1, 219)
+JOYSTICK_XY_HORIZONTAL = (70, 229, 341, 1)
+JOYSTICK_Z_PANEL = (478, 64, 100, 364)
+JOYSTICK_Z_CENTER = (510, 229)
 JOYSTICK_Z_RADIUS = 125
 JOYSTICK_Z_CURSOR_BOUNDS = (119, 339)
+JOYSTICK_Z_HITBOX = (486, 96, 84, 266)
 JOYSTICK_STATUS_PANEL = (588, 64, 200, 364)
 JOYSTICK_POSITION_CARD = (602, 96, 172, 92)
 JOYSTICK_INERTIA_CARD = (602, 200, 172, 48)
@@ -1286,7 +1290,7 @@ class FeatherScreen:
                     if not planner.is_moving():
                         self.joystick_busy_since = None
                         self.joystick_timer_active = False
-                        self._update_joystick_feedback(eventtime)
+                        self._update_joystick_feedback(eventtime, force=True)
                         return self.reactor.NEVER
                     if getattr(self, "joystick_busy_since", None) is None:
                         self.joystick_busy_since = eventtime
@@ -1332,7 +1336,7 @@ class FeatherScreen:
                     stream.finish()
                     self.joystick_queued = False
                     self.joystick_timer_active = False
-                    self._update_joystick_feedback(eventtime)
+                    self._update_joystick_feedback(eventtime, force=True)
                     return self.reactor.NEVER
                 self._queue_joystick_segment(segment)
                 position = segment.position
@@ -1344,10 +1348,11 @@ class FeatherScreen:
             self._stop_joystick()
             return self.reactor.NEVER
 
-    def _render_move(self):
+    def _render_move(self, snapshot=None, caution=None):
         self._require_idle()
         now = self.reactor.monotonic()
-        snapshot = self._move_status_snapshot(now)
+        if snapshot is None:
+            snapshot = self._move_status_snapshot(now)
         commands = self.renderer.begin_page("Move", back=True)
         if getattr(self, "move_mode", "step") == "joystick":
             self.joystick_drawn_cursor = None
@@ -1356,7 +1361,8 @@ class FeatherScreen:
             commands += self._joystick_move_commands(snapshot)
         else:
             commands += self._step_move_commands(snapshot)
-        caution = self._move_caution_state(snapshot, now)
+        if caution is None:
+            caution = self._move_caution_state(snapshot, now)
         self.move_caution_signature = caution
         if caution[0]:
             commands += self._move_caution_commands(caution[1])
@@ -1412,25 +1418,25 @@ class FeatherScreen:
         commands += self.renderer.panel(
             *JOYSTICK_XY_PAD, border="35d9e6", line_width=1)
         commands += self.renderer.dot_grid(
-            48, 116, 304, 226, columns=11, rows=7)
+            *JOYSTICK_XY_GRID, columns=11, rows=7)
         commands += self.renderer.corner_marks(
-            46, 112, 308, 234, length=11)
+            50, 114, 380, 230, length=11)
         center_x, center_y = JOYSTICK_XY_CENTER
         commands += [
-            self.renderer.fill(center_x, 119, 1, 220, "35d9e6"),
-            self.renderer.fill(54, center_y, 292, 1, "35d9e6"),
-            self.renderer.text(center_x, 112, "+Y", "35d9e6",
+            self.renderer.fill(*JOYSTICK_XY_VERTICAL, color="35d9e6"),
+            self.renderer.fill(*JOYSTICK_XY_HORIZONTAL, color="35d9e6"),
+            self.renderer.text(center_x, 106, "+Y", "35d9e6",
                                "JetBrainsMono 8pt",
                                "center", "middle"),
-            self.renderer.text(center_x, 346, "-Y", "35d9e6",
+            self.renderer.text(center_x, 352, "-Y", "35d9e6",
                                "JetBrainsMono 8pt",
                                "center", "middle"),
-            self.renderer.text(42, center_y, "-X", "35d9e6",
+            self.renderer.text(48, center_y, "-X", "35d9e6",
                                "JetBrainsMono 8pt",
-                               "left", "middle"),
-            self.renderer.text(358, center_y, "+X", "35d9e6",
+                               "center", "middle"),
+            self.renderer.text(432, center_y, "+X", "35d9e6",
                                "JetBrainsMono 8pt",
-                               "right", "middle"),
+                               "center", "middle"),
         ]
         commands += self.renderer.joystick_knob(center_x, center_y, "xy")
 
@@ -1439,20 +1445,15 @@ class FeatherScreen:
         z_x, z_y = JOYSTICK_Z_CENTER
         commands += self.renderer.panel(
             z_x - 5, 103, 10, 252, border="35d9e6", line_width=1)
-        for offset, label in ((-100, "+100"), (-50, "+50"), (0, "0"),
-                              (50, "-50"), (100, "-100")):
+        for offset in (-100, -50, 0, 50, 100):
             tick_y = z_y + offset
-            commands += [
-                self.renderer.fill(480, tick_y, 10, 1, "35d9e6"),
-                self.renderer.text(
-                    496, tick_y, label,
-                    "35d9e6" if offset == 0 else "56656c",
-                    "JetBrainsMono 8pt", "left", "middle"),
-            ]
+            commands.append(self.renderer.fill(
+                535, tick_y, 12, 1,
+                "35d9e6" if offset == 0 else "56656c"))
         for offset in range(-120, 121, 20):
             if offset not in (-100, -50, 0, 50, 100):
                 commands.append(self.renderer.fill(
-                    480, z_y + offset, 4, 1, "56656c"))
+                    535, z_y + offset, 5, 1, "56656c"))
         commands += self.renderer.joystick_knob(z_x, z_y, "z")
 
         commands += self.renderer.section_panel(
@@ -1480,7 +1481,7 @@ class FeatherScreen:
             self.renderer.action_hitbox(
                 "move.joy.xy", *JOYSTICK_XY_PAD, continuous=True),
             self.renderer.action_hitbox(
-                "move.joy.z", 410, 96, 155, 266, continuous=True),
+                "move.joy.z", *JOYSTICK_Z_HITBOX, continuous=True),
         ]
         return commands
 
@@ -1517,28 +1518,35 @@ class FeatherScreen:
         unsafe = (
             bool(values[5])
             and float(values[2]) < MOVE_CAUTION_Z
-            and profile is not None
-            and profile != "auto"
         )
         if not unsafe:
             self.move_caution_acknowledged = False
         visible = unsafe and not getattr(
             self, "move_caution_acknowledged", False)
-        return visible, auto_available if visible else None
+        if not visible:
+            return False, None
+        if profile == "auto":
+            return True, "active"
+        return True, "available" if auto_available else "missing"
 
-    def _move_caution_commands(self, auto_available):
+    def _move_caution_commands(self, auto_state):
+        if auto_state == "active":
+            profile_line = "BED PROFILE 'AUTO' IS ACTIVE"
+        elif auto_state == "available":
+            profile_line = "LOAD BED PROFILE 'AUTO'?"
+        else:
+            profile_line = "PROFILE 'AUTO' IS NOT AVAILABLE"
         lines = (
             "Z IS BELOW 5 MM",
             "XY MOTION MAY SCRATCH THE BED",
-            "LOAD BED PROFILE 'AUTO'?",
+            profile_line,
         )
-        buttons = (
-            ("move.caution.dismiss", "CLOSE", "enabled"),
-            ("move.caution.auto", "LOAD AUTO",
-             "warning" if auto_available else "disabled"),
-        )
+        buttons = [("move.caution.dismiss", "CONTINUE", "enabled")]
+        if auto_state == "available":
+            buttons.append(("move.caution.auto", "LOAD AUTO", "warning"))
         return self.renderer.dialog(
-            "CAUTION", lines, buttons, x=30, y=96, width=340, height=266,
+            "CAUTION", lines, tuple(buttons),
+            x=30, y=96, width=420, height=266,
             tone="warning")
 
     def _move_status_commands(self, values, axes=False):
@@ -1575,7 +1583,7 @@ class FeatherScreen:
         if caution != getattr(self, "move_caution_signature", caution):
             if caution[0]:
                 self._stop_joystick()
-            self._render_move()
+            self._render_move(snapshot=values, caution=caution)
             return
         previous = getattr(self, "_last_move", None)
         if values == previous:
@@ -1648,19 +1656,23 @@ class FeatherScreen:
             left, top, width, height, "050c0f")]
         if action == "move.joy.xy":
             commands += self.renderer.dot_grid(
-                48, 116, 304, 226, columns=11, rows=7,
+                *JOYSTICK_XY_GRID, columns=11, rows=7,
                 clip=(left, top, width, height))
             center_x, center_y = JOYSTICK_XY_CENTER
             if left <= center_x < right:
-                line_top = max(top, 119)
-                line_bottom = min(bottom, 339)
+                line_top = max(top, JOYSTICK_XY_VERTICAL[1])
+                line_bottom = min(
+                    bottom,
+                    JOYSTICK_XY_VERTICAL[1] + JOYSTICK_XY_VERTICAL[3])
                 if line_top < line_bottom:
                     commands.append(self.renderer.fill(
                         center_x, line_top, 1, line_bottom - line_top,
                         "35d9e6"))
             if top <= center_y < bottom:
-                line_left = max(left, 54)
-                line_right = min(right, 346)
+                line_left = max(left, JOYSTICK_XY_HORIZONTAL[0])
+                line_right = min(
+                    right,
+                    JOYSTICK_XY_HORIZONTAL[0] + JOYSTICK_XY_HORIZONTAL[2])
                 if line_left < line_right:
                     commands.append(self.renderer.fill(
                         line_left, center_y, line_right - line_left, 1,
@@ -1732,7 +1744,7 @@ class FeatherScreen:
         if caution != getattr(self, "move_caution_signature", caution):
             if caution[0]:
                 self._stop_joystick()
-            self._render_move()
+            self._render_move(snapshot=values, caution=caution)
             return
         if caution[0]:
             return

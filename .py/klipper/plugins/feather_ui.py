@@ -575,10 +575,16 @@ class FeatherRenderer:
         font = self.normalize_font(font)
         value = str(value)
         # argparse treats a text value beginning with '-' as another option.
-        # A leading space is visually harmless with centered text and keeps
-        # labels such as -5 visible.
+        # Keep the protective space out of the visible alignment calculation,
+        # otherwise centered labels such as -Y appear half a glyph off-center.
         if value.startswith("-"):
             value = " " + value
+            match = self.FONT_PATTERN.match(font)
+            advance = self.FONT_ADVANCE[int(match.group(2))]
+            if h_align == "center":
+                x -= advance // 2
+            elif h_align == "left":
+                x -= advance
         return "--batch text -p %d %d -c %s -f %s -ha %s -va %s -t %s" % (
             x, y, self.color(color), self.quote(font), h_align, v_align,
             self.quote(value))

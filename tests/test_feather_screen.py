@@ -351,6 +351,10 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-p 128 208 -s 25 25", drawing)
         self.assertIn("-p 94 220 -s 13 1", drawing)
         self.assertIn("-p 134 217 -s 13 1", drawing)
+        self.assertIn(
+            "-p 95 250",
+            renderer.text(100, 250, "-Y", font="JetBrainsMono 8pt",
+                          h_align="center"))
 
     def test_dialog_composes_panel_text_and_modal_buttons(self):
         renderer = FEATHER.FeatherRenderer()
@@ -818,14 +822,14 @@ class RendererStateTest(unittest.TestCase):
         batches = []
         controller.renderer.send = batches.append
         controller.toolhead = StatusObject({
-            "position": (1.0, 2.0, 3.0, 0.0),
+            "position": (1.0, 2.0, 10.0, 0.0),
             "homed_axes": "xyz",
         })
         controller._last_move = None
 
         controller._update_move_status(0)
         controller._update_move_status(1)
-        controller.toolhead.status["position"] = (1.0, 2.0, 3.1, 0.0)
+        controller.toolhead.status["position"] = (1.0, 2.0, 10.1, 0.0)
         controller._update_move_status(2)
         controller.toolhead.status["homed_axes"] = "xy"
         controller._update_move_status(3)
@@ -848,7 +852,7 @@ class RendererStateTest(unittest.TestCase):
         controller.joystick = type("Planner", (), {
             "xy_speed": 600.0, "z_speed": 25.0})()
         controller.toolhead = StatusObject({
-            "position": (1.0, 2.0, 3.0, 0.0), "homed_axes": "xyz"})
+            "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
         controller._require_idle = lambda: None
 
         controller._render_move()
@@ -864,15 +868,17 @@ class RendererStateTest(unittest.TestCase):
         self.assertNotIn('"VZ', drawing)
         self.assertIn("HOME Z", drawing)
         self.assertIn("--id 1:move.homez", drawing)
-        self.assertIn("-p 30 96 -s 340 266", drawing)
-        self.assertIn("-p 410 96 -s 155 266", drawing)
+        self.assertIn("-p 30 96 -s 420 266", drawing)
+        self.assertIn("-p 486 96 -s 84 266", drawing)
+        self.assertNotIn('"+100"', drawing)
+        self.assertNotIn('"-100"', drawing)
         self.assertIn("--id 1:move.joy.xy", drawing)
         self.assertIn("--id 1:move.joy.z", drawing)
         self.assertEqual(drawing.count("--continuous"), 2)
         self.assertNotIn("--continuous", UI.FeatherRenderer.hitbox(
             "normal", 0, 0, 10, 10))
 
-    def test_low_z_move_page_uses_caution_dialog_until_auto_is_loaded(self):
+    def test_low_z_move_page_always_warns_and_reports_auto_profile_state(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
@@ -903,8 +909,11 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         safe = "\n".join(batches[-1])
 
-        self.assertNotIn("CAUTION", safe)
-        self.assertIn("--id 2:move.joy.xy", safe)
+        self.assertIn("CAUTION", safe)
+        self.assertIn("BED PROFILE 'AUTO' IS ACTIVE", safe)
+        self.assertEqual(
+            set(controller.renderer._buttons),
+            {"move.caution.dismiss"})
         self.assertFalse(controller.move_caution_acknowledged)
 
     def test_joystick_feedback_tracks_cursor_and_position_in_realtime(self):
@@ -915,8 +924,8 @@ class RendererStateTest(unittest.TestCase):
         controller.page = FEATHER.Page.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.toolhead = StatusObject({
-            "position": (1.0, 2.0, 3.0, 0.0), "homed_axes": "xyz"})
-        controller._last_move = (1.0, 2.0, 3.0, "HOMED: XYZ", True, True)
+            "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
+        controller._last_move = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
         controller.joystick_cursor = ("move.joy.xy", 320, 180)
         controller.joystick_drawn_cursor = None
         controller.joystick_feedback_at = 0.0
@@ -930,7 +939,7 @@ class RendererStateTest(unittest.TestCase):
         })()
 
         controller._update_joystick_feedback(
-            1.0, position=(2.0, 3.0, 4.0))
+            1.0, position=(2.0, 3.0, 11.0))
 
         live = "\n".join(batches[-1])
         self.assertIn("--batch stroke -p 308 168 -s 25 25", live)
@@ -939,7 +948,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn('"Y"', live)
         self.assertIn('"   3.0"', live)
         self.assertIn('"Z"', live)
-        self.assertIn('"   4.0"', live)
+        self.assertIn('"  11.0"', live)
         self.assertIn('" 45.7"', live)
         self.assertNotIn('"VX"', live)
         self.assertNotIn('"VY"', live)
@@ -949,7 +958,7 @@ class RendererStateTest(unittest.TestCase):
         controller._update_joystick_feedback(1.1, force=True)
         released = "\n".join(batches[-1])
         self.assertIn("--batch fill -p 306 166 -s 29 29", released)
-        self.assertIn("--batch stroke -p 188 217 -s 25 25", released)
+        self.assertIn("--batch stroke -p 228 217 -s 25 25", released)
 
     def test_joystick_knob_dirty_region_stays_inside_static_artwork(self):
         margin = (FEATHER.JOYSTICK_KNOB_SIZE // 2
@@ -959,10 +968,10 @@ class RendererStateTest(unittest.TestCase):
                 ("move.joy.xy", 900, 900)):
             _action, x, y, _cx, _cy, _color = (
                 FEATHER.FeatherScreen._joystick_cursor_geometry(cursor))
-            self.assertGreaterEqual(x - margin, 48)
-            self.assertLessEqual(x + margin, 352)
-            self.assertGreaterEqual(y - margin, 116)
-            self.assertLessEqual(y + margin, 342)
+            self.assertGreaterEqual(x - margin, 70)
+            self.assertLessEqual(x + margin, 410)
+            self.assertGreaterEqual(y - margin, 120)
+            self.assertLessEqual(y + margin, 338)
 
         for raw_y in (-100, 900):
             geometry = FEATHER.FeatherScreen._joystick_cursor_geometry(
@@ -975,12 +984,94 @@ class RendererStateTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
 
         commands = controller._joystick_indicator_commands(
-            ("move.joy.xy", 200, 229), ("move.joy.xy", 320, 180))
+            ("move.joy.xy", 240, 229), ("move.joy.xy", 320, 180))
         drawing = "\n".join(commands)
 
-        self.assertIn("--batch fill -p 186 215 -s 29 29", drawing)
+        self.assertIn("--batch fill -p 226 215 -s 29 29", drawing)
         self.assertIn("--batch stroke -p 308 168 -s 25 25", drawing)
-        self.assertNotIn("--batch stroke -p 188 217 -s 25 25", drawing)
+        self.assertNotIn("--batch stroke -p 228 217 -s 25 25", drawing)
+
+    def test_joystick_tick_forces_final_zero_inertia_frame(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.joystick_action = None
+        controller.joystick_busy_since = None
+        controller.joystick_queued = True
+        controller.joystick_timer_active = True
+        controller.reactor = type("TimerReactor", (), {"NEVER": 9999.0})()
+        controller.toolhead = type("Toolhead", (), {
+            "get_status": lambda self, eventtime: {"homed_axes": "xyz"},
+            "get_position": lambda self: (0.0, 0.0, 10.0),
+        })()
+
+        class SettledPlanner:
+            held = False
+
+            @staticmethod
+            def watchdog(eventtime):
+                return False
+
+            @staticmethod
+            def advance(position, period):
+                return None
+
+        class ActiveStream:
+            active = True
+
+            def __init__(self):
+                self.finished = False
+
+            @staticmethod
+            def ahead(eventtime):
+                return 0.0
+
+            @staticmethod
+            def wants_segment(eventtime):
+                return True
+
+            def finish(self):
+                self.finished = True
+
+        stream = ActiveStream()
+        controller.joystick = SettledPlanner()
+        controller._get_joystick_stream = lambda: stream
+        feedback = []
+        controller._update_joystick_feedback = (
+            lambda eventtime, position=None, force=False:
+            feedback.append((eventtime, position, force)))
+
+        result = controller._joystick_tick(10.0)
+
+        self.assertEqual(result, controller.reactor.NEVER)
+        self.assertTrue(stream.finished)
+        self.assertEqual(feedback[-1], (10.0, None, True))
+
+    def test_low_z_queued_position_is_used_for_immediate_caution(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.move_caution_signature = (False, None)
+        controller.move_caution_acknowledged = False
+        controller.toolhead = StatusObject({
+            "position": (0.0, 0.0, 10.0, 0.0), "homed_axes": "xyz"})
+        controller.bed_mesh = StatusObject({
+            "profile_name": "auto", "profiles": {"auto": {"points": []}}})
+        stopped = []
+        rendered = []
+        controller._stop_joystick = lambda: stopped.append(True)
+        controller._render_move = (
+            lambda snapshot=None, caution=None:
+            rendered.append((snapshot, caution)))
+
+        controller._update_joystick_feedback(
+            1.0, position=(1.0, 2.0, 4.9), force=True)
+
+        self.assertEqual(stopped, [True])
+        self.assertEqual(rendered[-1][0][2], 4.9)
+        self.assertEqual(rendered[-1][1], (True, "active"))
 
 
 class ControllerSafetyTest(unittest.TestCase):
@@ -1013,7 +1104,7 @@ class ControllerSafetyTest(unittest.TestCase):
         safe = (0.0, 0.0, 5.0, "HOMED: XYZ", True, True)
 
         self.assertEqual(controller._move_caution_state(low, 0),
-                         (True, True))
+                         (True, "available"))
         controller.move_caution_acknowledged = True
         self.assertEqual(controller._move_caution_state(low, 0),
                          (False, None))
@@ -1021,7 +1112,7 @@ class ControllerSafetyTest(unittest.TestCase):
                          (False, None))
         self.assertFalse(controller.move_caution_acknowledged)
         self.assertEqual(controller._move_caution_state(low, 0),
-                         (True, True))
+                         (True, "available"))
 
     def test_every_page_routes_to_a_renderer(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
