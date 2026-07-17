@@ -38,7 +38,10 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  
   **Note**: Requires a [post-processing script](/docs/SLICING.md#md5-checksum-validation) in your slicer. Scripts are available in *Configuration → mod* (`addMD5.sh` or `addMD5.bat`).  
 
-- **`use_kamp`**: Enables KAMP (Klipper Adaptive Meshing and Purging) if set to `1`.  
+- **`use_kamp`**: Enables KAMP (Klipper Adaptive Meshing and Purging) if set to `1`.
+
+  > [!DANGER]
+  > Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
 
 - **`camera`**: Enables the alternative camera implementation if set to `1`.  
 

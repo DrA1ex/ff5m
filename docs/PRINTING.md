@@ -70,6 +70,9 @@ The printer uses different bed meshes depending on the scenario:
 
 ## KAMP
 
+> [!DANGER]
+> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
+
 Follow these steps to set up KAMP (Klipper Adaptive Meshing and Purging):
 
 1. **Enable the Mod Parameter**  
