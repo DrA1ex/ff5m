@@ -157,6 +157,9 @@ class FeatherScreen:
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
         self.mod_update_pending = False
+        self.mod_update_token = 0
+        self.mod_update_modal_visible = False
+        self.mod_update_complete = None
 
         self.network_process = None
         self.network_stopping = []
@@ -379,9 +382,12 @@ class FeatherScreen:
             self.reactor.update_timer(self.joystick_timer, self.reactor.NOW)
 
     def _handle_touch_action(self, action):
-        if (getattr(self, "mod_update_pending", False)
-                or (getattr(self, "command_depth", 0) > 0 and action not in
-                    ("print.cancel", "print.cancel.confirm"))):
+        if getattr(self, "mod_update_pending", False):
+            logging.info("[feather_screen] touch ignored while mod update is active: %s",
+                         action)
+            return
+        if (getattr(self, "command_depth", 0) > 0 and action not in
+                ("print.cancel", "print.cancel.confirm")):
             logging.info("[feather_screen] touch ignored while command is active: %s",
                          action)
             notice = getattr(self.renderer, "busy_notice", None)
@@ -2059,9 +2065,8 @@ class FeatherScreen:
             self.renderer.text(44, 268, "SOUND FEEDBACK", "35d9e6",
                                "JetBrainsMono Bold 8pt"),
         ]
-        toggle = "[ OFF | >ON< ]" if sound else "[ >OFF< | ON ]"
-        commands += self.renderer.button("settings.sound", 550, 245, 205, 46,
-                                         toggle, font="JetBrainsMono 8pt")
+        commands += self.renderer.toggle("settings.sound", 679, 249, 76, 38,
+                                         sound)
         commands += self.renderer.button(
             "settings.mod", 25, 317, 750, 100, "MOD PARAMETERS",
             subtitle="EDIT ALL FORGE-X OPTIONS", layout="row",
@@ -2077,6 +2082,15 @@ class FeatherScreen:
             return
         if action == "settings.sound":
             key, value = "sound", 0 if self._setting("sound", 1) else 1
+            scheduler = lambda callback, delay: self.reactor.register_callback(
+                callback, self.reactor.monotonic() + delay)
+            renderer = getattr(self, "renderer", None)
+            animate = getattr(renderer, "animate_toggle", None)
+            if animate is not None:
+                animate(action, bool(value), scheduler)
+            block = getattr(renderer, "block_input", None)
+            if block is not None:
+                block()
         else:
             key = "backlight_eco" if action.startswith("settings.eco") else "backlight"
             delta = -5 if action.endswith("minus") else 5
@@ -2084,7 +2098,12 @@ class FeatherScreen:
         self._run_script("SET_MOD PARAM=%s VALUE=%d" % (key, value))
         if key == "backlight":
             self._set_backlight(value)
-        self._render_settings()
+        if key == "sound":
+            self.reactor.register_callback(
+                lambda _eventtime: self._render_settings(),
+                self.reactor.monotonic() + 0.14)
+        else:
+            self._render_settings()
 
     def _mod_parameters(self):
         return mod_ui.visible_parameters(self.params)
@@ -2129,13 +2148,9 @@ class FeatherScreen:
             value = mod_ui.display_value(self.params, param)
             state = "disabled" if getattr(param, "readonly", False) else "enabled"
             if kind == "bool":
-                false_label, true_label = mod_ui.bool_labels(param)
-                label = ("[ %s | >%s< ]" % (false_label, true_label)
-                         if value == "ON" else
-                         "[ >%s< | %s ]" % (false_label, true_label))
-                commands += self.renderer.button(
-                    action, 500, y + 9, 200, 46, label, state=state,
-                    font="JetBrainsMono 8pt")
+                commands += self.renderer.toggle(
+                    action, 624, y + 13, 76, 38, value == "ON",
+                    enabled=state == "enabled")
             else:
                 label = self.renderer.truncate_text(value, 130,
                                                     "JetBrainsMono 8pt") + " >"
@@ -2172,9 +2187,19 @@ class FeatherScreen:
         kind = mod_ui.parameter_kind(param)
         if kind == "bool":
             current = bool(self.params.variables.get(param.key, param.default))
-            self._set_mod_value(param, "0" if current else "1")
-            self._render_mod_settings()
-            self._toast("UPDATED: %s" % param.label)
+            action = "mod.item.%d" % index
+            scheduler = lambda callback, delay: self.reactor.register_callback(
+                callback, self.reactor.monotonic() + delay)
+            animate = getattr(self.renderer, "animate_toggle", None)
+            if animate is not None:
+                animate(action, not current, scheduler)
+
+            def complete():
+                self._render_mod_settings()
+                self._toast("UPDATED: %s" % param.label)
+
+            self._set_mod_value(param, "0" if current else "1",
+                                complete, minimum_duration=0.14)
             return
         self.mod_parameter = param
         self.mod_edit_value = mod_ui.current_edit_value(self.params, param)
@@ -2187,26 +2212,82 @@ class FeatherScreen:
             self.mod_enum_selection = None
             self._show_page(Page.MOD_VALUE)
 
-    def _set_mod_value(self, param, value):
+    def _set_mod_value(self, param, value, complete=None,
+                       minimum_duration=0.0):
         setter = getattr(self.params, "set_value", None)
         if setter is None:
             raise RuntimeError("Mod parameter API is unavailable")
         logging.info("[feather_screen] mod parameter update key=%s", param.key)
+        now = self.reactor.monotonic()
+        token = getattr(self, "mod_update_token", 0) + 1
+        self.mod_update_token = token
         self.mod_update_pending = True
-        self.renderer.busy_notice("APPLYING")
+        self.mod_update_modal_visible = False
+        self.mod_update_modal_at = 0.0
+        self.mod_update_started = now
+        self.mod_update_not_before = now + max(0.0, minimum_duration)
+        self.mod_update_complete = complete
+        block = getattr(self.renderer, "block_input", None)
+        if block is not None:
+            block()
+        self.reactor.register_callback(
+            lambda eventtime, operation=token:
+            self._show_mod_update_modal(eventtime, operation),
+            now + 0.3)
         try:
             result = setter(param.key, value)
         except Exception:
             self.mod_update_pending = False
-            self.renderer.clear_busy_notice()
+            self.mod_update_token += 1
+            self.mod_update_complete = None
             raise
-        self.reactor.register_callback(self._finish_mod_update)
+        self.reactor.register_callback(
+            lambda eventtime, operation=token:
+            self._finish_mod_update(eventtime, operation))
         return result
 
-    def _finish_mod_update(self, eventtime):
+    def _show_mod_update_modal(self, eventtime, token):
+        if (not getattr(self, "mod_update_pending", False)
+                or token != getattr(self, "mod_update_token", 0)):
+            return
+        if getattr(self, "mod_update_modal_visible", False):
+            return
+        self.mod_update_modal_visible = True
+        self.mod_update_modal_at = eventtime
+        modal = getattr(self.renderer, "applying_modal", None)
+        if modal is not None:
+            modal()
+        logging.info("[feather_screen] showing mod update modal")
+
+    def _finish_mod_update(self, eventtime, token=None):
+        if token is None:
+            token = getattr(self, "mod_update_token", 0)
+        if (not getattr(self, "mod_update_pending", False)
+                or token != getattr(self, "mod_update_token", 0)):
+            return
+        if (not getattr(self, "mod_update_modal_visible", False)
+                and eventtime - getattr(self, "mod_update_started", eventtime)
+                >= 0.3):
+            self._show_mod_update_modal(eventtime, token)
+        deadline = getattr(self, "mod_update_not_before", 0.0)
+        if getattr(self, "mod_update_modal_visible", False):
+            deadline = max(deadline,
+                           getattr(self, "mod_update_modal_at", 0.0) + 0.225)
+        if eventtime < deadline:
+            self.reactor.register_callback(
+                lambda when, operation=token:
+                self._finish_mod_update(when, operation),
+                deadline)
+            return
         self.mod_update_pending = False
-        self.renderer.clear_busy_notice()
+        self.mod_update_modal_visible = False
+        complete = getattr(self, "mod_update_complete", None)
+        self.mod_update_complete = None
         logging.info("[feather_screen] mod parameter update finished")
+        if complete is not None:
+            complete()
+        else:
+            self._show_page(self.page)
 
     def _handle_mod_action(self, action):
         self._require_idle()
@@ -2239,17 +2320,23 @@ class FeatherScreen:
             return
         if action == "mod.apply":
             value = mod_ui.validate_value(param, self.mod_enum_selection)
-            self._set_mod_value(param, value)
-            self.mod_parameter = None
-            self._show_page(Page.MOD_SETTINGS)
-            self._toast("UPDATED: %s" % param.label)
+
+            def complete():
+                self.mod_parameter = None
+                self._show_page(Page.MOD_SETTINGS)
+                self._toast("UPDATED: %s" % param.label)
+
+            self._set_mod_value(param, value, complete)
             return
         if action == "mod.save":
             value = mod_ui.validate_value(param, self.mod_edit_value)
-            self._set_mod_value(param, value)
-            self.mod_parameter = None
-            self._show_page(Page.MOD_SETTINGS)
-            self._toast("UPDATED: %s" % param.label)
+
+            def complete():
+                self.mod_parameter = None
+                self._show_page(Page.MOD_SETTINGS)
+                self._toast("UPDATED: %s" % param.label)
+
+            self._set_mod_value(param, value, complete)
             return
         if action == "mod.backspace":
             self.mod_edit_value = self.mod_edit_value[:-1]

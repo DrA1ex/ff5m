@@ -118,6 +118,7 @@ class FeatherRenderer:
         self._footer_values = None
         self._footer_drawn = False
         self._buttons = {}
+        self._toggles = {}
         self._generation = 0
         self._pending_draw = bytearray()
         self._pending_frames = deque()
@@ -384,6 +385,63 @@ class FeatherRenderer:
         return self.hitbox(self._wire_action(action), x, y, width, height,
                            continuous)
 
+    def _toggle_commands(self, x, y, width, height, thumb_x, enabled):
+        border = COLOR_CYAN if enabled else "263238"
+        thumb_color = COLOR_CYAN if enabled else COLOR_DIM
+        inset = 5
+        thumb_size = max(1, height - 2 * inset)
+        return [
+            self.fill(x, y, width, height, COLOR_PANEL),
+            self.stroke(x, y, width, height, border, 2),
+            self.fill(thumb_x, y + inset, thumb_size, thumb_size, thumb_color),
+        ]
+
+    def toggle(self, action, x, y, width, height, active, enabled=True):
+        """Draw a rectangular switch with a centered square thumb and no text."""
+        inset = 5
+        thumb_size = max(1, height - 2 * inset)
+        half = width // 2
+        left = x + (half - thumb_size) // 2
+        right = x + half + (half - thumb_size) // 2
+        thumb_x = right if active else left
+        self._toggles[action] = (x, y, width, height, bool(active), enabled,
+                                 left, right)
+        commands = self._toggle_commands(
+            x, y, width, height, thumb_x, enabled)
+        if enabled:
+            commands.append(self.action_hitbox(action, x, y, width, height))
+        return commands
+
+    def animate_toggle(self, action, active, scheduler, duration=0.12):
+        spec = self._toggles.get(action)
+        if spec is None or not spec[5]:
+            return False
+        x, y, width, height, current, enabled, left, right = spec
+        if current == bool(active):
+            return False
+        start, finish = (left, right) if active else (right, left)
+        generation = self._generation
+        frames = 4
+        self._toggles[action] = (x, y, width, height, bool(active), enabled,
+                                 left, right)
+
+        def draw_frame(_eventtime, index):
+            if self._generation != generation:
+                return
+            thumb_x = start + (finish - start) * index // frames
+            self.send(self._toggle_commands(
+                x, y, width, height, thumb_x, enabled))
+
+        draw_frame(None, 1)
+        for index in range(2, frames + 1):
+            scheduler(lambda eventtime, step=index:
+                      draw_frame(eventtime, step),
+                      duration * (index - 1) / (frames - 1))
+        return True
+
+    def block_input(self):
+        self.send(["--batch clear-hitboxes"])
+
     @classmethod
     def composite_button(cls, action, x, y, width, height, label, state, font,
                          include_hitbox=True):
@@ -476,6 +534,7 @@ class FeatherRenderer:
     def begin_page(self, title, back=False):
         self._generation += 1
         self._buttons = {}
+        self._toggles = {}
         commands = [
             "--batch clear-hitboxes",
             # Preserve the footer framebuffer. It is a persistent status area
@@ -586,6 +645,23 @@ class FeatherRenderer:
             color = COLOR_CYAN if index == phase % 5 else "263238"
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
         self.send(commands)
+
+    def applying_modal(self, message="APPLYING CHANGES"):
+        """Dim the page and draw a non-interactive modal progress panel."""
+        self._buttons = {}
+        self._toggles = {}
+        self.send([
+            "--batch clear-hitboxes",
+            self.fill(0, HEADER_BOTTOM + 1, SCREEN_WIDTH,
+                      CONTENT_BOTTOM - HEADER_BOTTOM - 1, "010203"),
+            self.fill(160, 145, 480, 180, COLOR_PANEL),
+            self.stroke(160, 145, 480, 180, COLOR_CYAN, 2),
+            self.text(400, 205, str(message).upper(), COLOR_TEXT,
+                      "JetBrainsMono Bold 16pt", "center", "middle"),
+            self.text(400, 260, "PLEASE WAIT", COLOR_DIM,
+                      "JetBrainsMono 12pt", "center", "middle"),
+            self.fill(310, 292, 180, 8, COLOR_CYAN),
+        ])
 
 
 def rectangles_overlap(first, second):

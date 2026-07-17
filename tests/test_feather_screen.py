@@ -69,6 +69,32 @@ class Reactor:
         callback(self.now if when is None else when)
 
 
+class DeferredReactor:
+    def __init__(self, now=100.0):
+        self.now = now
+        self.callbacks = []
+        self.sequence = 0
+
+    def monotonic(self):
+        return self.now
+
+    def register_callback(self, callback, when=None):
+        self.sequence += 1
+        self.callbacks.append((
+            self.now if when is None else when, self.sequence, callback))
+
+    def run_until(self, deadline):
+        while self.callbacks:
+            scheduled, sequence, callback = min(
+                self.callbacks, key=lambda item: (item[0], item[1]))
+            if scheduled > deadline:
+                break
+            self.callbacks.remove((scheduled, sequence, callback))
+            self.now = max(self.now, scheduled)
+            callback(self.now)
+        self.now = max(self.now, deadline)
+
+
 class ModManager:
     def __init__(self, params, variables):
         self.params = params
@@ -811,10 +837,13 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn('-t " -5"', drawing)
         self.assertIn('-t "+5"', drawing)
         self.assertIn("MOD PARAMETERS", drawing)
-        self.assertIn("[ OFF | &gt;ON&lt; ]".replace("&gt;", ">")
-                      .replace("&lt;", "<"), drawing)
+        self.assertIn("--batch stroke -p 679 249 -s 76 38 -c 35d9e6 -lw 2",
+                      drawing)
+        self.assertIn("--batch fill -p 722 254 -s 28 28 -c 35d9e6", drawing)
+        self.assertNotIn('[ OFF |', drawing)
+        self.assertNotIn('[ >OFF< |', drawing)
 
-    def test_mod_settings_list_scrolls_and_uses_ascii_toggles(self):
+    def test_mod_settings_list_scrolls_and_uses_square_toggles(self):
         params = [mod_param("flag%d" % index, bool, False,
                             "Feature %d" % index,
                             "Feature description %d." % index)
@@ -824,8 +853,11 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_mod_settings()
         first = "\n".join(controller.draw_batches[-1])
         self.assertIn("01-05 / 07", first)
-        self.assertIn("[ &gt;OFF&lt; | ON ]".replace("&gt;", ">")
-                      .replace("&lt;", "<"), first)
+        self.assertIn("--batch stroke -p 624 101 -s 76 38 -c 35d9e6 -lw 2",
+                      first)
+        self.assertIn("--batch fill -p 629 106 -s 28 28 -c 35d9e6", first)
+        self.assertNotIn('[ OFF |', first)
+        self.assertNotIn('[ >OFF< |', first)
         self.assertIn("--id 1:mod.next", first)
         self.assertNotIn("--id 1:mod.prev", first)
 
@@ -843,9 +875,86 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(controller.params.updated, [("camera", True)])
         self.assertIsNone(controller.mod_parameter)
-        self.assertIn("[ OFF | &gt;ON&lt; ]".replace("&gt;", ">")
-                      .replace("&lt;", "<"),
+        drawing = "\n".join(controller.draw_batches[-1])
+        self.assertIn("--batch fill -p 667 106 -s 28 28 -c 35d9e6", drawing)
+        self.assertNotIn('[ OFF |', drawing)
+        self.assertNotIn('[ >OFF< |', drawing)
+
+    def test_toggle_thumb_is_centered_and_animates_between_halves(self):
+        renderer = FEATHER.FeatherRenderer()
+        batches = []
+        callbacks = []
+        renderer.send = batches.append
+        initial = "\n".join(renderer.toggle(
+            "flag", 100, 50, 76, 38, False))
+        self.assertIn("--batch fill -p 105 55 -s 28 28", initial)
+
+        renderer.animate_toggle(
+            "flag", True,
+            lambda callback, delay: callbacks.append((delay, callback)))
+        self.assertIn("--batch fill -p 114 55 -s 28 28",
+                      "\n".join(batches[-1]))
+        for delay, callback in callbacks:
+            callback(100 + delay)
+        self.assertIn("--batch fill -p 143 55 -s 28 28",
+                      "\n".join(batches[-1]))
+
+    def test_fast_mod_update_blocks_input_without_showing_modal(self):
+        flag = mod_param("camera", bool, False, "Alt camera")
+        controller = mod_controller([flag], {"camera": False})
+        controller.reactor = DeferredReactor()
+        controller._render_mod_settings()
+
+        controller._handle_mod_action("mod.item.0")
+        self.assertTrue(controller.mod_update_pending)
+        self.assertIn("clear-hitboxes",
                       "\n".join(controller.draw_batches[-1]))
+        self.assertNotIn("APPLYING CHANGES",
+                         "\n".join("\n".join(batch)
+                                   for batch in controller.draw_batches))
+
+        controller.reactor.run_until(100.14)
+        self.assertFalse(controller.mod_update_pending)
+        controller.reactor.run_until(100.3)
+        self.assertNotIn("APPLYING CHANGES",
+                         "\n".join("\n".join(batch)
+                                   for batch in controller.draw_batches))
+
+    def test_slow_mod_update_keeps_modal_visible_for_minimum_time(self):
+        flag = mod_param("camera", bool, False, "Alt camera")
+        controller = mod_controller([flag], {"camera": False})
+        reactor = DeferredReactor()
+        controller.reactor = reactor
+        completed = []
+
+        class SlowManager(ModManager):
+            def set_value(manager, key, value):
+                result = super(SlowManager, manager).set_value(key, value)
+
+                def notify(eventtime):
+                    controller._show_mod_update_modal(
+                        eventtime + 0.3, controller.mod_update_token)
+                    reactor.now = eventtime + 0.4
+
+                reactor.register_callback(notify)
+                return result
+
+        controller.params = SlowManager([flag], {"camera": False})
+        controller._set_mod_value(flag, "1",
+                                  lambda: completed.append(reactor.monotonic()))
+        reactor.run_until(100.4)
+        drawing = "\n".join("\n".join(batch)
+                            for batch in controller.draw_batches)
+        self.assertIn("APPLYING CHANGES", drawing)
+        self.assertTrue(controller.mod_update_pending)
+
+        reactor.run_until(100.524)
+        self.assertTrue(controller.mod_update_pending)
+        self.assertEqual(completed, [])
+        reactor.run_until(100.525)
+        self.assertFalse(controller.mod_update_pending)
+        self.assertEqual(len(completed), 1)
+        self.assertAlmostEqual(completed[0], 100.525)
 
     def test_mod_enum_selection_is_staged_until_apply(self):
         Display = enum.Enum("Display", {"STOCK": 0, "FEATHER": 1,
