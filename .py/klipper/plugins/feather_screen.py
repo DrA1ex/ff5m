@@ -35,6 +35,20 @@ DISP_LCD_BACKLIGHT_ENABLE = 0x104
 REFRESH_TIME = 1.0
 ACTION_DEBOUNCE = 0.08
 MOVE_CAUTION_Z = 5.0
+JOYSTICK_XY_PANEL = (12, 64, 376, 364)
+JOYSTICK_XY_PAD = (30, 96, 340, 266)
+JOYSTICK_XY_CENTER = (200, 229)
+JOYSTICK_XY_RADIUS = 138
+JOYSTICK_XY_CURSOR_BOUNDS = (64, 132, 336, 326)
+JOYSTICK_Z_PANEL = (398, 64, 180, 364)
+JOYSTICK_Z_CENTER = (443, 229)
+JOYSTICK_Z_RADIUS = 125
+JOYSTICK_Z_CURSOR_BOUNDS = (119, 339)
+JOYSTICK_STATUS_PANEL = (588, 64, 200, 364)
+JOYSTICK_POSITION_CARD = (602, 96, 172, 92)
+JOYSTICK_INERTIA_CARD = (602, 200, 172, 48)
+JOYSTICK_KNOB_SIZE = 25
+JOYSTICK_DIRTY_MARGIN = 2
 MAX_TOUCH_EVENT = 256
 FILE_ROWS = 5
 VALID_GCODE_EXTS = (".gcode", ".g", ".gco")
@@ -402,11 +416,14 @@ class FeatherScreen:
             self.joystick_action = None
             self.joystick_cursor = None
         elif action == "move.joy.xy":
-            self.joystick.set_xy(x, y, now, 240, 220, 125)
+            self.joystick.set_xy(
+                x, y, now, JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1],
+                JOYSTICK_XY_RADIUS)
             self.joystick_cursor = (action, x, y)
         else:
-            self.joystick.set_z(y, now, 220, 125)
-            self.joystick_cursor = (action, 540, y)
+            self.joystick.set_z(
+                y, now, JOYSTICK_Z_CENTER[1], JOYSTICK_Z_RADIUS)
+            self.joystick_cursor = (action, JOYSTICK_Z_CENTER[0], y)
         self._start_joystick_timer()
         self._update_joystick_feedback(now, force=phase in ("begin", "end"))
 
@@ -1390,64 +1407,80 @@ class FeatherScreen:
 
     def _joystick_move_commands(self, snapshot):
         commands = []
-        commands += self.renderer.panel(25, 75, 430, 285, "35d9e6")
-        commands += [
-            self.renderer.fill(240, 87, 1, 261, "295c66"),
-            self.renderer.fill(37, 220, 406, 1, "295c66"),
-            self.renderer.text(240, 92, "Y+", "35d9e6", "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(240, 343, "Y-", "35d9e6", "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(43, 220, "X-", "35d9e6", "JetBrainsMono 8pt",
-                               "left", "middle"),
-            self.renderer.text(437, 220, "X+", "35d9e6", "JetBrainsMono 8pt",
-                               "right", "middle"),
-            self.renderer.text(240, 220, "+", "b47aff", "JetBrainsMono 16pt",
-                               "center", "middle"),
-        ]
-        commands += self.renderer.panel(485, 75, 110, 285, "b47aff")
-        commands += [
-            self.renderer.fill(540, 87, 1, 261, "295c66"),
-            self.renderer.fill(497, 220, 86, 1, "295c66"),
-            self.renderer.text(540, 92, "UP / Z-", "b47aff",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(540, 343, "DOWN / Z+", "b47aff",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(540, 220, "+", "b47aff", "JetBrainsMono 16pt",
-                               "center", "middle"),
-        ]
+        commands += self.renderer.section_panel(
+            "XY POSITION", *JOYSTICK_XY_PANEL)
         commands += self.renderer.panel(
-            615, 75, 160, 285, "295c66", line_width=1)
+            *JOYSTICK_XY_PAD, border="35d9e6", line_width=1)
+        commands += self.renderer.dot_grid(
+            48, 116, 304, 226, columns=11, rows=7)
+        commands += self.renderer.corner_marks(
+            46, 112, 308, 234, length=11)
+        center_x, center_y = JOYSTICK_XY_CENTER
         commands += [
-            self.renderer.text(695, 94, snapshot[3],
-                               "35d9e6" if snapshot[3] == "HOMED: XYZ"
-                               else "f2c94c", "JetBrainsMono 8pt",
+            self.renderer.fill(center_x, 119, 1, 220, "35d9e6"),
+            self.renderer.fill(54, center_y, 292, 1, "35d9e6"),
+            self.renderer.text(center_x, 112, "+Y", "35d9e6",
+                               "JetBrainsMono 8pt",
                                "center", "middle"),
-            self.renderer.text(695, 125, "X %6.1f" % snapshot[0], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 151, "Y %6.1f" % snapshot[1], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 177, "Z %6.1f" % snapshot[2], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.text(center_x, 346, "-Y", "35d9e6",
+                               "JetBrainsMono 8pt",
+                               "center", "middle"),
+            self.renderer.text(42, center_y, "-X", "35d9e6",
+                               "JetBrainsMono 8pt",
+                               "left", "middle"),
+            self.renderer.text(358, center_y, "+X", "35d9e6",
+                               "JetBrainsMono 8pt",
+                               "right", "middle"),
         ]
+        commands += self.renderer.joystick_knob(center_x, center_y, "xy")
+
+        commands += self.renderer.section_panel(
+            "Z AXIS", *JOYSTICK_Z_PANEL)
+        z_x, z_y = JOYSTICK_Z_CENTER
+        commands += self.renderer.panel(
+            z_x - 5, 103, 10, 252, border="35d9e6", line_width=1)
+        for offset, label in ((-100, "+100"), (-50, "+50"), (0, "0"),
+                              (50, "-50"), (100, "-100")):
+            tick_y = z_y + offset
+            commands += [
+                self.renderer.fill(480, tick_y, 10, 1, "35d9e6"),
+                self.renderer.text(
+                    496, tick_y, label,
+                    "35d9e6" if offset == 0 else "56656c",
+                    "JetBrainsMono 8pt", "left", "middle"),
+            ]
+        for offset in range(-120, 121, 20):
+            if offset not in (-100, -50, 0, 50, 100):
+                commands.append(self.renderer.fill(
+                    480, z_y + offset, 4, 1, "56656c"))
+        commands += self.renderer.joystick_knob(z_x, z_y, "z")
+
+        commands += self.renderer.section_panel(
+            "POSITION", *JOYSTICK_STATUS_PANEL)
+        commands += self._joystick_position_commands(snapshot)
         inertia = self._joystick_inertia_snapshot()
         commands += self._joystick_inertia_commands(inertia)
         self.joystick_drawn_inertia = inertia
-        commands += self.renderer.button("move.homeall", 627, 255, 136, 42,
-                                         "HOME ALL", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.homexy", 627, 307, 136, 42,
-                                         "HOME XY", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.mode", 25, 375, 205, 55,
-                                         "[STEP|>JOY]", state="selected",
-                                         font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.motors", 245, 375, 210, 55,
-                                         "DISABLE MOTORS",
-                                         font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "move.homeall", 602, 262, 172, 42, "HOME ALL",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "move.homexy", 602, 310, 172, 42, "HOME XY",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "move.homez", 602, 358, 172, 42, "HOME Z",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "move.motors", 30, 374, 190, 44, "DISABLE MOTORS",
+            font="JetBrainsMono 8pt")
+        commands += self.renderer.button(
+            "move.mode", 230, 374, 140, 44, "STEP MODE",
+            font="JetBrainsMono 8pt")
         commands += [
-            self.renderer.text(485, 402, "HOLD + DRAG", "56656c",
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.action_hitbox("move.joy.xy", 25, 75, 430, 285, True),
-            self.renderer.action_hitbox("move.joy.z", 485, 75, 110, 285, True),
+            self.renderer.action_hitbox(
+                "move.joy.xy", *JOYSTICK_XY_PAD, continuous=True),
+            self.renderer.action_hitbox(
+                "move.joy.z", 410, 96, 155, 266, continuous=True),
         ]
         return commands
 
@@ -1505,7 +1538,7 @@ class FeatherScreen:
              "warning" if auto_available else "disabled"),
         )
         return self.renderer.dialog(
-            "CAUTION", lines, buttons, x=25, y=75, width=430, height=285,
+            "CAUTION", lines, buttons, x=30, y=96, width=340, height=266,
             tone="warning")
 
     def _move_status_commands(self, values, axes=False):
@@ -1557,47 +1590,34 @@ class FeatherScreen:
         self.renderer.send(self._move_status_commands(values, axes=axes_changed))
 
     def _joystick_position_commands(self, values):
-        return [
-            self.renderer.fill(620, 80, 150, 112, "050c0f"),
-            self.renderer.text(695, 94, values[3],
-                               "35d9e6" if values[3] == "HOMED: XYZ"
-                               else "f2c94c", "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(695, 125, "X %6.1f" % values[0], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 151, "Y %6.1f" % values[1], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(695, 177, "Z %6.1f" % values[2], "d9e4e8",
-                               "JetBrainsMono 8pt", "center", "middle"),
-        ]
+        x, y, width, height = JOYSTICK_POSITION_CARD
+        border = "35d9e6" if values[3] == "HOMED: XYZ" else "f2c94c"
+        commands = self.renderer.panel(
+            x, y, width, height, border=border, line_width=1)
+        for offset, label, value in (
+                (22, "X", "%6.1f" % values[0]),
+                (46, "Y", "%6.1f" % values[1]),
+                (70, "Z", "%6.1f" % values[2])):
+            commands += self.renderer.metric_row(
+                x + 12, y + offset, width - 24, label, value, "mm",
+                label_color=border)
+        return commands
 
     def _joystick_inertia_snapshot(self):
         planner = getattr(self, "joystick", None)
         state = (planner.inertia() if planner is not None
                  and callable(getattr(planner, "inertia", None)) else {})
         velocity = state.get("velocity", (0.0, 0.0, 0.0))
-        return (
-            round(float(state.get("xy_speed", 0.0)), 1),
-            round(float(velocity[0]), 1),
-            round(float(velocity[1]), 1),
-            round(float(state.get("z_speed", 0.0)), 1),
-            round(float(state.get("acceleration_magnitude", 0.0))),
-        )
+        return round(sum(float(value) ** 2 for value in velocity) ** 0.5, 1)
 
     def _joystick_inertia_commands(self, inertia):
-        xy_speed, vx, vy, vz, acceleration = inertia
-        return [
-            self.renderer.fill(620, 194, 150, 57, "050c0f"),
-            self.renderer.text(
-                695, 202, "INERTIA %5.1f" % xy_speed, "35d9e6",
-                "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(
-                695, 222, "VX %+4.0f VY %+4.0f" % (vx, vy), "d9e4e8",
-                "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(
-                695, 242, "VZ %+4.1f A %4.0f" % (vz, acceleration),
-                "56656c", "JetBrainsMono 8pt", "center", "middle"),
-        ]
+        x, y, width, height = JOYSTICK_INERTIA_CARD
+        commands = self.renderer.panel(
+            x, y, width, height, border="295c66", line_width=1)
+        commands += self.renderer.metric_row(
+            x + 12, y + height // 2, width - 24, "INERTIA",
+            "%5.1f" % inertia)
+        return commands
 
     @staticmethod
     def _joystick_cursor_geometry(cursor):
@@ -1605,38 +1625,93 @@ class FeatherScreen:
             return None
         action, x, y = cursor
         if action == "move.joy.xy":
-            return (action, max(47, min(433, int(x))),
-                    max(105, min(335, int(y))), 240, 220, "35d9e6")
-        return (action, 540, max(105, min(335, int(y))),
-                540, 220, "b47aff")
+            left, top, right, bottom = JOYSTICK_XY_CURSOR_BOUNDS
+            return (action, max(left, min(right, int(x))),
+                    max(top, min(bottom, int(y))),
+                    JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1], "35d9e6")
+        return (action, JOYSTICK_Z_CENTER[0],
+                max(JOYSTICK_Z_CURSOR_BOUNDS[0],
+                    min(JOYSTICK_Z_CURSOR_BOUNDS[1], int(y))),
+                JOYSTICK_Z_CENTER[0], JOYSTICK_Z_CENTER[1], "35d9e6")
+
+    @staticmethod
+    def _joystick_center_cursor(action):
+        if action == "move.joy.xy":
+            return (action, JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1])
+        return (action, JOYSTICK_Z_CENTER[0], JOYSTICK_Z_CENTER[1])
+
+    def _joystick_surface_patch(self, action, left, top, width, height):
+        """Restore only the static pixels covered by the previous knob."""
+        right = left + width
+        bottom = top + height
+        commands = [self.renderer.fill(
+            left, top, width, height, "050c0f")]
+        if action == "move.joy.xy":
+            commands += self.renderer.dot_grid(
+                48, 116, 304, 226, columns=11, rows=7,
+                clip=(left, top, width, height))
+            center_x, center_y = JOYSTICK_XY_CENTER
+            if left <= center_x < right:
+                line_top = max(top, 119)
+                line_bottom = min(bottom, 339)
+                if line_top < line_bottom:
+                    commands.append(self.renderer.fill(
+                        center_x, line_top, 1, line_bottom - line_top,
+                        "35d9e6"))
+            if top <= center_y < bottom:
+                line_left = max(left, 54)
+                line_right = min(right, 346)
+                if line_left < line_right:
+                    commands.append(self.renderer.fill(
+                        line_left, center_y, line_right - line_left, 1,
+                        "35d9e6"))
+            return commands
+
+        track_left = JOYSTICK_Z_CENTER[0] - 5
+        track_right = track_left + 9
+        track_top = 103
+        track_bottom = 354
+        line_top = max(top, track_top)
+        line_bottom = min(bottom - 1, track_bottom)
+        if line_top <= line_bottom:
+            line_height = line_bottom - line_top + 1
+            commands += [
+                self.renderer.fill(
+                    track_left, line_top, 1, line_height, "35d9e6"),
+                self.renderer.fill(
+                    track_right, line_top, 1, line_height, "35d9e6"),
+            ]
+        if top <= track_top < bottom:
+            commands.append(self.renderer.fill(
+                track_left, track_top, 10, 1, "35d9e6"))
+        if top <= track_bottom < bottom:
+            commands.append(self.renderer.fill(
+                track_left, track_bottom, 10, 1, "35d9e6"))
+        return commands
 
     def _joystick_indicator_commands(self, previous, current):
         commands = []
-        old = self._joystick_cursor_geometry(previous)
-        if old is not None:
-            _action, x, y, center_x, center_y, _color = old
-            left, top, size = x - 10, y - 10, 21
-            commands.append(self.renderer.fill(
-                left, top, size, size, "050c0f"))
-            if left <= center_x < left + size:
-                commands.append(self.renderer.fill(
-                    center_x, top, 1, size, "295c66"))
-            if top <= center_y < top + size:
-                commands.append(self.renderer.fill(
-                    left, center_y, size, 1, "295c66"))
-            if (left <= center_x < left + size
-                    and top <= center_y < top + size):
-                commands.append(self.renderer.text(
-                    center_x, center_y, "+", "b47aff",
-                    "JetBrainsMono 16pt", "center", "middle"))
+        old_cursor = previous
+        if old_cursor is None and current is not None:
+            old_cursor = self._joystick_center_cursor(current[0])
+        old = self._joystick_cursor_geometry(old_cursor)
+        new_cursor = current
+        if new_cursor is None and previous is not None:
+            new_cursor = self._joystick_center_cursor(previous[0])
+        new = self._joystick_cursor_geometry(new_cursor)
+        if old == new:
+            return commands
 
-        new = self._joystick_cursor_geometry(current)
+        if old is not None:
+            action, x, y, _center_x, _center_y, _color = old
+            half = JOYSTICK_KNOB_SIZE // 2 + JOYSTICK_DIRTY_MARGIN
+            commands += self._joystick_surface_patch(
+                action, x - half, y - half, half * 2 + 1, half * 2 + 1)
         if new is not None:
-            _action, x, y, _center_x, _center_y, color = new
-            commands += [
-                self.renderer.fill(x - 8, y - 8, 17, 17, color),
-                self.renderer.stroke(x - 8, y - 8, 17, 17, "ffffff", 1),
-            ]
+            action, x, y, _center_x, _center_y, color = new
+            commands += self.renderer.joystick_knob(
+                x, y, "xy" if action == "move.joy.xy" else "z",
+                JOYSTICK_KNOB_SIZE, color)
         return commands
 
     def _update_joystick_feedback(self, eventtime, position=None, force=False):
@@ -1718,6 +1793,7 @@ class FeatherScreen:
             return
         commands = {
             "move.homeall": "G28", "move.homexy": "G28 X Y",
+            "move.homez": "G28 Z",
             "move.motors": "M84",
         }
         if action in commands:

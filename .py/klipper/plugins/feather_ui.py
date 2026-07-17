@@ -488,6 +488,88 @@ class FeatherRenderer:
                 self.stroke(x, y, width, height, border, line_width))
         return commands
 
+    def section_panel(self, title, x, y, width, height, border="295c66"):
+        """Draw a titled content panel with consistent Feather spacing."""
+        commands = self.panel(
+            x, y, width, height, border=border, background=COLOR_PANEL,
+            line_width=1)
+        commands.append(self.text(
+            x + 18, y + 21, str(title).upper(), COLOR_CYAN,
+            "JetBrainsMono 8pt", "left", "middle"))
+        return commands
+
+    def dot_grid(self, x, y, width, height, columns=11, rows=7,
+                 color="263238", clip=None):
+        """Draw a sparse point grid, optionally limited to a redraw region."""
+        commands = []
+        if columns < 2 or rows < 2:
+            return commands
+        if clip is not None:
+            clip_x, clip_y, clip_width, clip_height = clip
+            clip_right = clip_x + clip_width
+            clip_bottom = clip_y + clip_height
+        for row in range(rows):
+            point_y = y + row * height // (rows - 1)
+            for column in range(columns):
+                point_x = x + column * width // (columns - 1)
+                if (clip is None
+                        or (clip_x <= point_x < clip_right
+                            and clip_y <= point_y < clip_bottom)):
+                    commands.append(self.fill(point_x, point_y, 1, 1, color))
+        return commands
+
+    def corner_marks(self, x, y, width, height, length=12, color=COLOR_CYAN):
+        """Draw four open targeting corners around a control surface."""
+        right = x + width - 1
+        bottom = y + height - 1
+        commands = []
+        for horizontal_x, vertical_x in ((x, x), (right - length + 1, right)):
+            commands.append(self.fill(horizontal_x, y, length, 1, color))
+            commands.append(self.fill(vertical_x, y, 1, length, color))
+            commands.append(self.fill(horizontal_x, bottom, length, 1, color))
+            commands.append(self.fill(
+                vertical_x, bottom - length + 1, 1, length, color))
+        return commands
+
+    def metric_row(self, x, y, width, label, value, unit="",
+                   label_color=COLOR_CYAN, value_color=COLOR_TEXT):
+        """Draw a compact label/value/unit row for status cards."""
+        commands = [
+            self.text(x, y, label, label_color, "JetBrainsMono 8pt",
+                      "left", "middle"),
+            self.text(x + width - (34 if unit else 0), y, value, value_color,
+                      "JetBrainsMono 8pt", "right", "middle"),
+        ]
+        if unit:
+            commands.append(self.text(
+                x + width, y, unit, label_color, "JetBrainsMono 8pt",
+                "right", "middle"))
+        return commands
+
+    def joystick_knob(self, x, y, axis="xy", size=25, color=COLOR_CYAN):
+        """Draw a centered square joystick knob without font alignment drift."""
+        size = max(9, int(size))
+        if size % 2 == 0:
+            size += 1
+        left = int(x) - size // 2
+        top = int(y) - size // 2
+        commands = self.panel(
+            left, top, size, size, border=color, background=COLOR_PANEL,
+            line_width=2)
+        center_x = int(x)
+        center_y = int(y)
+        if axis == "z":
+            commands += [
+                self.fill(center_x - 6, center_y - 3, 13, 1, color),
+                self.fill(center_x - 6, center_y + 3, 13, 1, color),
+            ]
+        else:
+            commands += [
+                self.fill(center_x - 6, center_y, 13, 1, color),
+                self.fill(center_x, center_y - 6, 1, 13, color),
+            ]
+        return commands
+
     def text(self, x, y, value, color=COLOR_CYAN,
              font="JetBrainsMono 12pt", h_align="left", v_align="middle"):
         font = self.normalize_font(font)

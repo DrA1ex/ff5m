@@ -329,6 +329,29 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
 
 class RendererStateTest(unittest.TestCase):
+    def test_layout_primitives_compose_sections_metrics_and_grids(self):
+        renderer = FEATHER.FeatherRenderer()
+
+        commands = renderer.section_panel("Position", 10, 60, 200, 300)
+        commands += renderer.metric_row(
+            25, 120, 150, "X", "110.0", "mm")
+        commands += renderer.dot_grid(30, 150, 100, 50, columns=3, rows=2)
+        commands += renderer.corner_marks(20, 90, 160, 120)
+        commands += renderer.joystick_knob(100, 220, "xy")
+        commands += renderer.joystick_knob(140, 220, "z")
+        drawing = "\n".join(commands)
+
+        self.assertIn("POSITION", drawing)
+        self.assertIn('"110.0"', drawing)
+        self.assertIn('"mm"', drawing)
+        self.assertIn("-p 30 150 -s 1 1", drawing)
+        self.assertIn("-p 130 200 -s 1 1", drawing)
+        self.assertIn("-p 20 90 -s 12 1", drawing)
+        self.assertIn("-p 88 208 -s 25 25", drawing)
+        self.assertIn("-p 128 208 -s 25 25", drawing)
+        self.assertIn("-p 94 220 -s 13 1", drawing)
+        self.assertIn("-p 134 217 -s 13 1", drawing)
+
     def test_dialog_composes_panel_text_and_modal_buttons(self):
         renderer = FEATHER.FeatherRenderer()
 
@@ -831,12 +854,18 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         drawing = "\n".join(batches[0])
 
-        self.assertIn("[STEP|&gt;JOY]".replace("&gt;", ">"), drawing)
-        self.assertIn("UP / Z-", drawing)
-        self.assertIn("DOWN / Z+", drawing)
+        self.assertIn("XY POSITION", drawing)
+        self.assertIn("Z AXIS", drawing)
+        self.assertIn("POSITION", drawing)
+        self.assertIn("STEP MODE", drawing)
+        self.assertIn("--id 1:move.mode", drawing)
         self.assertIn("INERTIA", drawing)
-        self.assertIn("VX", drawing)
-        self.assertIn("VZ", drawing)
+        self.assertNotIn('"VX"', drawing)
+        self.assertNotIn('"VZ', drawing)
+        self.assertIn("HOME Z", drawing)
+        self.assertIn("--id 1:move.homez", drawing)
+        self.assertIn("-p 30 96 -s 340 266", drawing)
+        self.assertIn("-p 410 96 -s 155 266", drawing)
         self.assertIn("--id 1:move.joy.xy", drawing)
         self.assertIn("--id 1:move.joy.z", drawing)
         self.assertEqual(drawing.count("--continuous"), 2)
@@ -904,18 +933,54 @@ class RendererStateTest(unittest.TestCase):
             1.0, position=(2.0, 3.0, 4.0))
 
         live = "\n".join(batches[-1])
-        self.assertIn("--batch fill -p 312 172 -s 17 17", live)
-        self.assertIn('X    2.0', live)
-        self.assertIn('Y    3.0', live)
-        self.assertIn('Z    4.0', live)
-        self.assertIn('INERTIA  45.7', live)
-        self.assertIn('VX  +42 VY  -18', live)
-        self.assertIn('VZ +1.5 A  850', live)
+        self.assertIn("--batch stroke -p 308 168 -s 25 25", live)
+        self.assertIn('"X"', live)
+        self.assertIn('"   2.0"', live)
+        self.assertIn('"Y"', live)
+        self.assertIn('"   3.0"', live)
+        self.assertIn('"Z"', live)
+        self.assertIn('"   4.0"', live)
+        self.assertIn('" 45.7"', live)
+        self.assertNotIn('"VX"', live)
+        self.assertNotIn('"VY"', live)
+        self.assertNotIn('"VZ', live)
 
         controller.joystick_cursor = None
         controller._update_joystick_feedback(1.1, force=True)
         released = "\n".join(batches[-1])
-        self.assertIn("--batch fill -p 310 170 -s 21 21", released)
+        self.assertIn("--batch fill -p 306 166 -s 29 29", released)
+        self.assertIn("--batch stroke -p 188 217 -s 25 25", released)
+
+    def test_joystick_knob_dirty_region_stays_inside_static_artwork(self):
+        margin = (FEATHER.JOYSTICK_KNOB_SIZE // 2
+                  + FEATHER.JOYSTICK_DIRTY_MARGIN)
+        for cursor in (
+                ("move.joy.xy", -100, -100),
+                ("move.joy.xy", 900, 900)):
+            _action, x, y, _cx, _cy, _color = (
+                FEATHER.FeatherScreen._joystick_cursor_geometry(cursor))
+            self.assertGreaterEqual(x - margin, 48)
+            self.assertLessEqual(x + margin, 352)
+            self.assertGreaterEqual(y - margin, 116)
+            self.assertLessEqual(y + margin, 342)
+
+        for raw_y in (-100, 900):
+            geometry = FEATHER.FeatherScreen._joystick_cursor_geometry(
+                ("move.joy.z", 443, raw_y))
+            self.assertGreaterEqual(geometry[2] - margin, 103)
+            self.assertLessEqual(geometry[2] + margin, 354)
+
+    def test_joystick_knob_move_clears_center_instead_of_leaving_ghost(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+
+        commands = controller._joystick_indicator_commands(
+            ("move.joy.xy", 200, 229), ("move.joy.xy", 320, 180))
+        drawing = "\n".join(commands)
+
+        self.assertIn("--batch fill -p 186 215 -s 29 29", drawing)
+        self.assertIn("--batch stroke -p 308 168 -s 25 25", drawing)
+        self.assertNotIn("--batch stroke -p 188 217 -s 25 25", drawing)
 
 
 class ControllerSafetyTest(unittest.TestCase):
