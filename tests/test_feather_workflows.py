@@ -985,7 +985,6 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller.z_calibration = FEATHER.ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.prepared = True
-        controller.z_calibration.briefing_seen = True
         moves = []
         controller._run_blocking_gcode = (
             lambda command, message: moves.append((command, message)))
@@ -994,13 +993,19 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._handle_calibration_action("z.zone.rear_right")
 
+        self.assertEqual(moves, [])
+        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
+
+        controller._handle_calibration_action("z.paper_briefing.continue")
+
         self.assertEqual(moves, [(
             "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
             "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
             "POSITIONING HEAD...")])
-        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER])
+        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
+                                 FEATHER.Page.Z_OFFSET_PAPER])
 
-    def test_z_offset_briefing_is_shown_only_before_first_zone(self):
+    def test_z_offset_briefing_precedes_zones_and_paper_briefing_follows_each_zone(self):
         controller = base_controller()
         controller.z_calibration = FEATHER.ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
@@ -1011,16 +1016,20 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             lambda x, y: moves.append((x, y)))
 
         controller._handle_calibration_action("z.zone.front_left")
-        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_BRIEFING])
+        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
         self.assertEqual(moves, [])
 
-        controller._handle_calibration_action("z.briefing.continue")
+        controller._handle_calibration_action("z.paper_briefing.continue")
         self.assertEqual(moves, [(-94.0, -94.0)])
         self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER)
 
         controller._handle_calibration_action("z.zone.center")
+        self.assertEqual(moves, [(-94.0, -94.0)])
+        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER_BRIEFING)
+
+        controller._handle_calibration_action("z.paper_briefing.continue")
         self.assertEqual(moves[-1], (0.0, 0.0))
-        self.assertEqual(pages.count(FEATHER.Page.Z_OFFSET_BRIEFING), 1)
+        self.assertEqual(pages.count(FEATHER.Page.Z_OFFSET_PAPER_BRIEFING), 2)
 
     def test_z_offset_reset_moves_to_zero_candidate_position(self):
         controller = base_controller()
@@ -1058,6 +1067,27 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertAlmostEqual(controller.z_calibration.trigger_z, -0.625)
         self.assertAlmostEqual(controller.z_calibration.local_z, 0.5)
         self.assertAlmostEqual(controller.z_calibration.candidate, 0.25)
+
+    def test_manual_paper_start_moves_to_one_point_five_and_enables_controls(self):
+        controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("front_right")
+        controller._render_z_paper = lambda: None
+        moves = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+
+        controller._handle_calibration_action("z.move_1_5")
+
+        self.assertEqual(moves, [(
+            "MOVE_SAFE Z=1.500000 ABSOLUTE=1 F=300",
+            "MOVING TO 1.5 MM...")])
+        self.assertEqual(controller.z_calibration.start_mode, "manual")
+        self.assertTrue(controller.z_calibration.ready_for_paper_test)
+        self.assertAlmostEqual(controller.z_calibration.reference_z, 1.5)
+        self.assertAlmostEqual(controller.z_calibration.paper_contact_z, 1.5)
+        self.assertAlmostEqual(controller.z_calibration.candidate, 1.25)
 
     def test_paper_step_uses_no_loader_or_busy_notice(self):
         controller = base_controller()

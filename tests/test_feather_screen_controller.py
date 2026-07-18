@@ -137,6 +137,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_BRIEFING: "_render_z_briefing",
+            FEATHER.Page.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
             FEATHER.Page.Z_OFFSET_PAPER: "_render_z_paper",
             FEATHER.Page.LIVE_Z_OFFSET: "_render_live_z_offset",
             FEATHER.Page.CALIBRATION_CONFIRM: "_render_calibration_confirm",
@@ -230,6 +231,28 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn('-t "FL"', drawing)
         self.assertNotIn('-t "RR"', drawing)
         self.assertIn("AUTO LOAD", drawing)
+        self.assertIn("--batch button -p 75 72 -s 210 64", drawing)
+        self.assertIn("--batch button -p 295 72 -s 210 64", drawing)
+        self.assertIn("--batch button -p 130 146 -s 260 64", drawing)
+        self.assertIn("--batch button -p 65 334 -s 670 82", drawing)
+
+    def test_z_paper_controls_are_disabled_until_probe_or_manual_start(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.0, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("center")
+        controller._z_weight_gauge_commands = lambda eventtime: []
+
+        controller._render_z_paper()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("z.move_1_5", drawing)
+        for action in ("z.closer", "z.farther", "z.reset", "z.accept"):
+            self.assertNotIn(action, drawing)
 
     def test_live_z_offset_page_separates_saved_current_and_unsaved(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -394,15 +417,16 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("CLEAR_NOZZLE", drawing)
         self.assertIn("cal.clean.skip", drawing)
         self.assertIn("WITHOUT CLEANING", drawing)
-        self.assertIn("Bed temperature stays unchanged", drawing)
-        self.assertIn("probe cooldown", drawing)
+        self.assertIn("CLEAN NOZZLE FOR PETG, THEN HOME AND TARE", drawing)
         self.assertIn("cal.material.PETG", drawing)
+        self.assertIn("--batch button -p 310 145", drawing)
 
         controller.calibration_clean_nozzle = False
         controller._render_calibration_confirm()
         drawing = "\n".join(batches[-1])
         self.assertIn("cal.clean.skip", drawing)
         self.assertIn("--border b47aff", drawing)
+        self.assertIn("WITHOUT CLEANING: USE COOLDOWN TEMPERATURE", drawing)
 
     def test_screw_calibration_marks_only_current_phase_with_accent(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -783,6 +807,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("clear-hitboxes", drawing)
         self.assertIn("cal.emergency_stop", drawing)
         self.assertIn("EMERGENCY STOP", drawing)
+        self.assertIn("--batch button -p 235 335 -s 330 72", drawing)
 
     def test_calibration_emergency_stop_bypasses_busy_and_touch_feedback(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

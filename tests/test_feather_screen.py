@@ -270,7 +270,10 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_SUMMARY,
                                 "z.zone.front_left"))
         self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.probe"))
+        self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.move_1_5"))
         self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.step.25"))
+        self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
+                                "z.paper_briefing.continue"))
         self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
                                 "live_z.closer"))
         self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,

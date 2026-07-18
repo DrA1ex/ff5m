@@ -229,12 +229,12 @@ Calibrate Z-offset only while the printer is idle. The Stock screen retains its 
 1. Open **Control → Calibration → Z Offset**.
 2. Select PLA, PETG, ABS, or ABS-PC and press **Start**. Feather heats, cleans, homes, lifts Z, and tares the load cells. Select **Without cleaning** to leave the bed temperature completely unchanged and prepare only the nozzle at `clear_cooldown_temp`.
 3. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
-4. Select **Front Left**, **Front Right**, **Center**, **Rear Left**, or **Rear Right**. Feather shows the paper-test briefing once per session.
-5. Press the large **Probe** button. After the two-sample probe completes and the bed retracts, insert normal printer paper under the clean nozzle.
+4. Read the briefing, then select one or more zones: **Rear Left**, **Center**, **Rear Right**, **Front Left**, or **Front Right**. The results page lets you save one measured zone or the average of several zones. When **Auto Load** is enabled, the saved value is applied automatically before every print.
+5. After selecting a zone, read the paper-test instructions. Put normal printer paper under the clean nozzle, then press **Probe**. After the two-sample probe completes and the bed retracts, begin the paper test. If probing is unreliable, press **Move to 1.5 mm** instead; this establishes the manual paper-test starting position.
 6. Select a step of 0.005, 0.010, 0.025, or 0.050 mm:
    - **Closer** increases paper drag.
    - **Farther** decreases paper drag.
-   - **Reset to 0.000** physically moves to the position represented by a zero candidate.
+   - **Reset to 0.000** physically moves to the position represented by a true zero Z-offset. The displayed nozzle coordinate can differ from `0.000` because the probe or manual reference is accounted for; the displayed Z-offset remains `0.000`.
 7. When the paper has consistent light drag, press **Accept Zone**. Measure any other positions you want; measuring a position again replaces its earlier result.
 8. On the results screen:
    - one measured position is selected automatically;

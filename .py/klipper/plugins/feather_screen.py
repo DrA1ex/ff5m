@@ -83,10 +83,12 @@ EXACT_ACTIONS = {
         "nav.back", "z.selection.next", "z.load.toggle", "z.save",
         "z.discard.cancel", "z.discard.confirm"),
     Page.Z_OFFSET_BRIEFING: ("nav.back", "z.briefing.continue"),
+    Page.Z_OFFSET_PAPER_BRIEFING: (
+        "nav.back", "z.paper_briefing.continue"),
     Page.Z_OFFSET_PAPER: (
-        "nav.back", "z.probe", "z.step.5", "z.step.10", "z.step.25",
-        "z.step.50", "z.closer", "z.farther", "z.reset", "z.accept",
-        "z.pressure.ok"),
+        "nav.back", "z.probe", "z.move_1_5", "z.step.5", "z.step.10",
+        "z.step.25", "z.step.50", "z.closer", "z.farther", "z.reset",
+        "z.accept", "z.pressure.ok"),
     Page.LIVE_Z_OFFSET: (
         "nav.back", "live_z.step.0005", "live_z.step.001",
         "live_z.step.005", "live_z.closer", "live_z.farther",
@@ -840,6 +842,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_z_summary()
         elif page == Page.Z_OFFSET_BRIEFING:
             self._render_z_briefing()
+        elif page == Page.Z_OFFSET_PAPER_BRIEFING:
+            self._render_z_paper_briefing()
         elif page == Page.Z_OFFSET_PAPER:
             self._render_z_paper()
         elif page == Page.LIVE_Z_OFFSET:
@@ -913,6 +917,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             else:
                 self._cancel_z_calibration()
         elif self.page == Page.Z_OFFSET_BRIEFING:
+            self._show_page(Page.Z_OFFSET_SUMMARY)
+        elif self.page == Page.Z_OFFSET_PAPER_BRIEFING:
             self._show_page(Page.Z_OFFSET_SUMMARY)
         elif self.page == Page.Z_OFFSET_PAPER:
             self.z_calibration.dialog = None

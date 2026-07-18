@@ -1176,10 +1176,13 @@ class FeatherControlsMixin:
         elif action.startswith("z.zone."):
             self._choose_z_zone(action.rsplit(".", 1)[1])
         elif action == "z.briefing.continue":
-            self.z_calibration.briefing_seen = True
+            self._show_page(Page.Z_OFFSET_SUMMARY)
+        elif action == "z.paper_briefing.continue":
             self._enter_z_zone()
         elif action == "z.probe":
             self._probe_z_zone()
+        elif action == "z.move_1_5":
+            self._move_z_manual_start()
         elif action == "z.reset":
             self._reset_z_paper()
         elif action == "z.accept":
@@ -1360,7 +1363,7 @@ class FeatherControlsMixin:
                     "or continue without cleaning.")
         elif kind == "z":
             text = ("Select the material temperature for nozzle cleaning, "
-                    "or prepare at nozzle cooldown without touching the bed.")
+                    "or start without an initial nozzle cleaning.")
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
         for index, line in enumerate(self._wrap(text, 52, 3)):
@@ -1380,7 +1383,7 @@ class FeatherControlsMixin:
             for index, material in enumerate(materials):
                 commands += self.renderer.button("cal.material.%s" % material,
                                                  left + index * (width + gap),
-                                                 170, width, 55,
+                                                 145, width, 55,
                                                  material,
                                                  state=("selected" if
                                                         material ==
@@ -1393,14 +1396,18 @@ class FeatherControlsMixin:
                                                         else "enabled"))
         if kind in ("screws", "z"):
             commands += self.renderer.button(
-                "cal.clean.skip", 115, 240, 570, 52, "WITHOUT CLEANING",
+                "cal.clean.skip", 115, 215, 570, 52, "WITHOUT CLEANING",
                 state=("enabled" if getattr(
                     self, "calibration_clean_nozzle", True) else "selected"))
+            if getattr(self, "calibration_clean_nozzle", True):
+                mode_hint = (
+                    "CLEAN NOZZLE FOR %s, THEN HOME AND TARE" %
+                    self.calibration_material)
+            else:
+                mode_hint = (
+                    "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
             commands.append(self.renderer.text(
-                400, 305,
-                ("Bed stays untouched; nozzle uses cooldown temperature"
-                 if kind == "z" else
-                 "Bed temperature stays unchanged; nozzle uses probe cooldown"),
+                400, 290, mode_hint,
                 "56656c", "JetBrainsMono 8pt", "center"))
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START",
@@ -1419,7 +1426,8 @@ class FeatherControlsMixin:
         emergency_visible = self.calibration_kind in ("screws", "mesh", "z")
         if emergency_visible:
             commands += self.renderer.button(
-                "cal.emergency_stop", 50, 335, 330, 72,
+                "cal.emergency_stop", 50 if cancel_visible else 235, 335,
+                330, 72,
                 "EMERGENCY STOP", state="danger",
                 font="JetBrainsMono Bold 12pt")
         if cancel_visible:
@@ -1432,15 +1440,6 @@ class FeatherControlsMixin:
                     self, "calibration_cancel_requested", False)
                        else "danger"),
                 font="JetBrainsMono Bold 12pt")
-        elif self.calibration_kind == "mesh":
-            commands += [
-                self.renderer.text(
-                    585, 350, "AFTER HEATING:", "56656c",
-                    "JetBrainsMono 8pt", "center"),
-                self.renderer.text(
-                    585, 380, "NO SAFE SOFTWARE CANCEL", "f2c94c",
-                    "JetBrainsMono 8pt", "center"),
-            ]
         self.renderer.send(commands)
         self._last_calibration_label = label
         self._last_calibration_cancel_visible = cancel_visible

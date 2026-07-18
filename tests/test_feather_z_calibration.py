@@ -48,6 +48,22 @@ class ZCalibrationStateTest(unittest.TestCase):
         self.assertAlmostEqual(session.local_z, 0.25)
         self.assertAlmostEqual(session.candidate, 0.0)
 
+    def test_manual_start_records_reference_and_reset_still_is_true_offset_zero(self):
+        session = ZCAL.ZCalibrationSession()
+        session.begin(0.0, None, "", -0.25, False)
+        session.choose_zone("center")
+        session.set_manual_start(1.5)
+
+        self.assertEqual(session.start_mode, "manual")
+        self.assertTrue(session.ready_for_paper_test)
+        self.assertAlmostEqual(session.reference_z, 1.5)
+        self.assertAlmostEqual(session.reference_base_z, 1.5)
+        self.assertAlmostEqual(session.local_z, 0.0)
+        self.assertAlmostEqual(session.paper_contact_z, 1.5)
+        self.assertAlmostEqual(session.candidate, 1.25)
+        self.assertAlmostEqual(session.reset(), 0.25)
+        self.assertAlmostEqual(session.candidate, 0.0)
+
     def test_average_is_rounded_and_remeasurement_replaces_zone(self):
         session = ZCAL.ZCalibrationSession()
         session.begin(0.0, None, "", -0.25, False)

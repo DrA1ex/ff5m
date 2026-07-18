@@ -35,6 +35,14 @@ def calculate_z_offset(paper_contact_z, probe_trigger_z,
             + float(configured_probe_z_offset))
 
 
+def calculate_z_offset_from_reference(paper_contact_z, reference_z,
+                                      reference_base_z,
+                                      configured_probe_z_offset):
+    """Calculate a candidate from a displayed paper-test reference."""
+    return (float(paper_contact_z) - float(reference_z)
+            + float(reference_base_z) + float(configured_probe_z_offset))
+
+
 def rounded_average(values):
     values = tuple(float(value) for value in values)
     if not values:
@@ -77,10 +85,13 @@ class ZCalibrationSession:
         self.selected = None
         self.zone = None
         self.trigger_z = None
+        self.reference_z = None
+        self.reference_base_z = 0.0
         self.local_z = None
         self.step = PAPER_STEPS[1]
-        self.briefing_seen = False
+        self.start_mode = None
         self.probing = False
+        self.moving_to_start = False
         self.dialog = None
         self.pressure = PressureHysteresis()
 
@@ -102,37 +113,61 @@ class ZCalibrationSession:
             raise ValueError("Unknown Z calibration zone")
         self.zone = key
         self.trigger_z = None
+        self.reference_z = None
+        self.reference_base_z = 0.0
         self.local_z = None
 
     def set_trigger(self, trigger_z, retract=0.5):
         self.trigger_z = float(trigger_z)
+        self.reference_z = self.trigger_z
+        self.reference_base_z = 0.0
         self.local_z = float(retract)
+        self.start_mode = "probe"
+
+    def set_manual_start(self, height=1.5):
+        """Use the homed Z origin when a load-cell probe is unavailable.
+
+        The visible reference is the actual 1.5 mm starting coordinate.  Its
+        base is retained separately so paper moves still calculate a value in
+        the normal global Z-offset coordinate system.
+        """
+        self.trigger_z = None
+        self.reference_z = float(height)
+        self.reference_base_z = self.reference_z
+        self.local_z = 0.0
+        self.start_mode = "manual"
+
+    @property
+    def ready_for_paper_test(self):
+        return (self.reference_z is not None and self.local_z is not None
+                and not self.probing and not self.moving_to_start)
 
     @property
     def paper_contact_z(self):
-        if self.trigger_z is None or self.local_z is None:
+        if self.reference_z is None or self.local_z is None:
             return None
-        return self.trigger_z + self.local_z
+        return self.reference_z + self.local_z
 
     @property
     def candidate(self):
         contact = self.paper_contact_z
         if contact is None:
             return None
-        return calculate_z_offset(
-            contact, self.trigger_z, self.probe_z_offset)
+        return calculate_z_offset_from_reference(
+            contact, self.reference_z, self.reference_base_z,
+            self.probe_z_offset)
 
     def adjust(self, delta):
         if self.local_z is None:
             raise ValueError("Probe the zone before adjusting Z")
         self.local_z += float(delta)
-        return self.trigger_z + self.local_z
+        return self.reference_z + self.local_z
 
     def reset(self):
-        if self.trigger_z is None:
+        if self.reference_z is None:
             raise ValueError("Probe the zone before resetting Z")
-        self.local_z = -self.probe_z_offset
-        return self.trigger_z + self.local_z
+        self.local_z = -(self.reference_base_z + self.probe_z_offset)
+        return self.reference_z + self.local_z
 
     def accept(self):
         if self.zone is None or self.candidate is None:
@@ -191,12 +226,18 @@ class FeatherZCalibrationMixin:
     def _render_z_summary(self):
         session = self.z_calibration
         commands = self.renderer.begin_page("Z offset zones", back=True)
-        geometry = (
-            (20, 72, 210, 64), (245, 72, 210, 64),
-            (470, 72, 210, 64), (130, 146, 260, 64),
-            (410, 146, 260, 64),
-        )
-        for point, (x, y, width, height) in zip(ZONE_POINTS, geometry):
+        geometry = {
+            "rear_left": (75, 72, 210, 64),
+            "center": (295, 72, 210, 64),
+            "rear_right": (515, 72, 210, 64),
+            "front_left": (130, 146, 260, 64),
+            "front_right": (410, 146, 260, 64),
+        }
+        zone_order = ("rear_left", "center", "rear_right", "front_left",
+                      "front_right")
+        for key in zone_order:
+            point = ZONE_BY_KEY[key]
+            x, y, width, height = geometry[key]
             key, label = point[:2]
             result = session.results.get(key)
             caption = (label if result is None else
@@ -207,18 +248,18 @@ class FeatherZCalibrationMixin:
                 font="JetBrainsMono 8pt")
         if session.spread > POSITIONAL_WARNING:
             commands.append(self.renderer.text(
-                350, 230, "POSITIONAL SPREAD %.3f MM - CHECK BED / PROBE" %
+                400, 230, "POSITIONAL SPREAD %.3f MM - CHECK BED / PROBE" %
                 session.spread, "f2c94c", "JetBrainsMono 8pt",
                 "center", "middle"))
         elif session.results:
             commands.append(self.renderer.text(
-                350, 230, "%d ZONE%s MEASURED" %
+                400, 230, "%d ZONE%s MEASURED" %
                 (len(session.results),
                  "" if len(session.results) == 1 else "S"),
                 "56656c", "JetBrainsMono 8pt", "center", "middle"))
         else:
             commands.append(self.renderer.text(
-                350, 230, "SELECT A POSITION TO START THE PAPER TEST",
+                400, 230, "SELECT A POSITION TO START THE PAPER TEST",
                 "56656c", "JetBrainsMono 8pt", "center", "middle"))
         selected = session.selected
         if selected == "average":
@@ -230,15 +271,15 @@ class FeatherZCalibrationMixin:
             selection = "NO RESULT SELECTED"
         selection_state = "enabled" if session.results else "disabled"
         commands += self.renderer.button(
-            "z.selection.next", 20, 258, 450, 58, selection,
+            "z.selection.next", 65, 258, 455, 58, selection,
             state=selection_state, font="JetBrainsMono 8pt")
         commands += self.renderer.button(
-            "z.load.toggle", 490, 258, 200, 58,
+            "z.load.toggle", 535, 258, 200, 58,
             "AUTO LOAD: %s" % ("ON" if session.load_zoffset else "OFF"),
             state="selected" if session.load_zoffset else "enabled",
             font="JetBrainsMono 8pt")
         commands += self.renderer.button(
-            "z.save", 20, 334, 660, 82, "SAVE SELECTED Z OFFSET",
+            "z.save", 65, 334, 670, 82, "SAVE SELECTED Z OFFSET",
             state=selection_state, font="JetBrainsMono Bold 12pt")
         if session.dialog == "discard":
             commands += self.renderer.dialog(
@@ -251,25 +292,46 @@ class FeatherZCalibrationMixin:
         self.renderer.send(commands)
 
     def _render_z_briefing(self):
-        point = ZONE_BY_KEY[self.z_calibration.zone]
-        commands = self.renderer.begin_page("Paper test briefing", back=True)
+        commands = self.renderer.begin_page("Z offset calibration", back=True)
         lines = (
-            "PROBE FINDS THE LOAD-CELL TRIGGER HEIGHT AND SETS LOCAL ZERO.",
-            "PLACE NORMAL PRINTER PAPER BETWEEN THE CLEAN NOZZLE AND BED.",
-            "CLOSER LOWERS LOCAL Z; FARTHER RAISES IT.",
-            "STOP WHEN THE PAPER DRAGS EVENLY, THEN ACCEPT THE ZONE.",
+            "Z OFFSET SETS THE NOZZLE-TO-BED HEIGHT FOR THE FIRST LAYER.",
+            "CHOOSE ONE OR MORE BED ZONES; FEATHER GUIDES EACH PAPER TEST.",
+            "THE SCREEN COLLECTS THE RESULTS AND CAN USE THEIR AVERAGE.",
+            "WITH AUTO LOAD ON, THE CHOSEN Z OFFSET IS APPLIED BEFORE",
+            "EVERY PRINT.",
         )
         for index, line in enumerate(lines):
             commands.append(self.renderer.text(
-                400, 92 + index * 52, line,
+                400, 78 + index * 43, line,
+                "d9e4e8" if index else "35d9e6",
+                "JetBrainsMono 8pt", "center", "middle"))
+        commands += self.renderer.button(
+            "z.briefing.continue", 170, 340, 460, 74,
+            "SELECT ZONES", font="JetBrainsMono Bold 12pt")
+        self.renderer.send(commands)
+
+    def _render_z_paper_briefing(self):
+        point = ZONE_BY_KEY[self.z_calibration.zone]
+        commands = self.renderer.begin_page("Paper test briefing", back=True)
+        lines = (
+            "PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.",
+            "PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.",
+            "MOVE TO 1.5 MM RECORDS THAT HEIGHT AS REFERENCE Z, SO YOU",
+            "CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.",
+            "SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.",
+            "WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.",
+        )
+        for index, line in enumerate(lines):
+            commands.append(self.renderer.text(
+                400, 64 + index * 36, line,
                 "d9e4e8" if index else "35d9e6",
                 "JetBrainsMono 8pt", "center", "middle"))
         commands.append(self.renderer.text(
-            400, 306, "FIRST POSITION: %s" % point[1],
+            400, 285, "SELECTED ZONE: %s" % point[1],
             "b47aff", "JetBrainsMono Bold 12pt", "center", "middle"))
         commands += self.renderer.button(
-            "z.briefing.continue", 170, 344, 460, 74,
-            "CONTINUE TO PAPER TEST", font="JetBrainsMono Bold 12pt")
+            "z.paper_briefing.continue", 170, 340, 460, 74,
+            "POSITION HEAD", font="JetBrainsMono Bold 12pt")
         self.renderer.send(commands)
 
     def _render_z_paper(self):
@@ -277,15 +339,16 @@ class FeatherZCalibrationMixin:
         point = ZONE_BY_KEY[session.zone]
         commands = self.renderer.begin_page(
             "Paper test - %s" % point[1], back=True)
-        trigger = ("--" if session.trigger_z is None else
-                   "%+.3f" % session.trigger_z)
-        local = ("--" if session.local_z is None else
-                 "%+.3f" % session.local_z)
+        reference = ("--" if session.reference_z is None else
+                     "%+.3f" % session.reference_z)
+        nozzle = ("--" if session.paper_contact_z is None else
+                  "%+.3f" % session.paper_contact_z)
         candidate = ("--" if session.candidate is None else
                      "%+.3f" % session.candidate)
         for label, value, x in (
-                ("TRIGGER Z", trigger, 20),
-                ("LOCAL HEIGHT", local, 245),
+                ("TRIGGER Z" if session.start_mode != "manual"
+                 else "REFERENCE Z", reference, 20),
+                ("NOZZLE Z", nozzle, 245),
                 ("Z OFFSET", candidate, 470)):
             commands += self.renderer.panel(
                 x, 70, 210, 72, border="295c66", background="050c0f")
@@ -296,9 +359,15 @@ class FeatherZCalibrationMixin:
                 x + 105, 119, "%s MM" % value, "ffffff",
                 "JetBrainsMono Bold 12pt", "center", "middle"))
         commands += self.renderer.button(
-            "z.probe", 20, 154, 670, 70, "PROBE",
-            state="busy" if session.probing else "danger",
-            font="JetBrainsMono Bold 16pt")
+            "z.probe", 20, 154, 325, 70, "PROBE",
+            state=("busy" if session.probing else
+                   "disabled" if session.moving_to_start else "danger"),
+            font="JetBrainsMono Bold 14pt")
+        commands += self.renderer.button(
+            "z.move_1_5", 365, 154, 325, 70, "MOVE TO 1.5 MM",
+            state=("busy" if session.moving_to_start else
+                   "disabled" if session.probing else "enabled"),
+            font="JetBrainsMono Bold 12pt")
         for index, step in enumerate(PAPER_STEPS):
             token = ("%04d" % round(step * 1000)).lstrip("0")
             commands += self.renderer.button(
@@ -306,7 +375,7 @@ class FeatherZCalibrationMixin:
                 "%.3f MM" % step,
                 state=("selected" if step == session.step else "enabled"),
                 font="JetBrainsMono 8pt")
-        ready = session.trigger_z is not None and not session.probing
+        ready = session.ready_for_paper_test
         state = "enabled" if ready else "disabled"
         commands += self.renderer.button(
             "z.closer", 20, 300, 325, 66,
@@ -424,7 +493,7 @@ class FeatherZCalibrationMixin:
             self._run_script(self._z_preparation_command())
             self.z_calibration.prepared = True
             self._begin_z_weight_gauge()
-            self._show_page(Page.Z_OFFSET_SUMMARY)
+            self._show_page(Page.Z_OFFSET_BRIEFING)
             return
         except Exception as exc:
             if getattr(self, "shutdown_active", False):
@@ -453,10 +522,7 @@ class FeatherZCalibrationMixin:
     def _choose_z_zone(self, key):
         self._require_idle()
         self.z_calibration.choose_zone(key)
-        if not self.z_calibration.briefing_seen:
-            self._show_page(Page.Z_OFFSET_BRIEFING)
-        else:
-            self._enter_z_zone()
+        self._show_page(Page.Z_OFFSET_PAPER_BRIEFING)
 
     def _enter_z_zone(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
@@ -482,6 +548,21 @@ class FeatherZCalibrationMixin:
             session.probing = False
         self._render_z_paper()
         self._check_z_pressure(self.reactor.monotonic())
+
+    def _move_z_manual_start(self):
+        session = self.z_calibration
+        if session.moving_to_start or session.probing:
+            return
+        session.moving_to_start = True
+        self._render_z_paper()
+        try:
+            self._run_blocking_gcode(
+                "MOVE_SAFE Z=1.500000 ABSOLUTE=1 F=300",
+                "MOVING TO 1.5 MM...")
+            session.set_manual_start(1.5)
+        finally:
+            session.moving_to_start = False
+        self._render_z_paper()
 
     def _move_z_paper(self, delta):
         session = self.z_calibration
