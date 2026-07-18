@@ -203,7 +203,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("CLEAR_NOZZLE", drawing)
         self.assertIn("cal.clean.skip", drawing)
         self.assertIn("WITHOUT CLEANING", drawing)
-        self.assertIn("probe cooldown temperature", drawing)
+        self.assertIn("Bed temperature stays unchanged", drawing)
+        self.assertIn("probe cooldown", drawing)
         self.assertIn("cal.material.PETG", drawing)
 
         controller.calibration_clean_nozzle = False
@@ -224,6 +225,140 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("stroke -p 195 225 -s 128 38 -c b47aff", drawing)
         self.assertIn("stroke -p 335 225 -s 128 38 -c 263238", drawing)
         self.assertEqual(drawing.count("-c b47aff"), 2)
+
+    def test_screw_and_mesh_heating_offer_m108_cancel(self):
+        for kind in ("screws", "mesh"):
+            with self.subTest(kind=kind):
+                controller = FEATHER.FeatherScreen.__new__(
+                    FEATHER.FeatherScreen)
+                controller.renderer = FEATHER.FeatherRenderer()
+                controller.calibration_kind = kind
+                controller.calibration_repeat_probe = False
+                controller.calibration_clean_nozzle = True
+                controller.calibration_cancel_requested = False
+                controller.temperature_wait = type(
+                    "Wait", (), {"variables": {
+                        "active": True, "cancel": False}})()
+                controller.print_status_text = "HEATING..."
+                batches = []
+                controller.renderer.send = batches.append
+
+                controller._render_calibration_progress()
+
+                drawing = "\n".join(batches[-1])
+                self.assertIn("cal.cancel.heat", drawing)
+                self.assertIn("CANCEL HEATING", drawing)
+                self.assertIn("cal.emergency_stop", drawing)
+                self.assertIn("EMERGENCY STOP", drawing)
+
+    def test_calibration_heat_cancel_dispatches_immediate_m108_once(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "mesh"
+        controller.calibration_cancel_requested = False
+        controller.calibration_cancel_dispatched = False
+        controller.temperature_wait = type(
+            "Wait", (), {"variables": {
+                "active": True, "cancel": False}})()
+        controller._render_calibration_progress = lambda: None
+        immediate = []
+        controller._run_immediate_command = immediate.append
+
+        controller._handle_calibration_action("cal.cancel.heat")
+        controller._handle_calibration_action("cal.cancel.heat")
+
+        self.assertEqual(immediate, ["M108"])
+        self.assertTrue(controller.calibration_cancel_requested)
+        self.assertTrue(controller.calibration_cancel_dispatched)
+
+    def test_calibration_heat_cancel_is_not_blocked_by_active_macro(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.calibration_kind = "mesh"
+        controller.command_depth = 1
+        controller.mod_update_pending = False
+        controller.touch_feedback_pending = False
+        controller.renderer = type("Renderer", (), {
+            "flash_button": lambda self, action: True,
+            "generation": 1,
+        })()
+        cancelled = []
+        controller._cancel_calibration_heat = lambda: cancelled.append(True)
+
+        controller._handle_touch_action("cal.cancel.heat")
+
+        self.assertEqual(cancelled, [True])
+        self.assertFalse(controller.touch_feedback_pending)
+
+    def test_same_page_redraw_does_not_discard_delayed_button_action(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.SETTINGS
+        controller.touch_feedback_pending = True
+        restored = []
+        controller.renderer = type("Renderer", (), {
+            "generation": 2,
+            "restore_button": lambda self, action: restored.append(action),
+        })()
+        dispatched = []
+        controller._dispatch_action = dispatched.append
+
+        controller._finish_touch_action(
+            0, "settings.theme.next",
+            source_page=FEATHER.Page.SETTINGS, generation=1)
+
+        self.assertEqual(restored, [])
+        self.assertEqual(dispatched, ["settings.theme.next"])
+        self.assertFalse(controller.touch_feedback_pending)
+
+    def test_page_change_discards_delayed_button_action(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.touch_feedback_pending = True
+        controller.renderer = type("Renderer", (), {"generation": 2})()
+        dispatched = []
+        controller._dispatch_action = dispatched.append
+
+        controller._finish_touch_action(
+            0, "settings.theme.next",
+            source_page=FEATHER.Page.SETTINGS, generation=1)
+
+        self.assertEqual(dispatched, [])
+        self.assertFalse(controller.touch_feedback_pending)
+
+    def test_homing_progress_keeps_emergency_stop_registered(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+        controller.calibration_repeat_probe = False
+        controller.calibration_cancel_requested = False
+        controller.temperature_wait = type(
+            "Wait", (), {"variables": {
+                "active": False, "cancel": False}})()
+        controller.print_status_text = "CALIBRATION: STARTING"
+        batches = []
+        controller.renderer.send = batches.append
+        controller._render_calibration_progress()
+
+        controller.print_status_text = "HOMING..."
+        controller._update_calibration_progress()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("clear-hitboxes", drawing)
+        self.assertIn("cal.emergency_stop", drawing)
+        self.assertIn("EMERGENCY STOP", drawing)
+
+    def test_calibration_emergency_stop_bypasses_busy_and_touch_feedback(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.calibration_kind = "screws"
+        controller.command_depth = 1
+        controller.mod_update_pending = False
+        controller.touch_feedback_pending = True
+        immediate = []
+        controller._run_immediate_command = immediate.append
+
+        controller._handle_touch_action("cal.emergency_stop")
+
+        self.assertEqual(immediate, ["M112"])
 
     def test_screw_repeat_progress_contains_only_probe_and_done(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -763,8 +898,71 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._show_page = pages.append
         controller._run_calibration(0)
         self.assertEqual(controller.gcode.commands, [
-            "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=245 BED_TEMP=68 CLEAN=0"])
+            "BED_LEVEL_SCREWS_TUNE CLEAN=0"])
         self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+
+    def test_cancelled_calibration_result_does_not_offer_unsafe_repeat(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "screws"
+        controller.calibration_error = None
+        controller.calibration_cancelled = True
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_calibration_result()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("HEATING CANCELLED", drawing)
+        self.assertIn("cal.done", drawing)
+        self.assertNotIn("cal.repeat", drawing)
+
+    def test_cancelled_calibration_heating_is_stopped_by_screen_code(self):
+        class CancelThenRecord:
+            def __init__(self):
+                self.commands = []
+
+            def run_script_from_command(self, command):
+                self.commands.append(command)
+                if len(self.commands) == 1:
+                    raise RuntimeError("Aborted")
+
+        cases = (
+            ("screws", False, "BED_LEVEL_SCREWS_TUNE CLEAN=0", "M104 S0"),
+            ("screws", True,
+             "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=245 BED_TEMP=68 CLEAN=1",
+             "TURN_OFF_HEATERS"),
+            ("mesh", True,
+             "AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=245 BED_TEMP=68 PROFILE=auto",
+             "TURN_OFF_HEATERS"),
+        )
+        for kind, clean, start_command, cleanup_command in cases:
+            with self.subTest(kind=kind, clean=clean):
+                controller = FEATHER.FeatherScreen.__new__(
+                    FEATHER.FeatherScreen)
+                controller.calibration_kind = kind
+                controller.calibration_material = "PETG"
+                controller.calibration_clean_nozzle = clean
+                controller.calibration_repeat_probe = False
+                controller.calibration_cancel_requested = True
+                controller.calibration_cancel_dispatched = True
+                controller.calibration_cancelled = False
+                controller.calibration_error = None
+                controller.gcode = CancelThenRecord()
+                controller._require_idle = lambda: None
+                controller._limited_preheat = lambda material: (245, 68)
+                pages = []
+                controller._show_page = pages.append
+
+                controller._run_calibration(0)
+
+                self.assertEqual(
+                    controller.gcode.commands,
+                    [start_command, cleanup_command])
+                self.assertTrue(controller.calibration_cancelled)
+                self.assertIsNone(controller.calibration_error)
+                self.assertEqual(
+                    pages, [FEATHER.Page.CALIBRATION_RESULT])
 
     def test_screw_repeat_starts_probe_immediately_without_confirm(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

@@ -55,8 +55,10 @@ Recent macro history shows why targeted review matters:
 
 - `CLEAR_NOZZLE` was changed to reset the mesh first, preventing mesh-validation + cleaning from affecting measured Z and potentially scratching hardware.
 - Its cooldown condition was tightened so cooldown occurs only when target is below current extruder temperature.
-- `BED_LEVEL_SCREWS_TUNE` now owns full screw-calibration preparation: it either calls `CLEAR_NOZZLE` or, with `CLEAN=0`, homes and holds the nozzle at `clear_cooldown_temp`, then delegates measurement to `BED_LEVEL_SCREWS_PROBE`.
+- `BED_LEVEL_SCREWS_TUNE` now owns full screw-calibration preparation: it either calls `CLEAR_NOZZLE` or, with `CLEAN=0`, leaves the current bed target untouched, homes, and holds only the nozzle at `clear_cooldown_temp`, then delegates measurement to `BED_LEVEL_SCREWS_PROBE`.
 - `BED_LEVEL_SCREWS_PROBE` intentionally performs only load-cell tare and corner probing. Feather uses it for **Repeat** while the printer remains homed and at calibration temperatures; it must not be exposed as an unguarded general-purpose calibration button.
+- During screw or bed-mesh heating, Feather exposes `cal.cancel.heat` only while `_WAIT_TEMPERATURE.active` is true. It dispatches patched immediate `M108` outside the G-code mutex; `_WAIT_TEMPERATURE_FINAL_CHECK` remains generic and raises before the queued calibration can continue into probing. Feather catches that expected exception and performs workflow-specific cleanup after the dispatcher unwinds: `M104 S0` for screw `CLEAN=0`, preserving the bed target, or `TURN_OFF_HEATERS` for screw cleaning and bed mesh. The result page treats this as cancellation and does not expose the probing-only **Repeat** action.
+- Screw and bed-mesh progress pages always register `cal.emergency_stop`. Touch handling dispatches `M112` before command-depth checks, debounce, or the 80 ms button-feedback callback. `M112` is also part of the patched immediate-command set, so it never waits for the active calibration's G-code mutex.
 - `AUTO_FULL_BED_LEVEL` received a stock/non-stock default-profile correction.
 - Interactive `LOAD_MATERIAL` prompts and KAMP Smart Parking were added nearby.
 

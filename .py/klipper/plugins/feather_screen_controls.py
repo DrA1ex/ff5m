@@ -1063,6 +1063,8 @@ class FeatherControlsMixin:
             self._render_calibration_confirm()
         elif action == "cal.confirm":
             self._start_calibration(repeat_probe=False)
+        elif action == "cal.cancel.heat":
+            self._cancel_calibration_heat()
         elif action == "cal.repeat":
             if self.calibration_kind == "screws":
                 self._start_calibration(repeat_probe=True)
@@ -1093,6 +1095,9 @@ class FeatherControlsMixin:
         self.calibration_results = []
         self.calibration_mesh = []
         self.calibration_error = None
+        self.calibration_cancel_requested = False
+        self.calibration_cancel_dispatched = False
+        self.calibration_cancelled = False
         if self.calibration_kind == "zreset":
             self.print_status_text = "RESETTING Z"
         elif self.calibration_repeat_probe:
@@ -1159,7 +1164,8 @@ class FeatherControlsMixin:
                 state=("enabled" if getattr(
                     self, "calibration_clean_nozzle", True) else "selected"))
             commands.append(self.renderer.text(
-                400, 305, "Nozzle will be held at probe cooldown temperature",
+                400, 305,
+                "Bed temperature stays unchanged; nozzle uses probe cooldown",
                 "56656c", "JetBrainsMono 8pt", "center"))
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START" if kind != "zreset" else "RESET",
@@ -1175,16 +1181,50 @@ class FeatherControlsMixin:
                                            "b47aff", "JetBrainsMono Bold 12pt",
                                            "center"))
         commands += self._calibration_stage_commands(label)
-        if self.calibration_kind == "mesh":
-            commands.append(self.renderer.text(
-                400, 335, "DO NOT POWER OFF // NO SAFE SOFTWARE CANCEL",
-                "f2c94c", "JetBrainsMono 8pt", "center"))
+        cancel_visible = self._calibration_heat_cancel_visible()
+        emergency_visible = self.calibration_kind in ("screws", "mesh")
+        if emergency_visible:
+            commands += self.renderer.button(
+                "cal.emergency_stop", 50, 335, 330, 72,
+                "EMERGENCY STOP", state="danger",
+                font="JetBrainsMono Bold 12pt")
+        if cancel_visible:
+            commands += self.renderer.button(
+                "cal.cancel.heat", 420, 335, 330, 72,
+                "CANCELLING..." if getattr(
+                    self, "calibration_cancel_requested", False)
+                else "CANCEL HEATING",
+                state=("busy" if getattr(
+                    self, "calibration_cancel_requested", False)
+                       else "danger"),
+                font="JetBrainsMono Bold 12pt")
+        elif self.calibration_kind == "mesh":
+            commands += [
+                self.renderer.text(
+                    585, 350, "AFTER HEATING:", "56656c",
+                    "JetBrainsMono 8pt", "center"),
+                self.renderer.text(
+                    585, 380, "NO SAFE SOFTWARE CANCEL", "f2c94c",
+                    "JetBrainsMono 8pt", "center"),
+            ]
         self.renderer.send(commands)
         self._last_calibration_label = label
+        self._last_calibration_cancel_visible = cancel_visible
 
     def _update_calibration_progress(self):
         label = self.print_status_text or "Calibration running..."
-        if label == self._last_calibration_label:
+        cancel_visible = self._calibration_heat_cancel_visible()
+        if (label == self._last_calibration_label
+                and cancel_visible == getattr(
+                    self, "_last_calibration_cancel_visible", False)):
+            return
+        # Phase changes are infrequent.  Rebuild the whole safety screen so
+        # Emergency Stop and its hitbox are guaranteed to be present from the
+        # initial Homing phase onward, regardless of partial status redraws.
+        if (self.calibration_kind in ("screws", "mesh")
+                or cancel_visible != getattr(
+                    self, "_last_calibration_cancel_visible", False)):
+            self._render_calibration_progress()
             return
         self._last_calibration_label = label
         commands = [self.renderer.fill(40, 105, 720, 205, "030607"),
@@ -1193,6 +1233,42 @@ class FeatherControlsMixin:
                                        "center")]
         commands += self._calibration_stage_commands(label)
         self.renderer.send(commands)
+
+    def _calibration_heat_cancel_visible(self):
+        return (
+            self.calibration_kind in ("screws", "mesh")
+            and (self._temperature_wait_active()
+                 or getattr(self, "calibration_cancel_requested", False)))
+
+    def _cancel_calibration_heat(self):
+        if (self.calibration_kind not in ("screws", "mesh")
+                or not self._temperature_wait_active()
+                or getattr(self, "calibration_cancel_requested", False)):
+            return
+        self.calibration_cancel_requested = True
+        self.calibration_cancel_dispatched = True
+        self._render_calibration_progress()
+        try:
+            self._run_immediate_command("M108")
+        except Exception:
+            self.calibration_cancel_requested = False
+            self.calibration_cancel_dispatched = False
+            raise
+
+    def _stop_cancelled_calibration_heating(self):
+        command = (
+            "M104 S0"
+            if (self.calibration_kind == "screws"
+                and not getattr(
+                    self, "calibration_clean_nozzle", True))
+            else "TURN_OFF_HEATERS")
+        try:
+            self._run_script(command)
+        except Exception:
+            # The original cancellation remains the user-visible result.
+            # Cleanup failure is still recorded for diagnostics.
+            logging.exception(
+                "[feather_screen] unable to stop calibration heating")
 
     def _calibration_stage_commands(self, label):
         text = str(label).upper()
@@ -1255,13 +1331,16 @@ class FeatherControlsMixin:
                     if getattr(self, "calibration_repeat_probe", False):
                         command = "BED_LEVEL_SCREWS_PROBE"
                     else:
-                        nozzle, bed = self._limited_preheat(
-                            self.calibration_material)
                         clean = int(getattr(
                             self, "calibration_clean_nozzle", True))
-                        command = (
-                            "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=%.0f "
-                            "BED_TEMP=%.0f CLEAN=%d" % (nozzle, bed, clean))
+                        if clean:
+                            nozzle, bed = self._limited_preheat(
+                                self.calibration_material)
+                            command = (
+                                "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=%.0f "
+                                "BED_TEMP=%.0f CLEAN=1" % (nozzle, bed))
+                        else:
+                            command = "BED_LEVEL_SCREWS_TUNE CLEAN=0"
                 else:
                     nozzle, bed = self._limited_preheat(
                         self.calibration_material)
@@ -1271,8 +1350,16 @@ class FeatherControlsMixin:
                 if self.calibration_kind == "mesh":
                     self.calibration_mesh = self._read_mesh_matrix(eventtime)
         except Exception as exc:
-            logging.exception("[feather_screen] calibration failed")
-            self.calibration_error = str(exc)
+            if (getattr(self, "calibration_cancel_requested", False)
+                    and getattr(
+                        self, "calibration_cancel_dispatched", False)):
+                logging.info("[feather_screen] calibration heating cancelled")
+                self._stop_cancelled_calibration_heating()
+                self.calibration_cancelled = True
+                self.calibration_error = None
+            else:
+                logging.exception("[feather_screen] calibration failed")
+                self.calibration_error = str(exc)
         self._show_page(Page.CALIBRATION_RESULT)
 
     @staticmethod
@@ -1341,6 +1428,15 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(400, 120,
                                                self._shorten(self.calibration_error, 70),
                                                "ff3030", "Roboto 10pt", "center"))
+        elif getattr(self, "calibration_cancelled", False):
+            commands += [
+                self.renderer.text(
+                    400, 145, "HEATING CANCELLED", "f2c94c",
+                    "JetBrainsMono Bold 16pt", "center", "middle"),
+                self.renderer.text(
+                    400, 195, "Calibration was stopped before probing",
+                    "d9e4e8", "JetBrainsMono 8pt", "center", "middle"),
+            ]
         elif self.calibration_kind == "mesh" and self.calibration_mesh:
             matrix = self.calibration_mesh
             values = [cell for row in matrix for cell in row]
@@ -1384,6 +1480,12 @@ class FeatherControlsMixin:
         else:
             commands.append(self.renderer.text(400, 150, "Calibration completed",
                                                "00f0f0", "Roboto Bold 14pt", "center"))
-        commands += self.renderer.button("cal.repeat", 100, 355, 260, 70, "REPEAT")
-        commands += self.renderer.button("cal.done", 440, 355, 260, 70, "DONE")
+        if getattr(self, "calibration_cancelled", False):
+            commands += self.renderer.button(
+                "cal.done", 270, 355, 260, 70, "DONE")
+        else:
+            commands += self.renderer.button(
+                "cal.repeat", 100, 355, 260, 70, "REPEAT")
+            commands += self.renderer.button(
+                "cal.done", 440, 355, 260, 70, "DONE")
         self.renderer.send(commands)

@@ -5,7 +5,7 @@ You can pause and resume printing using the `PAUSE` and `RESUME` macros.
 To cancel a print, use the `CANCEL_PRINT` macro.    
 
 If there is a pending temperature change operation (initiated by the mod only, Klipper's M109 and M190 won't work), you can cancel the wait using the `M108` macro.   
-This cancels any active wait and execute `CANCEL_PRINT` if printing is active.
+This cancels the active wait and executes `CANCEL_PRINT` if printing is active.
 
 For detailed instructions on configuring your slicer, refer to the [Slicing](../docs/SLICING.md) section.
 
@@ -35,8 +35,8 @@ The full calibration workflows are available in the Fluidd/Mainsail main screen 
 - `BED_LEVEL_SCREWS_TUNE`: Adjusts bed leveling screws (calculates adjustments for **nuts under the bed**).   
   ⚠️ **Recalibrate** the bed mesh after making changes.
   - `EXTRUDER_TEMP` nozzle temperature used by `CLEAR_NOZZLE` (default `230`)
-  - `BED_TEMP` temperature of the bed (default `80`)
-  - `CLEAN` runs `CLEAR_NOZZLE` when `1` (default); when `0`, cleaning is skipped, `EXTRUDER_TEMP` is ignored, and the nozzle is heated only to `clear_cooldown_temp` (default `120`)
+  - `BED_TEMP` temperature of the bed used by `CLEAR_NOZZLE` (default `80`)
+  - `CLEAN` runs `CLEAR_NOZZLE` when `1` (default); when `0`, cleaning is skipped, `EXTRUDER_TEMP` and `BED_TEMP` are ignored, the current bed target remains unchanged, and only the nozzle is heated to `clear_cooldown_temp` (default `120`)
 
 - `BED_LEVEL_SCREWS_PROBE`: Repeats only load-cell tare and corner probing after the printer has already been prepared by `BED_LEVEL_SCREWS_TUNE`.
   - Does not select material, clean the nozzle, home, or wait for heating.

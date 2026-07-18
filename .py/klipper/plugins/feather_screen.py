@@ -77,6 +77,7 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_Z: ("nav.back", "z.step.001", "z.step.005", "z.closer",
                          "z.farther", "z.reset", "z.load.toggle"),
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
+    Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.eco.minus",
@@ -212,7 +213,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.calibration_results = []
         self.calibration_mesh = []
         self.calibration_error = None
+        self.calibration_cancel_requested = False
+        self.calibration_cancel_dispatched = False
+        self.calibration_cancelled = False
         self._last_calibration_label = None
+        self._last_calibration_cancel_visible = False
         self._last_filament_heat = None
         self.recovery_action = None
         self.recovery_status = None
@@ -501,6 +506,27 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._update_joystick_feedback(now, force=phase in ("begin", "end"))
 
     def _handle_touch_action(self, action):
+        # Safety actions must not wait for button animation, the normal action
+        # debounce, or an active G-code dispatcher mutex.  In particular, a
+        # calibration redraw during the 80 ms touch animation would change the
+        # hitbox generation and discard M108 before it reached the immediate
+        # G-code handler.
+        if (action == "cal.emergency_stop"
+                and self.page == Page.CALIBRATION_PROGRESS
+                and self.calibration_kind in ("screws", "mesh")):
+            logging.warning(
+                "[feather_screen] emergency stop requested during %s calibration",
+                self.calibration_kind)
+            self._run_immediate_command("M112")
+            return
+        if (action == "cal.cancel.heat"
+                and self.page == Page.CALIBRATION_PROGRESS
+                and self.calibration_kind in ("screws", "mesh")):
+            logging.info(
+                "[feather_screen] immediate heating cancellation requested "
+                "during %s calibration", self.calibration_kind)
+            self._cancel_calibration_heat()
+            return
         if getattr(self, "mod_update_pending", False):
             logging.info("[feather_screen] touch ignored while mod update is active: %s",
                          action)
@@ -535,14 +561,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _finish_touch_action(self, eventtime, action, source_page=None,
                              generation=None):
         current_generation = getattr(self.renderer, "generation", None)
-        if ((source_page is not None and self.page != source_page)
-                or (generation is not None
-                    and current_generation != generation)):
+        if source_page is not None and self.page != source_page:
             self.touch_feedback_pending = False
             return
-        restore = getattr(self.renderer, "restore_button", None)
-        if restore is not None:
-            restore(action)
+        # A redraw of the same page may legitimately occur while the 80 ms
+        # pressed-state flash is visible (status, temperature, or phase
+        # update).  Do not paint the stale button over the new generation, but
+        # never discard the user's action merely because that redraw happened.
+        if generation is None or current_generation == generation:
+            restore = getattr(self.renderer, "restore_button", None)
+            if restore is not None:
+                restore(action)
         # Release the visual-feedback lock before dispatch. G-code is already
         # serialized through run_script(), while generation-tagged hitboxes
         # reject bounce events belonging to a page that has been replaced.
@@ -908,7 +937,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         by then _WAIT_TEMPERATURE had reset its flag and already called
         CANCEL_PRINT, making Feather issue a second cancellation.
         """
-        if command not in ("M108", "FEATHER_ABORT"):
+        if command not in ("M108", "M112", "FEATHER_ABORT"):
             raise ValueError("Unsupported immediate Feather command")
         self.gcode.run_script_from_command(command)
 
@@ -1104,7 +1133,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.page == Page.FILAMENT_ACTION:
             self._update_filament_status(eventtime)
         elif self.page == Page.CALIBRATION_PROGRESS and self.calibration_kind in (
-                "mesh", "recovery"):
+                "screws", "mesh", "recovery"):
             self._update_calibration_progress()
         if self.page == Page.CALIBRATION_Z and self.print_state in (
                 PrintState.PRINTING, PrintState.PAUSED) and not self._z_adjust_allowed(eventtime):

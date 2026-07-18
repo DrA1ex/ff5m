@@ -339,15 +339,49 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertIn(
             "CLEAR_NOZZLE EXTRUDER_TEMP={extruder_temp} BED_TEMP={bed_temp}",
             tune)
+        self.assertNotIn("M140", tune)
         self.assertIn("M104 S{cooldown_t}", tune)
+        self.assertNotIn(
+            "_WAIT_TEMPERATURE CMD=M140 VALUE={bed_temp}", tune)
         self.assertIn(
-            "_WAIT_TEMPERATURE CMD=M104 VALUE={cooldown_t}", tune)
+            "_WAIT_TEMPERATURE CMD=M104 VALUE={cooldown_t} BELOW=2 ABOVE=3",
+            tune)
         self.assertIn("BED_LEVEL_SCREWS_PROBE", tune)
         self.assertIn("LOAD_CELL_TARE", probe)
         self.assertIn("SCREWS_TILT_CALCULATE", probe)
         self.assertNotIn("_WAIT_TEMPERATURE", probe)
         self.assertNotIn("CLEAR_NOZZLE", probe)
         self.assertNotIn("G28", probe)
+
+    def test_cancelled_temperature_wait_only_reports_abort(self):
+        root = pathlib.Path(__file__).parents[1]
+        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
+        final = macros.split(
+            "[gcode_macro _WAIT_TEMPERATURE_FINAL_CHECK]", 1)[1].split(
+                "[gcode_macro _RAISE_WITH_PRINT_CANCEL]", 1)[0]
+        self.assertIn(
+            '"Temperature waiting cancelled." if cancelled', final)
+        self.assertIn("_RAISE_WITH_PRINT_CANCEL", final)
+        self.assertNotIn("TURN_OFF_HEATERS", final)
+        self.assertNotIn("M104 S0", final)
+
+    def test_clear_nozzle_reports_homing_before_g28(self):
+        root = pathlib.Path(__file__).parents[1]
+        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
+        clear_nozzle = macros.split(
+            "[gcode_macro CLEAR_NOZZLE]", 1)[1].split(
+                "[gcode_macro _CLEAR_NOZZLE_PROBE]", 1)[0]
+        homing = clear_nozzle.index('_PRINT_STATUS S="HOMING..."')
+        home = clear_nozzle.index("G28")
+        self.assertLess(homing, home)
+
+    def test_m112_is_an_immediate_gcode_command(self):
+        root = pathlib.Path(__file__).parents[1]
+        gcode = (root / ".py" / "klipper" / "patches" /
+                 "gcode.py").read_text(encoding="utf-8")
+        immediate = gcode.split("immediate_cmds =", 1)[1].split(
+            "immediate_cmds_r", 1)[0]
+        self.assertIn('"M112"', immediate)
 
 
 class MotionHeatSettingsTest(unittest.TestCase):

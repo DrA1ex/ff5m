@@ -12,8 +12,8 @@ This document provides a concise overview of the G-code macros defined in the `b
   - **Description**: Fully prepares the printer and calculates bed screw adjustments. By default, it homes and runs `CLEAR_NOZZLE` at the selected material temperatures before probing.
   - **Parameters**:
     - `EXTRUDER_TEMP` (float, default: 230): Target extruder temperature used by `CLEAR_NOZZLE` (°C).
-    - `BED_TEMP` (float, default: 80): Target bed temperature (°C).
-    - `CLEAN` (int, default: 1): Run `CLEAR_NOZZLE` before probing. With `CLEAN=0`, the macro skips cleaning, ignores `EXTRUDER_TEMP`, homes the printer, and heats the nozzle only to `clear_cooldown_temp` (120°C by default).
+    - `BED_TEMP` (float, default: 80): Target bed temperature used by `CLEAR_NOZZLE` (°C).
+    - `CLEAN` (int, default: 1): Run `CLEAR_NOZZLE` before probing. With `CLEAN=0`, the macro skips cleaning, ignores `EXTRUDER_TEMP` and `BED_TEMP`, leaves the existing bed temperature target unchanged, homes the printer, and heats only the nozzle to `clear_cooldown_temp` (120°C by default).
   - **Defaults**: Clears the active bed mesh, prepares the printer, then calls `BED_LEVEL_SCREWS_PROBE`.
 
 - **BED_LEVEL_SCREWS_PROBE**
@@ -388,7 +388,7 @@ This document provides a concise overview of the G-code macros defined in the `b
   - **Defaults**: Executes command in bash.
 
 - **M108**
-  - **Description**: Cancels a heating wait command specific to the mod.
+  - **Description**: Cancels an active heating wait created by the mod.
   - **Parameters**: None.
   - **Defaults**: Calls original `M108.1`.
 
