@@ -191,6 +191,37 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("PROFILE AUTO", drawing)
         self.assertIn("cal.mesh -p 30 295 -s 740 90", drawing)
 
+    def test_idle_z_offset_page_has_homing_and_bed_points(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.print_stats = StatusObject({"state": "standby"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.125)})
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (0.0, 0.0, 5.0, 0.0),
+        })
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.125, "load_zoffset": 1}})()
+        controller.z_step = 0.01
+        controller.z_session_adjust = 0.0
+
+        controller._render_calibration_z()
+
+        drawing = "\n".join(batches[0])
+        for action in (
+                "z.home", "z.point.front_left", "z.point.front_right",
+                "z.point.center", "z.point.rear_left",
+                "z.point.rear_right"):
+            self.assertIn(action, drawing)
+        self.assertIn("HEAD X+0.0  Y+0.0  Z5.0", drawing)
+        self.assertIn("FRONT L", drawing)
+        self.assertIn("REAR R", drawing)
+
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()

@@ -866,6 +866,84 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
                          ["SET_GCODE_OFFSET Z_ADJUST=+0.050 MOVE=1"])
         self.assertEqual(controller.z_session_adjust, 0.05)
 
+    def test_z_offset_entry_homes_and_centers_when_not_homed(self):
+        controller = base_controller()
+        controller.toolhead = StatusObject({
+            "homed_axes": "", "position": (20.0, 30.0, 0.0, 0.0)})
+        moves = []
+        pages = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+        controller._show_page = pages.append
+
+        controller._handle_calibration_action("cal.z")
+
+        self.assertEqual(moves, [(
+            "G28\n"
+            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE X=0.0 Y=0.0 ABSOLUTE=1 F=6000",
+            "POSITIONING HEAD...")])
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_Z])
+
+    def test_z_offset_entry_centers_only_when_z_is_above_five(self):
+        controller = base_controller()
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (40.0, -30.0, 12.0, 0.0)})
+        moves = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append(command))
+        controller._show_page = lambda page: None
+
+        controller._handle_calibration_action("cal.z")
+
+        self.assertEqual(moves, [
+            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE X=0.0 Y=0.0 ABSOLUTE=1 F=6000"])
+
+    def test_z_offset_entry_keeps_safe_homed_position_unchanged(self):
+        controller = base_controller()
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (40.0, -30.0, 4.5, 0.0)})
+        moves = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append(command))
+        controller._show_page = lambda page: None
+
+        controller._handle_calibration_action("cal.z")
+
+        self.assertEqual(moves, [])
+
+    def test_z_offset_bed_point_lifts_to_five_before_xy_move(self):
+        controller = base_controller()
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (0.0, 0.0, 0.2, 0.0)})
+        moves = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+
+        controller._handle_calibration_action("z.point.rear_right")
+
+        self.assertEqual(moves, [(
+            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
+            "POSITIONING HEAD...")])
+
+    def test_z_offset_reset_is_immediate_and_has_no_result_page(self):
+        controller = base_controller()
+        rendered = []
+        notices = []
+        controller.z_session_adjust = 0.3
+        controller._render_calibration_z = lambda: rendered.append(True)
+        controller._toast = notices.append
+
+        controller._handle_calibration_action("z.reset")
+
+        self.assertEqual(controller.gcode.commands, [
+            "SET_GCODE_OFFSET Z=0\nSET_MOD PARAM=z_offset VALUE=0"])
+        self.assertEqual(controller.z_session_adjust, 0.0)
+        self.assertEqual(rendered, [True])
+        self.assertEqual(notices, ["Z offset reset to 0"])
+
     def test_screw_output_is_collected_only_during_workflow(self):
         controller = base_controller()
         controller.calibration_results = []

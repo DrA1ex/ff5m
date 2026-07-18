@@ -74,8 +74,11 @@ EXACT_ACTIONS = {
     Page.FILAMENT_ACTION: ("nav.back", "filament.load", "filament.unload",
                            "filament.purge", "filament.done", "filament.resume"),
     Page.CALIBRATION_HOME: ("nav.back", "cal.z", "cal.screws", "cal.mesh"),
-    Page.CALIBRATION_Z: ("nav.back", "z.step.001", "z.step.005", "z.closer",
-                         "z.farther", "z.reset", "z.load.toggle"),
+    Page.CALIBRATION_Z: (
+        "nav.back", "z.step.001", "z.step.005", "z.closer", "z.farther",
+        "z.reset", "z.load.toggle", "z.home", "z.point.front_left",
+        "z.point.front_right", "z.point.center", "z.point.rear_left",
+        "z.point.rear_right"),
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
     Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),

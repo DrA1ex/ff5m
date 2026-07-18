@@ -18,6 +18,14 @@ except (ImportError, ValueError):
 
 
 MOVE_CAUTION_Z = 5.0
+Z_OFFSET_TRAVEL_Z = 5.0
+Z_OFFSET_POINTS = (
+    ("z.point.front_left", "FRONT L", -94.0, -94.0),
+    ("z.point.front_right", "FRONT R", 94.0, -94.0),
+    ("z.point.center", "CENTER", 0.0, 0.0),
+    ("z.point.rear_left", "REAR L", -94.0, 94.0),
+    ("z.point.rear_right", "REAR R", 94.0, 94.0),
+)
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
 JOYSTICK_XY_PAD = (30, 96, 420, 266)
 JOYSTICK_XY_CENTER = (240, 229)
@@ -1007,27 +1015,55 @@ class FeatherControlsMixin:
         allowed = not live or self._z_adjust_allowed(now)
         current = self.gcode_move.get_status(now)["homing_origin"][2]
         saved = float(self._setting("z_offset", 0.0))
-        commands = self.renderer.begin_page("First layer Z" if live else "Z offset", back=True)
-        commands.append(self.renderer.text(400, 82, "Current %+.3f mm   Saved %+.3f mm" %
-                                           (current, saved), "ffffff", "Roboto 12pt",
-                                           "center"))
+        commands = self.renderer.begin_page(
+            "First layer Z" if live else "Z offset", back=True)
+        commands.append(self.renderer.text(
+            400, 72, "Current %+.3f mm   Saved %+.3f mm" %
+            (current, saved), "ffffff", "Roboto 12pt", "center"))
         if live:
             commands.append(self.renderer.text(400, 120,
                                                "Session %+.3f / %.2f mm" %
                                                (self.z_session_adjust,
                                                 self.z_adjust_session_limit),
                                                "00f0f0", "Roboto 10pt", "center"))
+            step_y = 150
+            adjust_y = 250
+            adjust_height = 100
+        else:
+            status = self.toolhead.get_status(now)
+            position = status.get("position", (0.0, 0.0, 0.0, 0.0))
+            homed = str(status.get("homed_axes", "")).lower()
+            all_homed = all(axis in homed for axis in "xyz")
+            commands.append(self.renderer.text(
+                400, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
+                (position[0], position[1], position[2]),
+                "35d9e6" if all_homed else "f2c94c",
+                "JetBrainsMono 8pt", "center", "middle"))
+            quick_buttons = [("z.home", "HOME", None, None)]
+            quick_buttons += list(Z_OFFSET_POINTS)
+            for index, point in enumerate(quick_buttons):
+                action, label = point[:2]
+                commands += self.renderer.button(
+                    action, 40 + index * 120, 112, 110, 44, label,
+                    state=("enabled" if all_homed or action == "z.home"
+                           else "disabled"),
+                    font="JetBrainsMono 8pt")
+            step_y = 172
+            adjust_y = 238
+            adjust_height = 90
         for index, step in enumerate((0.01, 0.05)):
             commands += self.renderer.button("z.step.%s" % ("001" if index == 0 else "005"),
-                                             210 + index * 200, 150, 180, 65,
+                                             210 + index * 200, step_y, 180, 52,
                                              "%.2f mm" % step,
                                              state="selected" if step == self.z_step
                                              else "enabled")
         state = "enabled" if allowed else "disabled"
-        commands += self.renderer.button("z.closer", 70, 250, 300, 100, "CLOSER",
-                                         state=state, font="Roboto Bold 16pt")
-        commands += self.renderer.button("z.farther", 430, 250, 300, 100, "FARTHER",
-                                         state=state, font="Roboto Bold 16pt")
+        commands += self.renderer.button(
+            "z.closer", 70, adjust_y, 300, adjust_height, "CLOSER",
+            state=state, font="Roboto Bold 16pt")
+        commands += self.renderer.button(
+            "z.farther", 430, adjust_y, 300, adjust_height, "FARTHER",
+            state=state, font="Roboto Bold 16pt")
         if not live:
             load = bool(self._setting("load_zoffset", 0))
             commands += self.renderer.button("z.load.toggle", 70, 375, 300, 55,
@@ -1041,6 +1077,7 @@ class FeatherControlsMixin:
         if action == "cal.z":
             self._require_idle()
             self.z_session_adjust = 0.0
+            self._prepare_z_offset_head()
             self._show_page(Page.CALIBRATION_Z)
         elif action in ("cal.screws", "cal.mesh"):
             self._require_idle()
@@ -1083,10 +1120,55 @@ class FeatherControlsMixin:
             value = 0 if self._setting("load_zoffset", 0) else 1
             self._run_script("SET_MOD PARAM=load_zoffset VALUE=%d" % value)
             self._render_calibration_z()
+        elif action == "z.home":
+            self._require_idle()
+            self._move_z_offset_head(0.0, 0.0, force_home=True)
+            self._toast("Homed and moved to center")
+        elif action.startswith("z.point."):
+            self._require_idle()
+            point = next(
+                ((x, y, label) for name, label, x, y in Z_OFFSET_POINTS
+                 if name == action), None)
+            if point is None:
+                return
+            self._move_z_offset_head(point[0], point[1])
+            self._toast("%s X%+.0f Y%+.0f" %
+                        (point[2], point[0], point[1]))
         elif action == "z.reset":
             self._require_idle()
-            self.calibration_kind = "zreset"
-            self._show_page(Page.CALIBRATION_CONFIRM)
+            self._run_script(
+                "SET_GCODE_OFFSET Z=0\nSET_MOD PARAM=z_offset VALUE=0")
+            self.z_session_adjust = 0.0
+            self._render_calibration_z()
+            self._toast("Z offset reset to 0")
+
+    def _z_offset_head_state(self):
+        status = self.toolhead.get_status(self.reactor.monotonic())
+        homed = str(status.get("homed_axes", "")).lower()
+        position = status.get("position", (0.0, 0.0, 0.0, 0.0))
+        return all(axis in homed for axis in "xyz"), position
+
+    def _z_offset_move_commands(self, x, y, force_home=False):
+        homed, _position = self._z_offset_head_state()
+        commands = []
+        if force_home or not homed:
+            commands.append("G28")
+        commands += [
+            "MOVE_SAFE Z=%.1f ABSOLUTE=1 F=600" % Z_OFFSET_TRAVEL_Z,
+            "MOVE_SAFE X=%.1f Y=%.1f ABSOLUTE=1 F=6000" % (x, y),
+        ]
+        return "\n".join(commands)
+
+    def _move_z_offset_head(self, x, y, force_home=False):
+        command = self._z_offset_move_commands(x, y, force_home)
+        self._run_blocking_gcode(command, "POSITIONING HEAD...")
+
+    def _prepare_z_offset_head(self):
+        homed, position = self._z_offset_head_state()
+        if homed and float(position[2]) <= Z_OFFSET_TRAVEL_Z:
+            return False
+        self._move_z_offset_head(0.0, 0.0)
+        return True
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()
@@ -1098,9 +1180,7 @@ class FeatherControlsMixin:
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False
         self.calibration_cancelled = False
-        if self.calibration_kind == "zreset":
-            self.print_status_text = "RESETTING Z"
-        elif self.calibration_repeat_probe:
+        if self.calibration_repeat_probe:
             self.print_status_text = "BED SCREWS: PROBING"
         else:
             self.print_status_text = "CALIBRATION: STARTING"
@@ -1134,9 +1214,7 @@ class FeatherControlsMixin:
     def _render_calibration_confirm(self):
         kind = self.calibration_kind
         commands = self.renderer.begin_page("Confirm calibration", back=True)
-        if kind == "zreset":
-            text = "Reset saved and current Z offset to zero?"
-        elif kind == "screws":
+        if kind == "screws":
             text = ("Select material to run CLEAR_NOZZLE before probing, "
                     "or continue without cleaning.")
         else:
@@ -1168,14 +1246,13 @@ class FeatherControlsMixin:
                 "Bed temperature stays unchanged; nozzle uses probe cooldown",
                 "56656c", "JetBrainsMono 8pt", "center"))
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
-                                         "START" if kind != "zreset" else "RESET",
-                                         state="danger" if kind == "zreset" else "enabled",
+                                         "START",
+                                         state="enabled",
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
 
     def _render_calibration_progress(self):
-        label = "Resetting Z..." if self.calibration_kind == "zreset" else (
-            self.print_status_text or "Calibration running...")
+        label = self.print_status_text or "Calibration running..."
         commands = self.renderer.begin_page("Calibration")
         commands.append(self.renderer.text(400, 142, self._shorten(label, 44),
                                            "b47aff", "JetBrainsMono Bold 12pt",
@@ -1325,29 +1402,26 @@ class FeatherControlsMixin:
     def _run_calibration(self, eventtime):
         try:
             self._require_idle()
-            if self.calibration_kind == "zreset":
-                self._run_script(
-                    "SET_GCODE_OFFSET Z=0 MOVE=1\nSET_MOD PARAM=z_offset VALUE=0")
-            else:
-                if self.calibration_kind == "screws":
-                    if getattr(self, "calibration_repeat_probe", False):
-                        command = "BED_LEVEL_SCREWS_PROBE"
-                    else:
-                        clean = int(getattr(
-                            self, "calibration_clean_nozzle", True))
-                        if clean:
-                            nozzle, bed = self._limited_preheat(
-                                self.calibration_material)
-                            command = (
-                                "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=%.0f "
-                                "BED_TEMP=%.0f CLEAN=1" % (nozzle, bed))
-                        else:
-                            command = "BED_LEVEL_SCREWS_TUNE CLEAN=0"
+            if self.calibration_kind == "screws":
+                if getattr(self, "calibration_repeat_probe", False):
+                    command = "BED_LEVEL_SCREWS_PROBE"
                 else:
-                    nozzle, bed = self._limited_preheat(
-                        self.calibration_material)
-                    command = ("AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=%.0f BED_TEMP=%.0f "
-                               "PROFILE=auto" % (nozzle, bed))
+                    clean = int(getattr(
+                        self, "calibration_clean_nozzle", True))
+                    if clean:
+                        nozzle, bed = self._limited_preheat(
+                            self.calibration_material)
+                        command = (
+                            "BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=%.0f "
+                            "BED_TEMP=%.0f CLEAN=1" % (nozzle, bed))
+                    else:
+                        command = "BED_LEVEL_SCREWS_TUNE CLEAN=0"
+                self._run_script(command)
+            else:
+                nozzle, bed = self._limited_preheat(
+                    self.calibration_material)
+                command = ("AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=%.0f BED_TEMP=%.0f "
+                           "PROFILE=auto" % (nozzle, bed))
                 self._run_script(command)
                 if self.calibration_kind == "mesh":
                     self.calibration_mesh = self._read_mesh_matrix(eventtime)

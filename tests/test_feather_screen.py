@@ -270,6 +270,11 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.CONTROL_HOME, "nav.calibration"))
         self.assertTrue(allowed(FEATHER.Page.CALIBRATION_CONFIRM,
                                 "cal.material.PETG"))
+        self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z,
+                                "z.point.front_left"))
+        self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z, "z.home"))
+        self.assertFalse(allowed(FEATHER.Page.CONTROL_MOVE,
+                                 "z.point.front_left"))
         self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))
         self.assertTrue(allowed(FEATHER.Page.SETTINGS, "settings.mod"))
         self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
