@@ -29,6 +29,18 @@ from tests.test_feather_screen import (
 )
 
 
+class BedMeshState(StatusObject):
+    def __init__(self, mesh_object, profile_name):
+        super().__init__({"profile_name": profile_name, "profiles": {}})
+        self.z_mesh = mesh_object
+        self.profile_name = profile_name
+        self.restored = []
+
+    def set_mesh(self, mesh_object):
+        self.z_mesh = mesh_object
+        self.restored.append(mesh_object)
+
+
 class ControllerSafetyTest(unittest.TestCase):
     def test_home_cards_register_navigation_without_icon_font(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -122,7 +134,10 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.FILAMENT_MATERIAL: "_render_filament_material",
             FEATHER.Page.FILAMENT_ACTION: "_render_filament_action",
             FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
-            FEATHER.Page.CALIBRATION_Z: "_render_calibration_z",
+            FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
+            FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
+            FEATHER.Page.Z_OFFSET_BRIEFING: "_render_z_briefing",
+            FEATHER.Page.Z_OFFSET_PAPER: "_render_z_paper",
             FEATHER.Page.LIVE_Z_OFFSET: "_render_live_z_offset",
             FEATHER.Page.CALIBRATION_CONFIRM: "_render_calibration_confirm",
             FEATHER.Page.CALIBRATION_PROGRESS: "_render_calibration_progress",
@@ -192,38 +207,29 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("PROFILE AUTO", drawing)
         self.assertIn("cal.mesh -p 30 295 -s 740 90", drawing)
 
-    def test_idle_z_offset_page_has_homing_and_bed_points(self):
+    def test_z_offset_summary_uses_full_position_names(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.reactor = Reactor()
-        controller.print_state = FEATHER.PrintState.IDLE
-        controller.print_stats = StatusObject({"state": "standby"})
-        controller.gcode_move = StatusObject(
-            {"homing_origin": (0.0, 0.0, 0.125)})
-        controller.toolhead = StatusObject({
-            "homed_axes": "xyz",
-            "position": (0.0, 0.0, 5.0, 0.0),
-        })
-        controller.params = type("Params", (), {
-            "variables": {"z_offset": 0.125, "load_zoffset": 1}})()
-        controller.z_step = 0.01
-        controller.z_session_adjust = 0.0
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.125, None, "adaptive", -0.25, True)
 
-        controller._render_calibration_z()
+        controller._render_z_summary()
 
         drawing = "\n".join(batches[0])
-        for action in (
-                "z.home", "z.point.front_left", "z.point.front_right",
-                "z.point.center", "z.point.rear_left",
-                "z.point.rear_right"):
+        for action, label in (
+                ("z.zone.front_left", "FRONT LEFT"),
+                ("z.zone.front_right", "FRONT RIGHT"),
+                ("z.zone.center", "CENTER"),
+                ("z.zone.rear_left", "REAR LEFT"),
+                ("z.zone.rear_right", "REAR RIGHT")):
             self.assertIn(action, drawing)
-        self.assertIn("HEAD X+0.0  Y+0.0  Z5.0", drawing)
-        self.assertIn('-t "FL"', drawing)
-        self.assertIn('-t "RR"', drawing)
-        self.assertIn("CLOSER  -0.010", drawing)
-        self.assertIn("FARTHER  +0.010", drawing)
+            self.assertIn(label, drawing)
+        self.assertNotIn('-t "FL"', drawing)
+        self.assertNotIn('-t "RR"', drawing)
+        self.assertIn("AUTO LOAD", drawing)
 
     def test_live_z_offset_page_separates_saved_current_and_unsaved(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -411,8 +417,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("stroke -p 335 225 -s 128 38 -c 263238", drawing)
         self.assertEqual(drawing.count("-c b47aff"), 2)
 
-    def test_screw_and_mesh_heating_offer_m108_cancel(self):
-        for kind in ("screws", "mesh"):
+    def test_calibration_heating_offers_m108_cancel_and_emergency_stop(self):
+        for kind in ("screws", "mesh", "z"):
             with self.subTest(kind=kind):
                 controller = FEATHER.FeatherScreen.__new__(
                     FEATHER.FeatherScreen)
@@ -435,6 +441,253 @@ class ControllerSafetyTest(unittest.TestCase):
                 self.assertIn("CANCEL HEATING", drawing)
                 self.assertIn("cal.emergency_stop", drawing)
                 self.assertIn("EMERGENCY STOP", drawing)
+
+    def test_z_preparation_has_clean_and_no_clean_command_paths(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_material = "ABS-PC"
+        controller._limited_preheat = lambda material: (270, 105)
+        controller.params = type("Params", (), {
+            "variables": {"clear_cooldown_temp": 120}})()
+
+        controller.calibration_clean_nozzle = True
+        clean = controller._z_preparation_command()
+        self.assertIn(
+            "CLEAR_NOZZLE EXTRUDER_TEMP=270 BED_TEMP=105", clean)
+        self.assertIn('S="Z OFFSET: TARE"', clean)
+        self.assertIn("LOAD_CELL_TARE", clean)
+        self.assertIn('S="Z OFFSET: READY"', clean)
+
+        controller.calibration_clean_nozzle = False
+        no_clean = controller._z_preparation_command()
+        self.assertIn("M104 S120", no_clean)
+        self.assertIn("G28", no_clean)
+        self.assertIn(
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=120", no_clean)
+        self.assertNotIn("M140", no_clean)
+        self.assertNotIn("CLEAR_NOZZLE", no_clean)
+        self.assertIn("LOAD_CELL_TARE", no_clean)
+
+    def test_z_progress_stages_match_cleaning_choice(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "z"
+        controller.calibration_clean_nozzle = True
+        clean = "\n".join(controller._calibration_stage_commands(
+            "Z OFFSET: TARE"))
+        for stage in ("PREP", "HOME", "HEAT", "CLEAN", "TARE", "READY"):
+            self.assertIn('-t "%s"' % stage, clean)
+
+        controller.calibration_clean_nozzle = False
+        no_clean = "\n".join(controller._calibration_stage_commands(
+            "Z OFFSET: TARE"))
+        self.assertNotIn('-t "CLEAN"', no_clean)
+
+    def test_z_session_captures_runtime_and_exact_mesh_before_clearing(self):
+        mesh_object = object()
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = DeferredReactor()
+        controller.gcode = GCodeRecorder()
+        controller.gcode_move = StatusObject({
+            "homing_origin": (0.0, 0.0, 0.187)})
+        controller.bed_mesh = BedMeshState(mesh_object, "adaptive-run")
+        controller.probe = type("Probe", (), {"z_offset": -0.25})()
+        controller.params = type("Params", (), {
+            "variables": {"load_zoffset": 1}})()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller._require_idle = lambda: None
+        controller._show_page = lambda page: None
+
+        controller._start_z_calibration()
+
+        session = controller.z_calibration
+        self.assertTrue(session.active)
+        self.assertEqual(session.original_runtime_offset, 0.187)
+        self.assertIs(session.original_mesh, mesh_object)
+        self.assertEqual(session.original_mesh_profile, "adaptive-run")
+        self.assertEqual(controller.gcode.commands, [
+            "_SET_GCODE_OFFSET Z=0 MOVE=0", "BED_MESH_CLEAR"])
+        self.assertEqual(len(controller.reactor.callbacks), 1)
+
+    def test_z_session_entry_failure_restores_runtime_and_mesh(self):
+        class FailClear(GCodeRecorder):
+            def run_script_from_command(self, command):
+                super().run_script_from_command(command)
+                if command == "BED_MESH_CLEAR":
+                    raise RuntimeError("clear failed")
+
+        mesh_object = object()
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.gcode = FailClear()
+        controller.gcode_move = StatusObject({
+            "homing_origin": (0.0, 0.0, -0.187)})
+        controller.bed_mesh = BedMeshState(None, "")
+        controller.bed_mesh.z_mesh = mesh_object
+        controller.bed_mesh.status["profile_name"] = "temporary"
+        controller.probe = type("Probe", (), {"z_offset": -0.25})()
+        controller.params = type("Params", (), {
+            "variables": {"load_zoffset": 0}})()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller._require_idle = lambda: None
+
+        with self.assertRaisesRegex(RuntimeError, "clear failed"):
+            controller._start_z_calibration()
+
+        self.assertEqual(controller.gcode.commands, [
+            "_SET_GCODE_OFFSET Z=0 MOVE=0",
+            "BED_MESH_CLEAR",
+            "_SET_GCODE_OFFSET Z=-0.187000 MOVE=0",
+        ])
+        self.assertIs(controller.bed_mesh.z_mesh, mesh_object)
+        self.assertEqual(controller.bed_mesh.profile_name, "temporary")
+        self.assertFalse(controller.z_calibration.active)
+
+    def test_z_normal_exit_restores_absent_named_and_temporary_mesh(self):
+        for original, profile in (
+                (None, ""), (object(), "auto"),
+                (object(), "adaptive-run")):
+            with self.subTest(profile=profile or "absent"):
+                controller = FEATHER.FeatherScreen.__new__(
+                    FEATHER.FeatherScreen)
+                controller.reactor = Reactor()
+                controller.gcode = GCodeRecorder()
+                controller.toolhead = StatusObject({
+                    "homed_axes": "xyz",
+                    "position": (0.0, 0.0, 0.2, 0.0)})
+                controller.bed_mesh = BedMeshState(None, "")
+                controller.z_calibration = FEATHER.ZCalibrationSession()
+                controller.z_calibration.begin(
+                    0.321, original, profile, -0.25, False)
+
+                controller._finish_z_calibration(None)
+
+                command = "\n".join(controller.gcode.commands)
+                self.assertIn(
+                    "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600", command)
+                self.assertIn("TURN_OFF_HEATERS", command)
+                self.assertIn(
+                    "_SET_GCODE_OFFSET Z=+0.321000 MOVE=0", command)
+                self.assertIs(controller.bed_mesh.z_mesh, original)
+                self.assertEqual(controller.bed_mesh.profile_name, profile)
+                self.assertFalse(controller.z_calibration.active)
+
+    def test_z_save_applies_runtime_persists_offset_and_auto_load(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.gcode = GCodeRecorder()
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (0.0, 0.0, 0.2, 0.0)})
+        controller.bed_mesh = BedMeshState(None, "")
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            -0.100, None, "", -0.25, True)
+
+        controller._finish_z_calibration(0.123)
+
+        command = "\n".join(controller.gcode.commands)
+        self.assertIn("_SET_GCODE_OFFSET Z=+0.123000 MOVE=0", command)
+        self.assertIn("SET_MOD PARAM=z_offset VALUE=0.123", command)
+        self.assertIn("SET_MOD PARAM=load_zoffset VALUE=1", command)
+        self.assertIn("TURN_OFF_HEATERS", command)
+
+    def test_z_pressure_dialog_is_suppressed_during_probe_then_rearms(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.page = FEATHER.Page.Z_OFFSET_PAPER
+        controller.weight_sensor = StatusObject({
+            "temperature": 850.0,
+            "measured_min_temp": 0.0,
+            "measured_max_temp": 850.0,
+        })
+        controller.z_weight_gauge = None
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.0, None, "", -0.25, False)
+        rendered = []
+        controller._render_z_paper = lambda: rendered.append(True)
+
+        controller.z_calibration.probing = True
+        self.assertFalse(controller._check_z_pressure(100.0))
+        self.assertIsNone(controller.z_calibration.dialog)
+
+        controller.z_calibration.probing = False
+        self.assertTrue(controller._check_z_pressure(100.0))
+        self.assertEqual(controller.z_calibration.dialog, "pressure")
+        self.assertEqual(rendered, [True])
+        self.assertFalse(controller._check_z_pressure(101.0))
+
+        controller.weight_sensor.status["temperature"] = 599.0
+        self.assertFalse(controller._check_z_pressure(102.0))
+        controller.z_calibration.dialog = None
+        controller.weight_sensor.status["temperature"] = 850.0
+        self.assertTrue(controller._check_z_pressure(103.0))
+
+    def test_z_cancelled_preparation_turns_off_heaters_and_restores_state(self):
+        class AbortPreparation:
+            def __init__(self):
+                self.commands = []
+
+            def run_script_from_command(self, command):
+                self.commands.append(command)
+                if len(self.commands) == 1:
+                    raise RuntimeError("cancelled")
+
+        original_mesh = object()
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.gcode = AbortPreparation()
+        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.shutdown_active = False
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (0.0, 0.0, 1.0, 0.0)})
+        controller.bed_mesh = BedMeshState(None, "")
+        controller.params = type("Params", (), {
+            "variables": {"clear_cooldown_temp": 120}})()
+        controller.calibration_clean_nozzle = False
+        controller.calibration_cancel_requested = True
+        controller.calibration_cancel_dispatched = True
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.111, original_mesh, "adaptive", -0.25, False)
+        controller._require_idle = lambda: None
+        messages = []
+        controller._show_message = (
+            lambda message, page: messages.append((message, page)))
+
+        controller._run_z_calibration_preparation(100.0)
+
+        self.assertEqual(len(controller.gcode.commands), 4)
+        cleanup = "\n".join(controller.gcode.commands[1:])
+        self.assertIn("TURN_OFF_HEATERS", cleanup)
+        self.assertIn("_SET_GCODE_OFFSET Z=+0.111000 MOVE=0", cleanup)
+        self.assertIs(controller.bed_mesh.z_mesh, original_mesh)
+        self.assertEqual(controller.bed_mesh.profile_name, "adaptive")
+        self.assertEqual(messages, [(
+            "Z-offset heating cancelled", FEATHER.Page.CALIBRATION_HOME)])
+
+    def test_z_shutdown_clears_local_session_without_replacing_error_page(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.gcode = FailingGCode()
+        controller.page = FEATHER.Page.ERROR
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.shutdown_active = True
+        controller.calibration_clean_nozzle = False
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.111, object(), "adaptive", -0.25, False)
+        controller._require_idle = lambda: None
+        controller._z_preparation_command = lambda: "FAIL"
+        pages = []
+        controller._show_page = pages.append
+        controller._show_message = (
+            lambda message, page: pages.append((message, page)))
+
+        controller._run_z_calibration_preparation(100.0)
+
+        self.assertFalse(controller.z_calibration.active)
+        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(pages, [])
 
     def test_calibration_heat_cancel_dispatches_immediate_m108_once(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1033,18 +1286,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.toolhead.status["homed_axes"] = "xyz"
         controller.print_state = FEATHER.PrintState.PREPARING
         self.assertFalse(controller._live_z_adjust_allowed(0))
-
-    def test_idle_z_adjust_keeps_session_safety_limit(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.reactor = Reactor()
-        controller.z_session_adjust = 0.0
-        controller.z_adjust_session_limit = 0.5
-        controller.z_offset_limit = 2.0
-        controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0)})
-        controller.gcode = GCodeRecorder()
-        controller.z_session_adjust = 0.49
-        with self.assertRaisesRegex(RuntimeError, "session limit"):
-            controller._apply_z_adjust(0.05)
 
     def test_network_operation_timeout_terminates_helper(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

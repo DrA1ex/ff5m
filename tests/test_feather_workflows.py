@@ -862,32 +862,38 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertIn("printer.gcode_move.homing_origin.z + z_adj", wrapper)
         self.assertNotIn("base_position", wrapper)
 
-    def test_idle_closer_decreases_z_offset_and_updates_session(self):
+    def test_paper_closer_moves_to_smaller_local_z_without_loader(self):
         controller = base_controller()
-        controller.z_session_adjust = 0.0
-        controller.z_adjust_session_limit = 0.5
-        controller.z_offset_limit = 2.0
-        controller.z_step = 0.01
-        controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0.2)})
-        controller._render_calibration_z = lambda: None
-        controller._handle_calibration_action("z.closer")
-        self.assertEqual(controller.gcode.commands,
-                         ["SET_GCODE_OFFSET Z_ADJUST=-0.010 MOVE=1"])
-        self.assertEqual(controller.z_session_adjust, -0.01)
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("center")
+        controller.z_calibration.set_trigger(-0.5)
+        controller.z_calibration.step = 0.010
+        controller._render_z_paper = lambda: None
+        blocking = []
+        controller._run_blocking_gcode = (
+            lambda command, message: blocking.append((command, message)))
 
-    def test_idle_farther_increases_z_offset(self):
+        controller._handle_calibration_action("z.closer")
+
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE Z=-0.010000 ABSOLUTE=1 F=300"])
+        self.assertAlmostEqual(controller.z_calibration.local_z, 0.49)
+        self.assertEqual(blocking, [])
+
+    def test_paper_farther_moves_to_larger_local_z(self):
         controller = base_controller()
-        controller.z_session_adjust = 0.0
-        controller.z_adjust_session_limit = 0.5
-        controller.z_offset_limit = 2.0
-        controller.z_step = 0.05
-        controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0.2)})
-        controller._render_calibration_z = lambda: None
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("center")
+        controller.z_calibration.set_trigger(-0.5)
+        controller.z_calibration.step = 0.050
+        controller._render_z_paper = lambda: None
 
         controller._handle_calibration_action("z.farther")
 
         self.assertEqual(controller.gcode.commands,
-                         ["SET_GCODE_OFFSET Z_ADJUST=+0.050 MOVE=1"])
+                         ["MOVE_SAFE Z=0.050000 ABSOLUTE=1 F=300"])
 
     def test_live_z_adjust_uses_original_macro_without_saving(self):
         controller = base_controller("printing")
@@ -958,83 +964,119 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "SET_MOD PARAM=load_zoffset VALUE=1"])
         self.assertIsNone(controller.live_z_dialog)
 
-    def test_z_offset_entry_homes_and_centers_when_not_homed(self):
+    def test_z_offset_entry_opens_preparation_without_moving_or_live_change(self):
         controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
         controller.toolhead = StatusObject({
             "homed_axes": "", "position": (20.0, 30.0, 0.0, 0.0)})
-        moves = []
         pages = []
-        controller._run_blocking_gcode = (
-            lambda command, message: moves.append((command, message)))
         controller._show_page = pages.append
+        controller._current_material = lambda: "ABS-PC"
 
         controller._handle_calibration_action("cal.z")
 
-        self.assertEqual(moves, [(
-            "G28\n"
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
-            "MOVE_SAFE X=0.0 Y=0.0 ABSOLUTE=1 F=6000",
-            "POSITIONING HEAD...")])
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_Z])
-
-    def test_z_offset_entry_centers_only_when_z_is_above_five(self):
-        controller = base_controller()
-        controller.toolhead = StatusObject({
-            "homed_axes": "xyz", "position": (40.0, -30.0, 12.0, 0.0)})
-        moves = []
-        controller._run_blocking_gcode = (
-            lambda command, message: moves.append(command))
-        controller._show_page = lambda page: None
-
-        controller._handle_calibration_action("cal.z")
-
-        self.assertEqual(moves, [
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
-            "MOVE_SAFE X=0.0 Y=0.0 ABSOLUTE=1 F=6000"])
-
-    def test_z_offset_entry_keeps_safe_homed_position_unchanged(self):
-        controller = base_controller()
-        controller.toolhead = StatusObject({
-            "homed_axes": "xyz", "position": (40.0, -30.0, 4.5, 0.0)})
-        moves = []
-        controller._run_blocking_gcode = (
-            lambda command, message: moves.append(command))
-        controller._show_page = lambda page: None
-
-        controller._handle_calibration_action("cal.z")
-
-        self.assertEqual(moves, [])
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(controller.calibration_material, "ABS-PC")
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_CONFIRM])
+        self.assertFalse(controller.z_calibration.active)
 
     def test_z_offset_bed_point_lifts_to_five_before_xy_move(self):
         controller = base_controller()
-        controller.toolhead = StatusObject({
-            "homed_axes": "xyz", "position": (0.0, 0.0, 0.2, 0.0)})
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.prepared = True
+        controller.z_calibration.briefing_seen = True
         moves = []
         controller._run_blocking_gcode = (
             lambda command, message: moves.append((command, message)))
+        pages = []
+        controller._show_page = pages.append
 
-        controller._handle_calibration_action("z.point.rear_right")
+        controller._handle_calibration_action("z.zone.rear_right")
 
         self.assertEqual(moves, [(
             "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
             "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
             "POSITIONING HEAD...")])
+        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER])
 
-    def test_z_offset_reset_is_immediate_and_has_no_result_page(self):
+    def test_z_offset_briefing_is_shown_only_before_first_zone(self):
         controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        pages = []
+        moves = []
+        controller._show_page = pages.append
+        controller._move_z_offset_head = (
+            lambda x, y: moves.append((x, y)))
+
+        controller._handle_calibration_action("z.zone.front_left")
+        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_BRIEFING])
+        self.assertEqual(moves, [])
+
+        controller._handle_calibration_action("z.briefing.continue")
+        self.assertEqual(moves, [(-94.0, -94.0)])
+        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER)
+
+        controller._handle_calibration_action("z.zone.center")
+        self.assertEqual(moves[-1], (0.0, 0.0))
+        self.assertEqual(pages.count(FEATHER.Page.Z_OFFSET_BRIEFING), 1)
+
+    def test_z_offset_reset_moves_to_zero_candidate_position(self):
+        controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("front_left")
+        controller.z_calibration.set_trigger(-0.5)
         rendered = []
-        notices = []
-        controller.z_session_adjust = 0.3
-        controller._render_calibration_z = lambda: rendered.append(True)
-        controller._toast = notices.append
+        controller._render_z_paper = lambda: rendered.append(True)
 
         controller._handle_calibration_action("z.reset")
 
         self.assertEqual(controller.gcode.commands, [
-            "SET_GCODE_OFFSET Z=0\nSET_MOD PARAM=z_offset VALUE=0"])
-        self.assertEqual(controller.z_session_adjust, 0.0)
+            "MOVE_SAFE Z=-0.250000 ABSOLUTE=1 F=300"])
+        self.assertEqual(controller.z_calibration.candidate, 0.0)
         self.assertEqual(rendered, [True])
-        self.assertEqual(notices, ["Z offset reset to 0"])
+
+    def test_probe_uses_two_samples_records_trigger_and_retracts_half_mm(self):
+        controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("front_right")
+        controller.probe = StatusObject({"last_z_result": -0.625})
+        controller._render_z_paper = lambda: None
+        controller._check_z_pressure = lambda eventtime: False
+        probing = []
+        controller._run_blocking_gcode = (
+            lambda command, message: probing.append((command, message)))
+
+        controller._probe_z_zone()
+
+        self.assertEqual(probing, [("PROBE SAMPLES=2", "PROBING...")])
+        self.assertEqual(controller.gcode.commands, [
+            "MOVE_SAFE Z=-0.125000 ABSOLUTE=1 F=300"])
+        self.assertAlmostEqual(controller.z_calibration.trigger_z, -0.625)
+        self.assertAlmostEqual(controller.z_calibration.local_z, 0.5)
+        self.assertAlmostEqual(controller.z_calibration.candidate, 0.25)
+
+    def test_paper_step_uses_no_loader_or_busy_notice(self):
+        controller = base_controller()
+        notices = []
+        controller.renderer = type("Renderer", (), {
+            "busy_notice": lambda self, label: notices.append(label),
+            "clear_busy_notice": lambda self: notices.append("clear"),
+        })()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.choose_zone("center")
+        controller.z_calibration.set_trigger(-0.5)
+        controller._render_z_paper = lambda: None
+
+        controller._move_z_paper(-0.005)
+
+        self.assertEqual(notices, [])
+        self.assertEqual(controller.gcode.commands, [
+            "MOVE_SAFE Z=-0.005000 ABSOLUTE=1 F=300"])
 
     def test_screw_output_is_collected_only_during_workflow(self):
         controller = base_controller()

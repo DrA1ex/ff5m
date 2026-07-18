@@ -27,6 +27,8 @@ try:
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS, JOYSTICK_Z_CURSOR_BOUNDS,
         JOYSTICK_Z_HITBOX, JOYSTICK_STATUS_PANEL, JOYSTICK_POSITION_CARD,
         JOYSTICK_INERTIA_CARD, JOYSTICK_KNOB_SIZE, JOYSTICK_DIRTY_MARGIN)
+    from .feather_z_calibration import (
+        FeatherZCalibrationMixin, ZCalibrationSession)
 except (ImportError, ValueError):
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -44,6 +46,8 @@ except (ImportError, ValueError):
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS, JOYSTICK_Z_CURSOR_BOUNDS,
         JOYSTICK_Z_HITBOX, JOYSTICK_STATUS_PANEL, JOYSTICK_POSITION_CARD,
         JOYSTICK_INERTIA_CARD, JOYSTICK_KNOB_SIZE, JOYSTICK_DIRTY_MARGIN)
+    from feather_z_calibration import (
+        FeatherZCalibrationMixin, ZCalibrationSession)
 
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
@@ -74,11 +78,15 @@ EXACT_ACTIONS = {
     Page.FILAMENT_ACTION: ("nav.back", "filament.load", "filament.unload",
                            "filament.purge", "filament.done", "filament.resume"),
     Page.CALIBRATION_HOME: ("nav.back", "cal.z", "cal.screws", "cal.mesh"),
-    Page.CALIBRATION_Z: (
-        "nav.back", "z.step.001", "z.step.005", "z.closer", "z.farther",
-        "z.reset", "z.load.toggle", "z.home", "z.point.front_left",
-        "z.point.front_right", "z.point.center", "z.point.rear_left",
-        "z.point.rear_right"),
+    Page.CALIBRATION_Z: ("nav.back",),
+    Page.Z_OFFSET_SUMMARY: (
+        "nav.back", "z.selection.next", "z.load.toggle", "z.save",
+        "z.discard.cancel", "z.discard.confirm"),
+    Page.Z_OFFSET_BRIEFING: ("nav.back", "z.briefing.continue"),
+    Page.Z_OFFSET_PAPER: (
+        "nav.back", "z.probe", "z.step.5", "z.step.10", "z.step.25",
+        "z.step.50", "z.closer", "z.farther", "z.reset", "z.accept",
+        "z.pressure.ok"),
     Page.LIVE_Z_OFFSET: (
         "nav.back", "live_z.step.0005", "live_z.step.001",
         "live_z.step.005", "live_z.closer", "live_z.farther",
@@ -109,7 +117,8 @@ EXACT_ACTIONS = {
 }
 
 
-class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
+class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
+                    FeatherZCalibrationMixin):
     def __init__(self, config):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
@@ -117,8 +126,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.debug = config.getboolean("debug", False)
         self.dim_timeout = config.getfloat("dim_timeout", 60.0, minval=10.0)
         self.z_offset_limit = config.getfloat("z_offset_limit", 2.0, minval=0.1)
-        self.z_adjust_session_limit = config.getfloat(
-            "z_adjust_session_limit", 0.5, minval=0.05)
+        # Parse the retired option so existing user configs keep loading. The
+        # guided paper test relies only on the configured hardware axis limits.
+        config.getfloat("z_adjust_session_limit", 0.5, minval=0.05)
         self.z_adjust_warning_threshold = config.getfloat(
             "z_adjust_warning_threshold", 0.3, minval=0.05)
         self.preheat = {}
@@ -181,13 +191,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.joystick_feedback_at = 0.0
         self.move_caution_acknowledged = False
         self.move_caution_signature = None
-        self.z_step = 0.01
-        self.z_session_adjust = 0.0
         self.live_z_step = 0.01
         self.live_z_dialog = None
         self.live_z_limit_warned = False
         self.weight_sensor = None
         self.z_weight_gauge = None
+        self.z_calibration = ZCalibrationSession()
 
         self.mod_page = 0
         self.mod_parameter = None
@@ -363,6 +372,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.start_print_macro = self.printer.lookup_object(
             "gcode_macro _START_PRINT", None)
         self.bed_mesh = self.printer.lookup_object("bed_mesh", None)
+        self.probe = self.printer.lookup_object("probe")
         self.weight_sensor = self.printer.lookup_object(
             "temperature_sensor weightValue", None)
         self.fan = self.printer.lookup_object("fan", None)
@@ -392,6 +402,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         # invoke_shutdown() calls this synchronously. Stop every producer and
         # discard its queued output before submitting the one final screen.
         self.shutdown_active = True
+        if getattr(self, "z_calibration", None) is not None:
+            self.z_calibration.clear()
         self._deactivate_components()
         if self.renderer.active:
             self.renderer.discard_pending_output()
@@ -581,7 +593,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         # G-code handler.
         if (action == "cal.emergency_stop"
                 and self.page == Page.CALIBRATION_PROGRESS
-                and self.calibration_kind in ("screws", "mesh")):
+                and self.calibration_kind in ("screws", "mesh", "z")):
             logging.warning(
                 "[feather_screen] emergency stop requested during %s calibration",
                 self.calibration_kind)
@@ -589,7 +601,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             return
         if (action == "cal.cancel.heat"
                 and self.page == Page.CALIBRATION_PROGRESS
-                and self.calibration_kind in ("screws", "mesh")):
+                and self.calibration_kind in ("screws", "mesh", "z")):
             logging.info(
                 "[feather_screen] immediate heating cancellation requested "
                 "during %s calibration", self.calibration_kind)
@@ -778,6 +790,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 or (page == Page.CONTROL_HEAT and action.startswith("heat."))
                 or (page == Page.CALIBRATION_CONFIRM and
                     action.startswith("cal.material."))
+                or (page == Page.Z_OFFSET_SUMMARY and
+                    action.startswith("z.zone."))
                 or (page == Page.MOD_SETTINGS and action.startswith("mod.item."))
                 or (page == Page.MOD_ENUM and action.startswith("mod.option."))
                 or (page == Page.MOD_VALUE and action.startswith("mod.key."))
@@ -821,7 +835,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif page == Page.CALIBRATION_HOME:
             self._render_calibration_home()
         elif page == Page.CALIBRATION_Z:
-            self._render_calibration_z()
+            self._render_z_summary()
+        elif page == Page.Z_OFFSET_SUMMARY:
+            self._render_z_summary()
+        elif page == Page.Z_OFFSET_BRIEFING:
+            self._render_z_briefing()
+        elif page == Page.Z_OFFSET_PAPER:
+            self._render_z_paper()
         elif page == Page.LIVE_Z_OFFSET:
             self._render_live_z_offset()
         elif page == Page.CALIBRATION_CONFIRM:
@@ -886,8 +906,19 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self, "mod_return_page", Page.MOD_SETTINGS))
         elif self.page == Page.FILAMENT_ACTION:
             self._finish_filament(False)
-        elif self.page == Page.CALIBRATION_Z:
-            self._show_page(Page.CALIBRATION_HOME)
+        elif self.page in (Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY):
+            if self.z_calibration.results:
+                self.z_calibration.dialog = "discard"
+                self._render_z_summary()
+            else:
+                self._cancel_z_calibration()
+        elif self.page == Page.Z_OFFSET_BRIEFING:
+            self._show_page(Page.Z_OFFSET_SUMMARY)
+        elif self.page == Page.Z_OFFSET_PAPER:
+            self.z_calibration.dialog = None
+            self._run_blocking_gcode(
+                "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600", "LIFTING Z...")
+            self._show_page(Page.Z_OFFSET_SUMMARY)
         elif self.page == Page.LIVE_Z_OFFSET:
             self.live_z_dialog = None
             self._show_page(self.page_for_print_state())
@@ -968,7 +999,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         return bool(wait is not None and
                     getattr(wait, "variables", {}).get("cancel", False))
 
-    def _run_script(self, command):
+    def _run_script(self, command, show_notice=True):
         """Serialize Feather G-code through Klipper's reactor mutex.
 
         run_script_from_command() bypasses the mutex and may recursively enter
@@ -987,7 +1018,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             page = getattr(self, "page", "UNKNOWN")
             logging.info("[feather_screen] command start name=%s page=%s",
                          command_name, getattr(page, "name", page))
-            if renderer is not None:
+            if renderer is not None and show_notice:
                 notice = getattr(renderer, "busy_notice", None)
                 if notice is not None:
                     notice("KLIPPER BUSY")
@@ -1003,7 +1034,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             if outermost:
                 logging.info("[feather_screen] command finish name=%s elapsed=%.3fs",
                              command_name, clock() - started)
-                if renderer is not None:
+                if renderer is not None and show_notice:
                     clear = getattr(renderer, "clear_busy_notice", None)
                     if clear is not None:
                         clear()
@@ -1199,12 +1230,16 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._update_heat_status(eventtime)
         elif self.page == Page.FILAMENT_ACTION:
             self._update_filament_status(eventtime)
-        elif self.page in (Page.CALIBRATION_Z, Page.LIVE_Z_OFFSET):
+        elif self.page in (
+                Page.CALIBRATION_Z, Page.Z_OFFSET_PAPER,
+                Page.LIVE_Z_OFFSET):
             if not (self.page == Page.LIVE_Z_OFFSET
-                    and self.live_z_dialog is not None):
+                    and self.live_z_dialog is not None) and not (
+                    self.page == Page.Z_OFFSET_PAPER
+                    and self.z_calibration.dialog is not None):
                 self._update_z_weight_status(eventtime)
         elif self.page == Page.CALIBRATION_PROGRESS and self.calibration_kind in (
-                "screws", "mesh", "recovery"):
+                "screws", "mesh", "z", "recovery"):
             self._update_calibration_progress()
         if self.filament_sensor is not None:
             sensor = self.filament_sensor.get_status(eventtime)

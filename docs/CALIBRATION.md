@@ -222,37 +222,44 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
 
 
 ## Z-Offset Calibration
-Calibrate Z-offset to ensure proper first-layer adhesion. For STOCK screen, Z-offset is managed via the firmware’s screen and auto-saved/loaded. For Feather/Headless/Guppy screen, use the following steps with Fluidd/Mainsail.
+Calibrate Z-offset only while the printer is idle. The Stock screen retains its normal firmware workflow. Feather provides a guided multi-position paper test; Headless and Guppy users can continue using Fluidd/Mainsail.
 
-1. **Verify Z-Offset**:
-   - Print a 200x200x0.2 mm single-layer square (create in slicer, export G-code, print via Fluidd/Mainsail).
-   - Compare to online reference images (e.g., Klipper documentation or 3D printing forums). If first-layer quality is good, no adjustment needed.
-2. **Adjust Z-Offset**:
-   - If lines are too squished, increase Z-offset to move the bed farther from the nozzle.
-   - If lines are too loose, decrease Z-offset to raise the bed closer to the nozzle.
-3. **Test Smaller Model**:
-   - Print a 50x50x0.2 mm single-layer square.
-   - Check first-layer quality and adjust Z-offset again if needed.
-4. **Repeat**:
-   - Repeat steps 2-3 until first-layer quality is satisfactory.
-5. **Save Z-Offset**:
-   - Apply and save Z-offset:
-     ```
-     SET_GCODE_OFFSET Z=<value>
-     ```
-     - E.g., `SET_GCODE_OFFSET Z=-0.2` for -0.2 mm.
-6. **Enable Auto-Load**:
-   - Enable automatic Z-offset loading:
-     ```
-     SET_MOD PARAM="load_zoffset" VALUE=1
-     ```
-   - This ensures Z-offset is loaded before prints and after reboots, similar to STOCK screen behavior.
-7. **Optional**: For nozzle cleaning, enable `load_zoffset_cleaning` it may prevent bed scratches if the default (0.0) offset is too low for your setup:
+### Feather guided paper test
+
+1. Open **Control → Calibration → Z Offset**.
+2. Select PLA, PETG, ABS, or ABS-PC and press **Start**. Feather heats, cleans, homes, lifts Z, and tares the load cells. Select **Without cleaning** to leave the bed temperature completely unchanged and prepare only the nozzle at `clear_cooldown_temp`.
+3. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
+4. Select **Front Left**, **Front Right**, **Center**, **Rear Left**, or **Rear Right**. Feather shows the paper-test briefing once per session.
+5. Press the large **Probe** button. After the two-sample probe completes and the bed retracts, insert normal printer paper under the clean nozzle.
+6. Select a step of 0.005, 0.010, 0.025, or 0.050 mm:
+   - **Closer** increases paper drag.
+   - **Farther** decreases paper drag.
+   - **Reset to 0.000** physically moves to the position represented by a zero candidate.
+7. When the paper has consistent light drag, press **Accept Zone**. Measure any other positions you want; measuring a position again replaces its earlier result.
+8. On the results screen:
+   - one measured position is selected automatically;
+   - with several positions, their average is selected by default;
+   - tap the selected-result control to cycle between the average and individual positions;
+   - a spread above 0.025 mm displays a warning but does not prevent saving.
+9. Set **Auto Load** to the desired state and press **Save Selected Z Offset**. Back asks for confirmation before discarding measured results.
+
+The right-side load indicator turns red above 400 g. During manual paper movement Feather warns above 800 g; move **Farther** and inspect the paper/nozzle before continuing.
+
+### First-layer verification
+
+Print a 50×50×0.2 mm single-layer square after saving. Use the separate **Live Z Offset** page during a print only for a small visual correction, then save it deliberately. The guided idle calibration never changes the live-print adjustment while a job is active.
+
+For Fluidd/Mainsail-only operation, save a chosen value with `SET_GCODE_OFFSET Z=<value>` and enable startup loading with:
+
+```gcode
+SET_MOD PARAM="load_zoffset" VALUE=1
+```
+
+**Optional**: For nozzle cleaning, enable `load_zoffset_cleaning`; it may prevent bed scratches if the default (0.0) offset is too low for your setup:
    ```
    SET_MOD PARAM="load_zoffset_cleaning" VALUE=1
    ```
-   - After cleaning with Z-Offset, ensure the nozzle is thoroughly clean - residual material may affect subsequent bed meshing   
-8. **Verify**: Print another 50x50x0.2 mm square to confirm.
+After cleaning with Z-offset, ensure the nozzle is thoroughly clean because residual material affects subsequent probing and bed meshing.
 
 ---
 

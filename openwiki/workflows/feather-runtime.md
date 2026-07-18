@@ -109,7 +109,8 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 |---|---|---|
 | `feather_screen.py` | Klipper lifecycle, UI state machine, safety gates, reactor timers/fds, G-code/macro dispatch, shared status/error handling | Page-specific rendering or a separate motion process |
 | `feather_screen_pages.py` | Dashboard, files, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, motion planning, and direct display access |
-| `feather_screen_controls.py` | Move, heat, filament, Z, screws, and mesh workflows | Network child processes and renderer lifecycle |
+| `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
+| `feather_z_calibration.py` | Idle Z-calibration state, formula, zone aggregation, pressure hysteresis, pages, motion, and exact mesh/runtime restoration | Live-print Z adjustment or unrestricted G-code |
 | `feather_ui.py` | Layout primitives, frame construction, FIFO and Typer child lifecycle, generation-tagged hitboxes | Klipper state decisions and printer commands |
 | `feather_joystick.py` | Touch normalization, ramps/braking, bounded motion queue planning | Rendering or direct touch-fd I/O |
 | `feather_mod_settings.py` | Mod-settings editor helpers | Persistence side effects |

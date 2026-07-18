@@ -12,21 +12,15 @@ try:
     from .feather_ui import Page, PrintState
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
+    from .feather_z_calibration import PAPER_STEPS
 except (ImportError, ValueError):
     from feather_ui import Page, PrintState
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
+    from feather_z_calibration import PAPER_STEPS
 
 
 MOVE_CAUTION_Z = 5.0
-Z_OFFSET_TRAVEL_Z = 5.0
-Z_OFFSET_POINTS = (
-    ("z.point.front_left", "FL", -94.0, -94.0),
-    ("z.point.front_right", "FR", 94.0, -94.0),
-    ("z.point.center", "CTR", 0.0, 0.0),
-    ("z.point.rear_left", "RL", -94.0, 94.0),
-    ("z.point.rear_right", "RR", 94.0, 94.0),
-)
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
 Z_WEIGHT_DANGER = 400.0
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
@@ -1012,57 +1006,6 @@ class FeatherControlsMixin:
             "JetBrainsMono 8pt", "center"))
         self.renderer.send(commands)
 
-    def _render_calibration_z(self):
-        now = self.reactor.monotonic()
-        current = self.gcode_move.get_status(now)["homing_origin"][2]
-        saved = float(self._setting("z_offset", 0.0))
-        commands = self.renderer.begin_page("Z offset", back=True)
-        commands.append(self.renderer.text(
-            355, 72, "Current %+.3f mm   Saved %+.3f mm" %
-            (current, saved), "ffffff", "Roboto 12pt", "center"))
-        status = self.toolhead.get_status(now)
-        position = status.get("position", (0.0, 0.0, 0.0, 0.0))
-        homed = str(status.get("homed_axes", "")).lower()
-        all_homed = all(axis in homed for axis in "xyz")
-        commands.append(self.renderer.text(
-            355, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
-            (position[0], position[1], position[2]),
-            "35d9e6" if all_homed else "f2c94c",
-            "JetBrainsMono 8pt", "center", "middle"))
-        quick_buttons = [("z.home", "HOME", None, None)]
-        quick_buttons += list(Z_OFFSET_POINTS)
-        for index, point in enumerate(quick_buttons):
-            action, label = point[:2]
-            commands += self.renderer.button(
-                action, 20 + index * 112, 112, 104, 44, label,
-                state=("enabled" if all_homed or action == "z.home"
-                       else "disabled"),
-                font="JetBrainsMono 8pt")
-        step_y = 172
-        adjust_y = 238
-        adjust_height = 90
-        for index, step in enumerate((0.01, 0.05)):
-            commands += self.renderer.button(
-                "z.step.%s" % ("001" if index == 0 else "005"),
-                165 + index * 200, step_y, 180, 52, "%.2f mm" % step,
-                state="selected" if step == self.z_step else "enabled")
-        commands += self.renderer.button(
-            "z.closer", 20, adjust_y, 325, adjust_height,
-            "CLOSER  -%.3f" % self.z_step,
-            state="enabled", font="JetBrainsMono Bold 12pt")
-        commands += self.renderer.button(
-            "z.farther", 365, adjust_y, 325, adjust_height,
-            "FARTHER  +%.3f" % self.z_step,
-            state="enabled", font="JetBrainsMono Bold 12pt")
-        load = bool(self._setting("load_zoffset", 0))
-        commands += self.renderer.button("z.load.toggle", 20, 375, 325, 55,
-                                         "LOAD SAVED: %s" % ("ON" if load else "OFF"),
-                                         state="selected" if load else "enabled")
-        commands += self.renderer.button("z.reset", 365, 375, 325, 55,
-                                         "RESET", state="danger")
-        commands += self._z_weight_gauge_commands(now)
-        self.renderer.send(commands)
-
     def _render_live_z_offset(self):
         now = self.reactor.monotonic()
         current = float(
@@ -1174,16 +1117,18 @@ class FeatherControlsMixin:
     def _handle_calibration_action(self, action):
         if action == "cal.z":
             self._require_idle()
-            self.z_session_adjust = 0.0
-            self._prepare_z_offset_head()
-            self._begin_z_weight_gauge()
-            self._show_page(Page.CALIBRATION_Z)
+            self.calibration_kind = "z"
+            current_material = self._current_material()
+            self.calibration_material = (
+                current_material if current_material in PREHEAT else "PLA")
+            self.calibration_clean_nozzle = True
+            self._show_page(Page.CALIBRATION_CONFIRM)
         elif action in ("cal.screws", "cal.mesh"):
             self._require_idle()
             self.calibration_kind = action.split(".", 1)[1]
             current_material = self._current_material()
             self.calibration_material = (
-                current_material if current_material in ("PLA", "PETG", "ABS")
+                current_material if current_material in PREHEAT
                 else "PLA")
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
@@ -1198,7 +1143,10 @@ class FeatherControlsMixin:
             self.calibration_repeat_probe = False
             self._render_calibration_confirm()
         elif action == "cal.confirm":
-            self._start_calibration(repeat_probe=False)
+            if self.calibration_kind == "z":
+                self._start_z_calibration()
+            else:
+                self._start_calibration(repeat_probe=False)
         elif action == "cal.cancel.heat":
             self._cancel_calibration_heat()
         elif action == "cal.repeat":
@@ -1210,65 +1158,45 @@ class FeatherControlsMixin:
         elif action == "cal.done":
             self._show_page(Page.CALIBRATION_HOME)
         elif action.startswith("z.step."):
-            self.z_step = 0.01 if action.endswith("001") else 0.05
-            self._render_calibration_z()
+            steps = dict(("z.step.%s" %
+                          (("%04d" % round(step * 1000)).lstrip("0")),
+                          step) for step in PAPER_STEPS)
+            if action in steps:
+                self.z_calibration.step = steps[action]
+                self._render_z_paper()
         elif action in ("z.closer", "z.farther"):
-            self._apply_z_adjust(
-                -self.z_step if action == "z.closer" else self.z_step)
+            delta = (-self.z_calibration.step
+                     if action == "z.closer"
+                     else self.z_calibration.step)
+            self._move_z_paper(delta)
         elif action == "z.load.toggle":
-            self._require_idle()
-            value = 0 if self._setting("load_zoffset", 0) else 1
-            self._run_script("SET_MOD PARAM=load_zoffset VALUE=%d" % value)
-            self._render_calibration_z()
-        elif action == "z.home":
-            self._require_idle()
-            self._move_z_offset_head(0.0, 0.0, force_home=True)
-            self._toast("Homed and moved to center")
-        elif action.startswith("z.point."):
-            self._require_idle()
-            point = next(
-                ((x, y, label) for name, label, x, y in Z_OFFSET_POINTS
-                 if name == action), None)
-            if point is None:
-                return
-            self._move_z_offset_head(point[0], point[1])
-            self._toast("%s X%+.0f Y%+.0f" %
-                        (point[2], point[0], point[1]))
+            self.z_calibration.load_zoffset = (
+                not self.z_calibration.load_zoffset)
+            self._render_z_summary()
+        elif action.startswith("z.zone."):
+            self._choose_z_zone(action.rsplit(".", 1)[1])
+        elif action == "z.briefing.continue":
+            self.z_calibration.briefing_seen = True
+            self._enter_z_zone()
+        elif action == "z.probe":
+            self._probe_z_zone()
         elif action == "z.reset":
-            self._require_idle()
-            self._run_script(
-                "SET_GCODE_OFFSET Z=0\nSET_MOD PARAM=z_offset VALUE=0")
-            self.z_session_adjust = 0.0
-            self._render_calibration_z()
-            self._toast("Z offset reset to 0")
-
-    def _z_offset_head_state(self):
-        status = self.toolhead.get_status(self.reactor.monotonic())
-        homed = str(status.get("homed_axes", "")).lower()
-        position = status.get("position", (0.0, 0.0, 0.0, 0.0))
-        return all(axis in homed for axis in "xyz"), position
-
-    def _z_offset_move_commands(self, x, y, force_home=False):
-        homed, _position = self._z_offset_head_state()
-        commands = []
-        if force_home or not homed:
-            commands.append("G28")
-        commands += [
-            "MOVE_SAFE Z=%.1f ABSOLUTE=1 F=600" % Z_OFFSET_TRAVEL_Z,
-            "MOVE_SAFE X=%.1f Y=%.1f ABSOLUTE=1 F=6000" % (x, y),
-        ]
-        return "\n".join(commands)
-
-    def _move_z_offset_head(self, x, y, force_home=False):
-        command = self._z_offset_move_commands(x, y, force_home)
-        self._run_blocking_gcode(command, "POSITIONING HEAD...")
-
-    def _prepare_z_offset_head(self):
-        homed, position = self._z_offset_head_state()
-        if homed and float(position[2]) <= Z_OFFSET_TRAVEL_Z:
-            return False
-        self._move_z_offset_head(0.0, 0.0)
-        return True
+            self._reset_z_paper()
+        elif action == "z.accept":
+            self._accept_z_zone()
+        elif action == "z.selection.next":
+            self.z_calibration.select_next()
+            self._render_z_summary()
+        elif action == "z.save":
+            self._save_z_calibration()
+        elif action == "z.discard.cancel":
+            self.z_calibration.dialog = None
+            self._render_z_summary()
+        elif action == "z.discard.confirm":
+            self._cancel_z_calibration()
+        elif action == "z.pressure.ok":
+            self.z_calibration.dialog = None
+            self._render_z_paper()
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()
@@ -1358,20 +1286,23 @@ class FeatherControlsMixin:
 
     def _update_z_weight_status(self, eventtime):
         self.renderer.send(self._z_weight_gauge_commands(eventtime))
+        if getattr(self, "page", None) == Page.Z_OFFSET_PAPER:
+            self._check_z_pressure(eventtime)
 
-    def _apply_z_adjust(self, delta):
-        if abs(self.z_session_adjust + delta) > self.z_adjust_session_limit + 0.0001:
-            raise RuntimeError("Z adjustment session limit reached")
-        now = self.reactor.monotonic()
-        current = self.gcode_move.get_status(now)["homing_origin"][2]
-        if abs(current + delta) > self.z_offset_limit + 0.0001:
-            raise RuntimeError("Z offset safety limit reached")
-        self._run_blocking_gcode(
-            "SET_GCODE_OFFSET Z_ADJUST=%+.3f MOVE=1" % delta,
-            "ADJUSTING Z...")
-        self.z_session_adjust += delta
-        self._render_calibration_z()
-        self._toast("Z %+.3f mm" % self.z_session_adjust)
+    def _check_z_pressure(self, eventtime):
+        session = getattr(self, "z_calibration", None)
+        if session is None or not session.active:
+            return False
+        gauge = self._update_z_weight_gauge(eventtime)
+        if gauge is None:
+            return False
+        warning = session.pressure.update(
+            gauge["value"], suppressed=session.probing)
+        if warning:
+            session.dialog = "pressure"
+            session.dialog_weight = gauge["value"]
+            self._render_z_paper()
+        return warning
 
     def _live_z_adjust_allowed(self, eventtime):
         stats = self.print_stats.get_status(eventtime)
@@ -1422,37 +1353,54 @@ class FeatherControlsMixin:
 
     def _render_calibration_confirm(self):
         kind = self.calibration_kind
-        commands = self.renderer.begin_page("Confirm calibration", back=True)
+        title = "Z offset preparation" if kind == "z" else "Confirm calibration"
+        commands = self.renderer.begin_page(title, back=True)
         if kind == "screws":
             text = ("Select material to run CLEAR_NOZZLE before probing, "
                     "or continue without cleaning.")
+        elif kind == "z":
+            text = ("Select the material temperature for nozzle cleaning, "
+                    "or prepare at nozzle cooldown without touching the bed.")
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
         for index, line in enumerate(self._wrap(text, 52, 3)):
             commands.append(self.renderer.text(400, 85 + index * 32, line,
                                                "ffffff", "Roboto 10pt", "center"))
         if kind in ("screws", "mesh"):
-            for index, material in enumerate(("PLA", "PETG", "ABS")):
+            materials = ("PLA", "PETG", "ABS")
+        elif kind == "z":
+            materials = ("PLA", "PETG", "ABS", "ABS-PC")
+        else:
+            materials = ()
+        if materials:
+            width = 135 if len(materials) == 4 else 180
+            gap = 15
+            total = len(materials) * width + (len(materials) - 1) * gap
+            left = (800 - total) // 2
+            for index, material in enumerate(materials):
                 commands += self.renderer.button("cal.material.%s" % material,
-                                                 115 + index * 195, 170, 180, 55,
+                                                 left + index * (width + gap),
+                                                 170, width, 55,
                                                  material,
                                                  state=("selected" if
                                                         material ==
                                                         self.calibration_material and
-                                                        (kind != "screws" or
+                                                        (kind not in ("screws", "z") or
                                                          getattr(
                                                              self,
                                                              "calibration_clean_nozzle",
                                                              True))
                                                         else "enabled"))
-        if kind == "screws":
+        if kind in ("screws", "z"):
             commands += self.renderer.button(
                 "cal.clean.skip", 115, 240, 570, 52, "WITHOUT CLEANING",
                 state=("enabled" if getattr(
                     self, "calibration_clean_nozzle", True) else "selected"))
             commands.append(self.renderer.text(
                 400, 305,
-                "Bed temperature stays unchanged; nozzle uses probe cooldown",
+                ("Bed stays untouched; nozzle uses cooldown temperature"
+                 if kind == "z" else
+                 "Bed temperature stays unchanged; nozzle uses probe cooldown"),
                 "56656c", "JetBrainsMono 8pt", "center"))
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START",
@@ -1468,7 +1416,7 @@ class FeatherControlsMixin:
                                            "center"))
         commands += self._calibration_stage_commands(label)
         cancel_visible = self._calibration_heat_cancel_visible()
-        emergency_visible = self.calibration_kind in ("screws", "mesh")
+        emergency_visible = self.calibration_kind in ("screws", "mesh", "z")
         if emergency_visible:
             commands += self.renderer.button(
                 "cal.emergency_stop", 50, 335, 330, 72,
@@ -1507,7 +1455,7 @@ class FeatherControlsMixin:
         # Phase changes are infrequent.  Rebuild the whole safety screen so
         # Emergency Stop and its hitbox are guaranteed to be present from the
         # initial Homing phase onward, regardless of partial status redraws.
-        if (self.calibration_kind in ("screws", "mesh")
+        if (self.calibration_kind in ("screws", "mesh", "z")
                 or cancel_visible != getattr(
                     self, "_last_calibration_cancel_visible", False)):
             self._render_calibration_progress()
@@ -1522,12 +1470,12 @@ class FeatherControlsMixin:
 
     def _calibration_heat_cancel_visible(self):
         return (
-            self.calibration_kind in ("screws", "mesh")
+            self.calibration_kind in ("screws", "mesh", "z")
             and (self._temperature_wait_active()
                  or getattr(self, "calibration_cancel_requested", False)))
 
     def _cancel_calibration_heat(self):
-        if (self.calibration_kind not in ("screws", "mesh")
+        if (self.calibration_kind not in ("screws", "mesh", "z")
                 or not self._temperature_wait_active()
                 or getattr(self, "calibration_cancel_requested", False)):
             return
@@ -1560,7 +1508,11 @@ class FeatherControlsMixin:
 
     def _calibration_stage_commands(self, label):
         text = str(label).upper()
-        if self.calibration_kind == "screws":
+        if self.calibration_kind == "z":
+            stages = (("PREP", "HOME", "HEAT", "CLEAN", "TARE", "READY")
+                      if getattr(self, "calibration_clean_nozzle", True)
+                      else ("PREP", "HOME", "HEAT", "TARE", "READY"))
+        elif self.calibration_kind == "screws":
             repeat_probe = getattr(self, "calibration_repeat_probe", False)
             clean_nozzle = getattr(self, "calibration_clean_nozzle", True)
             if repeat_probe:
@@ -1573,7 +1525,11 @@ class FeatherControlsMixin:
             stages = ("PREP", "HOME", "HEAT", "CLEAN", "LEVEL")
 
         phase = stages[0]
-        if "COMPLETE" in text:
+        if "READY" in text:
+            phase = "READY"
+        elif "TARE" in text:
+            phase = "TARE"
+        elif "COMPLETE" in text:
             phase = stages[-1]
         elif "PROB" in text:
             phase = "PROBE"

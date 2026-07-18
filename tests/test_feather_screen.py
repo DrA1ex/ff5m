@@ -267,18 +267,19 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.CONTROL_HOME, "nav.calibration"))
         self.assertTrue(allowed(FEATHER.Page.CALIBRATION_CONFIRM,
                                 "cal.material.PETG"))
-        self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z,
-                                "z.point.front_left"))
-        self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z, "z.home"))
+        self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_SUMMARY,
+                                "z.zone.front_left"))
+        self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.probe"))
+        self.assertTrue(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.step.25"))
         self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
                                 "live_z.closer"))
         self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
                                 "live_z.save"))
-        self.assertFalse(allowed(FEATHER.Page.CALIBRATION_Z,
+        self.assertFalse(allowed(FEATHER.Page.Z_OFFSET_SUMMARY,
                                  "live_z.closer"))
-        self.assertFalse(allowed(FEATHER.Page.LIVE_Z_OFFSET, "z.home"))
+        self.assertFalse(allowed(FEATHER.Page.LIVE_Z_OFFSET, "z.probe"))
         self.assertFalse(allowed(FEATHER.Page.CONTROL_MOVE,
-                                 "z.point.front_left"))
+                                 "z.zone.front_left"))
         self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))
         self.assertTrue(allowed(FEATHER.Page.SETTINGS, "settings.mod"))
         self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))

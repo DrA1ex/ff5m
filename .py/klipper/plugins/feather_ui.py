@@ -139,6 +139,9 @@ class Page(enum.Enum):
     MOD_VALUE = 28
     ERROR = 29
     LIVE_Z_OFFSET = 30
+    Z_OFFSET_SUMMARY = 31
+    Z_OFFSET_BRIEFING = 32
+    Z_OFFSET_PAPER = 33
 
 
 class PrintState(enum.Enum):
