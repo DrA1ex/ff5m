@@ -79,6 +79,11 @@ EXACT_ACTIONS = {
         "z.reset", "z.load.toggle", "z.home", "z.point.front_left",
         "z.point.front_right", "z.point.center", "z.point.rear_left",
         "z.point.rear_right"),
+    Page.LIVE_Z_OFFSET: (
+        "nav.back", "live_z.step.0005", "live_z.step.001",
+        "live_z.step.005", "live_z.closer", "live_z.farther",
+        "live_z.save", "live_z.warning.ok", "live_z.save.no",
+        "live_z.save.yes"),
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
     Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
@@ -114,6 +119,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.z_offset_limit = config.getfloat("z_offset_limit", 2.0, minval=0.1)
         self.z_adjust_session_limit = config.getfloat(
             "z_adjust_session_limit", 0.5, minval=0.05)
+        self.z_adjust_warning_threshold = config.getfloat(
+            "z_adjust_warning_threshold", 0.3, minval=0.05)
         self.preheat = {}
         for material, defaults in PREHEAT.items():
             key = material.lower().replace("-", "_")
@@ -176,6 +183,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.move_caution_signature = None
         self.z_step = 0.01
         self.z_session_adjust = 0.0
+        self.live_z_step = 0.01
+        self.live_z_dialog = None
+        self.live_z_limit_warned = False
+        self.weight_sensor = None
+        self.z_weight_gauge = None
 
         self.mod_page = 0
         self.mod_parameter = None
@@ -351,6 +363,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.start_print_macro = self.printer.lookup_object(
             "gcode_macro _START_PRINT", None)
         self.bed_mesh = self.printer.lookup_object("bed_mesh", None)
+        self.weight_sensor = self.printer.lookup_object(
+            "temperature_sensor weightValue", None)
         self.fan = self.printer.lookup_object("fan", None)
         self.filament_sensor = self.printer.lookup_object(
             "filament_switch_sensor e0_sensor", None)
@@ -737,6 +751,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._handle_filament_action(action)
             elif action.startswith("cal.") or action.startswith("z."):
                 self._handle_calibration_action(action)
+            elif action.startswith("live_z."):
+                self._handle_live_z_action(action)
             elif action.startswith("settings."):
                 self._handle_settings_action(action)
             elif action.startswith("mod."):
@@ -806,6 +822,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._render_calibration_home()
         elif page == Page.CALIBRATION_Z:
             self._render_calibration_z()
+        elif page == Page.LIVE_Z_OFFSET:
+            self._render_live_z_offset()
         elif page == Page.CALIBRATION_CONFIRM:
             self._render_calibration_confirm()
         elif page == Page.CALIBRATION_PROGRESS:
@@ -869,8 +887,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.page == Page.FILAMENT_ACTION:
             self._finish_filament(False)
         elif self.page == Page.CALIBRATION_Z:
-            self._show_page(Page.CALIBRATION_HOME if self.print_state == PrintState.IDLE
-                            else self.page_for_print_state())
+            self._show_page(Page.CALIBRATION_HOME)
+        elif self.page == Page.LIVE_Z_OFFSET:
+            self.live_z_dialog = None
+            self._show_page(self.page_for_print_state())
         elif self.page == Page.CALIBRATION_CONFIRM:
             self._show_page(Page.CALIBRATION_HOME)
         elif self.page == Page.RECOVERY_CONFIRM:
@@ -1179,14 +1199,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._update_heat_status(eventtime)
         elif self.page == Page.FILAMENT_ACTION:
             self._update_filament_status(eventtime)
+        elif self.page in (Page.CALIBRATION_Z, Page.LIVE_Z_OFFSET):
+            if not (self.page == Page.LIVE_Z_OFFSET
+                    and self.live_z_dialog is not None):
+                self._update_z_weight_status(eventtime)
         elif self.page == Page.CALIBRATION_PROGRESS and self.calibration_kind in (
                 "screws", "mesh", "recovery"):
             self._update_calibration_progress()
-        if self.page == Page.CALIBRATION_Z and self.print_state in (
-                PrintState.PRINTING, PrintState.PAUSED) and not self._z_adjust_allowed(eventtime):
-            self._show_page(self.page_for_print_state())
-            self._toast("Z adjust closed after first layer")
-
         if self.filament_sensor is not None:
             sensor = self.filament_sensor.get_status(eventtime)
             present = sensor.get("filament_detected")
@@ -1211,6 +1230,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         old_state = self.print_state
         self.print_state = new_state
         self.state_time = self.reactor.monotonic()
+        if (new_state in (PrintState.PREPARING, PrintState.PRINTING)
+                and old_state not in (
+                    PrintState.PREPARING, PrintState.PRINTING,
+                    PrintState.PAUSED)):
+            self.live_z_limit_warned = False
+            self.live_z_dialog = None
         if (new_state in (PrintState.PREPARING, PrintState.PRINTING,
                           PrintState.PAUSED)
                 and getattr(self, "network_process", None) is not None):
@@ -1223,7 +1248,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._progress_floor = 0.0
                 self._progress_source = None
                 self._m73_active = False
-            if (self.page not in (Page.PRINTING, Page.CANCEL_CONFIRM)
+            if (self.page not in (
+                    Page.PRINTING, Page.CANCEL_CONFIRM, Page.LIVE_Z_OFFSET)
                     and not (self.page == Page.IDLE_HOME
                              and getattr(
                                  self, "home_during_print", False))):
@@ -1231,7 +1257,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif new_state == PrintState.PAUSED:
             if self.page not in (
                     Page.CANCEL_CONFIRM, Page.FILAMENT_MATERIAL,
-                    Page.FILAMENT_ACTION, Page.CALIBRATION_Z) and not (
+                    Page.FILAMENT_ACTION, Page.LIVE_Z_OFFSET) and not (
                         self.page == Page.IDLE_HOME
                         and getattr(self, "home_during_print", False)):
                 self._show_page(Page.PAUSED)

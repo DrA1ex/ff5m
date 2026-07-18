@@ -138,6 +138,7 @@ class Page(enum.Enum):
     MOD_ENUM = 27
     MOD_VALUE = 28
     ERROR = 29
+    LIVE_Z_OFFSET = 30
 
 
 class PrintState(enum.Enum):
@@ -640,6 +641,75 @@ class FeatherRenderer:
             commands.append(self.text(
                 x + width, y, unit, label_color, "JetBrainsMono 8pt",
                 "right", "middle"))
+        return commands
+
+    def vertical_gauge(self, x, y, width, height, title, value,
+                       minimum, maximum, initial=None):
+        """Draw an auto-scaled vertical gauge with a movable start marker."""
+        value = float(value)
+        minimum = float(minimum)
+        maximum = float(maximum)
+        if maximum <= minimum:
+            padding = max(1.0, abs(value) * 0.05)
+            minimum = value - padding
+            maximum = value + padding
+        track_top = y + 108
+        track_bottom = y + height - 28
+        track_height = max(1, track_bottom - track_top)
+        track_x = x + width - 34
+        track_width = 16
+
+        def gauge_y(sample):
+            ratio = ((float(sample) - minimum) / (maximum - minimum))
+            ratio = max(0.0, min(1.0, ratio))
+            return track_bottom - int(round(ratio * track_height))
+
+        def number(sample):
+            sample = float(sample)
+            if abs(sample) < 10000:
+                return "%+.1f" % sample
+            return "%+.0e" % sample
+
+        value_y = gauge_y(value)
+        commands = self.panel(
+            x, y, width, height, border="295c66",
+            background=COLOR_PANEL, line_width=1)
+        commands += [
+            self.text(x + width // 2, y + 20, str(title).upper(),
+                      COLOR_CYAN, "JetBrainsMono 8pt", "center", "middle"),
+            self.text(x + width // 2, y + 48, number(value),
+                      COLOR_TEXT, "JetBrainsMono Bold 10pt",
+                      "center", "middle"),
+        ]
+        if initial is not None:
+            commands += [
+                self.text(
+                    x + width // 2, y + 70, "START",
+                    COLOR_VIOLET, "JetBrainsMono 8pt", "center", "middle"),
+                self.text(
+                    x + width // 2, y + 91, number(initial),
+                    COLOR_VIOLET, "JetBrainsMono 8pt", "center", "middle"),
+            ]
+        commands += [
+            self.fill(track_x, track_top, track_width, track_height,
+                      "263238"),
+            self.stroke(track_x, track_top, track_width, track_height,
+                        "295c66", 1),
+            self.fill(track_x + 2, value_y,
+                      max(1, track_width - 4),
+                      max(1, track_bottom - value_y), COLOR_CYAN),
+            self.text(x + 8, track_top, number(maximum),
+                      COLOR_DIM, "JetBrainsMono 8pt", "left", "middle"),
+            self.text(x + 8, track_bottom, number(minimum),
+                      COLOR_DIM, "JetBrainsMono 8pt", "left", "middle"),
+        ]
+        if initial is not None:
+            marker_y = gauge_y(initial)
+            commands += [
+                self.fill(track_x - 6, marker_y, track_width + 12, 2,
+                          COLOR_VIOLET),
+                self.fill(track_x - 8, marker_y - 2, 4, 6, COLOR_VIOLET),
+            ]
         return commands
 
     def joystick_knob(self, x, y, axis="xy", size=25, color=COLOR_CYAN):

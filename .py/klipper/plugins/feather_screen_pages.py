@@ -436,7 +436,8 @@ class FeatherPagesMixin:
                                          font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button(
             "print.z", 410, 355, 175, 72, "Z ADJUST",
-            state="enabled" if self._z_adjust_allowed(self.reactor.monotonic())
+            state="enabled" if self._live_z_adjust_allowed(
+                self.reactor.monotonic())
             else "disabled", font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button("print.cancel", 605, 355, 175, 72,
                                          "CANCEL", state="danger",
@@ -613,10 +614,11 @@ class FeatherPagesMixin:
                     return
             self._open_filament(True)
         elif action == "print.z" and stats in ("printing", "paused"):
-            if not self._z_adjust_allowed(self.reactor.monotonic()):
-                raise RuntimeError("Z adjust is available only on the first layer")
-            self.z_session_adjust = 0.0
-            self._show_page(Page.CALIBRATION_Z)
+            if not self._live_z_adjust_allowed(self.reactor.monotonic()):
+                raise RuntimeError("Z adjust is not available yet")
+            self.live_z_dialog = None
+            self._begin_z_weight_gauge()
+            self._show_page(Page.LIVE_Z_OFFSET)
         elif action == "print.cancel" and stats in ("printing", "paused"):
             self._show_page(Page.CANCEL_CONFIRM)
         elif action == "print.cancel.confirm" and stats in ("printing", "paused"):

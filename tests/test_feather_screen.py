@@ -273,6 +273,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z,
                                 "z.point.front_left"))
         self.assertTrue(allowed(FEATHER.Page.CALIBRATION_Z, "z.home"))
+        self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
+                                "live_z.closer"))
+        self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
+                                "live_z.save"))
+        self.assertFalse(allowed(FEATHER.Page.CALIBRATION_Z,
+                                 "live_z.closer"))
+        self.assertFalse(allowed(FEATHER.Page.LIVE_Z_OFFSET, "z.home"))
         self.assertFalse(allowed(FEATHER.Page.CONTROL_MOVE,
                                  "z.point.front_left"))
         self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))

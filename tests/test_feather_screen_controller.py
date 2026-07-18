@@ -123,6 +123,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.FILAMENT_ACTION: "_render_filament_action",
             FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
             FEATHER.Page.CALIBRATION_Z: "_render_calibration_z",
+            FEATHER.Page.LIVE_Z_OFFSET: "_render_live_z_offset",
             FEATHER.Page.CALIBRATION_CONFIRM: "_render_calibration_confirm",
             FEATHER.Page.CALIBRATION_PROGRESS: "_render_calibration_progress",
             FEATHER.Page.CALIBRATION_RESULT: "_render_calibration_result",
@@ -219,8 +220,135 @@ class ControllerSafetyTest(unittest.TestCase):
                 "z.point.rear_right"):
             self.assertIn(action, drawing)
         self.assertIn("HEAD X+0.0  Y+0.0  Z5.0", drawing)
-        self.assertIn("FRONT L", drawing)
-        self.assertIn("REAR R", drawing)
+        self.assertIn('-t "FL"', drawing)
+        self.assertIn('-t "RR"', drawing)
+        self.assertIn("CLOSER  -0.010", drawing)
+        self.assertIn("FARTHER  +0.010", drawing)
+
+    def test_live_z_offset_page_separates_saved_current_and_unsaved(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller.print_stats = StatusObject({"state": "printing"})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.635)})
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.125, "load_zoffset": 1}})()
+        controller.live_z_step = 0.005
+        controller.live_z_dialog = None
+        controller.z_adjust_warning_threshold = 0.3
+
+        controller._render_live_z_offset()
+
+        drawing = "\n".join(batches[-1])
+        for label in ("SAVED", "CURRENT", "UNSAVED", "ADJUSTMENT STEP"):
+            self.assertIn(label, drawing)
+        self.assertIn("+0.125 mm", drawing)
+        self.assertIn("+0.635 mm", drawing)
+        self.assertIn("+0.510 mm", drawing)
+        self.assertIn("CLOSER  -0.005", drawing)
+        self.assertIn("FARTHER  +0.005", drawing)
+        self.assertIn("-c ff4d5a", drawing)
+
+    def test_live_z_offset_load_warning_has_explicit_choice(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.PAUSED
+        controller.print_stats = StatusObject({"state": "paused"})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.2)})
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.1, "load_zoffset": 0}})()
+        controller.live_z_step = 0.01
+        controller.live_z_dialog = "save"
+        controller.z_adjust_warning_threshold = 0.3
+
+        controller._render_live_z_offset()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("AUTO LOAD IS OFF", drawing)
+        self.assertIn("live_z.save.no", drawing)
+        self.assertIn("live_z.save.yes", drawing)
+
+    def test_weight_gauge_uses_history_and_expands_without_clamping(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.reactor = Reactor()
+        controller.weight_sensor = StatusObject({
+            "temperature": 100.0,
+            "measured_min_temp": 80.0,
+            "measured_max_temp": 120.0,
+        })
+        controller.z_weight_gauge = None
+
+        controller._begin_z_weight_gauge()
+
+        gauge = controller.z_weight_gauge
+        self.assertEqual(gauge, {
+            "initial": 100.0,
+            "minimum": 80.0,
+            "maximum": 120.0,
+            "value": 100.0,
+        })
+        initial_commands = controller._z_weight_gauge_commands(0)
+        initial_marker = next(
+            line for line in initial_commands
+            if "-s 28 2 -c b47aff" in line)
+
+        controller.weight_sensor.status.update({
+            "temperature": 160.0,
+            "measured_max_temp": 160.0,
+        })
+        expanded_commands = controller._z_weight_gauge_commands(1)
+        expanded_marker = next(
+            line for line in expanded_commands
+            if "-s 28 2 -c b47aff" in line)
+
+        self.assertEqual(gauge["initial"], 100.0)
+        self.assertEqual(gauge["minimum"], 80.0)
+        self.assertEqual(gauge["maximum"], 160.0)
+        self.assertEqual(gauge["value"], 160.0)
+        self.assertNotEqual(initial_marker, expanded_marker)
+        self.assertTrue(any('-t "START"' in line
+                            for line in expanded_commands))
+        self.assertTrue(any('-t "+100.0"' in line
+                            for line in expanded_commands))
+
+        controller.weight_sensor.status.update({
+            "temperature": 40.0,
+            "measured_min_temp": 40.0,
+        })
+        controller._update_z_weight_gauge(2)
+        self.assertEqual(gauge["minimum"], 40.0)
+        self.assertEqual(gauge["maximum"], 160.0)
+        self.assertEqual(gauge["initial"], 100.0)
+
+    def test_weight_gauge_ignores_uninitialized_sensor_extrema(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.weight_sensor = StatusObject({
+            "temperature": 0.0,
+            "measured_min_temp": 99999999.0,
+            "measured_max_temp": 0.0,
+        })
+        controller.z_weight_gauge = None
+
+        controller._begin_z_weight_gauge()
+
+        self.assertEqual(controller.z_weight_gauge, {
+            "initial": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0,
+            "value": 0.0,
+        })
 
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -673,7 +801,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_status_text = "Heating"
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
-        controller._z_adjust_allowed = lambda eventtime: False
+        controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
         controller._render_print_page()
         drawing = "\n".join(batches[0])
@@ -698,7 +826,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "active": False, "phase": "PREPARING"}})()
         controller.start_print_macro = type("Start", (), {"variables": {
             "print_started": False}})()
-        controller._z_adjust_allowed = lambda eventtime: False
+        controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
 
         controller._render_print_page()
@@ -864,30 +992,31 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, ["M104 S185"])
         self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
 
-    def test_first_layer_z_gate_requires_metadata(self):
+    def test_live_z_adjust_is_available_on_every_layer_when_z_is_homed(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.print_stats = StatusObject(
-            {"state": "printing", "info": {"current_layer": None}})
-        self.assertFalse(controller._z_adjust_allowed(0))
-        controller.print_stats.status["info"]["current_layer"] = 1
-        self.assertTrue(controller._z_adjust_allowed(0))
-        controller.print_stats.status["info"]["current_layer"] = 2
-        self.assertFalse(controller._z_adjust_allowed(0))
-
-    def test_z_adjust_rechecks_layer_and_session_limit(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.print_stats = StatusObject(
-            {"state": "printing", "info": {"current_layer": 2}})
+            {"state": "printing", "info": {"current_layer": None}})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        self.assertTrue(controller._live_z_adjust_allowed(0))
+        controller.print_stats.status["info"]["current_layer"] = 1
+        self.assertTrue(controller._live_z_adjust_allowed(0))
+        controller.print_stats.status["info"]["current_layer"] = 2
+        self.assertTrue(controller._live_z_adjust_allowed(0))
+        controller.toolhead.status["homed_axes"] = "xy"
+        self.assertFalse(controller._live_z_adjust_allowed(0))
+        controller.toolhead.status["homed_axes"] = "xyz"
+        controller.print_state = FEATHER.PrintState.PREPARING
+        self.assertFalse(controller._live_z_adjust_allowed(0))
+
+    def test_idle_z_adjust_keeps_session_safety_limit(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
         controller.z_session_adjust = 0.0
         controller.z_adjust_session_limit = 0.5
         controller.z_offset_limit = 2.0
         controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0)})
         controller.gcode = GCodeRecorder()
-        with self.assertRaisesRegex(RuntimeError, "first layer"):
-            controller._apply_z_adjust(0.01)
-        controller.print_stats.status["info"]["current_layer"] = 1
         controller.z_session_adjust = 0.49
         with self.assertRaisesRegex(RuntimeError, "session limit"):
             controller._apply_z_adjust(0.05)

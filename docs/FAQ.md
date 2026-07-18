@@ -410,7 +410,7 @@ Failsafe mode skips all mod code execution to prevent bricking but may still dis
 Nozzle gouging, where the nozzle scrapes or digs into the build plate during the first layer, often occurs due to an incorrect Z-offset or bed mesh after installing Forge-X.
 
 **Solutions**:
-- **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset Calibration Guide](/docs/PRINTING.md#z-offset). Use `SET_GCODE_OFFSET Z_ADJUST=+0.05 MOVE=1` to raise the nozzle if it’s too close.
+- **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset Calibration Guide](/docs/PRINTING.md#z-offset). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
 - **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `NEW_SAVE_CONFIG` (Stock screen) or `SAVE_CONFIG` (Feather screen).
 - **Check Weight Sensor**: Recalibrate the load cell following Flashforge’s guide.
 - **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see Uninstall Guide).

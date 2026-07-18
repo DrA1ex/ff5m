@@ -854,17 +854,109 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertIn('SET_MATERIAL MATERIAL="{params.MATERIAL}"', macros)
         self.assertIn("_LOAD_MATERIAL_HEATUP MATERIAL=PETG TEMP=250", macros)
 
-    def test_valid_z_adjust_emits_move_and_updates_session(self):
-        controller = base_controller("printing")
+    def test_saved_z_adjust_uses_homing_origin_not_base_position(self):
+        root = pathlib.Path(__file__).parents[1]
+        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
+        wrapper = macros.split("[gcode_macro SET_GCODE_OFFSET]", 1)[1].split(
+            "[gcode_macro LOAD_GCODE_OFFSET]", 1)[0]
+        self.assertIn("printer.gcode_move.homing_origin.z + z_adj", wrapper)
+        self.assertNotIn("base_position", wrapper)
+
+    def test_idle_closer_decreases_z_offset_and_updates_session(self):
+        controller = base_controller()
         controller.z_session_adjust = 0.0
         controller.z_adjust_session_limit = 0.5
         controller.z_offset_limit = 2.0
+        controller.z_step = 0.01
         controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0.2)})
         controller._render_calibration_z = lambda: None
-        controller._apply_z_adjust(0.05)
+        controller._handle_calibration_action("z.closer")
+        self.assertEqual(controller.gcode.commands,
+                         ["SET_GCODE_OFFSET Z_ADJUST=-0.010 MOVE=1"])
+        self.assertEqual(controller.z_session_adjust, -0.01)
+
+    def test_idle_farther_increases_z_offset(self):
+        controller = base_controller()
+        controller.z_session_adjust = 0.0
+        controller.z_adjust_session_limit = 0.5
+        controller.z_offset_limit = 2.0
+        controller.z_step = 0.05
+        controller.gcode_move = StatusObject({"homing_origin": (0, 0, 0.2)})
+        controller._render_calibration_z = lambda: None
+
+        controller._handle_calibration_action("z.farther")
+
         self.assertEqual(controller.gcode.commands,
                          ["SET_GCODE_OFFSET Z_ADJUST=+0.050 MOVE=1"])
-        self.assertEqual(controller.z_session_adjust, 0.05)
+
+    def test_live_z_adjust_uses_original_macro_without_saving(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.2)})
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.1, "load_zoffset": 1}})()
+        controller.z_offset_limit = 2.0
+        controller.z_adjust_warning_threshold = 0.3
+        controller.live_z_limit_warned = False
+        controller.live_z_dialog = None
+        controller.live_z_step = 0.01
+        controller._render_live_z_offset = lambda: None
+
+        controller._handle_live_z_action("live_z.closer")
+        controller._handle_live_z_action("live_z.farther")
+
+        self.assertEqual(controller.gcode.commands, [
+            "_SET_GCODE_OFFSET Z_ADJUST=-0.010 MOVE=1",
+            "_SET_GCODE_OFFSET Z_ADJUST=+0.010 MOVE=1",
+        ])
+        self.assertNotIn("SET_MOD", "\n".join(controller.gcode.commands))
+
+    def test_live_z_warns_once_after_crossing_half_mm(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.29)})
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.0, "load_zoffset": 1}})()
+        controller.z_offset_limit = 2.0
+        controller.z_adjust_warning_threshold = 0.3
+        controller.live_z_limit_warned = False
+        controller.live_z_dialog = None
+        controller._render_live_z_offset = lambda: None
+
+        def run(command, _message):
+            controller.gcode.commands.append(command)
+            controller.gcode_move.status["homing_origin"] = (0.0, 0.0, 0.34)
+
+        controller._run_blocking_gcode = run
+        controller._apply_live_z_adjust(0.05)
+
+        self.assertEqual(controller.live_z_dialog, "limit")
+        self.assertTrue(controller.live_z_limit_warned)
+        controller.live_z_dialog = None
+        controller._apply_live_z_adjust(0.05)
+        self.assertIsNone(controller.live_z_dialog)
+
+    def test_live_z_save_can_enable_auto_load(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.gcode_move = StatusObject(
+            {"homing_origin": (0.0, 0.0, 0.235)})
+        controller.params = type("Params", (), {
+            "variables": {"z_offset": 0.1, "load_zoffset": 0}})()
+        controller.live_z_dialog = "save"
+        controller._render_live_z_offset = lambda: None
+
+        controller._handle_live_z_action("live_z.save.yes")
+
+        self.assertEqual(controller.gcode.commands, [
+            "SET_MOD PARAM=z_offset VALUE=0.235\n"
+            "SET_MOD PARAM=load_zoffset VALUE=1"])
+        self.assertIsNone(controller.live_z_dialog)
 
     def test_z_offset_entry_homes_and_centers_when_not_homed(self):
         controller = base_controller()

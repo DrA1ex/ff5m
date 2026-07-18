@@ -228,8 +228,8 @@ Calibrate Z-offset to ensure proper first-layer adhesion. For STOCK screen, Z-of
    - Print a 200x200x0.2 mm single-layer square (create in slicer, export G-code, print via Fluidd/Mainsail).
    - Compare to online reference images (e.g., Klipper documentation or 3D printing forums). If first-layer quality is good, no adjustment needed.
 2. **Adjust Z-Offset**:
-   - If lines are too squished (over-extruded), increase Z-offset (e.g., `SET_GCODE_OFFSET Z=0.05` for +0.05 mm).
-   - If lines are too loose (under-extruded), decrease Z-offset (e.g., `SET_GCODE_OFFSET Z=-0.05` for -0.05 mm).
+   - If lines are too squished, increase Z-offset to move the bed farther from the nozzle.
+   - If lines are too loose, decrease Z-offset to raise the bed closer to the nozzle.
 3. **Test Smaller Model**:
    - Print a 50x50x0.2 mm single-layer square.
    - Check first-layer quality and adjust Z-offset again if needed.

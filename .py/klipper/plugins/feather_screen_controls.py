@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import logging
+import math
 import re
 
 try:
@@ -20,12 +21,13 @@ except (ImportError, ValueError):
 MOVE_CAUTION_Z = 5.0
 Z_OFFSET_TRAVEL_Z = 5.0
 Z_OFFSET_POINTS = (
-    ("z.point.front_left", "FRONT L", -94.0, -94.0),
-    ("z.point.front_right", "FRONT R", 94.0, -94.0),
-    ("z.point.center", "CENTER", 0.0, 0.0),
-    ("z.point.rear_left", "REAR L", -94.0, 94.0),
-    ("z.point.rear_right", "REAR R", 94.0, 94.0),
+    ("z.point.front_left", "FL", -94.0, -94.0),
+    ("z.point.front_right", "FR", 94.0, -94.0),
+    ("z.point.center", "CTR", 0.0, 0.0),
+    ("z.point.rear_left", "RL", -94.0, 94.0),
+    ("z.point.rear_right", "RR", 94.0, 94.0),
 )
+Z_WEIGHT_GAUGE = (665, 72, 115, 358)
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
 JOYSTICK_XY_PAD = (30, 96, 420, 266)
 JOYSTICK_XY_CENTER = (240, 229)
@@ -1011,73 +1013,169 @@ class FeatherControlsMixin:
 
     def _render_calibration_z(self):
         now = self.reactor.monotonic()
-        live = self.print_state in (PrintState.PRINTING, PrintState.PAUSED)
-        allowed = not live or self._z_adjust_allowed(now)
         current = self.gcode_move.get_status(now)["homing_origin"][2]
         saved = float(self._setting("z_offset", 0.0))
-        commands = self.renderer.begin_page(
-            "First layer Z" if live else "Z offset", back=True)
+        commands = self.renderer.begin_page("Z offset", back=True)
         commands.append(self.renderer.text(
-            400, 72, "Current %+.3f mm   Saved %+.3f mm" %
+            330, 72, "Current %+.3f mm   Saved %+.3f mm" %
             (current, saved), "ffffff", "Roboto 12pt", "center"))
-        if live:
-            commands.append(self.renderer.text(400, 120,
-                                               "Session %+.3f / %.2f mm" %
-                                               (self.z_session_adjust,
-                                                self.z_adjust_session_limit),
-                                               "00f0f0", "Roboto 10pt", "center"))
-            step_y = 150
-            adjust_y = 250
-            adjust_height = 100
-        else:
-            status = self.toolhead.get_status(now)
-            position = status.get("position", (0.0, 0.0, 0.0, 0.0))
-            homed = str(status.get("homed_axes", "")).lower()
-            all_homed = all(axis in homed for axis in "xyz")
-            commands.append(self.renderer.text(
-                400, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
-                (position[0], position[1], position[2]),
-                "35d9e6" if all_homed else "f2c94c",
-                "JetBrainsMono 8pt", "center", "middle"))
-            quick_buttons = [("z.home", "HOME", None, None)]
-            quick_buttons += list(Z_OFFSET_POINTS)
-            for index, point in enumerate(quick_buttons):
-                action, label = point[:2]
-                commands += self.renderer.button(
-                    action, 40 + index * 120, 112, 110, 44, label,
-                    state=("enabled" if all_homed or action == "z.home"
-                           else "disabled"),
-                    font="JetBrainsMono 8pt")
-            step_y = 172
-            adjust_y = 238
-            adjust_height = 90
+        status = self.toolhead.get_status(now)
+        position = status.get("position", (0.0, 0.0, 0.0, 0.0))
+        homed = str(status.get("homed_axes", "")).lower()
+        all_homed = all(axis in homed for axis in "xyz")
+        commands.append(self.renderer.text(
+            330, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
+            (position[0], position[1], position[2]),
+            "35d9e6" if all_homed else "f2c94c",
+            "JetBrainsMono 8pt", "center", "middle"))
+        quick_buttons = [("z.home", "HOME", None, None)]
+        quick_buttons += list(Z_OFFSET_POINTS)
+        for index, point in enumerate(quick_buttons):
+            action, label = point[:2]
+            commands += self.renderer.button(
+                action, 24 + index * 104, 112, 96, 44, label,
+                state=("enabled" if all_homed or action == "z.home"
+                       else "disabled"),
+                font="JetBrainsMono 8pt")
+        step_y = 172
+        adjust_y = 238
+        adjust_height = 90
         for index, step in enumerate((0.01, 0.05)):
-            commands += self.renderer.button("z.step.%s" % ("001" if index == 0 else "005"),
-                                             210 + index * 200, step_y, 180, 52,
-                                             "%.2f mm" % step,
-                                             state="selected" if step == self.z_step
-                                             else "enabled")
-        state = "enabled" if allowed else "disabled"
+            commands += self.renderer.button(
+                "z.step.%s" % ("001" if index == 0 else "005"),
+                135 + index * 200, step_y, 180, 52, "%.2f mm" % step,
+                state="selected" if step == self.z_step else "enabled")
         commands += self.renderer.button(
-            "z.closer", 70, adjust_y, 300, adjust_height, "CLOSER",
-            state=state, font="Roboto Bold 16pt")
+            "z.closer", 25, adjust_y, 300, adjust_height,
+            "CLOSER  -%.3f" % self.z_step,
+            state="enabled", font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button(
-            "z.farther", 430, adjust_y, 300, adjust_height, "FARTHER",
-            state=state, font="Roboto Bold 16pt")
-        if not live:
-            load = bool(self._setting("load_zoffset", 0))
-            commands += self.renderer.button("z.load.toggle", 70, 375, 300, 55,
-                                             "LOAD SAVED: %s" % ("ON" if load else "OFF"),
-                                             state="selected" if load else "enabled")
-            commands += self.renderer.button("z.reset", 430, 375, 300, 55,
-                                             "RESET", state="danger")
+            "z.farther", 340, adjust_y, 300, adjust_height,
+            "FARTHER  +%.3f" % self.z_step,
+            state="enabled", font="JetBrainsMono Bold 12pt")
+        load = bool(self._setting("load_zoffset", 0))
+        commands += self.renderer.button("z.load.toggle", 25, 375, 300, 55,
+                                         "LOAD SAVED: %s" % ("ON" if load else "OFF"),
+                                         state="selected" if load else "enabled")
+        commands += self.renderer.button("z.reset", 340, 375, 300, 55,
+                                         "RESET", state="danger")
+        commands += self._z_weight_gauge_commands(now)
         self.renderer.send(commands)
+
+    def _render_live_z_offset(self):
+        now = self.reactor.monotonic()
+        current = float(
+            self.gcode_move.get_status(now)["homing_origin"][2])
+        saved = float(self._setting("z_offset", 0.0))
+        unsaved = current - saved
+        outside_warning = (
+            abs(unsaved) > self.z_adjust_warning_threshold + 0.0001)
+        value_color = "ff4d5a" if outside_warning else "ffffff"
+        commands = self.renderer.begin_page("Live Z offset", back=True)
+        commands += self.renderer.button(
+            "live_z.save", 640, 7, 146, 46, "SAVE",
+            font="JetBrainsMono Bold 10pt")
+
+        cards = (
+            ("SAVED", saved, 20, "35d9e6"),
+            ("CURRENT", current, 230, value_color),
+            ("UNSAVED", unsaved, 440, value_color),
+        )
+        for label, value, x, color in cards:
+            commands += self.renderer.panel(
+                x, 82, 200, 112, border="295c66", background="050c0f")
+            commands.append(self.renderer.text(
+                x + 100, 108, label, "35d9e6",
+                "JetBrainsMono 8pt", "center", "middle"))
+            commands.append(self.renderer.text(
+                x + 100, 151, "%+.3f mm" % value, color,
+                "JetBrainsMono Bold 16pt", "center", "middle"))
+
+        commands.append(self.renderer.text(
+            330, 218, "ADJUSTMENT STEP", "56656c",
+            "JetBrainsMono 8pt", "center", "middle"))
+        steps = (
+            ("live_z.step.0005", 0.005),
+            ("live_z.step.001", 0.010),
+            ("live_z.step.005", 0.050),
+        )
+        for index, (action, step) in enumerate(steps):
+            commands += self.renderer.button(
+                action, 45 + index * 200, 238, 170, 55,
+                "%.3f mm" % step,
+                state=("selected" if step == self.live_z_step
+                       else "enabled"),
+                font="JetBrainsMono 10pt")
+
+        controls_enabled = self._live_z_adjust_allowed(now)
+        state = "enabled" if controls_enabled else "disabled"
+        commands += self.renderer.button(
+            "live_z.closer", 20, 322, 305, 88,
+            "CLOSER  -%.3f" % self.live_z_step,
+            state=state, font="JetBrainsMono Bold 12pt")
+        commands += self.renderer.button(
+            "live_z.farther", 335, 322, 305, 88,
+            "FARTHER  +%.3f" % self.live_z_step,
+            state=state, font="JetBrainsMono Bold 12pt")
+        commands += self._z_weight_gauge_commands(now)
+
+        if self.live_z_dialog == "limit":
+            commands += self.renderer.dialog(
+                "LARGE Z-OFFSET CHANGE",
+                ("CURRENT DIFFERS FROM SAVED BY MORE THAN %.2f MM." %
+                 self.z_adjust_warning_threshold,
+                 "VERIFY THE FIRST LAYER BEFORE CONTINUING."),
+                (("live_z.warning.ok", "OK", "warning"),),
+                x=100, y=115, width=600, height=260, tone="danger")
+        elif self.live_z_dialog == "save":
+            commands += self.renderer.dialog(
+                "AUTO LOAD IS OFF",
+                ("THE VALUE WILL BE SAVED, BUT NOT RESTORED",
+                 "AFTER A KLIPPER RESTART. ENABLE AUTO LOAD?"),
+                (("live_z.save.no", "NO", "enabled"),
+                 ("live_z.save.yes", "YES", "warning")),
+                x=100, y=115, width=600, height=260, tone="warning")
+        self.renderer.send(commands)
+
+    def _handle_live_z_action(self, action):
+        if action.startswith("live_z.step."):
+            steps = {
+                "live_z.step.0005": 0.005,
+                "live_z.step.001": 0.010,
+                "live_z.step.005": 0.050,
+            }
+            step = steps.get(action)
+            if step is not None:
+                self.live_z_step = step
+                self._render_live_z_offset()
+        elif action in ("live_z.closer", "live_z.farther"):
+            delta = (-self.live_z_step if action == "live_z.closer"
+                     else self.live_z_step)
+            self._apply_live_z_adjust(delta)
+        elif action == "live_z.save":
+            self._require_live_z_adjust()
+            if self._setting("load_zoffset", 0):
+                self._save_live_z_offset(False)
+            else:
+                self.live_z_dialog = "save"
+                self._render_live_z_offset()
+        elif action == "live_z.warning.ok":
+            if self.live_z_dialog == "limit":
+                self.live_z_dialog = None
+                self._render_live_z_offset()
+        elif action == "live_z.save.no":
+            if self.live_z_dialog == "save":
+                self._save_live_z_offset(False)
+        elif action == "live_z.save.yes":
+            if self.live_z_dialog == "save":
+                self._save_live_z_offset(True)
 
     def _handle_calibration_action(self, action):
         if action == "cal.z":
             self._require_idle()
             self.z_session_adjust = 0.0
             self._prepare_z_offset_head()
+            self._begin_z_weight_gauge()
             self._show_page(Page.CALIBRATION_Z)
         elif action in ("cal.screws", "cal.mesh"):
             self._require_idle()
@@ -1114,7 +1212,8 @@ class FeatherControlsMixin:
             self.z_step = 0.01 if action.endswith("001") else 0.05
             self._render_calibration_z()
         elif action in ("z.closer", "z.farther"):
-            self._apply_z_adjust(self.z_step if action == "z.closer" else -self.z_step)
+            self._apply_z_adjust(
+                -self.z_step if action == "z.closer" else self.z_step)
         elif action == "z.load.toggle":
             self._require_idle()
             value = 0 if self._setting("load_zoffset", 0) else 1
@@ -1187,13 +1286,80 @@ class FeatherControlsMixin:
         self._show_page(Page.CALIBRATION_PROGRESS)
         self.reactor.register_callback(self._run_calibration)
 
+    @staticmethod
+    def _finite_weight(value):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    def _begin_z_weight_gauge(self):
+        self.z_weight_gauge = None
+        self._update_z_weight_gauge(self.reactor.monotonic())
+
+    def _update_z_weight_gauge(self, eventtime):
+        sensor = getattr(self, "weight_sensor", None)
+        if sensor is None:
+            return None
+        try:
+            status = sensor.get_status(eventtime)
+        except Exception:
+            logging.exception("[feather_screen] unable to read weightValue")
+            return getattr(self, "z_weight_gauge", None)
+        current = self._finite_weight(status.get("temperature"))
+        if current is None:
+            return getattr(self, "z_weight_gauge", None)
+        measured_min = self._finite_weight(status.get("measured_min_temp"))
+        measured_max = self._finite_weight(status.get("measured_max_temp"))
+        samples = [current]
+        # Generic temperature sensors expose their uninitialized extrema as
+        # min=99999999/max=0. Only seed the gauge from a coherent pair.
+        if (measured_min is not None and measured_max is not None
+                and measured_min <= measured_max):
+            samples.extend((measured_min, measured_max))
+        gauge = getattr(self, "z_weight_gauge", None)
+        if gauge is None:
+            gauge = {
+                "initial": current,
+                "minimum": min(samples),
+                "maximum": max(samples),
+                "value": current,
+            }
+            self.z_weight_gauge = gauge
+        else:
+            gauge["value"] = current
+            gauge["minimum"] = min([gauge["minimum"]] + samples)
+            gauge["maximum"] = max([gauge["maximum"]] + samples)
+        return gauge
+
+    def _z_weight_gauge_commands(self, eventtime):
+        gauge = self._update_z_weight_gauge(eventtime)
+        x, y, width, height = Z_WEIGHT_GAUGE
+        if gauge is None:
+            commands = self.renderer.panel(
+                x, y, width, height, border="295c66",
+                background="050c0f", line_width=1)
+            commands += [
+                self.renderer.text(
+                    x + width // 2, y + 24, "FORCE", "35d9e6",
+                    "JetBrainsMono 8pt", "center", "middle"),
+                self.renderer.text(
+                    x + width // 2, y + height // 2, "NO SENSOR",
+                    "56656c", "JetBrainsMono 6pt", "center", "middle"),
+            ]
+            return commands
+        return self.renderer.vertical_gauge(
+            x, y, width, height, "FORCE, G", gauge["value"],
+            gauge["minimum"], gauge["maximum"], gauge["initial"])
+
+    def _update_z_weight_status(self, eventtime):
+        self.renderer.send(self._z_weight_gauge_commands(eventtime))
+
     def _apply_z_adjust(self, delta):
-        now = self.reactor.monotonic()
-        live = self.print_state in (PrintState.PRINTING, PrintState.PAUSED)
-        if live and not self._z_adjust_allowed(now):
-            raise RuntimeError("Z adjust is available only on the first layer")
         if abs(self.z_session_adjust + delta) > self.z_adjust_session_limit + 0.0001:
             raise RuntimeError("Z adjustment session limit reached")
+        now = self.reactor.monotonic()
         current = self.gcode_move.get_status(now)["homing_origin"][2]
         if abs(current + delta) > self.z_offset_limit + 0.0001:
             raise RuntimeError("Z offset safety limit reached")
@@ -1204,12 +1370,52 @@ class FeatherControlsMixin:
         self._render_calibration_z()
         self._toast("Z %+.3f mm" % self.z_session_adjust)
 
-    def _z_adjust_allowed(self, eventtime):
+    def _live_z_adjust_allowed(self, eventtime):
         stats = self.print_stats.get_status(eventtime)
         if stats.get("state") not in ("printing", "paused"):
             return False
-        layer = stats.get("info", {}).get("current_layer")
-        return layer is not None and layer in (0, 1)
+        if self.print_state == PrintState.PREPARING:
+            return False
+        homed = str(
+            self.toolhead.get_status(eventtime).get("homed_axes", "")).lower()
+        return "z" in homed
+
+    def _require_live_z_adjust(self):
+        if not self._live_z_adjust_allowed(self.reactor.monotonic()):
+            raise RuntimeError("Z adjust is not available")
+
+    def _apply_live_z_adjust(self, delta):
+        self._require_live_z_adjust()
+        now = self.reactor.monotonic()
+        current = float(
+            self.gcode_move.get_status(now)["homing_origin"][2])
+        if abs(current + delta) > self.z_offset_limit + 0.0001:
+            raise RuntimeError("Z offset safety limit reached")
+        self._run_blocking_gcode(
+            "_SET_GCODE_OFFSET Z_ADJUST=%+.3f MOVE=1" % delta,
+            "ADJUSTING Z...")
+        current = float(self.gcode_move.get_status(
+            self.reactor.monotonic())["homing_origin"][2])
+        saved = float(self._setting("z_offset", 0.0))
+        if (abs(current - saved)
+                > self.z_adjust_warning_threshold + 0.0001
+                and not self.live_z_limit_warned):
+            self.live_z_limit_warned = True
+            self.live_z_dialog = "limit"
+        self._render_live_z_offset()
+
+    def _save_live_z_offset(self, enable_auto_load):
+        self._require_live_z_adjust()
+        current = float(self.gcode_move.get_status(
+            self.reactor.monotonic())["homing_origin"][2])
+        commands = ["SET_MOD PARAM=z_offset VALUE=%.3f" % current]
+        if enable_auto_load:
+            commands.append("SET_MOD PARAM=load_zoffset VALUE=1")
+        self.live_z_dialog = None
+        self._run_blocking_gcode(
+            "\n".join(commands), "SAVING Z OFFSET...")
+        self._render_live_z_offset()
+        self._toast("Z offset saved %+.3f mm" % current)
 
     def _render_calibration_confirm(self):
         kind = self.calibration_kind
