@@ -40,8 +40,6 @@ SYMBOL_KEY_ROWS = (
      ("colon", ":"), ("semi", ";"), ("lparen", "("), ("rparen", ")"),
      ("quote", '"'), ("bslash", "\\")),
 )
-
-
 class FileEntry:
     """Compact mapping-compatible record for one browser row."""
 
@@ -68,8 +66,6 @@ class FeatherPagesMixin:
         commands += [
             self.renderer.text(28, 80, "SYSTEM // STANDBY", "35d9e6",
                                "JetBrainsMono Bold 16pt", "left", "middle"),
-            self.renderer.text(772, 80, time.strftime("%H:%M"), "d9e4e8",
-                               "JetBrainsMono 16pt", "right", "middle"),
             self.renderer.fill(25, 104, 750, 1, "295c66"),
         ]
         panels = ((25, 124, 235, 112, "NOZZLE", "b47aff"),
@@ -83,7 +79,7 @@ class FeatherPagesMixin:
         commands += [
             self.renderer.fill(25, 256, 750, 82, "050c0f"),
             self.renderer.stroke(25, 256, 750, 82, "295c66", 2),
-            self.renderer.text(44, 278, "JOB STATUS", "56656c",
+            self.renderer.text(44, 274, "JOB STATUS", "35d9e6",
                                "JetBrainsMono 8pt", "left", "middle"),
             self.renderer.fill(25, 354, 750, 1, "295c66"),
             self.renderer.text(28, 374, "LAST JOB", "56656c",
@@ -94,6 +90,9 @@ class FeatherPagesMixin:
                                "JetBrainsMono 8pt", "left", "middle"),
             self.renderer.text(400, 424, "OPEN MENU TO CONTROL PRINTER", "56656c",
                                "JetBrainsMono 8pt", "center", "middle"),
+            self.renderer.action_hitbox("nav.heat", 25, 124, 492, 112),
+            self.renderer.action_hitbox("nav.network", 539, 124, 236, 112),
+            self.renderer.action_hitbox("nav.job", 25, 256, 750, 82),
         ]
         self.renderer.send(commands)
         self._last_dashboard = None
@@ -113,6 +112,7 @@ class FeatherPagesMixin:
     def _update_dashboard(self, eventtime):
         if self.page != Page.IDLE_HOME:
             return
+        self._refresh_local_timezone()
         self.filament_material = self._current_material()
         extruder = self.extruder.get_status(eventtime)
         bed = self.heater_bed.get_status(eventtime)
@@ -122,10 +122,11 @@ class FeatherPagesMixin:
         ssid = self.network_status.get("ssid") or ""
         ip = self.network_status.get("ip") or self._read_text("/tmp/net_ip") or "NO LINK"
         net_name = "%s%s" % (mode.upper(), " / " + ssid if ssid else "")
+        job = self._dashboard_job(eventtime)
         values = (round(extruder["temperature"]), round(extruder["target"]),
                   round(bed["temperature"]), round(bed["target"]),
                   net_name, ip, self.last_job_name, self.filament_material,
-                  homed or "NOT HOMED", time.strftime("%H:%M"))
+                  homed or "NOT HOMED", job, time.strftime("%H:%M"))
         if values == self._last_dashboard:
             return
         previous = self._last_dashboard
@@ -160,13 +161,38 @@ class FeatherPagesMixin:
                                    self.renderer.truncate_text(values[5], 210,
                                                                "JetBrainsMono 8pt"),
                                    "35d9e6", "JetBrainsMono 8pt", "center", "middle")]
-        if previous is None:
+        if previous is None or values[9] != previous[9]:
+            active, state, filename, progress, elapsed, remaining, detail = values[9]
             commands += [
-                self.renderer.fill(29, 284, 742, 50, "050c0f"),
-                self.renderer.text(44, 310, "NO ACTIVE JOB", "35d9e6",
-                                   "JetBrainsMono Bold 12pt", "left", "middle"),
-                self.renderer.text(756, 310, "READY", "35d9e6",
-                                   "JetBrainsMono 8pt", "right", "middle")]
+                self.renderer.fill(25, 60, 500, 40, "030607"),
+                self.renderer.text(
+                    28, 80, "SYSTEM // %s" % (
+                        state if active else "STANDBY"),
+                    "35d9e6", "JetBrainsMono Bold 16pt",
+                    "left", "middle"),
+                self.renderer.fill(29, 292, 742, 42, "050c0f"),
+                self.renderer.text(
+                    44, 305,
+                    self.renderer.truncate_text(
+                        filename if active else "NO ACTIVE JOB", 560,
+                        "JetBrainsMono Bold 8pt"),
+                    "d9e4e8" if active else "35d9e6",
+                    "JetBrainsMono Bold 8pt", "left", "middle"),
+                self.renderer.text(
+                    756, 305, state if active else "READY",
+                    "f2c94c" if state == "PAUSED" else "35d9e6",
+                    "JetBrainsMono 8pt", "right", "middle")]
+            if active:
+                commands += [
+                    self.renderer.text(
+                        44, 327,
+                        self.renderer.truncate_text(
+                            detail, 330, "JetBrainsMono 8pt"),
+                        "56656c", "JetBrainsMono 8pt", "left", "middle"),
+                    self.renderer.text(
+                        756, 327, "%d%% // %s / %s" % (
+                            progress, elapsed, remaining),
+                        "d9e4e8", "JetBrainsMono 8pt", "right", "middle")]
         if previous is None or values[6:9] != previous[6:9]:
             commands += [
                 self.renderer.fill(25, 386, 750, 27, "030607"),
@@ -179,12 +205,63 @@ class FeatherPagesMixin:
                 self.renderer.text(570, 400, values[8],
                                    "35d9e6" if values[8] == "XYZ" else "f2c94c",
                                    "JetBrainsMono 8pt", "left", "middle")]
-        if previous is None or values[9] != previous[9]:
+        if previous is None or values[10] != previous[10]:
             commands += [
-                self.renderer.fill(680, 60, 92, 40, "030607"),
-                self.renderer.text(772, 80, values[9], "d9e4e8",
+                self.renderer.fill(650, 60, 125, 40, "030607"),
+                self.renderer.text(772, 80, values[10], "d9e4e8",
                                    "JetBrainsMono 16pt", "right", "middle")]
         self.renderer.send(commands)
+
+    def _dashboard_job(self, eventtime):
+        stats_object = getattr(self, "print_stats", None)
+        virtual_sdcard = getattr(self, "virtual_sdcard", None)
+        stats = (stats_object.get_status(eventtime)
+                 if stats_object is not None else {})
+        state = str(stats.get("state", "")).lower()
+        active = (state in ("printing", "paused")
+                  or bool(virtual_sdcard is not None
+                          and virtual_sdcard.is_active()))
+        if not active:
+            return (False, "READY", self.last_job_name, 0,
+                    "--:--:--", "--:--:--", "")
+
+        if getattr(self, "print_state", None) == PrintState.PREPARING:
+            label = "PREPARING"
+        else:
+            label = "PAUSED" if state == "paused" else "PRINTING"
+        path = (virtual_sdcard.file_path()
+                if virtual_sdcard is not None
+                and hasattr(virtual_sdcard, "file_path") else "")
+        filename = os.path.basename(path or self.last_job_name or "UNKNOWN")
+        try:
+            progress_value = self._print_progress(eventtime, stats)
+            elapsed, remaining = self._print_time_values(
+                eventtime, stats, progress_value)
+        except (AttributeError, TypeError, ValueError):
+            progress_value = 0.0
+            elapsed = stats.get("print_duration")
+            remaining = None
+        detail = getattr(self, "print_status_text", "") or label
+        return (
+            True, label, filename, int(progress_value * 100),
+            self._clock_duration(elapsed),
+            self._clock_duration(remaining), detail)
+
+    def _refresh_local_timezone(self):
+        """Reload libc timezone data after SET_TIMEZONE replaces localtime."""
+        try:
+            stat_result = os.lstat("/etc/localtime")
+            signature = (
+                stat_result.st_ino, stat_result.st_mtime,
+                os.readlink("/etc/localtime")
+                if os.path.islink("/etc/localtime") else "")
+        except OSError:
+            signature = None
+        if signature == getattr(self, "_timezone_signature", object()):
+            return
+        if hasattr(time, "tzset"):
+            time.tzset()
+        self._timezone_signature = signature
 
     def _render_control_home(self):
         commands = self.renderer.begin_page("Control menu", back=True)
@@ -313,6 +390,9 @@ class FeatherPagesMixin:
         paused = self.print_state == PrintState.PAUSED
         controls_ready = self._print_controls_ready()
         commands = self.renderer.begin_page("PAUSED" if paused else "PRINTING")
+        commands += self.renderer.button(
+            "nav.home", 14, 7, 146, 46, "HOME",
+            font="JetBrainsMono Bold 8pt")
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
         filename = self.renderer.truncate_text(
@@ -1154,7 +1234,6 @@ class FeatherPagesMixin:
         return commands
 
     def _render_network_home(self):
-        self._require_idle()
         commands = self.renderer.begin_page("Network", back=True)
         lines = ["Mode: %s" % self.network_status.get("mode", "OFFLINE")]
         if self.network_status.get("ssid"):
@@ -1173,7 +1252,6 @@ class FeatherPagesMixin:
         self.renderer.send(commands)
 
     def _handle_network_action(self, action):
-        self._require_idle()
         if action in ("net.scan", "net.rescan"):
             self._start_network_process("scan", [NETWORK_HELPER, "scan"], Page.NETWORK_HOME)
         elif action == "net.retry":

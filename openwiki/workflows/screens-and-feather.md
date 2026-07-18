@@ -71,6 +71,22 @@ config/feather.cfg
 
 The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, layer metadata, filament sensor, resurrection state, fan and current-print `M73` progress. Progress source selection is explicit: slicer `M73 P` first, elapsed time divided by slicer total-time metadata second, and virtual-SD file position only as the final fallback. A per-print floor prevents every source, including malformed `M73` sequences, from moving the displayed percentage backwards. It presents a persistent footer, file caption, progress bar, macro status, estimated/elapsed time, guided workflows and a bounded error/disconnect panel. Shared hint and dialog primitives keep text inset from their borders. MCU shutdown, communication and scheduling errors are recognized as recoverable states and present a `FIRMWARE_RESTART` button instead of leaving a stale page that appears frozen. Config errors detected during startup offer `RESTART`, while a plain disconnect displays an explicit reconnecting state. During `START_PRINT` preparation, pause and filament controls stay disabled until `_START_PRINT.print_started` confirms that regular print G-code has begun; cancel remains available. Filament entry is additionally guarded by a request token and a live `print_stats` recheck, so a delayed `PAUSE` completion cannot reopen the filament workflow after cancellation or route Back to an inactive print page. Full pages redraw on navigation/state changes; footer, temperatures and progress update from the existing one-second timer. The Move page can also register continuous hitboxes: `typer` supplies absolute screen coordinates starting at `0,0` plus heartbeats, while Feather queues short native toolhead segments with the configured velocity, half acceleration, a bounded queue horizon, and the runtime-reported toolhead axis limits. When the stick is released, retained transverse acceleration is discarded so inertia decays along the current motion vector instead of creating a circular fly-off path.
 
+The print page can return to the dashboard without interrupting the active job.
+On the dashboard, the job card reopens print details, the temperature cards open
+heat controls, and the network card opens network settings. The active job card
+uses the same monotonic progress and time estimates as the full print page.
+
+The dashboard wall clock reads the printer's Linux system clock, which
+[`.root/S45ntpd`](../../.root/S45ntpd) keeps synchronized through
+`pool.ntp.org`. It converts that time through the timezone selected by
+`/etc/localtime`, not a Klipper print-time counter or a browser timezone.
+`SET_TIMEZONE ZONE=Area/City` delegates to
+[`.shell/commands/ztimezone.sh`](../../.shell/commands/ztimezone.sh), which
+validates the requested entry under `/usr/share/zoneinfo` and atomically
+replaces the symlink. Feather watches that symlink and calls `time.tzset()` when
+it changes, so an already running Klipper process starts using the new timezone
+without a restart.
+
 Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
 
 ### How print status reaches Feather

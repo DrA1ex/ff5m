@@ -720,7 +720,6 @@ class FeatherControlsMixin:
             self._toast("Moved %s %g mm" % (axis.upper(), distance))
 
     def _render_heat(self):
-        self._require_idle()
         now = self.reactor.monotonic()
         extruder = self.extruder.get_status(now)
         bed = self.heater_bed.get_status(now)
@@ -799,7 +798,6 @@ class FeatherControlsMixin:
         ])
 
     def _handle_heat_action(self, action):
-        self._require_idle()
         now = self.reactor.monotonic()
         if action.startswith("heat.e"):
             target = self.extruder.get_status(now)["target"]

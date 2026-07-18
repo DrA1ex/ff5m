@@ -224,6 +224,19 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(clock(4354), "01:12:34")
         self.assertEqual(clock(90061), "1d 01:01:01")
 
+    def test_dashboard_reloads_timezone_only_when_localtime_changes(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        stat_result = type("Stat", (), {"st_ino": 10, "st_mtime": 20})()
+        with (mock.patch.object(PAGES.os, "lstat", return_value=stat_result),
+              mock.patch.object(PAGES.os.path, "islink", return_value=True),
+              mock.patch.object(
+                  PAGES.os, "readlink",
+                  return_value="/usr/share/zoneinfo/Asia/Yekaterinburg"),
+              mock.patch.object(PAGES.time, "tzset") as tzset):
+            controller._refresh_local_timezone()
+            controller._refresh_local_timezone()
+        tzset.assert_called_once_with()
+
     def test_message_wrapping_is_bounded(self):
         lines = FEATHER.FeatherScreen._wrap("one two three four five", 8, 2)
         self.assertEqual(lines, ["one two", "three"])
@@ -248,6 +261,10 @@ class FeatherUtilitiesTest(unittest.TestCase):
     def test_page_actions_cover_new_navigation_and_reject_stale_taps(self):
         allowed = FEATHER.FeatherScreen._action_allowed
         self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.menu"))
+        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.heat"))
+        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.network"))
+        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.job"))
+        self.assertTrue(allowed(FEATHER.Page.PRINTING, "nav.home"))
         self.assertFalse(allowed(FEATHER.Page.IDLE_HOME, "nav.filament"))
         self.assertTrue(allowed(FEATHER.Page.MAIN_MENU, "nav.filament"))
         self.assertTrue(allowed(FEATHER.Page.CONTROL_HOME, "nav.calibration"))

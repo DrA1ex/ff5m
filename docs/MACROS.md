@@ -468,10 +468,13 @@ This document provides a concise overview of the G-code macros defined in the `b
   - **Defaults**: Sets to default if no value provided.
 
 - **SET_TIMEZONE**
-  - **Description**: Changes the system timezone.
+  - **Description**: Validates and changes the printer timezone.
   - **Parameters**:
     - `ZONE` (string, default: "Europe/Moscow"): Timezone (e.g., "Asia/Yekaterinburg").
   - **Defaults**: Sets to Europe/Moscow if unspecified.
+  - Invalid timezone names are rejected without changing the current setting.
+  - Feather notices the change automatically; restarting Klipper is not
+    required for the dashboard clock.
 
 - **CAMERA_RELOAD**
   - **Description**: Reloads camera parameters.

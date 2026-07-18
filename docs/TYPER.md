@@ -4,7 +4,7 @@
 
 ## Overview
 
-The program interacts with the framebuffer device (`/dev/fb0`) to render text and graphics. It supports multiple fonts (Roboto, JetBrainsMono, Typicons) and provides commands for drawing text, filling rectangles, stroking rectangles, drawing lines, clearing the screen, and flushing changes in double-buffered mode.
+The program interacts with the framebuffer device (`/dev/fb0`) to render text and graphics. It supports the bundled Roboto and JetBrains Mono fonts and provides commands for drawing text, filling rectangles, stroking rectangles, drawing lines, clearing the screen, and flushing changes in double-buffered mode.
 
 The utility is located at `/root/printer_data/bin/typer`.   
 To add it to your `PATH`, use the following command:   
@@ -198,13 +198,13 @@ Processes commands via the named pipe `/tmp/typer_pipe`.
 
 ## Fonts
 
-Supported fonts include variants of Roboto, JetBrainsMono, and Typicons at different sizes and weights. Use `--list-fonts` to view all available fonts.
+Supported fonts include variants of Roboto and JetBrains Mono at different sizes and weights. Use `--list-fonts` to view all available fonts.
 
 **Example:**
 ```bash
 typer --list-fonts
 ```
-Lists all loaded fonts, e.g., `Roboto 12pt`, `JetBrainsMono Bold 16pt`, `Typicons 28pt`.
+Lists all loaded fonts, e.g., `Roboto 12pt` and `JetBrainsMono Bold 16pt`.
 
 ## Notes
 

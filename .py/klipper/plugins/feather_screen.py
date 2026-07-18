@@ -55,15 +55,17 @@ MAX_TOUCH_EVENT = 256
 
 
 EXACT_ACTIONS = {
-    Page.IDLE_HOME: ("nav.menu",),
+    Page.IDLE_HOME: ("nav.menu", "nav.heat", "nav.network", "nav.job"),
     Page.MAIN_MENU: ("nav.back", "nav.files", "nav.control", "nav.filament",
                      "nav.network"),
     Page.CONTROL_HOME: ("nav.back", "nav.move", "nav.heat", "nav.calibration",
                         "nav.settings"),
     Page.FILE_BROWSER: ("nav.back", "file.prev", "file.next"),
     Page.FILE_CONFIRM: ("nav.back", "file.start"),
-    Page.PRINTING: ("print.pause", "print.filament", "print.cancel", "print.z"),
-    Page.PAUSED: ("print.resume", "print.filament", "print.cancel", "print.z"),
+    Page.PRINTING: ("nav.home", "print.pause", "print.filament",
+                    "print.cancel", "print.z"),
+    Page.PAUSED: ("nav.home", "print.resume", "print.filament",
+                  "print.cancel", "print.z"),
     Page.CANCEL_CONFIRM: ("nav.back", "print.cancel.back", "print.cancel.confirm"),
     Page.CONTROL_MOVE: ("nav.back", "move.mode", "move.joy.xy", "move.joy.z"),
     Page.CONTROL_HEAT: ("nav.back",),
@@ -141,6 +143,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.cancel_mode = None
         self.cancel_phase = None
         self._last_cancel_label = None
+        self.home_during_print = False
         self.busy_message = None
         self.busy_phase = 0
         self.print_status_text = ""
@@ -188,6 +191,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.network_credentials = None
         self.network_operation = None
         self.network_return_page = Page.NETWORK_HOME
+        self.network_parent_page = Page.MAIN_MENU
         self.networks = []
         self.network_page = 0
         self.selected_network = None
@@ -229,6 +233,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._last_print_controls_ready = None
         self._last_filename = None
         self._last_heat = None
+        self.heat_return_page = Page.CONTROL_HOME
         self._last_dashboard = None
         self.last_job_name = "NONE"
 
@@ -597,6 +602,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             if action == "nav.back":
                 self._go_back()
             elif action == "nav.home":
+                self.home_during_print = self.print_state in (
+                    PrintState.PREPARING, PrintState.PRINTING,
+                    PrintState.PAUSED)
                 self._show_page(Page.IDLE_HOME)
             elif action == "nav.menu":
                 self._show_page(Page.MAIN_MENU)
@@ -611,7 +619,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._require_idle()
                 self._show_page(Page.CONTROL_MOVE)
             elif action == "nav.heat":
-                self._require_idle()
+                self.heat_return_page = self.page
                 self._show_page(Page.CONTROL_HEAT)
             elif action == "nav.filament":
                 self._open_filament(False)
@@ -622,9 +630,18 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._require_idle()
                 self._show_page(Page.SETTINGS)
             elif action == "nav.network":
-                self._require_idle()
-                self._start_network_process("status", [NETWORK_HELPER, "status"],
-                                            Page.IDLE_HOME)
+                self.network_parent_page = self.page
+                self._show_page(Page.NETWORK_HOME)
+            elif action == "nav.job":
+                stats = self.print_stats.get_status(
+                    self.reactor.monotonic()).get("state")
+                if stats in ("printing", "paused"):
+                    self.home_during_print = False
+                    self._show_page(self.page_for_print_state())
+                else:
+                    self.current_directory = ""
+                    self.file_page = 0
+                    self._show_page(Page.FILE_BROWSER)
             elif action.startswith("file."):
                 self._handle_file_action(action)
             elif action.startswith("print."):
@@ -739,16 +756,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._render_file_browser()
         elif self.page == Page.FILE_CONFIRM:
             self._show_page(Page.FILE_BROWSER)
-        elif self.page in (Page.CONTROL_HOME, Page.NETWORK_HOME,
-                           Page.FILAMENT_MATERIAL):
+        elif self.page in (Page.CONTROL_HOME, Page.FILAMENT_MATERIAL):
             if self.page == Page.FILAMENT_MATERIAL and self.filament_from_pause:
                 self._show_page(self.page_for_print_state())
             else:
                 self._show_page(Page.MAIN_MENU)
+        elif self.page == Page.NETWORK_HOME:
+            self._show_page(getattr(
+                self, "network_parent_page", Page.MAIN_MENU))
         elif self.page == Page.MAIN_MENU:
             self._show_page(Page.IDLE_HOME)
-        elif self.page in (Page.CONTROL_MOVE, Page.CONTROL_HEAT,
-                           Page.CALIBRATION_HOME, Page.SETTINGS):
+        elif self.page == Page.CONTROL_HEAT:
+            self._show_page(getattr(
+                self, "heat_return_page", Page.CONTROL_HOME))
+        elif self.page in (Page.CONTROL_MOVE, Page.CALIBRATION_HOME,
+                           Page.SETTINGS):
             self._show_page(Page.CONTROL_HOME)
         elif self.page == Page.MOD_SETTINGS:
             self._show_page(Page.SETTINGS)
@@ -1125,11 +1147,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._progress_floor = 0.0
                 self._progress_source = None
                 self._m73_active = False
-            if self.page not in (Page.PRINTING, Page.CANCEL_CONFIRM):
+            if (self.page not in (Page.PRINTING, Page.CANCEL_CONFIRM)
+                    and not (self.page == Page.IDLE_HOME
+                             and getattr(
+                                 self, "home_during_print", False))):
                 self._show_page(Page.PRINTING)
         elif new_state == PrintState.PAUSED:
-            if self.page not in (Page.CANCEL_CONFIRM, Page.FILAMENT_MATERIAL,
-                                 Page.FILAMENT_ACTION, Page.CALIBRATION_Z):
+            if self.page not in (
+                    Page.CANCEL_CONFIRM, Page.FILAMENT_MATERIAL,
+                    Page.FILAMENT_ACTION, Page.CALIBRATION_Z) and not (
+                        self.page == Page.IDLE_HOME
+                        and getattr(self, "home_during_print", False)):
                 self._show_page(Page.PAUSED)
         elif new_state == PrintState.IDLE:
             self._filament_request_token = getattr(
@@ -1143,6 +1171,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                           "error": "Print failed"}.get(stats_state, "Print stopped"))
                 self.cancel_requested = False
                 self.cancel_waiting_for_heat = False
+                self.home_during_print = False
                 self._m73_start_expiry = float(getattr(
                     getattr(self, "display_status", None),
                     "expire_progress", 0.0) or 0.0)

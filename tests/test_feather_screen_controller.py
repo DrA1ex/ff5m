@@ -29,6 +29,22 @@ from tests.test_feather_screen import (
 
 
 class ControllerSafetyTest(unittest.TestCase):
+    def test_home_cards_register_navigation_without_icon_font(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.reactor = Reactor()
+        controller._update_dashboard = lambda eventtime: None
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_home()
+
+        drawing = "\n".join(batches[0])
+        self.assertNotIn("Typicons", drawing)
+        self.assertIn("nav.heat", drawing)
+        self.assertIn("nav.network", drawing)
+        self.assertIn("nav.job", drawing)
+
     def test_move_caution_loads_existing_auto_bed_profile(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.reactor = Reactor()
@@ -146,6 +162,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._last_dashboard = None
         controller._read_text = lambda path: ""
         controller._update_dashboard(100)
+        initial = "\n".join(batches[0])
+        self.assertIn("-p 650 60 -s 125 40", initial)
+        self.assertIn("-p 29 292 -s 742 42", initial)
+        self.assertNotIn("-p 29 284", initial)
         controller.extruder.status["temperature"] = 22.0
         controller._update_dashboard(101)
         update = "\n".join(batches[1])

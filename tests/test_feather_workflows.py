@@ -275,6 +275,18 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertEqual(controller._progress_floor, 0.0)
         self.assertFalse(controller._m73_active)
 
+    def test_dashboard_remains_visible_after_explicit_print_home(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.home_during_print = True
+        pages = []
+        controller._show_page = pages.append
+
+        controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
+        controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
+
+        self.assertEqual(pages, [])
+
     def test_filament_back_uses_live_terminal_state(self):
         controller = base_controller("paused")
         controller.page = FEATHER.Page.FILAMENT_MATERIAL

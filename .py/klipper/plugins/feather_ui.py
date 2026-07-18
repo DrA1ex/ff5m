@@ -680,19 +680,21 @@ class FeatherRenderer:
         return "%s %dpt" % (family, size)
 
     @classmethod
-    def text_width(cls, value, font):
-        """Return the exact monospaced advance used by typer for ASCII UI text."""
+    def font_advance(cls, font):
         normalized = cls.normalize_font(font)
         match = cls.FONT_PATTERN.match(normalized)
-        return len(str(value)) * cls.FONT_ADVANCE[int(match.group(2))]
+        return cls.FONT_ADVANCE[int(match.group(2))]
+
+    @classmethod
+    def text_width(cls, value, font):
+        """Return the exact monospaced advance used by typer for ASCII UI text."""
+        return len(str(value)) * cls.font_advance(font)
 
     @classmethod
     def truncate_text(cls, value, width, font, ellipsis="..."):
         """Shorten monospaced text to pixels without changing its font size."""
         value = str(value)
-        normalized = cls.normalize_font(font)
-        match = cls.FONT_PATTERN.match(normalized)
-        advance = cls.FONT_ADVANCE[int(match.group(2))]
+        advance = cls.font_advance(font)
         max_chars = max(0, int(width) // advance)
         if len(value) <= max_chars:
             return value
