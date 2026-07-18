@@ -133,6 +133,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         config.getfloat("z_adjust_session_limit", 0.5, minval=0.05)
         self.z_adjust_warning_threshold = config.getfloat(
             "z_adjust_warning_threshold", 0.3, minval=0.05)
+        self.joystick_limits = (
+            (config.getfloat("joystick_x_min", -110.0),
+             config.getfloat("joystick_x_max", 110.0)),
+            (config.getfloat("joystick_y_min", -110.0),
+             config.getfloat("joystick_y_max", 110.0)),
+            (config.getfloat("joystick_z_min", 0.0),
+             config.getfloat("joystick_z_max", 220.0)),
+        )
+        if any(low >= high for low, high in self.joystick_limits):
+            raise config.error(
+                "feather_screen joystick minimum must be below maximum")
         self.preheat = {}
         for material, defaults in PREHEAT.items():
             key = material.lower().replace("-", "_")

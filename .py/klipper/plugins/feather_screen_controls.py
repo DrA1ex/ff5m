@@ -21,6 +21,7 @@ except (ImportError, ValueError):
 
 
 MOVE_CAUTION_Z = 5.0
+MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
 Z_WEIGHT_DANGER = 400.0
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
@@ -50,16 +51,40 @@ PREHEAT = {
 
 
 class FeatherControlsMixin:
+    @staticmethod
+    def _intersect_axis_limits(configured, restricted):
+        lower = max(float(configured[0]), float(restricted[0]))
+        upper = min(float(configured[1]), float(restricted[1]))
+        if lower >= upper:
+            raise RuntimeError("Movement limits have no safe overlap")
+        return lower, upper
+
+    def _feather_move_limits(self, status):
+        """Return the limits shared by the joystick and step controls.
+
+        XY is intentionally expressed in Feather/MOVE_SAFE coordinates.  The
+        printer's ToolHead XY limits use its parking convention and must not
+        change this coordinate system.  Z additionally cannot exceed the
+        physical ToolHead range.
+        """
+        x_limits, y_limits, z_limits = getattr(
+            self, "joystick_limits",
+            ((-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)))
+        x_limits = tuple(float(value) for value in x_limits)
+        y_limits = tuple(float(value) for value in y_limits)
+        z_limits = tuple(float(value) for value in z_limits)
+        axis_minimum = status.get("axis_minimum", (0.0, 0.0, z_limits[0]))
+        axis_maximum = status.get("axis_maximum", (0.0, 0.0, z_limits[1]))
+        z_limits = self._intersect_axis_limits(
+            z_limits, (float(axis_minimum[2]),
+                       float(axis_maximum[2]) - MOVE_SAFE_Z_MAX_MARGIN))
+        return x_limits, y_limits, z_limits
+
     def _create_joystick_planner(self):
         now = self.reactor.monotonic()
         status = self.toolhead.get_status(now)
         kinematics = self.toolhead.get_kinematics()
-        axis_minimum = status.get("axis_minimum", (-110.0, -110.0, 0.0))
-        axis_maximum = status.get("axis_maximum", (110.0, 110.0, 230.0))
-        x_limits = (float(axis_minimum[0]), float(axis_maximum[0]))
-        y_limits = (float(axis_minimum[1]), float(axis_maximum[1]))
-        z_minimum = max(0.0, float(axis_minimum[2]))
-        z_maximum = max(z_minimum, float(axis_maximum[2]) - 10.0)
+        x_limits, y_limits, z_limits = self._feather_move_limits(status)
         xy_speed = (float(status.get("max_velocity", 600.0))
                     * joystick_ui.MAX_SPEED_SCALE)
         xy_accel = float(status.get("max_accel", 20000.0)) * 0.5
@@ -68,13 +93,13 @@ class FeatherControlsMixin:
         z_accel = float(getattr(kinematics, "max_z_accel", 500.0)) * 0.5
         self.joystick = joystick_ui.JoystickPlanner(
             xy_speed, xy_accel, z_speed, z_accel,
-            (x_limits, y_limits, (z_minimum, z_maximum)))
+            (x_limits, y_limits, z_limits))
         logging.info(
             "[feather_screen] joystick limits xy=%.1f/%.1f z=%.1f/%.1f "
             "bounds=%.1f..%.1f,%.1f..%.1f,%.1f..%.1f",
             xy_speed, xy_accel, z_speed, z_accel,
             x_limits[0], x_limits[1], y_limits[0], y_limits[1],
-            z_minimum, z_maximum)
+            z_limits[0], z_limits[1])
 
     def _start_joystick_timer(self):
         timer = getattr(self, "joystick_timer", None)
@@ -717,12 +742,28 @@ class FeatherControlsMixin:
         }
         if action in moves:
             axis, distance, speed = moves[action]
-            homed = self.toolhead.get_status(self.reactor.monotonic())["homed_axes"]
+            status = self.toolhead.get_status(self.reactor.monotonic())
+            homed = status["homed_axes"]
             if axis not in homed:
                 raise RuntimeError("Home %s before moving" % axis.upper())
+            axis_index = "xyz".index(axis)
+            current = float(status["position"][axis_index])
+            limits = self._feather_move_limits(status)[axis_index]
+            if distance > 0.0:
+                target = min(limits[1], current + distance)
+                limit_reached = target <= current
+            else:
+                target = max(limits[0], current + distance)
+                limit_reached = target >= current
+            if limit_reached or math.isclose(
+                    target, current, abs_tol=0.000001):
+                self._toast("%s LIMIT REACHED" % axis.upper())
+                return
             self._run_script(
-                "MOVE_SAFE %s=%g F=%d" % (axis.upper(), distance, speed))
-            self._toast("Moved %s %g mm" % (axis.upper(), distance))
+                "MOVE_SAFE %s=%g ABSOLUTE=1 F=%d" % (
+                    axis.upper(), target, speed))
+            self._toast("Moved %s %g mm" % (
+                axis.upper(), target - current))
 
     def _render_heat(self):
         now = self.reactor.monotonic()

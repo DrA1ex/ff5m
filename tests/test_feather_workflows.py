@@ -630,7 +630,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertIsNone(controller.joystick_action)
         self.assertEqual(notices, ["TOOLHEAD BUSY"])
 
-    def test_joystick_speed_is_half_the_configured_toolhead_limit(self):
+    def test_joystick_uses_feather_limits_and_actual_z_limits(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.reactor = Reactor()
 
@@ -641,8 +641,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
         class Toolhead:
             def get_status(self, eventtime):
                 return {
-                    "axis_minimum": (0.0, 0.0, 0.0),
-                    "axis_maximum": (220.0, 220.0, 230.0),
+                    "axis_minimum": (-120.0, -120.0, 5.0),
+                    "axis_maximum": (120.0, 120.0, 230.0),
                     "max_velocity": 600.0,
                     "max_accel": 20000.0,
                 }
@@ -651,6 +651,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 return Kinematics()
 
         controller.toolhead = Toolhead()
+        controller.joystick_limits = (
+            (-97.0, 103.0), (-89.0, 91.0), (0.0, 220.0))
         controller._create_joystick_planner()
 
         self.assertEqual(controller.joystick.xy_speed, 300.0)
@@ -659,7 +661,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(controller.joystick.z_accel, 250.0)
         self.assertEqual(
             controller.joystick.limits,
-            ((0.0, 220.0), (0.0, 220.0), (0.0, 220.0)))
+            ((-97.0, 103.0), (-89.0, 91.0), (5.0, 220.0)))
 
     def test_heat_page_draws_values_immediately_and_refreshes_fan(self):
         controller = base_controller()
@@ -699,20 +701,88 @@ class MotionHeatSettingsTest(unittest.TestCase):
     def test_move_requires_homed_axis_and_uses_conservative_speed(self):
         controller = base_controller()
         controller.jog_step = 10.0
-        controller.toolhead = StatusObject({"homed_axes": "y"})
+        controller.toolhead = StatusObject({
+            "homed_axes": "y", "position": (0.0, 0.0, 0.0)})
         with self.assertRaisesRegex(RuntimeError, "Home X"):
             controller._handle_move_action("move.xp")
         controller.toolhead.status["homed_axes"] = "xyz"
         controller._handle_move_action("move.xm")
         controller._handle_move_action("move.zp")
         self.assertEqual(controller.gcode.commands,
-                         ["MOVE_SAFE X=-10 F=6000", "MOVE_SAFE Z=10 F=600"])
+                         ["MOVE_SAFE X=-10 ABSOLUTE=1 F=6000",
+                          "MOVE_SAFE Z=10 ABSOLUTE=1 F=600"])
+
+    def test_step_controls_share_joystick_limits(self):
+        controller = base_controller()
+        controller.jog_step = 10.0
+        controller.joystick_limits = (
+            (-100.0, 100.0), (-90.0, 90.0), (0.0, 210.0))
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (95.0, -85.0, 205.0),
+            "axis_minimum": (-120.0, -120.0, 0.0),
+            "axis_maximum": (120.0, 120.0, 220.0),
+        })
+
+        controller._handle_move_action("move.xp")
+        controller._handle_move_action("move.ym")
+        controller._handle_move_action("move.zp")
+
+        self.assertEqual(
+            controller.gcode.commands,
+            ["MOVE_SAFE X=100 ABSOLUTE=1 F=6000",
+             "MOVE_SAFE Y=-90 ABSOLUTE=1 F=6000",
+             "MOVE_SAFE Z=210 ABSOLUTE=1 F=600"])
+
+    def test_step_z_respects_toolhead_range_and_does_not_move_at_limit(self):
+        controller = base_controller()
+        controller.jog_step = 10.0
+        controller.joystick_limits = (
+            (-100.0, 100.0), (-90.0, 90.0), (0.0, 220.0))
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (0.0, 0.0, 205.0),
+            "axis_minimum": (-120.0, -120.0, 5.0),
+            "axis_maximum": (120.0, 120.0, 220.0),
+        })
+        notices = []
+        controller._toast = notices.append
+
+        controller._handle_move_action("move.zp")
+        controller.toolhead.status["position"] = (0.0, 0.0, 210.0)
+        controller._handle_move_action("move.zp")
+
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE Z=210 ABSOLUTE=1 F=600"])
+        self.assertEqual(notices, ["Moved Z 5 mm", "Z LIMIT REACHED"])
+
+    def test_step_does_not_reverse_when_current_position_is_outside_limit(self):
+        controller = base_controller()
+        controller.jog_step = 10.0
+        controller.joystick_limits = (
+            (-100.0, 100.0), (-90.0, 90.0), (0.0, 220.0))
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (105.0, 0.0, 100.0),
+            "axis_minimum": (-120.0, -120.0, 0.0),
+            "axis_maximum": (120.0, 120.0, 230.0),
+        })
+        notices = []
+        controller._toast = notices.append
+
+        controller._handle_move_action("move.xp")
+        controller._handle_move_action("move.xm")
+
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE X=95 ABSOLUTE=1 F=6000"])
+        self.assertEqual(notices, ["X LIMIT REACHED", "Moved X -10 mm"])
 
     def test_low_z_warning_blocks_step_xy_but_keeps_step_z_available(self):
         controller = base_controller()
         controller.jog_step = 1.0
         controller.move_caution_signature = (True, "available")
-        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz", "position": (0.0, 0.0, 20.0)})
 
         controller._handle_move_action("move.xp")
         controller._handle_move_action("move.yp")
@@ -720,7 +790,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller._handle_move_action("move.zm")
 
         self.assertEqual(
-            controller.gcode.commands, ["MOVE_SAFE Z=-1 F=600"])
+            controller.gcode.commands, ["MOVE_SAFE Z=19 ABSOLUTE=1 F=600"])
 
     def test_preheat_fan_and_cooldown_commands(self):
         controller = base_controller()
