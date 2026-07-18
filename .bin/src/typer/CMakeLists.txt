@@ -138,7 +138,12 @@ if(BUILD_TESTING)
             switching_buffers_flushes_and_resynchronizes
             two_bpp_font_blends_edges
             compact_font_maps_disjoint_unicode_ranges
-            bundled_compact_font_renders_cyrillic)
+            bundled_compact_font_renders_cyrillic
+            text_wrap_uses_font_metrics_and_word_boundaries
+            text_wrap_limits_by_rendered_height_and_adds_ellipsis
+            text_wrap_without_truncate_has_no_ellipsis
+            text_wrap_splits_long_utf8_words_without_corruption
+            text_truncate_uses_font_metrics_and_preserves_utf8)
 
     add_custom_target(typer_tests
             DEPENDS

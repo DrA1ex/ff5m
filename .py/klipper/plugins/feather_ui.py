@@ -575,7 +575,7 @@ class FeatherRenderer:
         """Draw a centered one-line hint with guaranteed inner padding."""
         font = self.normalize_font(font)
         available = max(1, int(max_width) - 2 * self.HINT_TEXT_PADDING)
-        label = self.truncate_text(str(message).upper(), available, font)
+        label = str(message).upper()
         width = min(
             int(max_width),
             max(int(min_width),
@@ -586,7 +586,7 @@ class FeatherRenderer:
             background=background, line_width=2)
         commands.append(self.text(
             int(center_x), int(y) + int(height) // 2, label, COLOR_TEXT,
-            font, "center", "middle"))
+            font, "center", "middle", max_width=available, truncate=True))
         return commands
 
     def section_panel(self, title, x, y, width, height, border="295c66"):
@@ -729,9 +729,14 @@ class FeatherRenderer:
         return commands
 
     def text(self, x, y, value, color=COLOR_CYAN,
-             font="JetBrainsMono 12pt", h_align="left", v_align="middle"):
+             font="JetBrainsMono 12pt", h_align="left", v_align="middle",
+             max_width=None, max_height=None, wrap=False, truncate=False):
         font = self.normalize_font(font)
         value = str(value)
+        if (wrap or truncate) and (max_width is None or int(max_width) <= 0):
+            raise ValueError("wrap and truncate require max_width")
+        if wrap and (max_height is None or int(max_height) <= 0):
+            raise ValueError("wrap requires max_height")
         # argparse treats a text value beginning with '-' as another option.
         # Keep the protective space out of the visible alignment calculation,
         # otherwise centered labels such as -Y appear half a glyph off-center.
@@ -743,9 +748,17 @@ class FeatherRenderer:
                 x -= advance // 2
             elif h_align == "left":
                 x -= advance
-        return "--batch text -p %d %d -c %s -f %s -ha %s -va %s -t %s" % (
-            x, y, self.color(color), self.quote(font), h_align, v_align,
-            self.quote(value))
+        command = "--batch text -p %d %d -c %s -f %s -ha %s -va %s" % (
+            x, y, self.color(color), self.quote(font), h_align, v_align)
+        if max_width is not None:
+            command += " --max-width %d" % int(max_width)
+        if max_height is not None:
+            command += " --max-height %d" % int(max_height)
+        if wrap:
+            command += " --wrap"
+        if truncate:
+            command += " --truncate"
+        return command + " -t %s" % self.quote(value)
 
     @classmethod
     def normalize_font(cls, font):
@@ -771,18 +784,6 @@ class FeatherRenderer:
     def text_width(cls, value, font):
         """Return the exact monospaced advance used by typer for ASCII UI text."""
         return len(str(value)) * cls.font_advance(font)
-
-    @classmethod
-    def truncate_text(cls, value, width, font, ellipsis="..."):
-        """Shorten monospaced text to pixels without changing its font size."""
-        value = str(value)
-        advance = cls.font_advance(font)
-        max_chars = max(0, int(width) // advance)
-        if len(value) <= max_chars:
-            return value
-        if max_chars <= len(ellipsis):
-            return ellipsis[:max_chars]
-        return value[:max_chars - len(ellipsis)] + ellipsis
 
     @staticmethod
     def hitbox(action, x, y, width, height, continuous=False):
@@ -860,11 +861,13 @@ class FeatherRenderer:
         display_label = str(label)
         if display_label.startswith("-"):
             display_label = " " + display_label
+        max_width = max(1, width - 2 * self.BUTTON_TEXT_PADDING)
         command = ("--batch button -p %d %d -s %d %d --background %s "
-                   "--border %s --text-color %s -lw 2 -f %s -t %s" %
+                   "--border %s --text-color %s -lw 2 -f %s "
+                   "--max-width %d --truncate -t %s" %
                    (x, y, width, height, background, border, text_color,
                     self.quote(self.normalize_font(font)),
-                    self.quote(display_label)))
+                    max_width, self.quote(display_label)))
         if include_hitbox and state not in ("disabled", "busy"):
             command += " --id %s" % action
         return [command]
@@ -896,7 +899,9 @@ class FeatherRenderer:
         else:
             label_y = y + height // 2 if subtitle is None else y + height // 2 - 14
             commands.append(self.text(x + width // 2, label_y, label,
-                                      text_color, font, "center", "middle"))
+                                      text_color, font, "center", "middle",
+                                      max_width=width - 2 * self.BUTTON_TEXT_PADDING,
+                                      truncate=True))
             if subtitle is not None:
                 commands.append(self.text(
                     x + width // 2, y + height // 2 + 24, subtitle, COLOR_DIM,
@@ -915,8 +920,6 @@ class FeatherRenderer:
             state = "enabled"
         if layout == "center":
             font = self.normalize_font(font)
-            label = self.truncate_text(
-                label, width - 2 * self.BUTTON_TEXT_PADDING, font)
         if state not in ("disabled", "busy"):
             self._buttons[action] = (x, y, width, height, label, state, font,
                                      subtitle, layout)
@@ -949,14 +952,14 @@ class FeatherRenderer:
             x, y, width, height, border=border, background=COLOR_PANEL)
         commands.append(self.text(
             x + width // 2, y + 34, str(title).upper(), border,
-            "JetBrainsMono Bold 16pt", "center", "middle"))
+            "JetBrainsMono Bold 16pt", "center", "middle",
+            max_width=width - 2 * self.DIALOG_TEXT_PADDING, truncate=True))
         for index, line in enumerate(tuple(lines)[:4]):
-            line = self.truncate_text(
-                str(line), width - 2 * self.DIALOG_TEXT_PADDING,
-                "JetBrainsMono 8pt")
             commands.append(self.text(
-                x + width // 2, y + 78 + index * 24, line, COLOR_TEXT,
-                "JetBrainsMono 8pt", "center", "middle"))
+                x + width // 2, y + 78 + index * 24, str(line), COLOR_TEXT,
+                "JetBrainsMono 8pt", "center", "middle",
+                max_width=width - 2 * self.DIALOG_TEXT_PADDING,
+                truncate=True))
         button_specs = tuple(buttons)
         if button_specs:
             gap = 12
@@ -1010,23 +1013,22 @@ class FeatherRenderer:
         if back:
             commands += self.button("nav.back", 14, 7, 146, 46, "< BACK",
                                     font="JetBrainsMono Bold 8pt")
-        title = self.truncate_text(str(title).upper(), 440,
-                                   "JetBrainsMono 12pt")
+        title = str(title).upper()
         commands += [
             self.text(400, 29, title, "header_text",
                       "JetBrainsMono 12pt",
-                      "center", "middle"),
+                      "center", "middle", max_width=440, truncate=True),
             self.fill(18, HEADER_BOTTOM, 764, 1, "header_border"),
             self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
         ]
         if self._busy_label is not None:
-            busy_label = self.truncate_text(
-                self._busy_label, 132, "JetBrainsMono Bold 8pt")
+            busy_label = self._busy_label
             commands += [
                 self.fill(622, 9, 160, 38, "header_background"),
                 self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
                 self.text(702, 28, busy_label, COLOR_AMBER,
-                          "JetBrainsMono Bold 8pt", "center", "middle"),
+                          "JetBrainsMono Bold 8pt", "center", "middle",
+                          max_width=132, truncate=True),
             ]
         if self._footer_values is not None and not self._footer_drawn:
             commands += self._footer_commands(self._footer_values)
@@ -1042,9 +1044,10 @@ class FeatherRenderer:
             self.stroke(FRAME_X, FOOTER_Y - 2, FRAME_WIDTH,
                         SCREEN_HEIGHT - (FOOTER_Y - 2) - 4, "295c66", 1),
             self.text(20, FOOTER_Y + 16, left, COLOR_CYAN,
-                      "JetBrainsMono 8pt"),
+                      "JetBrainsMono 8pt", max_width=520, truncate=True),
             self.text(780, FOOTER_Y + 16, right, COLOR_CYAN,
-                      "JetBrainsMono 8pt", "right"),
+                      "JetBrainsMono 8pt", "right", max_width=230,
+                      truncate=True),
         ]
 
     def footer(self, nozzle, nozzle_target, bed, bed_target, network, state):
@@ -1068,12 +1071,12 @@ class FeatherRenderer:
         if label == self._busy_label:
             return
         self._busy_label = label
-        label = self.truncate_text(label, 132, "JetBrainsMono Bold 8pt")
         self.send([
             self.fill(622, 9, 160, 38, "header_background"),
             self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
             self.text(702, 28, label, COLOR_AMBER,
-                      "JetBrainsMono Bold 8pt", "center", "middle"),
+                      "JetBrainsMono Bold 8pt", "center", "middle",
+                      max_width=132, truncate=True),
         ])
 
     def clear_busy_notice(self):

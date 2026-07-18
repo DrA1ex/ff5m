@@ -103,6 +103,17 @@ void drawText(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
     auto fontName = opts.get("--font");
     auto hAlignStr = opts.get("--h-align");
     auto vAlignVStr = opts.get("--v-align");
+    auto maxWidth = opts.get<int>("--max-width");
+    auto maxHeight = opts.get<int>("--max-height");
+    auto wrap = opts.get<bool>("--wrap");
+    auto truncate = opts.get<bool>("--truncate");
+
+    if ((wrap || truncate) && maxWidth <= 0) {
+        throw std::invalid_argument("--wrap and --truncate require --max-width");
+    }
+    if (wrap && maxHeight <= 0) {
+        throw std::invalid_argument("--wrap requires --max-height");
+    }
 
     HorizontalAlign hAlign;
     if (hAlignStr == "center") {
@@ -139,7 +150,13 @@ void drawText(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
     drawer.setHorizontalAlignment(hAlign);
     drawer.setVerticalAlignment(vAlign);
 
-    drawer.print(text.c_str());
+    if (wrap) {
+        drawer.printWrapped(text.c_str(), maxWidth, maxHeight, truncate);
+    } else if (truncate) {
+        drawer.printTruncated(text.c_str(), maxWidth);
+    } else {
+        drawer.print(text.c_str());
+    }
 }
 
 void fill(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
@@ -214,6 +231,12 @@ void drawButton(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
     const auto lineWidth = std::max<uint8_t>(1, opts.get<uint8_t>("--line-width"));
     const auto fontName = opts.get("--font");
     const auto label = opts.get<std::string>("--text");
+    const auto maxWidth = opts.get<int>("--max-width");
+    const auto truncate = opts.get<bool>("--truncate");
+
+    if (truncate && maxWidth <= 0) {
+        throw std::invalid_argument("button --truncate requires --max-width");
+    }
 
     if (!fonts.contains(fontName)) {
         throw std::invalid_argument("Unknown font name: " + fontName);
@@ -228,7 +251,11 @@ void drawButton(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
     drawer.setFontScale(1, 1);
     drawer.setHorizontalAlignment(HorizontalAlign::CENTER);
     drawer.setVerticalAlignment(VerticalAlignment::MIDDLE);
-    drawer.print(label.c_str());
+    if (truncate) {
+        drawer.printTruncated(label.c_str(), maxWidth);
+    } else {
+        drawer.print(label.c_str());
+    }
 
     if (opts.is_used("--id")) add_hitbox(opts);
 }
@@ -337,6 +364,24 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->text_command.add_argument("--v-align", "-va")
         .choices("bottom", "baseline", "middle", "top")
         .default_value("baseline");
+
+    result->text_command.add_argument("--max-width")
+        .scan<'d', int>()
+        .default_value(0)
+        .help("Maximum rendered width in pixels");
+
+    result->text_command.add_argument("--max-height")
+        .scan<'d', int>()
+        .default_value(0)
+        .help("Maximum rendered height in pixels");
+
+    result->text_command.add_argument("--wrap")
+        .help("Wrap text within max-width and max-height")
+        .flag();
+
+    result->text_command.add_argument("--truncate")
+        .help("Truncate text to max-width and append an ellipsis")
+        .flag();
 
     result->program.add_subparser(result->text_command);
 
@@ -455,6 +500,8 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->button_command.add_argument("--line-width", "-lw").scan<'d', uint8_t>().default_value((uint8_t) 2);
     result->button_command.add_argument("--font", "-f").default_value(Roboto12pt.name);
     result->button_command.add_argument("--text", "-t").default_value("");
+    result->button_command.add_argument("--max-width").scan<'d', int>().default_value(0);
+    result->button_command.add_argument("--truncate").flag();
     result->button_command.add_argument("--id");
     result->button_command.add_argument("--continuous").flag();
     result->program.add_subparser(result->button_command);

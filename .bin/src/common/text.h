@@ -8,7 +8,9 @@
 
 #include <limits>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "./fonts/types.h"
 
@@ -116,6 +118,9 @@ public:
     void setDebug(bool enable);
 
     void print(const char *text);
+    void printWrapped(const char *text, int32_t maxWidth, int32_t maxHeight,
+                      bool truncateOverflow = false);
+    void printTruncated(const char *text, int32_t maxWidth);
     void breakLine();
 
     void setPixel(int32_t x, int32_t y, uint32_t color);
@@ -134,6 +139,11 @@ public:
 
     [[nodiscard]] TextBoundary calcTextBoundaries(const std::string_view &text, int32_t x = 0, int32_t y = 0) const;
     [[nodiscard]] TextBoundary calcTextBoundaries(const char *text, int32_t x = 0, int32_t y = 0) const;
+    [[nodiscard]] std::vector<std::string> wrapText(
+        const std::string_view &text, int32_t maxWidth,
+        int32_t maxHeight, bool truncateOverflow = false) const;
+    [[nodiscard]] std::string truncateText(
+        const std::string_view &text, int32_t maxWidth) const;
 
 private:
     typedef std::pair<int32_t, int32_t> Point;

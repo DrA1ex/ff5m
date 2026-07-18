@@ -45,12 +45,32 @@ Renders text with customizable font, color, alignment, and scale.
 | `--scale`, `-s` | Font scale | integer | `1` | No |
 | `--h-align`, `-ha` | Horizontal alignment (`left`, `center`, `right`) | string | `left` | No |
 | `--v-align`, `-va` | Vertical alignment (`bottom`, `baseline`, `middle`, `top`) | string | `baseline` | No |
+| `--max-width` | Maximum rendered width in pixels | integer | `0` | No |
+| `--max-height` | Maximum rendered height in pixels | integer | `0` | No |
+| `--wrap` | Wrap text within `max-width` and `max-height` | flag | off | No |
+| `--truncate` | Keep one line, truncate to `max-width`, and append an ellipsis | flag | off | No |
 
 **Example:**
 ```bash
 typer text --pos 400 240 --color ff0000 --font "Roboto Bold 16pt" --text "Hello, World!" --h-align center --v-align middle
 ```
 Draws "Hello, World!" in red, centered at (400, 240) using RobotoBold16pt font.
+
+Wrapping and truncation use the selected font's actual glyph metrics:
+
+```bash
+typer text --pos 400 160 --font "JetBrainsMono 12pt" --h-align center \
+  --v-align middle --max-width 640 --max-height 100 --wrap --truncate \
+  --text "A long status message that must stay inside the dialog"
+
+typer text --pos 20 400 --font "JetBrainsMono 8pt" \
+  --max-width 240 --truncate --text "A very long filename.gcode"
+```
+
+`--wrap` requires both positive limits. Add `--truncate` to put an ellipsis on
+the last visible wrapped line when the text exceeds `max-height`. Without
+`--wrap`, `--truncate` keeps the text on one line and requires a positive
+`--max-width`.
 
 In batch/pipe mode, you can continue text from the last position by omitting the `--pos` parameter in subsequent `text` commands.
 ```bash

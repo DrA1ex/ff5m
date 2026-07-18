@@ -241,10 +241,6 @@ class FeatherUtilitiesTest(unittest.TestCase):
             controller._refresh_local_timezone()
         tzset.assert_called_once_with()
 
-    def test_message_wrapping_is_bounded(self):
-        lines = FEATHER.FeatherScreen._wrap("one two three four five", 8, 2)
-        self.assertEqual(lines, ["one two", "three"])
-
     def test_stale_actions_are_rejected(self):
         allowed = FEATHER.FeatherScreen._action_allowed
         self.assertTrue(allowed(FEATHER.Page.FILE_CONFIRM, "file.start"))
@@ -433,21 +429,27 @@ class RendererStateTest(unittest.TestCase):
         dialog = "\n".join(renderer.dialog(
             "Notice", (long_text,), (), x=80, y=90, width=640, height=240))
 
-        self.assertNotIn(long_text, hint)
+        self.assertIn(long_text, hint)
+        self.assertIn("--max-width 700 --truncate", hint)
         hint_panel = re.search(
             r"--batch fill -p (\d+) 397 -s (\d+) 44", hint)
         self.assertIsNotNone(hint_panel)
         self.assertGreaterEqual(int(hint_panel.group(1)), 30)
         self.assertLessEqual(int(hint_panel.group(2)), 740)
-        hint_label = re.search(r'-t "([^"]+)"', hint).group(1)
-        dialog_label = re.findall(r'-t "([^"]+)"', dialog)[1]
-        self.assertGreaterEqual(
-            int(hint_panel.group(2))
-            - renderer.text_width(hint_label, "JetBrainsMono 8pt"), 40)
-        self.assertLessEqual(
-            renderer.text_width(hint_label, "JetBrainsMono 8pt"), 700)
-        self.assertLessEqual(
-            renderer.text_width(dialog_label, "JetBrainsMono 8pt"), 584)
+        self.assertIn(long_text, dialog)
+        self.assertIn("--max-width 584 --truncate", dialog)
+
+    def test_text_bounds_are_delegated_to_typer(self):
+        renderer = FEATHER.FeatherRenderer()
+        wrapped = renderer.text(
+            400, 160, "one two three", max_width=584, max_height=66,
+            wrap=True, truncate=True)
+        truncated = renderer.text(
+            400, 160, "one two three", max_width=584, truncate=True)
+
+        self.assertIn(
+            "--max-width 584 --max-height 66 --wrap --truncate", wrapped)
+        self.assertIn("--max-width 584 --truncate", truncated)
 
     def test_startup_modal_draws_pulsing_circle_and_loading_text(self):
         renderer = FEATHER.FeatherRenderer()
@@ -661,7 +663,7 @@ class RendererStateTest(unittest.TestCase):
                       if "nav.back" in command and "--id " in command)
         self.assertIn("-s 146 46", hitbox)
 
-    def test_button_fonts_keep_a_visible_horizontal_margin(self):
+    def test_button_text_bounds_are_delegated_to_typer(self):
         renderer = FEATHER.FeatherRenderer()
         renderer.begin_page("Audit")
         cases = (
@@ -673,23 +675,20 @@ class RendererStateTest(unittest.TestCase):
             ("backspace", 165, "BACKSPACE", "Roboto Bold 12pt"),
         )
         for action, width, label, requested in cases:
-            renderer.button(action, 0, 60, width, 50, label, font=requested)
-            rendered = renderer._buttons[action][4]
-            font = renderer._buttons[action][6]
-            remaining = width - renderer.text_width(rendered, font)
-            self.assertGreaterEqual(
-                remaining, 2 * renderer.BUTTON_TEXT_PADDING,
-                "%s uses %s with only %d px remaining" %
-                (rendered, font, remaining))
+            commands = renderer.button(
+                action, 0, 60, width, 50, label, font=requested)
+            self.assertIn(
+                "--max-width %d --truncate" %
+                (width - 2 * renderer.BUTTON_TEXT_PADDING), commands[0])
 
-    def test_large_label_is_shortened_without_changing_font_size(self):
+    def test_large_label_keeps_source_text_and_font_for_native_truncation(self):
         renderer = FEATHER.FeatherRenderer()
         renderer.begin_page("Cancel")
         renderer.button("cancel", 0, 60, 260, 100, "CANCEL PRINT",
                         font="Roboto Bold 16pt")
         self.assertEqual(renderer._buttons["cancel"][6],
                          "JetBrainsMono Bold 16pt")
-        self.assertEqual(renderer._buttons["cancel"][4], "CANCEL ...")
+        self.assertEqual(renderer._buttons["cancel"][4], "CANCEL PRINT")
 
     def test_footer_is_preserved_across_page_frames(self):
         renderer = FEATHER.FeatherRenderer()

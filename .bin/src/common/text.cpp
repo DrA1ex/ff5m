@@ -12,6 +12,8 @@
 #include <limits>
 #include <ranges>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "utf8.h"
 
@@ -141,6 +143,23 @@ void TextDrawer::print(const char *text) {
             _cursorX += _drawChar(symbol, _cursorX, b.baseline);
         }
     }
+}
+
+void TextDrawer::printWrapped(const char *text, int32_t maxWidth,
+                              int32_t maxHeight, bool truncateOverflow) {
+    const auto lines = wrapText(
+        text, maxWidth, maxHeight, truncateOverflow);
+    std::string wrapped;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index > 0) wrapped += '\n';
+        wrapped += lines[index];
+    }
+    print(wrapped.c_str());
+}
+
+void TextDrawer::printTruncated(const char *text, int32_t maxWidth) {
+    const auto truncated = truncateText(text, maxWidth);
+    print(truncated.c_str());
 }
 
 void TextDrawer::breakLine() {
@@ -430,6 +449,167 @@ TextBoundary TextDrawer::calcTextBoundaries(const std::string_view &text, int32_
     boundary.offset(offsetX, offsetY);
 
     return boundary;
+}
+
+std::string TextDrawer::truncateText(const std::string_view &text,
+                                     int32_t maxWidth) const {
+    if (maxWidth <= 0 || calcTextBoundaries(text).size().first <= maxWidth) {
+        return std::string(text);
+    }
+
+    const auto removeLastCodepoint = [](std::string &value) {
+        if (value.empty()) return;
+        auto offset = value.size() - 1;
+        while (offset > 0
+               && (static_cast<unsigned char>(value[offset]) & 0xc0) == 0x80) {
+            --offset;
+        }
+        value.erase(offset);
+    };
+
+    std::string ellipsis = "...";
+    while (!ellipsis.empty()
+           && calcTextBoundaries(ellipsis).size().first > maxWidth) {
+        ellipsis.pop_back();
+    }
+
+    auto result = std::string(text);
+    while (!result.empty()
+           && calcTextBoundaries(result + ellipsis).size().first > maxWidth) {
+        removeLastCodepoint(result);
+    }
+    return result + ellipsis;
+}
+
+std::vector<std::string> TextDrawer::wrapText(
+    const std::string_view &text, int32_t maxWidth,
+    int32_t maxHeight, bool truncateOverflow) const {
+    if (maxWidth <= 0) return {std::string(text)};
+
+    const auto fits = [this, maxWidth](const std::string_view &line) {
+        return calcTextBoundaries(line).size().first <= maxWidth;
+    };
+    const auto utf8Length = [](unsigned char firstByte) -> std::size_t {
+        if (firstByte < 0x80) return 1;
+        if ((firstByte & 0xe0) == 0xc0) return 2;
+        if ((firstByte & 0xf0) == 0xe0) return 3;
+        throw std::invalid_argument("Character too large and not supported.");
+    };
+
+    std::vector<std::string> lines;
+    std::string current;
+    const auto pushCurrent = [&lines, &current]() {
+        lines.push_back(std::move(current));
+        current.clear();
+    };
+    const auto appendWord = [&lines, &current, &fits, &utf8Length,
+                             &pushCurrent](const std::string_view &word) {
+        if (!current.empty()) {
+            auto candidate = current + " " + std::string(word);
+            if (fits(candidate)) {
+                current = std::move(candidate);
+                return;
+            }
+            pushCurrent();
+        }
+
+        if (fits(word)) {
+            current = word;
+            return;
+        }
+
+        std::size_t offset = 0;
+        while (offset < word.size()) {
+            auto next = offset;
+            std::string chunk;
+            while (next < word.size()) {
+                const auto length = utf8Length(
+                    static_cast<unsigned char>(word[next]));
+                if (next + length > word.size()) {
+                    throw std::invalid_argument("Invalid UTF-8 sequence");
+                }
+                auto candidate = chunk + std::string(word.substr(next, length));
+                if (!chunk.empty() && !fits(candidate)) break;
+                chunk = std::move(candidate);
+                next += length;
+                if (!fits(chunk)) break;
+            }
+            if (next == offset) {
+                const auto length = utf8Length(
+                    static_cast<unsigned char>(word[offset]));
+                chunk = word.substr(offset, length);
+                next = offset + length;
+            }
+            offset = next;
+            if (offset < word.size()) {
+                lines.push_back(std::move(chunk));
+            } else {
+                current = std::move(chunk);
+            }
+        }
+    };
+
+    std::size_t paragraphStart = 0;
+    while (paragraphStart <= text.size()) {
+        const auto paragraphEnd = text.find('\n', paragraphStart);
+        const auto end = paragraphEnd == std::string_view::npos
+            ? text.size() : paragraphEnd;
+        const auto paragraph = text.substr(paragraphStart, end - paragraphStart);
+
+        std::size_t wordStart = 0;
+        bool foundWord = false;
+        while (wordStart < paragraph.size()) {
+            while (wordStart < paragraph.size()
+                   && (paragraph[wordStart] == ' ' || paragraph[wordStart] == '\t'
+                       || paragraph[wordStart] == '\r')) {
+                ++wordStart;
+            }
+            if (wordStart >= paragraph.size()) break;
+            auto wordEnd = wordStart;
+            while (wordEnd < paragraph.size()
+                   && paragraph[wordEnd] != ' ' && paragraph[wordEnd] != '\t'
+                   && paragraph[wordEnd] != '\r') {
+                ++wordEnd;
+            }
+            appendWord(paragraph.substr(wordStart, wordEnd - wordStart));
+            foundWord = true;
+            wordStart = wordEnd;
+        }
+        if (!current.empty()) pushCurrent();
+        if (!foundWord) lines.emplace_back();
+
+        if (paragraphEnd == std::string_view::npos) break;
+        paragraphStart = paragraphEnd + 1;
+    }
+
+    if (maxHeight <= 0 || lines.empty()) return lines;
+
+    std::size_t visible = 0;
+    int32_t blockTop = std::numeric_limits<int32_t>::max();
+    int32_t blockBottom = std::numeric_limits<int32_t>::min();
+    const auto lineAdvance = font()->advanceY * _scaleY;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto boundary = calcTextBoundaries(
+            lines[index], 0, static_cast<int32_t>(index) * lineAdvance);
+        if (boundary.left >= boundary.right && boundary.top >= boundary.bottom) {
+            ++visible;
+            continue;
+        }
+        const auto nextTop = std::min(blockTop, boundary.top);
+        const auto nextBottom = std::max(blockBottom, boundary.bottom);
+        if (nextBottom - nextTop > maxHeight) break;
+        blockTop = nextTop;
+        blockBottom = nextBottom;
+        ++visible;
+    }
+
+    if (visible >= lines.size()) return lines;
+    if (visible == 0) return {};
+    lines.resize(visible);
+    if (truncateOverflow) {
+        lines.back() = truncateText(lines.back() + "...", maxWidth);
+    }
+    return lines;
 }
 
 TextDrawer::Point TextDrawer::_getAlignmentOffset(const TextBoundary &boundary) const {

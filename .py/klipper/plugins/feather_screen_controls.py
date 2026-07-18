@@ -1407,9 +1407,9 @@ class FeatherControlsMixin:
                     "or start without an initial nozzle cleaning.")
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
-        for index, line in enumerate(self._wrap(text, 52, 3)):
-            commands.append(self.renderer.text(400, 85 + index * 32, line,
-                                               "ffffff", "Roboto 10pt", "center"))
+        commands.append(self.renderer.text(
+            400, 85, text, "ffffff", "Roboto 10pt", "center", "middle",
+            max_width=572, max_height=70, wrap=True, truncate=True))
         if kind in ("screws", "mesh"):
             materials = ("PLA", "PETG", "ABS")
         elif kind == "z":
@@ -1458,10 +1458,11 @@ class FeatherControlsMixin:
 
     def _render_calibration_progress(self):
         label = self.print_status_text or "Calibration running..."
-        commands = self.renderer.begin_page("Calibration")
-        commands.append(self.renderer.text(400, 142, self._shorten(label, 44),
-                                           "b47aff", "JetBrainsMono Bold 12pt",
-                                           "center"))
+        title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
+        commands = self.renderer.begin_page(title)
+        commands.append(self.renderer.text(
+            400, 142, label, "b47aff", "JetBrainsMono Bold 12pt", "center",
+            max_width=704, truncate=True))
         commands += self._calibration_stage_commands(label)
         cancel_visible = self._calibration_heat_cancel_visible()
         emergency_visible = self.calibration_kind in ("screws", "mesh", "z")
@@ -1502,9 +1503,9 @@ class FeatherControlsMixin:
             return
         self._last_calibration_label = label
         commands = [self.renderer.fill(40, 105, 720, 205, "030607"),
-                    self.renderer.text(400, 142, self._shorten(label, 44),
-                                       "b47aff", "JetBrainsMono Bold 12pt",
-                                       "center")]
+                    self.renderer.text(
+                        400, 142, label, "b47aff", "JetBrainsMono Bold 12pt",
+                        "center", max_width=704, truncate=True)]
         commands += self._calibration_stage_commands(label)
         self.renderer.send(commands)
 
@@ -1548,7 +1549,12 @@ class FeatherControlsMixin:
 
     def _calibration_stage_commands(self, label):
         text = str(label).upper()
-        if self.calibration_kind == "z":
+        if self.calibration_kind == "recovery":
+            if getattr(self, "recovery_action", None) == "cleanup":
+                stages = ("PREP", "HEAT", "HOME", "CLEANUP")
+            else:
+                stages = ("PREP", "HEAT", "HOME", "POSITION", "RESTORE")
+        elif self.calibration_kind == "z":
             stages = (("PREP", "HOME", "HEAT", "CLEAN", "TARE", "READY")
                       if getattr(self, "calibration_clean_nozzle", True)
                       else ("PREP", "HOME", "HEAT", "TARE", "READY"))
@@ -1565,7 +1571,16 @@ class FeatherControlsMixin:
             stages = ("PREP", "HOME", "HEAT", "CLEAN", "LEVEL")
 
         phase = stages[0]
-        if "READY" in text:
+        if self.calibration_kind == "recovery" and (
+                "START" in text or "ABORT" in text or "RESURRECT" in text):
+            phase = "PREP"
+        elif "POSITION" in text:
+            phase = "POSITION"
+        elif "RESTOR" in text:
+            phase = "RESTORE"
+        elif "ABORT" in text or "CLEANING UP" in text:
+            phase = "CLEANUP"
+        elif "READY" in text:
             phase = "READY"
         elif "TARE" in text:
             phase = "TARE"
@@ -1707,9 +1722,9 @@ class FeatherControlsMixin:
     def _render_calibration_result(self):
         commands = self.renderer.begin_page("Calibration result")
         if self.calibration_error:
-            commands.append(self.renderer.text(400, 120,
-                                               self._shorten(self.calibration_error, 70),
-                                               "ff3030", "Roboto 10pt", "center"))
+            commands.append(self.renderer.text(
+                400, 120, self.calibration_error, "ff3030", "Roboto 10pt",
+                "center", max_width=740, truncate=True))
         elif getattr(self, "calibration_cancelled", False):
             commands += [
                 self.renderer.text(

@@ -192,6 +192,74 @@ void bundled_compact_font_renders_cyrillic() {
     TYPER_CHECK(changed > 100);
 }
 
+void text_wrap_uses_font_metrics_and_word_boundaries() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+
+    const auto lines = drawer.wrapText("ONE TWO THREE FOUR", width, 480);
+
+    TYPER_CHECK((lines == std::vector<std::string>{"ONE TWO", "THREE", "FOUR"}));
+}
+
+void text_wrap_limits_by_rendered_height_and_adds_ellipsis() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+    const auto first = drawer.calcTextBoundaries("ONE TWO", 0, 0);
+    const auto second = drawer.calcTextBoundaries(
+        "THREE", 0, JetBrainsMono12ptb2.advanceY);
+    const auto twoLineHeight = std::max(first.bottom, second.bottom)
+        - std::min(first.top, second.top);
+
+    const auto lines = drawer.wrapText(
+        "ONE TWO THREE FOUR", width, twoLineHeight, true);
+
+    TYPER_CHECK(lines.size() == 2);
+    TYPER_CHECK(lines[0] == "ONE TWO");
+    TYPER_CHECK(lines[1].ends_with("..."));
+    TYPER_CHECK(drawer.calcTextBoundaries(lines[1]).size().first <= width);
+}
+
+void text_wrap_without_truncate_has_no_ellipsis() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+    const auto oneLineHeight = drawer.calcTextBoundaries("ONE TWO").size().second;
+
+    const auto lines = drawer.wrapText(
+        "ONE TWO THREE FOUR", width, oneLineHeight);
+
+    TYPER_CHECK(lines.size() == 1);
+    TYPER_CHECK(lines[0] == "ONE TWO");
+}
+
+void text_wrap_splits_long_utf8_words_without_corruption() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    const auto width = drawer.calcTextBoundaries("АБ").size().first;
+
+    const auto lines = drawer.wrapText("АБВГД", width, 480);
+
+    TYPER_CHECK((lines == std::vector<std::string>{"АБ", "ВГ", "Д"}));
+}
+
+void text_truncate_uses_font_metrics_and_preserves_utf8() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    const auto width = drawer.calcTextBoundaries("АБ...").size().first;
+
+    const auto text = drawer.truncateText("АБВГД", width);
+
+    TYPER_CHECK(text == "АБ...");
+    TYPER_CHECK(drawer.calcTextBoundaries(text).size().first <= width);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -206,5 +274,10 @@ int main(int argc, char **argv) {
         {"two_bpp_font_blends_edges", two_bpp_font_blends_edges},
         {"compact_font_maps_disjoint_unicode_ranges", compact_font_maps_disjoint_unicode_ranges},
         {"bundled_compact_font_renders_cyrillic", bundled_compact_font_renders_cyrillic},
+        {"text_wrap_uses_font_metrics_and_word_boundaries", text_wrap_uses_font_metrics_and_word_boundaries},
+        {"text_wrap_limits_by_rendered_height_and_adds_ellipsis", text_wrap_limits_by_rendered_height_and_adds_ellipsis},
+        {"text_wrap_without_truncate_has_no_ellipsis", text_wrap_without_truncate_has_no_ellipsis},
+        {"text_wrap_splits_long_utf8_words_without_corruption", text_wrap_splits_long_utf8_words_without_corruption},
+        {"text_truncate_uses_font_metrics_and_preserves_utf8", text_truncate_uses_font_metrics_and_preserves_utf8},
     });
 }

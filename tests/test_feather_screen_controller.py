@@ -1574,6 +1574,58 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("error.firmware_restart", drawing)
         self.assertIn("--batch fill -p 80 85 -s 640 325", drawing)
 
+    def test_shutdown_message_is_wrapped_by_typer_inside_dialog(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.error_message = (
+            "Shutdown caused by a toolhead communication timeout while the "
+            "printer was waiting for the motion queue to finish safely")
+        controller.error_recovery = "firmware_restart"
+
+        controller._render_error()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn(controller.error_message, drawing)
+        self.assertIn(
+            "--max-width 584 --max-height 66 --wrap --truncate", drawing)
+        self.assertNotIn("communication time...", drawing)
+
+    def test_recovery_progress_has_own_title_and_stages(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_kind = "recovery"
+        controller.recovery_action = "restore"
+        controller.print_status_text = "POSITIONING..."
+
+        controller._render_calibration_progress()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn('RECOVERY', drawing)
+        self.assertNotIn('CALIBRATION', drawing)
+        self.assertIn('POSITION', drawing)
+        self.assertIn('RESTORE', drawing)
+        self.assertNotIn('LEVEL', drawing)
+
+    def test_recovery_confirmation_text_is_wrapped_by_typer(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.recovery_action = "cleanup"
+
+        controller._render_recovery_confirm()
+
+        text = (
+            "Cleanup will heat and home, then permanently remove recovery data.")
+        drawing = "\n".join(batches[0])
+        self.assertIn(text, drawing)
+        self.assertIn(
+            "--max-width 640 --max-height 100 --wrap --truncate", drawing)
+
     def test_firmware_restart_action_switches_to_animated_startup(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.error_message = "shutdown"

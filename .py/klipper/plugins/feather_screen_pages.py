@@ -154,13 +154,13 @@ class FeatherPagesMixin:
             commands += [
                 self.renderer.fill(542, 153, 230, 78, "050c0f"),
                 self.renderer.text(657, 178,
-                                   self.renderer.truncate_text(values[4], 210,
-                                                               "JetBrainsMono 8pt"),
-                                   "d9e4e8", "JetBrainsMono 8pt", "center", "middle"),
+                                   values[4], "d9e4e8", "JetBrainsMono 8pt",
+                                   "center", "middle", max_width=210,
+                                   truncate=True),
                 self.renderer.text(657, 211,
-                                   self.renderer.truncate_text(values[5], 210,
-                                                               "JetBrainsMono 8pt"),
-                                   "35d9e6", "JetBrainsMono 8pt", "center", "middle")]
+                                   values[5], "35d9e6", "JetBrainsMono 8pt",
+                                   "center", "middle", max_width=210,
+                                   truncate=True)]
         if previous is None or values[9] != previous[9]:
             active, state, filename, progress, elapsed, remaining, detail = values[9]
             commands += [
@@ -172,12 +172,10 @@ class FeatherPagesMixin:
                     "left", "middle"),
                 self.renderer.fill(29, 292, 742, 42, "050c0f"),
                 self.renderer.text(
-                    44, 305,
-                    self.renderer.truncate_text(
-                        filename if active else "NO ACTIVE JOB", 560,
-                        "JetBrainsMono Bold 8pt"),
+                    44, 305, filename if active else "NO ACTIVE JOB",
                     "d9e4e8" if active else "35d9e6",
-                    "JetBrainsMono Bold 8pt", "left", "middle"),
+                    "JetBrainsMono Bold 8pt", "left", "middle",
+                    max_width=560, truncate=True),
                 self.renderer.text(
                     756, 305, state if active else "READY",
                     "f2c94c" if state == "PAUSED" else "35d9e6",
@@ -185,10 +183,8 @@ class FeatherPagesMixin:
             if active:
                 commands += [
                     self.renderer.text(
-                        44, 327,
-                        self.renderer.truncate_text(
-                            detail, 330, "JetBrainsMono 8pt"),
-                        "56656c", "JetBrainsMono 8pt", "left", "middle"),
+                        44, 327, detail, "56656c", "JetBrainsMono 8pt",
+                        "left", "middle", max_width=330, truncate=True),
                     self.renderer.text(
                         756, 327, "%d%% // %s / %s" % (
                             progress, elapsed, remaining),
@@ -196,10 +192,9 @@ class FeatherPagesMixin:
         if previous is None or values[6:9] != previous[6:9]:
             commands += [
                 self.renderer.fill(25, 386, 750, 27, "030607"),
-                self.renderer.text(28, 400,
-                                   self.renderer.truncate_text(values[6], 240,
-                                                               "JetBrainsMono 8pt"),
-                                   "d9e4e8", "JetBrainsMono 8pt", "left", "middle"),
+                self.renderer.text(28, 400, values[6], "d9e4e8",
+                                   "JetBrainsMono 8pt", "left", "middle",
+                                   max_width=240, truncate=True),
                 self.renderer.text(300, 400, values[7], "d9e4e8",
                                    "JetBrainsMono 8pt", "left", "middle"),
                 self.renderer.text(570, 400, values[8],
@@ -362,10 +357,9 @@ class FeatherPagesMixin:
     def _render_file_confirm(self):
         entry = self.selected_file
         commands = self.renderer.begin_page("Start print?", back=True)
-        filename = self.renderer.truncate_text(
-            entry["name"], 720, "JetBrainsMono Bold 16pt")
-        commands.append(self.renderer.text(400, 150, filename,
-                                           "ffffff", "Roboto Bold 16pt", "center", "middle"))
+        commands.append(self.renderer.text(
+            400, 150, entry["name"], "ffffff", "Roboto Bold 16pt", "center",
+            "middle", max_width=720, truncate=True))
         commands.append(self.renderer.text(400, 220, self._format_size(entry["size"]),
                                            "00f0f0", "Roboto 12pt", "center", "middle"))
         commands += self.renderer.button("file.start", 220, 310, 360, 100,
@@ -395,16 +389,13 @@ class FeatherPagesMixin:
             font="JetBrainsMono Bold 8pt")
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
-        filename = self.renderer.truncate_text(
-            filename, 750, "JetBrainsMono Bold 12pt")
         commands.append(self.renderer.text(25, 78, filename,
                                            "35d9e6", "JetBrainsMono Bold 12pt",
-                                           "left", "middle"))
+                                           "left", "middle", max_width=750,
+                                           truncate=True))
         commands.append(self.renderer.text(
-            25, 110,
-            self.renderer.truncate_text(
-                self.print_status_text, 750, "JetBrainsMono 8pt"),
-            "d9e4e8", "JetBrainsMono 8pt", "left", "middle"))
+            25, 110, self.print_status_text, "d9e4e8", "JetBrainsMono 8pt",
+            "left", "middle", max_width=750, truncate=True))
         commands += [
             self.renderer.text(25, 142, "PROGRESS", "35d9e6",
                                "JetBrainsMono 8pt", "left", "middle"),
@@ -574,10 +565,9 @@ class FeatherPagesMixin:
     def _draw_print_status(self, status):
         self.renderer.send([
             self.renderer.fill(20, 94, 760, 34),
-            self.renderer.text(
-                25, 110,
-                self.renderer.truncate_text(status, 750, "JetBrainsMono 8pt"),
-                "d9e4e8", "JetBrainsMono 8pt", "left", "middle")])
+            self.renderer.text(25, 110, status, "d9e4e8",
+                               "JetBrainsMono 8pt", "left", "middle",
+                               max_width=750, truncate=True)])
 
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
@@ -827,20 +817,20 @@ class FeatherPagesMixin:
             absolute = start + row
             action = "mod.item.%d" % absolute
             y = 88 + row * 66
-            title = self.renderer.truncate_text(
-                str(param.label).upper(), 430, "JetBrainsMono Bold 8pt")
-            detail = self.renderer.truncate_text(
-                mod_ui.description(param), 430, "JetBrainsMono 8pt")
+            title = str(param.label).upper()
+            detail = mod_ui.description(param)
             commands += [
                 self.renderer.fill(row_x, y, row_width, row_height, "050c0f"),
                 self.renderer.stroke(row_x, y, row_width, row_height,
                                      "295c66", 1),
                 self.renderer.text(40, y + 14, title, "35d9e6",
-                                   "JetBrainsMono Bold 8pt"),
+                                   "JetBrainsMono Bold 8pt", max_width=430,
+                                   truncate=True),
                 self.renderer.text(40, y + 32, param.key, "56656c",
                                    "JetBrainsMono 8pt"),
                 self.renderer.text(40, y + 50, detail, "d9e4e8",
-                                   "JetBrainsMono 8pt"),
+                                   "JetBrainsMono 8pt", max_width=430,
+                                   truncate=True),
             ]
             kind = mod_ui.parameter_kind(param)
             value = mod_ui.display_value(self.params, param)
@@ -850,8 +840,7 @@ class FeatherPagesMixin:
                     action, 624, y + 13, 76, 38, value == "ON",
                     enabled=state == "enabled")
             else:
-                label = self.renderer.truncate_text(value, 130,
-                                                    "JetBrainsMono 8pt") + " >"
+                label = value + " >"
                 commands += self.renderer.button(
                     action, 520, y + 9, 180, 46, label, state=state,
                     font="JetBrainsMono 8pt")
@@ -1085,10 +1074,10 @@ class FeatherPagesMixin:
             self._show_page(Page.MOD_SETTINGS)
             return
         commands = self.renderer.begin_page(str(param.label), back=True)
-        description = self._wrap(mod_ui.description(param), 58, 2)
-        for index, line in enumerate(description):
-            commands.append(self.renderer.text(25, 76 + index * 20, line,
-                                               "d9e4e8", "JetBrainsMono 8pt"))
+        commands.append(self.renderer.text(
+            25, 76, mod_ui.description(param), "d9e4e8",
+            "JetBrainsMono 8pt", max_width=650, max_height=44, wrap=True,
+            truncate=True))
         if param.key == "display":
             commands.append(self.renderer.text(
                 25, 108, "CHANGING DISPLAY RESTARTS KLIPPER.", "f2c94c",
@@ -1158,18 +1147,14 @@ class FeatherPagesMixin:
                                "JetBrainsMono Bold 12pt"),
             self.renderer.text(25, 98, param.key, "56656c",
                                "JetBrainsMono 8pt"),
-            self.renderer.text(280, 98,
-                               self.renderer.truncate_text(
-                                   mod_ui.description(param), 490,
-                                   "JetBrainsMono 8pt"),
-                               "d9e4e8", "JetBrainsMono 8pt"),
+            self.renderer.text(280, 98, mod_ui.description(param), "d9e4e8",
+                               "JetBrainsMono 8pt", max_width=490,
+                               truncate=True),
             self.renderer.fill(25, 120, 750, 53, "050c0f"),
             self.renderer.stroke(25, 120, 750, 53, "35d9e6", 2),
-            self.renderer.text(42, 147,
-                               self.renderer.truncate_text(
-                                   self.mod_edit_value or "_", 710,
-                                   "JetBrainsMono 12pt"),
-                               "35d9e6", "JetBrainsMono 12pt"),
+            self.renderer.text(42, 147, self.mod_edit_value or "_", "35d9e6",
+                               "JetBrainsMono 12pt", max_width=710,
+                               truncate=True),
         ]
         if kind in ("int", "float"):
             commands += self._render_mod_numeric_keys(kind)
@@ -1243,9 +1228,9 @@ class FeatherPagesMixin:
                          (self.network_status["ssid"], self.network_status.get("signal") or "?"))
         lines.append("IP: %s" % (self.network_status.get("ip") or "Offline"))
         for index, line in enumerate(lines):
-            commands.append(self.renderer.text(400, 75 + index * 35,
-                                               self._shorten(line, 60), "ffffff",
-                                               "Roboto 10pt", "center"))
+            commands.append(self.renderer.text(
+                400, 75 + index * 35, line, "ffffff", "Roboto 10pt", "center",
+                max_width=660, truncate=True))
         commands += self.renderer.button("net.scan", 55, 190, 320, 150,
                                          "WI-FI", font="JetBrainsMono 12pt")
         commands += self.renderer.button("net.ethernet", 425, 190, 320, 150,
@@ -1485,7 +1470,7 @@ class FeatherPagesMixin:
                              self.network_page * NETWORK_ROWS + NETWORK_ROWS]
         for index, network in enumerate(rows):
             y = 62 + index * 65
-            label = "%s   %d dBm" % (self._shorten(network["ssid"], 36), network["signal"])
+            label = "%s   %d dBm" % (network["ssid"], network["signal"])
             commands += self.renderer.button("net.item%d" % index, 30, y, 740, 56,
                                              label, font="JetBrainsMono 12pt")
         commands += self.renderer.button("net.prev", 125, 390, 150, 50, "< Page",
@@ -1503,11 +1488,9 @@ class FeatherPagesMixin:
         commands = self.renderer.begin_page(ssid, back=True)
         masked = self.password if self.password_visible else "*" * len(self.password)
         commands.append(self.renderer.stroke(55, 62, 690, 42, "872187", 3))
-        commands.append(self.renderer.text(70, 83,
-                                           self.renderer.truncate_text(
-                                               masked, 660, "JetBrainsMono 12pt"),
-                                           "ffffff",
-                                           "JetBrainsMono 12pt", "left", "middle"))
+        commands.append(self.renderer.text(
+            70, 83, masked, "ffffff", "JetBrainsMono 12pt", "left", "middle",
+            max_width=660, truncate=True))
 
         if self.keyboard_symbols:
             rows = SYMBOL_KEY_ROWS
@@ -1589,9 +1572,9 @@ class FeatherPagesMixin:
     def _render_recovery_prompt(self):
         status = self.recovery_status or {}
         commands = self.renderer.begin_page("Power loss recovery")
-        commands.append(self.renderer.text(400, 90,
-                                           self._shorten(status.get("filename", "Unknown"), 48),
-                                           "ffffff", "Roboto Bold 14pt", "center"))
+        commands.append(self.renderer.text(
+            400, 90, status.get("filename", "Unknown"), "ffffff",
+            "Roboto Bold 14pt", "center", max_width=720, truncate=True))
         commands.append(self.renderer.text(400, 140, "Saved progress: %.1f%%" %
                                            (float(status.get("progress", 0.0)) * 100),
                                            "00f0f0", "Roboto 12pt", "center"))
@@ -1614,9 +1597,10 @@ class FeatherPagesMixin:
         text = ("Cleanup will heat and home, then permanently remove recovery data."
                 if cleanup else
                 "Restore will heat, home and continue the interrupted print.")
-        for index, line in enumerate(self._wrap(text, 52, 3)):
-            commands.append(self.renderer.text(400, 150 + index * 38, line,
-                                               "ffffff", "Roboto 11pt", "center"))
+        commands.append(self.renderer.text(
+            400, 150, text, "ffffff", "JetBrainsMono 12pt", "center",
+            "middle", max_width=640, max_height=100, wrap=True,
+            truncate=True))
         commands += self.renderer.button("recovery.confirm", 220, 300, 360, 100,
                                          "CLEANUP" if cleanup else "RESTORE",
                                          state="danger" if cleanup else "enabled",
@@ -1632,7 +1616,9 @@ class FeatherPagesMixin:
         elif action == "recovery.confirm":
             command = "RESURRECT" if self.recovery_action == "restore" else "RESURRECT_ABORT"
             self.calibration_kind = "recovery"
-            self.print_status_text = "RESTORING..." if command == "RESURRECT" else "CLEANING UP..."
+            self.print_status_text = ("STARTING RECOVERY..."
+                                      if command == "RESURRECT"
+                                      else "STARTING CLEANUP...")
             self._show_page(Page.CALIBRATION_PROGRESS)
             self.reactor.register_callback(
                 lambda eventtime, cmd=command: self._run_recovery(eventtime, cmd))

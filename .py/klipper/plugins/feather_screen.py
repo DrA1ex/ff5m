@@ -1091,7 +1091,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
 
     def _toast(self, message):
         self.toast_until = self.reactor.monotonic() + 2.0
-        self.toast_message = self._shorten(message, 60)
+        self.toast_message = str(message)
         self.renderer.toast(self.toast_message)
 
     def _show_message(self, message, return_page):
@@ -1099,16 +1099,20 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         if recovery is not None:
             self._show_error(message, "runtime", recovery)
             return
-        self.message = self._shorten(message, 100)
+        self.message = str(message)
         self.message_return = return_page
         self._show_page(Page.MESSAGE)
 
     def _render_message(self):
         commands = self.renderer.begin_page("Message")
         commands += self.renderer.dialog(
-            "Message", self._wrap(self.message, 48, 4),
+            "Message", (),
             (("message.ok", "OK", "enabled"),),
             x=90, y=95, width=620, height=300, tone="info")
+        commands.append(self.renderer.text(
+            400, 173, self.message, "d9e4e8", "JetBrainsMono 8pt", "center",
+            "middle", max_width=584, max_height=88, wrap=True,
+            truncate=True))
         self.renderer.send(commands)
 
     @staticmethod
@@ -1121,7 +1125,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return None
 
     def _show_error(self, message, category="", recovery=None):
-        self.error_message = self._shorten(str(message).replace("\n", " "), 220)
+        self.error_message = str(message).replace("\n", " ")
         self.error_category = str(category or "")
         self.error_recovery = (
             recovery if recovery is not None
@@ -1130,23 +1134,31 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
 
     def _render_error(self):
         commands = self.renderer.begin_page("Klipper error")
-        lines = list(self._wrap(self.error_message, 58, 3))
         if self.error_recovery == "firmware_restart":
-            lines.append("Check the printer, then restart the MCU.")
+            advice = "Check the printer, then restart the MCU."
             buttons = (("error.firmware_restart",
                         "FIRMWARE RESTART", "danger"),)
             title = "MCU RESTART REQUIRED"
         elif self.error_recovery == "restart":
-            lines.append("Correct the issue, then restart Klipper.")
+            advice = "Correct the issue, then restart Klipper."
             buttons = (("error.restart", "RESTART", "danger"),)
             title = "KLIPPER ERROR"
         else:
-            lines.append("Waiting for Klipper to reconnect.")
+            advice = "Waiting for Klipper to reconnect."
             buttons = ()
             title = "KLIPPER IS NOT READY"
         commands += self.renderer.dialog(
-            title, tuple(lines), buttons,
+            title, (), buttons,
             x=80, y=85, width=640, height=325, tone="danger")
+        commands += [
+            self.renderer.text(
+                400, 163, self.error_message, "d9e4e8", "JetBrainsMono 8pt",
+                "center", "middle", max_width=584, max_height=66, wrap=True,
+                truncate=True),
+            self.renderer.text(
+                400, 235, advice, "d9e4e8", "JetBrainsMono 8pt", "center",
+                "middle", max_width=584, truncate=True),
+        ]
         self.renderer.send(commands)
 
     def _handle_error_action(self, action):
@@ -1272,7 +1284,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         network = self.network_status.get("ip") or self._read_text("/tmp/net_ip") or "Offline"
         self.renderer.footer(extruder["temperature"], extruder["target"],
                              bed["temperature"], bed["target"],
-                             self._shorten(network, 18), state.upper())
+                             network, state.upper())
         if self.toast_until and eventtime >= self.toast_until:
             self.toast_until = 0.0
             self._show_page(self.page)
@@ -1386,29 +1398,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 return stream.readline().strip()
         except OSError:
             return None
-
-    @staticmethod
-    def _shorten(value, length):
-        value = str(value)
-        return value if len(value) <= length else value[:length - 3] + "..."
-
-    @staticmethod
-    def _wrap(value, width, max_lines):
-        words = str(value).split()
-        lines, current = [], ""
-        for word in words:
-            candidate = word if not current else current + " " + word
-            if len(candidate) <= width:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = word[:width]
-                if len(lines) >= max_lines:
-                    break
-        if current and len(lines) < max_lines:
-            lines.append(current)
-        return lines
 
     @staticmethod
     def _format_size(size):
