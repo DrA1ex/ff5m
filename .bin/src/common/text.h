@@ -138,6 +138,7 @@ public:
 private:
     typedef std::pair<int32_t, int32_t> Point;
 
+    [[nodiscard]] const Glyph *_glyphByCode(uint16_t symbol) const;
     int32_t _drawChar(uint16_t symbol, int32_t cursorX, int32_t cursorY);
     [[nodiscard]] Point _getAlignmentOffset(const TextBoundary &boundary) const;
 

@@ -135,7 +135,10 @@ if(BUILD_TESTING)
             internal_buffer_fallback
             disable_flushes_and_restores_direct_drawing
             repeated_enable_preserves_pending_frame
-            switching_buffers_flushes_and_resynchronizes)
+            switching_buffers_flushes_and_resynchronizes
+            two_bpp_font_blends_edges
+            compact_font_maps_disjoint_unicode_ranges
+            bundled_compact_font_renders_cyrillic)
 
     add_custom_target(typer_tests
             DEPENDS

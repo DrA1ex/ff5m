@@ -175,11 +175,9 @@ void TextDrawer::flush() {
 
 int32_t TextDrawer::_drawChar(uint16_t symbol, int32_t cursorX, int32_t cursorY) {
     const auto &font = *this->font();
-    if (symbol < font.codeFrom || symbol > font.codeTo) {
-        return 0;
-    }
-
-    const Glyph &glyph = font.glyphs[symbol - font.codeFrom];
+    const auto *found = _glyphByCode(symbol);
+    if (found == nullptr) return 0;
+    const Glyph &glyph = *found;
 
     const int32_t offsetX = cursorX + glyph.offsetX * _scaleX;
     const int32_t offsetY = cursorY + glyph.offsetY * _scaleY;
@@ -207,6 +205,49 @@ int32_t TextDrawer::_drawChar(uint16_t symbol, int32_t cursorX, int32_t cursorY)
 
     // Advance the cursor
     return glyph.advanceX * _scaleX;
+}
+
+const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
+    const auto &font = *this->font();
+    if (font.ranges != nullptr && font.rangeCount > 0) {
+        // Compact UI fonts put printable ASCII first. Keep the overwhelmingly
+        // common path at one range check and one subtraction; only sparse
+        // Unicode blocks pay for binary search.
+        const auto &primary = font.ranges[0];
+        if (symbol >= primary.codeFrom && symbol <= primary.codeTo) {
+            const uint32_t index = primary.glyphOffset
+                + static_cast<uint32_t>(symbol - primary.codeFrom);
+            if (font.glyphCount == 0 || index < font.glyphCount) {
+                return &font.glyphs[index];
+            }
+            return nullptr;
+        }
+
+        uint16_t left = 1;
+        uint16_t right = font.rangeCount;
+        while (left < right) {
+            const uint16_t middle = left + (right - left) / 2;
+            const auto &range = font.ranges[middle];
+            if (symbol < range.codeFrom) {
+                right = middle;
+            } else if (symbol > range.codeTo) {
+                left = middle + 1;
+            } else {
+                const uint32_t index = range.glyphOffset
+                    + static_cast<uint32_t>(symbol - range.codeFrom);
+                if (font.glyphCount > 0 && index >= font.glyphCount) {
+                    return nullptr;
+                }
+                return &font.glyphs[index];
+            }
+        }
+        return nullptr;
+    }
+
+    if (symbol < font.codeFrom || symbol > font.codeTo) return nullptr;
+    const uint32_t index = symbol - font.codeFrom;
+    if (font.glyphCount > 0 && index >= font.glyphCount) return nullptr;
+    return &font.glyphs[index];
 }
 
 void TextDrawer::setPixel(int32_t x, int32_t y, uint32_t color) {
@@ -359,11 +400,11 @@ TextBoundary TextDrawer::calcTextBoundaries(const std::string_view &text, int32_
         if (symbol == '\n') {
             cursorY = x;
             cursorY += font.advanceY * _scaleY;
-        } else if (symbol < font.codeFrom || symbol > font.codeTo) {
-            continue;
         }
 
-        const Glyph &glyph = font.glyphs[symbol - font.codeFrom];
+        const auto *found = _glyphByCode(symbol);
+        if (found == nullptr) continue;
+        const Glyph &glyph = *found;
 
         auto left = cursorX + glyph.offsetX * _scaleX;
         auto top = cursorY + glyph.offsetY * _scaleY;

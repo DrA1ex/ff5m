@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../../common/text.h"
+#include "../../common/fonts/JetBrainsMono12ptb2.h"
 #include "test_runner.h"
 
 
@@ -16,6 +17,23 @@ namespace {
 
 constexpr uint32_t WIDTH = 6;
 constexpr uint32_t HEIGHT = 4;
+
+const uint8_t compactBitmaps[] = {0x80, 0x80};
+const Glyph compactGlyphs[] = {
+    {0, 1, 1, 1, 0, -1},
+    {1, 1, 1, 1, 0, -1},
+};
+const GlyphRange compactRanges[] = {
+    {0x0041, 0x0041, 0},
+    {0x0401, 0x0401, 1},
+};
+const Font compactFont = {
+    "Compact test", 1,
+    const_cast<uint8_t *>(compactBitmaps),
+    const_cast<Glyph *>(compactGlyphs),
+    0x0041, 0x0401, 2,
+    compactRanges, 2, 2,
+};
 
 std::vector<uint32_t> pixels() {
     std::vector<uint32_t> result(WIDTH * HEIGHT);
@@ -118,6 +136,62 @@ void switching_buffers_flushes_and_resynchronizes() {
     TYPER_CHECK(second == screen);
 }
 
+void two_bpp_font_blends_edges() {
+    constexpr uint32_t width = 220;
+    constexpr uint32_t height = 50;
+    constexpr uint32_t background = 0xff11051d;
+    constexpr uint32_t foreground = 0xffff42c8;
+    std::vector<uint32_t> screen(width * height, background);
+    TextDrawer drawer(screen.data(), width, height);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    drawer.setPosition(8, 35);
+    drawer.setColor(foreground);
+    drawer.setBackgroundColor(background);
+    drawer.print("MAIN MENU");
+
+    const auto blended = std::find_if(
+        screen.begin(), screen.end(), [](uint32_t pixel) {
+            return pixel != background && pixel != foreground;
+        });
+    TYPER_CHECK(JetBrainsMono12ptb2.bpp == 2);
+    TYPER_CHECK(blended != screen.end());
+}
+
+void compact_font_maps_disjoint_unicode_ranges() {
+    std::vector<uint32_t> screen(4, 0xff000000);
+    TextDrawer drawer(screen.data(), 4, 1);
+    drawer.setFont(&compactFont);
+    drawer.setPosition(0, 1);
+    drawer.setColor(0xffffffff);
+    drawer.setBackgroundColor(0);
+    drawer.print("A\xd0\x81"); // ASCII A followed by Cyrillic Yo.
+
+    TYPER_CHECK(screen[0] == 0xffffffff);
+    TYPER_CHECK(screen[1] == 0xffffffff);
+    TYPER_CHECK(screen[2] == 0xff000000);
+}
+
+void bundled_compact_font_renders_cyrillic() {
+    constexpr uint32_t width = 320;
+    constexpr uint32_t height = 48;
+    constexpr uint32_t background = 0xff030607;
+    std::vector<uint32_t> screen(width * height, background);
+    TextDrawer drawer(screen.data(), width, height);
+    drawer.setFont(&JetBrainsMono12ptb2);
+    drawer.setPosition(8, 32);
+    drawer.setColor(0xff69d540);
+    drawer.setBackgroundColor(0);
+    drawer.print("Привет, мир! Ёж");
+
+    const auto changed = std::count_if(
+        screen.begin(), screen.end(), [](uint32_t pixel) {
+            return pixel != background;
+        });
+    TYPER_CHECK(JetBrainsMono12ptb2.rangeCount == 4);
+    TYPER_CHECK(JetBrainsMono12ptb2.glyphCount == 161);
+    TYPER_CHECK(changed > 100);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -129,5 +203,8 @@ int main(int argc, char **argv) {
         {"disable_flushes_and_restores_direct_drawing", disable_flushes_and_restores_direct_drawing},
         {"repeated_enable_preserves_pending_frame", repeated_enable_preserves_pending_frame},
         {"switching_buffers_flushes_and_resynchronizes", switching_buffers_flushes_and_resynchronizes},
+        {"two_bpp_font_blends_edges", two_bpp_font_blends_edges},
+        {"compact_font_maps_disjoint_unicode_ranges", compact_font_maps_disjoint_unicode_ranges},
+        {"bundled_compact_font_renders_cyrillic", bundled_compact_font_renders_cyrillic},
     });
 }

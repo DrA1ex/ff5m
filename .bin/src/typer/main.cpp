@@ -25,15 +25,15 @@
 #include "framebuffer.h"
 
 
-#include "../common/fonts/JetBrainsMono12pt.h"
-#include "../common/fonts/JetBrainsMono16pt.h"
-#include "../common/fonts/JetBrainsMono20pt.h"
-#include "../common/fonts/JetBrainsMono28pt.h"
+#include "../common/fonts/JetBrainsMono12ptb2.h"
+#include "../common/fonts/JetBrainsMono16ptb2.h"
+#include "../common/fonts/JetBrainsMono20ptb2.h"
+#include "../common/fonts/JetBrainsMono28ptb2.h"
 #include "../common/fonts/JetBrainsMono8ptb4.h"
-#include "../common/fonts/JetBrainsMonoBold12pt.h"
-#include "../common/fonts/JetBrainsMonoBold16pt.h"
-#include "../common/fonts/JetBrainsMonoBold20pt.h"
-#include "../common/fonts/JetBrainsMonoBold28pt.h"
+#include "../common/fonts/JetBrainsMonoBold12ptb2.h"
+#include "../common/fonts/JetBrainsMonoBold16ptb2.h"
+#include "../common/fonts/JetBrainsMonoBold20ptb2.h"
+#include "../common/fonts/JetBrainsMonoBold28ptb2.h"
 #include "../common/fonts/JetBrainsMonoBold8ptb4.h"
 #include "../common/fonts/JetBrainsMonoThin12ptb4.h"
 #include "../common/fonts/JetBrainsMonoThin16ptb2.h"
@@ -83,15 +83,15 @@ std::map<std::string, const Font *> fonts{
     {RobotoThin28ptb2.name, &RobotoThin28ptb2},
 
     {JetBrainsMono8ptb4.name, &JetBrainsMono8ptb4},
-    {JetBrainsMono12pt.name, &JetBrainsMono12pt},
-    {JetBrainsMono16pt.name, &JetBrainsMono16pt},
-    {JetBrainsMono20pt.name, &JetBrainsMono20pt},
-    {JetBrainsMono28pt.name, &JetBrainsMono28pt},
+    {JetBrainsMono12ptb2.name, &JetBrainsMono12ptb2},
+    {JetBrainsMono16ptb2.name, &JetBrainsMono16ptb2},
+    {JetBrainsMono20ptb2.name, &JetBrainsMono20ptb2},
+    {JetBrainsMono28ptb2.name, &JetBrainsMono28ptb2},
     {JetBrainsMonoBold8ptb4.name, &JetBrainsMonoBold8ptb4},
-    {JetBrainsMonoBold12pt.name, &JetBrainsMonoBold12pt},
-    {JetBrainsMonoBold16pt.name, &JetBrainsMonoBold16pt},
-    {JetBrainsMonoBold20pt.name, &JetBrainsMonoBold20pt},
-    {JetBrainsMonoBold28pt.name, &JetBrainsMonoBold28pt},
+    {JetBrainsMonoBold12ptb2.name, &JetBrainsMonoBold12ptb2},
+    {JetBrainsMonoBold16ptb2.name, &JetBrainsMonoBold16ptb2},
+    {JetBrainsMonoBold20ptb2.name, &JetBrainsMonoBold20ptb2},
+    {JetBrainsMonoBold28ptb2.name, &JetBrainsMonoBold28ptb2},
     {JetBrainsMonoThin8ptb4.name, &JetBrainsMonoThin8ptb4},
     {JetBrainsMonoThin12ptb4.name, &JetBrainsMonoThin12ptb4},
     {JetBrainsMonoThin16ptb2.name, &JetBrainsMonoThin16ptb2},
