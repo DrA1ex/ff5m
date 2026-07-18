@@ -12,7 +12,7 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 FRAME_BYTES = 800 * 480 * 4
 ROW_BYTES = 800 * 4
-BGRA_BACKGROUND = bytes((0x07, 0x06, 0x03, 0xFF))
+BGRA_OPAQUE_BLACK = bytes((0x00, 0x00, 0x00, 0xFF))
 
 
 class ScreenImageTest(unittest.TestCase):
@@ -25,7 +25,7 @@ class ScreenImageTest(unittest.TestCase):
 
     def test_loading_screen_reserves_boot_log_rows(self):
         raw = lzma.decompress((ROOT / "load.img.xz").read_bytes())
-        expected = BGRA_BACKGROUND * (800 * (480 - 350))
+        expected = BGRA_OPAQUE_BLACK * (800 * (480 - 350))
         self.assertEqual(raw[350 * ROW_BYTES:], expected)
 
 

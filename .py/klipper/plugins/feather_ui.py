@@ -644,7 +644,8 @@ class FeatherRenderer:
         return commands
 
     def vertical_gauge(self, x, y, width, height, title, value,
-                       minimum, maximum, initial=None):
+                       minimum, maximum, initial=None,
+                       value_color=COLOR_CYAN):
         """Draw an auto-scaled vertical gauge with a movable start marker."""
         value = float(value)
         minimum = float(minimum)
@@ -653,10 +654,10 @@ class FeatherRenderer:
             padding = max(1.0, abs(value) * 0.05)
             minimum = value - padding
             maximum = value + padding
-        track_top = y + 108
+        track_top = y + 78
         track_bottom = y + height - 28
         track_height = max(1, track_bottom - track_top)
-        track_x = x + width - 34
+        track_x = x + (width - 16) // 2
         track_width = 16
 
         def gauge_y(sample):
@@ -681,15 +682,6 @@ class FeatherRenderer:
                       COLOR_TEXT, "JetBrainsMono Bold 10pt",
                       "center", "middle"),
         ]
-        if initial is not None:
-            commands += [
-                self.text(
-                    x + width // 2, y + 70, "START",
-                    COLOR_VIOLET, "JetBrainsMono 8pt", "center", "middle"),
-                self.text(
-                    x + width // 2, y + 91, number(initial),
-                    COLOR_VIOLET, "JetBrainsMono 8pt", "center", "middle"),
-            ]
         commands += [
             self.fill(track_x, track_top, track_width, track_height,
                       "263238"),
@@ -697,18 +689,14 @@ class FeatherRenderer:
                         "295c66", 1),
             self.fill(track_x + 2, value_y,
                       max(1, track_width - 4),
-                      max(1, track_bottom - value_y), COLOR_CYAN),
-            self.text(x + 8, track_top, number(maximum),
-                      COLOR_DIM, "JetBrainsMono 8pt", "left", "middle"),
-            self.text(x + 8, track_bottom, number(minimum),
-                      COLOR_DIM, "JetBrainsMono 8pt", "left", "middle"),
+                      max(1, track_bottom - value_y), value_color),
         ]
         if initial is not None:
             marker_y = gauge_y(initial)
             commands += [
-                self.fill(track_x - 6, marker_y, track_width + 12, 2,
+                self.fill(x + 6, marker_y, max(1, width - 12), 2,
                           COLOR_VIOLET),
-                self.fill(track_x - 8, marker_y - 2, 4, 6, COLOR_VIOLET),
+                self.fill(x + 3, marker_y - 2, 4, 6, COLOR_VIOLET),
             ]
         return commands
 

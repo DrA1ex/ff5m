@@ -239,7 +239,7 @@ Feather provides two separate Z-Offset workflows:
 - Use **Controls → Calibration → Z Offset** while the printer is idle to calibrate and save the normal nozzle height.
 - Use **Z Adjust** on the print screen to make a temporary correction during the current Klipper session. The screen clearly shows the saved value, current value, and unsaved difference. Choose a step, then use **Closer** to decrease Z-Offset or **Farther** to increase it. On the FF5M, a negative adjustment raises the bed toward the nozzle.
 
-Both Feather Z-Offset screens show the current load-cell force on a vertical scale. The `START` marker records the force measured when the screen was opened. The scale expands automatically if a later reading falls outside its initial minimum or maximum.
+Both Feather Z-Offset screens show the current load-cell force on a vertical scale. The accent line marks the force measured when the screen was opened. The scale expands automatically if a later reading falls outside its initial range, and the bar turns red above 400 g.
 
 Live adjustments take effect immediately but are not saved until you explicitly press **Save**. If automatic loading is disabled, Feather will offer to enable it while saving. Without automatic loading, the saved value remains available but is not restored after Klipper restarts.
 

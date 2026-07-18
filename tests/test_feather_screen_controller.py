@@ -301,7 +301,13 @@ class ControllerSafetyTest(unittest.TestCase):
         initial_commands = controller._z_weight_gauge_commands(0)
         initial_marker = next(
             line for line in initial_commands
-            if "-s 28 2 -c b47aff" in line)
+            if "-s 58 2 -c b47aff" in line)
+        self.assertFalse(any('-t "START"' in line
+                             for line in initial_commands))
+        self.assertFalse(any('-t "+80.0"' in line
+                             for line in initial_commands))
+        self.assertFalse(any('-t "+120.0"' in line
+                             for line in initial_commands))
 
         controller.weight_sensor.status.update({
             "temperature": 160.0,
@@ -310,17 +316,13 @@ class ControllerSafetyTest(unittest.TestCase):
         expanded_commands = controller._z_weight_gauge_commands(1)
         expanded_marker = next(
             line for line in expanded_commands
-            if "-s 28 2 -c b47aff" in line)
+            if "-s 58 2 -c b47aff" in line)
 
         self.assertEqual(gauge["initial"], 100.0)
         self.assertEqual(gauge["minimum"], 80.0)
         self.assertEqual(gauge["maximum"], 160.0)
         self.assertEqual(gauge["value"], 160.0)
         self.assertNotEqual(initial_marker, expanded_marker)
-        self.assertTrue(any('-t "START"' in line
-                            for line in expanded_commands))
-        self.assertTrue(any('-t "+100.0"' in line
-                            for line in expanded_commands))
 
         controller.weight_sensor.status.update({
             "temperature": 40.0,
@@ -349,6 +351,29 @@ class ControllerSafetyTest(unittest.TestCase):
             "maximum": 0.0,
             "value": 0.0,
         })
+
+    def test_weight_gauge_turns_red_only_above_four_hundred(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.set_theme("CYBERPUNK_RED")
+        controller.reactor = Reactor()
+        controller.weight_sensor = StatusObject({
+            "temperature": 400.0,
+            "measured_min_temp": 0.0,
+            "measured_max_temp": 400.0,
+        })
+        controller.z_weight_gauge = None
+
+        normal = controller._z_weight_gauge_commands(0)
+        self.assertTrue(any("-c ff304f" in line for line in normal))
+        self.assertFalse(any("-c ff0033" in line for line in normal))
+
+        controller.weight_sensor.status.update({
+            "temperature": 401.0,
+            "measured_max_temp": 401.0,
+        })
+        danger = controller._z_weight_gauge_commands(1)
+        self.assertTrue(any("-c ff0033" in line for line in danger))
 
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

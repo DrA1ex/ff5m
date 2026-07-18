@@ -27,7 +27,8 @@ Z_OFFSET_POINTS = (
     ("z.point.rear_left", "RL", -94.0, 94.0),
     ("z.point.rear_right", "RR", 94.0, 94.0),
 )
-Z_WEIGHT_GAUGE = (665, 72, 115, 358)
+Z_WEIGHT_GAUGE = (710, 72, 70, 358)
+Z_WEIGHT_DANGER = 400.0
 JOYSTICK_XY_PANEL = (12, 64, 456, 364)
 JOYSTICK_XY_PAD = (30, 96, 420, 266)
 JOYSTICK_XY_CENTER = (240, 229)
@@ -1017,14 +1018,14 @@ class FeatherControlsMixin:
         saved = float(self._setting("z_offset", 0.0))
         commands = self.renderer.begin_page("Z offset", back=True)
         commands.append(self.renderer.text(
-            330, 72, "Current %+.3f mm   Saved %+.3f mm" %
+            355, 72, "Current %+.3f mm   Saved %+.3f mm" %
             (current, saved), "ffffff", "Roboto 12pt", "center"))
         status = self.toolhead.get_status(now)
         position = status.get("position", (0.0, 0.0, 0.0, 0.0))
         homed = str(status.get("homed_axes", "")).lower()
         all_homed = all(axis in homed for axis in "xyz")
         commands.append(self.renderer.text(
-            330, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
+            355, 96, "HEAD X%+.1f  Y%+.1f  Z%.1f" %
             (position[0], position[1], position[2]),
             "35d9e6" if all_homed else "f2c94c",
             "JetBrainsMono 8pt", "center", "middle"))
@@ -1033,7 +1034,7 @@ class FeatherControlsMixin:
         for index, point in enumerate(quick_buttons):
             action, label = point[:2]
             commands += self.renderer.button(
-                action, 24 + index * 104, 112, 96, 44, label,
+                action, 20 + index * 112, 112, 104, 44, label,
                 state=("enabled" if all_homed or action == "z.home"
                        else "disabled"),
                 font="JetBrainsMono 8pt")
@@ -1043,21 +1044,21 @@ class FeatherControlsMixin:
         for index, step in enumerate((0.01, 0.05)):
             commands += self.renderer.button(
                 "z.step.%s" % ("001" if index == 0 else "005"),
-                135 + index * 200, step_y, 180, 52, "%.2f mm" % step,
+                165 + index * 200, step_y, 180, 52, "%.2f mm" % step,
                 state="selected" if step == self.z_step else "enabled")
         commands += self.renderer.button(
-            "z.closer", 25, adjust_y, 300, adjust_height,
+            "z.closer", 20, adjust_y, 325, adjust_height,
             "CLOSER  -%.3f" % self.z_step,
             state="enabled", font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button(
-            "z.farther", 340, adjust_y, 300, adjust_height,
+            "z.farther", 365, adjust_y, 325, adjust_height,
             "FARTHER  +%.3f" % self.z_step,
             state="enabled", font="JetBrainsMono Bold 12pt")
         load = bool(self._setting("load_zoffset", 0))
-        commands += self.renderer.button("z.load.toggle", 25, 375, 300, 55,
+        commands += self.renderer.button("z.load.toggle", 20, 375, 325, 55,
                                          "LOAD SAVED: %s" % ("ON" if load else "OFF"),
                                          state="selected" if load else "enabled")
-        commands += self.renderer.button("z.reset", 340, 375, 300, 55,
+        commands += self.renderer.button("z.reset", 365, 375, 325, 55,
                                          "RESET", state="danger")
         commands += self._z_weight_gauge_commands(now)
         self.renderer.send(commands)
@@ -1078,21 +1079,21 @@ class FeatherControlsMixin:
 
         cards = (
             ("SAVED", saved, 20, "35d9e6"),
-            ("CURRENT", current, 230, value_color),
-            ("UNSAVED", unsaved, 440, value_color),
+            ("CURRENT", current, 245, value_color),
+            ("UNSAVED", unsaved, 470, value_color),
         )
         for label, value, x, color in cards:
             commands += self.renderer.panel(
-                x, 82, 200, 112, border="295c66", background="050c0f")
+                x, 82, 215, 112, border="295c66", background="050c0f")
             commands.append(self.renderer.text(
-                x + 100, 108, label, "35d9e6",
+                x + 107, 108, label, "35d9e6",
                 "JetBrainsMono 8pt", "center", "middle"))
             commands.append(self.renderer.text(
-                x + 100, 151, "%+.3f mm" % value, color,
+                x + 107, 151, "%+.3f mm" % value, color,
                 "JetBrainsMono Bold 16pt", "center", "middle"))
 
         commands.append(self.renderer.text(
-            330, 218, "ADJUSTMENT STEP", "56656c",
+            355, 218, "ADJUSTMENT STEP", "56656c",
             "JetBrainsMono 8pt", "center", "middle"))
         steps = (
             ("live_z.step.0005", 0.005),
@@ -1101,7 +1102,7 @@ class FeatherControlsMixin:
         )
         for index, (action, step) in enumerate(steps):
             commands += self.renderer.button(
-                action, 45 + index * 200, 238, 170, 55,
+                action, 65 + index * 205, 238, 180, 55,
                 "%.3f mm" % step,
                 state=("selected" if step == self.live_z_step
                        else "enabled"),
@@ -1110,11 +1111,11 @@ class FeatherControlsMixin:
         controls_enabled = self._live_z_adjust_allowed(now)
         state = "enabled" if controls_enabled else "disabled"
         commands += self.renderer.button(
-            "live_z.closer", 20, 322, 305, 88,
+            "live_z.closer", 20, 322, 330, 88,
             "CLOSER  -%.3f" % self.live_z_step,
             state=state, font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button(
-            "live_z.farther", 335, 322, 305, 88,
+            "live_z.farther", 360, 322, 330, 88,
             "FARTHER  +%.3f" % self.live_z_step,
             state=state, font="JetBrainsMono Bold 12pt")
         commands += self._z_weight_gauge_commands(now)
@@ -1345,13 +1346,15 @@ class FeatherControlsMixin:
                     x + width // 2, y + 24, "FORCE", "35d9e6",
                     "JetBrainsMono 8pt", "center", "middle"),
                 self.renderer.text(
-                    x + width // 2, y + height // 2, "NO SENSOR",
+                    x + width // 2, y + height // 2, "N/A",
                     "56656c", "JetBrainsMono 6pt", "center", "middle"),
             ]
             return commands
         return self.renderer.vertical_gauge(
-            x, y, width, height, "FORCE, G", gauge["value"],
-            gauge["minimum"], gauge["maximum"], gauge["initial"])
+            x, y, width, height, "LOAD", gauge["value"],
+            gauge["minimum"], gauge["maximum"], gauge["initial"],
+            value_color=("danger" if gauge["value"] > Z_WEIGHT_DANGER
+                         else "primary"))
 
     def _update_z_weight_status(self, eventtime):
         self.renderer.send(self._z_weight_gauge_commands(eventtime))

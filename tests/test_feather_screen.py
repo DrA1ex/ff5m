@@ -166,7 +166,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             _value = entry["unknown"]
 
-    def test_packaged_feather_config_uses_plugin_defaults(self):
+    def test_packaged_feather_config_uses_only_plugin_defaults(self):
         config_path = pathlib.Path(__file__).parents[1] / "config" / "feather.cfg"
         contents = config_path.read_text(encoding="utf-8")
         section = contents.split(
@@ -174,10 +174,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
         active_options = [line for line in section.splitlines()
                           if line.strip() and not line.lstrip().startswith("#")]
         self.assertEqual(active_options, [])
-        reset = contents.split("[delayed_gcode reset_screen]", 1)[1].split(
-            "[", 1)[0]
-        self.assertIn("_BACKLIGHT", reset)
-        self.assertNotIn("draw_splash", reset)
+        self.assertNotIn("[delayed_gcode reset_screen]", contents)
 
     def test_network_helper_includes_stock_sbin_paths(self):
         helper = (pathlib.Path(__file__).parents[1] / ".shell" / "commands" /
