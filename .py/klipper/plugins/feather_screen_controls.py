@@ -887,18 +887,18 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(400, 120, "Heating - please wait",
                                                "ffffff", "Roboto 10pt", "center"))
         state = "enabled" if hot else "disabled"
-        commands += self.renderer.button("filament.load", 35, 165, 220, 100,
+        commands += self.renderer.button("filament.load", 20, 165, 175, 100,
                                          "LOAD", state=state, font="Roboto Bold 14pt")
-        commands += self.renderer.button("filament.unload", 290, 165, 220, 100,
+        commands += self.renderer.button("filament.unload", 215, 165, 175, 100,
                                          "UNLOAD", state=state, font="Roboto Bold 14pt")
-        commands += self.renderer.button("filament.purge", 545, 165, 220, 100,
+        commands += self.renderer.button("filament.purge", 410, 165, 175, 100,
                                          "PURGE", state=state, font="Roboto Bold 14pt")
         if self.filament_from_pause:
-            commands += self.renderer.button("filament.resume", 220, 315, 360, 95,
-                                             "DONE & RESUME", font="Roboto Bold 16pt")
+            commands += self.renderer.button("filament.resume", 605, 165, 175, 100,
+                                             "CONTINUE", font="Roboto Bold 14pt")
         else:
-            commands += self.renderer.button("filament.done", 220, 315, 360, 95,
-                                             "DONE", font="Roboto Bold 16pt")
+            commands += self.renderer.button("filament.done", 605, 165, 175, 100,
+                                             "DONE", font="Roboto Bold 14pt")
         self.renderer.send(commands)
         self._last_filament_heat = (round(status["temperature"], 1),
                                     round(status["target"]), hot)

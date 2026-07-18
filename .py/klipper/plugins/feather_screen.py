@@ -220,6 +220,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_recovery = None
 
         self._last_progress = None
+        self._progress_floor = 0.0
+        self._progress_source = None
+        self._m73_start_expiry = 0.0
+        self._m73_active = False
         self._last_time = None
         self._last_filename = None
         self._last_heat = None
@@ -306,6 +310,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.idle_timeout = self.printer.lookup_object("idle_timeout")
         self.pause_resume = self.printer.lookup_object("pause_resume")
         self.display_status = self.printer.lookup_object("display_status")
+        self._m73_start_expiry = float(
+            getattr(self.display_status, "expire_progress", 0.0) or 0.0)
         self.print_stats = self.printer.lookup_object("print_stats")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
         self.gcode_move = self.printer.lookup_object("gcode_move")
@@ -1100,6 +1106,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if new_state in (PrintState.PREPARING, PrintState.PRINTING):
             if old_state == PrintState.IDLE:
                 self.cancel_requested = False
+                self._progress_floor = 0.0
+                self._progress_source = None
+                self._m73_active = False
             if self.page not in (Page.PRINTING, Page.CANCEL_CONFIRM):
                 self._show_page(Page.PRINTING)
         elif new_state == PrintState.PAUSED:
@@ -1116,6 +1125,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                           "error": "Print failed"}.get(stats_state, "Print stopped"))
                 self.cancel_requested = False
                 self.cancel_waiting_for_heat = False
+                self._m73_start_expiry = float(getattr(
+                    getattr(self, "display_status", None),
+                    "expire_progress", 0.0) or 0.0)
+                self._m73_active = False
                 self._show_message(label, Page.IDLE_HOME)
             elif old_state == PrintState.INACTIVE:
                 self._show_page(Page.IDLE_HOME)

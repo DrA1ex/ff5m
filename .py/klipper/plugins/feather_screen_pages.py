@@ -362,9 +362,11 @@ class FeatherPagesMixin:
     def _update_print_progress(self, eventtime):
         if self.page not in (Page.PRINTING, Page.PAUSED):
             return
-        progress = int(self.display_status.get_status(eventtime)["progress"] * 100)
         stats = self.print_stats.get_status(eventtime)
-        elapsed, remaining = self._print_time_values(eventtime, stats)
+        progress_value = self._print_progress(eventtime, stats)
+        progress = int(progress_value * 100)
+        elapsed, remaining = self._print_time_values(
+            eventtime, stats, progress_value)
         info = stats.get("info", {})
         current, total = info.get("current_layer"), info.get("total_layer")
         layer = "%s / %s" % (current if current is not None else "?",
@@ -399,7 +401,56 @@ class FeatherPagesMixin:
         ]
         self.renderer.send(commands)
 
-    def _print_time_values(self, eventtime, stats=None):
+    def _print_progress(self, eventtime, stats=None):
+        stats = stats or self.print_stats.get_status(eventtime)
+        status = self.virtual_sdcard.get_status(eventtime)
+        try:
+            sd_progress = float(status.get("progress", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            sd_progress = 0.0
+        sd_progress = max(0.0, min(1.0, sd_progress))
+
+        display_status = getattr(self, "display_status", None)
+        m73_expiry = float(
+            getattr(display_status, "expire_progress", 0.0) or 0.0)
+        if m73_expiry > getattr(self, "_m73_start_expiry", 0.0):
+            self._m73_active = True
+        m73_progress = getattr(display_status, "progress", None)
+
+        progress = None
+        source = None
+        if getattr(self, "_m73_active", False) and m73_progress is not None:
+            try:
+                progress = float(m73_progress)
+                source = "M73"
+            except (TypeError, ValueError):
+                progress = None
+
+        estimate = (getattr(self.virtual_sdcard, "estimate_print_time", None)
+                    or status.get("estimate_print_time"))
+        if progress is None and estimate:
+            try:
+                duration = float(stats.get("print_duration", 0.0) or 0.0)
+                estimate = float(estimate)
+                if estimate > 0:
+                    progress = min(0.99, duration / estimate)
+                    source = "TIME"
+            except (TypeError, ValueError):
+                progress = None
+
+        if progress is None:
+            progress = sd_progress
+            source = "SD"
+
+        progress = max(0.0, min(1.0, progress))
+        progress = max(getattr(self, "_progress_floor", 0.0), progress)
+        self._progress_floor = progress
+        if source != getattr(self, "_progress_source", None):
+            logging.info("[feather_screen] print progress source=%s", source)
+        self._progress_source = source
+        return progress
+
+    def _print_time_values(self, eventtime, stats=None, progress=None):
         stats = stats or self.print_stats.get_status(eventtime)
         duration = float(stats.get("print_duration", 0.0) or 0.0)
         estimate = getattr(self.virtual_sdcard, "estimate_print_time", None)
@@ -410,7 +461,8 @@ class FeatherPagesMixin:
             if current and total:
                 estimate = duration / max(current, 1) * total
             else:
-                progress = self.display_status.get_status(eventtime)["progress"]
+                if progress is None:
+                    progress = self._print_progress(eventtime)
                 estimate = duration / progress if progress > 0 else None
         if estimate is not None:
             estimate = max(duration, float(estimate))
@@ -503,7 +555,7 @@ class FeatherPagesMixin:
         commands += self.renderer.button("print.cancel.back", 100, 285, 260, 100,
                                          "GO BACK", font="Roboto Bold 16pt")
         commands += self.renderer.button("print.cancel.confirm", 440, 285, 260, 100,
-                                         "CANCEL PRINT",
+                                         "CANCEL",
                                          state="busy" if self.pending_action ==
                                          "print.cancel.confirm" else "danger",
                                          font="Roboto Bold 16pt")

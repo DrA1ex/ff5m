@@ -504,14 +504,14 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer.send = batches.append
         controller.page = FEATHER.Page.PRINTING
         controller._last_progress = None
+        controller._progress_floor = 0.0
         controller._last_time = None
-        controller.display_status = StatusObject({"progress": 0.25})
         controller.print_stats = StatusObject({
             "state": "printing", "print_duration": 100,
             "info": {"current_layer": None, "total_layer": None},
         })
-        controller.virtual_sdcard = type(
-            "SD", (), {"estimate_print_time": 400.0})()
+        controller.virtual_sdcard = StatusObject({"progress": 0.25})
+        controller.virtual_sdcard.estimate_print_time = 400.0
         controller.toolhead = StatusObject({
             "position": (10.0, 20.0, 3.25, 0.0), "homed_axes": "xyz"})
 
@@ -522,6 +522,91 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("00:05:00", drawing)
         self.assertIn('? / ?', drawing)
         self.assertIn("3.25 MM", drawing)
+
+    def test_print_progress_uses_sd_position_and_never_moves_backwards(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller._progress_floor = 0.0
+        controller._m73_start_expiry = 0.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": None, "expire_progress": 0.0})()
+        controller.print_stats = StatusObject({"print_duration": 0.0})
+        sdcard = StatusObject({"progress": 0.12})
+        sdcard.estimate_print_time = None
+        controller.virtual_sdcard = sdcard
+
+        self.assertEqual(controller._print_progress(1.0), 0.12)
+        sdcard.status["progress"] = 0.09
+        self.assertEqual(controller._print_progress(2.0), 0.12)
+        sdcard.status["progress"] = 0.15
+        self.assertEqual(controller._print_progress(3.0), 0.15)
+
+    def test_print_progress_prefers_current_print_m73(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller._progress_floor = 0.0
+        controller._m73_start_expiry = 10.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": 0.37, "expire_progress": 25.0})()
+        controller.print_stats = StatusObject({"print_duration": 50.0})
+        controller.virtual_sdcard = StatusObject({
+            "progress": 0.80, "estimate_print_time": 100.0})
+        controller.virtual_sdcard.estimate_print_time = 100.0
+
+        self.assertEqual(controller._print_progress(20.0), 0.37)
+        self.assertEqual(controller._progress_source, "M73")
+        controller.display_status.progress = 0.29
+        controller.display_status.expire_progress = 30.0
+        self.assertEqual(controller._print_progress(25.0), 0.37)
+
+    def test_print_progress_uses_time_estimate_before_sd_fallback(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller._progress_floor = 0.0
+        controller._m73_start_expiry = 10.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": 0.75, "expire_progress": 10.0})()
+        controller.print_stats = StatusObject({"print_duration": 25.0})
+        controller.virtual_sdcard = StatusObject({
+            "progress": 0.80, "estimate_print_time": 100.0})
+        controller.virtual_sdcard.estimate_print_time = 100.0
+
+        self.assertEqual(controller._print_progress(20.0), 0.25)
+        self.assertEqual(controller._progress_source, "TIME")
+
+    def test_cancel_confirmation_uses_plain_cancel_label(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.pending_action = None
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_cancel_confirm()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn('-t "CANCEL"', drawing)
+        self.assertNotIn("CANCEL ...", drawing)
+
+    def test_filament_continue_is_next_to_action_buttons(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.filament_material = "PLA"
+        controller.filament_from_pause = True
+        controller.extruder = StatusObject({
+            "temperature": 220.0, "target": 220.0})
+        controller.extruder.min_extrude_temp = 170.0
+
+        controller._render_filament_action()
+
+        drawing = "\n".join(batches[0])
+        for action, x in (("filament.load", 20), ("filament.unload", 215),
+                          ("filament.purge", 410), ("filament.resume", 605)):
+            self.assertIn("-p %d 165 -s 175 100" % x, drawing)
+            self.assertIn("--id 1:%s" % action, drawing)
+        self.assertIn('-t "CONTINUE"', drawing)
 
     def test_terminal_print_state_becomes_idle_and_reports_result(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

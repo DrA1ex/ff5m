@@ -231,11 +231,15 @@ class PrintWorkflowTest(unittest.TestCase):
 
     def test_print_state_transition_selects_correct_page(self):
         controller = base_controller("idle")
+        controller._progress_floor = 0.75
+        controller._m73_active = True
         pages = []
         controller._show_page = pages.append
         controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
         controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
         self.assertEqual(pages, [FEATHER.Page.PRINTING, FEATHER.Page.PAUSED])
+        self.assertEqual(controller._progress_floor, 0.0)
+        self.assertFalse(controller._m73_active)
 
     def test_print_state_change_does_not_drop_accepted_cancel(self):
         controller = base_controller("printing")
