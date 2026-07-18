@@ -68,7 +68,16 @@
         "muted": { "$ref": "#/$defs/color" },
         "success": { "$ref": "#/$defs/color" },
         "pressed_background": { "$ref": "#/$defs/color" },
-        "overlay": { "$ref": "#/$defs/color" }
+        "overlay": { "$ref": "#/$defs/color" },
+        "button_background": { "$ref": "#/$defs/color" },
+        "button_border": { "$ref": "#/$defs/color" },
+        "button_text": { "$ref": "#/$defs/color" },
+        "button_selected_background": { "$ref": "#/$defs/color" },
+        "button_selected_border": { "$ref": "#/$defs/color" },
+        "button_selected_text": { "$ref": "#/$defs/color" },
+        "header_background": { "$ref": "#/$defs/color" },
+        "header_text": { "$ref": "#/$defs/color" },
+        "header_border": { "$ref": "#/$defs/color" }
       }
     }
   },

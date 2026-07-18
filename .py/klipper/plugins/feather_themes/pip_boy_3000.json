@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "PIP_BOY_3000",
+  "description": "Fallout 4 bright green CRT",
+  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "colors": {
+    "background": "010702",
+    "panel": "031108",
+    "primary": "15eb18",
+    "primary_dark": "075a09",
+    "secondary": "78ff6a",
+    "secondary_dark": "26772b",
+    "warning": "f2db4b",
+    "danger": "ff5b45",
+    "danger_background": "210502",
+    "text": "8df58a",
+    "bright": "d4ffcc",
+    "dim": "347e38",
+    "border": "126c18",
+    "muted": "103617",
+    "success": "42ff3f",
+    "pressed_background": "09520d",
+    "overlay": "000301"
+  }
+}

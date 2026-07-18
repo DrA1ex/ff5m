@@ -174,6 +174,22 @@ Joystick normalization, inertia and boundary braking are kept in
 [feather_joystick.py](/.py/klipper/plugins/feather_joystick.py); motion remains
 inside the Klipper process and does not add an idle service.
 
+### Feather Color Themes
+
+Feather ships its palettes as standalone schema-versioned JSON files. Bundled
+themes include Default, Cyberpunk Red/Yellow, Ocean, Dark, Synth, Forest,
+Aurora, the Fallout 2-era **Pip-Boy 2000**, and the Fallout 4-style
+**Pip-Boy 3000**. Select them from the normal Feather Settings page or the
+Forge-X mod parameters.
+
+Custom themes can be added to `/opt/config/mod_data/themes`. Use
+[`theme.schema.json`](/.py/klipper/plugins/feather_themes/theme.schema.json) as
+the format reference; opening the theme selector reloads both bundled and user
+directories. Themes may optionally define separate `button_*` and `header_*`
+component colors. When omitted, Feather derives them from the original panel,
+primary, secondary, and border roles, so existing version 1 themes remain
+compatible.
+
 ### Custom Loading and Splash Screens
 
 Set any image as your splash/loading screen.

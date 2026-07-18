@@ -451,7 +451,8 @@ class RendererStateTest(unittest.TestCase):
         renderer = FEATHER.FeatherRenderer()
         self.assertEqual(set(renderer.theme_names()), {
             "DEFAULT", "CYBERPUNK_RED", "CYBERPUNK_YELLOW", "OCEAN",
-            "DARK", "SYNTH", "FOREST", "AURORA"})
+            "DARK", "SYNTH", "FOREST", "AURORA", "PIP_BOY_2000",
+            "PIP_BOY_3000"})
         renderer.set_theme("OCEAN")
         for source, role in UI.COLOR_ROLES.items():
             self.assertEqual(renderer.color(source),
@@ -460,6 +461,29 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-c 02080d", page)
         self.assertIn("-c 35baf6", page)
         self.assertNotIn("-c 35d9e6", page)
+
+        renderer.set_theme("PIP_BOY_2000")
+        self.assertEqual(renderer.color(UI.COLOR_CYAN), "69d540")
+        self.assertEqual(renderer.color(UI.COLOR_VIOLET), "a8cf45")
+        self.assertEqual(renderer.color("button_background"), "28230f")
+        self.assertEqual(renderer.color("header_text"), "b88d2e")
+        button = "\n".join(renderer.button(
+            "test", 10, 70, 180, 44, "BUTTON"))
+        self.assertIn("--background 28230f", button)
+        self.assertIn("--border 6d5c2b", button)
+        self.assertIn("--text-color b58c2f", button)
+        selected = "\n".join(renderer.button(
+            "selected", 200, 70, 180, 44, "SELECTED",
+            state="selected"))
+        self.assertIn("--background 102306", selected)
+        self.assertIn("--border 69d540", selected)
+        header = "\n".join(renderer.begin_page("Pip-Boy"))
+        self.assertIn("-c 24200e", header)
+        self.assertIn("-c b88d2e", header)
+        self.assertIn("-c 5b4c24", header)
+        renderer.set_theme("PIP_BOY_3000")
+        self.assertEqual(renderer.color(UI.COLOR_CYAN), "15eb18")
+        self.assertEqual(renderer.color(UI.COLOR_TEXT), "8df58a")
 
     def test_every_screen_color_is_assigned_to_a_theme_role(self):
         source = MODULE_PATH.read_text(encoding="utf-8")
@@ -510,11 +534,20 @@ class RendererStateTest(unittest.TestCase):
         name, description, colors = FEATHER.FeatherRenderer._validate_theme(valid)
         self.assertEqual((name, description), ("VALID", "Valid test theme"))
         self.assertEqual(colors["primary"], UI.COLOR_CYAN)
+        self.assertEqual(colors["button_background"], colors["panel"])
+        self.assertEqual(colors["button_border"], colors["primary"])
+        self.assertEqual(colors["header_text"], colors["primary"])
 
         invalid = dict(valid)
         invalid["colors"] = dict(valid["colors"], primary="not-a-color")
         with self.assertRaisesRegex(ValueError, "invalid primary"):
             FEATHER.FeatherRenderer._validate_theme(invalid)
+
+        invalid_optional = dict(valid)
+        invalid_optional["colors"] = dict(
+            valid["colors"], button_background="not-a-color")
+        with self.assertRaisesRegex(ValueError, "invalid button_background"):
+            FEATHER.FeatherRenderer._validate_theme(invalid_optional)
 
     def test_python_renderer_matches_cpp_protocol_fixture(self):
         fixture = pathlib.Path(__file__).parent / "fixtures" / "feather_draw_protocol.txt"
@@ -625,6 +658,20 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-s 800 442", "\n".join(first))
         self.assertNotIn("-s 784 472", "\n".join(first))
         self.assertIn("-s 784 439", "\n".join(first))
+
+    def test_theme_change_repaints_cached_footer(self):
+        renderer = FEATHER.FeatherRenderer()
+        renderer.send = lambda _commands: None
+        renderer.footer(21, 220, 24, 60, "192.168.2.4", "idle")
+
+        self.assertTrue(renderer.set_theme("OCEAN"))
+        page = "\n".join(renderer.begin_page("Settings"))
+        self.assertIn("NOZZLE 21/220C", page)
+        self.assertIn("192.168.2.4 | IDLE", page)
+        self.assertIn("-c 35baf6", page)
+
+        unchanged = "\n".join(renderer.begin_page("Settings"))
+        self.assertNotIn("NOZZLE 21/220C", unchanged)
 
     def test_mesh_matrix_validation_and_color_bands(self):
         normalize = FEATHER.FeatherScreen.normalize_mesh_matrix
@@ -827,6 +874,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_busy_notice_is_persistent_and_deduplicated(self):
         renderer = FEATHER.FeatherRenderer()
+        renderer.set_theme("PIP_BOY_2000")
         sent = []
         renderer.send = sent.append
         renderer.busy_notice("Klipper busy")
@@ -835,8 +883,12 @@ class RendererStateTest(unittest.TestCase):
         renderer.clear_busy_notice()
         self.assertEqual(len(sent), 2)
         self.assertIn("KLIPPER BUSY", "\n".join(sent[0]))
+        self.assertIn("-c 24200e", "\n".join(sent[0]))
         self.assertIn("KLIPPER BUSY", "\n".join(page))
+        self.assertIn("-c 24200e", "\n".join(page))
         self.assertNotIn("stroke", "\n".join(sent[1]))
+        self.assertIn("-c 24200e", "\n".join(sent[1]))
+        self.assertNotIn("-c 071305", "\n".join(sent[1]))
 
     def test_primary_layouts_do_not_overlap_footer(self):
         footer = (0, UI.FOOTER_Y, UI.SCREEN_WIDTH, UI.FOOTER_HEIGHT)

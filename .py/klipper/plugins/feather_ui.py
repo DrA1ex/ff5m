@@ -91,6 +91,21 @@ FALLBACK_THEME = {
     "success": "56c596", "pressed_background": "103238",
     "overlay": "010203",
 }
+# Component colors are optional additions to the version 1 theme format.
+# Resolving them through existing palette roles keeps every older user theme
+# valid while allowing themes with a distinct physical "shell" to style
+# controls independently from their display surfaces.
+OPTIONAL_THEME_ROLE_FALLBACKS = {
+    "button_background": "panel",
+    "button_border": "primary",
+    "button_text": "primary",
+    "button_selected_background": "panel",
+    "button_selected_border": "secondary",
+    "button_selected_text": "secondary",
+    "header_background": "panel",
+    "header_text": "primary",
+    "header_border": "border",
+}
 
 
 class Page(enum.Enum):
@@ -139,12 +154,15 @@ class FeatherRenderer:
     """Translate small UI primitives into typer display-list commands."""
 
     BUTTON_COLORS = {
-        "enabled": (COLOR_PANEL, COLOR_CYAN, COLOR_CYAN),
-        "disabled": (COLOR_PANEL, "263238", COLOR_DIM),
-        "selected": (COLOR_PANEL, COLOR_VIOLET, COLOR_VIOLET),
-        "warning": (COLOR_PANEL, COLOR_AMBER, COLOR_AMBER),
+        "enabled": ("button_background", "button_border", "button_text"),
+        "disabled": ("button_background", "263238", COLOR_DIM),
+        "selected": (
+            "button_selected_background",
+            "button_selected_border",
+            "button_selected_text"),
+        "warning": ("button_background", COLOR_AMBER, COLOR_AMBER),
         "danger": ("120708", COLOR_RED, COLOR_RED),
-        "busy": (COLOR_PANEL, COLOR_AMBER, COLOR_AMBER),
+        "busy": ("button_background", COLOR_AMBER, COLOR_AMBER),
         "pressed": ("103238", "ffffff", "ffffff"),
     }
     FONT_SIZES = (8, 12, 16, 20, 28)
@@ -165,7 +183,7 @@ class FeatherRenderer:
         self._themes = {}
         self._theme_descriptions = {}
         self._theme_name = DEFAULT_THEME
-        self._palette = dict(FALLBACK_THEME)
+        self._palette = self._with_optional_theme_roles(FALLBACK_THEME)
         self.reload_themes()
         self.process = None
         self.draw_fd = None
@@ -385,7 +403,8 @@ class FeatherRenderer:
         return self._theme_name
 
     def reload_themes(self):
-        themes = {DEFAULT_THEME: dict(FALLBACK_THEME)}
+        themes = {
+            DEFAULT_THEME: self._with_optional_theme_roles(FALLBACK_THEME)}
         descriptions = {DEFAULT_THEME: "cyan Forge-X palette"}
         for directory in self._theme_directories:
             if not os.path.isdir(directory):
@@ -422,7 +441,14 @@ class FeatherRenderer:
                             exc)
 
     @staticmethod
-    def _validate_theme(data):
+    def _with_optional_theme_roles(colors):
+        expanded = dict(colors)
+        for role, fallback_role in OPTIONAL_THEME_ROLE_FALLBACKS.items():
+            expanded.setdefault(role, expanded[fallback_role])
+        return expanded
+
+    @classmethod
+    def _validate_theme(cls, data):
         if not isinstance(data, dict):
             raise ValueError("root must be an object")
         if data.get("schema_version") != THEME_SCHEMA_VERSION:
@@ -445,7 +471,14 @@ class FeatherRenderer:
             if re.match(r"^[0-9a-f]{6}$", value) is None:
                 raise ValueError("invalid %s color" % role)
             normalized[role] = value
-        return name, description, normalized
+        for role in OPTIONAL_THEME_ROLE_FALLBACKS:
+            if role not in colors:
+                continue
+            value = str(colors[role]).strip().lower()
+            if re.match(r"^[0-9a-f]{6}$", value) is None:
+                raise ValueError("invalid %s color" % role)
+            normalized[role] = value
+        return name, description, cls._with_optional_theme_roles(normalized)
 
     def theme_names(self, reload=False):
         if reload:
@@ -468,11 +501,18 @@ class FeatherRenderer:
         changed = normalized != self._theme_name
         self._theme_name = normalized
         self._palette = self._themes[normalized]
+        if changed:
+            # The footer normally survives page redraws and is skipped while
+            # its values stay unchanged. A palette change is also a content
+            # change, so force begin_page() to repaint it in the new colors.
+            self._last_footer = None
+            self._footer_drawn = False
         return changed
 
     def color(self, value):
         normalized = str(value).lower()
-        role = COLOR_ROLES.get(normalized)
+        role = (normalized if normalized in self._palette
+                else COLOR_ROLES.get(normalized))
         return self._palette.get(role, normalized) if role else normalized
 
     def fill(self, x, y, width, height, color=COLOR_BG):
@@ -880,8 +920,8 @@ class FeatherRenderer:
             # footer even though none of its pixels changed.
             self.stroke(FRAME_X, FRAME_Y, FRAME_WIDTH,
                         FOOTER_Y - FRAME_Y - 1,
-                        "295c66", 1),
-            self.fill(10, 6, 780, HEADER_BOTTOM - 6, COLOR_PANEL),
+                        "header_border", 1),
+            self.fill(10, 6, 780, HEADER_BOTTOM - 6, "header_background"),
         ]
         if back:
             commands += self.button("nav.back", 14, 7, 146, 46, "< BACK",
@@ -889,17 +929,17 @@ class FeatherRenderer:
         title = self.truncate_text(str(title).upper(), 440,
                                    "JetBrainsMono 12pt")
         commands += [
-            self.text(400, 29, title, COLOR_CYAN,
+            self.text(400, 29, title, "header_text",
                       "JetBrainsMono 12pt",
                       "center", "middle"),
-            self.fill(18, HEADER_BOTTOM, 764, 1, "295c66"),
+            self.fill(18, HEADER_BOTTOM, 764, 1, "header_border"),
             self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
         ]
         if self._busy_label is not None:
             busy_label = self.truncate_text(
                 self._busy_label, 132, "JetBrainsMono Bold 8pt")
             commands += [
-                self.fill(622, 9, 160, 38, COLOR_PANEL),
+                self.fill(622, 9, 160, 38, "header_background"),
                 self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
                 self.text(702, 28, busy_label, COLOR_AMBER,
                           "JetBrainsMono Bold 8pt", "center", "middle"),
@@ -946,7 +986,7 @@ class FeatherRenderer:
         self._busy_label = label
         label = self.truncate_text(label, 132, "JetBrainsMono Bold 8pt")
         self.send([
-            self.fill(622, 9, 160, 38, COLOR_PANEL),
+            self.fill(622, 9, 160, 38, "header_background"),
             self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
             self.text(702, 28, label, COLOR_AMBER,
                       "JetBrainsMono Bold 8pt", "center", "middle"),
@@ -963,7 +1003,8 @@ class FeatherRenderer:
                 "nav.menu", x, y, width, height, label, state, font,
                 subtitle, False, layout))
         else:
-            self.send([self.fill(622, 9, 160, 38, COLOR_PANEL)])
+            self.send([
+                self.fill(622, 9, 160, 38, "header_background")])
 
     def loader(self, message, phase=0):
         """Draw a non-interactive busy overlay for a yielding G-code call."""
