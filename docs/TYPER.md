@@ -12,6 +12,13 @@ To add it to your `PATH`, use the following command:
 source /opt/config/mod/.shell/common.sh
 ```
 
+The deployed ARM build uses `-Os`, function/data sections, linker garbage
+collection, and stripped symbols. This reduces its binary and executable-page
+footprint without changing the command protocol. On the reference printer its
+idle memory is approximately 1.8 MiB PSS / 1.6 MiB private memory. Raw RSS is
+about 2.2 MiB because it also counts shared clean libc/libstdc++ pages; use PSS
+when checking the 2 MiB Typer budget.
+
 ## Global Options
 
 | Option | Description | Type | Default |

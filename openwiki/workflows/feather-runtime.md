@@ -107,7 +107,9 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `feather_screen.py` | Klipper integration, UI state machine, safety gates, reactor timers/fds, G-code/macro dispatch, network-child lifecycle | Primitive layout rendering or a separate motion process |
+| `feather_screen.py` | Klipper lifecycle, UI state machine, safety gates, reactor timers/fds, G-code/macro dispatch, shared status/error handling | Page-specific rendering or a separate motion process |
+| `feather_screen_pages.py` | Dashboard, files, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, motion planning, and direct display access |
+| `feather_screen_controls.py` | Move, heat, filament, Z, screws, and mesh workflows | Network child processes and renderer lifecycle |
 | `feather_ui.py` | Layout primitives, frame construction, FIFO and Typer child lifecycle, generation-tagged hitboxes | Klipper state decisions and printer commands |
 | `feather_joystick.py` | Touch normalization, ramps/braking, bounded motion queue planning | Rendering or direct touch-fd I/O |
 | `feather_mod_settings.py` | Mod-settings editor helpers | Persistence side effects |
@@ -115,6 +117,46 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 | `S35tslib` / `ts_uinput` | Calibrated input device | Feather page/UI behavior |
 
 `mod_params`, `resurrection`, and patched G-code logic are related Klipper-resident plugins/patches installed by the same overlay. They are not child services started by Feather.
+
+The screen class uses two bounded behavior mixins rather than forwarding proxy
+objects. This keeps the existing `FeatherScreen` action API and one state owner
+while limiting each production Python file to fewer than 1,500 lines. Do not
+reintroduce copies of controller state into the page modules.
+
+## Memory budget and measurement
+
+Measure resident processes from `/proc/<pid>/smaps`, not by adding raw RSS
+values. RSS counts clean libc/libstdc++ pages in every process that maps them;
+PSS divides those shared pages between their users, while `Private_Clean` plus
+`Private_Dirty` describes the process-only cost.
+
+A representative idle measurement on the 128 MiB target after the component
+split and size-oriented Typer build was:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Complete Klippy PSS | 19,812 KiB | 19,773 KiB |
+| Typer PSS | 1,895 KiB | 1,800 KiB |
+| Typer private memory | 1,684 KiB | 1,600 KiB |
+| Typer `/proc/status` RSS | 2,432 KiB | 2,284 KiB |
+| Deployed Typer binary | 1,089,196 bytes | 984,948 bytes |
+
+The raw RSS line remains above 2 MiB because it includes reclaimable/shared
+libc and libstdc++ text. Typer's attributed PSS and private working set are both
+below the 2 MiB budget. Its heap is about 104 KiB; the framebuffer-backed second
+page is a device mapping and does not allocate a 1.5 MiB heap backbuffer.
+
+The complete repository Feather Python source set is about 262 KiB
+(268,243 bytes), below the 500 KiB source budget. Splitting it adds a few module
+headers but does not duplicate controller state. The file browser uses compact
+slot-backed entries so a directory with many G-code files does not retain one
+Python dictionary per row.
+
+Moving page policy or printer actions into Typer is not currently justified:
+Typer's C++ runtime/shared-library footprint is already larger than its heap,
+while the measured Klippy PSS did not grow after the Python split. Such a move
+would also add a second state owner and a wider IPC protocol. Revisit it only
+with a before/after PSS profile demonstrating a net process-total reduction.
 
 ## Engineering and diagnosis
 

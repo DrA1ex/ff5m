@@ -163,7 +163,11 @@ Documentation for `typer` is available here: [link](/docs/TYPER.md)
 
 For examples you can view [feather.cfg](/config/feather.cfg) for macros and [screen.sh](/.shell/screen.sh) script.
 Implementation of Feather itself you can find in [feather_screen.py](/.py/klipper/plugins/feather_screen.py)
-and its renderer/layout helpers in [feather_ui.py](/.py/klipper/plugins/feather_ui.py).
+with page groups in
+[feather_screen_pages.py](/.py/klipper/plugins/feather_screen_pages.py),
+[feather_screen_controls.py](/.py/klipper/plugins/feather_screen_controls.py).
+Renderer/layout helpers remain in
+[feather_ui.py](/.py/klipper/plugins/feather_ui.py).
 The lightweight mod-parameter editor helpers live in
 [feather_mod_settings.py](/.py/klipper/plugins/feather_mod_settings.py).
 Joystick normalization, inertia and boundary braking are kept in

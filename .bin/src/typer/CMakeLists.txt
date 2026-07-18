@@ -1,8 +1,8 @@
-# Build configuration for the typer utility.
-#
-# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
-#
-# This file may be distributed under the terms of the GNU GPLv3 license
+## Build configuration for the typer utility.
+##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 cmake_minimum_required(VERSION 3.10)
 
@@ -41,6 +41,14 @@ add_executable(typer main.cpp interactive.cpp batch_protocol.cpp framebuffer.cpp
         ${font_headers})
 
 target_link_libraries(typer m)
+# Typer stays resident on a 128 MiB target. Prefer compact generated code and
+# let the linker discard unused template/font sections; debug symbols are not
+# useful in the deployed binary and only increase its page-cache footprint.
+target_compile_options(typer PRIVATE -Os -ffunction-sections -fdata-sections)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(typer PROPERTIES
+            LINK_FLAGS "-Wl,--gc-sections -Wl,--strip-all")
+endif()
 
 if(BUILD_TESTING)
     find_package(Threads REQUIRED)
