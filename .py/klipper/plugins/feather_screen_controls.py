@@ -1269,6 +1269,8 @@ class FeatherControlsMixin:
             # Cleanup failure is still recorded for diagnostics.
             logging.exception(
                 "[feather_screen] unable to stop calibration heating")
+            return False
+        return True
 
     def _calibration_stage_commands(self, label):
         text = str(label).upper()
@@ -1354,7 +1356,8 @@ class FeatherControlsMixin:
                     and getattr(
                         self, "calibration_cancel_dispatched", False)):
                 logging.info("[feather_screen] calibration heating cancelled")
-                self._stop_cancelled_calibration_heating()
+                if not self._stop_cancelled_calibration_heating():
+                    return
                 self.calibration_cancelled = True
                 self.calibration_error = None
             else:

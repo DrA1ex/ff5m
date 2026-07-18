@@ -1001,14 +1001,71 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.calibration_error, "macro failed")
         self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
 
-    def test_mcu_failures_are_classified_for_firmware_restart(self):
+    def test_calibration_shutdown_preserves_firmware_restart_screen(self):
+        class ShutdownGCode:
+            def run_script_from_command(self, command):
+                raise RuntimeError("opaque command failure")
+
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "mesh"
+        controller.calibration_material = "PLA"
+        controller.calibration_error = None
+        controller.calibration_cancel_requested = False
+        controller.gcode = ShutdownGCode()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.freeze_output()
+        controller.page = FEATHER.Page.ERROR
+        controller.error_recovery = None
+        controller._require_idle = lambda: None
+        controller._limited_preheat = lambda material: (220, 60)
+        rendered = []
+        controller._render_calibration_result = lambda: rendered.append(True)
+
+        with self.assertLogs(level="ERROR"):
+            controller._run_calibration(0)
+
+        self.assertEqual(controller.calibration_error, "opaque command failure")
+        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(rendered, [])
+
+    def test_workflow_pages_cannot_replace_firmware_restart_screen(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.ERROR
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.freeze_output()
+        controller.error_recovery = "firmware_restart"
+        controller._stop_joystick = lambda: None
+        rendered = []
+        controller._render_calibration_result = lambda: rendered.append(True)
+
+        controller._show_page(FEATHER.Page.CALIBRATION_RESULT)
+
+        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(rendered, [])
+
+    def test_frozen_shutdown_screen_ignores_late_action_error_page(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.ERROR
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.freeze_output()
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.last_action_time = 0
+        controller.pending_action = None
+        controller.reactor = Reactor(now=100)
+        controller.error_recovery = None
+        rendered = []
+        controller._render_message = lambda: rendered.append(True)
+
+        controller._show_message(
+            "opaque command failure", FEATHER.Page.CONTROL_HOME)
+
+        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(rendered, [])
+
+    def test_shutdown_classification_uses_state_category_only(self):
         classify = FEATHER.FeatherScreen._classify_error
-        self.assertEqual(
-            classify("MCU 'mcu' shutdown: Timer too close"),
-            "firmware_restart")
-        self.assertEqual(
-            classify("Lost communication with MCU 'mcu'"),
-            "firmware_restart")
+        self.assertIsNone(classify("MCU 'mcu' shutdown: Timer too close"))
+        self.assertIsNone(classify("Lost communication with MCU 'mcu'"))
         self.assertEqual(
             classify("ADC out of range", "shutdown"),
             "firmware_restart")
@@ -1017,6 +1074,37 @@ class ControllerSafetyTest(unittest.TestCase):
             "restart")
         self.assertIsNone(classify("Klipper disconnected", "disconnect"))
         self.assertIsNone(classify("Home X before moving"))
+
+    def test_shutdown_event_owns_firmware_restart_screen(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.shutdown_active = False
+        events = []
+        controller.renderer = type("Renderer", (), {
+            "active": True,
+            "discard_pending_output":
+                lambda self: events.append("discard"),
+            "thaw_output": lambda self: events.append("thaw"),
+            "freeze_output": lambda self: events.append("freeze"),
+        })()
+        controller.printer = type("Printer", (), {
+            "get_state_message": lambda self: (
+                "Shutdown due to M112 command\nPrinter is shutdown",
+                "shutdown"),
+        })()
+        controller._deactivate_components = lambda: events.append("stop")
+        controller._show_error = (
+            lambda message, category, recovery=None:
+            events.append((message, category, recovery)))
+
+        controller._shutdown()
+
+        self.assertTrue(controller.shutdown_active)
+        self.assertEqual(events, [
+            "stop", "discard", "thaw",
+            ("Shutdown due to M112 command\nPrinter is shutdown",
+             "shutdown", "firmware_restart"),
+            "freeze",
+        ])
 
     def test_error_page_offers_firmware_restart_with_padded_dialog(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1039,6 +1127,11 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.error_message = "shutdown"
         controller.error_category = "shutdown"
         controller.error_recovery = "firmware_restart"
+        controller.shutdown_active = True
+        controller.restart_pending = False
+        controller.renderer = type("Renderer", (), {
+            "thaw_output": lambda self: None,
+        })()
         controller.startup_phase = 3
         controller.startup_timer = None
         controller.timer = None
@@ -1054,6 +1147,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, ["FIRMWARE_RESTART"])
         self.assertEqual(controller.startup_phase, 0)
         self.assertEqual(controller.error_message, "")
+        self.assertFalse(controller.shutdown_active)
+        self.assertTrue(controller.restart_pending)
 
     def test_startup_tick_advances_pulse_until_klipper_is_ready(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

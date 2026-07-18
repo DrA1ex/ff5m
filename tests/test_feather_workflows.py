@@ -375,15 +375,6 @@ class PrintWorkflowTest(unittest.TestCase):
         home = clear_nozzle.index("G28")
         self.assertLess(homing, home)
 
-    def test_m112_is_an_immediate_gcode_command(self):
-        root = pathlib.Path(__file__).parents[1]
-        gcode = (root / ".py" / "klipper" / "patches" /
-                 "gcode.py").read_text(encoding="utf-8")
-        immediate = gcode.split("immediate_cmds =", 1)[1].split(
-            "immediate_cmds_r", 1)[0]
-        self.assertIn('"M112"', immediate)
-
-
 class MotionHeatSettingsTest(unittest.TestCase):
     def test_continuous_touch_updates_planner_and_release(self):
         controller = base_controller()

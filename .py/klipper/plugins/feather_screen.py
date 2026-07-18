@@ -228,6 +228,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_message = ""
         self.error_category = ""
         self.error_recovery = None
+        self.shutdown_active = False
+        self.restart_pending = False
 
         self._last_progress = None
         self._progress_floor = 0.0
@@ -244,7 +246,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
 
         self.printer.register_event_handler("klippy:ready", self._init)
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
-        self.printer.register_event_handler("klippy:disconnect", self._shutdown)
+        self.printer.register_event_handler("klippy:disconnect", self._disconnect)
         self.gcode.register_command("FEATHER_PRINT_STATUS", self.cmd_FEATHER_PRINT_STATUS)
         self._start_pre_ready_ui()
 
@@ -308,6 +310,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.startup_timer = None
 
     def _init(self):
+        self.shutdown_active = False
+        self.restart_pending = False
+        self.error_message = ""
+        self.error_category = ""
+        self.error_recovery = None
+        self.renderer.thaw_output()
         self.params = self.printer.lookup_object("mod_params")
         self._enable_backlight()
         self._set_backlight(self._setting("backlight", 100))
@@ -358,6 +366,32 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.timer = self.reactor.register_timer(self._update, self.reactor.NOW)
 
     def _shutdown(self):
+        # invoke_shutdown() calls this synchronously. Stop every producer and
+        # discard its queued output before submitting the one final screen.
+        self.shutdown_active = True
+        self._deactivate_components()
+        if self.renderer.active:
+            self.renderer.discard_pending_output()
+            self.renderer.thaw_output()
+            msg, _category = self.printer.get_state_message()
+            message = msg if str(msg).strip() else "Printer is shutdown"
+            self._show_error(message, "shutdown", "firmware_restart")
+            self.renderer.freeze_output()
+
+    def _disconnect(self):
+        if self.shutdown_active:
+            return
+        self._deactivate_components()
+        if self.restart_pending:
+            return
+        if self.renderer.active:
+            self.renderer.discard_pending_output()
+            self.renderer.thaw_output()
+            self._show_error(
+                "Klipper disconnected", "disconnect", recovery=None)
+            self.renderer.freeze_output()
+
+    def _deactivate_components(self):
         # Suppress any final ToolHead flush after the MCU has already stopped.
         self.print_state = PrintState.DESTROYED
         self._stop_startup_animation()
@@ -384,10 +418,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     killer()
         self.network_stopping = []
         self._cleanup_network_credentials()
-        if self.renderer.active:
-            msg, category = self.printer.get_state_message()
-            message = msg if str(msg).strip() else "Klipper disconnected"
-            self._show_error(message, category)
+        self.pending_action = None
+        self.cancel_requested = False
+        self.cancel_waiting_for_heat = False
+        self.touch_feedback_pending = False
+        self.busy_message = None
+        self.toast_until = 0.0
+        self.mod_update_pending = False
+        self.mod_update_modal_visible = False
+        self.mod_update_complete = None
+        self.mod_update_token = getattr(self, "mod_update_token", 0) + 1
+        wait = getattr(self, "temperature_wait", None)
+        if wait is not None:
+            wait.variables = dict(getattr(wait, "variables", {}))
+            wait.variables["active"] = False
+            wait.variables["cancel"] = True
 
     def cmd_FEATHER_PRINT_STATUS(self, gcmd):
         status = gcmd.get("S")
@@ -715,6 +760,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 or (page == Page.WIFI_PASSWORD and action.startswith("key.")))
 
     def _show_page(self, page):
+        if (page != Page.ERROR
+                and getattr(
+                    getattr(self, "renderer", None),
+                    "output_frozen", False)):
+            return
         if (self.page == Page.CONTROL_MOVE
                 and (page != Page.CONTROL_MOVE
                      or getattr(self, "joystick_action", None) is not None)):
@@ -986,23 +1036,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
 
     @staticmethod
     def _classify_error(message, category=""):
-        text = ("%s %s" % (category, message)).lower()
-        markers = (
-            "mcu shutdown",
-            "mcu '",
-            "lost communication with mcu",
-            "unable to connect to mcu",
-            "timer too close",
-            "unable to obtain 'endstop_state'",
-            "shutdown due to",
-            "printer is shutdown",
-            "can not update mcu",
-            "missed scheduling",
-        )
         category = str(category).lower()
         if category == "shutdown":
-            return "firmware_restart"
-        if any(marker in text for marker in markers):
             return "firmware_restart"
         if category == "error":
             return "restart"
@@ -1045,9 +1080,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         command = commands.get(action)
         if command is None:
             return
+        self.renderer.thaw_output()
         self.error_message = ""
         self.error_category = ""
         self.error_recovery = None
+        self.shutdown_active = False
+        self.restart_pending = True
         self.startup_phase = 0
         if self.timer is not None:
             try:

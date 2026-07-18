@@ -199,6 +199,7 @@ class FeatherRenderer:
         self._retry_scheduled = False
         self._retry_scheduler = None
         self._busy_label = None
+        self._output_frozen = False
 
     def set_retry_scheduler(self, scheduler):
         """Schedule non-blocking FIFO retries on the Klipper reactor."""
@@ -207,6 +208,23 @@ class FeatherRenderer:
     @property
     def active(self):
         return self.process is not None and self.process.poll() is None
+
+    @property
+    def output_frozen(self):
+        return self._output_frozen
+
+    def discard_pending_output(self):
+        """Drop complete frames not yet accepted by Typer's FIFO."""
+        self._pending_draw = bytearray()
+        self._pending_frames.clear()
+        self._retry_scheduled = False
+
+    def freeze_output(self):
+        """Keep the last submitted safety screen as the sole display owner."""
+        self._output_frozen = True
+
+    def thaw_output(self):
+        self._output_frozen = False
 
     @staticmethod
     def _make_fifo(path):
@@ -246,6 +264,7 @@ class FeatherRenderer:
         return '"%s"' % value
 
     def start(self):
+        self._output_frozen = False
         subprocess.call(["killall", "typer"], stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL)
         if not self._wait_for_typer_exit(1.0):
@@ -310,10 +329,11 @@ class FeatherRenderer:
         self._busy_label = None
         self._last_footer = None
         self._footer_drawn = False
+        self._output_frozen = False
         logging.info("[feather_screen] typer stopped")
 
     def send(self, commands):
-        if self.draw_fd is None or not commands:
+        if self._output_frozen or self.draw_fd is None or not commands:
             return
         payloads = self._encode_frames(commands)
         pending_size = (len(self._pending_draw)
