@@ -57,6 +57,7 @@ def base_controller(state="idle"):
     controller.cancel_waiting_for_heat = False
     controller.cancel_mode = None
     controller.cancel_phase = None
+    controller._filament_request_token = 0
     controller.busy_phase = 0
     controller.print_flow = type("Flow", (), {"variables": {
         "active": False, "cancel_requested": False,
@@ -123,6 +124,39 @@ class FileWorkflowTest(unittest.TestCase):
 
 
 class PrintWorkflowTest(unittest.TestCase):
+    def test_filament_is_rejected_during_start_print_preparation(self):
+        controller = base_controller("printing")
+        controller.print_flow.variables.update(active=True, phase="HEATING")
+        controller.start_print_macro.variables["print_started"] = False
+        notices = []
+        controller._toast = notices.append
+
+        controller._handle_print_action("print.filament")
+
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(notices, ["Available after print preparation"])
+
+    def test_cancel_invalidates_filament_request_waiting_on_pause(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.Page.PRINTING
+        opened = []
+        controller._open_filament = lambda from_pause: opened.append(from_pause)
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            if command == "PAUSE":
+                controller.page = FEATHER.Page.CANCEL_CONFIRM
+                controller._handle_print_action("print.cancel.confirm")
+            elif command == "CANCEL_PRINT":
+                controller.print_stats.status["state"] = "cancelled"
+
+        controller._run_script = run
+        controller._handle_print_action("print.filament")
+
+        self.assertEqual(commands, ["PAUSE", "CANCEL_PRINT"])
+        self.assertEqual(opened, [])
+
     def test_pause_resume_and_cancel_are_state_gated(self):
         controller = base_controller("printing")
         controller._handle_print_action("print.pause")
@@ -240,6 +274,18 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertEqual(pages, [FEATHER.Page.PRINTING, FEATHER.Page.PAUSED])
         self.assertEqual(controller._progress_floor, 0.0)
         self.assertFalse(controller._m73_active)
+
+    def test_filament_back_uses_live_terminal_state(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.filament_from_pause = True
+        controller.print_stats.status["state"] = "cancelled"
+        pages = []
+        controller._show_page = pages.append
+
+        controller._go_back()
+
+        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
 
     def test_print_state_change_does_not_drop_accepted_cancel(self):
         controller = base_controller("printing")
@@ -699,6 +745,17 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
 
 class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
+    def test_filament_page_cannot_replace_cancel_confirmation(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.Page.CANCEL_CONFIRM
+        pages = []
+        controller._show_page = pages.append
+
+        opened = controller._open_filament(True)
+
+        self.assertFalse(opened)
+        self.assertEqual(pages, [])
+
     def test_material_selection_heats_and_opens_action_page(self):
         controller = base_controller("paused")
         controller.filament_from_pause = True
@@ -723,6 +780,20 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._finish_filament(True)
         self.assertEqual(controller.gcode.commands, ["M104 S215", "RESUME"])
         self.assertEqual(pages, [FEATHER.Page.PAUSED])
+
+    def test_cancelled_filament_flow_does_not_reheat_or_return_to_print(self):
+        controller = base_controller("paused")
+        controller.filament_from_pause = True
+        controller.filament_original_target = 215
+        controller.print_stats.status["state"] = "cancelled"
+        pages = []
+        controller._show_page = pages.append
+
+        controller._finish_filament(False)
+
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
+        self.assertFalse(controller.filament_from_pause)
 
     def test_load_persists_selected_material(self):
         controller = base_controller("paused")
@@ -972,6 +1043,12 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(notices, ["PLEASE WAIT"])
         controller._handle_touch_action("print.cancel")
         self.assertEqual(actions, ["print.cancel"])
+        controller.page = FEATHER.Page.CANCEL_CONFIRM
+        controller._handle_touch_action("print.cancel.back")
+        self.assertEqual(actions, ["print.cancel", "print.cancel.back"])
+        controller._handle_touch_action("nav.back")
+        self.assertEqual(actions, [
+            "print.cancel", "print.cancel.back", "nav.back"])
 
     def test_gcode_busy_badge_is_cleared_on_success_and_error(self):
         controller = base_controller()

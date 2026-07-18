@@ -497,6 +497,29 @@ class ControllerSafetyTest(unittest.TestCase):
                            if '--batch button' in line and '-t "%s"' % label in line)
             self.assertIn('-f "JetBrainsMono Bold 12pt"', command)
 
+    def test_print_preparation_disables_pause_and_filament(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.send = lambda commands: None
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.PREPARING
+        controller.pending_action = None
+        controller.print_status_text = "Heating"
+        controller.virtual_sdcard = type("SD", (), {
+            "file_path": lambda self: "/data/test.gcode"})()
+        controller.print_flow = type("Flow", (), {"variables": {
+            "active": False, "phase": "PREPARING"}})()
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": False}})()
+        controller._z_adjust_allowed = lambda eventtime: False
+        controller._update_print_progress = lambda eventtime: None
+
+        controller._render_print_page()
+
+        self.assertNotIn("print.pause", controller.renderer._buttons)
+        self.assertNotIn("print.filament", controller.renderer._buttons)
+        self.assertIn("print.cancel", controller.renderer._buttons)
+
     def test_print_progress_shows_remaining_layer_and_height(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()

@@ -311,6 +311,7 @@ class FeatherPagesMixin:
 
     def _render_print_page(self):
         paused = self.print_state == PrintState.PAUSED
+        controls_ready = self._print_controls_ready()
         commands = self.renderer.begin_page("PAUSED" if paused else "PRINTING")
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
@@ -343,11 +344,16 @@ class FeatherPagesMixin:
         commands += self.renderer.button("print.resume" if paused else "print.pause",
                                          20, 355, 175, 72,
                                          "RESUME" if paused else "PAUSE",
-                                         state="busy" if self.pending_action in
-                                         ("print.pause", "print.resume") else "enabled",
+                                         state=("disabled" if not controls_ready else
+                                                "busy" if self.pending_action in
+                                                ("print.pause", "print.resume")
+                                                else "enabled"),
                                          font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button("print.filament", 215, 355, 175, 72,
-                                         "FILAMENT", font="JetBrainsMono Bold 12pt")
+                                         "FILAMENT",
+                                         state=("enabled" if controls_ready
+                                                else "disabled"),
+                                         font="JetBrainsMono Bold 12pt")
         commands += self.renderer.button(
             "print.z", 410, 355, 175, 72, "Z ADJUST",
             state="enabled" if self._z_adjust_allowed(self.reactor.monotonic())
@@ -356,11 +362,26 @@ class FeatherPagesMixin:
                                          "CANCEL", state="danger",
                                          font="JetBrainsMono Bold 12pt")
         self.renderer.send(commands)
+        self._last_print_controls_ready = controls_ready
         self._last_progress = self._last_time = None
         self._update_print_progress(self.reactor.monotonic())
 
+    def _print_controls_ready(self):
+        if getattr(self, "print_state", None) == PrintState.PREPARING:
+            return False
+        flow = self._print_flow_status()
+        started = bool(getattr(getattr(
+            self, "start_print_macro", None), "variables", {}).get(
+                "print_started", False))
+        return not flow["active"] or started
+
     def _update_print_progress(self, eventtime):
         if self.page not in (Page.PRINTING, Page.PAUSED):
+            return
+        controls_ready = self._print_controls_ready()
+        if controls_ready != getattr(
+                self, "_last_print_controls_ready", controls_ready):
+            self._render_print_page()
             return
         stats = self.print_stats.get_status(eventtime)
         progress_value = self._print_progress(eventtime, stats)
@@ -479,6 +500,10 @@ class FeatherPagesMixin:
 
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
+        if action in ("print.pause", "print.filament"):
+            if not self._print_controls_ready():
+                self._toast("Available after print preparation")
+                return
         if action == "print.pause" and stats == "printing":
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
@@ -491,7 +516,21 @@ class FeatherPagesMixin:
             self._run_script("RESUME")
         elif action == "print.filament" and stats in ("printing", "paused"):
             if stats == "printing":
+                self._filament_request_token = getattr(
+                    self, "_filament_request_token", 0) + 1
+                token = self._filament_request_token
                 self._run_script("PAUSE")
+                current = self.print_stats.get_status(
+                    self.reactor.monotonic())["state"]
+                if (token != self._filament_request_token
+                        or current != "paused"
+                        or self.cancel_requested
+                        or self.page not in (Page.PRINTING, Page.PAUSED)):
+                    logging.info(
+                        "[feather_screen] stale filament request discarded "
+                        "token=%s current=%s page=%s cancel=%s",
+                        token, current, self.page.name, self.cancel_requested)
+                    return
             self._open_filament(True)
         elif action == "print.z" and stats in ("printing", "paused"):
             if not self._z_adjust_allowed(self.reactor.monotonic()):
@@ -501,6 +540,8 @@ class FeatherPagesMixin:
         elif action == "print.cancel" and stats in ("printing", "paused"):
             self._show_page(Page.CANCEL_CONFIRM)
         elif action == "print.cancel.confirm" and stats in ("printing", "paused"):
+            self._filament_request_token = getattr(
+                self, "_filament_request_token", 0) + 1
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 30.0
             self.cancel_requested = True

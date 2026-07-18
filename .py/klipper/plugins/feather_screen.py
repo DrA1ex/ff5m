@@ -200,6 +200,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.filament_material = "n/a"
         self.filament_from_pause = False
         self.filament_original_target = 0.0
+        self._filament_request_token = 0
         self.calibration_kind = None
         self.calibration_material = "PLA"
         self.calibration_clean_nozzle = True
@@ -225,6 +226,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._m73_start_expiry = 0.0
         self._m73_active = False
         self._last_time = None
+        self._last_print_controls_ready = None
         self._last_filename = None
         self._last_heat = None
         self._last_dashboard = None
@@ -498,8 +500,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             logging.info("[feather_screen] touch ignored while mod update is active: %s",
                          action)
             return
-        if (getattr(self, "command_depth", 0) > 0 and action not in
-                ("print.cancel", "print.cancel.confirm")):
+        busy_allowed = action in ("print.cancel", "print.cancel.confirm")
+        if (self.page == Page.CANCEL_CONFIRM and
+                action in ("nav.back", "print.cancel.back")):
+            busy_allowed = True
+        if getattr(self, "command_depth", 0) > 0 and not busy_allowed:
             logging.info("[feather_screen] touch ignored while command is active: %s",
                          action)
             notice = getattr(self.renderer, "busy_notice", None)
@@ -737,7 +742,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.page in (Page.CONTROL_HOME, Page.NETWORK_HOME,
                            Page.FILAMENT_MATERIAL):
             if self.page == Page.FILAMENT_MATERIAL and self.filament_from_pause:
-                self._show_page(Page.PAUSED)
+                self._show_page(self.page_for_print_state())
             else:
                 self._show_page(Page.MAIN_MENU)
         elif self.page == Page.MAIN_MENU:
@@ -764,14 +769,25 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._show_page(Page.NETWORK_HOME if self.page == Page.WIFI_SCAN
                             else Page.WIFI_SCAN)
         elif self.page == Page.CANCEL_CONFIRM:
-            self._show_page(Page.PAUSED if self.print_state == PrintState.PAUSED
-                            else Page.PRINTING)
+            self._show_page(self.page_for_print_state())
         else:
             self._show_page(Page.IDLE_HOME)
 
 
     def page_for_print_state(self):
-        return Page.PAUSED if self.print_state == PrintState.PAUSED else Page.PRINTING
+        try:
+            state = self.print_stats.get_status(
+                self.reactor.monotonic()).get("state")
+        except Exception:
+            state = None
+        if state == "paused":
+            return Page.PAUSED
+        if state == "printing":
+            return Page.PRINTING
+        if state in ("complete", "cancelled", "error", "standby"):
+            return Page.IDLE_HOME
+        return (Page.PAUSED if self.print_state == PrintState.PAUSED
+                else Page.PRINTING)
 
     def _setting(self, key, default):
         params = getattr(self, "params", None)
@@ -1116,6 +1132,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                                  Page.FILAMENT_ACTION, Page.CALIBRATION_Z):
                 self._show_page(Page.PAUSED)
         elif new_state == PrintState.IDLE:
+            self._filament_request_token = getattr(
+                self, "_filament_request_token", 0) + 1
             if old_state in (PrintState.PREPARING, PrintState.PRINTING,
                              PrintState.PAUSED, PrintState.FINISHED):
                 label = ("Print cancelled" if

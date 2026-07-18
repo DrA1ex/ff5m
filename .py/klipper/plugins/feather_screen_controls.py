@@ -857,10 +857,21 @@ class FeatherControlsMixin:
     def _open_filament(self, from_pause):
         if not from_pause:
             self._require_idle()
+        else:
+            state = self.print_stats.get_status(
+                self.reactor.monotonic())["state"]
+            if (state != "paused" or self.cancel_requested
+                    or self.page == Page.CANCEL_CONFIRM):
+                logging.info(
+                    "[feather_screen] filament page ignored in state=%s "
+                    "page=%s cancel=%s",
+                    state, self.page.name, self.cancel_requested)
+                return False
         now = self.reactor.monotonic()
         self.filament_from_pause = from_pause
         self.filament_original_target = self.extruder.get_status(now)["target"]
         self._show_page(Page.FILAMENT_MATERIAL)
+        return True
 
     def _render_filament_material(self):
         commands = self.renderer.begin_page("Select material", back=True)
@@ -958,12 +969,18 @@ class FeatherControlsMixin:
             self._run_script("M104 S%.0f" % self.filament_original_target)
             self._show_page(Page.IDLE_HOME)
             return
+        state = self.print_stats.get_status(
+            self.reactor.monotonic())["state"]
+        if state not in ("printing", "paused"):
+            self.filament_from_pause = False
+            self._show_page(Page.IDLE_HOME)
+            return
         target = self.filament_original_target
         if target > 0:
             self._run_script("M104 S%.0f" % target)
-        if resume and self.print_stats.get_status(self.reactor.monotonic())["state"] == "paused":
+        if resume and state == "paused":
             self._run_script("RESUME")
-        self._show_page(Page.PAUSED)
+        self._show_page(self.page_for_print_state())
 
     def _render_calibration_home(self):
         commands = self.renderer.begin_page("Calibration", back=True)
