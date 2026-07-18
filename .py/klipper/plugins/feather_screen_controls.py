@@ -1284,7 +1284,7 @@ class FeatherControlsMixin:
             else:
                 stages = ("PREP", "HOME", "HEAT", "PROBE", "DONE")
         else:
-            stages = ("PREP", "HEAT", "CLEAN", "HOME", "LEVEL")
+            stages = ("PREP", "HOME", "HEAT", "CLEAN", "LEVEL")
 
         phase = stages[0]
         if "COMPLETE" in text:

@@ -230,6 +230,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_recovery = None
         self.shutdown_active = False
         self.restart_pending = False
+        self.startup_restarting = False
 
         self._last_progress = None
         self._progress_floor = 0.0
@@ -268,11 +269,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self.renderer.event_fd, self._process_touch_events)
         return True
 
-    def _start_pre_ready_ui(self):
+    def _start_pre_ready_ui(self, restarting=None):
+        if restarting is not None:
+            self.startup_restarting = bool(restarting)
         try:
             self._enable_backlight()
             self._ensure_renderer_started()
-            self.renderer.startup_modal(self.startup_phase)
+            self.renderer.startup_modal(
+                self.startup_phase, restarting=self.startup_restarting)
         except Exception:
             logging.exception("[feather_screen] unable to draw startup modal")
         if self.startup_timer is None:
@@ -292,7 +296,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             restarted = self._ensure_renderer_started()
             self.startup_phase = (self.startup_phase + 1) % 4
             if restarted:
-                self.renderer.startup_modal(self.startup_phase)
+                self.renderer.startup_modal(
+                    self.startup_phase, restarting=self.startup_restarting)
             else:
                 self.renderer.send(
                     self.renderer.startup_pulse(self.startup_phase))
@@ -312,6 +317,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _init(self):
         self.shutdown_active = False
         self.restart_pending = False
+        self.startup_restarting = False
         self.error_message = ""
         self.error_category = ""
         self.error_recovery = None
@@ -1093,7 +1099,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             except Exception:
                 pass
             self.timer = None
-        self._start_pre_ready_ui()
+        self._start_pre_ready_ui(restarting=True)
         self._run_script(command)
 
     def _update(self, eventtime):

@@ -439,7 +439,7 @@ class RendererStateTest(unittest.TestCase):
 
         first = "\n".join(batches[0])
         expanded = "\n".join(batches[1])
-        self.assertIn("KLIPPER IS LOADING", first)
+        self.assertIn("INITIALIZING KLIPPER", first)
         self.assertIn("PLEASE WAIT", first)
         self.assertIn("-p 392 232 -s 17 1", first)
         self.assertIn("-p 384 232 -s 33 1", expanded)
@@ -449,6 +449,19 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-p 388 232 -s 25 1", pulse)
         self.assertNotIn("--batch clear-hitboxes", pulse)
         self.assertNotIn("-p 0 0 -s 800 480", pulse)
+
+    def test_restart_startup_modal_explains_the_static_reconnect_gap(self):
+        renderer = FEATHER.FeatherRenderer()
+        batches = []
+        renderer.send = batches.append
+
+        renderer.startup_modal(0, restarting=True)
+
+        drawing = "\n".join(batches[0])
+        self.assertIn("INITIALIZING KLIPPER", drawing)
+        self.assertIn("RESTART IN PROGRESS - DISPLAY MAY PAUSE", drawing)
+        self.assertIn("PLEASE WAIT", drawing)
+        self.assertNotIn("KLIPPER IS LOADING", drawing)
 
     def test_local_dialog_preserves_existing_controls_and_hitboxes(self):
         renderer = FEATHER.FeatherRenderer()

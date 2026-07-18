@@ -7,6 +7,7 @@
 import enum
 import errno
 import json
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -1136,7 +1137,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.startup_timer = None
         controller.timer = None
         started = []
-        controller._start_pre_ready_ui = lambda: started.append(True)
+        controller._start_pre_ready_ui = (
+            lambda restarting=False: started.append(restarting))
         controller.gcode = GCodeRecorder()
         controller.reactor = Reactor()
         controller.command_depth = 0
@@ -1149,6 +1151,17 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.error_message, "")
         self.assertFalse(controller.shutdown_active)
         self.assertTrue(controller.restart_pending)
+
+    def test_mesh_calibration_shows_homing_immediately_after_prep(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+
+        drawing = "\n".join(controller._calibration_stage_commands(
+            "BED MESH: PREPARING"))
+        labels = re.findall(r'-t "([^"]+)"', drawing)
+
+        self.assertEqual(labels, ["PREP", "HOME", "HEAT", "CLEAN", "LEVEL"])
 
     def test_startup_tick_advances_pulse_until_klipper_is_ready(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1166,6 +1179,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_state = FEATHER.PrintState.INACTIVE
         controller.error_message = ""
         controller.startup_phase = 0
+        controller.startup_restarting = False
 
         wake = controller._startup_tick(10.0)
         self.assertEqual(pulses, [["pulse 1"]])

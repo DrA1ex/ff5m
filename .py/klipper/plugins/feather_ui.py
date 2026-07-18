@@ -1045,10 +1045,12 @@ class FeatherRenderer:
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
         self.send(commands)
 
-    def startup_modal(self, phase=0):
+    def startup_modal(self, phase=0, restarting=False):
         """Draw the pre-ready Klipper loading modal and its pulse frame."""
         self._buttons = {}
         self._toggles = {}
+        detail = ("RESTART IN PROGRESS - DISPLAY MAY PAUSE"
+                  if restarting else "INITIALIZING PRINTER SERVICES")
         commands = [
             "--batch clear-hitboxes",
             self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, "010203"),
@@ -1057,14 +1059,14 @@ class FeatherRenderer:
             150, 120, 500, 250, border=COLOR_CYAN,
             background=COLOR_PANEL, line_width=2)
         commands += [
-            self.text(400, 170, "KLIPPER IS LOADING", COLOR_CYAN,
+            self.text(400, 170, "INITIALIZING KLIPPER", COLOR_CYAN,
                       "JetBrainsMono Bold 16pt", "center", "middle"),
         ]
         commands += self.startup_pulse(phase)
         commands += [
             self.text(400, 300, "PLEASE WAIT", COLOR_TEXT,
                       "JetBrainsMono 12pt", "center", "middle"),
-            self.text(400, 335, "INITIALIZING PRINTER SERVICES", COLOR_DIM,
+            self.text(400, 335, detail, COLOR_DIM,
                       "JetBrainsMono 8pt", "center", "middle"),
         ]
         self.send(commands)
