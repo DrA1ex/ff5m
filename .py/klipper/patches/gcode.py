@@ -434,7 +434,7 @@ class GCodeDispatch:
             if cmd in self.gcode_help:
                 cmdhelp.append("%-10s: %s" % (cmd, self.gcode_help[cmd]))
         gcmd.respond_info("\n".join(cmdhelp), log=False)
-    def cmd_NOOP:
+    def cmd_NOOP(self, gcmd):
         pass # Just do nothing
 
 # Support reading gcode from a pseudo-tty interface
