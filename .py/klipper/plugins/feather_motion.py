@@ -19,7 +19,7 @@ import logging
 # host timer without starving the MCU.
 START_BUFFER = 0.250
 STREAM_BUFFER_LOW = 0.150
-LOOKAHEAD_FLUSH = 0.080
+LOOKAHEAD_FLUSH = 0.060
 TARGET_AHEAD = 0.300
 MAX_AHEAD = 0.450
 BUSY_TOLERANCE = 0.020
@@ -57,6 +57,16 @@ class LowLatencyToolheadStream:
         self.maximum_processed = 0.0
         self.maximum_pending = 0.0
         self.minimum_processed = None
+        self.last_processed = 0.0
+        self.last_pending = 0.0
+        self.last_ahead = 0.0
+        self.last_tick_at = None
+        self.maximum_tick_gap = 0.0
+        self.maximum_refill_duration = 0.0
+        self.maximum_feedback_duration = 0.0
+        self.maximum_refill_segments = 0
+        self.minimum_refill_processed_before = None
+        self.minimum_refill_processed_after = None
         self.start_stalls = 0
 
     def supported(self):
@@ -86,6 +96,9 @@ class LowLatencyToolheadStream:
         processed = max(0.0, float(print_time) - float(estimated_time))
         pending = self._pending_time()
         total = processed + pending
+        self.last_processed = processed
+        self.last_pending = pending
+        self.last_ahead = total
         self.maximum_ahead = max(self.maximum_ahead, total)
         self.maximum_processed = max(self.maximum_processed, processed)
         self.maximum_pending = max(self.maximum_pending, pending)
@@ -94,6 +107,36 @@ class LowLatencyToolheadStream:
                 processed if self.minimum_processed is None
                 else min(self.minimum_processed, processed))
         return total
+
+    def record_tick(self, eventtime):
+        eventtime = float(eventtime)
+        if self.last_tick_at is not None:
+            self.maximum_tick_gap = max(
+                self.maximum_tick_gap, eventtime - self.last_tick_at)
+        self.last_tick_at = eventtime
+
+    def record_refill(self, duration, segment_count, processed_before,
+                      processed_after):
+        self.maximum_refill_duration = max(
+            self.maximum_refill_duration, max(0.0, float(duration)))
+        self.maximum_refill_segments = max(
+            self.maximum_refill_segments, int(segment_count))
+        if processed_before > 0.0:
+            self.minimum_refill_processed_before = (
+                processed_before
+                if self.minimum_refill_processed_before is None
+                else min(self.minimum_refill_processed_before,
+                         processed_before))
+        if processed_after > 0.0:
+            self.minimum_refill_processed_after = (
+                processed_after
+                if self.minimum_refill_processed_after is None
+                else min(self.minimum_refill_processed_after,
+                         processed_after))
+
+    def record_feedback(self, duration):
+        self.maximum_feedback_duration = max(
+            self.maximum_feedback_duration, max(0.0, float(duration)))
 
     def start(self, eventtime):
         if self.active:
@@ -160,6 +203,16 @@ class LowLatencyToolheadStream:
         self.maximum_processed = 0.0
         self.maximum_pending = 0.0
         self.minimum_processed = None
+        self.last_processed = 0.0
+        self.last_pending = 0.0
+        self.last_ahead = 0.0
+        self.last_tick_at = None
+        self.maximum_tick_gap = 0.0
+        self.maximum_refill_duration = 0.0
+        self.maximum_feedback_duration = 0.0
+        self.maximum_refill_segments = 0
+        self.minimum_refill_processed_before = None
+        self.minimum_refill_processed_after = None
         self.start_stalls = int(getattr(
             self.toolhead, "print_stall", 0))
         logging.info(
@@ -233,12 +286,19 @@ class LowLatencyToolheadStream:
             logging.info(
                 "[feather_screen] joystick stream end segments=%d "
                 "max_ahead=%.3f processed=%.3f pending=%.3f "
-                "min_processed=%.3f stalls=%d",
+                "min_processed=%.3f stalls=%d tick_gap=%.3f "
+                "refill=%.3f feedback=%.3f refill_segments=%d "
+                "refill_processed=%.3f/%.3f",
                 self.segment_count, self.maximum_ahead,
                 self.maximum_processed, self.maximum_pending,
                 self.minimum_processed or 0.0,
                 int(getattr(self.toolhead, "print_stall", 0))
-                - self.start_stalls)
+                - self.start_stalls, self.maximum_tick_gap,
+                self.maximum_refill_duration,
+                self.maximum_feedback_duration,
+                self.maximum_refill_segments,
+                self.minimum_refill_processed_before or 0.0,
+                self.minimum_refill_processed_after or 0.0)
             self.active = False
             self.queued = False
             self.saved_start_buffer = None

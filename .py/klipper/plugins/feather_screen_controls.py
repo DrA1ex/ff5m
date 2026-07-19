@@ -147,6 +147,14 @@ class FeatherControlsMixin:
         self._get_joystick_stream().queue_segment(segment)
         self.joystick_queued = True
 
+    def _record_joystick_refill(self, stream, started, segment_count,
+                                processed_before):
+        finished = self.reactor.monotonic()
+        stream.ahead(finished)
+        stream.record_refill(
+            finished - started, segment_count, processed_before,
+            stream.last_processed)
+
     def _joystick_tick(self, eventtime):
         try:
             planner = self.joystick
@@ -207,17 +215,27 @@ class FeatherControlsMixin:
                     self._render_move()
                     return self.reactor.NEVER
             self.joystick_busy_since = None
-            if stream.ahead(eventtime) >= joystick_motion.MAX_AHEAD:
+            stream.record_tick(eventtime)
+            queue_eventtime = self.reactor.monotonic()
+            if stream.ahead(queue_eventtime) >= joystick_motion.MAX_AHEAD:
                 self._update_joystick_feedback(eventtime)
                 return eventtime + joystick_ui.QUEUE_RETRY
 
             position = self.toolhead.get_position()
             queued_position = None
+            refill_started = self.reactor.monotonic()
+            stream.ahead(refill_started)
+            processed_before = stream.last_processed
+            refill_segments = 0
             for _index in range(joystick_motion.MAX_REFILL_SEGMENTS):
-                if not stream.wants_segment(eventtime):
+                refill_eventtime = self.reactor.monotonic()
+                if not stream.wants_segment(refill_eventtime):
                     break
                 segment = planner.advance(position, joystick_ui.PERIOD)
                 if segment is None:
+                    self._record_joystick_refill(
+                        stream, refill_started, refill_segments,
+                        processed_before)
                     if planner.held:
                         self._update_joystick_feedback(
                             eventtime, position=queued_position)
@@ -228,8 +246,11 @@ class FeatherControlsMixin:
                     self._update_joystick_feedback(eventtime, force=True)
                     return self.reactor.NEVER
                 self._queue_joystick_segment(segment)
+                refill_segments += 1
                 position = segment.position
                 queued_position = position
+            self._record_joystick_refill(
+                stream, refill_started, refill_segments, processed_before)
             self._update_joystick_feedback(eventtime, position=queued_position)
             return eventtime + joystick_ui.PERIOD
         except Exception:
@@ -664,7 +685,12 @@ class FeatherControlsMixin:
             self.joystick_drawn_inertia = inertia
         self.joystick_feedback_at = eventtime + joystick_ui.FEEDBACK_PERIOD
         if commands:
+            feedback_started = self.reactor.monotonic()
             self.renderer.send(commands)
+            stream = getattr(self, "joystick_stream", None)
+            if stream is not None and getattr(stream, "active", False):
+                stream.record_feedback(
+                    self.reactor.monotonic() - feedback_started)
 
     def _handle_move_action(self, action):
         self._require_idle()
