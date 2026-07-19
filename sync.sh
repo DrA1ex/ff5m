@@ -13,10 +13,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No color
 
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+cd "$SCRIPT_DIR" || exit 1
+
 REMOTE_HOST=""
 REMOTE_USER="root"
 REMOTE_DIR="/opt/config/"
-ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S).tar.gz"
+ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$$.tar.gz"
 
 SKIP_HEAVY=0
 
@@ -44,6 +47,7 @@ PROFILES_VALUES=(
     "
     "
         SKIP_MOON_RESTART=1
+        SKIP_MIGRATE=1
         SKIP_PLUGIN_RELOAD=1
         SKIP_HEAVY=1
     "
@@ -99,7 +103,7 @@ usage() {
     echo -e "    --hard-klipper-restart   Use Hard restart for Klipper."
     echo -e "    --force-restart, -fr     Force restart services."
     echo -e "    --verbose, -v            Enable verbose mode for detailed output."
-    echo -e "    --help, -h               Display this help message."
+    echo -e "    --help                   Display this help message."
     echo -e ""
     echo -e "${RED}Example:${NC} $0 --host 192.168.1.100 --skip-restart --verbose"
 }
@@ -133,10 +137,22 @@ while [ "$#" -gt 0 ]; do
     param=$1; shift
     case $param in
         --host|-h)
+            if [ -z "$1" ] || [[ "$1" == -* ]]; then
+                echo -e "${RED}Missing value for ${param}.${NC}"
+                HELP=1
+                break
+            fi
+
             REMOTE_HOST="$1"; shift
             print_label "!" "Remote host: ${REMOTE_HOST}."
         ;;
         --profile|-p)
+            if [ -z "$1" ] || [[ "$1" == -* ]]; then
+                echo -e "${RED}Missing value for ${param}.${NC}"
+                HELP=1
+                break
+            fi
+
             load_profile "$1"; shift
         ;;
         --skip-restart|-sr)
@@ -164,6 +180,7 @@ while [ "$#" -gt 0 ]; do
             fi
         ;;
         --force-restart|-fr)
+            SKIP_RESTART=0
             FORCE_RESTART=1
         ;;
         --verbose|-v)
@@ -223,7 +240,7 @@ fi
 
 
 cleanup() {
-    rm "./${ARCHIVE_NAME}"
+    rm -f "./${ARCHIVE_NAME}"
 }
 
 abort() {
@@ -244,7 +261,9 @@ declare -a EXCLUDES=(
     ".DS_Store"
     "./sync*.tar.gz"
     "./sync.sh"
+    "*/__pycache__"
     "./sync_remote.sh"
+    "./tests/"
     "./.bin/src/**/bin"
     "./.bin/src/**/CMakeFiles"
     "./.bin/src/**/Makefile"
@@ -269,13 +288,13 @@ fi
 echo
 print_label "Creating archive..."
 
-EXCLUDE_STR=""
+EXCLUDE_ARGS=()
 for e in "${EXCLUDES[@]}"; do
-    EXCLUDE_STR+="--exclude='$e' "
+    EXCLUDE_ARGS+=(--exclude="$e")
     if [ "$VERBOSE" -eq 1 ]; then echo "► Excluding: \"$e\""; fi
 done
 
-eval "tar $EXCLUDE_STR --disable-copyfile -czf \"${ARCHIVE_NAME}\" ."
+tar "${EXCLUDE_ARGS[@]}" --disable-copyfile -czf "${ARCHIVE_NAME}" .
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to create sync archive.${NC}"
     
