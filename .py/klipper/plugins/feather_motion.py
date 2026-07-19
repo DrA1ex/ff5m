@@ -56,18 +56,25 @@ class LowLatencyToolheadStream:
         self.maximum_ahead = 0.0
         self.maximum_processed = 0.0
         self.maximum_pending = 0.0
-        self.minimum_processed = None
+        self.minimum_motion_processed = None
+        self.minimum_motion_ahead = None
         self.last_processed = 0.0
         self.last_pending = 0.0
         self.last_ahead = 0.0
-        self.last_tick_at = None
+        self.motion_active = False
+        self.motion_ready = False
+        self.motion_started_at = None
+        self.maximum_startup_duration = 0.0
+        self.last_motion_tick_at = None
         self.maximum_tick_gap = 0.0
         self.maximum_refill_duration = 0.0
         self.maximum_feedback_duration = 0.0
         self.maximum_refill_segments = 0
-        self.minimum_refill_processed_before = None
-        self.minimum_refill_processed_after = None
+        self.minimum_motion_refill_processed_before = None
+        self.minimum_motion_refill_processed_after = None
         self.start_stalls = 0
+        self.last_stall_count = 0
+        self.motion_stalls = 0
 
     def supported(self):
         queue = getattr(self.toolhead, "move_queue", None)
@@ -91,6 +98,30 @@ class LowLatencyToolheadStream:
         return sum(max(0.0, float(getattr(move, "min_move_t", 0.0)))
                    for move in queue)
 
+    def _stall_count(self):
+        return int(getattr(self.toolhead, "print_stall", 0))
+
+    def set_motion_active(self, active, eventtime):
+        """Start or stop diagnostics for actual planned motion."""
+        active = bool(active)
+        eventtime = float(eventtime)
+        if active and not self.motion_active:
+            self.motion_ready = False
+            self.motion_started_at = eventtime
+            self.last_motion_tick_at = None
+            # Stalls before a new motion phase belong to the neutral tail or
+            # startup transition, not to steady joystick motion.
+            self.last_stall_count = self._stall_count()
+        elif not active and self.motion_active:
+            self.motion_ready = False
+            self.motion_started_at = None
+            self.last_motion_tick_at = None
+            self.last_stall_count = self._stall_count()
+        self.motion_active = active
+
+    def motion_diagnostics_active(self):
+        return self.motion_active and self.motion_ready
+
     def ahead(self, eventtime):
         print_time, estimated_time, _empty = self.toolhead.check_busy(eventtime)
         processed = max(0.0, float(print_time) - float(estimated_time))
@@ -102,37 +133,69 @@ class LowLatencyToolheadStream:
         self.maximum_ahead = max(self.maximum_ahead, total)
         self.maximum_processed = max(self.maximum_processed, processed)
         self.maximum_pending = max(self.maximum_pending, pending)
-        if self.queued and processed > 0.0:
-            self.minimum_processed = (
-                processed if self.minimum_processed is None
-                else min(self.minimum_processed, processed))
         return total
 
-    def record_tick(self, eventtime):
+    def record_motion_cycle(self, eventtime, active, processed_before,
+                            ahead_before, processed_after, ahead_after):
+        """Record one refill cycle after its final motion state is known."""
         eventtime = float(eventtime)
-        if self.last_tick_at is not None:
-            self.maximum_tick_gap = max(
-                self.maximum_tick_gap, eventtime - self.last_tick_at)
-        self.last_tick_at = eventtime
+        self.set_motion_active(active, eventtime)
+        current_stalls = self._stall_count()
+        if not self.motion_active:
+            self.last_stall_count = current_stalls
+            return
 
-    def record_refill(self, duration, segment_count, processed_before,
-                      processed_after):
+        was_ready = self.motion_ready
+        if not self.motion_ready:
+            if max(processed_before, processed_after) < START_BUFFER:
+                # Startup and re-prime stalls are intentionally excluded.
+                self.last_stall_count = current_stalls
+                return
+            self.motion_ready = True
+            self.last_motion_tick_at = eventtime
+            if self.motion_started_at is not None:
+                self.maximum_startup_duration = max(
+                    self.maximum_startup_duration,
+                    eventtime - self.motion_started_at)
+            self.last_stall_count = current_stalls
+        else:
+            if self.last_motion_tick_at is not None:
+                self.maximum_tick_gap = max(
+                    self.maximum_tick_gap,
+                    eventtime - self.last_motion_tick_at)
+            self.last_motion_tick_at = eventtime
+            self.motion_stalls += max(
+                0, current_stalls - self.last_stall_count)
+            self.last_stall_count = current_stalls
+
+        samples = []
+        if was_ready or processed_before >= START_BUFFER:
+            samples.append((processed_before, ahead_before))
+            self.minimum_motion_refill_processed_before = (
+                processed_before
+                if self.minimum_motion_refill_processed_before is None
+                else min(self.minimum_motion_refill_processed_before,
+                         processed_before))
+        if was_ready or processed_after >= START_BUFFER:
+            samples.append((processed_after, ahead_after))
+            self.minimum_motion_refill_processed_after = (
+                processed_after
+                if self.minimum_motion_refill_processed_after is None
+                else min(self.minimum_motion_refill_processed_after,
+                         processed_after))
+        for processed, total in samples:
+            self.minimum_motion_processed = (
+                processed if self.minimum_motion_processed is None
+                else min(self.minimum_motion_processed, processed))
+            self.minimum_motion_ahead = (
+                total if self.minimum_motion_ahead is None
+                else min(self.minimum_motion_ahead, total))
+
+    def record_refill(self, duration, segment_count):
         self.maximum_refill_duration = max(
             self.maximum_refill_duration, max(0.0, float(duration)))
         self.maximum_refill_segments = max(
             self.maximum_refill_segments, int(segment_count))
-        if processed_before > 0.0:
-            self.minimum_refill_processed_before = (
-                processed_before
-                if self.minimum_refill_processed_before is None
-                else min(self.minimum_refill_processed_before,
-                         processed_before))
-        if processed_after > 0.0:
-            self.minimum_refill_processed_after = (
-                processed_after
-                if self.minimum_refill_processed_after is None
-                else min(self.minimum_refill_processed_after,
-                         processed_after))
 
     def record_feedback(self, duration):
         self.maximum_feedback_duration = max(
@@ -202,19 +265,26 @@ class LowLatencyToolheadStream:
         self.maximum_ahead = 0.0
         self.maximum_processed = 0.0
         self.maximum_pending = 0.0
-        self.minimum_processed = None
+        self.minimum_motion_processed = None
+        self.minimum_motion_ahead = None
         self.last_processed = 0.0
         self.last_pending = 0.0
         self.last_ahead = 0.0
-        self.last_tick_at = None
+        self.motion_active = False
+        self.motion_ready = False
+        self.motion_started_at = None
+        self.maximum_startup_duration = 0.0
+        self.last_motion_tick_at = None
         self.maximum_tick_gap = 0.0
         self.maximum_refill_duration = 0.0
         self.maximum_feedback_duration = 0.0
         self.maximum_refill_segments = 0
-        self.minimum_refill_processed_before = None
-        self.minimum_refill_processed_after = None
+        self.minimum_motion_refill_processed_before = None
+        self.minimum_motion_refill_processed_after = None
         self.start_stalls = int(getattr(
             self.toolhead, "print_stall", 0))
+        self.last_stall_count = self.start_stalls
+        self.motion_stalls = 0
         logging.info(
             "[feather_screen] joystick stream begin start_buffer=%.3f "
             "buffer_low=%.3f lookahead=%.3f target=%.3f shaping=%s "
@@ -256,6 +326,7 @@ class LowLatencyToolheadStream:
     def finish(self):
         if not self.active:
             return
+        self.set_motion_active(False, 0.0)
         error = None
         try:
             if self.queued:
@@ -286,21 +357,28 @@ class LowLatencyToolheadStream:
             logging.info(
                 "[feather_screen] joystick stream end segments=%d "
                 "max_ahead=%.3f processed=%.3f pending=%.3f "
-                "min_processed=%.3f stalls=%d tick_gap=%.3f "
-                "refill=%.3f feedback=%.3f refill_segments=%d "
-                "refill_processed=%.3f/%.3f",
+                "motion_min_processed=%.3f motion_min_ahead=%.3f "
+                "stalls=%d motion_stalls=%d motion_tick_gap=%.3f "
+                "startup=%.3f refill=%.3f feedback=%.3f "
+                "refill_segments=%d motion_refill_processed=%.3f/%.3f",
                 self.segment_count, self.maximum_ahead,
                 self.maximum_processed, self.maximum_pending,
-                self.minimum_processed or 0.0,
-                int(getattr(self.toolhead, "print_stall", 0))
-                - self.start_stalls, self.maximum_tick_gap,
+                self.minimum_motion_processed or 0.0,
+                self.minimum_motion_ahead or 0.0,
+                self._stall_count() - self.start_stalls,
+                self.motion_stalls,
+                self.maximum_tick_gap, self.maximum_startup_duration,
                 self.maximum_refill_duration,
                 self.maximum_feedback_duration,
                 self.maximum_refill_segments,
-                self.minimum_refill_processed_before or 0.0,
-                self.minimum_refill_processed_after or 0.0)
+                self.minimum_motion_refill_processed_before or 0.0,
+                self.minimum_motion_refill_processed_after or 0.0)
             self.active = False
             self.queued = False
+            self.motion_active = False
+            self.motion_ready = False
+            self.motion_started_at = None
+            self.last_motion_tick_at = None
             self.saved_start_buffer = None
             self.saved_buffer_low = None
             self.saved_flush_time = None

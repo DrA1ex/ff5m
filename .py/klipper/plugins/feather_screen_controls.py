@@ -147,13 +147,19 @@ class FeatherControlsMixin:
         self._get_joystick_stream().queue_segment(segment)
         self.joystick_queued = True
 
-    def _record_joystick_refill(self, stream, started, segment_count,
-                                processed_before):
+    def _record_joystick_refill(self, stream, planner, started,
+                                segment_count, processed_before,
+                                ahead_before):
         finished = self.reactor.monotonic()
         stream.ahead(finished)
-        stream.record_refill(
-            finished - started, segment_count, processed_before,
-            stream.last_processed)
+        stream.record_refill(finished - started, segment_count)
+        active = (planner.motion_active()
+                  and (segment_count > 0
+                       or stream.last_ahead
+                       > joystick_motion.BUSY_TOLERANCE))
+        stream.record_motion_cycle(
+            finished, active, processed_before, ahead_before,
+            stream.last_processed, stream.last_ahead)
 
     def _joystick_tick(self, eventtime):
         try:
@@ -215,9 +221,19 @@ class FeatherControlsMixin:
                     self._render_move()
                     return self.reactor.NEVER
             self.joystick_busy_since = None
-            stream.record_tick(eventtime)
+            tick_eventtime = self.reactor.monotonic()
+            stream.set_motion_active(
+                planner.motion_active(), tick_eventtime)
             queue_eventtime = self.reactor.monotonic()
-            if stream.ahead(queue_eventtime) >= joystick_motion.MAX_AHEAD:
+            ahead_before = stream.ahead(queue_eventtime)
+            processed_before = stream.last_processed
+            if ahead_before >= joystick_motion.MAX_AHEAD:
+                finished = self.reactor.monotonic()
+                stream.ahead(finished)
+                stream.record_motion_cycle(
+                    finished, planner.motion_active(),
+                    processed_before, ahead_before,
+                    stream.last_processed, stream.last_ahead)
                 self._update_joystick_feedback(eventtime)
                 return eventtime + joystick_ui.QUEUE_RETRY
 
@@ -226,6 +242,7 @@ class FeatherControlsMixin:
             refill_started = self.reactor.monotonic()
             stream.ahead(refill_started)
             processed_before = stream.last_processed
+            ahead_before = stream.last_ahead
             refill_segments = 0
             for _index in range(joystick_motion.MAX_REFILL_SEGMENTS):
                 refill_eventtime = self.reactor.monotonic()
@@ -234,8 +251,8 @@ class FeatherControlsMixin:
                 segment = planner.advance(position, joystick_ui.PERIOD)
                 if segment is None:
                     self._record_joystick_refill(
-                        stream, refill_started, refill_segments,
-                        processed_before)
+                        stream, planner, refill_started, refill_segments,
+                        processed_before, ahead_before)
                     if planner.held:
                         self._update_joystick_feedback(
                             eventtime, position=queued_position)
@@ -250,7 +267,8 @@ class FeatherControlsMixin:
                 position = segment.position
                 queued_position = position
             self._record_joystick_refill(
-                stream, refill_started, refill_segments, processed_before)
+                stream, planner, refill_started, refill_segments,
+                processed_before, ahead_before)
             self._update_joystick_feedback(eventtime, position=queued_position)
             return eventtime + joystick_ui.PERIOD
         except Exception:

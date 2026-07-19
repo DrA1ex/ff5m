@@ -193,6 +193,11 @@ class JoystickPlanner:
         return (self.held or any(abs(value) > VELOCITY_EPSILON
                                 for value in self.velocity))
 
+    def motion_active(self):
+        """Return whether the planner is requesting or still carrying motion."""
+        return (_magnitude(self.target) > VELOCITY_EPSILON
+                or _magnitude(self.velocity) > VELOCITY_EPSILON)
+
     def stop(self):
         self.release()
         self.velocity[:] = [0.0, 0.0, 0.0]

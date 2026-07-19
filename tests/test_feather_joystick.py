@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import importlib.util
+import math
 import pathlib
 import unittest
 
@@ -127,11 +128,11 @@ class JoystickPlannerTest(unittest.TestCase):
         self.assertEqual(segment.position[2], position[2])
         self.assertEqual(segment.acceleration, planner.xy_accel)
 
-    def test_half_stick_applies_half_force_and_half_terminal_speed(self):
+    def test_half_stick_uses_nonlinear_force_and_terminal_speed(self):
         full = self.planner()
         half = self.planner()
         full.set_xy(300, 200, 0.0, 200, 200, 100)
-        # radial_input maps this point to approximately 50% after dead-zone.
+        # This point maps to exactly 50% useful travel after the dead zone.
         half.set_xy(256, 200, 0.0, 200, 200, 100)
         full_position = [0.0, 0.0, 100.0]
         half_position = [0.0, 0.0, 100.0]
@@ -141,9 +142,11 @@ class JoystickPlannerTest(unittest.TestCase):
             full_position = full_segment.position
             half_position = half_segment.position
 
+        expected = 0.5 ** JOYSTICK.INPUT_CURVE_EXPONENT
         self.assertGreater(full.velocity[0], half.velocity[0])
+        self.assertAlmostEqual(half.target[0], expected, places=12)
         self.assertAlmostEqual(
-            half.velocity[0] / full.velocity[0], 0.5, delta=0.08)
+            half.velocity[0] / full.velocity[0], expected, delta=0.04)
 
     def test_release_uses_smooth_fast_braking_without_reversing(self):
         planner = self.planner()
@@ -324,6 +327,40 @@ class JoystickPlannerTest(unittest.TestCase):
         self.assertTrue(planner.watchdog(10.16))
         self.assertFalse(planner.held)
         self.assertEqual(planner.target, [0.0, 0.0, 0.0])
+
+    def test_diagonal_uses_same_radial_strength_as_cardinal_input(self):
+        center_x = 100.0
+        center_y = 100.0
+        radius = 80.0
+        displacement = radius * 0.75
+
+        cardinal = JOYSTICK.radial_input(
+            center_x + displacement, center_y,
+            center_x, center_y, radius)
+        component = displacement / math.sqrt(2.0)
+        diagonal = JOYSTICK.radial_input(
+            center_x + component, center_y - component,
+            center_x, center_y, radius)
+
+        self.assertAlmostEqual(
+            math.hypot(*cardinal), math.hypot(*diagonal), places=12)
+        self.assertAlmostEqual(diagonal[0], diagonal[1], places=12)
+
+    def test_xy_speed_limit_applies_to_vector_magnitude(self):
+        limited = JOYSTICK._limit_vector((300.0, 300.0), 300.0)
+        self.assertAlmostEqual(math.hypot(*limited), 300.0, places=12)
+
+    def test_motion_active_ignores_neutral_held_touch(self):
+        planner = self.planner()
+        planner.held = True
+        self.assertFalse(planner.motion_active())
+
+        planner.target[0] = 0.5
+        self.assertTrue(planner.motion_active())
+
+        planner.target[0] = 0.0
+        planner.velocity[0] = 1.0
+        self.assertTrue(planner.motion_active())
 
 
 if __name__ == "__main__":

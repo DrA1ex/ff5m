@@ -64,6 +64,7 @@ class FakeToolhead:
         self.flushes = 0
         self.accels = []
         self.move_duration = 0.0125
+        self.print_stall = 0
 
     def check_busy(self, eventtime):
         return (self.print_time, self.estimated_time,
@@ -268,6 +269,80 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         self.assertEqual(shaper.disabled, 0)
         self.assertEqual(shaper.enabled, 0)
         self.assertEqual(shaper.axes[0].saved, ("external",))
+
+    def test_safe_stream_tuning_is_retained(self):
+        self.assertEqual(MOTION.LOOKAHEAD_FLUSH, 0.060)
+        self.assertEqual(MOTION.TARGET_AHEAD, 0.300)
+
+    def test_motion_diagnostics_ignore_startup_and_neutral_stop(self):
+        toolhead = FakeToolhead()
+        stream = MOTION.LowLatencyToolheadStream(toolhead)
+
+        stream.set_motion_active(True, 1.000)
+        stream.record_motion_cycle(
+            1.010, True, 0.020, 0.100, 0.120, 0.200)
+        toolhead.print_stall = 1
+        stream.record_motion_cycle(
+            1.020, True, 0.120, 0.200, 0.180, 0.250)
+
+        self.assertFalse(stream.motion_diagnostics_active())
+        self.assertIsNone(stream.minimum_motion_processed)
+        self.assertEqual(stream.motion_stalls, 0)
+
+        stream.record_motion_cycle(
+            1.030, True, 0.180, 0.250, MOTION.START_BUFFER, 0.310)
+        self.assertTrue(stream.motion_diagnostics_active())
+        self.assertAlmostEqual(stream.maximum_startup_duration, 0.030)
+        self.assertAlmostEqual(
+            stream.minimum_motion_processed, MOTION.START_BUFFER)
+
+        toolhead.print_stall = 2
+        stream.record_motion_cycle(
+            1.060, True, 0.160, 0.230, 0.210, 0.280)
+        self.assertAlmostEqual(stream.minimum_motion_processed, 0.160)
+        self.assertAlmostEqual(stream.minimum_motion_ahead, 0.230)
+        self.assertEqual(stream.motion_stalls, 1)
+        self.assertAlmostEqual(stream.maximum_tick_gap, 0.030)
+
+        toolhead.print_stall = 3
+        stream.record_motion_cycle(
+            1.080, False, 0.001, 0.001, 0.0, 0.0)
+        self.assertFalse(stream.motion_diagnostics_active())
+        self.assertAlmostEqual(stream.minimum_motion_processed, 0.160)
+        self.assertAlmostEqual(stream.minimum_motion_ahead, 0.230)
+        self.assertEqual(stream.motion_stalls, 1)
+        self.assertAlmostEqual(stream.maximum_tick_gap, 0.030)
+
+    def test_new_motion_after_neutral_requires_reprime(self):
+        toolhead = FakeToolhead()
+        stream = MOTION.LowLatencyToolheadStream(toolhead)
+
+        stream.record_motion_cycle(
+            2.000, True, MOTION.START_BUFFER, 0.300, 0.280, 0.330)
+        stream.record_motion_cycle(
+            2.020, False, 0.010, 0.010, 0.0, 0.0)
+        toolhead.print_stall = 2
+        stream.record_motion_cycle(
+            2.030, True, 0.020, 0.080, 0.100, 0.160)
+
+        self.assertFalse(stream.motion_diagnostics_active())
+        self.assertEqual(stream.motion_stalls, 0)
+
+        stream.record_motion_cycle(
+            2.060, True, 0.180, 0.240, 0.260, 0.320)
+        self.assertTrue(stream.motion_diagnostics_active())
+        self.assertAlmostEqual(stream.maximum_startup_duration, 0.030)
+
+    def test_diagnostics_keep_worst_observed_values(self):
+        stream = MOTION.LowLatencyToolheadStream(FakeToolhead())
+        stream.record_refill(0.004, 4)
+        stream.record_refill(0.007, 7)
+        stream.record_feedback(0.003)
+        stream.record_feedback(0.009)
+
+        self.assertEqual(stream.maximum_refill_duration, 0.007)
+        self.assertEqual(stream.maximum_refill_segments, 7)
+        self.assertEqual(stream.maximum_feedback_duration, 0.009)
 
 
 if __name__ == "__main__":

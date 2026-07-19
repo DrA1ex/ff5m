@@ -1050,6 +1050,9 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-p 486 96 -s 84 266", drawing)
         self.assertNotIn('"+100"', drawing)
         self.assertNotIn('"-100"', drawing)
+        self.assertIn("-p 473 129 -s 12 1", drawing)
+        self.assertIn("-p 480 109 -s 5 1", drawing)
+        self.assertNotIn("-p 535 129 -s 12 1", drawing)
         self.assertIn("--id 1:move.joy.xy", drawing)
         self.assertIn("--id 1:move.joy.z", drawing)
         self.assertEqual(drawing.count("--continuous"), 2)
@@ -1177,6 +1180,106 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("--batch stroke -p 308 168 -s 25 25", drawing)
         self.assertNotIn("--batch stroke -p 228 217 -s 25 25", drawing)
 
+
+    def test_joystick_refill_resamples_monotonic_time_for_each_segment(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.joystick_action = "move.joy.xy"
+        controller.joystick_busy_since = None
+        controller.joystick_queued = False
+
+        class TickReactor:
+            NEVER = 9999.0
+
+            def __init__(self):
+                self.now = 10.0
+
+            def monotonic(self):
+                self.now += 0.001
+                return self.now
+
+        class Planner:
+            held = True
+
+            @staticmethod
+            def watchdog(eventtime):
+                return False
+
+            @staticmethod
+            def motion_active():
+                return True
+
+            @staticmethod
+            def advance(position, period):
+                next_position = list(position)
+                next_position[0] += 0.01
+                return type("Segment", (), {
+                    "position": next_position,
+                    "speed": 1.0,
+                    "acceleration": 1.0,
+                })()
+
+        class Stream:
+            active = True
+
+            def __init__(self):
+                self.last_processed = 0.2
+                self.last_ahead = 0.2
+                self.wants_times = []
+                self.queued = []
+                self.motion_cycles = []
+
+            @staticmethod
+            def set_motion_active(active, eventtime):
+                pass
+
+            def ahead(self, eventtime):
+                self.last_processed = 0.2
+                self.last_ahead = 0.2
+                return self.last_ahead
+
+            def wants_segment(self, eventtime):
+                self.wants_times.append(eventtime)
+                return len(self.wants_times) <= 2
+
+            def queue_segment(self, segment):
+                self.queued.append(segment)
+
+            @staticmethod
+            def record_refill(duration, segment_count):
+                pass
+
+            def record_motion_cycle(self, eventtime, active,
+                                    processed_before, ahead_before,
+                                    processed_after, ahead_after):
+                self.motion_cycles.append((
+                    eventtime, active, processed_before, ahead_before,
+                    processed_after, ahead_after))
+
+        controller.reactor = TickReactor()
+        controller.joystick = Planner()
+        controller.toolhead = type("Toolhead", (), {
+            "get_status": lambda self, eventtime: {"homed_axes": "xyz"},
+            "get_position": lambda self: [0.0, 0.0, 0.0, 0.0],
+        })()
+        stream = Stream()
+        controller.joystick_stream = stream
+        controller._update_joystick_feedback = lambda *args, **kwargs: None
+
+        result = controller._joystick_tick(10.0)
+
+        self.assertEqual(result, 10.010)
+        self.assertEqual(len(stream.queued), 2)
+        self.assertGreaterEqual(len(stream.wants_times), 3)
+        self.assertTrue(all(
+            later > earlier for earlier, later in zip(
+                stream.wants_times, stream.wants_times[1:])))
+        self.assertTrue(all(value > 10.0 for value in stream.wants_times))
+        self.assertEqual(len(stream.motion_cycles), 1)
+        self.assertTrue(stream.motion_cycles[0][1])
+
     def test_joystick_tick_forces_final_zero_inertia_frame(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.page = FEATHER.Page.CONTROL_MOVE
@@ -1186,7 +1289,10 @@ class RendererStateTest(unittest.TestCase):
         controller.joystick_busy_since = None
         controller.joystick_queued = True
         controller.joystick_timer_active = True
-        controller.reactor = type("TimerReactor", (), {"NEVER": 9999.0})()
+        controller.reactor = type("TimerReactor", (), {
+            "NEVER": 9999.0,
+            "monotonic": lambda self: 10.001,
+        })()
         controller.toolhead = type("Toolhead", (), {
             "get_status": lambda self, eventtime: {"homed_axes": "xyz"},
             "get_position": lambda self: (0.0, 0.0, 10.0),
@@ -1200,6 +1306,10 @@ class RendererStateTest(unittest.TestCase):
                 return False
 
             @staticmethod
+            def motion_active():
+                return False
+
+            @staticmethod
             def advance(position, period):
                 return None
 
@@ -1208,14 +1318,30 @@ class RendererStateTest(unittest.TestCase):
 
             def __init__(self):
                 self.finished = False
+                self.last_processed = 0.0
+                self.last_ahead = 0.0
 
             @staticmethod
-            def ahead(eventtime):
+            def set_motion_active(active, eventtime):
+                pass
+
+            def ahead(self, eventtime):
+                self.last_processed = 0.0
+                self.last_ahead = 0.0
                 return 0.0
 
             @staticmethod
             def wants_segment(eventtime):
                 return True
+
+            @staticmethod
+            def record_refill(duration, segment_count):
+                pass
+
+            @staticmethod
+            def record_motion_cycle(eventtime, active, processed_before,
+                                    ahead_before, processed_after, ahead_after):
+                pass
 
             def finish(self):
                 self.finished = True
