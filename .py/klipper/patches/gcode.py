@@ -111,7 +111,7 @@ class GCodeDispatch:
         self.gcode_help = {}
         # Register commands needed before config file is loaded
         handlers = ['M108', 'FEATHER_ABORT', 'M110', 'M112', 'M115',
-                    'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP']
+                    'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP', 'NOOP']
         for cmd in handlers:
             func = getattr(self, 'cmd_' + cmd)
             desc = getattr(self, 'cmd_' + cmd + '_help', None)
@@ -434,6 +434,8 @@ class GCodeDispatch:
             if cmd in self.gcode_help:
                 cmdhelp.append("%-10s: %s" % (cmd, self.gcode_help[cmd]))
         gcmd.respond_info("\n".join(cmdhelp), log=False)
+    def cmd_NOOP:
+        pass # Just do nothing
 
 # Support reading gcode from a pseudo-tty interface
 class GCodeIO:
