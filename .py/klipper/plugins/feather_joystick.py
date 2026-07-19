@@ -20,6 +20,7 @@ FEEDBACK_PERIOD = 0.05
 TOUCH_WATCHDOG = 0.15
 MAX_SPEED_SCALE = 0.5
 DEAD_ZONE = 0.12
+INPUT_CURVE_EXPONENT = 2.8
 EDGE_MARGIN = 0.5
 VELOCITY_EPSILON = 0.02
 ACCELERATION_EPSILON = 0.5
@@ -40,7 +41,8 @@ def radial_input(x, y, center_x, center_y, radius, dead_zone=DEAD_ZONE):
     if magnitude <= dead_zone:
         return 0.0, 0.0
     magnitude_clamped = min(1.0, magnitude)
-    strength = (magnitude_clamped - dead_zone) / (1.0 - dead_zone)
+    strength = ((magnitude_clamped - dead_zone)
+                / (1.0 - dead_zone)) ** INPUT_CURVE_EXPONENT
     return dx / magnitude * strength, dy / magnitude * strength
 
 
@@ -50,7 +52,8 @@ def vertical_input(y, center_y, radius, dead_zone=DEAD_ZONE):
     magnitude = abs(raw)
     if magnitude <= dead_zone:
         return 0.0
-    strength = (min(1.0, magnitude) - dead_zone) / (1.0 - dead_zone)
+    strength = ((min(1.0, magnitude) - dead_zone)
+                / (1.0 - dead_zone)) ** INPUT_CURVE_EXPONENT
     return math.copysign(strength, raw)
 
 
