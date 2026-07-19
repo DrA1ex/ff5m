@@ -33,10 +33,11 @@ JOYSTICK_XY_GRID = (70, 120, 340, 218)
 JOYSTICK_XY_VERTICAL = (240, 120, 1, 219)
 JOYSTICK_XY_HORIZONTAL = (70, 229, 341, 1)
 JOYSTICK_Z_PANEL = (478, 64, 100, 364)
-JOYSTICK_Z_CENTER = (510, 229)
-JOYSTICK_Z_RADIUS = 125
-JOYSTICK_Z_CURSOR_BOUNDS = (119, 339)
-JOYSTICK_Z_HITBOX = (486, 96, 84, 266)
+JOYSTICK_Z_TRACK = (541, 103, 10, 315)
+JOYSTICK_Z_CENTER = (546, 260)
+JOYSTICK_Z_RADIUS = 156
+JOYSTICK_Z_CURSOR_BOUNDS = (119, 402)
+JOYSTICK_Z_HITBOX = (486, 96, 84, 329)
 JOYSTICK_STATUS_PANEL = (588, 64, 200, 364)
 JOYSTICK_POSITION_CARD = (602, 96, 172, 92)
 JOYSTICK_INERTIA_CARD = (602, 200, 172, 48)
@@ -370,17 +371,30 @@ class FeatherControlsMixin:
         commands += self.renderer.section_panel(
             "Z AXIS", *JOYSTICK_Z_PANEL)
         z_x, z_y = JOYSTICK_Z_CENTER
+        track_x, track_y, track_w, track_h = JOYSTICK_Z_TRACK
+        tick_gap = 20
+        tick_widths = (5, 8, 12)
+        subdivision_depth = 3
+        divisions = 1 << subdivision_depth
+        tick_right = track_x - tick_gap - 1
+        tick_min_y, tick_max_y = JOYSTICK_Z_CURSOR_BOUNDS
+        tick_span = tick_max_y - tick_min_y
         commands += self.renderer.panel(
-            z_x - 5, 103, 10, 252, border="35d9e6", line_width=1)
-        for offset in (-100, -50, 0, 50, 100):
-            tick_y = z_y + offset
+            track_x, track_y, track_w, track_h,
+            border="35d9e6", line_width=1)
+        for index in range(divisions + 1):
+            if index % (divisions // 2) == 0:
+                tick_width = tick_widths[2]
+            elif index % (divisions // 4) == 0:
+                tick_width = tick_widths[1]
+            else:
+                tick_width = tick_widths[0]
+            tick_x = tick_right - tick_width + 1
+            tick_y = int(round(
+                tick_min_y + tick_span * index / float(divisions)))
             commands.append(self.renderer.fill(
-                535, tick_y, 12, 1,
-                "35d9e6" if offset == 0 else "56656c"))
-        for offset in range(-120, 121, 20):
-            if offset not in (-100, -50, 0, 50, 100):
-                commands.append(self.renderer.fill(
-                    535, z_y + offset, 5, 1, "56656c"))
+                tick_x, tick_y, tick_width, 1,
+                "35d9e6" if index == divisions // 2 else "56656c"))
         commands += self.renderer.joystick_knob(z_x, z_y, "z")
 
         commands += self.renderer.section_panel(
@@ -622,10 +636,9 @@ class FeatherControlsMixin:
                         "35d9e6"))
             return commands
 
-        track_left = JOYSTICK_Z_CENTER[0] - 5
-        track_right = track_left + 9
-        track_top = 103
-        track_bottom = 354
+        track_left, track_top, track_width, track_height = JOYSTICK_Z_TRACK
+        track_right = track_left + track_width - 1
+        track_bottom = track_top + track_height - 1
         line_top = max(top, track_top)
         line_bottom = min(bottom - 1, track_bottom)
         if line_top <= line_bottom:
@@ -638,10 +651,10 @@ class FeatherControlsMixin:
             ]
         if top <= track_top < bottom:
             commands.append(self.renderer.fill(
-                track_left, track_top, 10, 1, "35d9e6"))
+                track_left, track_top, track_width, 1, "35d9e6"))
         if top <= track_bottom < bottom:
             commands.append(self.renderer.fill(
-                track_left, track_bottom, 10, 1, "35d9e6"))
+                track_left, track_bottom, track_width, 1, "35d9e6"))
         return commands
 
     def _joystick_indicator_commands(self, previous, current):
