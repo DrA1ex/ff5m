@@ -48,7 +48,7 @@ Renders text with customizable font, color, alignment, and scale.
 | `--max-width` | Maximum rendered width in pixels | integer | `0` | No |
 | `--max-height` | Maximum rendered height in pixels | integer | `0` | No |
 | `--wrap` | Wrap text within `max-width` and `max-height` | flag | off | No |
-| `--truncate` | Keep one line, truncate to `max-width`, and append an ellipsis | flag | off | No |
+| `--truncate` | Append an ellipsis when text exceeds its width or wrapped height | flag | off | No |
 
 **Example:**
 ```bash

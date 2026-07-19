@@ -380,7 +380,7 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
         .flag();
 
     result->text_command.add_argument("--truncate")
-        .help("Truncate text to max-width and append an ellipsis")
+        .help("Ellipsize text that exceeds its width or wrapped height")
         .flag();
 
     result->program.add_subparser(result->text_command);

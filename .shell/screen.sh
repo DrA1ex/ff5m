@@ -21,13 +21,13 @@ print_versions() {
     local batches=(
         --batch fill -p 72 270 -s 311 54 -c 0
         --batch fill -p 417 270 -s 311 54 -c 0
-        --batch text -ha center -va middle -p 228 286 -c b47aff -f "JetBrainsMono Bold 12pt" -t "v$MOD_VERSION"
-        --batch text -ha center -va middle -p 572 297 -c 35d9e6 -f "JetBrainsMono Bold 12pt" -t "v$FIRMWARE_VERSION"
+        --batch text -ha center -va middle -p 228 286 -c b47aff -f "JetBrainsMono Bold 12pt" --max-width 280 --truncate -t "v$MOD_VERSION"
+        --batch text -ha center -va middle -p 572 297 -c 35d9e6 -f "JetBrainsMono Bold 12pt" --max-width 280 --truncate -t "v$FIRMWARE_VERSION"
     )
 
     if [ -n "$MOD_VERSION_PATCH" ]; then
         batches+=(
-            --batch text -ha center -va middle -p 228 310 -c b47aff -f "JetBrainsMono Bold 8pt" -t "$MOD_VERSION_PATCH"
+            --batch text -ha center -va middle -p 228 310 -c b47aff -f "JetBrainsMono Bold 8pt" --max-width 280 --truncate -t "$MOD_VERSION_PATCH"
         )
     fi
 
@@ -39,7 +39,7 @@ print_message() {
     
     "$BINS/typer" -db batch \
         --batch fill -p 0 370 -s 800 50 -c 0 \
-        --batch text -ha center -p 400 400 -c 35d9e6 -f "JetBrainsMono 12pt" -t "$text"
+        --batch text -ha center -p 400 400 -c 35d9e6 -f "JetBrainsMono 12pt" --max-width 760 --truncate -t "$text"
 }
 
 print_progress() {
@@ -61,7 +61,7 @@ print_prepare_status() {
     
     "$BINS/typer" -db batch \
         --batch fill -p 205 425 -s 390 30 -c 0 \
-        --batch text -p 400 440 -ha center -va middle -c 35d9e6 -f "JetBrainsMono 8pt" -b 0 -t "${text}"
+        --batch text -p 400 440 -ha center -va middle -c 35d9e6 -f "JetBrainsMono 8pt" -b 0 --max-width 370 --truncate -t "${text}"
 }
 
 print_time() {
@@ -227,9 +227,13 @@ case "$1" in
             level="${str%%;;*}"
             message="${str#*;;}"
             color=$(level_to_color "$level")
+            message_width=760
+            if [ "$y_offset" -eq "$bottom_offset" ]; then
+                message_width=650
+            fi
 
             batches+=(
-                --batch text -ha left -va middle -p 10 "$y_offset" -c "$color" -f "JetBrainsMono Bold 8pt" -t "$message"
+                --batch text -ha left -va middle -p 10 "$y_offset" -c "$color" -f "JetBrainsMono Bold 8pt" --max-width "$message_width" --truncate -t "$message"
             )
 
             y_offset=$((y_offset + line_height))
