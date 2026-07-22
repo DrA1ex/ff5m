@@ -12,13 +12,13 @@ import subprocess
 import time
 
 try:
-    from .feather_ui import Page, PrintState
+    from .ui import Page, PrintState
     from . import feather_mod_settings as mod_ui
     from .feather_keyboard import keyboard_rows
     from .feather_files import FileEntry, scan_gcode_files
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
-    from feather_ui import Page, PrintState
+    from ui import Page, PrintState
     import feather_mod_settings as mod_ui
     from feather_keyboard import keyboard_rows
     from feather_files import FileEntry, scan_gcode_files

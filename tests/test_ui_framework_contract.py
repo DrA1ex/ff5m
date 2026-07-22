@@ -1,0 +1,80 @@
+"""Version and migration contracts between FF5M and the ui subtree."""
+
+import pathlib
+import sys
+import unittest
+
+
+PLUGINS = pathlib.Path(__file__).parents[1] / ".py" / "klipper" / "plugins"
+sys.path.insert(0, str(PLUGINS))
+
+import ui  # noqa: E402
+from ff5m_ui.keys import AppPage  # noqa: E402
+from ff5m_ui.move.actions import MoveCommand  # noqa: E402
+from ff5m_ui.move.state import MoveState, ToolheadState  # noqa: E402
+from ff5m_ui.z_offset.actions import ZOffsetCommand  # noqa: E402
+from ff5m_ui.z_offset.paper.state import PaperState  # noqa: E402
+from ff5m_ui.z_offset.paper_briefing.state import PaperBriefingState  # noqa: E402
+from ff5m_ui.z_offset.summary.state import SummaryState  # noqa: E402
+
+
+class FrameworkContractTest(unittest.TestCase):
+    def test_product_deploys_without_designer_scripts(self):
+        root = pathlib.Path(__file__).parents[1]
+        self.assertFalse((root / "scripts").exists())
+        self.assertTrue((PLUGINS / "ui" / "__init__.py").is_file())
+        self.assertTrue((PLUGINS / "ff5m_ui" / "__init__.py").is_file())
+
+    def test_manifest_is_framework_v2(self):
+        self.assertEqual(ui.__version__, "2.0.0")
+        self.assertEqual(ui.FRAMEWORK_API_VERSION, 2)
+        self.assertEqual(ui.REFLECTION_SCHEMA_VERSION, 2)
+        self.assertEqual(ui.framework_manifest(), {
+            "name": "feather-ui",
+            "version": "2.0.0",
+            "api_version": 2,
+            "reflection_schema_version": 2,
+            "capabilities": list(ui.FRAMEWORK_CAPABILITIES),
+        })
+
+    def test_product_key_wire_namespaces_survive_package_move(self):
+        namespaces = {
+            AppPage: "ui.pages.keys.AppPage",
+            MoveCommand: "ui.pages.move.actions.MoveCommand",
+            MoveState: "ui.pages.move.state.MoveState",
+            ToolheadState: "ui.pages.move.state.ToolheadState",
+            ZOffsetCommand: "ui.pages.z_offset.actions.ZOffsetCommand",
+            PaperState: "ui.pages.z_offset.paper.state.PaperState",
+            PaperBriefingState:
+                "ui.pages.z_offset.paper_briefing.state.PaperBriefingState",
+            SummaryState: "ui.pages.z_offset.summary.state.SummaryState",
+        }
+        for key_type, namespace in namespaces.items():
+            self.assertEqual(key_type.__key_namespace__, namespace)
+            for member in key_type:
+                self.assertEqual(ui.serialize_key(member),
+                                 "%s.%s" % (namespace, member.name))
+
+    def test_all_navigation_targets_keep_original_page_symbols(self):
+        self.assertEqual(
+            {ui.serialize_key(page) for page in AppPage},
+            {
+                "ui.pages.keys.AppPage.MOVE_STEP",
+                "ui.pages.keys.AppPage.MOVE_JOYSTICK",
+                "ui.pages.keys.AppPage.Z_OFFSET_BRIEFING",
+                "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+                "ui.pages.keys.AppPage.Z_OFFSET_PAPER_BRIEFING",
+                "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+            })
+
+    def test_framework_subtree_has_no_product_or_designer_imports(self):
+        framework = PLUGINS / "ui"
+        self.assertFalse((framework / "pages").exists())
+        for path in framework.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("ff5m_ui", source, str(path))
+            self.assertNotIn("feather_preview", source, str(path))
+
+
+if __name__ == "__main__":
+    unittest.main()

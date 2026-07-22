@@ -14,4 +14,9 @@ cmake-build-*
 .bin/src/*/Testing
 
 __pycache__
+node_modules/
+playwright-report/
+test-results/
+scripts/ui_preview/coverage/
+/feather-ui-designer/
 sql/version

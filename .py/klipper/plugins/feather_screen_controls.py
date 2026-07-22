@@ -7,44 +7,52 @@
 import logging
 import math
 import re
+import time
 
 try:
-    from .feather_ui import Page, PrintState
+    from .ui import (
+        Back, Command, Increment, Navigate, Page, PrintState, Replace,
+        SetValue, Toggle, state_spec,
+    )
+    from .ff5m_ui.keys import AppPage
+    from .ff5m_ui.move import runtime as move_ui
+    from .ff5m_ui.z_offset import runtime as z_offset_ui
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
     from .feather_z_calibration import PAPER_STEPS
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
-    from feather_ui import Page, PrintState
+    from ui import (
+        Back, Command, Increment, Navigate, Page, PrintState, Replace,
+        SetValue, Toggle, state_spec,
+    )
+    from ff5m_ui.keys import AppPage
+    from ff5m_ui.move import runtime as move_ui
+    from ff5m_ui.z_offset import runtime as z_offset_ui
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
     from feather_z_calibration import PAPER_STEPS
     from feather_pagination import Pagination, pagination_footer
 
 
+STEP_PAGE = move_ui.STEP_PAGE
+JOYSTICK_PAGE = move_ui.JOYSTICK_PAGE
+
+
 MOVE_CAUTION_Z = 5.0
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
-Z_WEIGHT_DANGER = 400.0
-JOYSTICK_XY_PANEL = (12, 64, 456, 364)
-JOYSTICK_XY_PAD = (30, 96, 420, 266)
-JOYSTICK_XY_CENTER = (240, 229)
+Z_WEIGHT_DANGER = z_offset_ui.Z_WEIGHT_DANGER
+
+_JOYSTICK_XY_PAD = JOYSTICK_PAGE.rect("xy.pad")
+_JOYSTICK_Z_TRACK = JOYSTICK_PAGE.rect("z.track")
+
+# Input normalization still needs the centers and force radii. Visual cursor
+# clamping and damage geometry belong to the declarative joystick components.
+JOYSTICK_XY_CENTER = _JOYSTICK_XY_PAD.center
 JOYSTICK_XY_RADIUS = 138
-JOYSTICK_XY_CURSOR_BOUNDS = (84, 134, 396, 324)
-JOYSTICK_XY_GRID = (70, 120, 340, 218)
-JOYSTICK_XY_VERTICAL = (240, 120, 1, 219)
-JOYSTICK_XY_HORIZONTAL = (70, 229, 341, 1)
-JOYSTICK_Z_PANEL = (478, 64, 100, 364)
-JOYSTICK_Z_TRACK = (541, 103, 10, 315)
-JOYSTICK_Z_CENTER = (546, 260)
-JOYSTICK_Z_RADIUS = 156
-JOYSTICK_Z_CURSOR_BOUNDS = (119, 402)
-JOYSTICK_Z_HITBOX = (486, 96, 84, 329)
-JOYSTICK_STATUS_PANEL = (588, 64, 200, 364)
-JOYSTICK_POSITION_CARD = (602, 96, 172, 92)
-JOYSTICK_INERTIA_CARD = (602, 200, 172, 48)
-JOYSTICK_KNOB_SIZE = 25
-JOYSTICK_DIRTY_MARGIN = 2
+JOYSTICK_Z_CENTER = _JOYSTICK_Z_TRACK.center
+JOYSTICK_Z_RADIUS = (_JOYSTICK_Z_TRACK.height - 3) // 2
 PREHEAT = {
     "PLA": (220, 60),
     "PETG": (250, 70),
@@ -138,8 +146,6 @@ class FeatherControlsMixin:
         self.joystick_timer_active = False
         self.joystick_busy_since = None
         self.joystick_cursor = None
-        self.joystick_drawn_cursor = None
-        self.joystick_drawn_inertia = None
         self.joystick_feedback_at = 0.0
         timer = getattr(self, "joystick_timer", None)
         if timer is not None:
@@ -302,149 +308,40 @@ class FeatherControlsMixin:
         now = self.reactor.monotonic()
         if snapshot is None:
             snapshot = self._move_status_snapshot(now)
-        commands = self.renderer.begin_page("Move", back=True)
-        if getattr(self, "move_mode", "step") == "joystick":
-            self.joystick_drawn_cursor = None
-            self.joystick_drawn_inertia = None
-            self.joystick_feedback_at = 0.0
-            commands += self._joystick_move_commands(snapshot)
-        else:
-            commands += self._step_move_commands(snapshot)
         if caution is None:
             caution = self._move_caution_state(snapshot, now)
+        commands = self.renderer.begin_page("Move", back=True)
+        if getattr(self, "move_mode", "step") == "joystick":
+            self.joystick_feedback_at = 0.0
+            commands += self._joystick_move_commands(snapshot, caution)
+        else:
+            commands += self._step_move_commands(snapshot, caution)
         self.move_caution_signature = caution
-        if caution[0]:
-            commands += self._move_caution_commands(caution[1])
         self.renderer.send(commands)
         self._last_move = snapshot
 
-    def _step_move_commands(self, snapshot):
-        commands = []
-        # XY pad and a separate Z rocker. The center is informational, not a
-        # hidden homing action.
-        commands += self.renderer.button("move.yp", 140, 78, 100, 68, "Y+")
-        commands += self.renderer.button("move.xm", 30, 158, 100, 68, "X-")
-        commands += self.renderer.button("move.xp", 250, 158, 100, 68, "X+")
-        commands += self.renderer.button("move.ym", 140, 238, 100, 68, "Y-")
-        commands += self.renderer.button("move.zm", 365, 78, 65, 68, "Z-")
-        commands += self.renderer.button("move.zp", 365, 238, 65, 68, "Z+")
-        commands.append(self.renderer.fill(445, 65, 1, 360, "295c66"))
+    def _move_ui_state(self, snapshot, caution=None):
+        values = move_ui.snapshot_values(snapshot)
+        if caution is None:
+            caution = self._move_caution_state(
+                snapshot, self.reactor.monotonic())
+        values[move_ui.MoveState.CAUTION_ACKNOWLEDGED] = bool(
+            getattr(self, "move_caution_acknowledged", False))
+        values[move_ui.MoveState.AUTO_PROFILE_STATE] = str(
+            caution[1] or "missing")
+        return values
 
-        commands += self.renderer.button("move.homeall", 465, 170, 145, 50,
-                                         "HOME ALL", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.homexy", 625, 170, 145, 50,
-                                         "HOME XY", font="JetBrainsMono 8pt")
-        commands.append(self.renderer.fill(465, 235, 305, 1, "295c66"))
-        commands.append(self.renderer.text(617, 254, "STEP SIZE", "35d9e6",
-                                           "JetBrainsMono 8pt", "center", "middle"))
-        commands += self.renderer.button("move.step.minus", 465, 270, 80, 48, "-")
-        commands.append(self.renderer.text(617, 294, "%g MM" % self.jog_step,
-                                           "d9e4e8", "JetBrainsMono 8pt",
-                                           "center", "middle"))
-        commands += self.renderer.button("move.step.plus", 690, 270, 80, 48, "+")
-        commands.append(self.renderer.text(617, 338, "PRESET STEPS", "35d9e6",
-                                           "JetBrainsMono 8pt", "center", "middle"))
-        for index, step in enumerate((0.1, 1.0, 10.0)):
-            commands += self.renderer.button(
-                "move.step%d" % index, 465 + index * 105, 358, 95, 50,
-                "%g" % step,
-                state="selected" if step == self.jog_step else "enabled",
-                font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.motors", 30, 350, 190, 58,
-                                         "DISABLE MOTORS",
-                                         font="JetBrainsMono 8pt")
-        commands += self.renderer.button("move.mode", 235, 350, 195, 58,
-                                         "JOY MODE",
-                                         font="JetBrainsMono 8pt")
-        commands += self._move_status_commands(snapshot, axes=True)
-        return commands
+    def _step_move_commands(self, snapshot, caution=None):
+        values = self._move_ui_state(snapshot, caution)
+        values[move_ui.MoveState.JOG_STEP] = float(self.jog_step)
+        return move_ui.render_step(self.renderer, values)
 
-    def _joystick_move_commands(self, snapshot):
-        commands = []
-        commands += self.renderer.section_panel(
-            "XY POSITION", *JOYSTICK_XY_PANEL)
-        commands += self.renderer.panel(
-            *JOYSTICK_XY_PAD, border="35d9e6", line_width=1)
-        commands += self.renderer.dot_grid(
-            *JOYSTICK_XY_GRID, columns=11, rows=7)
-        commands += self.renderer.corner_marks(
-            50, 114, 380, 230, length=11)
-        center_x, center_y = JOYSTICK_XY_CENTER
-        commands += [
-            self.renderer.fill(*JOYSTICK_XY_VERTICAL, color="35d9e6"),
-            self.renderer.fill(*JOYSTICK_XY_HORIZONTAL, color="35d9e6"),
-            self.renderer.text(center_x, 106, "+Y", "35d9e6",
-                               "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(center_x, 352, "-Y", "35d9e6",
-                               "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(48, center_y, "-X", "35d9e6",
-                               "JetBrainsMono 8pt",
-                               "center", "middle"),
-            self.renderer.text(432, center_y, "+X", "35d9e6",
-                               "JetBrainsMono 8pt",
-                               "center", "middle"),
-        ]
-        commands += self.renderer.joystick_knob(center_x, center_y, "xy")
-
-        commands += self.renderer.section_panel(
-            "Z AXIS", *JOYSTICK_Z_PANEL)
-        z_x, z_y = JOYSTICK_Z_CENTER
-        track_x, track_y, track_w, track_h = JOYSTICK_Z_TRACK
-        tick_gap = 20
-        tick_widths = (5, 8, 12)
-        subdivision_depth = 3
-        divisions = 1 << subdivision_depth
-        tick_right = track_x - tick_gap - 1
-        tick_min_y, tick_max_y = JOYSTICK_Z_CURSOR_BOUNDS
-        tick_span = tick_max_y - tick_min_y
-        commands += self.renderer.panel(
-            track_x, track_y, track_w, track_h,
-            border="35d9e6", line_width=1)
-        for index in range(divisions + 1):
-            if index % (divisions // 2) == 0:
-                tick_width = tick_widths[2]
-            elif index % (divisions // 4) == 0:
-                tick_width = tick_widths[1]
-            else:
-                tick_width = tick_widths[0]
-            tick_x = tick_right - tick_width + 1
-            tick_y = int(round(
-                tick_min_y + tick_span * index / float(divisions)))
-            commands.append(self.renderer.fill(
-                tick_x, tick_y, tick_width, 1,
-                "35d9e6" if index == divisions // 2 else "56656c"))
-        commands += self.renderer.joystick_knob(z_x, z_y, "z")
-
-        commands += self.renderer.section_panel(
-            "POSITION", *JOYSTICK_STATUS_PANEL)
-        commands += self._joystick_position_commands(snapshot)
-        inertia = self._joystick_inertia_snapshot()
-        commands += self._joystick_inertia_commands(inertia)
-        self.joystick_drawn_inertia = inertia
-        commands += self.renderer.button(
-            "move.homeall", 602, 262, 172, 42, "HOME ALL",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "move.homexy", 602, 310, 172, 42, "HOME XY",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "move.homez", 602, 358, 172, 42, "HOME Z",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "move.motors", 30, 374, 190, 44, "DISABLE MOTORS",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "move.mode", 230, 374, 140, 44, "STEP MODE",
-            font="JetBrainsMono 8pt")
-        commands += [
-            self.renderer.action_hitbox(
-                "move.joy.xy", *JOYSTICK_XY_PAD, continuous=True),
-            self.renderer.action_hitbox(
-                "move.joy.z", *JOYSTICK_Z_HITBOX, continuous=True),
-        ]
-        return commands
+    def _joystick_move_commands(self, snapshot, caution=None):
+        values = self._move_ui_state(snapshot, caution)
+        values[move_ui.MoveState.INERTIA] = float(
+            self._joystick_inertia_snapshot())
+        values[move_ui.MoveState.CURSOR] = None
+        return move_ui.render_joystick(self.renderer, values)
 
     def _move_status_snapshot(self, eventtime, position=None):
         status = self.toolhead.get_status(eventtime)
@@ -490,74 +387,35 @@ class FeatherControlsMixin:
             return True, "active"
         return True, "available" if auto_available else "missing"
 
-    def _move_caution_commands(self, auto_state):
-        if auto_state == "active":
-            profile_line = "BED PROFILE 'AUTO' IS LOADED"
-        elif auto_state == "available":
-            profile_line = "LOAD BED PROFILE 'AUTO'?"
-        else:
-            profile_line = "PROFILE 'AUTO' IS NOT AVAILABLE"
-        lines = (
-            "Z IS BELOW 5 MM",
-            "XY MOTION MAY SCRATCH THE BED",
-            profile_line,
-        )
-        if auto_state == "active":
-            buttons = [
-                ("move.caution.unload", "UNLOAD", "warning"),
-                ("move.caution.dismiss", "OK", "enabled"),
-            ]
-        else:
-            buttons = [("move.caution.dismiss", "CONTINUE", "enabled")]
-        if auto_state == "available":
-            buttons.append(("move.caution.auto", "LOAD", "warning"))
-        return self.renderer.dialog(
-            "CAUTION", lines, tuple(buttons),
-            x=30, y=96, width=420, height=266,
-            tone="warning", modal=False)
-
     def _sync_move_caution_overlay(self, values, caution):
         previous = getattr(self, "move_caution_signature", caution)
         if caution == previous:
             return False
-        if caution[0]:
-            self.move_caution_signature = caution
-            self.renderer.send(self._move_caution_commands(caution[1]))
+        if (not caution[0]
+                and getattr(self, "joystick_action", None)
+                == move_ui.JOYSTICK_Z.wire_id):
+            # Preserve an active continuous Z gesture until release. The
+            # normal page update below still owns the warning; no independent
+            # imperative caution renderer is used.
             return False
-        if getattr(self, "joystick_action", None) == "move.joy.z":
-            # Do not invalidate an active continuous touch merely to remove
-            # the overlay. It is cleared after the Z gesture has ended.
-            return False
-        self._render_move(snapshot=values, caution=caution)
+        ui_state = self._move_ui_state(values, caution)
+        if getattr(self, "move_mode", "step") == "joystick":
+            ui_state[move_ui.MoveState.INERTIA] = float(
+                self._joystick_inertia_snapshot())
+            ui_state[move_ui.MoveState.CURSOR] = getattr(
+                self, "joystick_cursor", None)
+            commands = move_ui.update_joystick(self.renderer, ui_state)
+        else:
+            commands = move_ui.render_step_status(
+                self.renderer, ui_state, axes=True)
+        self.move_caution_signature = caution
+        if commands:
+            self.renderer.send(commands)
         return True
 
-    def _move_status_commands(self, values, axes=False):
-        missing = values[3] != "HOMED: XYZ"
-        commands = [
-            self.renderer.fill(465, 65, 305, 95, "030607"),
-            self.renderer.text(617, 82, values[3],
-                               "f2c94c" if missing else "35d9e6",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(617, 122, "X %7.2f   Y %7.2f" % values[:2],
-                               "d9e4e8", "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.text(617, 148, "Z %7.2f" % values[2],
-                               "d9e4e8", "JetBrainsMono 8pt", "center", "middle"),
-        ]
-        if axes:
-            for x, width, label, homed in (
-                    (140, 100, "X / Y", values[4]),
-                    (365, 65, "Z", values[5])):
-                color = "35d9e6" if homed else "f2c94c"
-                commands += [
-                    self.renderer.fill(x, 158, width, 68, "050c0f"),
-                    self.renderer.stroke(x, 158, width, 68, color, 2),
-                    self.renderer.text(x + width // 2, 180, label, color,
-                                       "JetBrainsMono 8pt", "center", "middle"),
-                    self.renderer.text(x + width // 2, 207,
-                                       "HOMED" if homed else "HOME", color,
-                                       "JetBrainsMono 8pt", "center", "middle"),
-                ]
-        return commands
+    def _move_status_commands(self, values, axes=False, caution=None):
+        return move_ui.render_step_status(
+            self.renderer, self._move_ui_state(values, caution), axes=axes)
 
     def _update_move_status(self, eventtime):
         values = self._move_status_snapshot(eventtime)
@@ -569,24 +427,17 @@ class FeatherControlsMixin:
             return
         self._last_move = values
         if getattr(self, "move_mode", "step") == "joystick":
-            self.renderer.send(self._joystick_position_commands(values))
+            ui_state = self._move_ui_state(values, caution)
+            ui_state[move_ui.MoveState.INERTIA] = float(
+                self._joystick_inertia_snapshot())
+            ui_state[move_ui.MoveState.CURSOR] = getattr(
+                self, "joystick_cursor", None)
+            self.renderer.send(move_ui.update_joystick(
+                self.renderer, ui_state))
             return
         axes_changed = previous is None or values[4:] != previous[4:]
-        self.renderer.send(self._move_status_commands(values, axes=axes_changed))
-
-    def _joystick_position_commands(self, values):
-        x, y, width, height = JOYSTICK_POSITION_CARD
-        border = "35d9e6" if values[3] == "HOMED: XYZ" else "f2c94c"
-        commands = self.renderer.panel(
-            x, y, width, height, border=border, line_width=1)
-        for offset, label, value in (
-                (22, "X", "%6.1f" % values[0]),
-                (46, "Y", "%6.1f" % values[1]),
-                (70, "Z", "%6.1f" % values[2])):
-            commands += self.renderer.metric_row(
-                x + 12, y + offset, width - 24, label, value, "mm",
-                label_color=border)
-        return commands
+        self.renderer.send(self._move_status_commands(
+            values, axes=axes_changed, caution=caution))
 
     def _joystick_inertia_snapshot(self):
         planner = getattr(self, "joystick", None)
@@ -594,113 +445,6 @@ class FeatherControlsMixin:
                  and callable(getattr(planner, "inertia", None)) else {})
         velocity = state.get("velocity", (0.0, 0.0, 0.0))
         return round(sum(float(value) ** 2 for value in velocity) ** 0.5, 1)
-
-    def _joystick_inertia_commands(self, inertia):
-        x, y, width, height = JOYSTICK_INERTIA_CARD
-        commands = self.renderer.panel(
-            x, y, width, height, border="295c66", line_width=1)
-        commands += self.renderer.metric_row(
-            x + 12, y + height // 2, width - 24, "INERTIA",
-            "%5.1f" % inertia)
-        return commands
-
-    @staticmethod
-    def _joystick_cursor_geometry(cursor):
-        if cursor is None:
-            return None
-        action, x, y = cursor
-        if action == "move.joy.xy":
-            left, top, right, bottom = JOYSTICK_XY_CURSOR_BOUNDS
-            return (action, max(left, min(right, int(x))),
-                    max(top, min(bottom, int(y))),
-                    JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1], "35d9e6")
-        return (action, JOYSTICK_Z_CENTER[0],
-                max(JOYSTICK_Z_CURSOR_BOUNDS[0],
-                    min(JOYSTICK_Z_CURSOR_BOUNDS[1], int(y))),
-                JOYSTICK_Z_CENTER[0], JOYSTICK_Z_CENTER[1], "35d9e6")
-
-    @staticmethod
-    def _joystick_center_cursor(action):
-        if action == "move.joy.xy":
-            return (action, JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1])
-        return (action, JOYSTICK_Z_CENTER[0], JOYSTICK_Z_CENTER[1])
-
-    def _joystick_surface_patch(self, action, left, top, width, height):
-        """Restore only the static pixels covered by the previous knob."""
-        right = left + width
-        bottom = top + height
-        commands = [self.renderer.fill(
-            left, top, width, height, "050c0f")]
-        if action == "move.joy.xy":
-            commands += self.renderer.dot_grid(
-                *JOYSTICK_XY_GRID, columns=11, rows=7,
-                clip=(left, top, width, height))
-            center_x, center_y = JOYSTICK_XY_CENTER
-            if left <= center_x < right:
-                line_top = max(top, JOYSTICK_XY_VERTICAL[1])
-                line_bottom = min(
-                    bottom,
-                    JOYSTICK_XY_VERTICAL[1] + JOYSTICK_XY_VERTICAL[3])
-                if line_top < line_bottom:
-                    commands.append(self.renderer.fill(
-                        center_x, line_top, 1, line_bottom - line_top,
-                        "35d9e6"))
-            if top <= center_y < bottom:
-                line_left = max(left, JOYSTICK_XY_HORIZONTAL[0])
-                line_right = min(
-                    right,
-                    JOYSTICK_XY_HORIZONTAL[0] + JOYSTICK_XY_HORIZONTAL[2])
-                if line_left < line_right:
-                    commands.append(self.renderer.fill(
-                        line_left, center_y, line_right - line_left, 1,
-                        "35d9e6"))
-            return commands
-
-        track_left, track_top, track_width, track_height = JOYSTICK_Z_TRACK
-        track_right = track_left + track_width - 1
-        track_bottom = track_top + track_height - 1
-        line_top = max(top, track_top)
-        line_bottom = min(bottom - 1, track_bottom)
-        if line_top <= line_bottom:
-            line_height = line_bottom - line_top + 1
-            commands += [
-                self.renderer.fill(
-                    track_left, line_top, 1, line_height, "35d9e6"),
-                self.renderer.fill(
-                    track_right, line_top, 1, line_height, "35d9e6"),
-            ]
-        if top <= track_top < bottom:
-            commands.append(self.renderer.fill(
-                track_left, track_top, track_width, 1, "35d9e6"))
-        if top <= track_bottom < bottom:
-            commands.append(self.renderer.fill(
-                track_left, track_bottom, track_width, 1, "35d9e6"))
-        return commands
-
-    def _joystick_indicator_commands(self, previous, current):
-        commands = []
-        old_cursor = previous
-        if old_cursor is None and current is not None:
-            old_cursor = self._joystick_center_cursor(current[0])
-        old = self._joystick_cursor_geometry(old_cursor)
-        new_cursor = current
-        if new_cursor is None and previous is not None:
-            new_cursor = self._joystick_center_cursor(previous[0])
-        new = self._joystick_cursor_geometry(new_cursor)
-        if old == new:
-            return commands
-
-        if old is not None:
-            action, x, y, _center_x, _center_y, _color = old
-            half = JOYSTICK_KNOB_SIZE // 2 + JOYSTICK_DIRTY_MARGIN
-            commands += self._joystick_surface_patch(
-                action, x - half, y - half, half * 2 + 1, half * 2 + 1)
-        if new is not None:
-            action, x, y, _center_x, _center_y, color = new
-            commands += self.renderer.joystick_knob(
-                x, y, "xy" if action == "move.joy.xy" else "z",
-                JOYSTICK_KNOB_SIZE, color)
-        return commands
 
     def _update_joystick_feedback(self, eventtime, position=None, force=False):
         if (self.page != Page.CONTROL_MOVE
@@ -714,43 +458,137 @@ class FeatherControlsMixin:
             return
 
         cursor = getattr(self, "joystick_cursor", None)
-        drawn = getattr(self, "joystick_drawn_cursor", None)
         values = self._move_status_snapshot(eventtime, position)
         caution = self._move_caution_state(values, eventtime)
         if self._sync_move_caution_overlay(values, caution):
             return
-        active_cursor = cursor or drawn
-        if (caution[0] and active_cursor is not None
-                and active_cursor[0] == "move.joy.xy"):
+        if (caution[0] and cursor is not None
+                and cursor[0] == move_ui.JOYSTICK_XY.wire_id):
             return
         inertia = self._joystick_inertia_snapshot()
-        commands = []
-        if cursor != drawn:
-            commands += self._joystick_indicator_commands(drawn, cursor)
-            self.joystick_drawn_cursor = cursor
-        if values != getattr(self, "_last_move", None):
-            commands += self._joystick_position_commands(values)
-            self._last_move = values
-        if inertia != getattr(self, "joystick_drawn_inertia", None):
-            commands += self._joystick_inertia_commands(inertia)
-            self.joystick_drawn_inertia = inertia
+        ui_state = self._move_ui_state(values, caution)
+        ui_state[move_ui.MoveState.INERTIA] = float(inertia)
+        ui_state[move_ui.MoveState.CURSOR] = cursor
+        commands = move_ui.update_joystick(self.renderer, ui_state)
+        self._last_move = values
         self.joystick_feedback_at = eventtime + joystick_ui.FEEDBACK_PERIOD
         if commands:
-            feedback_started = self.reactor.monotonic()
-            self.renderer.send(commands)
             stream = getattr(self, "joystick_stream", None)
             if stream is not None and getattr(stream, "active", False):
-                stream.record_feedback(
-                    self.reactor.monotonic() - feedback_started)
+                reactor = getattr(self, "reactor", None)
+                clock = (reactor.monotonic if reactor is not None
+                         else time.monotonic)
+                feedback_started = clock()
+                self.renderer.send(commands)
+                stream.record_feedback(clock() - feedback_started)
+            else:
+                self.renderer.send(commands)
 
-    def _handle_move_action(self, action):
+    def _semantic_ui_page(self):
+        if self.page == Page.CONTROL_MOVE:
+            return (JOYSTICK_PAGE if getattr(self, "move_mode", "step") == "joystick"
+                    else STEP_PAGE)
+        pages = {
+            Page.Z_OFFSET_BRIEFING: z_offset_ui.BRIEFING_PAGE,
+            Page.Z_OFFSET_SUMMARY: z_offset_ui.SUMMARY_PAGE,
+            Page.Z_OFFSET_PAPER_BRIEFING: z_offset_ui.PAPER_BRIEFING_PAGE,
+            Page.Z_OFFSET_PAPER: z_offset_ui.PAPER_PAGE,
+        }
+        return pages.get(self.page)
+
+    def _resolve_semantic_ui_action(self, wire_id):
+        page = self._semantic_ui_page()
+        return None if page is None else page.resolve_action(wire_id)
+
+    def _navigate_app_page(self, target):
+        if target == AppPage.MOVE_STEP:
+            self._stop_joystick()
+            self.move_mode = "step"
+            self._render_move()
+            return
+        if target == AppPage.MOVE_JOYSTICK:
+            if not self._get_joystick_stream().supported():
+                self._toast("JOYSTICK NOT SUPPORTED")
+                return
+            self._stop_joystick()
+            self.move_mode = "joystick"
+            self._render_move()
+            return
+        targets = {
+            AppPage.Z_OFFSET_BRIEFING: Page.Z_OFFSET_BRIEFING,
+            AppPage.Z_OFFSET_SUMMARY: Page.Z_OFFSET_SUMMARY,
+            AppPage.Z_OFFSET_PAPER_BRIEFING: Page.Z_OFFSET_PAPER_BRIEFING,
+            AppPage.Z_OFFSET_PAPER: Page.Z_OFFSET_PAPER,
+        }
+        if target not in targets:
+            raise KeyError("Unknown application page: %s" % target)
+        self._show_page(targets[target])
+
+    def _dispatch_semantic_ui_action(self, action):
+        if isinstance(action, Back):
+            self._go_back()
+            return
+        if isinstance(action, (Navigate, Replace)):
+            self._navigate_app_page(action.target)
+            return
+        if isinstance(action, SetValue):
+            if action.key == move_ui.MoveState.CAUTION_ACKNOWLEDGED:
+                self.move_caution_acknowledged = bool(action.value)
+                self._render_move()
+                return
+            if action.key == move_ui.MoveState.JOG_STEP:
+                self.jog_step = float(action.value)
+                self._render_move()
+                return
+            if action.key == z_offset_ui.PaperState.STEP:
+                self.z_calibration.step = float(action.value)
+                self._render_z_paper()
+                return
+            if action.key == z_offset_ui.SummaryState.DIALOG:
+                self.z_calibration.dialog = action.value
+                self._render_z_summary()
+                return
+            if action.key == z_offset_ui.PaperState.DIALOG:
+                self.z_calibration.dialog = action.value
+                self._render_z_paper()
+                return
+            raise KeyError("Unsupported product state action: %s" % action.key)
+        if isinstance(action, Toggle):
+            if action.key == z_offset_ui.SummaryState.LOAD_ZOFFSET:
+                self.z_calibration.load_zoffset = not self.z_calibration.load_zoffset
+                self._render_z_summary()
+                return
+            raise KeyError("Unsupported product toggle: %s" % action.key)
+        if isinstance(action, Increment):
+            if action.key == move_ui.MoveState.JOG_STEP:
+                choices = tuple(state_spec(action.key).choices)
+                index = choices.index(float(self.jog_step)) + int(action.amount)
+                if action.wrap:
+                    index %= len(choices)
+                else:
+                    index = max(0, min(len(choices) - 1, index))
+                self.jog_step = choices[index]
+                self._render_move()
+                return
+            raise KeyError("Unsupported product increment: %s" % action.key)
+        if isinstance(action, Command):
+            if isinstance(action.key, move_ui.MoveCommand):
+                self._handle_move_command(action)
+                return
+            if isinstance(action.key, z_offset_ui.ZOffsetCommand):
+                self._handle_z_offset_command(action)
+                return
+        raise TypeError("Unsupported semantic action: %r" % (action,))
+
+    def _handle_move_command(self, command):
         self._require_idle()
-        if action == "move.caution.dismiss":
+        key = command.key
+        if key == move_ui.MoveCommand.CAUTION_DISMISS:
             self._stop_joystick()
             self.move_caution_acknowledged = True
             self._render_move()
             return
-        if action == "move.caution.auto":
+        if key == move_ui.MoveCommand.CAUTION_AUTO:
             self._stop_joystick()
             _profile, available = self._bed_mesh_profile_state(
                 self.reactor.monotonic())
@@ -761,64 +599,40 @@ class FeatherControlsMixin:
             self._render_move()
             self._toast("BED PROFILE AUTO LOADED")
             return
-        if action == "move.caution.unload":
+        if key == move_ui.MoveCommand.CAUTION_UNLOAD:
             self._stop_joystick()
             self._run_script("BED_MESH_CLEAR")
             self.move_caution_acknowledged = True
             self._render_move()
             self._toast("BED PROFILE UNLOADED")
             return
+        blocked = {
+            move_ui.MoveCommand.X_PLUS, move_ui.MoveCommand.X_MINUS,
+            move_ui.MoveCommand.Y_PLUS, move_ui.MoveCommand.Y_MINUS,
+            move_ui.MoveCommand.HOME_ALL, move_ui.MoveCommand.HOME_XY,
+        }
         if (getattr(self, "move_caution_signature", (False, None))[0]
-                and action in (
-                    "move.xp", "move.xm", "move.yp", "move.ym",
-                    "move.homeall", "move.homexy")):
+                and key in blocked):
             return
-        if action == "move.mode":
+        if key in (move_ui.MoveCommand.JOYSTICK_XY,
+                   move_ui.MoveCommand.JOYSTICK_Z):
+            return
+        if key == move_ui.MoveCommand.DISABLE_MOTORS:
             self._stop_joystick()
-            if self.move_mode == "step":
-                if not self._get_joystick_stream().supported():
-                    self._toast("JOYSTICK NOT SUPPORTED")
-                    return
-                self.move_mode = "joystick"
-            else:
-                self.move_mode = "step"
-            self._render_move()
+            self._run_script("M84")
+            self._toast("Motors disabled")
             return
-        if action.startswith("move.step"):
-            steps = (0.1, 1.0, 10.0)
-            if action == "move.step.minus":
-                index = max(0, steps.index(self.jog_step) - 1)
-            elif action == "move.step.plus":
-                index = min(len(steps) - 1, steps.index(self.jog_step) + 1)
-            else:
-                index = int(action[-1])
-            self.jog_step = steps[index]
-            self._render_move()
-            return
-        commands = {
-            "move.homeall": "G28", "move.homexy": "G28 X Y",
-            "move.homez": "G28 Z",
-            "move.motors": "M84",
-        }
-        if action in commands:
+        if isinstance(command.payload, move_ui.HomeRequest):
             self._stop_joystick()
-            if action.startswith("move.home"):
-                self._run_blocking_gcode(commands[action], "HOMING...")
-            else:
-                self._run_script(commands[action])
-            self._toast("Homing started" if action.startswith("move.home")
-                        else "Motors disabled")
+            axes = tuple(axis.value.upper() for axis in command.payload.axes)
+            gcode = "G28" if len(axes) == 3 else "G28 %s" % " ".join(axes)
+            self._run_blocking_gcode(gcode, "HOMING...")
+            self._toast("Homing started")
             return
-        moves = {
-            "move.xp": ("x", self.jog_step, 6000),
-            "move.xm": ("x", -self.jog_step, 6000),
-            "move.yp": ("y", self.jog_step, 6000),
-            "move.ym": ("y", -self.jog_step, 6000),
-            "move.zp": ("z", self.jog_step, 600),
-            "move.zm": ("z", -self.jog_step, 600),
-        }
-        if action in moves:
-            axis, distance, speed = moves[action]
+        if isinstance(command.payload, move_ui.JogRequest):
+            axis = command.payload.axis.value
+            distance = float(command.payload.direction) * float(self.jog_step)
+            speed = int(command.hint.speed)
             status = self.toolhead.get_status(self.reactor.monotonic())
             homed = status["homed_axes"]
             if axis not in homed:
@@ -832,15 +646,45 @@ class FeatherControlsMixin:
             else:
                 target = max(limits[0], current + distance)
                 limit_reached = target >= current
-            if limit_reached or math.isclose(
-                    target, current, abs_tol=0.000001):
+            if limit_reached or math.isclose(target, current, abs_tol=0.000001):
                 self._toast("%s LIMIT REACHED" % axis.upper())
                 return
             self._run_script(
                 "MOVE_SAFE %s=%g ABSOLUTE=1 F=%d" % (
                     axis.upper(), target, speed))
-            self._toast("Moved %s %g mm" % (
-                axis.upper(), target - current))
+            self._toast("Moved %s %g mm" % (axis.upper(), target - current))
+            return
+        raise KeyError("Unsupported movement command: %s" % key)
+
+    def _handle_z_offset_command(self, command):
+        key = command.key
+        if isinstance(command.payload, z_offset_ui.ZoneRequest):
+            self._choose_z_zone(command.payload.zone.value)
+        elif key == z_offset_ui.ZOffsetCommand.ENTER_ZONE:
+            self._enter_z_zone()
+        elif key == z_offset_ui.ZOffsetCommand.PROBE:
+            self._probe_z_zone()
+        elif key == z_offset_ui.ZOffsetCommand.MOVE_1_5:
+            self._move_z_manual_start()
+        elif isinstance(command.payload, z_offset_ui.AdjustmentRequest):
+            direction = command.payload.direction
+            delta = (-self.z_calibration.step
+                     if direction == z_offset_ui.Adjustment.CLOSER
+                     else self.z_calibration.step)
+            self._move_z_paper(delta)
+        elif key == z_offset_ui.ZOffsetCommand.RESET:
+            self._reset_z_paper()
+        elif key == z_offset_ui.ZOffsetCommand.ACCEPT:
+            self._accept_z_zone()
+        elif key == z_offset_ui.ZOffsetCommand.SELECTION_NEXT:
+            self.z_calibration.select_next()
+            self._render_z_summary()
+        elif key == z_offset_ui.ZOffsetCommand.SAVE:
+            self._save_z_calibration()
+        elif key == z_offset_ui.ZOffsetCommand.DISCARD_CONFIRM:
+            self._cancel_z_calibration()
+        else:
+            raise KeyError("Unsupported Z-offset command: %s" % key)
 
     def _render_heat(self):
         now = self.reactor.monotonic()
@@ -1321,6 +1165,7 @@ class FeatherControlsMixin:
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
                 self._restart_klipper("SAVE_CONFIG")
+<<<<<<< HEAD
         elif action == "cal.tuning.discard":
             if self._tuning_save_available():
                 self._show_page(Page.CALIBRATION_HOME)
@@ -1370,6 +1215,9 @@ class FeatherControlsMixin:
         elif action == "z.pressure.ok":
             self.z_calibration.dialog = None
             self._render_z_paper()
+=======
+
+>>>>>>> 8fbc718 (Introduce UI component model)
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()
@@ -1463,9 +1311,13 @@ class FeatherControlsMixin:
                          else "primary"))
 
     def _update_z_weight_status(self, eventtime):
-        self.renderer.send(self._z_weight_gauge_commands(eventtime))
+        gauge = self._update_z_weight_gauge(eventtime)
         if getattr(self, "page", None) == Page.Z_OFFSET_PAPER:
+            self.renderer.send(z_offset_ui.update_paper_gauge(
+                self.renderer, None if gauge is None else dict(gauge)))
             self._check_z_pressure(eventtime)
+            return
+        self.renderer.send(self._z_weight_gauge_commands(eventtime))
 
     def _check_z_pressure(self, eventtime):
         session = getattr(self, "z_calibration", None)

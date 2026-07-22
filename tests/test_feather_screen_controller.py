@@ -28,6 +28,9 @@ from tests.test_feather_screen import (
     mod_controller,
     mod_param,
 )
+from ff5m_ui.move import runtime as MOVE_UI
+
+
 
 
 class BedMeshState(StatusObject):
@@ -72,7 +75,7 @@ class ControllerSafetyTest(unittest.TestCase):
         notices = []
         controller._toast = notices.append
 
-        controller._handle_move_action("move.caution.auto")
+        controller._handle_move_command(MOVE_UI.CAUTION_AUTO)
 
         self.assertEqual(
             controller.gcode.commands, ["BED_MESH_PROFILE LOAD=auto"])
@@ -91,7 +94,7 @@ class ControllerSafetyTest(unittest.TestCase):
         notices = []
         controller._toast = notices.append
 
-        controller._handle_move_action("move.caution.unload")
+        controller._handle_move_command(MOVE_UI.CAUTION_UNLOAD)
 
         self.assertEqual(controller.gcode.commands, ["BED_MESH_CLEAR"])
         self.assertTrue(controller.move_caution_acknowledged)
