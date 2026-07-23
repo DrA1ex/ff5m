@@ -21,7 +21,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 - **`close_dialogs`**: Controls dialog timeout behavior.   
   - `OFF`: Dialogs remain open   
   - `SLOW`: Closes after 20s (GDB method, may not work in all firmware versions)     
-  - `FAST`: Closes after 20s (API method, requires [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod))    
+  - `FAST`: Closes after 20s (API method; enable LAN-mode when using the Stock screen).
 
 - **`disable_priming`**: Disables nozzle cleaning by line if set to `1`.  
 
@@ -35,9 +35,24 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
 
-- **`use_swap`**: Selects the swap backend: `MMC` (default), `USB`, `ZRAM`, or `OFF`. If USB swap cannot be activated, Forge-X reports the error and falls back to `MMC`. Use `PREPARE_USB` to prepare a drive. Do not disable swap solely to improve performance. See [Reducing Resource Usage](/docs/PRINTING.md#reducing-resource-usage) for setup instructions and the ZRAM trade-offs.
+- **`use_swap`**: Selects the swap backend.  
+  - `OFF`: Disables swap.  
+  - `MMC`: Uses a swap file on the internal eMMC. This remains the predictable option for memory-intensive or latency-sensitive Klipper operations.  
+  - `USB`: Uses a swap file on a connected USB storage device.  
+  - `ZRAM`: Uses compressed RAM-backed swap with a 64 MB logical size by default and a 64MB low-priority eMMC overflow swap. It may help with rarely used, latency-insensitive secondary software. See the [ZRAM validation report](/.shell/boot/zram/README.md) for test results.  
 
-- **`zram_algo`**: Selects the compression algorithm used when `use_swap` is `ZRAM`. `zstd` is the default and provides the best compression; `lzo-rle` uses less CPU if compression competes with printing.
+- **`zram_algo`**: Selects the compression algorithm used when `use_swap=ZRAM`. `zstd` provides the best compression ratio, while `lzo-rle` and `lzo` reduce compression CPU cost.  
+
+- **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. The default is `10` mm.
+
+  > [!WARNING]
+  > The real nozzle-to-bed clearance can be smaller than this value because bed leveling changes the effective bed position, and a non-standard nozzle can extend farther toward the bed. Choose a height that safely clears the bed on your printer, and verify Z-offset calibration after changing the bed setup or nozzle.
+
+  ```gcode
+  SET_MOD PARAM=safe_z VALUE=10
+  ```
+
+  Feather can calculate this value from the bed position in **Control → Calibration → Z Offset**. Re-run the Safe Z step after changing the nozzle or bed setup.
 
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  
   **Note**: Requires a [post-processing script](/docs/SLICING.md#md5-checksum-validation) in your slicer. Scripts are available in *Configuration → mod* (`addMD5.sh` or `addMD5.bat`).  
@@ -60,9 +75,15 @@ The mod supports a wide range of parameters to customize printer behavior. Below
   **Warning**: After enabling, recreate the bed mesh, adjust Z-offset, and optionally recalibrate flow and Pressure Advance.  
   See changed parameters here: [tuning.cfg](/tuning.cfg)
 
+### Changing Forge-X settings from Feather
+
+Feather Settings provides descriptions and editors for the supported Forge-X parameters. It can also change display brightness, chamber-light level, sound feedback, and the active theme. When a setting requires a Klipper or full printer restart, Feather shows that requirement before the change is applied.
+
+Use Fluidd or Mainsail for parameters that are not exposed on the touchscreen or when you need to edit configuration files directly.
+
 ## Backup Management
 
-The mod includes a backup and restore system for the printer's configuration (`printer.base.cfg`). This is essential because stock firmware updates can alter critical parameters, such as `rotation_distance` for steppers, which may lead event to printer damage if not corrected.
+The mod includes a backup and restore system for the printer's configuration (`printer.base.cfg`). This is essential because stock firmware updates can alter critical parameters, such as `rotation_distance` for steppers, which may even lead to printer damage if not corrected.
 To prevent this, the mod provides a backup management system.
 
 ### Configuring Backup Parameters
@@ -143,6 +164,38 @@ gcode:
 [stepper_x]
 rotation_distance: 40  # Override the rotation_distance for the X stepper
 ```
+
+### Material slots
+
+Feather and the material macros share the presets in `config/material.cfg`. To change names, ordering, or temperatures, add an override to `/opt/config/mod_data/user.cfg`:
+
+```cfg
+[gcode_macro _MATERIAL_CONFIG]
+variable_heating_slots: [1, 2, 3, 4, 5]
+variable_cold_pull_slots: [1, 2, 3, 6]
+
+variable_material_1: 'PLA'
+variable_material_1_heating: {
+    'nozzle': 215,
+    'bed': 60
+}
+variable_material_1_cold_pull: {
+    'hot': 220,
+    'cold': 100
+}
+```
+
+Restart Klipper through the supported workflow after changing the override. With the Stock screen, reboot the printer rather than issuing `RESTART` directly.
+
+- `heating_slots` controls the order and membership of heating, filament-loading, and calibration selectors.
+- `cold_pull_slots` controls the cold-pull selector.
+- Each list accepts at most five unique positive slot numbers.
+- Every active slot must have a unique valid material name and the corresponding temperature profile.
+- Heating profiles require numeric `nozzle` and `bed` temperatures within the printer's hardware limits.
+- Cold-pull profiles require valid `hot` and `cold` values, with `hot` above `cold` and high enough to permit extrusion.
+- Remove a slot from a list to hide it from that workflow; an empty list is allowed and disables the corresponding choices safely.
+
+See [Material workflow macros](MACROS.md#filament-management) for `SET_MATERIAL`, `PREHEAT_MATERIAL`, `LOAD_FILAMENT`, `LOAD_MATERIAL`, and `COLDPULL` behavior.
 
 ### Customizing Moonraker Parameters
 To modify Moonraker-specific settings, edit the file located in Fluidd under **Configuration -> mod_data -> user.moonraker.conf**.  

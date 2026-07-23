@@ -1,46 +1,139 @@
 # zram compressed swap for AD5M (stock 5.4.61 kernel)
 
-Loadable `zram` + `zsmalloc` modules that add **zstd-compressed swap** to the AD5M
-without replacing the stock kernel. Measured **~4× compression** on real klippy/
-moonraker cold pages — cuts swap I/O off the eMMC (no flash wear) and multiplies
-effective RAM under pressure on the 128 MB board.
+Loadable `zram` + `zsmalloc` modules add an optional compressed RAM-backed swap
+ device to the AD5M without replacing the stock kernel.
+
+ZRAM is not additional physical memory. Pages written to `/dev/zram0` are
+compressed and stored in the same system RAM that is used by Klipper, Moonraker
+and other services. The configured device size is a logical limit for original,
+uncompressed pages; physical RAM is allocated dynamically as pages enter zram.
+
+## Intended use
+
+ZRAM may help when the printer runs substantial secondary software that:
+
+- keeps a meaningful amount of cold anonymous memory;
+- is used only occasionally;
+- is not sensitive to scheduling or page-fault latency;
+- would otherwise cause routine writes to the eMMC swap file.
+
+Examples may include optional background services or interfaces that remain
+loaded but are rarely active. ZRAM is not recommended as a way to survive sudden
+memory spikes in latency-critical Klipper operations.
 
 ## Use
-Set the SWAP mode to `ZRAM` (mod settings → SWAP) and pick the algorithm
-(`zram compression`: `zstd` best ratio, `lzo-rle`/`lzo` cheaper CPU). On boot,
-`init_swap.sh` loads the modules here and brings up `/dev/zram0` as the **primary**
-swap (priority 100); the eMMC swapfile remains as a low-priority overflow.
 
-## Measured results (live AD5M, dual Cortex-A7, 128 MB)
+Set the SWAP mode to `ZRAM` (mod settings → SWAP) and select the compression
+algorithm (`zram compression`: `zstd` for the best ratio, `lzo-rle`/`lzo` for
+lower compression CPU cost).
 
-**Before / after:**
+On boot, `init_swap.sh` loads the modules and activates `/dev/zram0` as the
+primary swap at priority 100. A 64 MB eMMC swap file remains available at a
+lower priority as overflow. The default zram logical size is **64 MB**. It can be
+overridden for development tests with `ZRAM_DISKSIZE`, but larger values are not
+recommended without workload-specific validation.
 
-| | swap target | compression | flash wear | swap speed |
-|---|---|---|---|---|
-| Before (stock MMC swap) | 64 MB eMMC swapfile | none (1.0×) | yes — wears eMMC | flash I/O (slow, stalls) |
-| After (ZRAM, zstd) | 256 MB zram + eMMC overflow | ~4× | none (it's RAM) | RAM speed |
+> [!CAUTION]
+> Do not treat the eMMC swap file as a latency guarantee. When zram fills, or
+> when the kernel performs intensive reclaim while filling it, Klipper can still
+> suffer long scheduling stalls before or while overflow swap is used.
 
-Concretely, ~36 MB of cold klippy/moonraker pages that sat **uncompressed on eMMC
-flash** compress to **~9 MB in RAM** — same data, ¼ the footprint, zero flash wear.
+## Validation results
 
-**Algorithm comparison:**
+### Compression microbenchmarks
 
-| algo | ratio (real heap pages) | ratio (code/binary) | compress\* | decompress\* | A7 CPU |
-|---|---|---|---|---|---|
-| eMMC swapfile (baseline) | 1.0× (uncompressed) | 1.0× | flash-bound | flash-bound | — (flash wear) |
-| **zstd** *(default)* | **4.02–4.18×** | 3.54× | ~6.3 MB/s | ~37.5 MB/s | moderate |
-| `lzo-rle` | — | 2.74× | ~7.4 MB/s | ~30 MB/s | low |
-| `lzo` | — | 2.74× | ~8.6–9.6 MB/s | ~82.8 MB/s | lowest |
+Early tests on a live AD5M showed that cold Klipper/Moonraker pages can compress
+well. Approximately 36 MB of selected cold pages compressed to about 9 MB with
+`zstd`. These measurements demonstrate compression potential, but they do not
+represent worst-case whole-system latency under active memory pressure.
 
-\* Throughput is **block-I/O-bound** (timed `dd` through the zram block device), so
-treat the MB/s as **relative**, not absolute — real per-page (de)compression is much
-faster. Ratios are from `/sys/block/zram0/mm_stat`; real-heap ratios were measured by
-migrating live cold pages into zram (`swapoff` the eMMC file). `lz4` is unavailable
-(stock kernel lacks `CONFIG_CRYPTO_LZ4`).
+| algorithm | ratio (selected real heap pages) | ratio (code/binary) | compress\* | decompress\* | A7 CPU cost |
+|---|---:|---:|---:|---:|---|
+| eMMC swap file | 1.0× | 1.0× | flash-bound | flash-bound | no compression cost |
+| `zstd` | 4.02–4.18× | 3.54× | ~6.3 MB/s | ~37.5 MB/s | moderate |
+| `lzo-rle` | not measured | 2.74× | ~7.4 MB/s | ~30 MB/s | low |
+| `lzo` | not measured | 2.74× | ~8.6–9.6 MB/s | ~82.8 MB/s | lowest |
 
-**Recommendation:** `zstd` by default — on 128 MB the extra ~30 % ratio (more effective
-RAM) outweighs the CPU cost, and swap is intermittent on a printer. Switch to `lzo-rle`
-(setting → `zram compression`) if swap-time CPU ever contends with klippy during a print.
+\* Throughput was measured with block I/O through the zram device. Treat these
+values as relative compressor comparisons, not as a guarantee that Klipper will
+remain responsive while the kernel is reclaiming memory. Ratios were read from
+`/sys/block/zram0/mm_stat`. `lz4` is unavailable because the stock kernel lacks
+`CONFIG_CRYPTO_LZ4`.
+
+### ZSHAPER memory stress tests
+
+System-level memory stress testing was performed with the ZSHAPER workload,
+which creates a sharp memory-demand spike while Klipper must continue feeding
+the MCU on time. ZRAM logical sizes of **128 MB, 64 MB and 32 MB** were tested.
+None of these configurations met the expected stability and latency goals.
+
+| zram size | result |
+|---:|---|
+| 128 MB | Did not meet expectations under heavy memory pressure. The RAM-backed swap consumed part of the already limited physical memory and did not provide predictable Klipper latency. |
+| 64 MB | Did not meet expectations. ZRAM approached capacity, eMMC overflow also became active, and the system entered severe reclaim/swap stalls. |
+| 32 MB | Did not meet expectations. ZRAM filled rapidly, tens of megabytes moved to eMMC overflow, and multi-second scheduling gaps were observed. Klipper could fail with `Timer too close`. |
+
+The compressors themselves continued to store data successfully and achieved
+roughly 2:1 effective compression in the observed LZO runs. The failure mode was
+not corrupted zram data. It was a whole-system latency collapse caused by a
+combination of reclaim, compression/decompression, page faults and eMMC swap I/O
+on a dual-core system with about 110 MB of usable RAM.
+
+Reducing the zram device from 128 MB to 64 MB or 32 MB changed when the slowdown
+occurred, but did not remove it. Lowering `vm.swappiness` and increasing
+`vm.page-cluster` also changed the reclaim pattern without making the ZSHAPER
+workload reliable: reclaim happened later and in a larger burst.
+
+## Default-size rationale
+
+The original validation demonstrated that approximately **36 MB**
+of selected cold Klipper/Moonraker pages could compress well. It did not fill a
+256 MB zram device or validate worst-case whole-system latency during ZSHAPER.
+
+The configured zram size limits the amount of **original, uncompressed** memory
+that swap can place in zram. A 64 MB device can hold at most about 64 MB of
+original pages. If those pages compress 2:1, they consume roughly 32 MB of
+physical RAM plus allocator overhead; if they compress 4:1, roughly 16 MB. A
+larger logical device does not create more RAM and can allow zram to consume
+more of the same limited physical memory before the lower-priority eMMC swap is
+used.
+
+The **64 MB default** was selected because it:
+
+- preserves the contributor's documented approximately 36 MB cold-page use
+  case with additional logical headroom;
+- limits the worst-case amount of physical RAM that zram can consume compared
+  with 96 MB, 128 MB or 256 MB defaults;
+- moves additional pressure to the eMMC overflow earlier instead of extending
+  the compression/reclaim phase;
+- remains conservative for the smallest supported memory configuration.
+
+A 96 MB default would provide more logical zram capacity, but no published test
+showed that the extra 32 MB improves real workloads or preserves Klipper timing.
+On the observed LZO workload, effective compression including allocator overhead
+was approximately 1.9:1, so a full 96 MB device could consume roughly 50 MB of
+physical RAM. That is too large to use as the project-wide default on systems
+with about 110 MB usable RAM.
+
+Systems with more physical RAM do not automatically benefit from a larger zram
+device. If their workload already fits in RAM, swap remains unused. Users with a
+validated workload containing more than 64 MB of cold, latency-insensitive
+anonymous memory may override `ZRAM_DISKSIZE` explicitly and test 96 MB or a
+larger value. Such sizes are workload-specific experiments, not recommended
+defaults.
+
+## Recommendation
+
+- Keep `MMC` as the normal choice for ZSHAPER, resonance calibration and other
+  memory-intensive operations that must preserve Klipper/MCU timing.
+- Prefer freeing real RAM before those operations: stop optional screens,
+  cameras and secondary services where practical.
+- Use `ZRAM` only as an optional workload-specific optimization for cold,
+  latency-insensitive secondary software.
+- Keep the project default at **64 MB**. Treat 96 MB and larger values as explicit
+  workload-specific overrides requiring validation.
+- The 64 MB default is a neutral compromise for users who explicitly enable
+  ZRAM. It is not a claim that ZRAM makes severe memory pressure safe.
 
 ## Files
 - `zsmalloc.ko`, `zram.ko` — built for the stock kernel, vermagic
@@ -90,4 +183,3 @@ static binary from a ~10-line C wrapper (source in the ReForge project).
 
 zstd is already built into the stock kernel (`CONFIG_CRYPTO_ZSTD=y`), so no
 compressor module is needed.
-</content>
