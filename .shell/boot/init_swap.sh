@@ -155,7 +155,10 @@ activate_zram_swap() {
 
     local ZDIR="$(dirname "$0")/zram"
     local ALGO=$($CFG_SCRIPT $CFG_PATH --get "zram_algo" "zstd")
-    local ZSIZE="${ZRAM_DISKSIZE:-256M}"
+    # 64M is a neutral default for optional cold, latency-insensitive workloads.
+    # It is a logical zram capacity, not preallocated physical RAM, and it does
+    # not make sudden real-time memory spikes safe.
+    local ZSIZE="${ZRAM_DISKSIZE:-64M}"
 
     # Loadable zram+zsmalloc modules built for the stock 5.4.61 kernel
     # (vermagic: "5.4.61 SMP preempt mod_unload ARMv7 p2v8"). The AD5M kernel is
