@@ -1177,6 +1177,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         command = commands.get(action)
         if command is None:
             return
+        self._restart_klipper(command)
+
+    def _restart_klipper(self, command):
+        if self.restart_pending:
+            return
         self.renderer.thaw_output()
         self.error_message = ""
         self.error_category = ""
@@ -1191,7 +1196,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 pass
             self.timer = None
         self._start_pre_ready_ui(restarting=True)
-        self._run_script(command)
+        self._run_script(command, show_notice=False)
 
     def _update(self, eventtime):
         if self.print_state == PrintState.DESTROYED:

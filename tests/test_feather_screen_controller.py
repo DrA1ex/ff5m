@@ -1397,20 +1397,21 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("cal.mesh.discard", drawing)
         self.assertIn("cal.mesh.save", drawing)
         self.assertIn("DON'T SAVE", drawing)
-        self.assertIn("SAVE & RESTART", drawing)
+        self.assertIn(' -t "SAVE"', drawing)
         self.assertNotIn("cal.done", drawing)
 
-    def test_mesh_result_save_runs_save_config(self):
+    def test_mesh_result_save_starts_restart_ui_with_save_config(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.calibration_kind = "mesh"
         controller.calibration_mesh = [[0.0]]
         controller.calibration_error = None
         controller.calibration_cancelled = False
-        controller.gcode = GCodeRecorder()
+        restarts = []
+        controller._restart_klipper = restarts.append
 
         controller._handle_calibration_action("cal.mesh.save")
 
-        self.assertEqual(controller.gcode.commands, ["SAVE_CONFIG"])
+        self.assertEqual(restarts, ["SAVE_CONFIG"])
 
     def test_mesh_result_discard_keeps_previous_done_behavior(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1735,6 +1736,44 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.error_message, "")
         self.assertFalse(controller.shutdown_active)
         self.assertTrue(controller.restart_pending)
+
+    def test_restart_ui_is_drawn_before_restart_command(self):
+        events = []
+
+        class RestartGCode:
+            def run_script_from_command(self, command):
+                events.append(("command", command))
+
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.error_message = ""
+        controller.error_category = ""
+        controller.error_recovery = None
+        controller.shutdown_active = False
+        controller.restart_pending = False
+        controller.renderer = type("Renderer", (), {
+            "thaw_output": lambda self: events.append(("thaw", None)),
+        })()
+        controller.startup_phase = 3
+        controller.startup_timer = None
+        controller.timer = None
+        controller._start_pre_ready_ui = (
+            lambda restarting=False: events.append(("startup", restarting)))
+        controller.gcode = RestartGCode()
+        controller.reactor = Reactor()
+        controller.command_depth = 0
+
+        controller._restart_klipper("SAVE_CONFIG")
+
+        self.assertEqual(events, [
+            ("thaw", None),
+            ("startup", True),
+            ("command", "SAVE_CONFIG"),
+        ])
+        self.assertTrue(controller.restart_pending)
+        self.assertEqual(controller.startup_phase, 0)
+
+        controller._restart_klipper("SAVE_CONFIG")
+        self.assertEqual(len(events), 3)
 
     def test_mesh_calibration_shows_homing_immediately_after_prep(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

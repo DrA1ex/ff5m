@@ -1260,7 +1260,7 @@ class FeatherControlsMixin:
                 self._show_page(Page.CALIBRATION_HOME)
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
-                self._run_script("SAVE_CONFIG")
+                self._restart_klipper("SAVE_CONFIG")
         elif action.startswith("z.step."):
             steps = dict(("z.step.%s" %
                           (("%04d" % round(step * 1000)).lstrip("0")),
@@ -1857,7 +1857,7 @@ class FeatherControlsMixin:
             commands += self.renderer.button(
                 "cal.mesh.discard", 290, 355, 220, 70, "DON'T SAVE")
             commands += self.renderer.button(
-                "cal.mesh.save", 545, 355, 220, 70, "SAVE & RESTART",
+                "cal.mesh.save", 545, 355, 220, 70, "SAVE",
                 state="warning")
         else:
             commands += self.renderer.button(
