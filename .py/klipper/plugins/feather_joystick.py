@@ -4,7 +4,7 @@
 ## displacement into short, acceleration-limited Cartesian segments and keeps
 ## enough margin to decelerate before the MOVE_SAFE boundaries.
 ##
-## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 

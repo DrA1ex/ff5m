@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "DARK",
   "description": "Neutral monochrome",
-  "copyright": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>",
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
   "license": "GNU GPLv3",
   "colors": {
     "background": "050505",

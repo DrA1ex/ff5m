@@ -3,7 +3,7 @@
 ## The helpers operate on objects already loaded by mod_params.py.  They do not
 ## parse the declaration again or retain a second copy of the parameter list.
 ##
-## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 

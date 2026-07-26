@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/drA1ex/ff5m/feather-theme.schema.json",
-  "$comment": "Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. This file may be distributed under the terms of the GNU GPLv3 license.",
+  "$comment": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>. This file may be distributed under the terms of the GNU GPLv3 license.",
   "title": "Feather color theme",
   "type": "object",
   "required": [
