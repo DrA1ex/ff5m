@@ -1255,6 +1255,12 @@ class FeatherControlsMixin:
                 self._show_page(Page.CALIBRATION_CONFIRM)
         elif action == "cal.done":
             self._show_page(Page.CALIBRATION_HOME)
+        elif action == "cal.mesh.discard":
+            if self._mesh_save_available():
+                self._show_page(Page.CALIBRATION_HOME)
+        elif action == "cal.mesh.save":
+            if self._mesh_save_available():
+                self._run_script("SAVE_CONFIG")
         elif action.startswith("z.step."):
             steps = dict(("z.step.%s" %
                           (("%04d" % round(step * 1000)).lstrip("0")),
@@ -1748,6 +1754,13 @@ class FeatherControlsMixin:
         profile = status.get("profiles", {}).get("auto", {})
         return self.normalize_mesh_matrix(profile.get("points"))
 
+    def _mesh_save_available(self):
+        return (
+            self.calibration_kind == "mesh"
+            and bool(self.calibration_mesh)
+            and not self.calibration_error
+            and not getattr(self, "calibration_cancelled", False))
+
     @staticmethod
     def _mesh_color(value, minimum, maximum):
         if maximum <= minimum:
@@ -1838,6 +1851,14 @@ class FeatherControlsMixin:
         if getattr(self, "calibration_cancelled", False):
             commands += self.renderer.button(
                 "cal.done", 270, 355, 260, 70, "DONE")
+        elif self._mesh_save_available():
+            commands += self.renderer.button(
+                "cal.repeat", 35, 355, 220, 70, "REPEAT")
+            commands += self.renderer.button(
+                "cal.mesh.discard", 290, 355, 220, 70, "DON'T SAVE")
+            commands += self.renderer.button(
+                "cal.mesh.save", 545, 355, 220, 70, "SAVE & RESTART",
+                state="warning")
         else:
             commands += self.renderer.button(
                 "cal.repeat", 100, 355, 260, 70, "REPEAT")

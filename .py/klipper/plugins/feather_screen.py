@@ -94,7 +94,8 @@ EXACT_ACTIONS = {
         "live_z.save.yes"),
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
     Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
-    Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
+    Page.CALIBRATION_RESULT: (
+        "cal.repeat", "cal.done", "cal.mesh.discard", "cal.mesh.save"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.led.minus",
                     "settings.led.plus", "settings.sound", "settings.theme",

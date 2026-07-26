@@ -1380,6 +1380,73 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("cal.done", drawing)
         self.assertNotIn("cal.repeat", drawing)
 
+    def test_mesh_result_offers_repeat_discard_and_save(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+        controller.calibration_mesh = [[-0.1, 0.0], [0.05, 0.1]]
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_calibration_result()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("cal.repeat", drawing)
+        self.assertIn("cal.mesh.discard", drawing)
+        self.assertIn("cal.mesh.save", drawing)
+        self.assertIn("DON'T SAVE", drawing)
+        self.assertIn("SAVE & RESTART", drawing)
+        self.assertNotIn("cal.done", drawing)
+
+    def test_mesh_result_save_runs_save_config(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "mesh"
+        controller.calibration_mesh = [[0.0]]
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+        controller.gcode = GCodeRecorder()
+
+        controller._handle_calibration_action("cal.mesh.save")
+
+        self.assertEqual(controller.gcode.commands, ["SAVE_CONFIG"])
+
+    def test_mesh_result_discard_keeps_previous_done_behavior(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.calibration_kind = "mesh"
+        controller.calibration_mesh = [[0.0]]
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+        pages = []
+        controller._show_page = pages.append
+
+        controller._handle_calibration_action("cal.mesh.discard")
+
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_HOME])
+
+    def test_mesh_save_actions_are_ignored_without_valid_result(self):
+        for error, cancelled, mesh in (
+                ("failed", False, [[0.0]]),
+                (None, True, [[0.0]]),
+                (None, False, [])):
+            with self.subTest(error=error, cancelled=cancelled, mesh=mesh):
+                controller = FEATHER.FeatherScreen.__new__(
+                    FEATHER.FeatherScreen)
+                controller.calibration_kind = "mesh"
+                controller.calibration_mesh = mesh
+                controller.calibration_error = error
+                controller.calibration_cancelled = cancelled
+                controller.gcode = GCodeRecorder()
+                pages = []
+                controller._show_page = pages.append
+
+                controller._handle_calibration_action("cal.mesh.save")
+                controller._handle_calibration_action("cal.mesh.discard")
+
+                self.assertEqual(controller.gcode.commands, [])
+                self.assertEqual(pages, [])
+
     def test_cancelled_calibration_heating_is_stopped_by_screen_code(self):
         class CancelThenRecord:
             def __init__(self):
