@@ -258,6 +258,8 @@ declare -a EXCLUDES=(
     ".git"
     ".idea"
     ".vscode"
+    "*/__pycache__"
+    ".venv"
     ".DS_Store"
     "./sync*.tar.gz"
     "./sync.sh"
