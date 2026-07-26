@@ -1125,8 +1125,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
 
     @staticmethod
     def _classify_error(message, category=""):
+        text = str(message).upper()
         category = str(category).lower()
-        if category == "shutdown":
+        # Klipper's state message is authoritative when it names the recovery
+        # command. In particular, an MCU failure can be exposed with the
+        # generic "error" category while still requiring FIRMWARE_RESTART.
+        if "FIRMWARE_RESTART" in text or category == "shutdown":
             return "firmware_restart"
         if category == "error":
             return "restart"

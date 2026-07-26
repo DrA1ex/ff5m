@@ -1596,12 +1596,19 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.page, FEATHER.Page.ERROR)
         self.assertEqual(rendered, [])
 
-    def test_shutdown_classification_uses_state_category_only(self):
+    def test_error_classification_honors_firmware_restart_state_message(self):
         classify = FEATHER.FeatherScreen._classify_error
         self.assertIsNone(classify("MCU 'mcu' shutdown: Timer too close"))
         self.assertIsNone(classify("Lost communication with MCU 'mcu'"))
         self.assertEqual(
             classify("ADC out of range", "shutdown"),
+            "firmware_restart")
+        self.assertEqual(
+            classify(
+                "MCU 'mcu' shutdown: Timer too close\n"
+                "Once the underlying issue is corrected, use the "
+                "\"FIRMWARE_RESTART\" command.",
+                "error"),
             "firmware_restart")
         self.assertEqual(
             classify("Option 'foo' is not valid", "error"),
