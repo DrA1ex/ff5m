@@ -529,7 +529,9 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIs(session.original_mesh, mesh_object)
         self.assertEqual(session.original_mesh_profile, "adaptive-run")
         self.assertEqual(controller.gcode.commands, [
-            "_SET_GCODE_OFFSET Z=0 MOVE=0", "BED_MESH_CLEAR"])
+            "_CANCEL_DELAYED_COMMANDS",
+            "_SET_GCODE_OFFSET Z=0 MOVE=0",
+            "BED_MESH_CLEAR"])
         self.assertEqual(len(controller.reactor.callbacks), 1)
 
     def test_z_session_entry_failure_restores_runtime_and_mesh(self):
@@ -558,6 +560,7 @@ class ControllerSafetyTest(unittest.TestCase):
             controller._start_z_calibration()
 
         self.assertEqual(controller.gcode.commands, [
+            "_CANCEL_DELAYED_COMMANDS",
             "_SET_GCODE_OFFSET Z=0 MOVE=0",
             "BED_MESH_CLEAR",
             "_SET_GCODE_OFFSET Z=-0.187000 MOVE=0",
@@ -1431,6 +1434,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_mesh = []
         controller.calibration_error = None
         controller.reactor = DeferredReactor()
+        controller.gcode = GCodeRecorder()
         controller._require_idle = lambda: None
         pages = []
         controller._show_page = pages.append
@@ -1440,8 +1444,10 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.calibration_results, [])
         self.assertEqual(controller.print_status_text, "BED SCREWS: PROBING")
         self.assertEqual(len(controller.reactor.callbacks), 1)
+        self.assertEqual(
+            controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
 
-        controller.gcode = GCodeRecorder()
+        controller.gcode.commands[:] = []
         controller._show_page = pages.append
         controller._run_calibration(0)
         self.assertEqual(controller.gcode.commands, ["BED_LEVEL_SCREWS_PROBE"])

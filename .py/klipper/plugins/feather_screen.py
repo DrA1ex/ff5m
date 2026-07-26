@@ -740,14 +740,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self._show_page(Page.CONTROL_HOME)
             elif action == "nav.move":
                 self._require_idle()
+                self._cancel_delayed_tasks()
                 self._show_page(Page.CONTROL_MOVE)
             elif action == "nav.heat":
                 self.heat_return_page = self.page
+                self._cancel_delayed_tasks()
                 self._show_page(Page.CONTROL_HEAT)
             elif action == "nav.filament":
                 self._open_filament(False)
             elif action == "nav.calibration":
                 self._require_idle()
+                self._cancel_delayed_tasks()
                 self._show_page(Page.CALIBRATION_HOME)
             elif action == "nav.settings":
                 self._require_idle()
@@ -971,6 +974,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
     def _setting(self, key, default):
         params = getattr(self, "params", None)
         return params.variables.get(key, default) if params is not None else default
+
+    def _cancel_delayed_tasks(self):
+        self._run_script("_CANCEL_DELAYED_COMMANDS", show_notice=False)
 
     @staticmethod
     def _normalize_material(value):

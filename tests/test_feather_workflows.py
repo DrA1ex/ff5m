@@ -376,6 +376,42 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertLess(homing, home)
 
 class MotionHeatSettingsTest(unittest.TestCase):
+    def test_manual_control_pages_cancel_delayed_tasks_on_entry(self):
+        cases = (
+            ("nav.move", FEATHER.Page.CONTROL_HOME,
+             FEATHER.Page.CONTROL_MOVE),
+            ("nav.heat", FEATHER.Page.IDLE_HOME,
+             FEATHER.Page.CONTROL_HEAT),
+            ("nav.calibration", FEATHER.Page.CONTROL_HOME,
+             FEATHER.Page.CALIBRATION_HOME),
+        )
+        for action, source_page, target_page in cases:
+            with self.subTest(action=action):
+                controller = base_controller()
+                controller.page = source_page
+                controller.last_action_time = -1.0
+                pages = []
+                controller._show_page = pages.append
+
+                controller._dispatch_action(action)
+
+                self.assertEqual(
+                    controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
+                self.assertEqual(pages, [target_page])
+
+    def test_calibration_start_cancels_delayed_tasks_again(self):
+        controller = base_controller()
+        controller.calibration_kind = "screws"
+        controller.calibration_repeat_probe = False
+        pages = []
+        controller._show_page = pages.append
+
+        controller._start_calibration()
+
+        self.assertEqual(
+            controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+
     def test_continuous_touch_updates_planner_and_release(self):
         controller = base_controller()
         controller.page = FEATHER.Page.CONTROL_MOVE

@@ -1301,6 +1301,7 @@ class FeatherControlsMixin:
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()
+        self._cancel_delayed_tasks()
         self.calibration_repeat_probe = bool(
             repeat_probe and self.calibration_kind == "screws")
         self.calibration_results = []

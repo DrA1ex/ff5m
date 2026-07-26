@@ -438,6 +438,7 @@ class FeatherZCalibrationMixin:
 
     def _start_z_calibration(self):
         self._require_idle()
+        self._cancel_delayed_tasks()
         mesh_object, mesh_profile = self._capture_z_mesh()
         runtime = float(self.gcode_move.get_status(
             self.reactor.monotonic())["homing_origin"][2])
