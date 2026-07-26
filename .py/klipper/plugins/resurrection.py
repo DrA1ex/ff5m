@@ -4,14 +4,32 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import enum, json, logging, os, re
+import enum, json, logging, math, os, queue, sys, threading
 
+if __package__:
+    from . import resurrection_state as _state
+else:
+    plugin_dir = os.path.dirname(__file__)
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    import resurrection_state as _state
+
+GCodeStateParser = _state.GCodeStateParser
+GCodeStateReducer = _state.GCodeStateReducer
+MAX_GCODE_LINE_SIZE = _state.MAX_GCODE_LINE_SIZE
+PARSE_CHUNK_SIZE = _state.PARSE_CHUNK_SIZE
+RecoveryGCodeState = _state.RecoveryGCodeState
+RecoveryParseCancelled = _state.RecoveryParseCancelled
+RecoveryParseError = _state.RecoveryParseError
+_format_number = _state._format_number
 
 class ResurrectorState(enum.Enum):
     UNKNOWN = 0
 
     IDLE = 10
     RESURRECTION = 20
+    LOADING = 21
+    PREPARING = 22
 
     PRINTING = 30
     PAUSED = 40
@@ -30,8 +48,13 @@ class Resurrector:
 
         self.state = ResurrectorState.UNKNOWN
 
-        self.dump_time = config.getfloat("dump_time", 3.)
+        self.dump_time = config.getfloat("dump_time", 3., minval=1.)
         self.file_path = config.get("filename")
+        self._checkpoint_cache = None
+        self._checkpoint_cache_loaded = False
+        self._worker = None
+        self._worker_cancel = None
+        self._timer = None
 
         self.printer.register_event_handler("klippy:ready", self._init)
 
@@ -56,8 +79,11 @@ class Resurrector:
         if not result["available"] or not os.path.isfile(self.file_path):
             return result
         try:
-            with open(self.file_path, "r") as stream:
-                saved = json.load(stream)
+            if not getattr(self, "_checkpoint_cache_loaded", False):
+                with open(self.file_path, "r") as stream:
+                    self._checkpoint_cache = json.load(stream)
+                self._checkpoint_cache_loaded = True
+            saved = self._checkpoint_cache
             file_size = max(0, int(saved.get("file_size", 0)))
             file_position = max(0, int(saved.get("file_position", 0)))
             result.update({
@@ -68,7 +94,7 @@ class Resurrector:
                 "bed_target": float(saved.get("bed_temp", 0.0)),
                 "mesh": str(saved.get("mesh", "")),
             })
-        except (ValueError, TypeError, IOError, OSError):
+        except (AttributeError, ValueError, TypeError, IOError, OSError):
             logging.exception("[resurrection] Unable to publish recovery status")
             result["available"] = False
             result["state"] = "error"
@@ -120,6 +146,7 @@ class Resurrector:
 
     def _disconnect(self):
         logging.info("[resurrection] Disconnect...")
+        self._cancel_worker()
         if self._timer:
             self.reactor.unregister_timer(self._timer)
             self._timer = None
@@ -142,7 +169,12 @@ class Resurrector:
 
         if stats_state == "printing" and self.start_print_macro.variables["print_started"]:
             self._change_state(ResurrectorState.PRINTING)
-        elif stats_state in {"complete", "cancelled"} and self.state != ResurrectorState.IDLE:
+        elif (stats_state in {"complete", "cancelled"}
+              and self.state in {
+                  ResurrectorState.PRINTING,
+                  ResurrectorState.PAUSED,
+                  ResurrectorState.ERROR,
+              }):
             self._change_state(ResurrectorState.IDLE)
             self._clear(eventtime)
 
@@ -166,6 +198,19 @@ class Resurrector:
             logging.info(f"[resurrection] Change state: {self.state.name} -> {new_state.name}")
             self.state = new_state
 
+    def _cancel_worker(self):
+        worker = getattr(self, "_worker", None)
+        cancel_event = getattr(self, "_worker_cancel", None)
+        if worker is None:
+            return
+        if cancel_event is not None:
+            cancel_event.set()
+        if worker is not threading.current_thread():
+            worker.join()
+        if self._worker is worker:
+            self._worker = None
+            self._worker_cancel = None
+
     def _dump(self, eventtime):
         stats = self.virtual_sdcard.get_status(eventtime)
         gcode_file = stats["file_path"]
@@ -183,20 +228,33 @@ class Resurrector:
                 logging.info("[resurrection] Skip dump due to zeroed extruder temp")
                 return
 
+            checkpoint = {
+                "file_path": gcode_file,
+                "file_position": stats["file_position"],
+                "file_size": stats["file_size"],
+                "position": position,
+                "extruder_temp": extruder_temp,
+                "z_offset": z_offset,
+                "bed_temp": bed_temp,
+                "mesh": mesh,
+            }
+            temporary_path = self.file_path + ".tmp"
             try:
-                with open(self.file_path, "w") as f:
-                    json.dump({
-                        "file_path": gcode_file,
-                        "file_position": stats["file_position"],
-                        "file_size": stats["file_size"],
-                        "position": position,
-                        "extruder_temp": extruder_temp,
-                        "z_offset": z_offset,
-                        "bed_temp": bed_temp,
-                        "mesh": mesh,
-                    }, f)
+                with open(temporary_path, "w") as stream:
+                    json.dump(checkpoint, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary_path, self.file_path)
+                self._checkpoint_cache = checkpoint
+                self._checkpoint_cache_loaded = True
             except (IOError, OSError) as e:
                 logging.error(f"[resurrection] Failed to save resurrection file: {e}")
+                try:
+                    if os.path.isfile(temporary_path):
+                        os.remove(temporary_path)
+                except OSError:
+                    logging.exception(
+                        "[resurrection] Failed to remove temporary checkpoint")
                 return
         else:
             logging.info("[resurrection] Failed to save resurrection file. G-Code file is invalid")
@@ -209,27 +267,65 @@ class Resurrector:
                 os.remove(self.file_path)
             except (IOError, OSError) as e:
                 logging.error(f"[resurrection] Failed to remove resurrection file: {e}")
+                return
+        self._checkpoint_cache = None
+        self._checkpoint_cache_loaded = True
 
     def _load_resurrection_state(self, gcmd):
         if not os.path.isfile(self.file_path):
-            gcmd.respond_raw(f"!! The resurrection file missing!")
-            return
+            gcmd.respond_raw("!! The resurrection file missing!")
+            return None
 
-        with open(self.file_path, "r") as f:
-            try:
-                state = json.load(f)
-            except (json.JSONDecodeError, IOError, OSError) as e:
-                gcmd.respond_raw(f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
-                return None
+        try:
+            with open(self.file_path, "r") as stream:
+                state = json.load(stream)
+        except (ValueError, IOError, OSError) as e:
+            gcmd.respond_raw(
+                f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
+            return None
 
-        for key in ["file_path", "file_position", "file_size", "position", "z_offset", "extruder_temp", "bed_temp", "mesh"]:
+        required = [
+            "file_path", "file_position", "file_size", "position", "z_offset",
+            "extruder_temp", "bed_temp", "mesh",
+        ]
+        for key in required:
             if key not in state:
                 gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
                 return None
 
         gcode_file = state["file_path"]
-        if not os.path.isfile(gcode_file):
+        if not isinstance(gcode_file, str) or not os.path.isfile(gcode_file):
             gcmd.respond_raw(f"!! Failed to resurrect. File missing: {gcode_file!r}")
+            return None
+
+        expected_file_size = state["file_size"]
+        file_position = state["file_position"]
+        if (isinstance(expected_file_size, bool)
+                or not isinstance(expected_file_size, int)
+                or expected_file_size < 0
+                or isinstance(file_position, bool)
+                or not isinstance(file_position, int)
+                or file_position < 0
+                or file_position > expected_file_size):
+            gcmd.respond_raw(
+                "!! Failed to resurrect. Invalid file size or position")
+            return None
+
+        position = state["position"]
+        if not isinstance(position, (list, tuple)) or len(position) < 4:
+            gcmd.respond_raw("!! Failed to resurrect. Invalid toolhead position")
+            return None
+        if not isinstance(state["mesh"], str):
+            gcmd.respond_raw("!! Failed to resurrect. Invalid mesh name")
+            return None
+        numeric_values = list(position[:4]) + [
+            state["z_offset"], state["extruder_temp"], state["bed_temp"]]
+        try:
+            if not all(math.isfinite(float(value)) for value in numeric_values):
+                raise ValueError
+        except (TypeError, ValueError):
+            gcmd.respond_raw(
+                "!! Failed to resurrect. Invalid numeric checkpoint value")
             return None
 
         expected_file_size = state["file_size"]
@@ -238,109 +334,98 @@ class Resurrector:
             gcmd.respond_raw(f"!! Failed to resurrect. File size mismatch: {actual_file_size} <> {expected_file_size}")
             return None
 
-        return state
+        root = os.path.realpath(self.virtual_sdcard.sdcard_dirname)
+        real_file = os.path.realpath(gcode_file)
+        try:
+            inside_sdcard = os.path.commonpath([root, real_file]) == root
+        except ValueError:
+            inside_sdcard = False
+        if not inside_sdcard:
+            gcmd.respond_raw(
+                "!! Failed to resurrect. G-Code file is outside virtual SD")
+            return None
 
-    state_cmds = [re.compile(statement) for statement in [
-        r'^SET_VELOCITY_LIMIT .+$',
-        r'^SET_PRESSURE_ADVANCE ADVANCE=.*$',
-        r'^SKEW_PROFILE LOAD=.*$',
-        r"^M73 .*$",
-        r"^M106 S.+$",
-        r"^M106 P1 .+$",
-        r"^M106 P2 .+$"
-    ]]
+        if file_position:
+            try:
+                with open(gcode_file, "rb") as stream:
+                    stream.seek(file_position - 1)
+                    valid_boundary = stream.read(1) == b"\n"
+            except (IOError, OSError) as e:
+                gcmd.respond_raw(
+                    f"!! Failed to resurrect. Unable to read G-Code: {e}")
+                return None
+            if not valid_boundary:
+                gcmd.respond_raw(
+                    "!! Failed to resurrect. File position is not a line boundary")
+                return None
+
+        state["_relative_path"] = os.path.relpath(real_file, root)
+        self._checkpoint_cache = dict(state)
+        self._checkpoint_cache.pop("_relative_path", None)
+        self._checkpoint_cache_loaded = True
+        return state
 
     def _load_state(self, stats):
         self.gcode.run_script_from_command("_PRINT_STATUS S='LOADING STATE...'")
+        cancel_event = threading.Event()
+        results = queue.Queue(maxsize=1)
+        parser = GCodeStateParser(
+            stats["file_path"], stats["file_position"],
+            stats["file_size"], cancel_event)
 
-        file_path = stats["file_path"]
-        file_position = stats["file_position"]
+        def _worker():
+            try:
+                results.put((True, parser.parse()))
+            except Exception as error:
+                results.put((False, error))
 
-        # Create a set of compiled regex patterns for O(1) lookup
-        state_patterns = set(self.state_cmds)
-        found = []
+        worker = threading.Thread(
+            target=_worker, name="resurrection-gcode-parser")
+        self._worker = worker
+        self._worker_cancel = cancel_event
+        worker.start()
+        try:
+            while worker.is_alive():
+                self.reactor.pause(self.reactor.monotonic() + .050)
+                if self.state == ResurrectorState.DESTROYED:
+                    cancel_event.set()
+            worker.join()
+            if results.empty():
+                raise RecoveryParseError(
+                    "G-Code state parser stopped without a result")
+            success, result = results.get_nowait()
+            if not success:
+                raise result
+            return result
+        finally:
+            if worker.is_alive():
+                cancel_event.set()
+                worker.join()
+            if self._worker is worker:
+                self._worker = None
+                self._worker_cancel = None
 
-        with open(file_path, "rb", buffering=8192) as f:  # Use larger buffer for better performance
-            f.seek(file_position)
-
-            while state_patterns:  # Stop when all patterns found
-                line = self._read_line_backwards(f)
-                
-                if line is None:
-                    break
-                    
-                # Decode line and strip whitespace
-                try:
-                    line_str = line.decode('utf-8', errors='ignore').strip()
-                except (UnicodeDecodeError, AttributeError):
-                    continue
-                    
-                # Skip empty lines and comments
-                if not line_str or line_str.startswith(';') or line_str.startswith('#'):
-                    continue
-
-                # Check if line matches any of our state commands
-                # Find the first matching pattern without creating a copy
-                matched_pattern = None
-                for pattern in state_patterns:
-                    if pattern.match(line_str):
-                        matched_pattern = pattern
-                        break
-                
-                if matched_pattern:
-                    logging.info(f"[resurrection] Found CMD: {line_str}")
-                    found.append(line_str)
-                    # Remove this pattern to avoid duplicates - O(1) operation
-                    state_patterns.discard(matched_pattern)
-
-        return found
-
-    def _find_line_start(self, f, current_pos):
-        chunk_size = 256  # Optimal size based on performance testing
-        line_start = current_pos
-        
-        while line_start > 0:
-            # Calculate chunk boundaries
-            read_start = max(0, line_start - chunk_size)
-            
-            # Read chunk
-            f.seek(read_start)
-            chunk = f.read(line_start - read_start)
-            
-            # Look for line ending in this chunk
-            found_pos = None
-            for i in range(len(chunk) - 1, -1, -1):
-                if chunk[i:i+1] in (b'\n', b'\r'):
-                    found_pos = read_start + i + 1
-                    break
-                
-            if found_pos is not None:
-                return found_pos
-            
-            # No line ending found, try previous chunk
-            line_start = read_start
-        
-        return 0  # Beginning of file
-
-    def _read_line_backwards(self, f):
-        current_pos = f.tell()
-        if current_pos == 0:
-            return None
-        
-        # Find where this line starts
-        line_start = self._find_line_start(f, current_pos)
-        
-        # Read the line
-        f.seek(line_start)
-        line = f.read(current_pos - line_start)
-        
-        # Position for next backwards read
-        if line_start > 0:
-            f.seek(line_start - 1)
-        else:
-            f.seek(0)
-        
-        return line
+    def _rollback_recovery(self, gcmd, message, file_loaded=False):
+        logging.error("[resurrection] Recovery failed: %s", message)
+        self._cancel_worker()
+        if self.state != ResurrectorState.DESTROYED:
+            self._change_state(ResurrectorState.RESURRECTION)
+        if file_loaded:
+            try:
+                self.virtual_sdcard.do_cancel()
+            except Exception:
+                logging.exception(
+                    "[resurrection] Failed to reset virtual SD after recovery")
+        if self.state != ResurrectorState.DESTROYED:
+            try:
+                self.gcode.run_script_from_command(
+                    "TURN_OFF_HEATERS\n"
+                    "M106 P1 S0\n"
+                    "_PRINT_STATUS S='RECOVERY FAILED'")
+            except Exception:
+                logging.exception(
+                    "[resurrection] Failed to apply recovery cleanup")
+        gcmd.respond_raw("!! Failed to resurrect. %s" % (message,))
 
     def cmd_RESURRECT(self, gcmd):
         if self.state != ResurrectorState.RESURRECTION:
@@ -348,8 +433,6 @@ class Resurrector:
             return
 
         self.gcode.run_script_from_command("_PRINT_STATUS S='RESURRECTING...'")
-
-        self._change_state(ResurrectorState.IDLE)
         gcmd.respond_raw("// action:prompt_end")
 
         state = self._load_resurrection_state(gcmd)
@@ -366,55 +449,72 @@ class Resurrector:
                 gcmd.respond_raw(f"!! Failed to resurrect. Bed mesh missing: {mesh_name!r}")
                 return
 
-        toolhead_pos = state["position"]
+        self._change_state(ResurrectorState.LOADING)
+        file_loaded = False
+        try:
+            parsed_state = self._load_state(state)
+            if self.state == ResurrectorState.DESTROYED:
+                return
 
-        gcode_file = state["file_path"]
-        self.virtual_sdcard.load_file(gcmd, os.path.basename(gcode_file))
+            self.virtual_sdcard.load_file(gcmd, state["_relative_path"])
+            file_loaded = True
+            self._change_state(ResurrectorState.PREPARING)
 
-        cmds = self._load_state(state)
+            toolhead_pos = [float(value) for value in state["position"][:4]]
+            bed_temp = float(state["bed_temp"])
+            extruder_temp = float(state["extruder_temp"])
+            z_offset = float(state["z_offset"])
+            self.gcode.run_script_from_command("\n".join([
+                "_PRINT_STATUS S='PREPARING...'",
+                "_START_PRINT_PREPARE",
+                f"BED_MESH_PROFILE LOAD={mesh_name}",
+                f"M26 S{state['file_position']}",
+                "_PRINT_STATUS S='HEATING...'",
+                "_WAIT_TEMPERATURE CMD=M140 VALUE=%s BELOW=2 ABOVE=3"
+                % (_format_number(bed_temp),),
+                "M106 P1 S255",
+                "_WAIT_TEMPERATURE CMD=M104 VALUE=%s"
+                % (_format_number(extruder_temp),),
+                "_PRINT_STATUS S='HOMING...'",
+                "G28",
+                "M400",
+                "LOAD_CELL_TARE",
+                "G92 E0",
+                "G90",
+                "M83",
+                "_PRINT_STATUS S='POSITIONING...'",
+                "_SET_GCODE_OFFSET Z=%s" % (_format_number(z_offset),),
+                "G1 X%s Y%s F6000" % (
+                    _format_number(toolhead_pos[0]),
+                    _format_number(toolhead_pos[1])),
+                "G1 Z%s F3000" % (_format_number(toolhead_pos[2]),),
+                "M400",
+                "M106 P1 S0",
+                "_PRINT_STATUS S='RESTORING STATE...'",
+            ]))
 
-        self.gcode.run_script_from_command("\n".join([
-            f"_PRINT_STATUS S='PREPARING...'",
+            self.gcode.run_script_from_command("\n".join(
+                parsed_state.before_retraction_commands()))
 
-            f"_START_PRINT_PREPARE",
+            if parsed_state.has_retraction_state:
+                firmware_retraction = self.printer.lookup_object(
+                    "firmware_retraction", None)
+                if firmware_retraction is None:
+                    raise RecoveryParseError(
+                        "Firmware retraction state can not be restored")
+                firmware_retraction.is_retracted = parsed_state.retracted
 
-            f"BED_MESH_PROFILE LOAD={mesh_name}",
-            f"M26 S{state['file_position']!r}",
+            final_commands = parsed_state.final_commands()
+            final_commands.append("_PRINT_STATUS S='PRINTING...'")
+            self.gcode.run_script_from_command("\n".join(final_commands))
 
-            f"_PRINT_STATUS S='HEATING...'",
-            f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
-
-            "M106 P1 S255",  # Enable extruder fan to prevent melting
-            f"_WAIT_TEMPERATURE CMD=M104 VALUE={state['extruder_temp']}",
-
-            f"_PRINT_STATUS S='HOMING...'",
-            f"G28",
-            f"M400",
-
-            f"LOAD_CELL_TARE",
-
-            f"G92 E0",      # Reset extruder position
-            f"G90",         # Absolute toolhead coordinates
-            f"M83",         # Relative extruder coordinates
-
-            f"_PRINT_STATUS S='POSITIONING...'",
-            f"_SET_GCODE_OFFSET Z={state['z_offset']}",
-            f"G1 X{toolhead_pos[0]} Y{toolhead_pos[1]} F6000",
-            f"G1 Z{toolhead_pos[2]} F3000",
-            f"M400",
-
-            "M106 P1 S0",   # Disable extruder fan
-
-            f"_PRINT_STATUS S='RESTORING STATE...'",
-            *cmds,
-
-            f"_PRINT_STATUS S='PRINTING...'",
-        ]))
-
-        self.virtual_sdcard.do_resume()
-        self._change_state(ResurrectorState.PRINTING)
-
-        self.gcode.respond_raw("// Resurrection finished!")
+            self.virtual_sdcard.do_resume()
+            self._change_state(ResurrectorState.PRINTING)
+            self.gcode.respond_raw("// Resurrection finished!")
+        except Exception as error:
+            if self.state != ResurrectorState.DESTROYED:
+                self._rollback_recovery(
+                    gcmd, str(error) or error.__class__.__name__, file_loaded)
 
     def cmd_RESURRECT_ABORT(self, gcmd):
         if self.state != ResurrectorState.RESURRECTION:
