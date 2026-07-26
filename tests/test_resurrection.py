@@ -66,19 +66,60 @@ class CooperativeReactor:
 
 
 class VirtualSDRecorder:
-    def __init__(self):
+    def __init__(self, on_resume=None):
         self.loaded = []
         self.resumed = False
         self.cancelled = False
+        self.on_resume = on_resume
 
     def load_file(self, gcmd, filename):
         self.loaded.append(filename)
 
     def do_resume(self):
         self.resumed = True
+        if self.on_resume is not None:
+            self.on_resume()
 
     def do_cancel(self):
         self.cancelled = True
+
+
+class PhysicalToolheadModel:
+    def __init__(self, offset=-.08):
+        self.offset = offset
+        self.physical = [0., 0., 10., 0.]
+        self.logical = [0., 0., 0., 0.]
+        self.moves = []
+        self.following_positions = []
+        self.waited = False
+
+    @staticmethod
+    def mesh(x, y):
+        return .01027586333515498 if x < 0. else .02
+
+    def manual_move(self, coordinate, speed):
+        for axis, value in enumerate(coordinate):
+            if value is not None:
+                self.physical[axis] = value
+        self.logical[:2] = self.physical[:2]
+        self.logical[2] = (
+            self.physical[2] - self.offset
+            - self.mesh(self.physical[0], self.physical[1]))
+        self.moves.append((list(coordinate), speed))
+
+    def wait_moves(self):
+        self.waited = True
+
+    def get_position(self):
+        return list(self.physical)
+
+    def following_xy_move(self, x, y):
+        self.logical[:2] = [x, y]
+        self.physical[:2] = [x, y]
+        self.physical[2] = (
+            self.logical[2] + self.offset + self.mesh(x, y))
+        self.following_positions.append(
+            (list(self.logical), list(self.physical)))
 
 
 class GCodeStateParserTest(unittest.TestCase):
@@ -290,7 +331,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             gcode_path = os.path.join(directory, "part.gcode")
             checkpoint_path = os.path.join(directory, "resurrection.json")
             with open(gcode_path, "wb") as stream:
-                stream.write(b"G90\n")
+                stream.write(b"G90\nM82\n")
 
             resurrector = RESURRECTION.Resurrector.__new__(
                 RESURRECTION.Resurrector)
@@ -299,8 +340,10 @@ class ResurrectorLifecycleTest(unittest.TestCase):
                 "get_status": lambda self, eventtime: {
                     "file_path": gcode_path,
                     "file_position": 4,
-                    "file_size": 4,
+                    "file_size": 8,
                 },
+                "is_cmd_from_sd": lambda self: True,
+                "get_file_position": lambda self: 8,
             })()
             resurrector.toolhead = type("Toolhead", (), {
                 "get_status": lambda self, eventtime: {
@@ -335,6 +378,8 @@ class ResurrectorLifecycleTest(unittest.TestCase):
                 "file_path", "file_position", "file_size", "position",
                 "extruder_temp", "z_offset", "bed_temp", "mesh",
             })
+            self.assertEqual(checkpoint["file_position"], 8)
+            self.assertEqual(checkpoint["position"], [1., 2., 3., 4.])
             self.assertEqual(resurrector._checkpoint_cache, checkpoint)
 
     def test_checkpoint_accepts_nested_virtual_sd_path(self):
@@ -376,9 +421,17 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
         resurrector.gcode = GCodeRecorder()
         resurrector.reactor = CooperativeReactor()
-        resurrector.virtual_sdcard = VirtualSDRecorder()
+        toolhead = PhysicalToolheadModel()
+
+        def continue_layer():
+            toolhead.following_xy_move(24., 12.)
+            toolhead.following_xy_move(-12., -24.)
+            toolhead.following_xy_move(15., 15.)
+
+        resurrector.virtual_sdcard = VirtualSDRecorder(continue_layer)
         resurrector._worker = None
         resurrector._worker_cancel = None
+        resurrector.toolhead = toolhead
         resurrector.bed_mesh = type("Mesh", (), {
             "get_status": lambda self, eventtime: {
                 "profiles": ["saved"],
@@ -396,8 +449,10 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             "_relative_path": os.path.join("nested", "part.gcode"),
             "file_position": 1024,
             "file_size": 2048,
-            "position": [10., 20., 3., 100.],
-            "z_offset": .2,
+            "position": [
+                -13.985956125424346, -24.423308017104159,
+                .23027586333515498, 100.],
+            "z_offset": -.08,
             "extruder_temp": 220.,
             "bed_temp": 60.,
             "mesh": "saved",
@@ -422,6 +477,17 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             [os.path.join("nested", "part.gcode")])
         self.assertTrue(resurrector.virtual_sdcard.resumed)
         self.assertTrue(firmware_retraction.is_retracted)
+        self.assertEqual(toolhead.moves, [
+            ([-13.985956125424346, -24.423308017104159, None], 100.),
+            ([None, None, .23027586333515498], 50.),
+        ])
+        self.assertTrue(toolhead.waited)
+        for logical, physical in toolhead.following_positions:
+            self.assertAlmostEqual(logical[2], .3)
+            self.assertAlmostEqual(
+                physical[2],
+                logical[2] + toolhead.offset
+                + toolhead.mesh(logical[0], logical[1]))
         self.assertEqual(
             resurrector.state, RESURRECTION.ResurrectorState.PRINTING)
         lines = [
@@ -430,6 +496,9 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         ]
         self.assertNotIn("G10", lines)
         self.assertNotIn("G11", lines)
+        self.assertFalse(any(
+            line.startswith("G1 X") or line.startswith("G1 Z")
+            for line in lines))
         self.assertLess(lines.index("M221 S95"), lines.index("G92 E123.4"))
         self.assertLess(lines.index("G92 E123.4"), lines.index("G1 F900"))
         self.assertLess(

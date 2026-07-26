@@ -50,7 +50,18 @@ class RecoveryGCodeState:
         self.progress = {}
         self.print_stats = {}
 
-    def before_retraction_commands(self):
+    def skew_commands(self):
+        commands = []
+        if self.skew_base is not None:
+            commands.append(self.skew_base)
+        if self.skew_planes:
+            commands.append("SET_SKEW " + " ".join(
+                "%s=%s" % (plane, self.skew_planes[plane])
+                for plane in ("XY", "XZ", "YZ")
+                if plane in self.skew_planes))
+        return commands
+
+    def before_retraction_commands(self, include_skew=True):
         commands = []
         if self.velocity_limits:
             params = [
@@ -74,13 +85,8 @@ class RecoveryGCodeState:
             if len(params) > (1 if extruder is not None else 0):
                 commands.append("SET_PRESSURE_ADVANCE " + " ".join(params))
 
-        if self.skew_base is not None:
-            commands.append(self.skew_base)
-        if self.skew_planes:
-            commands.append("SET_SKEW " + " ".join(
-                "%s=%s" % (plane, self.skew_planes[plane])
-                for plane in ("XY", "XZ", "YZ")
-                if plane in self.skew_planes))
+        if include_skew:
+            commands.extend(self.skew_commands())
 
         if self.speed_factor is not None:
             commands.append("M220 S%s" % (

@@ -216,9 +216,12 @@ class Resurrector:
         gcode_file = stats["file_path"]
 
         if gcode_file and os.path.isfile(gcode_file):
+            file_position = stats["file_position"]
+            if self.virtual_sdcard.is_cmd_from_sd():
+                file_position = self.virtual_sdcard.get_file_position()
             t_status = self.toolhead.get_status(eventtime)
             position = t_status["position"]
-            
+
             extruder_temp = self.extruder.get_status(eventtime)["target"]
             bed_temp = self.heater_bed.get_status(eventtime)["target"]
             mesh = self.bed_mesh.get_status(eventtime)["profile_name"]
@@ -230,7 +233,7 @@ class Resurrector:
 
             checkpoint = {
                 "file_path": gcode_file,
-                "file_position": stats["file_position"],
+                "file_position": file_position,
                 "file_size": stats["file_size"],
                 "position": position,
                 "extruder_temp": extruder_temp,
@@ -427,6 +430,24 @@ class Resurrector:
                     "[resurrection] Failed to apply recovery cleanup")
         gcmd.respond_raw("!! Failed to resurrect. %s" % (message,))
 
+    def _restore_physical_position(self, position):
+        # Checkpoints contain the final toolhead coordinates after gcode
+        # offset, bed mesh, and skew transforms.  Moving through G-Code would
+        # apply those transforms a second time.  A manual toolhead move uses
+        # machine coordinates and emits toolhead:manual_move, which makes
+        # gcode_move invert the active transforms and synchronize its logical
+        # position before virtual SD processing resumes.
+        self.toolhead.manual_move(
+            [position[0], position[1], None], 100.)
+        self.toolhead.manual_move(
+            [None, None, position[2]], 50.)
+        self.toolhead.wait_moves()
+        restored = self.toolhead.get_position()
+        if any(abs(restored[axis] - position[axis]) > 1.e-6
+               for axis in range(3)):
+            raise RecoveryParseError(
+                "Toolhead did not reach the checkpoint position")
+
     def cmd_RESURRECT(self, gcmd):
         if self.state != ResurrectorState.RESURRECTION:
             gcmd.respond_raw(f"!! The printer isn’t in a resurrection state!")
@@ -484,17 +505,21 @@ class Resurrector:
                 "M83",
                 "_PRINT_STATUS S='POSITIONING...'",
                 "_SET_GCODE_OFFSET Z=%s" % (_format_number(z_offset),),
-                "G1 X%s Y%s F6000" % (
-                    _format_number(toolhead_pos[0]),
-                    _format_number(toolhead_pos[1])),
-                "G1 Z%s F3000" % (_format_number(toolhead_pos[2]),),
-                "M400",
+            ]))
+
+            skew_commands = parsed_state.skew_commands()
+            if skew_commands:
+                self.gcode.run_script_from_command("\n".join(skew_commands))
+
+            self._restore_physical_position(toolhead_pos)
+            self.gcode.run_script_from_command("\n".join([
                 "M106 P1 S0",
                 "_PRINT_STATUS S='RESTORING STATE...'",
             ]))
 
             self.gcode.run_script_from_command("\n".join(
-                parsed_state.before_retraction_commands()))
+                parsed_state.before_retraction_commands(
+                    include_skew=False)))
 
             if parsed_state.has_retraction_state:
                 firmware_retraction = self.printer.lookup_object(
