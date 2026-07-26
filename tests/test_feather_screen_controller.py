@@ -839,10 +839,13 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_settings_buttons_use_compact_signed_step_labels(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
+        controller.reactor = Reactor()
         batches = []
         controller.renderer.send = batches.append
         controller.params = type("Params", (), {"variables": {
             "backlight": 50, "backlight_eco": 10, "sound": 1}})()
+        controller.chamber_light = StatusObject({
+            "color_data": [(0.0, 0.0, 0.0, 0.4)]})
         controller._render_settings()
         drawing = "\n".join(batches[0])
         self.assertIn('-t " -5"', drawing)
@@ -853,6 +856,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("--batch stroke -p 679 249 -s 76 38 -c 35d9e6 -lw 2",
                       drawing)
         self.assertIn("--batch fill -p 722 254 -s 28 28 -c 35d9e6", drawing)
+        self.assertIn("CHAMBER LIGHT", drawing)
+        self.assertIn('-t "40%"', drawing)
         self.assertNotIn('[ OFF |', drawing)
         self.assertNotIn('[ >OFF< |', drawing)
 
@@ -1051,6 +1056,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_mod_action("mod.key.a")
         controller._handle_mod_action("mod.space")
         controller._handle_mod_action("mod.symbols")
+        self.assertIn("mod.key.1", dict(controller.renderer._buttons))
+        self.assertIn("mod.key.0", dict(controller.renderer._buttons))
         controller._handle_mod_action("mod.key.hash")
         controller._handle_mod_action("mod.backspace")
         controller._handle_mod_action("mod.key.dot")

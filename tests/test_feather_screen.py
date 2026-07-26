@@ -23,6 +23,7 @@ SPEC.loader.exec_module(FEATHER)
 UI = __import__("feather_ui")
 MOD_UI = __import__("feather_mod_settings")
 PAGES = __import__("feather_screen_pages")
+KEYBOARD = __import__("feather_keyboard")
 
 MOD_PARAMS_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
                    "plugins" / "mod_params.py")
@@ -216,6 +217,26 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertFalse(validate("z" * 64))
         self.assertFalse(validate("validpass\n"))
 
+    def test_text_keyboards_share_digits_and_symbol_rows(self):
+        rows = KEYBOARD.keyboard_rows(symbols=True)
+
+        self.assertEqual(
+            tuple(label for _token, label in rows[0]), tuple("1234567890"))
+        self.assertIn(("hash", "#"), rows[1])
+        self.assertIn(("dot", "."), rows[2])
+
+    def test_chamber_light_macros_update_state_without_toolhead_sync(self):
+        macros = (pathlib.Path(__file__).parents[1] / "macros" /
+                  "base.cfg").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "SET_LED LED=chamber_light WHITE=1 SYNC=0", macros)
+        self.assertIn(
+            "SET_LED LED=chamber_light WHITE=0 SYNC=0", macros)
+        self.assertIn(
+            '_SET_LED LED=chamber_light WHITE="{params.WHITE}" SYNC=0',
+            macros)
+
     def test_duration_formatting(self):
         duration = FEATHER.FeatherScreen._duration
         self.assertEqual(duration(None), "???")
@@ -288,6 +309,11 @@ class FeatherUtilitiesTest(unittest.TestCase):
                                  "z.zone.front_left"))
         self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))
         self.assertTrue(allowed(FEATHER.Page.SETTINGS, "settings.mod"))
+        self.assertFalse(allowed(FEATHER.Page.SETTINGS, "settings.led"))
+        self.assertTrue(allowed(FEATHER.Page.SETTINGS,
+                                "settings.led.minus"))
+        self.assertTrue(allowed(FEATHER.Page.SETTINGS,
+                                "settings.led.plus"))
         self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
         self.assertFalse(allowed(FEATHER.Page.MOD_ENUM, "mod.item.12"))
         self.assertTrue(allowed(FEATHER.Page.MOD_ENUM, "mod.option.2"))

@@ -16,8 +16,7 @@ try:
     from .feather_ui import FeatherRenderer, Page, PrintState
     from .feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS, VALID_GCODE_EXTS, mod_ui,
-        NETWORK_HELPER, NETWORK_TIMEOUTS, ALPHA_KEY_ROWS,
-        SYMBOL_KEY_ROWS)
+        NETWORK_HELPER, NETWORK_TIMEOUTS)
     from .feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -35,8 +34,7 @@ except (ImportError, ValueError):
     from feather_ui import FeatherRenderer, Page, PrintState
     from feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS, VALID_GCODE_EXTS, mod_ui,
-        NETWORK_HELPER, NETWORK_TIMEOUTS, ALPHA_KEY_ROWS,
-        SYMBOL_KEY_ROWS)
+        NETWORK_HELPER, NETWORK_TIMEOUTS)
     from feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -98,8 +96,8 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
     Page.CALIBRATION_RESULT: ("cal.repeat", "cal.done"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
-                    "settings.brightness.plus", "settings.eco.minus",
-                    "settings.eco.plus", "settings.sound", "settings.theme",
+                    "settings.brightness.plus", "settings.led.minus",
+                    "settings.led.plus", "settings.sound", "settings.theme",
                     "settings.mod"),
     Page.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next"),
     Page.MOD_ENUM: ("nav.back", "mod.cancel", "mod.apply",
@@ -208,6 +206,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.live_z_dialog = None
         self.live_z_limit_warned = False
         self.weight_sensor = None
+        self.chamber_light = None
         self.z_weight_gauge = None
         self.z_calibration = ZCalibrationSession()
 
@@ -388,6 +387,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.probe = self.printer.lookup_object("probe")
         self.weight_sensor = self.printer.lookup_object(
             "temperature_sensor weightValue", None)
+        self.chamber_light = self.printer.lookup_object(
+            "led chamber_light", None)
         self.fan = self.printer.lookup_object("fan", None)
         self.filament_sensor = self.printer.lookup_object(
             "filament_switch_sensor e0_sensor", None)

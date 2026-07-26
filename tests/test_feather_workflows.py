@@ -810,21 +810,43 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "PREHEAT_MATERIAL MATERIAL=ABS EXTRUDER_TEMP=250 BED_TEMP=90",
             "M106 S128", "TURN_OFF_HEATERS"])
 
-    def test_settings_clamp_values_and_toggle_sound(self):
+    def test_settings_clamp_values_toggle_sound_and_adjust_light(self):
         controller = base_controller()
         controller.params = type("Params", (), {
             "variables": {"backlight": 100, "backlight_eco": 1, "sound": 1}})()
+        controller.chamber_light = StatusObject({
+            "color_data": [(0.0, 0.0, 0.0, 0.55)]})
         controller._render_settings = lambda: None
         backlight = []
         controller._set_backlight = backlight.append
         controller._handle_settings_action("settings.brightness.plus")
-        controller._handle_settings_action("settings.eco.minus")
         controller._handle_settings_action("settings.sound")
+        controller._handle_settings_action("settings.led.minus")
         self.assertEqual(controller.gcode.commands, [
             "SET_MOD PARAM=backlight VALUE=100",
-            "SET_MOD PARAM=backlight_eco VALUE=1",
-            "SET_MOD PARAM=sound VALUE=0"])
+            "SET_MOD PARAM=sound VALUE=0",
+            "SET_LED LED=chamber_light WHITE=0.5 SYNC=0"])
         self.assertEqual(backlight, [100])
+
+    def test_settings_render_reflects_chamber_light_status(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.params = type("Params", (), {
+            "variables": {
+                "backlight": 50, "backlight_eco": 10, "sound": 1}})()
+        controller.chamber_light = StatusObject({
+            "color_data": [(0.0, 0.0, 0.0, 0.42)]})
+
+        controller._render_settings()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn('-t "42%"', drawing)
+        self.assertIn("settings.led.minus",
+                      dict(controller.renderer._buttons))
+        self.assertIn("settings.led.plus",
+                      dict(controller.renderer._buttons))
 
     def test_backlight_enable_is_separate_from_brightness(self):
         controller = base_controller()

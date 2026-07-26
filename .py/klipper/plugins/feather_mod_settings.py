@@ -11,18 +11,14 @@ import enum
 import math
 import re
 
+try:
+    from .feather_keyboard import SYMBOL_KEYS, key_character
+except (ImportError, ValueError):
+    from feather_keyboard import SYMBOL_KEYS, key_character
+
 
 VISIBLE_ROWS = 5
 MAX_VALUE_LENGTH = 64
-
-SYMBOL_KEYS = (
-    ("minus", "-"), ("under", "_"), ("plus", "+"), ("at", "@"),
-    ("hash", "#"), ("dollar", "$"), ("percent", "%"), ("amp", "&"),
-    ("star", "*"), ("bang", "!"), ("dot", "."), ("comma", ","),
-    ("question", "?"), ("slash", "/"), ("colon", ":"), ("semi", ";"),
-    ("lparen", "("), ("rparen", ")"), ("quote", '"'), ("bslash", "\\"),
-)
-SYMBOL_MAP = dict(SYMBOL_KEYS)
 
 
 def visible_parameters(manager):
@@ -118,9 +114,3 @@ def validate_value(param, text):
     if text not in enum_names(param):
         raise ValueError("Unknown option")
     return text
-
-
-def key_character(token, shift=False):
-    if len(token) == 1 and token.isalnum():
-        return token.upper() if shift and token.isalpha() else token
-    return SYMBOL_MAP.get(token)

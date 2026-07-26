@@ -14,9 +14,11 @@ import time
 try:
     from .feather_ui import Page, PrintState
     from . import feather_mod_settings as mod_ui
+    from .feather_keyboard import keyboard_rows
 except (ImportError, ValueError):
     from feather_ui import Page, PrintState
     import feather_mod_settings as mod_ui
+    from feather_keyboard import keyboard_rows
 
 
 FILE_ROWS = 5
@@ -30,16 +32,8 @@ NETWORK_TIMEOUTS = {
     "status-background": 5.0,
 }
 NETWORK_ROWS = 5
-ALPHA_KEY_ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm")
-SYMBOL_KEY_ROWS = (
-    tuple((str(i), str(i)) for i in range(1, 10)) + (("0", "0"),),
-    (("minus", "-"), ("under", "_"), ("plus", "+"), ("at", "@"),
-     ("hash", "#"), ("dollar", "$"), ("percent", "%"), ("amp", "&"),
-     ("star", "*"), ("bang", "!")),
-    (("dot", "."), ("comma", ","), ("question", "?"), ("slash", "/"),
-     ("colon", ":"), ("semi", ";"), ("lparen", "("), ("rparen", ")"),
-     ("quote", '"'), ("bslash", "\\")),
-)
+
+
 class FileEntry:
     """Compact mapping-compatible record for one browser row."""
 
@@ -717,25 +711,35 @@ class FeatherPagesMixin:
 
     def _render_settings(self):
         brightness = int(self._setting("backlight", 50))
-        eco = int(self._setting("backlight_eco", 10))
         sound = bool(self._setting("sound", 1))
+        light_available = getattr(self, "chamber_light", None) is not None
+        light = (self._chamber_light_brightness()
+                 if light_available else None)
         theme = str(getattr(self.renderer, "theme_name", "DEFAULT"))
         commands = self.renderer.begin_page("Settings", back=True)
-        rows = (("SCREEN BRIGHTNESS", brightness, "settings.brightness", 67),
-                ("ECO BRIGHTNESS", eco, "settings.eco", 151))
-        for label, value, prefix, y in rows:
+        rows = (
+            ("SCREEN BRIGHTNESS", brightness, "settings.brightness", 67, True),
+            ("CHAMBER LIGHT", light, "settings.led", 151, light_available),
+        )
+        for label, value, prefix, y, enabled in rows:
             commands += [
                 self.renderer.fill(25, y, 750, 70, "050c0f"),
                 self.renderer.stroke(25, y, 750, 70, "295c66", 1),
                 self.renderer.text(44, y + 22, label, "35d9e6",
                                    "JetBrainsMono Bold 8pt"),
-                self.renderer.text(425, y + 36, "%d%%" % value, "d9e4e8",
+                self.renderer.text(425, y + 36,
+                                   "%d%%" % value if enabled else "--",
+                                   "d9e4e8" if enabled else "56656c",
                                    "JetBrainsMono 12pt", "center"),
             ]
             commands += self.renderer.button(prefix + ".minus", 525, y + 12,
-                                             105, 46, "-5")
+                                             105, 46, "-5",
+                                             state=("enabled" if enabled
+                                                    else "disabled"))
             commands += self.renderer.button(prefix + ".plus", 650, y + 12,
-                                             105, 46, "+5")
+                                             105, 46, "+5",
+                                             state=("enabled" if enabled
+                                                    else "disabled"))
         commands += [
             self.renderer.fill(25, 235, 750, 66, "050c0f"),
             self.renderer.stroke(25, 235, 750, 66, "295c66", 1),
@@ -768,19 +772,21 @@ class FeatherPagesMixin:
             self.mod_parameter = None
             self._show_page(Page.MOD_SETTINGS)
             return
+        if action.startswith("settings.led."):
+            if getattr(self, "chamber_light", None) is None:
+                raise RuntimeError("Chamber light is unavailable")
+            delta = -5 if action.endswith("minus") else 5
+            value = max(
+                0, min(100, self._chamber_light_brightness() + delta))
+            self._run_script(
+                "SET_LED LED=chamber_light WHITE=%g SYNC=0" % (value / 100.0))
+            self._render_settings()
+            return
         if action == "settings.sound":
             key, value = "sound", 0 if self._setting("sound", 1) else 1
-            scheduler = lambda callback, delay: self.reactor.register_callback(
-                callback, self.reactor.monotonic() + delay)
-            renderer = getattr(self, "renderer", None)
-            animate = getattr(renderer, "animate_toggle", None)
-            if animate is not None:
-                animate(action, bool(value), scheduler)
-            block = getattr(renderer, "block_input", None)
-            if block is not None:
-                block()
+            self._animate_settings_toggle(action, bool(value))
         else:
-            key = "backlight_eco" if action.startswith("settings.eco") else "backlight"
+            key = "backlight"
             delta = -5 if action.endswith("minus") else 5
             value = max(1, min(100, int(self._setting(key, 10)) + delta))
         self._run_script("SET_MOD PARAM=%s VALUE=%d" % (key, value))
@@ -792,6 +798,27 @@ class FeatherPagesMixin:
                 self.reactor.monotonic() + 0.14)
         else:
             self._render_settings()
+
+    def _chamber_light_brightness(self):
+        light = getattr(self, "chamber_light", None)
+        if light is None:
+            return 0
+        colors = light.get_status(
+            self.reactor.monotonic()).get("color_data", ())
+        white = max((color[3] for color in colors if len(color) > 3),
+                    default=0.0)
+        return int(round(max(0.0, min(1.0, white)) * 100.0))
+
+    def _animate_settings_toggle(self, action, active):
+        scheduler = lambda callback, delay: self.reactor.register_callback(
+            callback, self.reactor.monotonic() + delay)
+        renderer = getattr(self, "renderer", None)
+        animate = getattr(renderer, "animate_toggle", None)
+        if animate is not None:
+            animate(action, bool(active), scheduler)
+        block = getattr(renderer, "block_input", None)
+        if block is not None:
+            block()
 
     def _mod_parameters(self):
         return mod_ui.visible_parameters(self.params)
@@ -1185,11 +1212,8 @@ class FeatherPagesMixin:
 
     def _render_mod_text_keys(self):
         commands = []
-        if self.mod_keyboard_symbols:
-            rows = mod_ui.SYMBOL_KEYS[:10], mod_ui.SYMBOL_KEYS[10:20]
-        else:
-            rows = tuple(tuple((char, char.upper() if self.mod_keyboard_shift else char)
-                               for char in row) for row in ALPHA_KEY_ROWS)
+        rows = keyboard_rows(
+            self.mod_keyboard_symbols, self.mod_keyboard_shift)
         for row, keys in enumerate(rows):
             key_width = 68
             total_width = len(keys) * key_width + max(0, len(keys) - 1) * 7
@@ -1492,11 +1516,7 @@ class FeatherPagesMixin:
             70, 83, masked, "ffffff", "JetBrainsMono 12pt", "left", "middle",
             max_width=660, truncate=True))
 
-        if self.keyboard_symbols:
-            rows = SYMBOL_KEY_ROWS
-        else:
-            rows = [[(ch, ch.upper() if self.keyboard_shift else ch) for ch in row]
-                    for row in ALPHA_KEY_ROWS]
+        rows = keyboard_rows(self.keyboard_symbols, self.keyboard_shift)
         for row_index, row in enumerate(rows):
             key_width = 66
             gap = 5
