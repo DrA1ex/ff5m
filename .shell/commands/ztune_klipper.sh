@@ -2,36 +2,7 @@
 
 source /opt/config/mod/.shell/common.sh
 
-MCU_F="/opt/klipper/klippy/mcu.py"
 TOOLHEAD_F="/opt/klipper/klippy/toolhead.py"
-
-already_done_e11() {
-    echo "Communication Timeout (E0011) already in sync!"
-}
-
-fix_disable_e11() {
-    echo "Reverting TRSYNC_TIMEOUT"
-
-    grep -qe "^TRSYNC_TIMEOUT = 0.025" $MCU_F \
-        && already_done_e11 && return
-    
-    sed -i 's|^TRSYNC_TIMEOUT = .*|TRSYNC_TIMEOUT = 0.025|' $MCU_F
-
-    sync
-    echo "Done"
-}
-
-fix_enable_e11() {
-    echo "Patching TRSYNC_TIMEOUT"
-
-    grep -qe "^TRSYNC_TIMEOUT = 0.05" $MCU_F \
-        && already_done_e11 && return
-    
-    sed -i 's|^TRSYNC_TIMEOUT = .*|TRSYNC_TIMEOUT = 0.05|' $MCU_F
-
-    sync
-    echo "Done"
-}
 
 already_done_e17() {
     echo "Move Queue Overflow (E0017) already in sync!"
@@ -62,12 +33,10 @@ fix_enable_e17() {
 }
 
 fix_disable_all() {
-    fix_disable_e11
     fix_disable_e17
 }
 
 fix_enable_all() {
-    fix_enable_e11
     fix_enable_e17
 }
 

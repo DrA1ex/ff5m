@@ -7,6 +7,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 source /opt/config/mod/.shell/common.sh
+source /opt/config/mod/.shell/klipper_overlay.sh
 
 handle_special_boot_mode() {
     if /opt/config/mod/.shell/boot/init_boot_flag.sh apply; then
@@ -138,7 +139,10 @@ initialize() {
     fi
 
     echo "// Apply klipper patches..."
-    apply_klipper_patches
+    if ! apply_klipper_patches; then
+        echo "@@ Failed to apply klipper patches."
+        return 1
+    fi
 
     echo "// Restore config..."
     fix_config
@@ -294,70 +298,6 @@ init_buildroot() {
     ln -fs /opt/config/mod/.root/config.json "$MOD"/root/www/
     
     "$CMDS"/zhttp.sh apply
-    sync
-}
-
-apply_klipper_patches() {
-    local SRC_DIR="/opt/config/mod/.py/klipper"
-    local TARGET_DIR="/opt/klipper/klippy"
-
-
-    # Remove old patches/extensions
-    find $TARGET_DIR -type l | while read -r file; do
-        local rel_path=${file#"$TARGET_DIR/"}
-        local file_name=${file##*/}
-
-        if [ -f "$file.bak" ]; then # Patch
-            if [ ! -f "$SRC_DIR/patches/$rel_path" ]; then
-                echo "// Remove old patch: $file"
-                mv "$file.bak" "$file"
-            fi
-        else
-            if [ ! -f "$SRC_DIR/plugins/$file_name" ]; then
-                echo "// Remove old plugin: $file"
-                rm -f "$file"
-            fi
-        fi
-    done
-
-    sync
-    echo "Linking extensions..."
-    
-    # Link new extensions
-    ln -fs $SRC_DIR/plugins/* "$TARGET_DIR/extras/"
-
-    sync
-    echo "Apply patches..."
-    
-    # Apply klipper patches
-    find $SRC_DIR/patches -type f | while read -r file; do
-        local rel_file=${file#"$SRC_DIR/patches/"}
-        local rel_path=$(dirname "$rel_file")
-        local target="$TARGET_DIR/$rel_file"
-        
-        mkdir -p "$TARGET_DIR/$rel_path"
-        
-        if [ ! -L "$target" ]; then
-            if [ ! -f "$target.bak" ]; then
-                echo "// Create klipper file backup: $target"
-                mv "$target" "$target.bak"
-            else
-                echo "// Remove overwritten klipper file: $target"
-                rm -f "$target"
-            fi
-            
-            echo "// Link patched klipper file: $file"
-            ln -fs "$file" "$target"
-        else
-            ln -fs "$file" "$target"
-        fi
-    done
-
-    sync
-    echo "Apply fixes..."
-
-    "$CMDS"/ztune_klipper.sh apply
-
     sync
 }
 
@@ -570,7 +510,10 @@ case "$1" in
     reload)
         {
             echo "// Apply klipper patches..."
-            apply_klipper_patches
+            if ! apply_klipper_patches; then
+                echo "@@ Failed to apply klipper patches."
+                exit 1
+            fi
 
             echo "// Update configs..."
             fix_config

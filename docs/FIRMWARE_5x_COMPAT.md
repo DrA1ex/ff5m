@@ -200,7 +200,7 @@ patches the known v11 bugs in place:
 
 | Stock v11 bug | Forge-X fix |
 |---|---|
-| E0011 communication timeout | `ztune_klipper.sh`: `TRSYNC_TIMEOUT 0.025 → 0.05` (`mcu.py`) |
+| E0011 communication timeout | patched `mcu.py`: `TRSYNC_TIMEOUT 0.025 → 0.05` from `tune_klipper` |
 | E0017 move-queue overflow | `ztune_klipper.sh`: `LOOKAHEAD_FLUSH_TIME 0.5 → 0.150` (`toolhead.py`) |
 | Broken square-corner velocity | `tuning.cfg`: `square_corner_velocity: 9` |
 | Faulty resume / power loss | `resurrection.py` plugin |

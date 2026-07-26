@@ -37,7 +37,7 @@ mod; Z-Mod exposes them as runtime flags (`SAVE_ZMOD_DATA`).
 
 | Stock bug | Forge-X | Z-Mod |
 |---|---|---|
-| E0011 (comm timeout / TRSYNC) | `ztune_klipper.sh`: `mcu.py` `TRSYNC_TIMEOUT 0.025 → 0.05` | `FIX_E0011`: `mcu.py` `TRSYNC_TIMEOUT → 0.1` |
+| E0011 (comm timeout / TRSYNC) | patched `mcu.py`: `TRSYNC_TIMEOUT 0.025 → 0.05` from `tune_klipper` | `FIX_E0011`: `mcu.py` `TRSYNC_TIMEOUT → 0.1` |
 | E0017 (move-queue overflow / LOOKAHEAD) | `ztune_klipper.sh`: `toolhead.py` `LOOKAHEAD_FLUSH_TIME 0.5 → 0.150` | `FIX_E0017`: `toolhead.py` `LOOKAHEAD_FLUSH_TIME → 0.150` |
 | Broken SCV (shaper/accel graphs) | `tuning.cfg`: `square_corner_velocity: 9` | `FIX_SCV` (`SCV=9`) |
 | Power-loss / resume | `resurrection.py` plugin | `ZRESTORE` |
