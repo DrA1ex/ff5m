@@ -813,9 +813,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
     def test_settings_clamp_values_toggle_sound_and_adjust_light(self):
         controller = base_controller()
         controller.params = type("Params", (), {
-            "variables": {"backlight": 100, "backlight_eco": 1, "sound": 1}})()
+            "variables": {
+                "backlight": 100, "backlight_eco": 1, "sound": 1,
+                "chamber_light": 55}})()
         controller.chamber_light = StatusObject({
-            "color_data": [(0.0, 0.0, 0.0, 0.55)]})
+            "color_data": [(0.0, 0.0, 0.0, 0.0)]})
         controller._render_settings = lambda: None
         backlight = []
         controller._set_backlight = backlight.append
@@ -835,9 +837,10 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.renderer.send = batches.append
         controller.params = type("Params", (), {
             "variables": {
-                "backlight": 50, "backlight_eco": 10, "sound": 1}})()
+                "backlight": 50, "backlight_eco": 10, "sound": 1,
+                "chamber_light": 42}})()
         controller.chamber_light = StatusObject({
-            "color_data": [(0.0, 0.0, 0.0, 0.42)]})
+            "color_data": [(0.0, 0.0, 0.0, 0.0)]})
 
         controller._render_settings()
 

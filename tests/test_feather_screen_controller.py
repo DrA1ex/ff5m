@@ -843,9 +843,10 @@ class ControllerSafetyTest(unittest.TestCase):
         batches = []
         controller.renderer.send = batches.append
         controller.params = type("Params", (), {"variables": {
-            "backlight": 50, "backlight_eco": 10, "sound": 1}})()
+            "backlight": 50, "backlight_eco": 10, "sound": 1,
+            "chamber_light": 40}})()
         controller.chamber_light = StatusObject({
-            "color_data": [(0.0, 0.0, 0.0, 0.4)]})
+            "color_data": [(0.0, 0.0, 0.0, 0.0)]})
         controller._render_settings()
         drawing = "\n".join(batches[0])
         self.assertIn('-t " -5"', drawing)

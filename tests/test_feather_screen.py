@@ -236,6 +236,15 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertIn(
             '_SET_LED LED=chamber_light WHITE="{params.WHITE}" SYNC=0',
             macros)
+        self.assertIn(
+            "[delayed_gcode _RESTORE_CHAMBER_LIGHT]", macros)
+        self.assertIn(
+            "printer.mod_params.variables.chamber_light|default(50)",
+            macros)
+        self.assertIn(
+            'SET_MOD PARAM=chamber_light VALUE="', macros)
+        self.assertIn(
+            'changes.key == "chamber_light"', macros)
 
     def test_duration_formatting(self):
         duration = FEATHER.FeatherScreen._duration
@@ -337,6 +346,15 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(normalize(None), "n/a")
         self.assertEqual(normalize("abs/pc"), "ABS-PC")
         self.assertEqual(normalize("custom"), "n/a")
+
+    def test_chamber_light_setting_defaults_to_visible_fifty_percent(self):
+        declaration = json.loads((pathlib.Path(__file__).parents[1] /
+                                  "mod_params.json").read_text(encoding="utf-8"))
+        light = next(item for item in declaration["parameters"]
+                     if item["key"] == "chamber_light")
+
+        self.assertEqual(light["default"], 50)
+        self.assertFalse(light.get("hidden", False))
 
     def test_visible_mod_parameters_have_screen_descriptions(self):
         declaration = json.loads((pathlib.Path(__file__).parents[1] /

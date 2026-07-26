@@ -296,6 +296,8 @@ You can play specific MIDI files using the **PLAY_MIDI** macro. This macro allow
 
 Use the `LED S=<PERCENT>` macro to set LED brightness (e.g., LED S=75).
 Use `LED_ON` and `LED_OFF` to toggle the LED.
+The selected brightness is saved in the mod variables and restored after
+Klipper restarts. New installations default to 50%.
 
 The mod also includes a LED klipper's plugin, which allows inverting LED controls in cases where the LED is connected using a non-standard scheme.   
 To enable this feature, you need to add a parameter in the `user.cfg` file (see [Configuration](/docs/CONFIGURATION.md)).  

@@ -209,13 +209,21 @@
       "order": 50002
     },
     {
+      "key": "chamber_light",
+      "type": "int",
+      "default": 50,
+      "label": "Chamber light brightness",
+      "description": "Last selected chamber light brightness percent.",
+      "order": 50003
+    },
+    {
       "key": "current_material",
       "type": "str",
       "default": "n/a",
       "label": "Current material",
       "description": "Last selected filament material.",
       "hidden": true,
-      "order": 50003
+      "order": 50004
     },
     {
       "key": "midi_on",

@@ -800,14 +800,11 @@ class FeatherPagesMixin:
             self._render_settings()
 
     def _chamber_light_brightness(self):
-        light = getattr(self, "chamber_light", None)
-        if light is None:
-            return 0
-        colors = light.get_status(
-            self.reactor.monotonic()).get("color_data", ())
-        white = max((color[3] for color in colors if len(color) > 3),
-                    default=0.0)
-        return int(round(max(0.0, min(1.0, white)) * 100.0))
+        try:
+            value = int(self._setting("chamber_light", 50))
+        except (TypeError, ValueError):
+            value = 50
+        return max(0, min(100, value))
 
     def _animate_settings_toggle(self, action, active):
         scheduler = lambda callback, delay: self.reactor.register_callback(
