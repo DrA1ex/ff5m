@@ -140,6 +140,44 @@ ARM EABI5.
 For another native project, replace `typer` with its directory name. Configure
 each project in a separate `cmake-build-*` directory.
 
+## Building and testing `logged`
+
+`logged` is the native boot-log renderer. It links the same
+`forge_screen_text` static target as `typer`, so wrapping and font measurement
+come from one `TextDrawer` implementation without adding a runtime shared
+library dependency.
+
+Build the shipped soft-float binary from the repository root:
+
+```shell
+cmake \
+  -S .bin/src/logged \
+  -B .bin/src/logged/cmake-build-printer-eabi \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/.bin/src/toolchains/printer-eabi.cmake" \
+  -DBUILD_TESTING=OFF
+
+cmake --build .bin/src/logged/cmake-build-printer-eabi \
+  --parallel --clean-first
+file .bin/exec/logged
+```
+
+Its platform-independent wrapping, physical-row rotation, and queue-file tests
+can be run on the host:
+
+```shell
+cmake \
+  -S .bin/src/logged \
+  -B .bin/src/logged/cmake-build-host \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/.bin/src/logged/cmake-build-host/bin" \
+  -DBUILD_TESTING=ON
+
+cmake --build .bin/src/logged/cmake-build-host --parallel
+ctest --test-dir .bin/src/logged/cmake-build-host \
+  --output-on-failure --no-tests=error
+```
+
 ## Running host tests
 
 The interactive touch parser and hitbox registry are platform-independent. They

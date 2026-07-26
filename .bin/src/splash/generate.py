@@ -109,9 +109,10 @@ def make_loading(regular, bold):
     screen.text((70, 337), "BOOT LOG // WAITING FOR EVENTS", 12, AMBER,
                 anchor="lm", bold=True)
     screen.line((330, 337, 730, 337), DIM)
-    # boot_message clears and redraws the full y=350..480 area with up to five
-    # log rows plus uptime. Keep it completely empty, including the base frame,
-    # so no static artwork can leak through between short messages.
+    # The native logged renderer clears and redraws the full y=350..480 area
+    # with up to five physical log rows plus uptime. Keep it completely empty,
+    # including the base frame, so no static artwork can leak through between
+    # short messages.
     screen.draw.rectangle((0, 350, WIDTH, HEIGHT), fill=BG)
     return screen.image
 

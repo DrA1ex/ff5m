@@ -1,17 +1,60 @@
 // Utils
 //
-// Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+// Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 //
 // This file may be distributed under the terms of the GNU GPLv3 license
 
 #pragma once
 
-#include <vector>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <fcntl.h>
 #include <fstream>
-#include <ranges>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
+#include <sys/file.h>
+#include <unistd.h>
 
 #include "types.h"
+
+
+class FileLock {
+    int _descriptor = -1;
+
+public:
+    explicit FileLock(const std::string &file_name) {
+        _descriptor = open(file_name.c_str(), O_CREAT | O_RDWR, 0666);
+        if (_descriptor == -1) {
+            throw std::runtime_error(
+                "Unable to open lock file " + file_name + ": "
+                + std::strerror(errno));
+        }
+
+        while (flock(_descriptor, LOCK_EX) == -1) {
+            if (errno == EINTR) continue;
+
+            const auto error = std::string(std::strerror(errno));
+            close(_descriptor);
+            _descriptor = -1;
+            throw std::runtime_error(
+                "Unable to lock " + file_name + ": " + error);
+        }
+    }
+
+    ~FileLock() {
+        if (_descriptor == -1) return;
+        flock(_descriptor, LOCK_UN);
+        close(_descriptor);
+    }
+
+    FileLock(const FileLock &) = delete;
+    FileLock &operator=(const FileLock &) = delete;
+};
 
 inline std::string current_date_time() {
     using namespace std::chrono;
@@ -43,14 +86,22 @@ inline std::vector<ScreenMessage> load_array_from_file(const std::string &file_n
                 LogLevel level = LogLevel::DEBUG;
 
                 try {
-                    level = (LogLevel) std::stoi(integerPart);
-                } catch (const std::invalid_argument &e) {
-                    std::cerr << "Failed to parse log level:  \"" << integerPart << "\"; " << e.what() << std::endl;
+                    const auto parsed = std::stoi(integerPart);
+                    if (parsed < static_cast<int>(LogLevel::DEBUG)
+                        || parsed > static_cast<int>(LogLevel::ERROR)) {
+                        throw std::out_of_range("unknown log level");
+                    }
+                    level = static_cast<LogLevel>(parsed);
+                } catch (const std::exception &e) {
+                    std::cerr << "Ignoring invalid screen queue entry: "
+                              << line << " (" << e.what() << ")" << std::endl;
+                    continue;
                 }
 
                 array.emplace_back(level, stringPart);
             } else {
-                throw std::runtime_error("Invalid line format: " + line);
+                std::cerr << "Ignoring invalid screen queue entry: "
+                          << line << std::endl;
             }
         }
     }
@@ -59,9 +110,31 @@ inline std::vector<ScreenMessage> load_array_from_file(const std::string &file_n
 }
 
 inline void save_array_to_file(const std::vector<ScreenMessage> &array, const std::string &file_name) {
-    std::ofstream outfile(file_name);
-    for (const auto &message: array) {
-        outfile << (int) message.log_level << ";;" << message.str << '\n';
+    const auto temporary = file_name + "." + std::to_string(getpid()) + ".tmp";
+    try {
+        std::ofstream outfile(temporary, std::ios::trunc);
+        if (!outfile) {
+            throw std::runtime_error("Unable to open temporary queue file");
+        }
+        for (const auto &message: array) {
+            outfile << static_cast<int>(message.log_level)
+                    << ";;" << message.str << '\n';
+        }
+        outfile.close();
+        if (!outfile) {
+            throw std::runtime_error("Unable to write temporary queue file");
+        }
+
+        std::error_code error;
+        std::filesystem::rename(temporary, file_name, error);
+        if (error) {
+            throw std::runtime_error(
+                "Unable to replace screen queue: " + error.message());
+        }
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        throw;
     }
 }
 

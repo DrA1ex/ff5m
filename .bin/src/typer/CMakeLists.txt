@@ -34,13 +34,16 @@ endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,/opt/lib/14.2.0")
 
+if(NOT TARGET forge_screen_text)
+    add_subdirectory(../common ${CMAKE_CURRENT_BINARY_DIR}/common)
+endif()
+
 file(GLOB font_headers ../common/fonts/*.h)
 
 add_executable(typer main.cpp interactive.cpp batch_protocol.cpp framebuffer.cpp
-        ../common/text.cpp
         ${font_headers})
 
-target_link_libraries(typer m)
+target_link_libraries(typer forge_screen_text)
 # Typer stays resident on a 128 MiB target. Prefer compact generated code and
 # let the linker discard unused template/font sections; debug symbols are not
 # useful in the deployed binary and only increase its page-cache footprint.
@@ -125,9 +128,8 @@ if(BUILD_TESTING)
             invalid_dimensions_fall_back)
 
     add_executable(typer_text_buffer_test
-            tests/text_buffer_test.cpp
-            ../common/text.cpp)
-    target_link_libraries(typer_text_buffer_test m)
+            tests/text_buffer_test.cpp)
+    target_link_libraries(typer_text_buffer_test forge_screen_text)
     add_typer_test_cases(typer_text_buffer_test
             external_buffer_is_initialized
             external_buffer_flushes_dirty_area

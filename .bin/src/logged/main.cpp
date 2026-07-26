@@ -1,12 +1,11 @@
 // Logging utility
 //
-// Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+// Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 //
 // This file may be distributed under the terms of the GNU GPLv3 license
 
-#include <filesystem>
-#include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 #include "logger.h"
@@ -16,11 +15,15 @@ void print_help();
 
 int main(int argc, char *argv[]) {
     LoggerParams config;
-    if (auto ret = parse_args(argc, argv, config)) return ret;
 
     try {
+        if (auto ret = parse_args(argc, argv, config)) return ret;
+
         Logger logger(config);
         logger.process_stream(std::cin);
+    } catch (const std::invalid_argument &e) {
+        std::cerr << "Invalid argument: " << e.what() << std::endl;
+        return 1;
     } catch (const std::exception &e) {
         std::cerr << "Fatal Error: " << e.what() << std::endl;
         return 2;
@@ -38,9 +41,20 @@ int read_int(const std::string &param, int &index, int argc, char *argv[]) {
 
     try {
         return std::stoi(value);
-    } catch (const std::invalid_argument &e) {
+    } catch (const std::exception &e) {
         throw std::invalid_argument("Unable to parse value for parameter " + param + ": " + value);
     }
+}
+
+LogLevel read_level(
+    const std::string &param, int &index, int argc, char *argv[]) {
+    const auto value = read_int(param, index, argc, argv);
+    if (value < static_cast<int>(LogLevel::DEBUG)
+        || value > static_cast<int>(LogLevel::ERROR)) {
+        throw std::invalid_argument(
+            param + " must be between 0 and 3");
+    }
+    return static_cast<LogLevel>(value);
 }
 
 int parse_args(int argc, char *argv[], LoggerParams &config) {
@@ -51,19 +65,26 @@ int parse_args(int argc, char *argv[], LoggerParams &config) {
         } else if (param == "--print-formatted") {
             config.print_formatted = true;
         } else if (param == "--print-level") {
-            config.print_level = (LogLevel) read_int(param, i, argc, argv);
+            config.print_level = read_level(param, i, argc, argv);
         } else if (param == "--no-log") {
             config.log = false;
         } else if (param == "--log-level") {
-            config.log_level = (LogLevel) read_int(param, i, argc, argv);
+            config.log_level = read_level(param, i, argc, argv);
         } else if (param == "--log-format") {
             config.log_format = argv[++i];
         } else if (param == "--send-to-screen") {
             config.send_to_screen = true;
         } else if (param == "--screen-level") {
-            config.screen_level = (LogLevel) read_int(param, i, argc, argv);
+            config.screen_level = read_level(param, i, argc, argv);
         } else if (param == "--screen-queue") {
-            config.screen_queue_max = read_int(param, i, argc, argv);
+            const auto count = read_int(param, i, argc, argv);
+            if (count <= 0
+                || count > static_cast<int>(MAX_SCREEN_QUEUE_ROWS)) {
+                throw std::invalid_argument(
+                    "--screen-queue must be between 1 and "
+                    + std::to_string(MAX_SCREEN_QUEUE_ROWS));
+            }
+            config.screen_queue_max = static_cast<std::size_t>(count);
         } else if (param == "--screen-no-followup") {
             config.screen_followup = false;
         } else if (param == "--benchmark") {

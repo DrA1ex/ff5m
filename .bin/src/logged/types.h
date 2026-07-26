@@ -1,13 +1,16 @@
 // Types
 //
-// Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+// Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 //
 // This file may be distributed under the terms of the GNU GPLv3 license
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+
+constexpr std::size_t MAX_SCREEN_QUEUE_ROWS = 20;
 
 enum class LogLevel :uint8_t {
     DEBUG = 0,
@@ -32,6 +35,7 @@ struct LoggerParams {
     bool screen_followup = true;
     size_t screen_queue_max = 5;
     std::string screen_follow_up_file = "/tmp/logged_message_queue";
+    std::string screen_lock_file = "/tmp/logged_screen.lock";
 
     bool benchmark = false;
 };

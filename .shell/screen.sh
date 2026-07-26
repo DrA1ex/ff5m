@@ -102,28 +102,6 @@ convert_duration() {
     fi
 }
 
-level_to_color() {
-    local level="$1"
-    local level_trimmed="${level%"${level##*[![:space:]]}"}"
-
-    case "$level_trimmed" in
-            3|ERROR)
-                color=c43c00
-            ;;
-            2|WARN)
-                color=fa7c17
-            ;;
-            1|INFO)
-                color=ffffff
-            ;;
-            *)
-                color=b7a6b5
-            ;;
-        esac
-
-    echo "$color"
-}
-
 case "$1" in
     draw_loading)
         load_version
@@ -198,52 +176,6 @@ case "$1" in
             --batch text -p $x $y  -c "$servo_color"    -ha right    -va middle -f  "Typicons 12pt"      -t "$icon_servo"
         ) && x=$((x - x_offset))
         
-        "$BINS/typer" -db batch "${batches[@]}"
-    ;;
-    
-    boot_message)
-        shift
-        if [ -z "$1" ]; then
-            echo "message text is missing"
-            exit 1
-        fi
-        
-        args=("$@")
-        count=${#args[@]}
-
-        max_lines=5
-        line_height=22
-        bottom_offset=460
-
-        batches=(
-            --batch fill -c 0 -p 0 "$((bottom_offset - max_lines * line_height))" -s 800 "$(((max_lines + 1) * line_height))"
-        )
-
-        height=$(((count - 1) * line_height))
-        y_offset=$((bottom_offset - height))
-
-        for str in "${args[@]}"; do
-            # Split argument into level and message
-            level="${str%%;;*}"
-            message="${str#*;;}"
-            color=$(level_to_color "$level")
-            message_width=760
-            if [ "$y_offset" -eq "$bottom_offset" ]; then
-                message_width=650
-            fi
-
-            batches+=(
-                --batch text -ha left -va middle -p 10 "$y_offset" -c "$color" -f "JetBrainsMono Bold 8pt" --max-width "$message_width" --truncate -t "$message"
-            )
-
-            y_offset=$((y_offset + line_height))
-        done
-
-        uptime=$(awk '{print $1}' < /proc/uptime)
-        batches+=(
-            --batch text -ha right -va middle -p 790 "$bottom_offset" -c "00ffff" -f "JetBrainsMono Bold 8pt" -t "<< $uptime"
-        )
-
         "$BINS/typer" -db batch "${batches[@]}"
     ;;
     
