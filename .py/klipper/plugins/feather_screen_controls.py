@@ -45,7 +45,6 @@ except (ImportError, ValueError):
     from feather_pagination import Pagination, pagination_footer
 
 
-MOVE_CAUTION_Z = 5.0
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
 PREHEAT = {
@@ -321,9 +320,13 @@ class FeatherControlsMixin:
                 snapshot, self.reactor.monotonic())
         values[move_ui.MoveState.CAUTION_ACKNOWLEDGED] = bool(
             getattr(self, "move_caution_acknowledged", False))
+        values[move_ui.MoveState.CAUTION_Z] = self._move_caution_z()
         values[move_ui.MoveState.AUTO_PROFILE_STATE] = str(
             caution[1] or "missing")
         return values
+
+    def _move_caution_z(self):
+        return abs(float(self._setting("safe_z", 10.0))) / 2.0
 
     def _step_move_commands(self, snapshot, caution=None):
         values = self._move_ui_state(snapshot, caution)
@@ -369,7 +372,7 @@ class FeatherControlsMixin:
         profile, auto_available = self._bed_mesh_profile_state(eventtime)
         unsafe = (
             bool(values[5])
-            and float(values[2]) < MOVE_CAUTION_Z
+            and float(values[2]) < self._move_caution_z()
         )
         if not unsafe:
             self.move_caution_acknowledged = False
@@ -483,8 +486,6 @@ class FeatherControlsMixin:
             return (move_ui.JOYSTICK_PAGE
                     if getattr(self, "move_mode", "step") == "joystick"
                     else move_ui.STEP_PAGE)
-        if self.page == Page.Z_OFFSET_BRIEFING:
-            return z_offset_ui.BRIEFING_PAGE
         if self.page == Page.SAFE_Z_BRIEFING:
             return z_offset_ui.SAFE_BRIEFING_PAGE
         if self.page == Page.SAFE_Z_CALIBRATION:
@@ -516,7 +517,6 @@ class FeatherControlsMixin:
             self._render_move()
             return
         targets = {
-            AppPage.Z_OFFSET_BRIEFING: Page.Z_OFFSET_BRIEFING,
             AppPage.Z_OFFSET_SUMMARY: Page.Z_OFFSET_SUMMARY,
             AppPage.Z_OFFSET_PAPER_BRIEFING: Page.Z_OFFSET_PAPER_BRIEFING,
             AppPage.Z_OFFSET_PAPER: Page.Z_OFFSET_PAPER,

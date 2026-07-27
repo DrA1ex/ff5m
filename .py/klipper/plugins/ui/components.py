@@ -269,6 +269,8 @@ class Text(Component):
             invalidation=Invalidation.LAYOUT))
 
     _FONT_POINTS = re.compile(r"(\d+)pt$")
+    _FONT_SIZES = (8, 12, 16, 20, 28)
+    _FONT_ADVANCE = {8: 11, 12: 16, 16: 22, 20: 28, 28: 38}
 
     def __init__(self, value, color="35d9e6", font=None,
                  horizontal="center", vertical="center", key=None,
@@ -292,6 +294,12 @@ class Text(Component):
         value = self.font if isinstance(self.font, str) else "JetBrainsMono 8pt"
         match = self._FONT_POINTS.search(value)
         return int(match.group(1)) if match else 8
+
+    def _normalized_font_points(self):
+        requested = self._font_points()
+        return min(
+            self._FONT_SIZES,
+            key=lambda candidate: abs(candidate - requested))
 
     @staticmethod
     def _wrapped_line_count(value, columns):
@@ -321,8 +329,8 @@ class Text(Component):
             return None
         if not isinstance(self.value, str):
             return None
-        points = self._font_points()
-        line_height = max(10, int(round(points * 1.65)))
+        points = self._normalized_font_points()
+        line_height = max(16, int(round(points * 1.65)))
         wrap = bool(self.kwargs.get("wrap", False))
         if wrap:
             width = self.kwargs.get("max_width")
@@ -331,9 +339,9 @@ class Text(Component):
             if width is None:
                 return None
             width = max(1, int(width) - self.layout_options.padding.horizontal)
-            character_width = max(1.0, points * 4.0 / 3.0 * 0.60)
+            character_width = self._FONT_ADVANCE[points]
             lines = self._wrapped_line_count(
-                self.value, int(width / character_width))
+                self.value, int(width / float(character_width)))
         else:
             lines = max(1, len(self.value.split("\n")))
         maximum = self.kwargs.get("max_height")

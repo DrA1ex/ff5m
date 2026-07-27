@@ -33,6 +33,8 @@ class MoveState(StateKey):
     CURSOR = state(tuple, default=None, mutable=False,
                    category="movement", simulation_role="input.cursor")
     CAUTION_ACKNOWLEDGED = state(bool, default=False, category="safety")
+    CAUTION_Z = state(float, default=5.0, minimum=0.0, unit="mm",
+                      mutable=False, category="safety")
     AUTO_PROFILE_STATE = state(
         str, default="missing", choices=("missing", "available", "active"),
         category="safety")

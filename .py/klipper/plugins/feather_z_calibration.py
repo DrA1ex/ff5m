@@ -296,14 +296,6 @@ class FeatherZCalibrationMixin:
             self.renderer, self._z_summary_ui_state())
         self.renderer.send(commands)
 
-    def _render_z_briefing(self):
-        commands = self.renderer.begin_page(
-            "Z offset calibration", back=True)
-        commands += z_offset_ui.render_briefing(self.renderer, {
-            z_offset_ui.BriefingState.SAFE_Z: self._safe_z(),
-        })
-        self.renderer.send(commands)
-
     def _safe_z_briefing_ui_state(self):
         return {
             z_offset_ui.SafeBriefingState.CURRENT: self._safe_z(),
@@ -488,7 +480,7 @@ class FeatherZCalibrationMixin:
             self._run_script(self._z_preparation_command())
             self.z_calibration.prepared = True
             self._begin_z_weight_gauge()
-            self._show_page(Page.Z_OFFSET_BRIEFING)
+            self._show_page(Page.Z_OFFSET_SUMMARY)
             return
         except Exception as exc:
             if getattr(self, "shutdown_active", False):
@@ -543,7 +535,7 @@ class FeatherZCalibrationMixin:
 
     def _continue_after_safe_z(self):
         if self.z_calibration.prepared:
-            self._show_page(Page.Z_OFFSET_BRIEFING)
+            self._show_page(Page.Z_OFFSET_SUMMARY)
             return
         self._start_z_calibration_preparation()
 

@@ -26,19 +26,16 @@ class SafeBriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "SAFE Z IS THE HEIGHT USED BEFORE LATERAL PARKING AND CALIBRATION MOVES.",
+            "SAFE Z IS THE CLEARANCE USED BEFORE THE PRINTER PARKS OR MOVES SIDEWAYS.",
             color="35d9e6", font=FONT, wrap=True, auto_height=True),
         Text(
-            "BED LEVELING AND A LONGER NOZZLE CAN REDUCE THE REAL CLEARANCE.",
+            "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True),
         Text(
-            "FEATHER WILL MOVE TO THE BED CENTER, PROBE IT, THEN ADD 5 MM.",
+            "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF SAFE CLEARANCE.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True),
         Text(
-            "THIS CHECK RUNS BEFORE NOZZLE CLEANING; NORMAL PREPARATION CONTINUES AFTERWARD.",
-            color="d9e4e8", font=FONT, wrap=True, auto_height=True),
-        Text(
-            "SKIP THIS STEP IF SAFE Z WAS ALREADY VERIFIED FOR THIS SETUP.",
+            "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True),
         gap=20,
     ).ref(SafeBriefingRef.TEXT)

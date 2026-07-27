@@ -18,13 +18,19 @@ def compact(content):
     return Override(content).with_button_style(COMPACT_BUTTONS).apply()
 
 
-def _caution_visible(z, homed_z, acknowledged):
-    return bool(homed_z) and float(z) < 5.0 and not bool(acknowledged)
+def _caution_visible(z, homed_z, acknowledged, threshold):
+    return (bool(homed_z) and float(z) < float(threshold)
+            and not bool(acknowledged))
 
 
 def _caution_for(profile):
-    return lambda z, homed_z, acknowledged, current: (
-        _caution_visible(z, homed_z, acknowledged) and current == profile)
+    return lambda z, homed_z, acknowledged, current, threshold: (
+        _caution_visible(z, homed_z, acknowledged, threshold)
+        and current == profile)
+
+
+def _caution_height(threshold):
+    return "Z IS BELOW %g MM" % float(threshold)
 
 
 CAUTION_WIDTH = 420
@@ -42,12 +48,14 @@ def caution_layers():
         bind(ToolheadState.HOMED_Z),
         bind(MoveState.CAUTION_ACKNOWLEDGED),
         bind(MoveState.AUTO_PROFILE_STATE),
+        bind(MoveState.CAUTION_Z),
     )
+    height = derived(_caution_height, bind(MoveState.CAUTION_Z))
     dismiss = SetValue(MoveState.CAUTION_ACKNOWLEDGED, True)
     return (
         When(derived(_caution_for("active"), *inputs), Dialog(
             "CAUTION",
-            ("Z IS BELOW 5 MM", "XY MOTION MAY SCRATCH THE BED",
+            (height, "XY MOTION MAY SCRATCH THE BED",
              "BED PROFILE 'AUTO' IS LOADED"),
             ((CAUTION_UNLOAD, "UNLOAD", "warning"),
              (dismiss, "OK", "enabled")),
@@ -55,7 +63,7 @@ def caution_layers():
         )),
         When(derived(_caution_for("available"), *inputs), Dialog(
             "CAUTION",
-            ("Z IS BELOW 5 MM", "XY MOTION MAY SCRATCH THE BED",
+            (height, "XY MOTION MAY SCRATCH THE BED",
              "LOAD BED PROFILE 'AUTO'?"),
             ((dismiss, "CONTINUE", "enabled"),
              (CAUTION_AUTO, "LOAD", "warning")),
@@ -63,7 +71,7 @@ def caution_layers():
         )),
         When(derived(_caution_for("missing"), *inputs), Dialog(
             "CAUTION",
-            ("Z IS BELOW 5 MM", "XY MOTION MAY SCRATCH THE BED",
+            (height, "XY MOTION MAY SCRATCH THE BED",
              "PROFILE 'AUTO' IS NOT AVAILABLE"),
             ((dismiss, "CONTINUE", "enabled"),),
             tone="warning", modal=False,

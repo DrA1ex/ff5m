@@ -141,7 +141,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.CALIBRATION_GUIDE: "_render_calibration_guide",
             FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
-            FEATHER.Page.Z_OFFSET_BRIEFING: "_render_z_briefing",
             FEATHER.Page.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
             FEATHER.Page.Z_OFFSET_PAPER: "_render_z_paper",
             FEATHER.Page.SAFE_Z_BRIEFING: "_render_safe_z_briefing",
@@ -507,11 +506,6 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("START HEIGHT: 16.000 MM", briefing)
         self.assertIn("z.safe.skip", briefing)
         self.assertIn("z.safe.calibrate", briefing)
-
-        controller._render_z_briefing()
-        z_briefing = "\n".join(batches[-1])
-        self.assertIn("ACTIVE SAFE Z: 8.000 MM", z_briefing)
-        self.assertIn("PARKING AND LATERAL MOVE HEIGHT", z_briefing)
 
         controller._render_safe_z()
         before_probe = "\n".join(batches[-1])

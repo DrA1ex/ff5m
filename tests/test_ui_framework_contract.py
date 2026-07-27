@@ -15,7 +15,6 @@ from ff5m_ui.keys import AppPage  # noqa: E402
 from ff5m_ui.move.actions import MoveCommand  # noqa: E402
 from ff5m_ui.move.state import MoveState, ToolheadState  # noqa: E402
 from ff5m_ui.z_offset.actions import ZOffsetCommand  # noqa: E402
-from ff5m_ui.z_offset.briefing.state import BriefingState  # noqa: E402
 from ff5m_ui.z_offset.paper.state import PaperState  # noqa: E402
 from ff5m_ui.z_offset.paper_briefing.state import PaperBriefingState  # noqa: E402
 from ff5m_ui.z_offset.safe.state import SafeState  # noqa: E402
@@ -80,7 +79,6 @@ class FrameworkContractTest(unittest.TestCase):
             MoveState: "ui.pages.move.state.MoveState",
             ToolheadState: "ui.pages.move.state.ToolheadState",
             ZOffsetCommand: "ui.pages.z_offset.actions.ZOffsetCommand",
-            BriefingState: "ui.pages.z_offset.briefing.state.BriefingState",
             PaperState: "ui.pages.z_offset.paper.state.PaperState",
             PaperBriefingState:
                 "ui.pages.z_offset.paper_briefing.state.PaperBriefingState",
@@ -101,7 +99,6 @@ class FrameworkContractTest(unittest.TestCase):
             {
                 "ui.pages.keys.AppPage.MOVE_STEP",
                 "ui.pages.keys.AppPage.MOVE_JOYSTICK",
-                "ui.pages.keys.AppPage.Z_OFFSET_BRIEFING",
                 "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
                 "ui.pages.keys.AppPage.Z_OFFSET_PAPER_BRIEFING",
                 "ui.pages.keys.AppPage.Z_OFFSET_PAPER",

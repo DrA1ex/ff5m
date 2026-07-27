@@ -7,7 +7,6 @@ class AppPage(PageKey):
     __key_namespace__ = "ui.pages.keys.AppPage"
     MOVE_STEP = "move.step"
     MOVE_JOYSTICK = "move.joystick"
-    Z_OFFSET_BRIEFING = "z_offset.briefing"
     Z_OFFSET_SUMMARY = "z_offset.summary"
     Z_OFFSET_PAPER_BRIEFING = "z_offset.paper_briefing"
     Z_OFFSET_PAPER = "z_offset.paper"

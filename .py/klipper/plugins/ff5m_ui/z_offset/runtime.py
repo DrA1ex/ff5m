@@ -6,7 +6,6 @@ from .actions import (
     SAFE_SAVE, SAFE_SKIP, SAVE, SELECTION_NEXT, Adjustment,
     AdjustmentRequest, ZONE_ACTIONS, Zone, ZoneRequest, ZOffsetCommand,
 )
-from .briefing.state import BriefingState
 from .paper.state import PaperState
 from .paper_briefing.state import PaperBriefingState
 from .safe.state import SafeState
@@ -23,8 +22,6 @@ _LAZY_EXPORTS = {
     "render_safe_briefing": ("safe_briefing.page", "render"),
     "SAFE_PAGE": ("safe.page", "PAGE"),
     "render_safe": ("safe.page", "render"),
-    "BRIEFING_PAGE": ("briefing.page", "PAGE"),
-    "render_briefing": ("briefing.page", "render"),
     "PAPER_PAGE": ("paper.page", "PAGE"),
     "render_paper": ("paper.page", "render"),
     "update_paper_gauge": ("paper.page", "update_gauge"),
