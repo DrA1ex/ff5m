@@ -3,10 +3,12 @@
 from enum import Enum
 
 from ui.actions import Navigate
+from ui.bindings import bind, derived
 from ui.components import Button, Text
 from ui.layout import Column, PageTree as Page, Spacer
 from ...keys import AppPage
 from ..common import CONTENT, FONT
+from .state import BriefingState
 
 
 PAGE_ID = AppPage.Z_OFFSET_BRIEFING
@@ -27,9 +29,13 @@ class BriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "Z OFFSET SETS THE NOZZLE-TO-BED HEIGHT FOR THE FIRST LAYER.",
-            color="35d9e6", font=FONT, wrap=True, auto_height=True,
-        ).ref(BriefingRef.LINE_1),
+            derived(
+                lambda safe_z:
+                    "ACTIVE SAFE Z: %.3f MM. PARKING AND LATERAL MOVE HEIGHT."
+                    % safe_z,
+                bind(BriefingState.SAFE_Z)),
+            color="35d9e6", font=FONT,
+        ).height(28).ref(BriefingRef.LINE_1),
         Text(
             "CHOOSE ONE OR MORE BED ZONES; FEATHER GUIDES EACH PAPER TEST.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True,
@@ -62,5 +68,5 @@ def _content():
 PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
 
 
-def render(renderer):
-    return PAGE.draw(renderer)
+def render(renderer, values):
+    return PAGE.draw(renderer, values)

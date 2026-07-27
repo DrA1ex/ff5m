@@ -20,6 +20,25 @@ SPEC.loader.exec_module(ZCAL)
 
 
 class ZCalibrationStateTest(unittest.TestCase):
+    def test_safe_z_candidate_uses_clean_trigger_plus_five(self):
+        session = ZCAL.ZCalibrationSession()
+        session.begin(0.0, None, "", -0.25, False, safe_z=10.0)
+
+        target = session.set_safe_z_trigger(-0.375)
+
+        self.assertAlmostEqual(target, 4.625)
+        self.assertTrue(session.safe_z_ready)
+        self.assertAlmostEqual(session.adjust_safe_z(1.0), 5.625)
+        self.assertAlmostEqual(session.adjust_safe_z(-1.0), 4.625)
+        self.assertAlmostEqual(session.accept_safe_z(), 4.625)
+
+    def test_safe_z_adjustment_cannot_cross_the_one_mm_clearance_floor(self):
+        session = ZCAL.ZCalibrationSession()
+        session.begin(0.0, None, "", -0.25, False)
+        session.set_safe_z_trigger(0.2)
+
+        self.assertAlmostEqual(session.adjust_safe_z(-100.0), 1.2)
+
     def test_formula_supports_negative_configured_probe_offset(self):
         self.assertAlmostEqual(
             ZCAL.calculate_z_offset(0.125, -0.500, -0.250), 0.375)

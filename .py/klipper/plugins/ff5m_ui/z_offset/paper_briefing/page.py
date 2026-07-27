@@ -41,7 +41,10 @@ def _content():
             color="d9e4e8", font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_2),
         Text(
-            "MOVE TO 1.5 MM RECORDS THAT HEIGHT AS REFERENCE Z, SO YOU",
+            derived(lambda height:
+                    "MOVE TO %.3f MM USES HALF OF SAFE Z AS REFERENCE, SO YOU" %
+                    height,
+                    bind(PaperBriefingState.MANUAL_START)),
             color="d9e4e8", font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_3),
         Text(

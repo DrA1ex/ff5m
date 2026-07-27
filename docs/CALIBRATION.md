@@ -234,21 +234,22 @@ Calibrate Z-offset only while the printer is idle. The Stock screen retains its 
 ### Feather guided paper test
 
 1. Open **Control → Calibration → Z Offset**.
-2. Select PLA, PETG, ABS, or ABS-PC and press **Start**. Feather heats, cleans, homes, lifts Z, and tares the load cells. Select **Without cleaning** to leave the bed temperature completely unchanged and prepare only the nozzle at `clear_cooldown_temp`.
-3. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
-4. Read the briefing, then select one or more zones: **Rear Left**, **Center**, **Rear Right**, **Front Left**, or **Front Right**. The results page lets you save one measured zone or the average of several zones. When **Auto Load** is enabled, the saved value is applied automatically before every print.
-5. After selecting a zone, read the paper-test instructions. Put normal printer paper under the clean nozzle, then press **Probe**. After the two-sample probe completes and the bed retracts, begin the paper test. If probing is unreliable, press **Move to 1.5 mm** instead; this establishes the manual paper-test starting position.
-6. Select a step of 0.005, 0.010, 0.025, or 0.050 mm:
+2. Select PLA, PETG, ABS, or ABS-PC and press **Start**. Select **Without cleaning** to leave the bed temperature completely unchanged during the later preparation and use only `clear_cooldown_temp` for the nozzle.
+3. Feather first offers to calibrate **Safe Z**, the absolute height used before lateral parking and calibration moves. This deliberately happens before nozzle cleaning so the cleaning motion can use a verified clearance. Choose **Calibrate Safe Z** after changing the nozzle or bed setup. Feather homes, moves to twice the current Safe Z, tares the load cells, probes the bed center, adds 5 mm, and lets you adjust the result in 1 mm increments before saving. Choose **Skip** when Safe Z has already been verified for the current hardware.
+4. Feather then performs the selected nozzle-cleaning or cooldown preparation, lifts Z, and tares the load cells. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
+5. Read the Z-offset briefing, then select one or more zones: **Rear Left**, **Center**, **Rear Right**, **Front Left**, or **Front Right**. The results page lets you save one measured zone or the average of several zones. When **Auto Load** is enabled, the saved value is applied automatically before every print.
+6. After selecting a zone, read the paper-test instructions. Put normal printer paper under the clean nozzle, then press **Probe**. After the two-sample probe completes and the bed retracts, begin the paper test. If probing is unreliable, use the alternative move button; it positions Z at half of the saved Safe Z height and establishes that position as the manual paper-test reference.
+7. Select a step of 0.005, 0.010, 0.025, 0.050, or 0.100 mm:
    - **Closer** increases paper drag.
    - **Farther** decreases paper drag.
    - **Reset to 0.000** physically moves to the position represented by a true zero Z-offset. The displayed nozzle coordinate can differ from `0.000` because the probe or manual reference is accounted for; the displayed Z-offset remains `0.000`.
-7. When the paper has consistent light drag, press **Accept Zone**. Measure any other positions you want; measuring a position again replaces its earlier result.
-8. On the results screen:
+8. When the paper has consistent light drag, press **Accept Zone**. Measure any other positions you want; measuring a position again replaces its earlier result.
+9. On the results screen:
    - one measured position is selected automatically;
    - with several positions, their average is selected by default;
    - tap the selected-result control to cycle between the average and individual positions;
    - a spread above 0.025 mm displays a warning but does not prevent saving.
-9. Set **Auto Load** to the desired state and press **Save Selected Z Offset**. Back asks for confirmation before discarding measured results.
+10. Set **Auto Load** to the desired state and press **Save Selected Z Offset**. Back asks for confirmation before discarding measured results.
 
 The right-side load indicator turns red above 400 g. During manual paper movement Feather warns above 800 g; move **Farther** and inspect the paper/nozzle before continuing.
 

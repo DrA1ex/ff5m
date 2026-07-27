@@ -24,7 +24,7 @@ try:
     from .ff5m_ui.z_offset import runtime as z_offset_ui
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
-    from .feather_z_calibration import PAPER_STEPS
+    from .feather_z_calibration import PAPER_STEPS, SAFE_Z_ADJUST_STEP
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from ui import (
@@ -41,7 +41,7 @@ except (ImportError, ValueError):
     from ff5m_ui.z_offset import runtime as z_offset_ui
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
-    from feather_z_calibration import PAPER_STEPS
+    from feather_z_calibration import PAPER_STEPS, SAFE_Z_ADJUST_STEP
     from feather_pagination import Pagination, pagination_footer
 
 
@@ -485,6 +485,10 @@ class FeatherControlsMixin:
                     else move_ui.STEP_PAGE)
         if self.page == Page.Z_OFFSET_BRIEFING:
             return z_offset_ui.BRIEFING_PAGE
+        if self.page == Page.SAFE_Z_BRIEFING:
+            return z_offset_ui.SAFE_BRIEFING_PAGE
+        if self.page == Page.SAFE_Z_CALIBRATION:
+            return z_offset_ui.SAFE_PAGE
         if self.page == Page.Z_OFFSET_SUMMARY:
             return z_offset_ui.SUMMARY_PAGE
         if self.page == Page.Z_OFFSET_PAPER_BRIEFING:
@@ -516,6 +520,8 @@ class FeatherControlsMixin:
             AppPage.Z_OFFSET_SUMMARY: Page.Z_OFFSET_SUMMARY,
             AppPage.Z_OFFSET_PAPER_BRIEFING: Page.Z_OFFSET_PAPER_BRIEFING,
             AppPage.Z_OFFSET_PAPER: Page.Z_OFFSET_PAPER,
+            AppPage.SAFE_Z_BRIEFING: Page.SAFE_Z_BRIEFING,
+            AppPage.SAFE_Z_CALIBRATION: Page.SAFE_Z_CALIBRATION,
         }
         if target not in targets:
             raise KeyError("Unknown application page: %s" % target)
@@ -661,7 +667,19 @@ class FeatherControlsMixin:
             self._enter_z_zone()
         elif key == z_offset_ui.ZOffsetCommand.PROBE:
             self._probe_z_zone()
-        elif key == z_offset_ui.ZOffsetCommand.MOVE_1_5:
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_CALIBRATE:
+            self._begin_safe_z_calibration()
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_SKIP:
+            self._skip_safe_z_calibration()
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_PROBE:
+            self._probe_safe_z()
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_HIGHER:
+            self._adjust_safe_z(SAFE_Z_ADJUST_STEP)
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_LOWER:
+            self._adjust_safe_z(-SAFE_Z_ADJUST_STEP)
+        elif key == z_offset_ui.ZOffsetCommand.SAFE_SAVE:
+            self._save_safe_z()
+        elif key == z_offset_ui.ZOffsetCommand.MOVE_SAFE_HALF:
             self._move_z_manual_start()
         elif isinstance(command.payload, z_offset_ui.AdjustmentRequest):
             direction = command.payload.direction

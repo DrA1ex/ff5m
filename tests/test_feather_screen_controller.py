@@ -144,6 +144,8 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.Z_OFFSET_BRIEFING: "_render_z_briefing",
             FEATHER.Page.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
             FEATHER.Page.Z_OFFSET_PAPER: "_render_z_paper",
+            FEATHER.Page.SAFE_Z_BRIEFING: "_render_safe_z_briefing",
+            FEATHER.Page.SAFE_Z_CALIBRATION: "_render_safe_z",
             FEATHER.Page.LIVE_Z_OFFSET: "_render_live_z_offset",
             FEATHER.Page.CALIBRATION_CONFIRM: "_render_calibration_confirm",
             FEATHER.Page.CALIBRATION_PROGRESS: "_render_calibration_progress",
@@ -485,9 +487,45 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_z_paper()
 
         drawing = "\n".join(batches[-1])
-        self.assertIn("z.move_1_5", drawing)
+        self.assertIn("z.move_safe_half", drawing)
+        self.assertIn("0.100 MM", drawing)
         for action in ("z.closer", "z.farther", "z.reset", "z.accept"):
             self.assertNotIn(action, drawing)
+
+    def test_safe_z_pages_explain_measurement_and_gate_adjustment_until_probe(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.0, None, "", -0.25, False, safe_z=8.0)
+
+        controller._render_safe_z_briefing()
+        briefing = "\n".join(batches[-1])
+        self.assertIn("CURRENT: 8.000 MM", briefing)
+        self.assertIn("START HEIGHT: 16.000 MM", briefing)
+        self.assertIn("z.safe.skip", briefing)
+        self.assertIn("z.safe.calibrate", briefing)
+
+        controller._render_z_briefing()
+        z_briefing = "\n".join(batches[-1])
+        self.assertIn("ACTIVE SAFE Z: 8.000 MM", z_briefing)
+        self.assertIn("PARKING AND LATERAL MOVE HEIGHT", z_briefing)
+
+        controller._render_safe_z()
+        before_probe = "\n".join(batches[-1])
+        self.assertIn("z.safe.probe", before_probe)
+        for action in ("z.safe.lower", "z.safe.higher", "z.safe.save"):
+            self.assertNotIn(action, before_probe)
+
+        controller.z_calibration.set_safe_z_trigger(-0.4)
+        controller._render_safe_z()
+        after_probe = "\n".join(batches[-1])
+        self.assertIn("TRIGGER Z", after_probe)
+        self.assertIn("4.600 MM", after_probe)
+        for action in ("z.safe.lower", "z.safe.higher", "z.safe.save"):
+            self.assertIn(action, after_probe)
 
     def test_live_z_offset_page_separates_saved_current_and_unsaved(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -723,6 +761,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn(
             "CLEAR_NOZZLE EXTRUDER_TEMP=270 BED_TEMP=105", clean)
         self.assertIn('S="Z OFFSET: TARE"', clean)
+        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", clean)
         self.assertIn("LOAD_CELL_TARE", clean)
         self.assertIn('S="Z OFFSET: READY"', clean)
 
@@ -734,6 +773,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "_WAIT_TEMPERATURE CMD=M104 VALUE=120", no_clean)
         self.assertNotIn("M140", no_clean)
         self.assertNotIn("CLEAR_NOZZLE", no_clean)
+        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", no_clean)
         self.assertIn("LOAD_CELL_TARE", no_clean)
 
     def test_z_progress_stages_match_cleaning_choice(self):
@@ -764,7 +804,8 @@ class ControllerSafetyTest(unittest.TestCase):
             "variables": {"load_zoffset": 1}})()
         controller.z_calibration = FEATHER.ZCalibrationSession()
         controller._require_idle = lambda: None
-        controller._show_page = lambda page: None
+        pages = []
+        controller._show_page = pages.append
 
         controller._start_z_calibration()
 
@@ -775,9 +816,11 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(session.original_mesh_profile, "adaptive-run")
         self.assertEqual(controller.gcode.commands, [
             "_CANCEL_DELAYED_COMMANDS",
+            "SET_SKEW CLEAR=1",
             "_SET_GCODE_OFFSET Z=0 MOVE=0",
             "BED_MESH_CLEAR"])
-        self.assertEqual(len(controller.reactor.callbacks), 1)
+        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_BRIEFING])
+        self.assertEqual(controller.reactor.callbacks, [])
 
     def test_z_session_entry_failure_restores_runtime_and_mesh(self):
         class FailClear(GCodeRecorder):
@@ -806,6 +849,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(controller.gcode.commands, [
             "_CANCEL_DELAYED_COMMANDS",
+            "SET_SKEW CLEAR=1",
             "_SET_GCODE_OFFSET Z=0 MOVE=0",
             "BED_MESH_CLEAR",
             "_SET_GCODE_OFFSET Z=-0.187000 MOVE=0",

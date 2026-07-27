@@ -17,8 +17,10 @@ class PaperState(StateKey):
     MOVING_TO_START = state(bool, default=False, mutable=False,
                             category="z_offset")
     STEP = state(float, default=0.010,
-                 choices=(0.005, 0.010, 0.025, 0.050), unit="mm",
+                 choices=(0.005, 0.010, 0.025, 0.050, 0.100), unit="mm",
                  category="z_offset")
+    MANUAL_START = state(float, default=5.0, minimum=0.0, unit="mm",
+                         mutable=False, category="z_offset")
     READY = state(bool, default=False, mutable=False, category="z_offset")
     GAUGE = state(dict, default=None, mutable=False, category="z_offset")
     DIALOG = state(str, default=None, category="z_offset")

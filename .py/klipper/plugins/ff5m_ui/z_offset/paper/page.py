@@ -7,7 +7,7 @@ from ui.bindings import bind, derived
 from ui.components import Button, Dialog, Panel, Text, VerticalGauge
 from ui.layout import Column, Equal, Flex, Grid, Overlay, PageTree as Page, Spacer, When
 from ...keys import AppPage
-from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_1_5, PROBE, RESET
+from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_SAFE_HALF, PROBE, RESET
 from ..common import (
     CONTENT, FONT, PAPER_STEPS, Z_WEIGHT_DANGER, compact,
 )
@@ -40,12 +40,13 @@ class PaperRef(Enum):
     CANDIDATE_VALUE = "paper.candidate.value"
     START = "paper.start"
     PROBE = "paper.probe"
-    MOVE_1_5 = "paper.move_1_5"
+    MOVE_SAFE_HALF = "paper.move_safe_half"
     STEPS = "paper.steps"
     STEP_005 = "paper.step.005"
     STEP_010 = "paper.step.010"
     STEP_025 = "paper.step.025"
     STEP_050 = "paper.step.050"
+    STEP_100 = "paper.step.100"
     ADJUST = "paper.adjust"
     CLOSER = "paper.closer"
     FARTHER = "paper.farther"
@@ -60,7 +61,7 @@ class PaperRef(Enum):
 
 _STEP_REFS = dict(zip(PAPER_STEPS, (
     PaperRef.STEP_005, PaperRef.STEP_010,
-    PaperRef.STEP_025, PaperRef.STEP_050,
+    PaperRef.STEP_025, PaperRef.STEP_050, PaperRef.STEP_100,
 )))
 
 
@@ -120,13 +121,15 @@ def _start():
                 font="JetBrainsMono Bold 12pt",
             ).ref(PaperRef.PROBE),
             Button(
-                MOVE_1_5, "MOVE TO 1.5 MM",
+                MOVE_SAFE_HALF,
+                derived(lambda height: "MOVE TO %.3f MM" % height,
+                        bind(PaperState.MANUAL_START)),
                 state=derived(
                     _move_state,
                     bind(PaperState.PROBING),
                     bind(PaperState.MOVING_TO_START)),
                 font="JetBrainsMono Bold 12pt",
-            ).ref(PaperRef.MOVE_1_5),
+            ).ref(PaperRef.MOVE_SAFE_HALF),
         ),),
         columns=Equal(2), rows=Equal(1), gap=(20, 0),
     ).ref(PaperRef.START)
@@ -143,7 +146,7 @@ def _steps():
                     bind(PaperState.STEP)),
             ).ref(_STEP_REFS[step])
             for step in PAPER_STEPS),),
-        columns=Equal(4), rows=Equal(1), gap=(10, 0),
+        columns=Equal(5), rows=Equal(1), gap=(8, 0),
     )).padding(right=8).ref(PaperRef.STEPS)
 
 

@@ -42,11 +42,17 @@ class ZOffsetCommand(CommandKey):
     DISCARD_CONFIRM = "z.discard.confirm"
     ENTER_ZONE = "z.paper_briefing.continue"
     PROBE = "z.probe"
-    MOVE_1_5 = "z.move_1_5"
+    MOVE_SAFE_HALF = "z.move_safe_half"
     CLOSER = "z.closer"
     FARTHER = "z.farther"
     RESET = "z.reset"
     ACCEPT = "z.accept"
+    SAFE_CALIBRATE = "z.safe.calibrate"
+    SAFE_SKIP = "z.safe.skip"
+    SAFE_PROBE = "z.safe.probe"
+    SAFE_HIGHER = "z.safe.higher"
+    SAFE_LOWER = "z.safe.lower"
+    SAFE_SAVE = "z.safe.save"
 
 
 _ZONE_KEYS = {
@@ -68,9 +74,9 @@ SAVE = Command(ZOffsetCommand.SAVE)
 DISCARD_CONFIRM = Command(ZOffsetCommand.DISCARD_CONFIRM)
 ENTER_ZONE = Command(ZOffsetCommand.ENTER_ZONE)
 PROBE = Command(ZOffsetCommand.PROBE, hint=ProbingHint(axis="z"))
-MOVE_1_5 = Command(
-    ZOffsetCommand.MOVE_1_5,
-    hint=MovementHint(axis="z", distance=1.5, speed=600))
+MOVE_SAFE_HALF = Command(
+    ZOffsetCommand.MOVE_SAFE_HALF,
+    hint=MovementHint(axis="z", speed=600))
 CLOSER = Command(
     ZOffsetCommand.CLOSER, AdjustmentRequest(Adjustment.CLOSER),
     hint=MovementHint(axis="z"))
@@ -79,3 +85,14 @@ FARTHER = Command(
     hint=MovementHint(axis="z"))
 RESET = Command(ZOffsetCommand.RESET)
 ACCEPT = Command(ZOffsetCommand.ACCEPT)
+SAFE_CALIBRATE = Command(ZOffsetCommand.SAFE_CALIBRATE)
+SAFE_SKIP = Command(ZOffsetCommand.SAFE_SKIP)
+SAFE_PROBE = Command(
+    ZOffsetCommand.SAFE_PROBE, hint=ProbingHint(axis="z"))
+SAFE_HIGHER = Command(
+    ZOffsetCommand.SAFE_HIGHER,
+    hint=MovementHint(axis="z", distance=1.0, speed=300))
+SAFE_LOWER = Command(
+    ZOffsetCommand.SAFE_LOWER,
+    hint=MovementHint(axis="z", distance=-1.0, speed=300))
+SAFE_SAVE = Command(ZOffsetCommand.SAFE_SAVE)

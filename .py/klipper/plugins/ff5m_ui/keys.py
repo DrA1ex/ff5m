@@ -11,3 +11,5 @@ class AppPage(PageKey):
     Z_OFFSET_SUMMARY = "z_offset.summary"
     Z_OFFSET_PAPER_BRIEFING = "z_offset.paper_briefing"
     Z_OFFSET_PAPER = "z_offset.paper"
+    SAFE_Z_BRIEFING = "z_offset.safe_briefing"
+    SAFE_Z_CALIBRATION = "z_offset.safe"
