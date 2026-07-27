@@ -118,6 +118,16 @@ EXACT_ACTIONS = {
     Page.ERROR: ("error.restart", "error.firmware_restart"),
 }
 
+EMERGENCY_PAGES = frozenset((
+    Page.PRINTING, Page.PAUSED,
+    Page.CONTROL_MOVE, Page.CONTROL_HEAT,
+    Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION,
+    Page.CANCEL_CONFIRM,
+    Page.CALIBRATION_PROGRESS, Page.LIVE_Z_OFFSET,
+    Page.Z_OFFSET_SUMMARY, Page.Z_OFFSET_BRIEFING,
+    Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
+))
+
 
 class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     FeatherZCalibrationMixin):
@@ -615,6 +625,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         # hitbox generation and discard M108 before it reached the immediate
         # G-code handler.
         if action in ("global.abort", "cal.emergency_stop"):
+            if not self._emergency_stop_active():
+                logging.info(
+                    "[feather_screen] ignored inactive emergency stop")
+                return
             logging.warning(
                 "[feather_screen] immediate emergency stop requested page=%s",
                 self.page.name)
@@ -714,7 +728,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         if self.print_state == PrintState.DESTROYED:
             return
         if action == "global.abort":
-            self._run_immediate_command("M112")
+            if self._emergency_stop_active():
+                self._run_immediate_command("M112")
+            else:
+                logging.info(
+                    "[feather_screen] ignored inactive emergency stop")
             return
         now = self.reactor.monotonic()
         if now - self.last_action_time < ACTION_DEBOUNCE:
@@ -835,20 +853,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     getattr(self, "renderer", None),
                     "output_frozen", False)):
             return
-        emergency = (
-            page in (
-                Page.PRINTING, Page.PAUSED,
-                Page.CONTROL_MOVE, Page.CONTROL_HEAT,
-                Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION,
-                Page.CANCEL_CONFIRM,
-                Page.CALIBRATION_PROGRESS, Page.LIVE_Z_OFFSET,
-                Page.Z_OFFSET_SUMMARY, Page.Z_OFFSET_BRIEFING,
-                Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER))
         set_emergency = getattr(
             getattr(self, "renderer", None),
             "set_emergency_stop_visible", None)
         if set_emergency is not None:
-            set_emergency(emergency)
+            set_emergency(self._emergency_stop_active(page))
         if (self.page == Page.CONTROL_MOVE
                 and (page != Page.CONTROL_MOVE
                      or getattr(self, "joystick_action", None) is not None)):
@@ -1053,6 +1062,65 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return bool(wait is not None and
                     getattr(wait, "variables", {}).get("cancel", False))
 
+    def _gcode_dispatcher_busy(self):
+        gcode = getattr(self, "gcode", None)
+        get_mutex = getattr(gcode, "get_mutex", None)
+        if get_mutex is None:
+            return False
+        try:
+            return bool(get_mutex().test())
+        except Exception:
+            return False
+
+    def _emergency_stop_active(self, page=None, eventtime=None):
+        page = page if page is not None else getattr(
+            self, "page", Page.IDLE_HOME)
+        if page not in EMERGENCY_PAGES:
+            return False
+        if eventtime is None:
+            reactor = getattr(self, "reactor", None)
+            eventtime = (reactor.monotonic()
+                         if reactor is not None else time.monotonic())
+
+        print_stats = getattr(self, "print_stats", None)
+        if print_stats is not None:
+            try:
+                if print_stats.get_status(eventtime).get("state") == "printing":
+                    return True
+            except Exception:
+                pass
+        if getattr(self, "busy_message", None) is not None:
+            return True
+        if self._temperature_wait_active():
+            return True
+        if getattr(self, "command_depth", 0) > 0:
+            return True
+        if self._gcode_dispatcher_busy():
+            return True
+
+        idle_timeout = getattr(self, "idle_timeout", None)
+        if idle_timeout is not None:
+            try:
+                if (str(idle_timeout.get_status(eventtime).get(
+                        "state", "")).lower() == "printing"):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _refresh_emergency_stop(self, eventtime=None):
+        renderer = getattr(self, "renderer", None)
+        setter = getattr(renderer, "set_emergency_stop_visible", None)
+        if setter is None:
+            return False
+        if not setter(self._emergency_stop_active(eventtime=eventtime)):
+            return False
+        # A full page render clears the old Typer hitbox as well as its
+        # framebuffer. This is required when an operation ends; merely
+        # painting over ABORT would leave an invisible M112 touch target.
+        self._show_page(self.page)
+        return True
+
     def _run_script(self, command, show_notice=True):
         """Serialize Feather G-code through Klipper's reactor mutex.
 
@@ -1116,6 +1184,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.busy_phase = 0
         logging.info("[feather_screen] operation start label=%s page=%s",
                      message, page.name)
+        self._refresh_emergency_stop()
         renderer.loader(message, 0)
         try:
             self._run_script(command)
@@ -1267,6 +1336,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             new_state = PrintState.IDLE
         if new_state != self.print_state:
             self._change_print_state(new_state, state)
+        self._refresh_emergency_stop(eventtime)
         if self.pending_action is not None:
             expected = {"print.pause": "paused", "print.resume": "printing",
                         "print.cancel.confirm": "cancelled"}.get(self.pending_action)

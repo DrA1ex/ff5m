@@ -1009,7 +1009,13 @@ class FeatherRenderer:
         return True
 
     def set_emergency_stop_visible(self, visible):
-        self._emergency_stop_visible = bool(visible)
+        visible = bool(visible)
+        if visible == self._emergency_stop_visible:
+            return False
+        self._emergency_stop_visible = visible
+        if not visible:
+            self._buttons.pop("global.abort", None)
+        return True
 
     def _emergency_stop_commands(self):
         return self.button(

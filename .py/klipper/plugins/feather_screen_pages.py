@@ -378,7 +378,7 @@ class FeatherPagesMixin:
         paused = self.print_state == PrintState.PAUSED
         controls_ready = self._print_controls_ready()
         commands = self.renderer.begin_page(
-            "PAUSED" if paused else "PRINTING", abort=True)
+            "PAUSED" if paused else "PRINTING")
         commands += self.renderer.button(
             "nav.home", 14, 7, 146, 46, "HOME",
             font="JetBrainsMono Bold 8pt")
@@ -641,7 +641,7 @@ class FeatherPagesMixin:
         if self.pending_action == "print.cancel.confirm":
             label = self._cancel_progress_label()
             commands = self.renderer.begin_page(
-                "STOPPING PRINT", abort=True)
+                "STOPPING PRINT")
             commands.append(self.renderer.text(
                 400, 170, label, "f2c94c",
                 "JetBrainsMono Bold 16pt", "center", "middle"))
@@ -659,7 +659,7 @@ class FeatherPagesMixin:
             self._last_cancel_label = label
             return
         commands = self.renderer.begin_page(
-            "Cancel print?", back=True, abort=True)
+            "Cancel print?", back=True)
         commands.append(self.renderer.text(400, 170, "The current print will stop",
                                            "ff9000", "Roboto 16pt", "center", "middle"))
         commands += self.renderer.button("print.cancel.back", 100, 285, 260, 100,

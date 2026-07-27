@@ -256,6 +256,7 @@ class PrintWorkflowTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
+        controller.renderer.set_emergency_stop_visible(True)
         FEATHER.FeatherScreen._render_cancel_confirm(controller)
         drawing = "\n".join(batches[0])
         self.assertIn("CANCELLING PRINT", drawing)

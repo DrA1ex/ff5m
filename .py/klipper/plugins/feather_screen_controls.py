@@ -282,7 +282,7 @@ class FeatherControlsMixin:
         now = self.reactor.monotonic()
         if snapshot is None:
             snapshot = self._move_status_snapshot(now)
-        commands = self.renderer.begin_page("Move", back=True, abort=True)
+        commands = self.renderer.begin_page("Move", back=True)
         if getattr(self, "move_mode", "step") == "joystick":
             self.joystick_drawn_cursor = None
             self.joystick_drawn_inertia = None
@@ -829,7 +829,7 @@ class FeatherControlsMixin:
         fan_speed = (self.fan.get_status(now).get("speed", 0.0) * 100
                      if self.fan is not None else 0.0)
         commands = self.renderer.begin_page(
-            "Heat / fan", back=True, abort=True)
+            "Heat / fan", back=True)
         rows = (("NOZZLE", 95, "selected", "heat.e"),
                 ("BED", 175, "warning", "heat.b"))
         for label, y, state, prefix in rows:
@@ -993,7 +993,7 @@ class FeatherControlsMixin:
         hot = status["temperature"] >= minimum
         commands = self.renderer.begin_page(
             "Filament - %s" % self.filament_material,
-            back=True, abort=True)
+            back=True)
         commands.append(self.renderer.text(
             400, 80, "Nozzle %.1f / %.0fC" % (status["temperature"], status["target"]),
             "ffb000" if not hot else "00f0f0", "Roboto Bold 14pt", "center"))
@@ -1116,7 +1116,7 @@ class FeatherControlsMixin:
             abs(unsaved) > self.z_adjust_warning_threshold + 0.0001)
         value_color = "ff4d5a" if outside_warning else "ffffff"
         commands = self.renderer.begin_page(
-            "Live Z offset", back=True, abort=True)
+            "Live Z offset", back=True)
 
         cards = (
             ("SAVED", saved, 20, "35d9e6"),
@@ -1526,7 +1526,7 @@ class FeatherControlsMixin:
     def _render_calibration_progress(self):
         label = self.print_status_text or "Calibration running..."
         title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
-        commands = self.renderer.begin_page(title, abort=True)
+        commands = self.renderer.begin_page(title)
         commands.append(self.renderer.text(
             400, 142, label, "b47aff", "JetBrainsMono Bold 12pt", "center",
             max_width=704, truncate=True))

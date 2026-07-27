@@ -186,6 +186,94 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("nav.menu", "\n".join(drawing))
         self.assertNotIn("global.abort", "\n".join(drawing))
 
+    def test_emergency_stop_requires_real_printer_activity(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.print_stats = StatusObject({"state": "standby"})
+        controller.idle_timeout = StatusObject({"state": "Ready"})
+        controller.temperature_wait = type(
+            "Wait", (), {"variables": {"active": False}})()
+        controller.command_depth = 0
+
+        class Mutex:
+            busy = False
+
+            def test(self):
+                return self.busy
+
+        mutex = Mutex()
+        controller.gcode = type("GCode", (), {
+            "get_mutex": lambda self: mutex,
+        })()
+
+        for state in ("standby", "paused", "complete", "cancelled", "error"):
+            controller.print_stats.status["state"] = state
+            self.assertFalse(
+                controller._emergency_stop_active(), state)
+
+        controller.print_stats.status["state"] = "printing"
+        self.assertTrue(controller._emergency_stop_active())
+        self.assertFalse(controller._emergency_stop_active(
+            FEATHER.Page.IDLE_HOME))
+
+        controller.print_stats.status["state"] = "standby"
+        mutex.busy = True
+        self.assertTrue(controller._emergency_stop_active())
+        mutex.busy = False
+
+        controller.idle_timeout.status["state"] = "Printing"
+        self.assertTrue(controller._emergency_stop_active())
+        controller.idle_timeout.status["state"] = "Ready"
+
+        controller.temperature_wait.variables["active"] = True
+        self.assertTrue(controller._emergency_stop_active())
+        controller.temperature_wait.variables["active"] = False
+
+        controller.command_depth = 1
+        self.assertTrue(controller._emergency_stop_active())
+
+    def test_inactive_operation_page_removes_abort_hitbox(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.print_stats = StatusObject({"state": "standby"})
+        controller.idle_timeout = StatusObject({"state": "Ready"})
+        controller.command_depth = 0
+        controller.busy_message = None
+
+        class Mutex:
+            busy = False
+
+            def test(self):
+                return self.busy
+
+        mutex = Mutex()
+        controller.gcode = type("GCode", (), {
+            "get_mutex": lambda self: mutex,
+        })()
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+
+        def render_move():
+            controller.renderer.send(
+                controller.renderer.begin_page("Move", back=True))
+
+        controller._render_move = render_move
+        render_move()
+        self.assertNotIn("global.abort", controller.renderer._buttons)
+
+        mutex.busy = True
+        self.assertTrue(controller._refresh_emergency_stop())
+        self.assertIn("global.abort", controller.renderer._buttons)
+
+        mutex.busy = False
+        self.assertTrue(controller._refresh_emergency_stop())
+        self.assertNotIn("global.abort", controller.renderer._buttons)
+        self.assertNotIn("global.abort", "\n".join(batches[-1]))
+
     def test_dashboard_refresh_redraws_only_changed_panel(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.page = FEATHER.Page.IDLE_HOME
@@ -292,6 +380,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.live_z_step = 0.005
         controller.live_z_dialog = None
         controller.z_adjust_warning_threshold = 0.3
+        controller.renderer.set_emergency_stop_visible(True)
 
         controller._render_live_z_offset()
 
@@ -333,7 +422,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("AUTO LOAD IS OFF", drawing)
         self.assertIn("live_z.save.no", drawing)
         self.assertIn("live_z.save.yes", drawing)
-        self.assertIn("global.abort", controller.renderer._buttons)
+        self.assertNotIn("global.abort", controller.renderer._buttons)
 
     def test_weight_gauge_uses_history_and_expands_without_clamping(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -485,6 +574,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 controller.print_status_text = "HEATING..."
                 batches = []
                 controller.renderer.send = batches.append
+                controller.renderer.set_emergency_stop_visible(True)
 
                 controller._render_calibration_progress()
 
@@ -831,6 +921,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_status_text = "CALIBRATION: STARTING"
         batches = []
         controller.renderer.send = batches.append
+        controller.renderer.set_emergency_stop_visible(True)
         controller._render_calibration_progress()
 
         controller.print_status_text = "HOMING..."
@@ -855,6 +946,11 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_touch_action("global.abort")
 
         self.assertEqual(immediate, ["M112"])
+
+        controller.command_depth = 0
+        immediate[:] = []
+        controller._handle_touch_action("global.abort")
+        self.assertEqual(immediate, [])
 
     def test_screw_repeat_progress_contains_only_probe_and_done(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1147,6 +1243,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "file_path": lambda self: "/data/test.gcode"})()
         controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
+        controller.renderer.set_emergency_stop_visible(True)
         controller._render_print_page()
         drawing = "\n".join(batches[0])
         self.assertIn("--id 1:global.abort", drawing)
@@ -1174,6 +1271,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "print_started": False}})()
         controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
+        controller.renderer.set_emergency_stop_visible(True)
 
         controller._render_print_page()
 
