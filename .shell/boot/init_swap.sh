@@ -7,12 +7,15 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-MOD=/data/.mod/.forge-x
-CFG_SCRIPT="/opt/config/mod/.shell/commands/zconf.sh"
-CFG_PATH="/opt/config/mod_data/variables.cfg"
+MOD="${MOD:-/data/.mod/.forge-x}"
+CFG_SCRIPT="${CFG_SCRIPT:-/opt/config/mod/.shell/commands/zconf.sh}"
+CFG_PATH="${CFG_PATH:-/opt/config/mod_data/variables.cfg}"
+SWAP_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+source "$SWAP_SCRIPT_DIR/usb_storage.sh"
 
 
-SWAP_SIZE="${1-"64M"}"
+SWAP_SIZE="${SWAP_SIZE-${1-64M}}"
 
 if [ -z "$SWAP_SIZE" ]; then
     echo "Usage: $0 <swap_size>"
@@ -20,20 +23,10 @@ if [ -z "$SWAP_SIZE" ]; then
 fi
 
 
-is_usb_disk() {
-    local device=$1
-    local device_name=$(basename "$device")
-    
-    if readlink -f "/sys/block/$device_name" | grep -q 'usb'; then
-        return 0
-    else
-        return 1
-    fi
-}
-
 size_convert() {
-    size=$1
-    case $size in
+    local size=$1
+    local bytes
+    case "$size" in
         *K) bytes=$((${size%K} * 1024)) ;;
         *M) bytes=$((${size%M} * 1024 * 1024)) ;;
         *G) bytes=$((${size%G} * 1024 * 1024 * 1024)) ;;
@@ -43,12 +36,64 @@ size_convert() {
     echo "$bytes"
 }
 
+swap_mkswap() {
+    if command -v mkswap >/dev/null 2>&1; then
+        command mkswap "$@"
+    else
+        busybox mkswap "$@"
+    fi
+}
+
+swap_swapon() {
+    if command -v swapon >/dev/null 2>&1; then
+        command swapon "$@"
+    else
+        busybox swapon "$@"
+    fi
+}
+
+swap_swapoff() {
+    if command -v swapoff >/dev/null 2>&1; then
+        command swapoff "$@"
+    else
+        busybox swapoff "$@"
+    fi
+}
+
+allocate_swap_file() {
+    local swap_file="$1"
+    local filesystem="$2"
+    local desired_size full_mib remainder
+
+    case "$filesystem" in
+        vfat|msdos|fat|fat12|fat16|fat32)
+            # The 5.4 FAT driver provides bmap(), so populated FAT files can
+            # be swap files. Do not use truncate/fallocate here: swapon must
+            # see a physical block behind every page.
+            desired_size=$(size_convert "$SWAP_SIZE")
+            full_mib=$((desired_size / 1048576))
+            remainder=$((desired_size % 1048576))
+            dd if=/dev/zero of="$swap_file" bs=1048576 \
+                count="$full_mib" conv=fsync || return 1
+            if [ "$remainder" -gt 0 ]; then
+                dd if=/dev/zero of="$swap_file" bs=1 \
+                    count="$remainder" seek=$((full_mib * 1048576)) \
+                    conv=notrunc,fsync || return 1
+            fi
+            ;;
+        *)
+            fallocate -l "$SWAP_SIZE" "$swap_file"
+            ;;
+    esac
+}
+
 make_swap() {
-    swap_file=$1
+    local swap_file=$1
+    local filesystem="${2:-ext4}"
+    local ret=0 current_size desired_size
     
-    swapoff -a
-    
-    ret=0
+    swap_swapoff -a
+
     if [ -f "$swap_file" ]; then
         current_size=$(ls -l "$swap_file" | awk '{print $5}')
         desired_size=$(size_convert "$SWAP_SIZE")
@@ -56,12 +101,12 @@ make_swap() {
         if [ ! "$current_size" -eq "$desired_size" ]; then
             echo "Recreating existing swap file..."
             rm -f "$swap_file"
-            fallocate -l "$SWAP_SIZE" "$swap_file"
+            allocate_swap_file "$swap_file" "$filesystem"
             ret=$?
         fi
     else
         echo "Generating swap file..."
-        fallocate -l "$SWAP_SIZE" "$swap_file"
+        allocate_swap_file "$swap_file" "$filesystem"
         ret=$?
     fi
 
@@ -71,82 +116,99 @@ make_swap() {
     fi
 
     chmod 600 "$swap_file"           \
-        && mkswap "$swap_file"       \
-        && swapon "$swap_file"       \
+        && swap_mkswap "$swap_file"  \
+        && swap_swapon "$swap_file"  \
     
     return $?
 }
 
 activate_usb_swap() {
+    local wait_seconds candidates
+    local size_kib partition filesystem desired_size desired_kib
+    local swap_file current_size available_kib
+
     echo "// Creating SWAP on USB..."
-    
-    for device in /dev/sd*; do
-        # Skip if it's a partition (e.g., /dev/sda1)
-        if [[ $device =~ [0-9]$ ]]; then
+
+    wait_seconds="${USB_SWAP_WAIT_SECONDS:-10}"
+    echo "Waiting up to ${wait_seconds}s for USB storage..."
+
+    if ! usb_storage_wait_for_candidates "$wait_seconds"; then
+        echo "@@ USB swap: no storage appeared within ${wait_seconds}s."
+        return 1
+    fi
+
+    candidates=$(usb_storage_candidates)
+    desired_size=$(size_convert "$SWAP_SIZE")
+    desired_kib=$(((desired_size + 1023) / 1024))
+
+    while read -r size_kib partition; do
+        [ -n "$partition" ] || continue
+        filesystem=$(usb_storage_filesystem "$partition")
+        echo "Found USB candidate: $partition (${size_kib} KiB, ${filesystem:-unknown})"
+
+        if [ "$size_kib" -lt "$desired_kib" ]; then
+            echo "USB candidate $partition is too small."
             continue
         fi
-        
-        # Check if the device is a USB disk
-        if is_usb_disk "$device"; then
-            echo "Found USB disk: $device"
-            
-            partitions=$(fdisk -l "$device" | awk '/^ *[0-9]+/ {print $1 " " $4}' | sort -k2,2nr)
-            if [ -z "$partitions" ]; then
-                echo "No partitions found on $device. Please create a partition on the USB disk."
+
+        if [ "$filesystem" = "swap" ]; then
+            swap_swapoff -a
+            if swap_swapon "$partition"; then
+                echo "// USB swap partition activated on $partition"
+                return 0
+            fi
+            echo "@@ Failed to activate USB swap partition $partition"
+            continue
+        fi
+
+        if ! usb_storage_supports_mount "$filesystem" \
+                && [ -n "$filesystem" ]; then
+            echo "@@ USB swap: unsupported filesystem $filesystem on $partition."
+            continue
+        fi
+        if ! usb_storage_mount_candidate \
+                "$partition" "$filesystem" "forge-x-usb-swap"; then
+            echo "@@ USB swap: could not mount $partition."
+            continue
+        fi
+
+        filesystem="$USB_STORAGE_MOUNT_FILESYSTEM"
+
+        swap_file="$USB_STORAGE_MOUNT_POINT/swap"
+        current_size=0
+        [ -f "$swap_file" ] \
+            && current_size=$(ls -l "$swap_file" | awk '{print $5}')
+        if [ "$current_size" -ne "$desired_size" ]; then
+            available_kib=$(df -Pk "$USB_STORAGE_MOUNT_POINT" \
+                | awk 'NR == 2 { print $4 }')
+            if [ -z "$available_kib" ] \
+                    || [ "$available_kib" -lt "$desired_kib" ]; then
+                echo "@@ USB swap: $partition has insufficient free space."
                 continue
             fi
-            
-            echo "Disk has partitions: $(echo "$partitions" | wc -l)"
-            
-            while read -r partition size; do
-                partition_path="${device}${partition}"
-                mount_point=$(mount | grep "$partition_path" | awk '{print $3}')
-                
-                if [ -z "$mount_point" ]; then
-                    echo "Partition $partition not mounted. Mounting..."
-                    mount_point=$(mktemp -d)
-                    
-                    if ! mount -t vfat -o codepage=437,iocharset=utf8 "$partition_path" "$mount_point"; then
-                        echo "Failed to mount $device; partition $partition"
-                        rmdir "$mount_point"
-                    fi
-                fi
-                
-                echo "USB disk mounted at $mount_point; Size: $size"
-
-                disk_size=$(size_convert "$size")
-                desired_size=$(size_convert "$SWAP_SIZE")
-
-                if [ "$disk_size" -lt "$desired_size" ]; then
-                    echo "Partition not big enough!"
-                    continue
-                fi
-                
-                make_swap "$mount_point/swap"
-                
-                if [ $? -eq 0 ]; then
-                    echo "// Swap file created and activated on $device"
-                    return 0
-                else
-                    echo "@@ Failed to enable swap file on $device"
-                fi
-            done <<< "$partitions"
-        else
-            echo "$device is not a USB disk."
         fi
-        
-        return 1
-    done
+
+        if make_swap "$swap_file" "$filesystem"; then
+            echo "// Swap file created and activated on $partition"
+            return 0
+        fi
+
+        echo "@@ USB swap: $filesystem swap file activation failed on $partition."
+    done <<< "$candidates"
+
+    return 1
 }
 
 activate_mmc_swap() {
     echo "// Creating SWAP on eMMC..."
     
-    make_swap "$MOD/root/swap"
+    make_swap "$MOD/root/swap" ext4
     if [ $? -eq 0 ]; then
         echo "// Swap file created and activated eMMC"
+        return 0
     else
         echo "@@ Failed to enable swap file on eMMC"
+        return 1
     fi
 }
 
@@ -171,11 +233,11 @@ activate_zram_swap() {
     # (Re)create zram0 as a compressed swap. Touch ONLY zram0 here -- do NOT
     # `swapoff -a` (that forces tens of MB back into RAM and can fail under
     # memory pressure on the 128MB board).
-    swapoff /dev/zram0 2>/dev/null
+    swap_swapoff /dev/zram0 2>/dev/null
     echo 1 > /sys/block/zram0/reset 2>/dev/null
     echo "$ALGO" > /sys/block/zram0/comp_algorithm 2>/dev/null || ALGO="(default)"
     echo "$ZSIZE" > /sys/block/zram0/disksize
-    mkswap /dev/zram0 >/dev/null 2>&1
+    swap_mkswap /dev/zram0 >/dev/null 2>&1
 
     # zram = PRIMARY swap (priority 100). busybox `swapon` has no -p, so use the
     # static helper (swapon(2) with SWAP_FLAG_PREFER|prio).
@@ -211,26 +273,33 @@ activate_zram_swap() {
     if [ ! -f "$MOD/root/swap" ]; then
         fallocate -l "$SWAP_SIZE" "$MOD/root/swap" 2>/dev/null \
             && chmod 600 "$MOD/root/swap" \
-            && mkswap "$MOD/root/swap" >/dev/null 2>&1
+            && swap_mkswap "$MOD/root/swap" >/dev/null 2>&1
     fi
-    swapon "$MOD/root/swap" 2>/dev/null   # default (low) priority = overflow
+    swap_swapon "$MOD/root/swap" 2>/dev/null   # default priority = overflow
 
     echo "// zram swap active (algo=$ALGO, size=$ZSIZE); eMMC = overflow"
     return 0
 }
 
 cleanup_mounts() {
-    mount | grep "/dev/sd" | awk '{print $1 " " $3}' | while read -r partition mount; do
-        if ! ls "$partition" > /dev/null 2>&1; then
-            echo "Unmounting dead mounting point: $mount"
-            umount -l "$mount"
+    local partition mount_point
+
+    mount | grep "/dev/sd" | awk '{print $1 " " $3}' \
+        | while read -r partition mount_point; do
+        if [ ! -e "$partition" ]; then
+            echo "Unmounting dead mounting point: $mount_point"
+            umount -l "$mount_point"
             
-            if [[ $mount == /tmp/* ]]; then
-                rmdir "$mount"
-            fi
+            case "$mount_point" in
+                /tmp/*) rmdir "$mount_point" ;;
+            esac
         fi
     done
 }
+
+if [ "${INIT_SWAP_LIBRARY_ONLY:-0}" -eq 1 ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 swap=$($CFG_SCRIPT  $CFG_PATH --get "use_swap" "MMC")
 echo "SWAP: \"$swap\""
@@ -239,7 +308,7 @@ case "$swap" in
     OFF)
         echo "Swap disabled."
         
-        swapoff -a
+        swap_swapoff -a
         rm -f "$MOD"/root/swap
         
         exit 0
@@ -256,8 +325,11 @@ case "$swap" in
     USB)
         cleanup_mounts
         if ! activate_usb_swap; then
-            echo "Failed to activate USB swap. Activating MMC swap instead."
-            activate_mmc_swap
+            echo "@@ USB swap initialization failed; falling back to eMMC swap."
+            if ! activate_mmc_swap; then
+                echo "@@ FATAL: both USB and eMMC swap initialization failed."
+                exit 1
+            fi
         fi
     ;;
     *)

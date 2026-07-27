@@ -26,6 +26,24 @@ Use [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) for the operator proc
 | Power-loss recovery | `power_loss_recovery`; `zchanges.sh` | Clears saved resurrection state and may restart Klipper outside stock mode. |
 | Safety and print defaults | `check_md5`, `cell_weight`, Z-offset, cleaning, KAMP, mesh options | Keep macro expectations synchronized with metadata defaults. |
 
+### USB swap and drive preparation
+
+USB storage behavior is shared instead of being implemented independently by each caller:
+
+- [`.shell/boot/usb_storage.sh`](../../.shell/boot/usb_storage.sh) discovers external USB block devices, enumerates kernel-recognized partitions, identifies filesystems, and owns temporary mounts.
+- [`.shell/boot/init_swap.sh`](../../.shell/boot/init_swap.sh) consumes those candidates for raw swap partitions or swap files and falls back to eMMC if every USB candidate fails.
+- [`.shell/commands/zusb.sh`](../../.shell/commands/zusb.sh) backs the destructive `PREPARE_USB` workflow exposed from [`macros/base.cfg`](../../macros/base.cfg).
+
+Discovery deliberately uses `/sys/block/<disk>/<partition>/partition` and `/proc/partitions`, not `sdX` string parsing or `fdisk` output. Consequently MBR/GPT, primary/logical and multiple partitions, digit-suffixed device names such as `mmcblk9p1`, and filesystems written directly to the whole disk follow the same path. USB ancestry must be visible in sysfs. Zero-capacity card-reader slots and non-direct-access SCSI devices such as optical drives are excluded.
+
+Mount access is purpose-specific. Swap and preparation require `rw`; boot-media inspection may reuse an existing `ro` mount or create a temporary `ro` mount. Supported mount filesystems are FAT-family filesystems and ext2/3/4. An empty/late filesystem probe triggers bounded mount attempts in compatibility order. Existing mounts are never unmounted by read-only inspection; only mounts created by the helper are released.
+
+FAT swap files are fully allocated with `dd`, because sparse/fallocate-style files do not provide the stable block mapping required by the target Linux 5.4 FAT driver. EXT uses `fallocate`; a filesystem with `FSTYPE=swap` is activated directly. The BusyBox `mkswap`, `swapon`, and `swapoff` applets are fallbacks because the applets exist on stock firmware even when command symlinks do not.
+
+Drive preparation creates a single MBR partition as FAT32 (`0x0c`) or Linux EXT (`0x83`, formatted ext2 by the available BusyBox `mke2fs`). The two confirmation stages pass a short numeric device fingerprint computed from sysfs path, capacity, model, and the nearest USB serial when available. It is recomputed immediately before erasure, so replacing or removing the selected drive aborts the operation; there is no authentication-token state or temporary token file.
+
+The first prompt is produced by a background shell command. Fluidd requires each `action:prompt_*` line to arrive as a separate Klipper response, matching the repository's existing material dialogs. The opt-in `linewise: True` setting in [`macros/shell.cfg`](../../macros/shell.cfg) uses [`.py/klipper/patches/extras/gcode_shell_command.py`](../../.py/klipper/patches/extras/gcode_shell_command.py) to split only these commands' output into ordered raw response events. Drive formatting uses the threaded `stream` mode so complete output lines reach the console while the process is active without blocking Klipper's reactor. `_PREPARE_USB_EXECUTE` first opens a non-interactive progress prompt; `zusb.sh` replaces it with a success or failure prompt before exiting. Do not make streaming or linewise splitting the default for unrelated shell commands.
+
 ## Display modes and configuration roots
 
 The display root determines the starting Klipper configuration:

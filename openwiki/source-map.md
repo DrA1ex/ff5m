@@ -15,7 +15,8 @@ Use this map to start at the behavior boundary, then follow includes/calls rathe
 | Parameter schema and reactions | [`mod_params.json`](../mod_params.json) | `.shell/commands/zchanges.sh`, `docs/CONFIGURATION.md` | Defaults/options and side effects of supported settings. |
 | Klipper patch/plugin overlay | [`.py/klipper/`](../.py/klipper/) | [Built-in Klipper patching](workflows/klipper-patching.md), [Forge-X Klipper extensions](workflows/klipper-extensions.md), `.shell/S00init`, `.shell/uninstall.sh` | Symlinked stock-module replacements with `.bak` rollback plus six configured extra plugins; not a full source fork. |
 | Persistence/backup | [`.py/cfg_backup.py`](../.py/cfg_backup.py) | `.shell/commands/zbackup.sh`, `zchanges.sh` | Managed configuration backup/restore and tuning application. |
-| Resource/network peripherals | [`.shell/boot/init_swap.sh`](../.shell/boot/init_swap.sh) | `.shell/boot/zram/`, `.shell/S98camera`, `.shell/S98zssh` | Low-memory path, camera, remote access. |
+| USB storage and memory | [`.shell/boot/usb_storage.sh`](../.shell/boot/usb_storage.sh) | `.shell/boot/init_swap.sh`, `.shell/boot/init_boot_flag.sh`, `.shell/commands/zusb.sh`, `.shell/boot/zram/` | Early USB discovery, boot media, drive preparation, and swap fallback. |
+| Network peripherals | [`.shell/S98camera`](../.shell/S98camera) | `.shell/S98zssh`, `.shell/commands/zchanges.sh` | Camera and remote access. |
 | Packaging/maintenance helpers | `sync.sh`, `sync_remote.sh`, `addMD5.sh`, `addMD5.bat` | release/docs references | Synchronization and slicer checksum tooling. |
 
 ## Documentation map
@@ -33,6 +34,7 @@ When code and a doc disagree, prefer current source for implemented behavior and
 ## High-risk boundaries
 
 - **`macros/shell.cfg` → `.shell/commands/*`:** privileged command execution from G-code. Inspect parameter handling and caller macros together.
+- **USB sysfs discovery → destructive preparation:** `PREPARE_USB` must accept only external direct-access USB disks and revalidate the device fingerprint immediately before erasure.
 - **Display config → boot path:** alternate display modes need network/bootstrap behavior not used by default stock mode.
 - **`mod_params.json` → mutable `variables.cfg`:** schema/default change may affect existing printers, not merely fresh installs.
 - **`.py/klipper/patches` → stock `/opt/klipper`:** compatibility depends on the version/layout documented in `FIRMWARE_5x_COMPAT.md`.

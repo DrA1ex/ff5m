@@ -6,7 +6,11 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-source /opt/config/mod/.shell/common.sh
+COMMON_SCRIPT="${COMMON_SCRIPT:-/opt/config/mod/.shell/common.sh}"
+BOOT_FLAG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+source "$COMMON_SCRIPT"
+source "$BOOT_FLAG_SCRIPT_DIR/usb_storage.sh"
 
 FLAGS=("SKIP_MOD" "SKIP_MOD_SOFT" "REMOVE_MOD" "REMOVE_MOD_SOFT" "klipper_mod_skip" "klipper_mod_remove")
 
@@ -43,78 +47,46 @@ check_special_boot_flag() {
     return 1
 }
 
-is_usb_disk() {
-    local device=$1
-    local device_name=$(basename "$device")
-    
-    if readlink -f "/sys/block/$device_name" | grep -q 'usb'; then
-        return 0
-    else
-        return 1
-    fi
-}
-
 search_special_boot_flag_usb() {
     local callback=$1
+    local wait_seconds candidates size_kib partition_path filesystem
+    local mount_point found
+
     echo "Searching for boot flag in USB files..."
-    
-    for device in /dev/sd*; do
-        # Skip if it's a partition (e.g., /dev/sda1)
-        if [[ $device =~ [0-9]$ ]]; then
+
+    wait_seconds="${BOOT_FLAG_USB_WAIT_SECONDS:-10}"
+    if ! usb_storage_wait_for_candidates "$wait_seconds"; then
+        echo "No USB storage appeared within ${wait_seconds}s."
+        return 1
+    fi
+
+    candidates=$(usb_storage_candidates)
+    while read -r size_kib partition_path; do
+        [ -n "$partition_path" ] || continue
+        filesystem=$(usb_storage_filesystem "$partition_path")
+        echo "// Found USB storage: $partition_path (${size_kib} KiB, ${filesystem:-unknown})"
+
+        if ! usb_storage_supports_mount "$filesystem" \
+                && [ -n "$filesystem" ]; then
+            echo "Skipping unsupported filesystem $filesystem on $partition_path."
             continue
         fi
-        
-        if is_usb_disk "$device"; then
-            echo "// Found USB disk: $device"
-            
-            device_name=$(basename "$device")
-            partitions=$(
-                awk -v dev="$device_name" \
-                    '$4 ~ dev"[0-9]+$" {print substr($4,length(dev)+1) " " $3/1024 "M"}'\
-                    /proc/partitions \
-                    | sort -k2,2rn
-            )
-            
-            if [ -z "$partitions" ]; then
-                echo "No partitions found on $device."
-                continue
-            fi
-            
-            echo "Disk has partitions: $(echo "$partitions" | wc -l)"
-            while read -r partition size; do
-                partition_path="${device}${partition}"
-                mount_point=$(mount | grep "$partition_path" | awk '{print $3}')
-                was_mounted=true
-                
-                if [ -z "$mount_point" ]; then
-                    echo "Partition $partition not mounted. Mounting temporarily..."
-                    mount_point=$(mktemp -d)
-                    was_mounted=false
-                    
-                    if ! mount -t vfat -o codepage=437,iocharset=utf8 "$partition_path" "$mount_point"; then
-                        echo "Failed to mount $device; partition $partition"
-                        rmdir "$mount_point"
-                        continue
-                    fi
-                fi
-                
-                echo "USB disk mounted at $mount_point; Size: $size"
 
-                found=$(check_special_boot_flag "$mount_point")
-
-                if [ "$was_mounted" = false ]; then
-                    umount "$mount_point"
-                    rmdir "$mount_point"
-                fi
-
-                if [ -n "$found" ]; then
-                    echo "// Boot flag found: $found"
-                    eval "$callback" "$found"
-                    return 0
-                fi
-            done <<< "$partitions"
+        if ! usb_storage_mount_candidate \
+                "$partition_path" "$filesystem" "forge-x-boot-flag" ro; then
+            continue
         fi
-    done
+
+        mount_point="$USB_STORAGE_MOUNT_POINT"
+        found=$(check_special_boot_flag "$mount_point")
+        usb_storage_release_mount
+
+        if [ -n "$found" ]; then
+            echo "// Boot flag found: $found"
+            eval "$callback" "$found"
+            return 0
+        fi
+    done <<< "$candidates"
 
     return 1
 }
@@ -241,6 +213,10 @@ search() {
 
     return $ret
 }
+
+if [ "${INIT_BOOT_FLAG_LIBRARY_ONLY:-0}" -eq 1 ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 case "$1" in
     test)

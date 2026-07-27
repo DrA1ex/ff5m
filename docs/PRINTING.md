@@ -401,6 +401,27 @@ Use these settings for Klipper/MCU timing errors, not as a response to high memo
 
 Swap is a safety net for memory pressure; it is not a way to create free RAM. The default `MMC` mode uses an eMMC swapfile. `ZRAM` stores swapped-out pages compressed in RAM, uses it before the eMMC file, and keeps the eMMC swapfile only as an overflow fallback. This can avoid slow eMMC I/O, but compression also consumes CPU and RAM, so do not enable it as a blanket performance optimization.
 
+To prepare a USB drive for storage or swap, connect exactly one drive and run:
+
+```gcode
+PREPARE_USB
+```
+
+The dialog works in Feather, Fluidd, and compatible web interfaces. Choose `FAT32` for the widest printer and desktop compatibility, or `Linux EXT` as an alternative; both can store files and host USB swap.
+
+> [!WARNING]
+> Confirming the second dialog erases all data on the selected USB drive.
+
+Keep the printer powered and the drive connected while the progress dialog is visible. Formatting stages are also shown in the console; the dialog reports whether preparation completed or failed.
+
+After preparing the drive, enable USB swap with:
+
+```gcode
+SET_MOD PARAM=use_swap VALUE=USB
+```
+
+If the USB drive is unavailable, unsupported, read-only, or too small, Forge-X reports the problem and uses the normal eMMC swap instead.
+
 For a resource-constrained print where Moonraker has already been stopped, prefer ZRAM over relying on the eMMC swapfile:
 
 ```

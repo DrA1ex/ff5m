@@ -15,6 +15,12 @@ Installation uses a FAT32 USB drive and an intact release archive named for the 
 
 Before an OTA or configuration migration, retain logs and backups. `S00init` rotates stock logs and links mod logs into `/data/logFiles/mod`; `S99root` uses a bootstrap start/stop cycle to initialize/migrate the Moonraker database when absent.
 
+### Early USB boot-media inspection
+
+Special boot flags, `flashforge_init.sh`, and `Adventurer5M*.tgz` firmware images are searched by [`.shell/boot/init_boot_flag.sh`](../../.shell/boot/init_boot_flag.sh). It shares [the USB discovery and mount path](configuration-and-printing.md#usb-swap-and-drive-preparation) used by swap initialization, waits for late kernel device-node creation, scans every supported partition (or a whole-disk filesystem), and reads media using `ro` access. A mount that existed before inspection is retained; a temporary inspection mount is released before the callback applies the discovered action.
+
+This path intentionally depends on kernel block metadata rather than partition-table parsing. Changes must retain coverage for multiple and logical partitions, digit-suffixed block names, whole-disk filesystems, existing read-only mounts, FAT/ext filesystems, firmware images, and normal boot flags. Unsupported filesystems are skipped so root/eMMC flag checks and the remaining recovery path still run.
+
 ### Operational caveat: release channels
 
 `moonraker.conf` currently configures Forge-X as a Git updater on `channel: dev`, while `version.txt` states 1.4.1. The inspected repository does not establish whether every released device should consume that channel. Do not “fix” this discrepancy without an explicit release-policy decision.
