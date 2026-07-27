@@ -13,6 +13,7 @@ HELPER = ROOT / ".shell" / "boot" / "usb_storage.sh"
 INIT_SWAP = ROOT / ".shell" / "boot" / "init_swap.sh"
 INIT_BOOT_FLAG = ROOT / ".shell" / "boot" / "init_boot_flag.sh"
 PREPARE_USB = ROOT / ".shell" / "commands" / "zusb.sh"
+MOUNT_USB = ROOT / ".shell" / "commands" / "zusb_mount.sh"
 BASE_MACROS = ROOT / "macros" / "base.cfg"
 SHELL_MACROS = ROOT / "macros" / "shell.cfg"
 
@@ -27,6 +28,7 @@ class UsbStorageTest(unittest.TestCase):
         self.proc_partitions = self.root / "partitions"
         self.proc_mounts = self.root / "mount-table"
         self.proc_swaps = self.root / "swaps"
+        self.operation_lock = self.root / "usb-operation"
         self.bin = self.root / "bin"
         for path in (self.sys_block, self.dev, self.mount_root, self.bin):
             path.mkdir(parents=True)
@@ -83,6 +85,12 @@ class UsbStorageTest(unittest.TestCase):
             "BOOT_FLAG_USB_WAIT_SECONDS": "0",
             "USB_PREPARE_WAIT_SECONDS": "0",
             "USB_PREPARE_PROC_SWAPS": str(self.proc_swaps),
+            "USB_BROWSER_PROC_SWAPS": str(self.proc_swaps),
+            "USB_BROWSER_WAIT_SECONDS": "0",
+            "USB_BROWSER_DATA_ROOT": str(self.root / "data"),
+            "USB_BROWSER_CHROOT_ROOT": "",
+            "USB_STORAGE_REQUIRE_BLOCK_DEVICES": "0",
+            "USB_STORAGE_OPERATION_LOCK": str(self.operation_lock),
             "SWAP_SIZE": "64M",
             "COMMON_SCRIPT": "/dev/null",
             "INIT_SWAP_LIBRARY_ONLY": "1",
@@ -111,6 +119,12 @@ class UsbStorageTest(unittest.TestCase):
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             check=False)
 
+    def _run_mount(self, *args):
+        return subprocess.run(
+            ["bash", str(MOUNT_USB), *args], env=self.environment,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+
     def _prepare_identity(self, prompt):
         match = re.search(r"\bID=([0-9]+)", prompt.stdout)
         self.assertIsNotNone(match, prompt.stdout)
@@ -119,8 +133,212 @@ class UsbStorageTest(unittest.TestCase):
     def test_scripts_have_valid_bash_syntax(self):
         subprocess.run(
             ["bash", "-n", str(HELPER), str(INIT_SWAP),
-             str(INIT_BOOT_FLAG), str(PREPARE_USB)], check=True)
+             str(INIT_BOOT_FLAG), str(PREPARE_USB), str(MOUNT_USB)],
+            check=True)
         self.assertTrue(os.access(PREPARE_USB, os.X_OK))
+        self.assertTrue(os.access(MOUNT_USB, os.X_OK))
+
+    def test_browser_bind_mount_reuses_existing_storage_mount(self):
+        existing = self.root / "existing-usb"
+        target = self.root / "data" / "USB"
+        existing.mkdir()
+        target.parent.mkdir()
+        self.proc_mounts.write_text(
+            "%s %s ext4 rw 0 0\n" % (self.dev / "sda2", existing),
+            encoding="utf-8")
+        mount_log = self.root / "mount-log"
+        self._script("mount", 'echo "$*" >> "$USB_TEST_MOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_MOUNT_LOG": str(mount_log),
+        })
+        result = self._run_mount("attach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ATTACHED %s ext4" % (self.dev / "sda2"), result.stdout)
+        self.assertEqual(
+            mount_log.read_text(encoding="utf-8").strip(),
+            "-o bind %s %s" % (existing, target))
+        self.assertFalse(self.operation_lock.exists())
+
+    def test_browser_direct_mount_is_writable_for_usb_swap_compatibility(self):
+        target = self.root / "data" / "USB"
+        target.parent.mkdir()
+        mount_log = self.root / "mount-log"
+        self._script("mount", 'echo "$*" >> "$USB_TEST_MOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_MOUNT_LOG": str(mount_log),
+        })
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ATTACHED %s ext4" % (self.dev / "sda2"), result.stdout)
+        self.assertIn("-o rw,noatime", mount_log.read_text(encoding="utf-8"))
+
+    def test_browser_mirrors_usb_mount_into_forge_x_data(self):
+        target = self.root / "data" / "USB"
+        target.parent.mkdir()
+        chroot_root = self.root / "forge-x"
+        (chroot_root / "data").mkdir(parents=True)
+        existing = self.root / "existing-usb"
+        existing.mkdir()
+        self.proc_mounts.write_text(
+            "%s %s ext4 rw 0 0\n" % (self.dev / "sda2", existing),
+            encoding="utf-8")
+        mount_log = self.root / "mount-log"
+        self._script("mount", 'echo "$*" >> "$USB_TEST_MOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_MOUNT_LOG": str(mount_log),
+            "USB_BROWSER_CHROOT_ROOT": str(chroot_root),
+        })
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(mount_log.read_text(encoding="utf-8").splitlines(), [
+            "-o bind %s %s" % (existing, target),
+            "-o bind %s %s" % (target, chroot_root / "data" / "USB"),
+        ])
+
+    def test_browser_attach_respects_exclusive_usb_operation(self):
+        target = self.root / "data" / "USB"
+        target.parent.mkdir()
+        self.operation_lock.mkdir()
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertEqual(result.returncode, 3, result.stdout)
+        self.assertEqual(result.stdout.strip(), "BUSY")
+
+    def test_browser_recovers_lock_left_by_dead_process(self):
+        target = self.root / "data" / "USB"
+        target.parent.mkdir()
+        self.operation_lock.mkdir()
+        (self.operation_lock / "owner").write_text(
+            "999999999\n", encoding="utf-8")
+        mount_log = self.root / "mount-log"
+        self._script("mount", 'echo "$*" >> "$USB_TEST_MOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_MOUNT_LOG": str(mount_log),
+        })
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ATTACHED", result.stdout)
+        self.assertFalse(self.operation_lock.exists())
+
+    def test_usb_lock_can_only_be_released_by_owner(self):
+        result = self._run(HELPER, r'''
+            usb_storage_operation_acquire || exit 20
+            echo 999999999 > "$USB_STORAGE_OPERATION_LOCK/owner"
+            ! usb_storage_operation_release || exit 21
+            test -d "$USB_STORAGE_OPERATION_LOCK" || exit 22
+        ''')
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_browser_refuses_to_cover_nonempty_directory(self):
+        target = self.root / "data" / "USB"
+        target.mkdir(parents=True)
+        (target / "owned-by-user").touch()
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Refusing to cover non-empty directory", result.stdout)
+        self.assertFalse(self.operation_lock.exists())
+
+    def test_browser_refuses_to_replace_unmanaged_usb_link(self):
+        target = self.root / "data" / "USB"
+        target.parent.mkdir(parents=True)
+        user_directory = self.root / "user-directory"
+        user_directory.mkdir()
+        target.symlink_to(user_directory, target_is_directory=True)
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Refusing to replace existing", result.stdout)
+        self.assertEqual(os.readlink(target), str(user_directory))
+
+    def test_browser_rejects_mount_point_outside_feather_namespace(self):
+        target = self.root / "data" / "usb"
+
+        result = self._run_mount("attach", str(target))
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Invalid Feather USB mount point", result.stdout)
+
+    def test_browser_detach_only_unmounts_its_own_target(self):
+        target = self.root / "data" / "USB"
+        target.mkdir(parents=True)
+        self.proc_mounts.write_text(
+            "%s %s ext4 rw 0 0\n%s %s ext4 rw 0 0\n" % (
+                self.dev / "sda2", self.root / "shared-usb",
+                self.dev / "sda2", target), encoding="utf-8")
+        umount_log = self.root / "umount-log"
+        self._script("umount", 'echo "$*" >> "$USB_TEST_UMOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_UMOUNT_LOG": str(umount_log),
+        })
+
+        result = self._run_mount("detach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            umount_log.read_text(encoding="utf-8").strip(), str(target))
+
+    def test_browser_detaches_chroot_mirror_before_primary_mount(self):
+        target = self.root / "data" / "USB"
+        target.mkdir(parents=True)
+        chroot_root = self.root / "forge-x"
+        mirror = chroot_root / "data" / "USB"
+        mirror.mkdir(parents=True)
+        self.proc_mounts.write_text(
+            "%s %s ext4 rw 0 0\n%s %s ext4 rw 0 0\n" % (
+                self.dev / "sda2", target,
+                self.dev / "sda2", mirror), encoding="utf-8")
+        umount_log = self.root / "umount-log"
+        self._script("umount", 'echo "$*" >> "$USB_TEST_UMOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_UMOUNT_LOG": str(umount_log),
+            "USB_BROWSER_CHROOT_ROOT": str(chroot_root),
+        })
+
+        result = self._run_mount("detach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(umount_log.read_text(encoding="utf-8").splitlines(), [
+            str(mirror), str(target)])
+
+    def test_browser_retains_mount_backing_active_swap(self):
+        target = self.root / "data" / "USB"
+        target.mkdir(parents=True)
+        self.proc_mounts.write_text(
+            "%s %s ext4 rw 0 0\n" % (self.dev / "sda2", target),
+            encoding="utf-8")
+        self.proc_swaps.write_text(
+            "Filename Type Size Used Priority\n%s/swap file 65532 0 -2\n"
+            % target, encoding="utf-8")
+        umount_log = self.root / "umount-log"
+        self._script("umount", 'echo "$*" >> "$USB_TEST_UMOUNT_LOG"\n')
+        self.environment.update({
+            "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
+            "USB_TEST_UMOUNT_LOG": str(umount_log),
+        })
+
+        result = self._run_mount("detach", str(target))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("RETAINED active-swap", result.stdout)
+        self.assertFalse(umount_log.exists())
 
     def test_disks_and_candidates_include_only_usb_largest_first(self):
         result = self._run(HELPER, "usb_storage_disks\nusb_storage_candidates\n")
@@ -140,6 +358,14 @@ class UsbStorageTest(unittest.TestCase):
         self.assertEqual(
             result.stdout.splitlines(),
             ["131072 %s" % (self.dev / "sda1")])
+
+    def test_regular_files_are_not_accepted_as_device_nodes_in_production(self):
+        self.environment["USB_STORAGE_REQUIRE_BLOCK_DEVICES"] = "1"
+
+        result = self._run(HELPER, "usb_storage_disks; usb_storage_candidates\n")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "")
 
     def test_partition_discovery_uses_sysfs_not_device_name_pattern(self):
         disk = (self.root / "devices" / "platform" / "usb2" / "2-1"
@@ -475,6 +701,7 @@ class UsbStorageTest(unittest.TestCase):
         self.assertIn("USB preparation complete", result.stdout)
         self.assertIn("action:prompt_begin USB preparation complete", result.stdout)
         self.assertNotIn("fdisk success details", result.stdout)
+        self.assertFalse(self.operation_lock.exists())
 
     def test_prepare_shows_fdisk_details_only_on_failure(self):
         prompt = self._run_prepare("prompt")
@@ -491,6 +718,7 @@ class UsbStorageTest(unittest.TestCase):
         self.assertIn("fdisk diagnostic", result.stdout)
         self.assertIn("Failed to create a partition", result.stdout)
         self.assertIn("action:prompt_begin USB preparation failed", result.stdout)
+        self.assertFalse(self.operation_lock.exists())
 
     def test_prepare_failure_emits_completion_dialog(self):
         prompt = self._run_prepare("prompt")

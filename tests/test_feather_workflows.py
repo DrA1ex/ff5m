@@ -17,6 +17,9 @@ except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject)
 
+FILES = __import__("feather_files")
+PAGES = __import__("feather_screen_pages")
+
 
 class VirtualSD:
     def __init__(self, root=None, active=False, file_path=None):
@@ -45,6 +48,63 @@ class FinishedProcess:
 
     def terminate(self):
         self.terminated = True
+
+
+class UsbProcess:
+    next_pid = 9000
+
+    def __init__(self, output, returncode=0, running=False):
+        self.output = output.encode("utf-8")
+        self.returncode = None if running else returncode
+        self.pid = UsbProcess.next_pid
+        UsbProcess.next_pid += 1
+
+    def poll(self):
+        return self.returncode
+
+    def communicate(self):
+        return (self.output, None)
+
+
+class UsbEventSocket:
+    def __init__(self):
+        self.messages = []
+        self.closed = False
+        self.bound = None
+
+    def setsockopt(self, *args):
+        pass
+
+    def bind(self, address):
+        self.bound = address
+
+    def setblocking(self, enabled):
+        pass
+
+    def fileno(self):
+        return 73
+
+    def recv(self, size):
+        if not self.messages:
+            raise BlockingIOError()
+        return self.messages.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
+class UsbReactor:
+    def __init__(self):
+        self.registered = []
+        self.unregistered = []
+
+    def register_fd(self, fd, callback):
+        handle = (fd, callback)
+        self.registered.append(handle)
+        return handle
+
+    def unregister_fd(self, handle):
+        self.unregistered.append(handle)
 
 
 def base_controller(state="idle"):
@@ -174,6 +234,309 @@ class FileWorkflowTest(unittest.TestCase):
             os.unlink(path)
             with self.assertRaisesRegex(RuntimeError, "no longer available"):
                 controller._start_selected_file()
+
+    def test_usb_directory_is_first_and_keeps_internal_list_flat(self):
+        with tempfile.TemporaryDirectory() as root:
+            internal = os.path.join(root, "internal.gcode")
+            usb_root = os.path.join(root, FILES.USB_MOUNT_NAME)
+            os.mkdir(usb_root)
+            pathlib.Path(internal).write_text("G28\n", encoding="utf-8")
+            pathlib.Path(usb_root, "usb.gcode").write_text(
+                "G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.file_source = "internal"
+            controller.usb_storage = type("USB", (), {
+                "available": True, "mount_point": usb_root})()
+
+            controller._load_file_entries()
+
+            self.assertEqual(controller.file_entries[0]["name"], "USB")
+            self.assertTrue(controller.file_entries[0]["directory"])
+            self.assertEqual(
+                [entry["name"] for entry in controller.file_entries[1:]],
+                ["internal.gcode"])
+
+    def test_usb_files_use_flat_recency_sort_and_virtual_sd_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            usb_root = os.path.join(root, FILES.USB_MOUNT_NAME)
+            nested = os.path.join(usb_root, "models")
+            os.makedirs(nested)
+            old_printed = os.path.join(nested, "old.gcode")
+            newest_file = os.path.join(usb_root, "new.gcode")
+            pathlib.Path(old_printed).write_text("G28\n", encoding="utf-8")
+            pathlib.Path(newest_file).write_text("G28\n", encoding="utf-8")
+            os.utime(old_printed, (10, 10))
+            os.utime(newest_file, (30, 30))
+            history = FEATHER.PrintHistory(os.path.join(root, ".history.json"))
+            history.record(root, old_printed, 40)
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.print_history = history
+            controller.file_source = "usb"
+            controller.usb_storage = type("USB", (), {
+                "available": True, "mount_point": usb_root})()
+
+            controller._load_file_entries()
+
+            self.assertEqual(
+                [entry["name"] for entry in controller.file_entries],
+                ["models/old.gcode", "new.gcode"])
+            controller.selected_file = controller.file_entries[0]
+            controller._start_selected_file()
+            self.assertEqual(controller.gcode.commands, [
+                'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"'])
+
+    def test_usb_directory_navigation_and_removal_return_to_root(self):
+        controller = base_controller()
+        controller.file_source = "internal"
+        controller.file_page = 0
+        controller.file_entries = [FILES.FileEntry(
+            "USB", "/data/USB", directory=True)]
+        rendered = []
+        controller._render_file_browser = lambda: rendered.append(
+            controller.file_source)
+
+        controller._handle_file_action("file.item0")
+        self.assertEqual(controller.file_source, "usb")
+        self.assertEqual(rendered, ["usb"])
+
+        controller._handle_file_action("file.refresh")
+        self.assertEqual(rendered, ["usb", "usb"])
+
+        controller.page = FEATHER.Page.FILE_BROWSER
+        shown = []
+        controller._show_page = lambda page: shown.append(page)
+        controller._go_back()
+        self.assertEqual(controller.file_source, "internal")
+        self.assertEqual(shown, [FEATHER.Page.FILE_BROWSER])
+
+        controller.file_source = "usb"
+        controller.page = FEATHER.Page.FILE_BROWSER
+        controller.usb_storage = type("USB", (), {
+            "available": False,
+            "resume": lambda self, eventtime: None,
+            "pause": lambda self: None,
+            "tick": lambda self, eventtime: True})()
+        controller._render_file_browser = lambda: rendered.append(
+            controller.file_source)
+        controller._poll_usb_storage(10.0)
+        self.assertEqual(controller.file_source, "internal")
+        self.assertEqual(rendered[-1], "internal")
+
+    def test_usb_scan_race_keeps_browser_alive(self):
+        controller = base_controller()
+        controller.virtual_sdcard = VirtualSD("/data")
+        controller.file_source = "usb"
+        controller.usb_storage = type("USB", (), {
+            "available": True, "mount_point": "/data/USB"})()
+
+        with mock.patch.object(
+                PAGES, "scan_gcode_files",
+                side_effect=RuntimeError("device disappeared")):
+            controller._load_file_entries()
+
+        self.assertEqual(controller.file_source, "usb")
+        self.assertEqual(controller.file_entries, [])
+
+    def test_usb_removal_from_confirmation_shows_message(self):
+        controller = base_controller()
+        controller.file_source = "usb"
+        controller.page = FEATHER.Page.FILE_CONFIRM
+        controller.selected_file = {"path": "/data/USB/job.gcode"}
+        controller.usb_storage = type("USB", (), {
+            "available": False,
+            "resume": lambda self, eventtime: None,
+            "pause": lambda self: None,
+            "tick": lambda self, eventtime: True})()
+        messages = []
+        controller._show_message = lambda message, page: messages.append(
+            (message, page))
+
+        controller._poll_usb_storage(10.0)
+
+        self.assertEqual(controller.file_source, "internal")
+        self.assertIsNone(controller.selected_file)
+        self.assertEqual(messages, [
+            ("USB drive removed", FEATHER.Page.FILE_BROWSER)])
+
+
+class UsbStorageMonitorTest(unittest.TestCase):
+    @staticmethod
+    def _event(action="add", subsystem="block", usb=True):
+        path = ("/devices/platform/usb1/1-1/block/sda"
+                if usb else "/devices/platform/mmc/block/mmcblk0")
+        return ("ACTION=%s\0SUBSYSTEM=%s\0DEVPATH=%s\0DEVNAME=sda\0"
+                % (action, subsystem, path)).encode("ascii")
+
+    def _monitor(self, processes, mounted):
+        calls = []
+        reactor = UsbReactor()
+        event_socket = UsbEventSocket()
+
+        def popen(command, **kwargs):
+            calls.append(command)
+            return processes.pop(0)
+
+        monitor = FEATHER.UsbStorageMonitor(
+            "/data", reactor, popen=popen,
+            is_mount=lambda path: mounted[0],
+            socket_factory=lambda *args: event_socket)
+        return monitor, calls, reactor, event_socket
+
+    def test_initial_reconcile_remove_and_reinsert_are_nonblocking(self):
+        mounted = [False]
+        processes = [
+            UsbProcess("ATTACHED /dev/sda1 vfat\n"),
+            UsbProcess("NONE\n", returncode=2),
+            UsbProcess("ATTACHED /dev/sdb1 ext4\n"),
+        ]
+        monitor, calls, _reactor, events = self._monitor(processes, mounted)
+
+        monitor.resume(0.0)
+        self.assertFalse(monitor.tick(0.0))
+        self.assertEqual(calls[-1][1], "attach")
+        mounted[0] = True
+        self.assertTrue(monitor.tick(1.0))
+        self.assertTrue(monitor.available)
+        self.assertEqual(monitor.device, "/dev/sda1")
+
+        events.messages.append(self._event("remove"))
+        monitor._handle_events(2.0)
+        mounted[0] = False
+        monitor.tick(3.0)
+        self.assertEqual(calls[-1][1], "attach")
+        self.assertTrue(monitor.tick(4.0))
+        self.assertFalse(monitor.available)
+
+        events.messages.append(self._event("add"))
+        monitor._handle_events(5.0)
+        monitor.tick(6.0)
+        self.assertEqual(calls[-1][1], "attach")
+        mounted[0] = True
+        self.assertTrue(monitor.tick(7.0))
+        self.assertTrue(monitor.available)
+        self.assertEqual(monitor.device, "/dev/sdb1")
+
+    def test_busy_attach_retries_without_marking_drive_available(self):
+        mounted = [False]
+        processes = [UsbProcess("BUSY\n", returncode=3),
+                     UsbProcess("ATTACHED /dev/sda1 vfat\n")]
+        monitor, calls, _reactor, _events = self._monitor(processes, mounted)
+
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+        monitor.tick(1.0)
+        self.assertFalse(monitor.available)
+        self.assertEqual(len(calls), 1)
+        monitor.tick(2.0)
+        self.assertEqual(len(calls), 2)
+        mounted[0] = True
+        self.assertTrue(monitor.tick(3.0))
+
+    def test_irrelevant_events_do_not_start_reconciliation(self):
+        mounted = [False]
+        monitor, calls, _reactor, events = self._monitor(
+            [UsbProcess("NONE\n", returncode=2)], mounted)
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+        monitor.tick(1.0)
+        self.assertEqual(len(calls), 1)
+
+        events.messages.extend([
+            self._event("change", usb=False),
+            self._event("add", subsystem="net"),
+        ])
+        monitor._handle_events(2.0)
+        monitor.tick(3.0)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_pause_closes_events_and_resume_forces_reconciliation(self):
+        mounted = [False]
+        monitor, calls, reactor, events = self._monitor(
+            [UsbProcess("NONE\n", returncode=2),
+             UsbProcess("ATTACHED /dev/sda1 vfat\n")], mounted)
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+        monitor.tick(1.0)
+
+        monitor.pause()
+        events.messages.append(self._event("add"))
+        self.assertTrue(events.closed)
+        self.assertEqual(reactor.unregistered, reactor.registered)
+        self.assertFalse(monitor.tick(2.0))
+        self.assertEqual(len(calls), 1)
+
+        replacement = UsbEventSocket()
+        monitor._socket_factory = lambda *args: replacement
+        monitor.resume(3.0)
+        monitor.tick(3.0)
+        mounted[0] = True
+        self.assertTrue(monitor.tick(4.0))
+        self.assertEqual(calls[-1][1], "attach")
+        self.assertTrue(monitor.available)
+
+    def test_controller_does_no_usb_work_while_printing(self):
+        for print_state in (
+                FEATHER.PrintState.PREPARING, FEATHER.PrintState.PRINTING,
+                FEATHER.PrintState.PAUSED):
+            controller = base_controller("printing")
+            controller.print_state = print_state
+            calls = []
+            controller.usb_storage = type("USB", (), {
+                "available": True,
+                "resume": lambda self, eventtime: calls.append("resume"),
+                "pause": lambda self: calls.append("pause"),
+                "tick": lambda self, eventtime: calls.append("tick")})()
+
+            controller._poll_usb_storage(10.0)
+
+            self.assertEqual(calls, ["pause"])
+
+    def test_pause_terminates_inflight_reconciliation(self):
+        running = UsbProcess("", running=True)
+        monitor, _calls, reactor, events = self._monitor(
+            [running], [False])
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+
+        with mock.patch("feather_files.os.killpg") as killpg:
+            monitor.pause()
+
+        killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
+        self.assertFalse(monitor.active)
+        self.assertTrue(events.closed)
+        self.assertEqual(reactor.unregistered, reactor.registered)
+
+    def test_stuck_helper_is_terminated_after_timeout(self):
+        running = UsbProcess("", running=True)
+        monitor, _calls, _reactor, _events = self._monitor(
+            [running], [False])
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+
+        with mock.patch("feather_files.os.killpg") as killpg:
+            monitor.tick(FILES.USB_HELPER_TIMEOUT)
+
+        killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
+        self.assertFalse(monitor.available)
+
+    def test_stop_signals_active_helper_and_starts_detach(self):
+        running = UsbProcess("", running=True)
+        detached = UsbProcess("DETACHED\n")
+        monitor, calls, reactor, events = self._monitor([detached], [False])
+        monitor.resume(0.0)
+        monitor.process = running
+
+        with mock.patch("feather_files.os.killpg") as killpg:
+            monitor.stop()
+
+        killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
+        self.assertEqual(calls[-1][1], "detach")
+        self.assertTrue(monitor.stopped)
+        self.assertTrue(events.closed)
+        self.assertEqual(reactor.unregistered, reactor.registered)
 
 
 class PrintWorkflowTest(unittest.TestCase):

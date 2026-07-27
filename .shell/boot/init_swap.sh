@@ -323,12 +323,26 @@ case "$swap" in
         fi
     ;;
     USB)
-        cleanup_mounts
-        if ! activate_usb_swap; then
-            echo "@@ USB swap initialization failed; falling back to eMMC swap."
+        if ! usb_storage_operation_acquire; then
+            echo "@@ Another USB operation is running; falling back to eMMC swap."
             if ! activate_mmc_swap; then
-                echo "@@ FATAL: both USB and eMMC swap initialization failed."
+                echo "@@ FATAL: eMMC swap initialization failed."
                 exit 1
+            fi
+        else
+            trap 'usb_storage_operation_release' EXIT
+            cleanup_mounts
+            if activate_usb_swap; then
+                usb_storage_operation_release
+                trap - EXIT
+            else
+                usb_storage_operation_release
+                trap - EXIT
+                echo "@@ USB swap initialization failed; falling back to eMMC swap."
+                if ! activate_mmc_swap; then
+                    echo "@@ FATAL: both USB and eMMC swap initialization failed."
+                    exit 1
+                fi
             fi
         fi
     ;;

@@ -64,8 +64,22 @@ Pipe-mode Typer configures Linux `PR_SET_PDEATHSIG=SIGTERM`, so it exits if the 
 | `/tmp/feather-events` | FIFO | Typer writes logical touch events; Klipper's reactor reads them. Typer unlinks it on normal exit. |
 | `/tmp/feather-wifi-<pid>-<sequence>` | temporary file | Private Wi-Fi input from the plugin to `znetwork.sh`; retired after the operation. |
 | `/tmp/feather-wifi-*`, `/tmp/feather-wpa-*.conf`, `/tmp/feather-udhcpc-*.log`, `/tmp/feather-resolv.*` | temporary network-helper files | Scan/connect/DHCP artifacts managed by `znetwork.sh` and the network helpers, not by Typer. |
+| `/data/USB` | Feather-owned mount or bind mount | Exposes one supported USB filesystem to Feather, Fluidd, and Klipper. It exists only while supported USB storage is attached. |
+| `/tmp/forge-x-usb-operation` | atomic lock directory with owner PID | Serializes Feather attach, destructive `PREPARE_USB`, and USB-swap initialization. Removed by the owning helper's exit trap; a later operation can reclaim it if that PID no longer exists. |
 
 `/tmp/typer` is a FIFO, not a regular command file or a service socket. Do not replace it, remove it under a live renderer, or add a concurrent writer.
+
+## USB file browsing
+
+While the printer is idle, Feather subscribes a non-blocking `NETLINK_KOBJECT_UEVENT` socket to the Klipper reactor and filters kernel `add`, `remove`, `change`, and `move` events to the USB block subsystem. It does not add an init service, udev rule, watcher thread, persistent process, or periodic sysfs scan. Event bursts are coalesced for 400 ms before [`.shell/commands/zusb_mount.sh`](../../.shell/commands/zusb_mount.sh) starts as a non-blocking child; the reactor only polls process completion. The helper is terminated after a bounded timeout, and failed or lock-contended attaches use bounded backoff.
+
+Feather closes the uevent socket and stops an in-flight reconciliation helper in `PREPARING`, `PRINTING`, and `PAUSED`. It deliberately performs no USB discovery in those states and leaves an existing mount in place for an active USB print. Returning to `IDLE` recreates the subscription and forces one complete helper reconciliation, so a device event missed while printing is recovered without background polling.
+
+The helper reuses a supported existing mount through a bind mount when Stock, USB swap, or preparation already mounted that partition. Otherwise it mounts the largest supported candidate read/write directly at `/data/USB`. Because Forge-X binds `/data` into its chroot before Feather starts, the helper also mirrors that same mount at the chroot's `/data/USB`; this keeps Klipper and Moonraker on the same filesystem while preserving one logical path. Detach removes the mirror first and then unmounts only the Feather target, never a reused source mount. If an active swap file lives below that target, detach retains both mounts. Inserting a second drive does not replace the currently attached drive; removing the attached drive allows the next supported candidate to take its place.
+
+The virtual-SD placement lets Klipper, Moonraker, and Fluidd address removable files as `USB/<path>`. `feather_files.py` excludes `USB` from the internal scan, then scans it separately into the same compact flat entries and recency order. History keys include the `USB/` prefix, so identically named internal and removable files do not collide. Traversal remains limited to two levels, and removal during a directory scan produces an empty USB page instead of stopping Feather's periodic reactor callback.
+
+Formatting, swap initialization, and browser attach share the atomic `/tmp/forge-x-usb-operation` lock. Lock acquisition occurs before any swap mount cleanup or formatter erase. Browser attach reports `BUSY` and retries; destructive preparation reports a user-visible failure instead of racing another owner.
 
 ## FIFO protocol and concurrency
 
@@ -108,7 +122,8 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 | Component | Owns | Does not own |
 |---|---|---|
 | `feather_screen.py` | Klipper lifecycle, UI state machine, safety gates, reactor timers/fds, G-code/macro dispatch, shared status/error handling | Page-specific rendering or a separate motion process |
-| `feather_screen_pages.py` | Dashboard, files, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, motion planning, and direct display access |
+| `feather_screen_pages.py` | Dashboard, files, USB browser presentation, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, USB mount ownership, motion planning, and direct display access |
+| `feather_files.py` | Compact file entries, print recency history, bounded USB discovery/helper lifecycle | Page rendering, destructive formatting, or direct block-device mounting |
 | `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
 | `feather_z_calibration.py` | Idle Z-calibration state, formula, zone aggregation, pressure hysteresis, pages, motion, and exact mesh/runtime restoration | Live-print Z adjustment or unrestricted G-code |
 | `feather_ui.py` | Layout primitives, frame construction, FIFO and Typer child lifecycle, generation-tagged hitboxes | Klipper state decisions and printer commands |

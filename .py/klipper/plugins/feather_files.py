@@ -7,12 +7,23 @@
 import json
 import logging
 import os
+import signal
+import socket
+import subprocess
 
 
 DEFAULT_HISTORY_PATH = "/opt/config/mod_data/feather_print_history.json"
 HISTORY_LIMIT = 512
 MAX_DIRECTORY_DEPTH = 2
 VALID_GCODE_EXTS = (".gcode", ".g", ".gco")
+USB_HELPER_PATH = "/root/printer_data/scripts/commands/zusb_mount.sh"
+USB_MOUNT_NAME = "USB"
+USB_RETRY_MAX = 30.0
+USB_HELPER_TIMEOUT = 15.0
+USB_EVENT_SETTLE = 0.4
+USB_EVENT_BUFFER = 16384
+NETLINK_KOBJECT_UEVENT = 15
+AF_NETLINK = getattr(socket, "AF_NETLINK", 16)
 
 
 class FileEntry:
@@ -115,9 +126,12 @@ class PrintHistory:
                 pass
 
 
-def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH):
+def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH,
+                     history_prefix="", excluded_paths=()):
     """Return a flat newest-first list without following directory symlinks."""
     root = os.path.realpath(root)
+    excluded = frozenset(os.path.realpath(path) for path in excluded_paths)
+    history_prefix = str(history_prefix or "").strip("/")
     entries = []
     pending = [(root, 0)]
     while pending:
@@ -131,7 +145,7 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH):
                     if path != root and not path.startswith(root + os.sep):
                         continue
                     if child.is_dir(follow_symlinks=False):
-                        if depth < max_depth:
+                        if path not in excluded and depth < max_depth:
                             pending.append((path, depth + 1))
                         continue
                     if (not child.is_file(follow_symlinks=False)
@@ -148,10 +162,245 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH):
             raise RuntimeError("Unable to list files: %s" % exc)
 
     def sort_key(item):
-        printed = (history.last_printed(item.name)
+        history_name = (history_prefix + "/" + item.name
+                        if history_prefix else item.name)
+        printed = (history.last_printed(history_name)
                    if history is not None else 0.0)
         recency = max(float(item.mtime), float(printed))
         return (-recency, item.name.lower())
 
     entries.sort(key=sort_key)
     return entries
+
+
+class UsbStorageMonitor:
+    """Event-driven USB mount lifecycle for the Feather file browser."""
+
+    __slots__ = (
+        "mount_point", "helper_path", "reactor",
+        "_popen", "_is_mount", "_socket_factory", "event_socket",
+        "event_handle", "available", "device", "process",
+        "process_started", "next_attempt", "next_socket_attempt", "dirty",
+        "active", "failures", "stopped")
+
+    def __init__(self, virtual_sd_root, reactor,
+                 helper_path=USB_HELPER_PATH, popen=None, is_mount=None,
+                 socket_factory=None):
+        self.mount_point = os.path.join(
+            os.path.realpath(virtual_sd_root), USB_MOUNT_NAME)
+        self.helper_path = helper_path
+        self.reactor = reactor
+        self._popen = popen or subprocess.Popen
+        self._is_mount = is_mount or os.path.ismount
+        self._socket_factory = socket_factory or socket.socket
+
+        self.event_socket = None
+        self.event_handle = None
+        self.available = False
+        self.device = None
+        self.process = None
+        self.process_started = 0.0
+        self.next_attempt = 0.0
+        self.next_socket_attempt = 0.0
+        self.dirty = True
+        self.active = False
+        self.failures = 0
+        self.stopped = False
+
+    def _open_events(self, eventtime):
+        if self.event_socket is not None or self.stopped or not self.active:
+            return
+        event_socket = None
+        try:
+            event_socket = self._socket_factory(
+                AF_NETLINK, socket.SOCK_DGRAM,
+                NETLINK_KOBJECT_UEVENT)
+            event_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF, USB_EVENT_BUFFER)
+            event_socket.bind((0, 1))
+            event_socket.setblocking(False)
+            event_handle = self.reactor.register_fd(
+                event_socket.fileno(), self._handle_events)
+        except (OSError, ValueError):
+            logging.exception(
+                "[feather_screen] unable to subscribe to USB events")
+            if event_socket is not None:
+                try:
+                    event_socket.close()
+                except OSError:
+                    pass
+            self.next_socket_attempt = eventtime + USB_RETRY_MAX
+            return
+        self.event_socket = event_socket
+        self.event_handle = event_handle
+        self.next_socket_attempt = eventtime
+
+    def _close_events(self):
+        if self.event_handle is not None:
+            try:
+                self.reactor.unregister_fd(self.event_handle)
+            except (OSError, ValueError):
+                pass
+            self.event_handle = None
+        if self.event_socket is not None:
+            try:
+                self.event_socket.close()
+            except OSError:
+                pass
+            self.event_socket = None
+
+    @staticmethod
+    def _is_usb_block_event(message):
+        fields = {}
+        for field in message.split(b"\0"):
+            key, separator, value = field.partition(b"=")
+            if separator:
+                fields[key] = value
+        return (fields.get(b"SUBSYSTEM") == b"block"
+                and b"/usb" in fields.get(b"DEVPATH", b"")
+                and fields.get(b"ACTION") in (
+                    b"add", b"remove", b"change", b"move"))
+
+    def _handle_events(self, eventtime):
+        if not self.active or self.event_socket is None:
+            return
+        relevant = False
+        for _unused in range(64):
+            try:
+                message = self.event_socket.recv(4096)
+            except (BlockingIOError, InterruptedError):
+                break
+            except OSError:
+                logging.exception(
+                    "[feather_screen] unable to read USB event")
+                self._close_events()
+                self.next_socket_attempt = eventtime + USB_RETRY_MAX
+                self.dirty = True
+                self.next_attempt = eventtime
+                return
+            relevant = self._is_usb_block_event(message) or relevant
+        if relevant:
+            self.dirty = True
+            self.next_attempt = eventtime + USB_EVENT_SETTLE
+
+    def _start(self, eventtime):
+        if (self.process is not None or self.stopped or not self.active
+                or not self.dirty):
+            return
+        try:
+            self.process = self._popen(
+                [self.helper_path, "attach", self.mount_point],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                start_new_session=True)
+        except OSError:
+            logging.exception(
+                "[feather_screen] unable to start USB reconciliation")
+            self.next_attempt = eventtime + USB_RETRY_MAX
+            return
+        self.dirty = False
+        self.process_started = eventtime
+
+    @staticmethod
+    def _terminate(process):
+        if process is None or process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    def _finish(self, eventtime):
+        if self.process is None or self.process.poll() is None:
+            return False
+        process = self.process
+        self.process = None
+        self.process_started = 0.0
+        output = process.communicate()[0].decode("utf-8", errors="replace")
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        attached = next(
+            (line for line in lines if line.startswith("ATTACHED ")), None)
+        mounted = self._is_mount(self.mount_point)
+        was_available = self.available
+        previous_device = self.device
+        self.available = bool(
+            process.returncode == 0 and attached and mounted)
+        if self.available:
+            fields = attached.split()
+            self.device = fields[1] if len(fields) > 1 else None
+            self.failures = 0
+            self.next_attempt = eventtime
+            if not was_available or self.device != previous_device:
+                logging.info(
+                    "[feather_screen] USB files available from %s",
+                    self.device or "unknown device")
+        else:
+            self.device = None
+            busy = "BUSY" in lines
+            retry = busy or any(line.startswith("ERROR ") for line in lines)
+            if retry:
+                self.failures += 1
+                self.dirty = True
+                self.next_attempt = eventtime + (
+                    1.0 if busy else min(
+                        USB_RETRY_MAX, 2.0 ** min(self.failures, 5)))
+            else:
+                self.failures = 0
+                self.next_attempt = eventtime
+            if not busy and lines and "NONE" not in lines:
+                logging.info(
+                    "[feather_screen] USB reconciliation deferred: %s",
+                    lines[-1])
+        return was_available != self.available
+
+    def resume(self, eventtime):
+        if self.stopped:
+            return
+        if not self.active:
+            self.active = True
+            self.dirty = True
+            self.next_attempt = eventtime
+        if self.event_socket is None and eventtime >= self.next_socket_attempt:
+            self._open_events(eventtime)
+
+    def pause(self):
+        if not self.active:
+            return
+        self.active = False
+        self.dirty = True
+        self._close_events()
+        self._terminate(self.process)
+
+    def tick(self, eventtime):
+        if self.stopped or not self.active:
+            return False
+        changed = self._finish(eventtime)
+        if self.process is not None:
+            if eventtime - self.process_started >= USB_HELPER_TIMEOUT:
+                logging.error(
+                    "[feather_screen] USB reconciliation timed out")
+                self._terminate(self.process)
+                self.process_started = eventtime
+            return changed
+        if self.event_socket is None and eventtime >= self.next_socket_attempt:
+            self._open_events(eventtime)
+        if self.dirty and eventtime >= self.next_attempt:
+            self._start(eventtime)
+        return changed
+
+    def stop(self):
+        if self.stopped:
+            return
+        self.stopped = True
+        self.active = False
+        self._close_events()
+        self._terminate(self.process)
+        self.process = None
+        self.available = False
+        self.device = None
+        try:
+            self._popen(
+                [self.helper_path, "detach", self.mount_point],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        except OSError:
+            logging.exception("[feather_screen] unable to detach USB files")

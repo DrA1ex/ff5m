@@ -17,7 +17,8 @@ try:
     from .feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS, mod_ui,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
-    from .feather_files import DEFAULT_HISTORY_PATH, PrintHistory
+    from .feather_files import (
+        DEFAULT_HISTORY_PATH, PrintHistory, UsbStorageMonitor)
     from .feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -36,7 +37,8 @@ except (ImportError, ValueError):
     from feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS, mod_ui,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
-    from feather_files import DEFAULT_HISTORY_PATH, PrintHistory
+    from feather_files import (
+        DEFAULT_HISTORY_PATH, PrintHistory, UsbStorageMonitor)
     from feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -206,6 +208,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.file_page = 0
         self.file_entries = []
         self.selected_file = None
+        self.file_source = "internal"
+        self.usb_storage = None
         self.jog_step = 1.0
         self.move_mode = "step"
         self.joystick = None
@@ -402,6 +406,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             getattr(self.display_status, "expire_progress", 0.0) or 0.0)
         self.print_stats = self.printer.lookup_object("print_stats")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
+        self.usb_storage = UsbStorageMonitor(
+            self.virtual_sdcard.sdcard_dirname, self.reactor)
         self.gcode_move = self.printer.lookup_object("gcode_move")
         self.temperature_wait = self.printer.lookup_object(
             "gcode_macro _WAIT_TEMPERATURE", None)
@@ -492,6 +498,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 if killer is not None:
                     killer()
         self.network_stopping = []
+        if self.usb_storage is not None:
+            self.usb_storage.stop()
+            self.usb_storage = None
         self._cleanup_network_credentials()
         self.pending_action = None
         self.cancel_requested = False
@@ -771,6 +780,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self._show_page(Page.MAIN_MENU)
             elif action == "nav.files":
                 self.file_page = 0
+                self.file_source = "internal"
                 self._show_page(Page.FILE_BROWSER)
             elif action == "nav.control":
                 self._require_idle()
@@ -804,6 +814,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     self._show_page(self.page_for_print_state())
                 else:
                     self.file_page = 0
+                    self.file_source = "internal"
                     self._show_page(Page.FILE_BROWSER)
             elif action.startswith("file."):
                 self._handle_file_action(action)
@@ -945,7 +956,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_error()
 
     def _go_back(self):
-        if self.page == Page.FILE_CONFIRM:
+        if (self.page == Page.FILE_BROWSER
+                and getattr(self, "file_source", "internal") == "usb"):
+            self.file_source = "internal"
+            self.file_page = 0
+            self.selected_file = None
+            self._show_page(Page.FILE_BROWSER)
+        elif self.page == Page.FILE_CONFIRM:
             self._show_page(Page.FILE_BROWSER)
         elif self.page in (Page.CONTROL_HOME, Page.FILAMENT_MATERIAL):
             if self.page == Page.FILAMENT_MATERIAL and self.filament_from_pause:
@@ -1345,6 +1362,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             new_state = PrintState.IDLE
         if new_state != self.print_state:
             self._change_print_state(new_state, state)
+        self._poll_usb_storage(eventtime)
         self._refresh_emergency_stop(eventtime)
         if self.pending_action is not None:
             expected = {"print.pause": "paused", "print.resume": "printing",
@@ -1414,6 +1432,27 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self.toast_until = 0.0
             self._show_page(self.page)
         return eventtime + REFRESH_TIME
+
+    def _poll_usb_storage(self, eventtime):
+        monitor = getattr(self, "usb_storage", None)
+        if monitor is None:
+            return
+        if self.print_state != PrintState.IDLE:
+            monitor.pause()
+            return
+        monitor.resume(eventtime)
+        if not monitor.tick(eventtime):
+            return
+        if (not monitor.available
+                and getattr(self, "file_source", "internal") == "usb"):
+            self.file_source = "internal"
+            self.file_page = 0
+            self.selected_file = None
+            if self.page == Page.FILE_CONFIRM:
+                self._show_message("USB drive removed", Page.FILE_BROWSER)
+                return
+        if self.page == Page.FILE_BROWSER:
+            self._render_file_browser()
 
     def _change_print_state(self, new_state, stats_state):
         old_state = self.print_state

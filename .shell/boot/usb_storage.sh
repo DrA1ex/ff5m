@@ -17,10 +17,53 @@ USB_STORAGE_PROC_MOUNTS="${USB_STORAGE_PROC_MOUNTS:-/proc/mounts}"
 USB_STORAGE_MOUNT_ROOT="${USB_STORAGE_MOUNT_ROOT:-/tmp}"
 USB_STORAGE_LSBLK="${USB_STORAGE_LSBLK:-lsblk}"
 USB_STORAGE_UDEVADM="${USB_STORAGE_UDEVADM:-udevadm}"
+USB_STORAGE_OPERATION_LOCK="${USB_STORAGE_OPERATION_LOCK:-/tmp/forge-x-usb-operation}"
+USB_STORAGE_REQUIRE_BLOCK_DEVICES="${USB_STORAGE_REQUIRE_BLOCK_DEVICES:-1}"
 
 USB_STORAGE_MOUNT_POINT=""
 USB_STORAGE_MOUNT_FILESYSTEM=""
 USB_STORAGE_MOUNTED_BY_US=0
+
+
+usb_storage_device_ready() {
+    [ -e "$1" ] || return 1
+    [ "$USB_STORAGE_REQUIRE_BLOCK_DEVICES" = "0" ] || [ -b "$1" ]
+}
+
+
+usb_storage_operation_acquire() {
+    local owner=""
+
+    if mkdir "$USB_STORAGE_OPERATION_LOCK" 2>/dev/null; then
+        printf '%s\n' "$$" > "$USB_STORAGE_OPERATION_LOCK/owner"
+        return 0
+    fi
+
+    [ -f "$USB_STORAGE_OPERATION_LOCK/owner" ] \
+        && read -r owner < "$USB_STORAGE_OPERATION_LOCK/owner"
+    case "$owner" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$owner" 2>/dev/null && return 1
+
+    # The previous owner no longer exists (for example after SIGKILL). Only
+    # remove the exact lock contents before one atomic retry.
+    rm -f "$USB_STORAGE_OPERATION_LOCK/owner" 2>/dev/null
+    rmdir "$USB_STORAGE_OPERATION_LOCK" 2>/dev/null || return 1
+    mkdir "$USB_STORAGE_OPERATION_LOCK" 2>/dev/null || return 1
+    printf '%s\n' "$$" > "$USB_STORAGE_OPERATION_LOCK/owner"
+}
+
+
+usb_storage_operation_release() {
+    local owner=""
+
+    [ -f "$USB_STORAGE_OPERATION_LOCK/owner" ] \
+        && read -r owner < "$USB_STORAGE_OPERATION_LOCK/owner"
+    [ "$owner" = "$$" ] || return 1
+    rm -f "$USB_STORAGE_OPERATION_LOCK/owner" 2>/dev/null
+    rmdir "$USB_STORAGE_OPERATION_LOCK" 2>/dev/null
+}
 
 
 usb_storage_is_usb_disk() {
@@ -46,7 +89,8 @@ usb_storage_disks() {
         [ -e "$sys_device" ] || continue
         device_name=$(basename "$sys_device")
         usb_storage_is_usb_disk "$device_name" || continue
-        [ -e "$USB_STORAGE_DEV_ROOT/$device_name" ] || continue
+        usb_storage_device_ready \
+            "$USB_STORAGE_DEV_ROOT/$device_name" || continue
         size_kib=$(awk -v dev="$device_name" \
             '$4 == dev { print $3; exit }' "$USB_STORAGE_PROC_PARTITIONS")
         [ -n "$size_kib" ] && [ "$size_kib" -gt 0 ] || continue
@@ -73,7 +117,8 @@ usb_storage_partitions() {
     for sys_partition in "$USB_STORAGE_SYS_BLOCK_ROOT/$disk_name"/*; do
         [ -f "$sys_partition/partition" ] || continue
         partition_name=$(basename "$sys_partition")
-        [ -e "$USB_STORAGE_DEV_ROOT/$partition_name" ] || continue
+        usb_storage_device_ready \
+            "$USB_STORAGE_DEV_ROOT/$partition_name" || continue
         size_kib=$(awk -v dev="$partition_name" \
             '$4 == dev { print $3; exit }' "$USB_STORAGE_PROC_PARTITIONS")
         [ -n "$size_kib" ] || continue
@@ -108,7 +153,7 @@ usb_storage_candidates() {
 
         # A filesystem or swap signature may also be written directly to a
         # whole USB device without a partition table.
-        if [ -e "$USB_STORAGE_DEV_ROOT/$device_name" ]; then
+        if usb_storage_device_ready "$USB_STORAGE_DEV_ROOT/$device_name"; then
             awk -v dev="$device_name" -v root="$USB_STORAGE_DEV_ROOT" \
                 '$4 == dev && $3 > 0 { print $3, root "/" $4 }' \
                 "$USB_STORAGE_PROC_PARTITIONS"

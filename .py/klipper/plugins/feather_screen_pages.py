@@ -250,9 +250,35 @@ class FeatherPagesMixin:
         self.renderer.send(commands)
 
     def _load_file_entries(self):
+        root = self.virtual_sdcard.sdcard_dirname
+        history = getattr(self, "print_history", None)
+        usb_storage = getattr(self, "usb_storage", None)
+        if getattr(self, "file_source", "internal") == "usb":
+            if usb_storage is None or not usb_storage.available:
+                self.file_source = "internal"
+                self.file_page = 0
+            else:
+                try:
+                    self.file_entries = scan_gcode_files(
+                        usb_storage.mount_point, history,
+                        history_prefix=os.path.relpath(
+                            usb_storage.mount_point, root))
+                except RuntimeError as exc:
+                    # Removable media can disappear between the monitor tick
+                    # and directory traversal. Keep the UI responsive; the
+                    # next tick will remove the USB entry if its mount is gone.
+                    logging.info(
+                        "[feather_screen] USB file scan deferred: %s", exc)
+                    self.file_entries = []
+                return
+
+        excluded = ((usb_storage.mount_point,)
+                    if usb_storage is not None else ())
         self.file_entries = scan_gcode_files(
-            self.virtual_sdcard.sdcard_dirname,
-            getattr(self, "print_history", None))
+            root, history, excluded_paths=excluded)
+        if usb_storage is not None and usb_storage.available:
+            self.file_entries.insert(0, FileEntry(
+                "USB", usb_storage.mount_point, directory=True))
 
     def _record_current_print(self):
         history = getattr(self, "print_history", None)
@@ -271,12 +297,20 @@ class FeatherPagesMixin:
         self._load_file_entries()
         pagination = Pagination(self.file_entries, self.file_page, FILE_ROWS)
         self.file_page = pagination.page
-        commands = self.renderer.begin_page("Print files", back=True)
+        usb_page = getattr(self, "file_source", "internal") == "usb"
+        title = "USB files" if usb_page else "Print files"
+        commands = self.renderer.begin_page(title, back=True)
+        if usb_page:
+            commands += self.renderer.button(
+                "file.refresh", 640, 7, 146, 46, "REFRESH",
+                font="JetBrainsMono Bold 8pt")
         rows = pagination.visible
         for index, entry in enumerate(rows):
             y = 62 + index * 65
             commands += self.renderer.button("file.item%d" % index, 30, y, 740, 56,
-                                             entry["name"],
+                                             (entry["name"] + "  >"
+                                              if entry["directory"]
+                                              else entry["name"]),
                                              font="JetBrainsMono 12pt")
         commands += pagination_footer(
             self.renderer, pagination, "file.prev", "file.next")
@@ -293,6 +327,8 @@ class FeatherPagesMixin:
         elif action == "file.next":
             self.file_page += 1
             self._render_file_browser()
+        elif action == "file.refresh":
+            self._render_file_browser()
         elif action == "file.start":
             self._start_selected_file()
         elif action.startswith("file.item"):
@@ -303,6 +339,12 @@ class FeatherPagesMixin:
             if offset is None:
                 return
             entry = self.file_entries[offset]
+            if entry["directory"]:
+                self.file_source = "usb"
+                self.file_page = 0
+                self.selected_file = None
+                self._render_file_browser()
+                return
             self.selected_file = entry
             self._show_page(Page.FILE_CONFIRM)
 

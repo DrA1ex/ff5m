@@ -409,6 +409,8 @@ PREPARE_USB
 
 The dialog works in Feather, Fluidd, and compatible web interfaces. Choose `FAT32` for the widest printer and desktop compatibility, or `Linux EXT` as an alternative; both can store files and host USB swap.
 
+On the Feather screen, a supported connected drive appears automatically as **USB DRIVE** at the top of **Print files**. Open it to select G-code using the same flat, recent-first list as internal storage; the entry disappears when the drive is removed.
+
 > [!WARNING]
 > Confirming the second dialog erases all data on the selected USB drive.
 

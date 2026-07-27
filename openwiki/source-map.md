@@ -15,7 +15,7 @@ Use this map to start at the behavior boundary, then follow includes/calls rathe
 | Parameter schema and reactions | [`mod_params.json`](../mod_params.json) | `.shell/commands/zchanges.sh`, `docs/CONFIGURATION.md` | Defaults/options and side effects of supported settings. |
 | Klipper patch/plugin overlay | [`.py/klipper/`](../.py/klipper/) | [Built-in Klipper patching](workflows/klipper-patching.md), [Forge-X Klipper extensions](workflows/klipper-extensions.md), `.shell/S00init`, `.shell/uninstall.sh` | Symlinked stock-module replacements with `.bak` rollback plus six configured extra plugins; not a full source fork. |
 | Persistence/backup | [`.py/cfg_backup.py`](../.py/cfg_backup.py) | `.shell/commands/zbackup.sh`, `zchanges.sh` | Managed configuration backup/restore and tuning application. |
-| USB storage and memory | [`.shell/boot/usb_storage.sh`](../.shell/boot/usb_storage.sh) | `.shell/boot/init_swap.sh`, `.shell/boot/init_boot_flag.sh`, `.shell/commands/zusb.sh`, `.shell/boot/zram/` | Early USB discovery, boot media, drive preparation, and swap fallback. |
+| USB storage and memory | [`.shell/boot/usb_storage.sh`](../.shell/boot/usb_storage.sh) | `.shell/boot/init_swap.sh`, `.shell/boot/init_boot_flag.sh`, `.shell/commands/zusb.sh`, `.shell/commands/zusb_mount.sh`, `.py/klipper/plugins/feather_files.py`, `.shell/boot/zram/` | Early USB discovery, boot media, drive preparation, Feather file browsing, and swap fallback. |
 | Network peripherals | [`.shell/S98camera`](../.shell/S98camera) | `.shell/S98zssh`, `.shell/commands/zchanges.sh` | Camera and remote access. |
 | Packaging/maintenance helpers | `sync.sh`, `sync_remote.sh`, `addMD5.sh`, `addMD5.bat` | release/docs references | Synchronization and slicer checksum tooling. |
 

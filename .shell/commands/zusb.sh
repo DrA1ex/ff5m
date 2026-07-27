@@ -298,6 +298,12 @@ case "$1" in
             usb_prepare_error "Usage: $0 format {EXT|FAT32} {device} {id}"
             exit 1
         }
+        if ! usb_storage_operation_acquire; then
+            usb_prepare_error "Another USB operation is already running."
+            usb_prepare_result_prompt 1 "$2" "$3"
+            exit 1
+        fi
+        trap 'usb_storage_operation_release' EXIT
         if usb_prepare_format "$2" "$3" "$4"; then
             usb_prepare_result_prompt 0 "$2" "$3"
         else
