@@ -52,6 +52,24 @@ class FrameworkContractTest(unittest.TestCase):
         subprocess.run([sys.executable, "-c", script], check=True,
                        env=environment)
 
+    def test_runtime_source_hooks_defer_designer_only_dependencies(self):
+        script = (
+            "import sys\n"
+            "import ui.source as source\n"
+            "assert 'threading' not in sys.modules\n"
+            "assert 'contextlib' not in sys.modules\n"
+            "provider = type('Provider', (), {})()\n"
+            "assert not source.capture_enabled()\n"
+            "with source.source_capture(provider):\n"
+            "    assert source.capture_enabled()\n"
+            "assert not source.capture_enabled()\n"
+            "assert 'threading' in sys.modules\n"
+            "assert 'contextlib' not in sys.modules\n")
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(PLUGINS)
+        subprocess.run([sys.executable, "-c", script], check=True,
+                       env=environment)
+
     def test_product_key_wire_namespaces_survive_package_move(self):
         namespaces = {
             AppPage: "ui.pages.keys.AppPage",

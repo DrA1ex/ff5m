@@ -5,13 +5,16 @@
 ## framework never imports a parser, a Designer package, or project-specific
 ## preview code.
 
-import contextlib
-import hashlib
-import threading
-
-
-_LOCAL = threading.local()
+_LOCAL = None
 _PROVIDERS = {}
+
+
+def _local():
+    global _LOCAL
+    if _LOCAL is None:
+        import threading
+        _LOCAL = threading.local()
+    return _LOCAL
 
 
 def _token_for(provider):
@@ -22,23 +25,37 @@ def _token_for(provider):
 
 
 def _provider():
+    if _LOCAL is None:
+        return None
     token = getattr(_LOCAL, "provider_token", None)
     return _PROVIDERS.get(token)
 
 
-@contextlib.contextmanager
+class _SourceCapture:
+    __slots__ = ("provider", "token", "previous", "local")
+
+    def __init__(self, provider):
+        if provider is None:
+            raise TypeError("source provenance provider is required")
+        self.provider = provider
+        self.token = _token_for(provider)
+        self.previous = None
+        self.local = None
+
+    def __enter__(self):
+        _PROVIDERS[self.token] = self.provider
+        self.local = _local()
+        self.previous = getattr(self.local, "provider_token", None)
+        self.local.provider_token = self.token
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.local.provider_token = self.previous
+        return False
+
+
 def source_capture(provider):
     """Install an external provenance provider for one import operation."""
-    if provider is None:
-        raise TypeError("source provenance provider is required")
-    token = _token_for(provider)
-    _PROVIDERS[token] = provider
-    previous = getattr(_LOCAL, "provider_token", None)
-    _LOCAL.provider_token = token
-    try:
-        yield
-    finally:
-        _LOCAL.provider_token = previous
+    return _SourceCapture(provider)
 
 
 def capture_enabled():
@@ -120,6 +137,7 @@ def layout_provenance(node):
 
 
 def _scope_id(scope):
+    import hashlib
     anchor = scope.get("anchor") or {}
     value = anchor.get("range") or {}
     start = value.get("start") or {}
