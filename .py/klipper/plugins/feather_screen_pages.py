@@ -1624,9 +1624,73 @@ class FeatherPagesMixin:
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
 
+    def _render_action_prompt(self):
+        prompt = self.action_prompt or {
+            "title": "Prompt", "text": [], "rows": [], "footer": []}
+        rows = prompt["rows"]
+        rows_per_page = 3
+        max_page = max(0, (len(rows) - 1) // rows_per_page)
+        self.action_prompt_page = min(
+            max(0, self.action_prompt_page), max_page)
+        visible_rows = rows[
+            self.action_prompt_page * rows_per_page:
+            (self.action_prompt_page + 1) * rows_per_page]
+
+        commands = self.renderer.begin_page("KLIPPER PROMPT")
+        commands += self.renderer.panel(
+            30, 67, 740, 365, border="295c66", background="050c0f")
+        commands.append(self.renderer.text(
+            400, 102, prompt["title"], "35d9e6",
+            "JetBrainsMono Bold 16pt", "center", "middle",
+            max_width=680, truncate=True))
+        text = "\n".join(prompt["text"])
+        if text:
+            commands.append(self.renderer.text(
+                400, 158, text, "d9e4e8", "JetBrainsMono 8pt",
+                "center", "middle", max_width=680, max_height=76,
+                wrap=True, truncate=True))
+
+        if max_page:
+            commands += self.renderer.button(
+                "prompt.prev", 48, 77, 70, 40, "<",
+                state=("enabled" if self.action_prompt_page else "disabled"),
+                font="JetBrainsMono Bold 12pt")
+            commands += self.renderer.button(
+                "prompt.next", 682, 77, 70, 40, ">",
+                state=("enabled" if self.action_prompt_page < max_page
+                       else "disabled"),
+                font="JetBrainsMono Bold 12pt")
+
+        for row_index, row in enumerate(visible_rows):
+            gap = 10
+            margin = 48
+            width = max(
+                1, (704 - gap * (len(row) - 1)) // max(1, len(row)))
+            y = 213 + row_index * 55
+            for column, button in enumerate(row):
+                commands += self.renderer.button(
+                    button["action"], margin + column * (width + gap), y,
+                    width, 45, button["label"], state=button["state"],
+                    font="JetBrainsMono 8pt")
+
+        footer = prompt["footer"]
+        if footer:
+            gap = 10
+            margin = 48
+            width = max(
+                1, (704 - gap * (len(footer) - 1))
+                // max(1, len(footer)))
+            for column, button in enumerate(footer):
+                commands += self.renderer.button(
+                    button["action"], margin + column * (width + gap), 374,
+                    width, 42, button["label"], state=button["state"],
+                    font="JetBrainsMono 8pt")
+        self.renderer.send(commands)
+
     def _handle_recovery_action(self, action):
         if action == "recovery.later":
-            self._show_page(Page.IDLE_HOME)
+            self._run_script(
+                "RESPOND TYPE=command MSG=action:prompt_end")
         elif action in ("recovery.restore", "recovery.cleanup"):
             self.recovery_action = action.split(".", 1)[1]
             self._show_page(Page.RECOVERY_CONFIRM)

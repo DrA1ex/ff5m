@@ -1783,12 +1783,168 @@ class FeatherControlsMixin:
             return {"name": match.group(1).strip(), "direction": "BASE", "turns": "-"}
         return None
 
-    def _handle_gcode_output(self, message):
-        if self.calibration_kind != "screws" or self.page != Page.CALIBRATION_PROGRESS:
+    @staticmethod
+    def _prompt_response_lines(message):
+        for raw_line in str(message).splitlines():
+            line = raw_line.strip()
+            if line.startswith("//"):
+                line = line[2:].lstrip()
+            if line.lower().startswith("action:prompt_"):
+                yield line
+
+    @staticmethod
+    def _prompt_button(payload, index):
+        parts = str(payload).split("|", 2)
+        label = parts[0].strip()
+        command = (
+            parts[1].strip()
+            if len(parts) > 1 and parts[1].strip() else label)
+        color = (
+            parts[2].strip().lower()
+            if len(parts) > 2 else "")
+        state = {
+            "error": "danger",
+            "warning": "warning",
+            "secondary": "selected",
+        }.get(color, "enabled")
+        return {
+            "action": "prompt.button.%d" % index,
+            "label": label,
+            "command": command,
+            "state": state,
+        }
+
+    def _start_action_prompt(self, title):
+        if (getattr(self, "action_prompt_visible", False)
+                and self.page in (
+                    Page.ACTION_PROMPT, Page.RECOVERY_PROMPT,
+                    Page.RECOVERY_CONFIRM)):
+            return_page = self.action_prompt_return_page
+        elif self.page in (Page.RECOVERY_PROMPT, Page.RECOVERY_CONFIRM):
+            return_page = self.page_for_print_state()
+        else:
+            return_page = self.page
+        self.action_prompt = {
+            "title": str(title).strip(),
+            "text": [],
+            "rows": [],
+            "footer": [],
+            "group": None,
+            "buttons": {},
+        }
+        self.action_prompt_visible = False
+        self.action_prompt_return_page = return_page
+        self.action_prompt_page = 0
+
+    def _append_action_prompt_button(self, payload, footer=False):
+        prompt = self.action_prompt
+        if prompt is None:
             return
-        result = self.parse_screw_result(message)
-        if result:
-            self.calibration_results.append(result)
+        button = self._prompt_button(payload, len(prompt["buttons"]))
+        prompt["buttons"][button["action"]] = button
+        if footer:
+            prompt["footer"].append(button)
+        elif prompt["group"] is not None:
+            prompt["group"].append(button)
+        else:
+            prompt["rows"].append([button])
+
+    def _finish_action_prompt_group(self):
+        prompt = self.action_prompt
+        if prompt is None or prompt["group"] is None:
+            return
+        if prompt["group"]:
+            prompt["rows"].append(prompt["group"])
+        prompt["group"] = None
+
+    def _action_prompt_is_recovery(self):
+        prompt = self.action_prompt or {}
+        return prompt.get("title", "").strip().casefold() == "resurrection"
+
+    def _show_action_prompt(self):
+        if self.action_prompt is None:
+            return
+        self._finish_action_prompt_group()
+        if self._action_prompt_is_recovery():
+            recovery = getattr(self, "resurrection", None)
+            status = (
+                recovery.get_status(self.reactor.monotonic())
+                if recovery is not None else {})
+            self.recovery_status = status
+            if not status.get("available"):
+                self.action_prompt = None
+                self.action_prompt_visible = False
+                return
+            page = Page.RECOVERY_PROMPT
+        else:
+            page = Page.ACTION_PROMPT
+        self.action_prompt_visible = True
+        self.action_prompt_page = 0
+        self._show_page(page)
+
+    def _end_action_prompt(self):
+        current_page = self.page
+        mirrored_recovery = (
+            current_page in (Page.RECOVERY_PROMPT, Page.RECOVERY_CONFIRM))
+        displayed = (
+            getattr(self, "action_prompt_visible", False)
+            and current_page == Page.ACTION_PROMPT)
+        return_page = getattr(
+            self, "action_prompt_return_page", Page.IDLE_HOME)
+        self.action_prompt = None
+        self.action_prompt_visible = False
+        self.action_prompt_page = 0
+        if mirrored_recovery or displayed:
+            self.recovery_action = None
+            self._show_page(
+                self.page_for_print_state()
+                if mirrored_recovery else return_page)
+
+    def _handle_action_prompt_response(self, line):
+        command, separator, payload = line.partition(" ")
+        action = command[len("action:prompt_"):].lower()
+        payload = payload if separator else ""
+        if action == "begin":
+            self._start_action_prompt(payload)
+        elif action == "text" and self.action_prompt is not None:
+            self.action_prompt["text"].append(payload)
+        elif action == "button":
+            self._append_action_prompt_button(payload)
+        elif action == "footer_button":
+            self._append_action_prompt_button(payload, footer=True)
+        elif action == "button_group_start" and self.action_prompt is not None:
+            self._finish_action_prompt_group()
+            self.action_prompt["group"] = []
+        elif action == "button_group_end":
+            self._finish_action_prompt_group()
+        elif action == "show":
+            self._show_action_prompt()
+        elif action == "end":
+            self._end_action_prompt()
+
+    def _handle_gcode_output(self, message):
+        for line in self._prompt_response_lines(message):
+            self._handle_action_prompt_response(line)
+        if (getattr(self, "calibration_kind", None) == "screws"
+                and self.page == Page.CALIBRATION_PROGRESS):
+            result = self.parse_screw_result(message)
+            if result:
+                self.calibration_results.append(result)
+
+    def _handle_action_prompt_action(self, action):
+        prompt = self.action_prompt
+        if prompt is None:
+            return
+        if action == "prompt.prev":
+            self.action_prompt_page = max(0, self.action_prompt_page - 1)
+            self._render_action_prompt()
+        elif action == "prompt.next":
+            self.action_prompt_page += 1
+            self._render_action_prompt()
+        elif action.startswith("prompt.button."):
+            button = prompt["buttons"].get(action)
+            if button is not None and button["command"]:
+                self._run_script(button["command"])
 
     def _render_calibration_result(self):
         commands = self.renderer.begin_page("Calibration result")

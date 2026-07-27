@@ -143,6 +143,7 @@ class Page(enum.Enum):
     Z_OFFSET_BRIEFING = 32
     Z_OFFSET_PAPER = 33
     Z_OFFSET_PAPER_BRIEFING = 34
+    ACTION_PROMPT = 35
 
 
 class PrintState(enum.Enum):

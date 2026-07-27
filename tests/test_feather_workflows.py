@@ -1573,13 +1573,118 @@ class RecoveryRobustnessTest(unittest.TestCase):
         self.assertEqual(status["state"], "error")
         self.assertNotIn("file_path", status)
 
-    def test_later_keeps_recovery_data_and_opens_home(self):
+    def test_later_keeps_recovery_data_and_closes_shared_prompt(self):
         controller = base_controller()
         pages = []
         controller._show_page = pages.append
         controller._handle_recovery_action("recovery.later")
-        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
-        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(pages, [])
+        self.assertEqual(controller.gcode.commands, [
+            "RESPOND TYPE=command MSG=action:prompt_end"])
+
+
+class ActionPromptProtocolTest(unittest.TestCase):
+    @staticmethod
+    def controller():
+        controller = base_controller()
+        controller.action_prompt = None
+        controller.action_prompt_visible = False
+        controller.action_prompt_return_page = FEATHER.Page.IDLE_HOME
+        controller.action_prompt_page = 0
+        controller.recovery_action = None
+        controller.resurrection = None
+        shown = []
+
+        def show_page(page):
+            controller.page = page
+            shown.append(page)
+
+        controller._show_page = show_page
+        return controller, shown
+
+    def test_prompt_responses_build_show_and_close_dialog(self):
+        controller, shown = self.controller()
+
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Choose material",
+            "// action:prompt_text Select a profile",
+            "// action:prompt_button_group_start",
+            "// action:prompt_button PLA|SET_MATERIAL MATERIAL=PLA|primary",
+            "// action:prompt_button PETG|SET_MATERIAL MATERIAL=PETG|warning",
+            "// action:prompt_button_group_end",
+            "// action:prompt_footer_button Cancel|"
+            "RESPOND TYPE=command MSG=action:prompt_end|secondary",
+            "// action:prompt_show",
+        ]))
+
+        self.assertEqual(shown, [FEATHER.Page.ACTION_PROMPT])
+        self.assertTrue(controller.action_prompt_visible)
+        self.assertEqual(controller.action_prompt["title"], "Choose material")
+        self.assertEqual(len(controller.action_prompt["rows"]), 1)
+        self.assertEqual(
+            [button["label"] for button in controller.action_prompt["rows"][0]],
+            ["PLA", "PETG"])
+        self.assertEqual(
+            controller.action_prompt["footer"][0]["command"],
+            "RESPOND TYPE=command MSG=action:prompt_end")
+
+        controller._handle_gcode_output("// action:prompt_end")
+
+        self.assertEqual(shown[-1], FEATHER.Page.IDLE_HOME)
+        self.assertFalse(controller.action_prompt_visible)
+        self.assertIsNone(controller.action_prompt)
+
+    def test_prompt_button_can_replace_dialog_with_next_menu(self):
+        controller, shown = self.controller()
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin First",
+            "// action:prompt_button Next|OPEN_NEXT",
+            "// action:prompt_show",
+        ]))
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            controller._handle_gcode_output("\n".join([
+                "// action:prompt_begin Second",
+                "// action:prompt_text This is the next menu",
+                "// action:prompt_show",
+            ]))
+
+        controller._run_script = run
+        controller._handle_action_prompt_action("prompt.button.0")
+
+        self.assertEqual(commands, ["OPEN_NEXT"])
+        self.assertEqual(controller.action_prompt["title"], "Second")
+        self.assertEqual(
+            controller.action_prompt_return_page, FEATHER.Page.IDLE_HOME)
+        self.assertEqual(shown, [
+            FEATHER.Page.ACTION_PROMPT, FEATHER.Page.ACTION_PROMPT])
+
+    def test_prompt_end_closes_recovery_page_without_prompt_buffer(self):
+        controller, shown = self.controller()
+        controller.page = FEATHER.Page.RECOVERY_CONFIRM
+        controller.recovery_action = "restore"
+        controller.print_stats.status["state"] = "standby"
+
+        controller._handle_gcode_output("// action:prompt_end")
+
+        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME])
+        self.assertIsNone(controller.recovery_action)
+
+    def test_resurrection_prompt_uses_specialized_recovery_page(self):
+        controller, shown = self.controller()
+        controller.resurrection = StatusObject({
+            "state": "resurrection", "available": True})
+
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Resurrection",
+            "// action:prompt_text Recovery is available",
+            "// action:prompt_show",
+        ]))
+
+        self.assertEqual(shown, [FEATHER.Page.RECOVERY_PROMPT])
+        self.assertTrue(controller.action_prompt_visible)
 
 
 if __name__ == "__main__":

@@ -113,6 +113,7 @@ EXACT_ACTIONS = {
     Page.RECOVERY_PROMPT: (
         "recovery.restore", "recovery.cleanup", "recovery.later"),
     Page.RECOVERY_CONFIRM: ("nav.back", "recovery.confirm"),
+    Page.ACTION_PROMPT: ("prompt.prev", "prompt.next"),
     Page.MESSAGE: ("message.ok",),
     Page.ERROR: ("error.restart", "error.firmware_restart"),
 }
@@ -258,6 +259,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self._last_filament_heat = None
         self.recovery_action = None
         self.recovery_status = None
+        self.action_prompt = None
+        self.action_prompt_visible = False
+        self.action_prompt_return_page = Page.IDLE_HOME
+        self.action_prompt_page = 0
         self._filament_present = None
 
         self.message = ""
@@ -478,6 +483,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.mod_update_modal_visible = False
         self.mod_update_complete = None
         self.mod_update_token = getattr(self, "mod_update_token", 0) + 1
+        self.action_prompt = None
+        self.action_prompt_visible = False
+        self.action_prompt_page = 0
         wait = getattr(self, "temperature_wait", None)
         if wait is not None:
             wait.variables = dict(getattr(wait, "variables", {}))
@@ -789,6 +797,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self._handle_mod_action(action)
             elif action.startswith("recovery."):
                 self._handle_recovery_action(action)
+            elif action.startswith("prompt."):
+                self._handle_action_prompt_action(action)
             elif action.startswith("error."):
                 self._handle_error_action(action)
             elif action.startswith("net.") or action.startswith("key."):
@@ -814,7 +824,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 or (page == Page.MOD_ENUM and action.startswith("mod.option."))
                 or (page == Page.MOD_VALUE and action.startswith("mod.key."))
                 or (page == Page.WIFI_SCAN and action.startswith("net.item"))
-                or (page == Page.WIFI_PASSWORD and action.startswith("key.")))
+                or (page == Page.WIFI_PASSWORD and action.startswith("key."))
+                or (page == Page.ACTION_PROMPT
+                    and action.startswith("prompt.button.")))
 
     def _show_page(self, page):
         if (page != Page.ERROR
@@ -890,6 +902,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_recovery_prompt()
         elif page == Page.RECOVERY_CONFIRM:
             self._render_recovery_confirm()
+        elif page == Page.ACTION_PROMPT:
+            self._render_action_prompt()
         elif page == Page.MESSAGE:
             self._render_message()
         elif page == Page.ERROR:

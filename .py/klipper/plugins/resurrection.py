@@ -126,6 +126,8 @@ class Resurrector:
             self._change_state(ResurrectorState.RESURRECTION)
 
             def _initial_msg(_):
+                if self.state != ResurrectorState.RESURRECTION:
+                    return
                 self.gcode.respond_raw("// action:prompt_begin Resurrection")
                 self.gcode.respond_raw("// action:prompt_text Resurrection is available! Would you like to restore the print?")
                 self.gcode.respond_raw("// action:prompt_footer_button Restore|RESURRECT")

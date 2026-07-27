@@ -153,6 +153,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.NETWORK_PROGRESS: "_render_network_progress",
             FEATHER.Page.RECOVERY_PROMPT: "_render_recovery_prompt",
             FEATHER.Page.RECOVERY_CONFIRM: "_render_recovery_confirm",
+            FEATHER.Page.ACTION_PROMPT: "_render_action_prompt",
             FEATHER.Page.MESSAGE: "_render_message",
             FEATHER.Page.ERROR: "_render_error",
         }
@@ -1714,6 +1715,43 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn(text, drawing)
         self.assertIn(
             "--max-width 640 --max-height 100 --wrap --truncate", drawing)
+
+    def test_action_prompt_renders_groups_footer_and_pagination(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.action_prompt_page = 0
+
+        def button(index, label):
+            return {
+                "action": "prompt.button.%d" % index,
+                "label": label,
+                "command": label,
+                "state": "enabled",
+            }
+
+        controller.action_prompt = {
+            "title": "Material menu",
+            "text": ["Select a profile"],
+            "rows": [
+                [button(0, "PLA"), button(1, "PETG")],
+                [button(2, "ABS")],
+                [button(3, "ASA")],
+                [button(4, "PA")],
+            ],
+            "footer": [button(5, "CANCEL")],
+        }
+
+        controller._render_action_prompt()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn("Material menu", drawing)
+        self.assertIn("Select a profile", drawing)
+        self.assertIn('prompt.button.0', drawing)
+        self.assertIn('prompt.button.5', drawing)
+        self.assertIn('prompt.next', drawing)
+        self.assertNotIn('prompt.button.4', drawing)
 
     def test_firmware_restart_action_switches_to_animated_startup(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
