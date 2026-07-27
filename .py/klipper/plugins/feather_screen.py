@@ -127,15 +127,32 @@ EXACT_ACTIONS = {
     Page.ERROR: ("error.restart", "error.firmware_restart"),
 }
 
-EMERGENCY_PAGES = frozenset((
-    Page.PRINTING, Page.PAUSED,
-    Page.CONTROL_MOVE, Page.CONTROL_HEAT,
+PRINT_EMERGENCY_STATES = frozenset((
+    PrintState.PREPARING, PrintState.PRINTING, PrintState.PAUSED,
+))
+
+PRINT_EMERGENCY_PAGES = frozenset((
+    Page.PRINTING, Page.PAUSED, Page.CANCEL_CONFIRM,
+))
+
+HEAT_EMERGENCY_PAGES = frozenset((
+    Page.CONTROL_HEAT,
     Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION,
-    Page.CANCEL_CONFIRM,
+    Page.CALIBRATION_PROGRESS,
+))
+
+MOTION_EMERGENCY_PAGES = frozenset((
+    Page.CONTROL_MOVE,
     Page.CALIBRATION_PROGRESS, Page.LIVE_Z_OFFSET,
     Page.Z_OFFSET_SUMMARY, Page.Z_OFFSET_BRIEFING,
     Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
 ))
+
+EMERGENCY_PAGES = frozenset().union(
+    PRINT_EMERGENCY_PAGES,
+    HEAT_EMERGENCY_PAGES,
+    MOTION_EMERGENCY_PAGES,
+)
 
 
 class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
@@ -1088,15 +1105,57 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return bool(wait is not None and
                     getattr(wait, "variables", {}).get("cancel", False))
 
-    def _gcode_dispatcher_busy(self):
-        gcode = getattr(self, "gcode", None)
-        get_mutex = getattr(gcode, "get_mutex", None)
-        if get_mutex is None:
+    def _active_print_job(self, eventtime):
+        if getattr(self, "print_state", None) in PRINT_EMERGENCY_STATES:
+            return True
+
+        print_stats = getattr(self, "print_stats", None)
+        if print_stats is not None:
+            try:
+                state = str(print_stats.get_status(eventtime).get(
+                    "state", "")).lower()
+                if state in ("printing", "paused"):
+                    return True
+            except Exception:
+                pass
+
+        idle_timeout = getattr(self, "idle_timeout", None)
+        if idle_timeout is not None:
+            try:
+                if (str(idle_timeout.get_status(eventtime).get(
+                        "state", "")).lower() == "printing"):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _active_heating(self, eventtime):
+        for heater in (getattr(self, "extruder", None),
+                       getattr(self, "heater_bed", None)):
+            if heater is None:
+                continue
+            try:
+                target = float(heater.get_status(eventtime).get("target", 0.0))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            except Exception:
+                continue
+            if target > 0.0:
+                return True
+        return False
+
+    def _homed_motion_available(self, eventtime):
+        toolhead = getattr(self, "toolhead", None)
+        if toolhead is None:
             return False
         try:
-            return bool(get_mutex().test())
+            homed_axes = str(toolhead.get_status(eventtime).get(
+                "homed_axes", "")).lower()
         except Exception:
             return False
+        # Partial homing is a valid completed state (for example HOME XY).
+        # As soon as any axis is homed, motion can be commanded on that axis.
+        return any(axis in homed_axes for axis in "xyz")
 
     def _emergency_stop_active(self, page=None, eventtime=None):
         page = page if page is not None else getattr(
@@ -1108,30 +1167,16 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             eventtime = (reactor.monotonic()
                          if reactor is not None else time.monotonic())
 
-        print_stats = getattr(self, "print_stats", None)
-        if print_stats is not None:
-            try:
-                if print_stats.get_status(eventtime).get("state") == "printing":
-                    return True
-            except Exception:
-                pass
-        if getattr(self, "busy_message", None) is not None:
+        # Visibility is derived only from stable printer state. Transient UI
+        # loaders, nested commands, temperature-wait macros, and the G-code
+        # dispatcher mutex must not make the header appear and disappear.
+        if self._active_print_job(eventtime):
             return True
-        if self._temperature_wait_active():
+        if page in HEAT_EMERGENCY_PAGES and self._active_heating(eventtime):
             return True
-        if getattr(self, "command_depth", 0) > 0:
+        if (page in MOTION_EMERGENCY_PAGES
+                and self._homed_motion_available(eventtime)):
             return True
-        if self._gcode_dispatcher_busy():
-            return True
-
-        idle_timeout = getattr(self, "idle_timeout", None)
-        if idle_timeout is not None:
-            try:
-                if (str(idle_timeout.get_status(eventtime).get(
-                        "state", "")).lower() == "printing"):
-                    return True
-            except Exception:
-                pass
         return False
 
     def _refresh_emergency_stop(self, eventtime=None):

@@ -1646,9 +1646,9 @@ class FeatherControlsMixin:
                 and cancel_visible == getattr(
                     self, "_last_calibration_cancel_visible", False)):
             return
-        # Phase changes are infrequent.  Rebuild the whole safety screen so
-        # Emergency Stop and its hitbox are guaranteed to be present from the
-        # initial Homing phase onward, regardless of partial status redraws.
+        # Phase changes are infrequent. Rebuild the whole safety screen so
+        # the state-derived Emergency Stop header and its hitbox stay in sync
+        # with homing and heater state across partial status redraws.
         if (self.calibration_kind in (
                 "screws", "mesh", "z", "pid_bed", "pid_extruder",
                 "shaper")
