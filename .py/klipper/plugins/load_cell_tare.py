@@ -105,17 +105,18 @@ class LoadCellTareGcode:
         self.gcode.run_script_from_command("SAVE_GCODE_STATE NAME=CELL_TARE")
 
         kin_status = self.toolhead.get_kinematics().get_status(0)
+        safe_z = abs(float(self.mod_params.variables.get("safe_z", 10.0)))
         if "z" not in kin_status['homed_axes']:
             logging.info("LOAD_CELL_TARE: Start Z homing...")
             self._run_gcode(
                 "G28 Z",
                 "M400"
             )
-        elif self.toolhead.get_position()[2] < 5:  # position.z
+        elif self.toolhead.get_position()[2] < safe_z:  # position.z
             logging.info("LOAD_CELL_TARE: Moving bed lower...")
             self._run_gcode(
                 "G90",
-                "G1 Z10 F6000",
+                "G1 Z%g F6000" % safe_z,
                 "M400",
             )
 

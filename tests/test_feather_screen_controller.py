@@ -835,7 +835,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
                 command = "\n".join(controller.gcode.commands)
                 self.assertIn(
-                    "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600", command)
+                    "MOVE_SAFE Z=10 ABSOLUTE=1 F=600", command)
                 self.assertIn("TURN_OFF_HEATERS", command)
                 self.assertIn(
                     "_SET_GCODE_OFFSET Z=+0.321000 MOVE=0", command)

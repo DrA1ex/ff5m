@@ -226,6 +226,13 @@ class ZCalibrationSession:
 
 class FeatherZCalibrationMixin:
     """Render and execute the multi-stage idle Z-calibration workflow."""
+    def _safe_z(self):
+        return abs(float(self._setting("safe_z", 10.0)))
+
+    def _safe_z_move_command(self, speed=600):
+        return "MOVE_SAFE Z=%g ABSOLUTE=1 F=%d" % (
+            self._safe_z(), int(speed))
+
     @staticmethod
     def _z_zone_labels():
         return dict((key, label) for key, label, _x, _y in ZONE_POINTS)
@@ -311,10 +318,9 @@ class FeatherZCalibrationMixin:
         position = status.get("position", (0.0, 0.0, 0.0, 0.0))
         return all(axis in homed for axis in "xyz"), position
 
-    @staticmethod
-    def _z_offset_move_commands(x, y):
+    def _z_offset_move_commands(self, x, y):
         return "\n".join([
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600",
+            self._safe_z_move_command(),
             "MOVE_SAFE X=%.1f Y=%.1f ABSOLUTE=1 F=6000" % (x, y),
         ])
 
@@ -371,25 +377,29 @@ class FeatherZCalibrationMixin:
     def _z_preparation_command(self):
         if self.calibration_clean_nozzle:
             nozzle, bed = self._limited_preheat(self.calibration_material)
-            return (
-                '_PRINT_STATUS S="Z OFFSET: PREP"\n'
-                "CLEAR_NOZZLE EXTRUDER_TEMP=%.0f BED_TEMP=%.0f\n"
-                '_PRINT_STATUS S="Z OFFSET: TARE"\n'
-                "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
-                "LOAD_CELL_TARE\n"
-                '_PRINT_STATUS S="Z OFFSET: READY"' % (nozzle, bed))
+            return "\n".join((
+                '_PRINT_STATUS S="Z OFFSET: PREP"',
+                "CLEAR_NOZZLE EXTRUDER_TEMP=%.0f BED_TEMP=%.0f" %
+                (nozzle, bed),
+                '_PRINT_STATUS S="Z OFFSET: TARE"',
+                self._safe_z_move_command(),
+                "LOAD_CELL_TARE",
+                '_PRINT_STATUS S="Z OFFSET: READY"',
+            ))
         cooldown = float(self._setting("clear_cooldown_temp", 120))
-        return (
-            '_PRINT_STATUS S="Z OFFSET: PREP"\n'
-            "M104 S%.0f\n"
-            '_PRINT_STATUS S="Z OFFSET: HOME"\n'
-            "G28\n"
-            '_PRINT_STATUS S="Z OFFSET: HEAT"\n'
-            "_WAIT_TEMPERATURE CMD=M104 VALUE=%.0f BELOW=2 ABOVE=3\n"
-            '_PRINT_STATUS S="Z OFFSET: TARE"\n'
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
-            "LOAD_CELL_TARE\n"
-            '_PRINT_STATUS S="Z OFFSET: READY"' % (cooldown, cooldown))
+        return "\n".join((
+            '_PRINT_STATUS S="Z OFFSET: PREP"',
+            "M104 S%.0f" % cooldown,
+            '_PRINT_STATUS S="Z OFFSET: HOME"',
+            "G28",
+            '_PRINT_STATUS S="Z OFFSET: HEAT"',
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=%.0f BELOW=2 ABOVE=3" %
+            cooldown,
+            '_PRINT_STATUS S="Z OFFSET: TARE"',
+            self._safe_z_move_command(),
+            "LOAD_CELL_TARE",
+            '_PRINT_STATUS S="Z OFFSET: READY"',
+        ))
 
     def _run_z_calibration_preparation(self, eventtime):
         try:
@@ -496,7 +506,7 @@ class FeatherZCalibrationMixin:
     def _accept_z_zone(self):
         result = self.z_calibration.accept()
         self._run_blocking_gcode(
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600", "LIFTING Z...")
+            self._safe_z_move_command(), "LIFTING Z...")
         self._show_page(Page.Z_OFFSET_SUMMARY)
         self._toast("Zone accepted %+.3f mm" % result)
 
@@ -509,7 +519,7 @@ class FeatherZCalibrationMixin:
         commands = []
         homed, _position = self._z_offset_head_state()
         if homed:
-            commands.append("MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600")
+            commands.append(self._safe_z_move_command())
         commands.append("TURN_OFF_HEATERS")
         state_commands = [
             "_SET_GCODE_OFFSET Z=%+.6f MOVE=0" % runtime]

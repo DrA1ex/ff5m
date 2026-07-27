@@ -38,13 +38,13 @@ class SmartParkSafetyTest(unittest.TestCase):
             'printer["gcode_macro MOVE_SAFE"]', self.smart_park)
         self.assertIn("variable_fallback_x: 110.0", self.smart_park)
         self.assertIn("variable_fallback_y: 100.0", self.smart_park)
-        self.assertIn("variable_fallback_z: 10.0", self.smart_park)
+        self.assertIn(
+            "printer.mod_params.variables.safe_z", self.smart_park)
         self.assertIn(
             "smart_park.fallback_x | float", self.smart_park)
         self.assertIn(
             "smart_park.fallback_y | float", self.smart_park)
         self.assertIn("if object_valid", self.smart_park)
-        self.assertIn("if not z_valid", self.smart_park)
         self.assertIn(
             'action_raise_error("SMART_PARK requires homed XYZ axes")',
             self.smart_park)
