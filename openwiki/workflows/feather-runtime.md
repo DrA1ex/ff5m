@@ -147,8 +147,8 @@ libc and libstdc++ text. Typer's attributed PSS and private working set are both
 below the 2 MiB budget. Its heap is about 104 KiB; the framebuffer-backed second
 page is a device mapping and does not allocate a 1.5 MiB heap backbuffer.
 
-The complete repository Feather Python source set is about 355 KiB
-(363,343 bytes), below the 500 KiB source budget. Splitting it adds a few module
+The complete repository Feather Python source set is about 364 KiB
+(372,412 bytes), below the 500 KiB source budget. Splitting it adds a few module
 headers but does not duplicate controller state. The file browser uses compact
 slot-backed entries so a directory with many G-code files does not retain one
 Python dictionary per row. It presents one flat list, scans at most two visible
@@ -156,6 +156,14 @@ subdirectory levels, and orders files by the newer of their upload/modification
 time and Feather's persisted last-print time. The latter is stored in
 `/opt/config/mod_data/feather_print_history.json` by default and is also updated
 when a print is started outside the local screen.
+
+List pagination is centralized in `feather_pagination.py`; file, Wi-Fi,
+mod-parameter, prompt, and calibration pages reuse its clamping and visible-row
+mapping. The calibration menu covers every workflow documented in
+`docs/CALIBRATION.md`: directly supported macros open guarded confirmation,
+progress, result, and save pages, while axis and extruder rotation calibration
+open measurement guides because those procedures require a printed model and a
+deliberate `user.cfg` edit.
 
 Moving page policy or printer actions into Typer is not currently justified:
 Typer's C++ runtime/shared-library footprint is already larger than its heap,

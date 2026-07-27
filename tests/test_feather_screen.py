@@ -24,6 +24,7 @@ UI = __import__("feather_ui")
 MOD_UI = __import__("feather_mod_settings")
 PAGES = __import__("feather_screen_pages")
 KEYBOARD = __import__("feather_keyboard")
+PAGINATION = __import__("feather_pagination")
 
 MOD_PARAMS_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
                    "plugins" / "mod_params.py")
@@ -157,6 +158,17 @@ def mod_controller(params, variables):
 
 
 class FeatherUtilitiesTest(unittest.TestCase):
+    def test_shared_pagination_clamps_and_maps_visible_indices(self):
+        pagination = PAGINATION.Pagination(list(range(8)), 99, 3)
+
+        self.assertEqual(pagination.page, 2)
+        self.assertEqual(pagination.page_count, 3)
+        self.assertEqual(pagination.visible, [6, 7])
+        self.assertTrue(pagination.has_previous)
+        self.assertFalse(pagination.has_next)
+        self.assertEqual(pagination.absolute_index(1), 7)
+        self.assertIsNone(pagination.absolute_index(2))
+
     def test_file_entries_use_compact_slots_and_keep_mapping_access(self):
         entry = PAGES.FileEntry(
             "part.gcode", "/data/gcodes/part.gcode", False, 1024, 42)

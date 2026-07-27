@@ -7,6 +7,7 @@
 import enum
 import errno
 import json
+import pathlib
 import re
 import tempfile
 import unittest
@@ -134,6 +135,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.FILAMENT_MATERIAL: "_render_filament_material",
             FEATHER.Page.FILAMENT_ACTION: "_render_filament_action",
             FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
+            FEATHER.Page.CALIBRATION_GUIDE: "_render_calibration_guide",
             FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_BRIEFING: "_render_z_briefing",
@@ -316,7 +318,127 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("ADJUSTMENT SCREWS", drawing)
         self.assertIn("PROBE BED AND CREATE", drawing)
         self.assertIn("PROFILE AUTO", drawing)
-        self.assertIn("cal.mesh -p 30 295 -s 740 90", drawing)
+        self.assertIn("cal.mesh -p 30 270 -s 740 84", drawing)
+        self.assertIn("1 / 3", drawing)
+        self.assertIn("cal.next", drawing)
+
+        controller.calibration_page = 1
+        controller._render_calibration_home()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("EXTRUDER ROTATION", drawing)
+        self.assertIn("INPUT SHAPER", drawing)
+        self.assertIn("AXIS DIMENSIONS", drawing)
+        self.assertIn("2 / 3", drawing)
+
+        controller.calibration_page = 2
+        controller._render_calibration_home()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("BED PID", drawing)
+        self.assertIn("HOTEND PID", drawing)
+        self.assertIn("3 / 3", drawing)
+
+    def test_manual_calibrations_open_measurement_guides(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller._require_idle = lambda: None
+        pages = []
+        controller._show_page = pages.append
+
+        controller._handle_calibration_action("cal.extruder")
+        self.assertEqual(
+            pages[-1], FEATHER.Page.CALIBRATION_GUIDE)
+        controller._render_calibration_guide()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("EXTRUDE 100 MM", drawing)
+        self.assertIn("EXTRUDER ROTATION_DISTANCE", drawing)
+
+        controller._handle_calibration_action("cal.axes")
+        controller._render_calibration_guide()
+        drawing = "\n".join(batches[-1])
+        self.assertIn("X/Y SQUARE OR Z TOWER", drawing)
+        self.assertIn("STEPPER ROTATION_DISTANCE", drawing)
+
+    def test_pid_confirm_uses_selected_material_temperature(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_kind = "pid_bed"
+        controller.calibration_material = "PETG"
+        controller._limited_preheat = lambda material: (250, 70)
+
+        controller._render_calibration_confirm()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("BED PID CALIBRATION", drawing)
+        self.assertIn("cal.material.PETG", drawing)
+        self.assertIn("TARGET 70 C // PETG", drawing)
+        self.assertNotIn("cal.clean.skip", drawing)
+
+    def test_pid_and_shaper_workflows_use_supported_macros(self):
+        cases = (
+            ("pid_bed",
+             ["PID_TUNE_BED TEMPERATURE=70", "TURN_OFF_HEATERS"]),
+            ("pid_extruder",
+             ["PID_TUNE_EXTRUDER TEMPERATURE=250", "TURN_OFF_HEATERS"]),
+            ("shaper", ["ZSHAPER"]),
+        )
+        for kind, expected in cases:
+            with self.subTest(kind=kind):
+                controller = FEATHER.FeatherScreen.__new__(
+                    FEATHER.FeatherScreen)
+                controller.calibration_kind = kind
+                controller.calibration_material = "PETG"
+                controller.calibration_error = None
+                controller.calibration_cancelled = False
+                controller.gcode = GCodeRecorder()
+                controller._require_idle = lambda: None
+                controller._limited_preheat = lambda material: (250, 70)
+                pages = []
+                controller._show_page = pages.append
+
+                controller._run_calibration(0)
+
+                self.assertEqual(controller.gcode.commands, expected)
+                self.assertEqual(
+                    pages, [FEATHER.Page.CALIBRATION_RESULT])
+
+    def test_tuning_result_can_save_or_return_without_saving(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_kind = "shaper"
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+
+        controller._render_calibration_result()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("cal.tuning.discard", drawing)
+        self.assertIn("cal.tuning.save", drawing)
+        restarts = []
+        pages = []
+        controller._restart_klipper = restarts.append
+        controller._show_page = pages.append
+        controller._handle_calibration_action("cal.tuning.save")
+        self.assertEqual(restarts, ["SAVE_CONFIG"])
+
+        controller._handle_calibration_action("cal.tuning.discard")
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_HOME])
+
+    def test_calibration_macros_publish_progress_for_feather(self):
+        macros = (
+            pathlib.Path(__file__).parents[1] / "macros" / "base.cfg"
+        ).read_text(encoding="utf-8")
+        for status in (
+                "BED PID: HOMING", "BED PID: TUNING",
+                "HOTEND PID: HOMING", "HOTEND PID: TUNING",
+                "INPUT SHAPER: HOMING", "INPUT SHAPER: MEASURING",
+                "INPUT SHAPER: PROCESSING", "INPUT SHAPER: COMPLETE"):
+            self.assertIn('_PRINT_STATUS S="%s"' % status, macros)
 
     def test_z_offset_summary_uses_full_position_names(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

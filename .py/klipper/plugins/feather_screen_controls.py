@@ -13,11 +13,13 @@ try:
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
     from .feather_z_calibration import PAPER_STEPS
+    from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from feather_ui import Page, PrintState
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
     from feather_z_calibration import PAPER_STEPS
+    from feather_pagination import Pagination, pagination_footer
 
 
 MOVE_CAUTION_Z = 5.0
@@ -49,6 +51,24 @@ PREHEAT = {
     "ABS": (260, 100),
     "ABS-PC": (270, 105),
 }
+CALIBRATION_ROWS = 3
+CALIBRATION_ITEMS = (
+    ("cal.z", "Z OFFSET", ("SET NOZZLE HEIGHT",)),
+    ("cal.screws", "BED SCREWS",
+     ("LEVEL BED USING", "ADJUSTMENT SCREWS")),
+    ("cal.mesh", "BED MESH",
+     ("PROBE BED AND CREATE", "PROFILE AUTO")),
+    ("cal.extruder", "EXTRUDER",
+     ("PRINT, MEASURE AND", "UPDATE USER.CFG")),
+    ("cal.shaper", "SHAPER",
+     ("MEASURE X/Y RESONANCE", "GENERATE CSV RESULTS")),
+    ("cal.axes", "AXIS",
+     ("PRINT, MEASURE AND", "UPDATE USER.CFG")),
+    ("cal.pid_bed", "BED PID",
+     ("TUNE BED HEATER", "TEMPERATURE CONTROL")),
+    ("cal.pid_extruder", "HOTEND PID",
+     ("TUNE NOZZLE HEATER", "TEMPERATURE CONTROL")),
+)
 
 
 class FeatherControlsMixin:
@@ -1086,24 +1106,56 @@ class FeatherControlsMixin:
         self._show_page(self.page_for_print_state())
 
     def _render_calibration_home(self):
+        pagination = Pagination(
+            CALIBRATION_ITEMS, getattr(self, "calibration_page", 0),
+            CALIBRATION_ROWS)
+        self.calibration_page = pagination.page
         commands = self.renderer.begin_page("Calibration", back=True)
         saved = float(self._setting("z_offset", 0.0))
-        commands += self.renderer.button(
-            "cal.z", 30, 75, 740, 90, "Z OFFSET",
-            font="JetBrainsMono 16pt",
-            subtitle=("SAVED %+.3f MM" % saved, "SET NOZZLE HEIGHT"),
-            layout="row")
-        commands += self.renderer.button(
-            "cal.screws", 30, 185, 740, 90, "BED SCREWS",
-            font="JetBrainsMono 16pt",
-            subtitle=("LEVEL BED USING", "ADJUSTMENT SCREWS"), layout="row")
-        commands += self.renderer.button(
-            "cal.mesh", 30, 295, 740, 90, "BED MESH",
-            font="JetBrainsMono 16pt",
-            subtitle=("PROBE BED AND CREATE", "PROFILE AUTO"), layout="row")
+        for row, (action, label, subtitle) in enumerate(pagination.visible):
+            if action == "cal.z":
+                subtitle = (
+                    "SAVED %+.3f MM" % saved, "SET NOZZLE HEIGHT")
+            commands += self.renderer.button(
+                action, 30, 68 + row * 101, 740, 84, label,
+                font="JetBrainsMono 16pt", subtitle=subtitle, layout="row")
+        commands += pagination_footer(
+            self.renderer, pagination, "cal.prev", "cal.next",
+            y=388, center_y=413)
+        self.renderer.send(commands)
+
+    def _render_calibration_guide(self):
+        kind = getattr(self, "calibration_guide_kind", None)
+        if kind == "extruder":
+            title = "Extruder rotation"
+            steps = (
+                "1. HEAT THE NOZZLE AND MARK 100 MM OF FILAMENT.",
+                "2. EXTRUDE 100 MM, THEN MEASURE THE ACTUAL LENGTH.",
+                "3. NEW DISTANCE = CURRENT DISTANCE X ACTUAL / 100.",
+                "4. UPDATE EXTRUDER ROTATION_DISTANCE IN USER.CFG.",
+            )
+        elif kind == "axes":
+            title = "Axis dimensions"
+            steps = (
+                "1. PRINT THE X/Y SQUARE OR Z TOWER FROM CALIBRATION.MD.",
+                "2. MEASURE THE FINISHED MODEL WITH CALIPERS.",
+                "3. NEW DISTANCE = CURRENT DISTANCE X ACTUAL / EXPECTED.",
+                "4. UPDATE THE STEPPER ROTATION_DISTANCE IN USER.CFG.",
+            )
+        else:
+            title = "Calibration guide"
+            steps = ("OPEN CALIBRATION.MD IN FLUIDD FOR INSTRUCTIONS.",)
+        commands = self.renderer.begin_page(title, back=True)
+        commands += self.renderer.panel(
+            30, 72, 740, 300, border="295c66", background="050c0f")
+        for index, step in enumerate(steps):
+            commands.append(self.renderer.text(
+                60, 112 + index * 62, step, "d9e4e8",
+                "JetBrainsMono 8pt", "left", "middle",
+                max_width=680, max_height=48, wrap=True, truncate=True))
         commands.append(self.renderer.text(
-            400, 415, "PRINTER MUST BE IDLE", "56656c",
-            "JetBrainsMono 8pt", "center"))
+            400, 410, "MEASUREMENT AND USER.CFG EDITING REQUIRED",
+            "f2c94c", "JetBrainsMono Bold 8pt", "center", "middle"))
         self.renderer.send(commands)
 
     def _render_live_z_offset(self):
@@ -1216,24 +1268,29 @@ class FeatherControlsMixin:
                 self._save_live_z_offset(True)
 
     def _handle_calibration_action(self, action):
-        if action == "cal.z":
-            self._require_idle()
-            self.calibration_kind = "z"
-            current_material = self._current_material()
-            self.calibration_material = (
-                current_material if current_material in PREHEAT else "PLA")
-            self.calibration_clean_nozzle = True
-            self._show_page(Page.CALIBRATION_CONFIRM)
-        elif action in ("cal.screws", "cal.mesh"):
+        if action == "cal.prev":
+            self.calibration_page = max(
+                0, getattr(self, "calibration_page", 0) - 1)
+            self._render_calibration_home()
+        elif action == "cal.next":
+            self.calibration_page = (
+                getattr(self, "calibration_page", 0) + 1)
+            self._render_calibration_home()
+        elif action in (
+                "cal.z", "cal.screws", "cal.mesh",
+                "cal.pid_bed", "cal.pid_extruder", "cal.shaper"):
             self._require_idle()
             self.calibration_kind = action.split(".", 1)[1]
             current_material = self._current_material()
             self.calibration_material = (
-                current_material if current_material in PREHEAT
-                else "PLA")
+                current_material if current_material in PREHEAT else "PLA")
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
             self._show_page(Page.CALIBRATION_CONFIRM)
+        elif action in ("cal.extruder", "cal.axes"):
+            self._require_idle()
+            self.calibration_guide_kind = action.split(".", 1)[1]
+            self._show_page(Page.CALIBRATION_GUIDE)
         elif action.startswith("cal.material."):
             self.calibration_material = action.rsplit(".", 1)[1]
             self.calibration_clean_nozzle = True
@@ -1263,6 +1320,12 @@ class FeatherControlsMixin:
                 self._show_page(Page.CALIBRATION_HOME)
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
+                self._restart_klipper("SAVE_CONFIG")
+        elif action == "cal.tuning.discard":
+            if self._tuning_save_available():
+                self._show_page(Page.CALIBRATION_HOME)
+        elif action == "cal.tuning.save":
+            if self._tuning_save_available():
                 self._restart_klipper("SAVE_CONFIG")
         elif action.startswith("z.step."):
             steps = dict(("z.step.%s" %
@@ -1322,7 +1385,11 @@ class FeatherControlsMixin:
         if self.calibration_repeat_probe:
             self.print_status_text = "BED SCREWS: PROBING"
         else:
-            self.print_status_text = "CALIBRATION: STARTING"
+            self.print_status_text = {
+                "pid_bed": "BED PID: STARTING",
+                "pid_extruder": "HOTEND PID: STARTING",
+                "shaper": "INPUT SHAPER: STARTING",
+            }.get(self.calibration_kind, "CALIBRATION: STARTING")
         self._show_page(Page.CALIBRATION_PROGRESS)
         self.reactor.register_callback(self._run_calibration)
 
@@ -1464,7 +1531,12 @@ class FeatherControlsMixin:
 
     def _render_calibration_confirm(self):
         kind = self.calibration_kind
-        title = "Z offset preparation" if kind == "z" else "Confirm calibration"
+        title = {
+            "z": "Z offset preparation",
+            "pid_bed": "Bed PID calibration",
+            "pid_extruder": "Hotend PID calibration",
+            "shaper": "Input shaper calibration",
+        }.get(kind, "Confirm calibration")
         commands = self.renderer.begin_page(title, back=True)
         if kind == "screws":
             text = ("Select material to run CLEAR_NOZZLE before probing, "
@@ -1472,6 +1544,15 @@ class FeatherControlsMixin:
         elif kind == "z":
             text = ("Select the material temperature for nozzle cleaning, "
                     "or start without an initial nozzle cleaning.")
+        elif kind == "pid_bed":
+            text = ("Select the bed target temperature used for PID tuning. "
+                    "The printer will home before heating.")
+        elif kind == "pid_extruder":
+            text = ("Select the nozzle target temperature used for PID tuning. "
+                    "Remove filament from the nozzle before starting.")
+        elif kind == "shaper":
+            text = ("The toolhead will home and vibrate rapidly on both axes. "
+                    "Clear the bed and keep away from the printer.")
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
         commands.append(self.renderer.text(
@@ -1479,7 +1560,7 @@ class FeatherControlsMixin:
             max_width=572, max_height=70, wrap=True, truncate=True))
         if kind in ("screws", "mesh"):
             materials = ("PLA", "PETG", "ABS")
-        elif kind == "z":
+        elif kind in ("z", "pid_bed", "pid_extruder"):
             materials = ("PLA", "PETG", "ABS", "ABS-PC")
         else:
             materials = ()
@@ -1517,6 +1598,18 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(
                 400, 290, mode_hint,
                 "56656c", "JetBrainsMono 8pt", "center"))
+        elif kind in ("pid_bed", "pid_extruder"):
+            nozzle, bed = self._limited_preheat(
+                self.calibration_material)
+            target = bed if kind == "pid_bed" else nozzle
+            commands.append(self.renderer.text(
+                400, 255, "TARGET %.0f C // %s" % (
+                    target, self.calibration_material),
+                "f2c94c", "JetBrainsMono Bold 10pt", "center"))
+        elif kind == "shaper":
+            commands.append(self.renderer.text(
+                400, 255, "STRONG MACHINE VIBRATION IS EXPECTED",
+                "f2c94c", "JetBrainsMono Bold 10pt", "center"))
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START",
                                          state="enabled",
@@ -1556,7 +1649,9 @@ class FeatherControlsMixin:
         # Phase changes are infrequent.  Rebuild the whole safety screen so
         # Emergency Stop and its hitbox are guaranteed to be present from the
         # initial Homing phase onward, regardless of partial status redraws.
-        if (self.calibration_kind in ("screws", "mesh", "z")
+        if (self.calibration_kind in (
+                "screws", "mesh", "z", "pid_bed", "pid_extruder",
+                "shaper")
                 or cancel_visible != getattr(
                     self, "_last_calibration_cancel_visible", False)):
             self._render_calibration_progress()
@@ -1627,6 +1722,10 @@ class FeatherControlsMixin:
                 stages = ("PREP", "HEAT", "CLEAN", "PROBE", "DONE")
             else:
                 stages = ("PREP", "HOME", "HEAT", "PROBE", "DONE")
+        elif self.calibration_kind in ("pid_bed", "pid_extruder"):
+            stages = ("PREP", "HOME", "TUNE", "DONE")
+        elif self.calibration_kind == "shaper":
+            stages = ("PREP", "HOME", "MEASURE", "PROCESS", "DONE")
         else:
             stages = ("PREP", "HOME", "HEAT", "CLEAN", "LEVEL")
 
@@ -1638,6 +1737,12 @@ class FeatherControlsMixin:
             phase = "POSITION"
         elif "RESTOR" in text:
             phase = "RESTORE"
+        elif "PROCESS" in text or "CALCULAT" in text:
+            phase = "PROCESS"
+        elif "MEASUR" in text or "VIBRAT" in text:
+            phase = "MEASURE"
+        elif "TUN" in text:
+            phase = "TUNE"
         elif "ABORT" in text or "CLEANING UP" in text:
             phase = "CLEANUP"
         elif "READY" in text:
@@ -1680,6 +1785,8 @@ class FeatherControlsMixin:
         return commands
 
     def _run_calibration(self, eventtime):
+        stop_heaters = self.calibration_kind in (
+            "pid_bed", "pid_extruder")
         try:
             self._require_idle()
             if self.calibration_kind == "screws":
@@ -1697,14 +1804,27 @@ class FeatherControlsMixin:
                     else:
                         command = "BED_LEVEL_SCREWS_TUNE CLEAN=0"
                 self._run_script(command)
-            else:
+            elif self.calibration_kind == "mesh":
                 nozzle, bed = self._limited_preheat(
                     self.calibration_material)
                 command = ("AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=%.0f BED_TEMP=%.0f "
                            "PROFILE=auto" % (nozzle, bed))
                 self._run_script(command)
-                if self.calibration_kind == "mesh":
-                    self.calibration_mesh = self._read_mesh_matrix(eventtime)
+                self.calibration_mesh = self._read_mesh_matrix(eventtime)
+            elif self.calibration_kind == "pid_bed":
+                _nozzle, bed = self._limited_preheat(
+                    self.calibration_material)
+                self._run_script(
+                    "PID_TUNE_BED TEMPERATURE=%.0f" % bed)
+            elif self.calibration_kind == "pid_extruder":
+                nozzle, _bed = self._limited_preheat(
+                    self.calibration_material)
+                self._run_script(
+                    "PID_TUNE_EXTRUDER TEMPERATURE=%.0f" % nozzle)
+            elif self.calibration_kind == "shaper":
+                self._run_script("ZSHAPER")
+            else:
+                raise RuntimeError("Unsupported calibration")
         except Exception as exc:
             if (getattr(self, "calibration_cancel_requested", False)
                     and getattr(
@@ -1717,6 +1837,16 @@ class FeatherControlsMixin:
             else:
                 logging.exception("[feather_screen] calibration failed")
                 self.calibration_error = str(exc)
+        finally:
+            if stop_heaters:
+                try:
+                    self._run_script("TURN_OFF_HEATERS")
+                except Exception:
+                    logging.exception(
+                        "[feather_screen] unable to stop PID heating")
+                    if not self.calibration_error:
+                        self.calibration_error = (
+                            "Unable to stop PID heating")
         self._show_page(Page.CALIBRATION_RESULT)
 
     @staticmethod
@@ -1754,6 +1884,13 @@ class FeatherControlsMixin:
         return (
             self.calibration_kind == "mesh"
             and bool(self.calibration_mesh)
+            and not self.calibration_error
+            and not getattr(self, "calibration_cancelled", False))
+
+    def _tuning_save_available(self):
+        return (
+            self.calibration_kind in (
+                "pid_bed", "pid_extruder", "shaper")
             and not self.calibration_error
             and not getattr(self, "calibration_cancelled", False))
 
@@ -2010,6 +2147,14 @@ class FeatherControlsMixin:
                 "cal.mesh.discard", 290, 355, 220, 70, "DON'T SAVE")
             commands += self.renderer.button(
                 "cal.mesh.save", 545, 355, 220, 70, "SAVE",
+                state="warning")
+        elif self._tuning_save_available():
+            commands += self.renderer.button(
+                "cal.repeat", 35, 355, 220, 70, "REPEAT")
+            commands += self.renderer.button(
+                "cal.tuning.discard", 290, 355, 220, 70, "DON'T SAVE")
+            commands += self.renderer.button(
+                "cal.tuning.save", 545, 355, 220, 70, "SAVE",
                 state="warning")
         else:
             commands += self.renderer.button(

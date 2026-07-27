@@ -77,7 +77,11 @@ EXACT_ACTIONS = {
                              "filament.ABS", "filament.ABS-PC"),
     Page.FILAMENT_ACTION: ("nav.back", "filament.load", "filament.unload",
                            "filament.purge", "filament.done", "filament.resume"),
-    Page.CALIBRATION_HOME: ("nav.back", "cal.z", "cal.screws", "cal.mesh"),
+    Page.CALIBRATION_HOME: (
+        "nav.back", "cal.prev", "cal.next", "cal.z", "cal.screws",
+        "cal.mesh", "cal.extruder", "cal.shaper", "cal.axes",
+        "cal.pid_bed", "cal.pid_extruder"),
+    Page.CALIBRATION_GUIDE: ("nav.back",),
     Page.CALIBRATION_Z: ("nav.back",),
     Page.Z_OFFSET_SUMMARY: (
         "nav.back", "z.selection.next", "z.load.toggle", "z.save",
@@ -97,7 +101,8 @@ EXACT_ACTIONS = {
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
     Page.CALIBRATION_PROGRESS: ("cal.cancel.heat",),
     Page.CALIBRATION_RESULT: (
-        "cal.repeat", "cal.done", "cal.mesh.discard", "cal.mesh.save"),
+        "cal.repeat", "cal.done", "cal.mesh.discard", "cal.mesh.save",
+        "cal.tuning.discard", "cal.tuning.save"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
                     "settings.brightness.plus", "settings.led.minus",
                     "settings.led.plus", "settings.sound", "settings.theme",
@@ -258,6 +263,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.filament_original_target = 0.0
         self._filament_request_token = 0
         self.calibration_kind = None
+        self.calibration_page = 0
+        self.calibration_guide_kind = None
         self.calibration_material = "PLA"
         self.calibration_clean_nozzle = True
         self.calibration_repeat_probe = False
@@ -781,6 +788,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             elif action == "nav.calibration":
                 self._require_idle()
                 self._cancel_delayed_tasks()
+                self.calibration_page = 0
                 self._show_page(Page.CALIBRATION_HOME)
             elif action == "nav.settings":
                 self._require_idle()
@@ -889,6 +897,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_filament_action()
         elif page == Page.CALIBRATION_HOME:
             self._render_calibration_home()
+        elif page == Page.CALIBRATION_GUIDE:
+            self._render_calibration_guide()
         elif page == Page.CALIBRATION_Z:
             self._render_z_summary()
         elif page == Page.Z_OFFSET_SUMMARY:
@@ -953,6 +963,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         elif self.page in (Page.CONTROL_MOVE, Page.CALIBRATION_HOME,
                            Page.SETTINGS):
             self._show_page(Page.CONTROL_HOME)
+        elif self.page == Page.CALIBRATION_GUIDE:
+            self._show_page(Page.CALIBRATION_HOME)
         elif self.page == Page.MOD_SETTINGS:
             self._show_page(Page.SETTINGS)
         elif self.page in (Page.MOD_ENUM, Page.MOD_VALUE):

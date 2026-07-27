@@ -22,6 +22,13 @@ First, it’s important to understand how calibration works. This is crucial bec
 
 If you’re using the Stock screen, you can perform calibrations directly through the screen as usual — Forge-X adds new features without altering existing ones.
 
+Feather exposes the workflows below through the paginated **Control →
+Calibration** menu. Z-offset, bed screws, bed mesh, input shaper, and bed/hotend
+PID tuning run their guarded Forge-X workflows directly. Extruder rotation and
+axis dimensions remain measurement-based procedures: Feather shows their steps,
+but applying the calculated `rotation_distance` still requires an explicit
+`user.cfg` edit in Fluidd/Mainsail.
+
 However, if you want to go further, here’s what you need to know:
 
 - The printer uses a bed mesh to know where to print. If the mesh doesn’t match your setup (e.g., servo configuration or nozzle height), the printer may print in mid-air, scrape the bed, or even cause hardware damage (broken nozzle, burnt servos or drivers, mechanical issues).

@@ -16,11 +16,13 @@ try:
     from . import feather_mod_settings as mod_ui
     from .feather_keyboard import keyboard_rows
     from .feather_files import FileEntry, scan_gcode_files
+    from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from feather_ui import Page, PrintState
     import feather_mod_settings as mod_ui
     from feather_keyboard import keyboard_rows
     from feather_files import FileEntry, scan_gcode_files
+    from feather_pagination import Pagination, pagination_footer
 
 
 FILE_ROWS = 5
@@ -267,23 +269,17 @@ class FeatherPagesMixin:
 
     def _render_file_browser(self):
         self._load_file_entries()
-        max_page = max(0, (len(self.file_entries) - 1) // FILE_ROWS)
-        self.file_page = max(0, min(self.file_page, max_page))
+        pagination = Pagination(self.file_entries, self.file_page, FILE_ROWS)
+        self.file_page = pagination.page
         commands = self.renderer.begin_page("Print files", back=True)
-        start = self.file_page * FILE_ROWS
-        rows = self.file_entries[start:start + FILE_ROWS]
+        rows = pagination.visible
         for index, entry in enumerate(rows):
             y = 62 + index * 65
             commands += self.renderer.button("file.item%d" % index, 30, y, 740, 56,
                                              entry["name"],
                                              font="JetBrainsMono 12pt")
-        commands += self.renderer.button("file.prev", 210, 390, 150, 50, "< Page",
-                                         active=self.file_page > 0)
-        commands.append(self.renderer.text(400, 415, "%d / %d" % (
-            self.file_page + 1, max_page + 1), "ffffff", "Roboto 8pt",
-            "center", "middle"))
-        commands += self.renderer.button("file.next", 440, 390, 150, 50, "Page >",
-                                         active=self.file_page < max_page)
+        commands += pagination_footer(
+            self.renderer, pagination, "file.prev", "file.next")
         if not rows:
             commands.append(self.renderer.text(400, 230, "No G-code files", "606060",
                                                "Roboto 16pt", "center", "middle"))
@@ -301,8 +297,10 @@ class FeatherPagesMixin:
             self._start_selected_file()
         elif action.startswith("file.item"):
             index = int(action[len("file.item"):])
-            offset = self.file_page * FILE_ROWS + index
-            if offset >= len(self.file_entries):
+            pagination = Pagination(
+                self.file_entries, self.file_page, FILE_ROWS)
+            offset = pagination.absolute_index(index)
+            if offset is None:
                 return
             entry = self.file_entries[offset]
             self.selected_file = entry
@@ -786,12 +784,13 @@ class FeatherPagesMixin:
     def _render_mod_settings(self):
         self._require_idle()
         parameters = self._mod_parameters()
-        total = len(parameters)
-        page_count = max(1, (total + mod_ui.VISIBLE_ROWS - 1)
-                         // mod_ui.VISIBLE_ROWS)
-        self.mod_page = max(0, min(getattr(self, "mod_page", 0), page_count - 1))
-        start = self.mod_page * mod_ui.VISIBLE_ROWS
-        visible = parameters[start:start + mod_ui.VISIBLE_ROWS]
+        pagination = Pagination(
+            parameters, getattr(self, "mod_page", 0),
+            mod_ui.VISIBLE_ROWS)
+        self.mod_page = pagination.page
+        total = pagination.total
+        start = pagination.start
+        visible = pagination.visible
         commands = self.renderer.begin_page("Mod settings", back=True)
         first = start + 1 if total else 0
         last = min(total, start + len(visible))
@@ -832,8 +831,9 @@ class FeatherPagesMixin:
                     action, 520, y + 9, 180, 46, label, state=state,
                     font="JetBrainsMono 8pt")
 
-        previous_state = "enabled" if self.mod_page > 0 else "disabled"
-        next_state = "enabled" if self.mod_page + 1 < page_count else "disabled"
+        previous_state = (
+            "enabled" if pagination.has_previous else "disabled")
+        next_state = "enabled" if pagination.has_next else "disabled"
         commands += self.renderer.button("mod.prev", 728, 88, 52, 48, "^",
                                          state=previous_state,
                                          font="JetBrainsMono 12pt")
@@ -843,10 +843,10 @@ class FeatherPagesMixin:
         track_y, track_height = 146, 209
         commands += [self.renderer.stroke(749, track_y, 10, track_height,
                                           "295c66", 1)]
-        thumb_height = max(18, track_height // page_count)
-        thumb_y = (track_y if page_count == 1 else
+        thumb_height = max(18, track_height // pagination.page_count)
+        thumb_y = (track_y if pagination.page_count == 1 else
                    track_y + (track_height - thumb_height) * self.mod_page
-                   // (page_count - 1))
+                   // (pagination.page_count - 1))
         commands.append(self.renderer.fill(751, thumb_y + 2, 6,
                                            max(4, thumb_height - 4), "35d9e6"))
         self.renderer.send(commands)
@@ -1075,11 +1075,11 @@ class FeatherPagesMixin:
                 self.mod_enum_selection = "DEFAULT"
         else:
             options = mod_ui.enum_names(param)
-        page_count = max(1, (len(options) + 3) // 4)
-        self.mod_enum_page = max(
-            0, min(getattr(self, "mod_enum_page", 0), page_count - 1))
-        start = self.mod_enum_page * 4
-        for row, name in enumerate(options[start:start + 4]):
+        pagination = Pagination(
+            options, getattr(self, "mod_enum_page", 0), 4)
+        self.mod_enum_page = pagination.page
+        start = pagination.start
+        for row, name in enumerate(pagination.visible):
             index = start + row
             selected = name == self.mod_enum_selection
             detail = (self.renderer.theme_description(name).upper()
@@ -1094,10 +1094,11 @@ class FeatherPagesMixin:
                 "mod.option.%d" % index, 25, 120 + row * 66, 750, 58,
                 label, state="selected" if selected else "enabled",
                 font="JetBrainsMono 8pt")
-        if page_count > 1:
+        if pagination.page_count > 1:
             commands += self.renderer.button(
                 "mod.enum.prev", 25, 390, 120, 47, "<",
-                state="enabled" if self.mod_enum_page > 0 else "disabled",
+                state=("enabled" if pagination.has_previous
+                       else "disabled"),
                 font="JetBrainsMono Bold 8pt")
             commands += self.renderer.button(
                 "mod.cancel", 155, 390, 220, 47, "CANCEL", state="danger",
@@ -1107,11 +1108,11 @@ class FeatherPagesMixin:
                 font="JetBrainsMono Bold 8pt")
             commands += self.renderer.button(
                 "mod.enum.next", 655, 390, 120, 47, ">",
-                state=("enabled" if self.mod_enum_page + 1 < page_count
-                       else "disabled"),
+                state=("enabled" if pagination.has_next else "disabled"),
                 font="JetBrainsMono Bold 8pt")
             commands.append(self.renderer.text(
-                750, 80, "%d/%d" % (self.mod_enum_page + 1, page_count),
+                750, 80, "%d/%d" % (
+                    pagination.page + 1, pagination.page_count),
                 "56656c", "JetBrainsMono 8pt", "right", "middle"))
         else:
             commands += self.renderer.button(
@@ -1236,8 +1237,10 @@ class FeatherPagesMixin:
             self._render_wifi_scan()
         elif action.startswith("net.item"):
             index = int(action[len("net.item"):])
-            offset = self.network_page * NETWORK_ROWS + index
-            if offset < len(self.networks):
+            pagination = Pagination(
+                self.networks, self.network_page, NETWORK_ROWS)
+            offset = pagination.absolute_index(index)
+            if offset is not None:
                 self.selected_network = self.networks[offset]
                 self.password = ""
                 self.keyboard_shift = self.keyboard_symbols = False
@@ -1447,21 +1450,21 @@ class FeatherPagesMixin:
         self.renderer.send(commands)
 
     def _render_wifi_scan(self):
-        max_page = max(0, (len(self.networks) - 1) // NETWORK_ROWS)
-        self.network_page = max(0, min(self.network_page, max_page))
+        pagination = Pagination(
+            self.networks, self.network_page, NETWORK_ROWS)
+        self.network_page = pagination.page
         commands = self.renderer.begin_page("Select Wi-Fi", back=True)
-        rows = self.networks[self.network_page * NETWORK_ROWS:
-                             self.network_page * NETWORK_ROWS + NETWORK_ROWS]
+        rows = pagination.visible
         for index, network in enumerate(rows):
             y = 62 + index * 65
             label = "%s   %d dBm" % (network["ssid"], network["signal"])
             commands += self.renderer.button("net.item%d" % index, 30, y, 740, 56,
                                              label, font="JetBrainsMono 12pt")
         commands += self.renderer.button("net.prev", 125, 390, 150, 50, "< Page",
-                                         active=self.network_page > 0)
+                                         active=pagination.has_previous)
         commands += self.renderer.button("net.rescan", 325, 390, 150, 50, "RESCAN")
         commands += self.renderer.button("net.next", 525, 390, 150, 50, "Page >",
-                                         active=self.network_page < max_page)
+                                         active=pagination.has_next)
         if not rows:
             commands.append(self.renderer.text(400, 230, "No supported networks",
                                                "606060", "Roboto 16pt", "center", "middle"))
@@ -1592,12 +1595,10 @@ class FeatherPagesMixin:
             "title": "Prompt", "text": [], "rows": [], "footer": []}
         rows = prompt["rows"]
         rows_per_page = 3
-        max_page = max(0, (len(rows) - 1) // rows_per_page)
-        self.action_prompt_page = min(
-            max(0, self.action_prompt_page), max_page)
-        visible_rows = rows[
-            self.action_prompt_page * rows_per_page:
-            (self.action_prompt_page + 1) * rows_per_page]
+        pagination = Pagination(
+            rows, self.action_prompt_page, rows_per_page)
+        self.action_prompt_page = pagination.page
+        visible_rows = pagination.visible
 
         commands = self.renderer.begin_page("KLIPPER PROMPT")
         commands += self.renderer.panel(
@@ -1613,15 +1614,14 @@ class FeatherPagesMixin:
                 "center", "middle", max_width=680, max_height=76,
                 wrap=True, truncate=True))
 
-        if max_page:
+        if pagination.page_count > 1:
             commands += self.renderer.button(
                 "prompt.prev", 48, 77, 70, 40, "<",
-                state=("enabled" if self.action_prompt_page else "disabled"),
+                state=("enabled" if pagination.has_previous else "disabled"),
                 font="JetBrainsMono Bold 12pt")
             commands += self.renderer.button(
                 "prompt.next", 682, 77, 70, 40, ">",
-                state=("enabled" if self.action_prompt_page < max_page
-                       else "disabled"),
+                state=("enabled" if pagination.has_next else "disabled"),
                 font="JetBrainsMono Bold 12pt")
 
         for row_index, row in enumerate(visible_rows):
