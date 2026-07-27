@@ -1,6 +1,6 @@
 ## Tests for Feather screen workflows.
 ##
-## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -16,6 +16,13 @@ try:
 except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject)
+
+from ff5m_ui.move import runtime as MOVE_UI
+from ff5m_ui.heat import runtime as HEAT_UI
+from ff5m_ui.filament import runtime as FILAMENT_UI
+from ff5m_ui.filament.actions import select as select_filament
+from ff5m_ui.z_offset import runtime as Z_OFFSET_UI
+from feather_feature_filament import FilamentFeature
 
 FILES = __import__("feather_files")
 PAGES = __import__("feather_screen_pages")
@@ -744,8 +751,32 @@ class PrintWorkflowTest(unittest.TestCase):
         root = pathlib.Path(__file__).parents[1]
         gcode = (root / ".py" / "klipper" / "patches" /
                  "gcode.py").read_text(encoding="utf-8")
-        self.assertIn('"FEATHER_ABORT"', gcode)
-        self.assertIn("flow.variables[\"cancel_requested\"] = True", gcode)
+        screen = (root / ".py" / "klipper" / "plugins" /
+                  "feather_screen.py").read_text(encoding="utf-8")
+        pages = (root / ".py" / "klipper" / "plugins" /
+                 "feather_screen_pages.py").read_text(encoding="utf-8")
+        self.assertNotIn("FEATHER_ABORT", gcode)
+        self.assertIn('register_immediate_command("FEATHER_ABORT")', screen)
+        self.assertIn("def cmd_FEATHER_ABORT", pages)
+        self.assertIn('flow.variables["cancel_requested"] = True', pages)
+
+    def test_feather_abort_sets_flow_and_temperature_wait_flags(self):
+        controller = base_controller("printing")
+        controller.print_flow.variables.update({
+            "active": True, "cancel_requested": False})
+        controller.temperature_wait = type("Wait", (), {"variables": {
+            "active": True, "cancel": False}})()
+        responses = []
+        gcmd = type("GCmd", (), {
+            "error": RuntimeError,
+            "respond_raw": responses.append,
+        })()
+
+        controller.cmd_FEATHER_ABORT(gcmd)
+
+        self.assertTrue(controller.print_flow.variables["cancel_requested"])
+        self.assertTrue(controller.temperature_wait.variables["cancel"])
+        self.assertEqual(responses, ["Feather cancellation requested"])
 
     def test_screw_tune_cleans_or_uses_cooldown_and_repeat_only_probes(self):
         root = pathlib.Path(__file__).parents[1]
@@ -798,6 +829,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
         cases = (
             ("nav.move", FEATHER.Page.CONTROL_HOME,
              FEATHER.Page.CONTROL_MOVE),
+            ("nav.move", FEATHER.Page.IDLE_HOME,
+             FEATHER.Page.CONTROL_MOVE),
             ("nav.heat", FEATHER.Page.IDLE_HOME,
              FEATHER.Page.CONTROL_HEAT),
             ("nav.calibration", FEATHER.Page.CONTROL_HOME,
@@ -816,6 +849,40 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 self.assertEqual(
                     controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
                 self.assertEqual(pages, [target_page])
+
+    def test_dashboard_material_opens_filament_and_returns_home(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.last_action_time = -1.0
+        pages = []
+        controller._show_page = pages.append
+        controller._require_idle = lambda: None
+        controller.extruder = StatusObject({"target": 0.0})
+
+        controller._dispatch_action("nav.filament")
+
+        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
+        self.assertEqual(controller.filament_return_page, FEATHER.Page.IDLE_HOME)
+
+        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.filament_from_pause = False
+        controller._go_back()
+        self.assertEqual(pages[-1], FEATHER.Page.IDLE_HOME)
+
+    def test_dashboard_move_returns_home(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.last_action_time = -1.0
+        pages = []
+        controller._show_page = pages.append
+
+        controller._dispatch_action("nav.move")
+
+        self.assertEqual(pages, [FEATHER.Page.CONTROL_MOVE])
+        self.assertEqual(controller.move_return_page, FEATHER.Page.IDLE_HOME)
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller._go_back()
+        self.assertEqual(pages[-1], FEATHER.Page.IDLE_HOME)
 
     def test_calibration_start_cancels_delayed_tasks_again(self):
         controller = base_controller()
@@ -865,11 +932,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
         controller.joystick = Planner()
         controller._handle_continuous_touch(
-            "touch 7:move.joy.xy begin 365 220")
+            "touch 7:%s begin 365 220" % MOVE_UI.JOYSTICK_XY.wire_id)
         controller._handle_continuous_touch(
-            "touch 7:move.joy.xy move 400 180")
+            "touch 7:%s move 400 180" % MOVE_UI.JOYSTICK_XY.wire_id)
         controller._handle_continuous_touch(
-            "touch 7:move.joy.xy end 400 180")
+            "touch 7:%s end 400 180" % MOVE_UI.JOYSTICK_XY.wire_id)
 
         self.assertEqual(controller.joystick.events,
                          [("xy", 365, 220), ("xy", 400, 180), ("release",)])
@@ -916,17 +983,17 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller._update_joystick_feedback = lambda *args, **kwargs: None
 
         controller._handle_continuous_touch(
-            "touch 9:move.joy.xy begin 240 229")
+            "touch 9:%s begin 240 229" % MOVE_UI.JOYSTICK_XY.wire_id)
         controller._handle_continuous_touch(
-            "touch 9:move.joy.xy move 300 229")
+            "touch 9:%s move 300 229" % MOVE_UI.JOYSTICK_XY.wire_id)
         controller._handle_continuous_touch(
-            "touch 9:move.joy.xy end 300 229")
+            "touch 9:%s end 300 229" % MOVE_UI.JOYSTICK_XY.wire_id)
         controller._handle_continuous_touch(
-            "touch 9:move.joy.z begin 510 180")
+            "touch 9:%s begin 510 180" % MOVE_UI.JOYSTICK_Z.wire_id)
         controller._handle_continuous_touch(
-            "touch 9:move.joy.z move 510 160")
+            "touch 9:%s move 510 160" % MOVE_UI.JOYSTICK_Z.wire_id)
         controller._handle_continuous_touch(
-            "touch 9:move.joy.z end 510 160")
+            "touch 9:%s end 510 160" % MOVE_UI.JOYSTICK_Z.wire_id)
 
         self.assertEqual(
             controller.joystick.events,
@@ -950,11 +1017,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.joystick = mock.Mock()
 
         controller._handle_continuous_touch(
-            "touch 8:move.joy.z begin 540 100")
+            "touch 8:%s begin 540 100" % MOVE_UI.JOYSTICK_Z.wire_id)
         controller._handle_continuous_touch(
-            "touch 8:move.joy.z move 540 90")
+            "touch 8:%s move 540 90" % MOVE_UI.JOYSTICK_Z.wire_id)
         controller._handle_continuous_touch(
-            "touch 8:move.joy.z end 540 90")
+            "touch 8:%s end 540 90" % MOVE_UI.JOYSTICK_Z.wire_id)
 
         controller.joystick.assert_not_called()
         self.assertIsNone(controller.joystick_suppressed)
@@ -1125,7 +1192,6 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.extruder = StatusObject({"temperature": 21.5, "target": 220})
         controller.heater_bed = StatusObject({"temperature": 24.0, "target": 60})
         controller.fan = StatusObject({"speed": 0.25})
-        controller.preheat = dict(FEATHER.PREHEAT)
 
         controller._render_heat()
 
@@ -1133,9 +1199,40 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertIn("21.5 / 220 C", initial)
         self.assertIn("24.0 / 60 C", initial)
         self.assertIn("25%", initial)
+        for material in controller.heating_materials:
+            self.assertIn('-t "%s"' % material, initial)
+        actions = tuple(
+            action for action in HEAT_UI.get_page(
+                controller.heating_materials).actions.values()
+            if action.key == HEAT_UI.HeatCommand.PREHEAT)
+        self.assertEqual(
+            set(action.payload for action in actions),
+            set(controller.heating_materials))
         controller.fan.status["speed"] = 0.5
         controller._update_heat_status(101)
         self.assertIn("50%", "\n".join(batches[-1]))
+
+    def test_empty_heating_keeps_manual_heat_controls_without_preset_hitboxes(self):
+        controller = base_controller()
+        controller.heating_materials = ()
+        controller.heating_profiles = {}
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.extruder = StatusObject({"temperature": 21.5, "target": 0})
+        controller.heater_bed = StatusObject({"temperature": 24.0, "target": 0})
+        controller.fan = StatusObject({"speed": 0.0})
+
+        controller._render_heat()
+
+        drawing = "\n".join(batches[-1])
+        actions = tuple(
+            action.key for action in HEAT_UI.get_page(()).actions.values())
+        self.assertIn("NO MATERIALS ENABLED", drawing)
+        self.assertIn(HEAT_UI.HeatCommand.NOZZLE_PLUS, actions)
+        self.assertIn(HEAT_UI.HeatCommand.BED_PLUS, actions)
+        self.assertIn(HEAT_UI.HeatCommand.COOLDOWN, actions)
+        self.assertNotIn(HEAT_UI.HeatCommand.PREHEAT, actions)
 
     def test_move_offers_only_combined_homing_commands(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1146,8 +1243,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
             lambda command, message: blocking.append((command, message)))
         controller._toast = lambda message: None
 
-        controller._handle_move_action("move.homeall")
-        controller._handle_move_action("move.homexy")
+        controller._handle_move_command(MOVE_UI.HOME_ALL)
+        controller._handle_move_command(MOVE_UI.HOME_XY)
 
         self.assertEqual(blocking, [("G28", "HOMING..."),
                                     ("G28 X Y", "HOMING...")])
@@ -1158,10 +1255,10 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.toolhead = StatusObject({
             "homed_axes": "y", "position": (0.0, 0.0, 0.0)})
         with self.assertRaisesRegex(RuntimeError, "Home X"):
-            controller._handle_move_action("move.xp")
+            controller._handle_move_command(MOVE_UI.X_PLUS)
         controller.toolhead.status["homed_axes"] = "xyz"
-        controller._handle_move_action("move.xm")
-        controller._handle_move_action("move.zp")
+        controller._handle_move_command(MOVE_UI.X_MINUS)
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
         self.assertEqual(controller.gcode.commands,
                          ["MOVE_SAFE X=-10 ABSOLUTE=1 F=6000",
                           "MOVE_SAFE Z=10 ABSOLUTE=1 F=600"])
@@ -1178,9 +1275,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_maximum": (120.0, 120.0, 220.0),
         })
 
-        controller._handle_move_action("move.xp")
-        controller._handle_move_action("move.ym")
-        controller._handle_move_action("move.zp")
+        controller._handle_move_command(MOVE_UI.X_PLUS)
+        controller._handle_move_command(MOVE_UI.Y_MINUS)
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
 
         self.assertEqual(
             controller.gcode.commands,
@@ -1202,9 +1299,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
         notices = []
         controller._toast = notices.append
 
-        controller._handle_move_action("move.zp")
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
         controller.toolhead.status["position"] = (0.0, 0.0, 210.0)
-        controller._handle_move_action("move.zp")
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
 
         self.assertEqual(controller.gcode.commands,
                          ["MOVE_SAFE Z=210 ABSOLUTE=1 F=600"])
@@ -1217,19 +1314,25 @@ class MotionHeatSettingsTest(unittest.TestCase):
             (-100.0, 100.0), (-90.0, 90.0), (0.0, 220.0))
         controller.toolhead = StatusObject({
             "homed_axes": "xyz",
-            "position": (105.0, 0.0, 100.0),
+            "position": (120.0, 0.0, 230.0),
             "axis_minimum": (-120.0, -120.0, 0.0),
             "axis_maximum": (120.0, 120.0, 230.0),
         })
         notices = []
         controller._toast = notices.append
 
-        controller._handle_move_action("move.xp")
-        controller._handle_move_action("move.xm")
+        controller._handle_move_command(MOVE_UI.X_PLUS)
+        controller._handle_move_command(MOVE_UI.X_MINUS)
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
+        controller._handle_move_command(MOVE_UI.Z_MINUS)
 
         self.assertEqual(controller.gcode.commands,
-                         ["MOVE_SAFE X=95 ABSOLUTE=1 F=6000"])
-        self.assertEqual(notices, ["X LIMIT REACHED", "Moved X -10 mm"])
+                         ["MOVE_SAFE X=110 ABSOLUTE=1 F=6000",
+                          "MOVE_SAFE Z=220 ABSOLUTE=1 F=600"])
+        self.assertEqual(notices, [
+            "X LIMIT REACHED", "Moved X -10 mm",
+            "Z LIMIT REACHED", "Moved Z -10 mm",
+        ])
 
     def test_low_z_warning_blocks_step_xy_but_keeps_step_z_available(self):
         controller = base_controller()
@@ -1238,10 +1341,10 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.toolhead = StatusObject({
             "homed_axes": "xyz", "position": (0.0, 0.0, 20.0)})
 
-        controller._handle_move_action("move.xp")
-        controller._handle_move_action("move.yp")
-        controller._handle_move_action("move.homeall")
-        controller._handle_move_action("move.zm")
+        controller._handle_move_command(MOVE_UI.X_PLUS)
+        controller._handle_move_command(MOVE_UI.Y_PLUS)
+        controller._handle_move_command(MOVE_UI.HOME_ALL)
+        controller._handle_move_command(MOVE_UI.Z_MINUS)
 
         self.assertEqual(
             controller.gcode.commands, ["MOVE_SAFE Z=19 ABSOLUTE=1 F=600"])
@@ -1254,15 +1357,14 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.heater_bed = StatusObject({"temperature": 20, "target": 0})
         controller.heater_bed.min_temp = 0
         controller.heater_bed.max_temp = 91
-        controller.preheat = dict(FEATHER.PREHEAT)
         controller.fan = StatusObject({"speed": 0.0})
 
         controller._handle_heat_action("heat.preheat.ABS")
         controller._handle_heat_action("heat.fan50")
         controller._handle_heat_action("heat.alloff")
         self.assertEqual(controller.gcode.commands, [
-            "PREHEAT_MATERIAL MATERIAL=ABS EXTRUDER_TEMP=250 BED_TEMP=90",
-            "M106 S128", "TURN_OFF_HEATERS"])
+            "PREHEAT_MATERIAL MATERIAL=ABS EXTRUDER_TEMP=250 BED_TEMP=85",
+            "SET_FAN_SPEED FAN=fanM106 SPEED=0.50", "TURN_OFF_HEATERS"])
 
     def test_settings_clamp_values_toggle_sound_and_adjust_light(self):
         controller = base_controller()
@@ -1331,6 +1433,259 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
 
 class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
+    def test_filament_page_uses_complete_shared_material_selector(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.extruder = type("Extruder", (), {
+            "heater": type(
+                "Heater", (), {"min_temp": 0, "max_temp": 300})()})()
+        controller.heater_bed = type(
+            "Bed", (), {"min_temp": 0, "max_temp": 130})()
+
+        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_MATERIAL)
+
+        drawing = "\n".join(batches[-1])
+        actions = tuple(
+            action for action in FILAMENT_UI.get_material_page(
+                tuple((material, controller._limited_preheat(material)[0])
+                      for material in controller.heating_materials)).actions.values()
+            if action.key == FILAMENT_UI.FilamentCommand.SELECT)
+        self.assertEqual(
+            set(action.payload for action in actions),
+            set(controller.heating_materials))
+        self.assertIn('"ABS-PC"', drawing)
+        self.assertIn('"270C"', drawing)
+        self.assertNotIn('"NOZZLE 270C"', drawing)
+        self.assertNotIn('"ABS-PC  270C"', drawing)
+
+    def test_empty_heating_filament_page_has_only_empty_state_and_back(self):
+        controller = base_controller()
+        controller.heating_materials = ()
+        controller.heating_profiles = {}
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+
+        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_MATERIAL)
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("NO MATERIALS ENABLED", drawing)
+        self.assertIn("nav.back", drawing)
+        self.assertFalse(FILAMENT_UI.get_material_page(()).actions)
+
+    def test_filament_action_back_preserves_heat_and_returns_to_materials(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.FILAMENT_ACTION
+        controller.filament_from_pause = False
+        controller.filament_material = "PETG"
+        controller.extruder = StatusObject({
+            "temperature": 130.4, "target": 250.0})
+        pages = []
+        controller._show_page = pages.append
+        controller.feature_manager = FEATHER.LazyFeatureManager(
+            controller, FEATHER.FEATURE_SPECS)
+        controller.feature_manager.get("filament")
+
+        controller._go_back()
+
+        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(controller.extruder.status["target"], 250.0)
+
+    def test_filament_cooling_fan_is_bounded_and_survives_action_back(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.filament_from_pause = False
+        controller.filament_material = "PETG"
+        controller.extruder = StatusObject({
+            "temperature": 260.0, "target": 250.0})
+        controller.extruder.min_extrude_temp = 170.0
+        controller.fan = StatusObject({"speed": 0.0})
+        commands = []
+        pages = []
+        controller._run_script = commands.append
+        controller._show_page = pages.append
+        feature = FilamentFeature(controller)
+        feature._selected_target = 250.0
+
+        feature.update(1.0)
+        feature.update(2.0)
+        feature.back(FEATHER.Page.FILAMENT_ACTION)
+
+        self.assertEqual(commands, [
+            "SET_FAN_SPEED FAN=fanM106 SPEED=1.00"])
+        self.assertTrue(feature._cooling_fan_active)
+        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
+
+        feature.back(FEATHER.Page.FILAMENT_MATERIAL)
+
+        self.assertEqual(commands[-1],
+                         "SET_FAN_SPEED FAN=fanM106 SPEED=0.00")
+        self.assertFalse(feature._cooling_fan_active)
+        self.assertIsNone(feature._selected_target)
+
+    def test_filament_cooling_fan_stops_at_five_degree_threshold(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.filament_material = "PETG"
+        controller.extruder = StatusObject({
+            "temperature": 255.1, "target": 250.0})
+        controller.extruder.min_extrude_temp = 170.0
+        controller.fan = StatusObject({"speed": 0.0})
+        commands = []
+        controller._run_script = commands.append
+        feature = FilamentFeature(controller)
+        feature._selected_target = 250.0
+
+        feature.update(1.0)
+        controller.extruder.status["temperature"] = 255.0
+        feature.update(2.0)
+
+        self.assertEqual(commands, [
+            "SET_FAN_SPEED FAN=fanM106 SPEED=1.00",
+            "SET_FAN_SPEED FAN=fanM106 SPEED=0.00",
+        ])
+        self.assertFalse(feature._cooling_fan_active)
+
+    def test_material_selection_arms_cooling_before_action_updates(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.filament_material = "PLA"
+        controller.heating_materials = ("PETG",)
+        controller.heating_profiles = {"PETG": (250, 80)}
+        controller.extruder = StatusObject({
+            "temperature": 260.0, "target": 0.0})
+        controller.extruder.heater = type(
+            "Heater", (), {"min_temp": 0, "max_temp": 300})()
+        controller.heater_bed = type(
+            "Bed", (), {"min_temp": 0, "max_temp": 130})()
+        controller.fan = StatusObject({"speed": 0.0})
+        commands = []
+        handled = []
+        controller._run_script = commands.append
+
+        def select(action):
+            handled.append(action)
+            controller.filament_material = "PETG"
+            controller.extruder.status["target"] = 250.0
+
+        controller._handle_filament_action = select
+        feature = FilamentFeature(controller)
+
+        feature.handle_semantic_action(
+            FEATHER.Page.FILAMENT_MATERIAL, select_filament("PETG"))
+
+        self.assertEqual(handled, ["filament.PETG"])
+        self.assertEqual(commands, [
+            "SET_FAN_SPEED FAN=fanM106 SPEED=1.00"])
+        self.assertEqual(feature._selected_target, 250.0)
+        self.assertTrue(feature._cooling_fan_active)
+
+    def test_safe_z_stage_positions_probes_adjusts_saves_then_continues(self):
+        controller = base_controller()
+        controller.params = type("Params", (), {
+            "variables": {"safe_z": 8.0}})()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.0, None, "", -0.25, False, safe_z=8.0)
+        controller.probe = StatusObject({"last_z_result": -0.4})
+        controller._render_safe_z = lambda: None
+        moves = []
+        pages = []
+        callbacks = []
+        controller.reactor.register_callback = callbacks.append
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+        controller._show_page = pages.append
+
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_CALIBRATE)
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_PROBE)
+
+        self.assertEqual(moves, [
+            ("G28\n"
+             "MOVE_SAFE Z=16 ABSOLUTE=1 F=600\n"
+             "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
+             "LOAD_CELL_TARE",
+             "POSITIONING HEAD..."),
+            ("PROBE SAMPLES=2", "PROBING..."),
+        ])
+        self.assertEqual(controller.gcode.commands, [
+            "MOVE_SAFE Z=4.600000 ABSOLUTE=1 F=300"])
+        self.assertAlmostEqual(controller.z_calibration.safe_z_candidate, 4.6)
+
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_LOWER)
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
+
+        self.assertEqual(controller.gcode.commands[-3:], [
+            "MOVE_SAFE Z=5.600000 ABSOLUTE=1 F=300",
+            "MOVE_SAFE Z=4.600000 ABSOLUTE=1 F=300",
+            "SET_MOD PARAM=safe_z VALUE=4.600",
+        ])
+        self.assertAlmostEqual(controller.z_calibration.safe_z, 4.6)
+        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_CALIBRATION,
+                                 FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(callbacks,
+                         [controller._run_z_calibration_preparation])
+
+    def test_safe_z_stage_can_be_skipped_without_changing_setting(self):
+        controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.0, None, "", -0.25, False, safe_z=9.0)
+        pages = []
+        callbacks = []
+        controller.reactor.register_callback = callbacks.append
+        controller._show_page = pages.append
+
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_SKIP)
+
+        self.assertEqual(controller.z_calibration.safe_z, 9.0)
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(callbacks,
+                         [controller._run_z_calibration_preparation])
+
+    def test_zone_selection_back_returns_to_saved_safe_z_without_repreparing(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.Z_OFFSET_SUMMARY
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.0, None, "", -0.25, False, safe_z=6.0)
+        controller.z_calibration.prepared = True
+        controller.z_calibration.set_safe_z_trigger(1.0)
+        controller.z_calibration.accept_safe_z()
+        moves = []
+        pages = []
+        callbacks = []
+        controller.reactor.register_callback = callbacks.append
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+        controller._show_page = pages.append
+        controller._render_safe_z = lambda: None
+
+        controller._go_back()
+
+        self.assertEqual(moves, [(
+            "G28\nMOVE_SAFE Z=12 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
+            "LOAD_CELL_TARE\nMOVE_SAFE Z=6.000000 ABSOLUTE=1 F=300",
+            "POSITIONING HEAD...")])
+        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_CALIBRATION])
+        self.assertTrue(controller.z_calibration.safe_z_ready)
+
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
+        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
+
+        self.assertEqual(controller.gcode.commands[-2:], [
+            "MOVE_SAFE Z=7.000000 ABSOLUTE=1 F=300",
+            "SET_MOD PARAM=safe_z VALUE=7.000",
+        ])
+        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_SUMMARY)
+        self.assertEqual(callbacks, [])
+
     def test_filament_page_cannot_replace_cancel_confirmation(self):
         controller = base_controller("paused")
         controller.page = FEATHER.Page.CANCEL_CONFIRM
@@ -1345,7 +1700,6 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
     def test_material_selection_heats_and_opens_action_page(self):
         controller = base_controller("paused")
         controller.filament_from_pause = True
-        controller.preheat = dict(FEATHER.PREHEAT)
         extruder = StatusObject({"temperature": 25, "target": 210})
         extruder.heater = type("Heater", (), {"min_temp": 0, "max_temp": 300})()
         controller.extruder = extruder
@@ -1385,7 +1739,8 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller = base_controller("paused")
         controller.filament_from_pause = True
         controller.filament_material = "ABS-PC"
-        controller.extruder = StatusObject({"temperature": 220})
+        controller.extruder = StatusObject({
+            "temperature": 270, "target": 270})
         controller.extruder.min_extrude_temp = 170
         calls = []
         controller._run_blocking_gcode = (
@@ -1394,14 +1749,34 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual(calls, [("LOAD_FILAMENT MATERIAL=ABS-PC",
                                   "LOAD FILAMENT...")])
 
+    def test_filament_action_rejects_extrusion_before_profile_target(self):
+        controller = base_controller("paused")
+        controller.filament_from_pause = True
+        controller.filament_material = "PETG"
+        controller.extruder = StatusObject({
+            "temperature": 200, "target": 250})
+        controller.extruder.min_extrude_temp = 170
+
+        with self.assertRaisesRegex(
+                RuntimeError, "has not reached the target"):
+            controller._handle_filament_action("filament.load")
+        self.assertEqual(controller.gcode.commands, [])
+
+        controller.extruder.status["temperature"] = 256
+        with self.assertRaisesRegex(
+                RuntimeError, "has not reached the target"):
+            controller._handle_filament_action("filament.load")
+        self.assertEqual(controller.gcode.commands, [])
+
     def test_material_macros_support_fluidd_and_persist_through_mod_params(self):
         root = pathlib.Path(__file__).parents[1]
-        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
+        macros = (root / "config" / "material.cfg").read_text(encoding="utf-8")
         self.assertIn("[gcode_macro SET_MATERIAL]", macros)
         self.assertIn("SET_MOD PARAM=current_material", macros)
         self.assertIn("[gcode_macro PREHEAT_MATERIAL]", macros)
         self.assertIn('SET_MATERIAL MATERIAL="{params.MATERIAL}"', macros)
-        self.assertIn("_LOAD_MATERIAL_HEATUP MATERIAL=PETG TEMP=250", macros)
+        self.assertIn("for slot in config.heating_slots", macros)
+        self.assertIn("_LOAD_MATERIAL_HEATUP MATERIAL={name}", macros)
 
     def test_saved_z_adjust_uses_homing_origin_not_base_position(self):
         root = pathlib.Path(__file__).parents[1]
@@ -1423,7 +1798,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._run_blocking_gcode = (
             lambda command, message: blocking.append((command, message)))
 
-        controller._handle_calibration_action("z.closer")
+        controller._handle_z_offset_command(Z_OFFSET_UI.CLOSER)
 
         self.assertEqual(controller.gcode.commands,
                          ["MOVE_SAFE Z=-0.010000 ABSOLUTE=1 F=300"])
@@ -1439,7 +1814,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller.z_calibration.step = 0.050
         controller._render_z_paper = lambda: None
 
-        controller._handle_calibration_action("z.farther")
+        controller._handle_z_offset_command(Z_OFFSET_UI.FARTHER)
 
         self.assertEqual(controller.gcode.commands,
                          ["MOVE_SAFE Z=0.050000 ABSOLUTE=1 F=300"])
@@ -1529,10 +1904,13 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual(pages, [FEATHER.Page.CALIBRATION_CONFIRM])
         self.assertFalse(controller.z_calibration.active)
 
-    def test_z_offset_bed_point_lifts_to_five_before_xy_move(self):
+    def test_z_offset_bed_point_uses_configured_safe_z_before_xy_move(self):
         controller = base_controller()
+        controller.params = type("Params", (), {
+            "variables": {"safe_z": 12.5}})()
         controller.z_calibration = FEATHER.ZCalibrationSession()
-        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.begin(
+            0.2, None, "", -0.25, False, safe_z=12.5)
         controller.z_calibration.prepared = True
         moves = []
         controller._run_blocking_gcode = (
@@ -1540,21 +1918,21 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         pages = []
         controller._show_page = pages.append
 
-        controller._handle_calibration_action("z.zone.rear_right")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["rear_right"])
 
         self.assertEqual(moves, [])
         self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
 
-        controller._handle_calibration_action("z.paper_briefing.continue")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
 
         self.assertEqual(moves, [(
-            "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600\n"
             "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
             "POSITIONING HEAD...")])
         self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
                                  FEATHER.Page.Z_OFFSET_PAPER])
 
-    def test_z_offset_briefing_precedes_zones_and_paper_briefing_follows_each_zone(self):
+    def test_zone_selection_opens_paper_briefing_for_each_zone(self):
         controller = base_controller()
         controller.z_calibration = FEATHER.ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
@@ -1564,19 +1942,19 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._move_z_offset_head = (
             lambda x, y: moves.append((x, y)))
 
-        controller._handle_calibration_action("z.zone.front_left")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["front_left"])
         self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
         self.assertEqual(moves, [])
 
-        controller._handle_calibration_action("z.paper_briefing.continue")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
         self.assertEqual(moves, [(-94.0, -94.0)])
         self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER)
 
-        controller._handle_calibration_action("z.zone.center")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["center"])
         self.assertEqual(moves, [(-94.0, -94.0)])
         self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER_BRIEFING)
 
-        controller._handle_calibration_action("z.paper_briefing.continue")
+        controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
         self.assertEqual(moves[-1], (0.0, 0.0))
         self.assertEqual(pages.count(FEATHER.Page.Z_OFFSET_PAPER_BRIEFING), 2)
 
@@ -1589,7 +1967,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         rendered = []
         controller._render_z_paper = lambda: rendered.append(True)
 
-        controller._handle_calibration_action("z.reset")
+        controller._handle_z_offset_command(Z_OFFSET_UI.RESET)
 
         self.assertEqual(controller.gcode.commands, [
             "MOVE_SAFE Z=-0.250000 ABSOLUTE=1 F=300"])
@@ -1617,7 +1995,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertAlmostEqual(controller.z_calibration.local_z, 0.5)
         self.assertAlmostEqual(controller.z_calibration.candidate, 0.25)
 
-    def test_manual_paper_start_moves_to_one_point_five_and_enables_controls(self):
+    def test_manual_paper_start_moves_to_half_safe_z_and_enables_controls(self):
         controller = base_controller()
         controller.z_calibration = FEATHER.ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
@@ -1627,16 +2005,33 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._run_blocking_gcode = (
             lambda command, message: moves.append((command, message)))
 
-        controller._handle_calibration_action("z.move_1_5")
+        controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
 
         self.assertEqual(moves, [(
-            "MOVE_SAFE Z=1.500000 ABSOLUTE=1 F=300",
-            "MOVING TO 1.5 MM...")])
+            "MOVE_SAFE Z=5.000000 ABSOLUTE=1 F=300",
+            "MOVING TO 5.000 MM...")])
         self.assertEqual(controller.z_calibration.start_mode, "manual")
         self.assertTrue(controller.z_calibration.ready_for_paper_test)
-        self.assertAlmostEqual(controller.z_calibration.reference_z, 1.5)
-        self.assertAlmostEqual(controller.z_calibration.paper_contact_z, 1.5)
-        self.assertAlmostEqual(controller.z_calibration.candidate, 1.25)
+        self.assertAlmostEqual(controller.z_calibration.reference_z, 5.0)
+        self.assertAlmostEqual(controller.z_calibration.paper_contact_z, 5.0)
+        self.assertAlmostEqual(controller.z_calibration.candidate, 4.75)
+
+    def test_manual_paper_start_tracks_custom_safe_z(self):
+        controller = base_controller()
+        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration.begin(
+            0.2, None, "", -0.25, False, safe_z=7.5)
+        controller.z_calibration.choose_zone("center")
+        controller._render_z_paper = lambda: None
+        moves = []
+        controller._run_blocking_gcode = (
+            lambda command, message: moves.append((command, message)))
+
+        controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
+
+        self.assertEqual(moves, [(
+            "MOVE_SAFE Z=3.750000 ABSOLUTE=1 F=300",
+            "MOVING TO 3.750 MM...")])
 
     def test_paper_step_uses_no_loader_or_busy_notice(self):
         controller = base_controller()
@@ -1878,6 +2273,44 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(actions, [
             "print.cancel", "print.cancel.back", "nav.back"])
 
+    def test_blocking_loader_rejects_current_and_delayed_back(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.busy_message = "HOMING..."
+        controller.command_depth = 0
+        controller.touch_feedback_pending = False
+        controller.renderer = type("Renderer", (), {"generation": 4})()
+        pages = []
+        controller._go_back = lambda: pages.append("back")
+
+        # The direct touch gate protects raw/stale events which bypass Typer's
+        # now-cleared loader hitboxes.
+        controller._handle_touch_action("nav.back")
+        # The dispatch gate protects an action whose 80 ms button feedback was
+        # scheduled immediately before the loader appeared.
+        controller.touch_feedback_pending = True
+        controller._finish_touch_action(
+            0, "nav.back", source_page=FEATHER.Page.CONTROL_MOVE,
+            generation=4)
+
+        self.assertEqual(pages, [])
+        self.assertFalse(controller.touch_feedback_pending)
+
+    def test_calibration_progress_rejects_back_during_dispatcher_macro(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.command_depth = 1
+        controller.busy_message = None
+        controller.renderer = type("Renderer", (), {
+            "busy_notice": lambda self, label: None,
+        })()
+        pages = []
+        controller._go_back = lambda: pages.append("back")
+
+        controller._handle_touch_action("nav.back")
+
+        self.assertEqual(pages, [])
+
     def test_gcode_busy_badge_is_cleared_on_success_and_error(self):
         controller = base_controller()
         events = []
@@ -1886,11 +2319,13 @@ class TouchEventBridgeTest(unittest.TestCase):
             "clear_busy_notice": lambda self: events.append(("clear", None)),
         })()
         controller.gcode.run_script = lambda command: events.append(
-            ("run", command, controller.command_depth))
+            ("run", command, controller.command_depth,
+             controller._ensure_safety_registry().lease_count))
         controller._run_script("G28")
         self.assertEqual(events, [("busy", "KLIPPER BUSY"),
-                                  ("run", "G28", 1), ("clear", None)])
+                                  ("run", "G28", 1, 0), ("clear", None)])
         self.assertEqual(controller.command_depth, 0)
+        self.assertEqual(controller.safety.lease_count, 0)
 
         events[:] = []
         def fail(command):
@@ -1900,6 +2335,36 @@ class TouchEventBridgeTest(unittest.TestCase):
             controller._run_script("M84")
         self.assertEqual(events, [("busy", "KLIPPER BUSY"), ("clear", None)])
         self.assertEqual(controller.command_depth, 0)
+        self.assertEqual(controller.safety.lease_count, 0)
+
+    def test_blocking_gcode_owns_stable_abort_lease(self):
+        controller = base_controller()
+        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.busy_message = None
+        controller.toolhead = StatusObject({"homed_axes": ""})
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.send = lambda commands: None
+        controller._show_page = lambda page: None
+        observed = []
+
+        def run(command):
+            observed.append((
+                command,
+                controller.safety.lease_count,
+                controller._safety_decision().visible,
+                controller._blocking_operation_active(),
+            ))
+            controller._dispatch_action("nav.back")
+            controller.toolhead.status["homed_axes"] = "xyz"
+
+        controller.gcode.run_script = run
+        controller._run_blocking_gcode("G28", "HOMING...")
+
+        self.assertEqual(observed, [("G28", 1, True, True)])
+        self.assertEqual(controller.page, FEATHER.Page.CONTROL_MOVE)
+        self.assertFalse(controller._blocking_operation_active())
+        self.assertEqual(controller.safety.lease_count, 0)
+        self.assertTrue(controller._safety_decision().visible)
 
     def test_fragmented_cpp_tap_events_are_reassembled(self):
         controller = base_controller()
@@ -2019,6 +2484,16 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
         controller._show_page = show_page
         return controller, shown
+
+    def test_builtin_prompts_do_not_mislabel_cancel_as_emergency_abort(self):
+        root = pathlib.Path(__file__).parents[1]
+        sources = (
+            root / "macros" / "base.cfg",
+            root / ".py" / "klipper" / "plugins" / "resurrection.py",
+        )
+        for source in sources:
+            text = source.read_text(encoding="utf-8")
+            self.assertNotIn("prompt_footer_button Abort|", text, source)
 
     def test_prompt_responses_build_show_and_close_dialog(self):
         controller, shown = self.controller()

@@ -6,6 +6,7 @@
 
 import errno
 import fcntl
+import importlib
 import logging
 import os
 import signal
@@ -13,43 +14,41 @@ import struct
 import time
 
 try:
-    from .feather_ui import FeatherRenderer, Page, PrintState
+    from .ui import Command, FeatherRenderer, Page, PrintState
+    from .ff5m_ui.move import runtime as move_ui
     from .feather_screen_pages import (
-        FeatherPagesMixin, FILE_ROWS, mod_ui,
+        FeatherPagesMixin, FILE_ROWS,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
     from .feather_files import (
         DEFAULT_HISTORY_PATH, PrintHistory, UsbStorageMonitor)
     from .feather_screen_controls import (
-        FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
+        FeatherControlsMixin,
         joystick_ui, joystick_motion,
-        JOYSTICK_XY_PANEL, JOYSTICK_XY_PAD, JOYSTICK_XY_CENTER,
-        JOYSTICK_XY_RADIUS, JOYSTICK_XY_CURSOR_BOUNDS, JOYSTICK_XY_GRID,
-        JOYSTICK_XY_VERTICAL, JOYSTICK_XY_HORIZONTAL, JOYSTICK_Z_PANEL,
-        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS, JOYSTICK_Z_CURSOR_BOUNDS,
-        JOYSTICK_Z_HITBOX, JOYSTICK_STATUS_PANEL, JOYSTICK_POSITION_CARD,
-        JOYSTICK_INERTIA_CARD, JOYSTICK_KNOB_SIZE, JOYSTICK_DIRTY_MARGIN)
-    from .feather_z_calibration import (
-        FeatherZCalibrationMixin, ZCalibrationSession)
+        JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
+        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS)
+    from .feather_materials import load_material_catalog
+    from .feather_feature_manager import (
+        FeatureLoadError, FeatureSpec, LazyFeatureManager)
+    from .feather_safety import SafetyRegistry
 except (ImportError, ValueError):
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
-    from feather_ui import FeatherRenderer, Page, PrintState
+    from ui import Command, FeatherRenderer, Page, PrintState
+    from ff5m_ui.move import runtime as move_ui
     from feather_screen_pages import (
-        FeatherPagesMixin, FILE_ROWS, mod_ui,
+        FeatherPagesMixin, FILE_ROWS,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
     from feather_files import (
         DEFAULT_HISTORY_PATH, PrintHistory, UsbStorageMonitor)
     from feather_screen_controls import (
-        FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
+        FeatherControlsMixin,
         joystick_ui, joystick_motion,
-        JOYSTICK_XY_PANEL, JOYSTICK_XY_PAD, JOYSTICK_XY_CENTER,
-        JOYSTICK_XY_RADIUS, JOYSTICK_XY_CURSOR_BOUNDS, JOYSTICK_XY_GRID,
-        JOYSTICK_XY_VERTICAL, JOYSTICK_XY_HORIZONTAL, JOYSTICK_Z_PANEL,
-        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS, JOYSTICK_Z_CURSOR_BOUNDS,
-        JOYSTICK_Z_HITBOX, JOYSTICK_STATUS_PANEL, JOYSTICK_POSITION_CARD,
-        JOYSTICK_INERTIA_CARD, JOYSTICK_KNOB_SIZE, JOYSTICK_DIRTY_MARGIN)
-    from feather_z_calibration import (
-        FeatherZCalibrationMixin, ZCalibrationSession)
+        JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
+        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS)
+    from feather_materials import load_material_catalog
+    from feather_feature_manager import (
+        FeatureLoadError, FeatureSpec, LazyFeatureManager)
+    from feather_safety import SafetyRegistry
 
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
@@ -61,7 +60,9 @@ MAX_TOUCH_EVENT = 256
 
 
 EXACT_ACTIONS = {
-    Page.IDLE_HOME: ("nav.menu", "nav.heat", "nav.network", "nav.job"),
+    Page.IDLE_HOME: (
+        "nav.menu", "nav.heat", "nav.network", "nav.job",
+        "nav.filament", "nav.move"),
     Page.MAIN_MENU: ("nav.back", "nav.files", "nav.control", "nav.filament",
                      "nav.network"),
     Page.CONTROL_HOME: ("nav.back", "nav.move", "nav.heat", "nav.calibration",
@@ -73,10 +74,9 @@ EXACT_ACTIONS = {
     Page.PAUSED: ("nav.home", "print.resume", "print.filament",
                   "print.cancel", "print.z"),
     Page.CANCEL_CONFIRM: ("nav.back", "print.cancel.back", "print.cancel.confirm"),
-    Page.CONTROL_MOVE: ("nav.back", "move.mode", "move.joy.xy", "move.joy.z"),
+    Page.CONTROL_MOVE: ("nav.back",),
     Page.CONTROL_HEAT: ("nav.back",),
-    Page.FILAMENT_MATERIAL: ("nav.back", "filament.PLA", "filament.PETG",
-                             "filament.ABS", "filament.ABS-PC"),
+    Page.FILAMENT_MATERIAL: ("nav.back",),
     Page.FILAMENT_ACTION: ("nav.back", "filament.load", "filament.unload",
                            "filament.purge", "filament.done", "filament.resume"),
     Page.CALIBRATION_HOME: (
@@ -84,17 +84,13 @@ EXACT_ACTIONS = {
         "cal.mesh", "cal.extruder", "cal.shaper", "cal.axes",
         "cal.pid_bed", "cal.pid_extruder"),
     Page.CALIBRATION_GUIDE: ("nav.back",),
+    Page.EXTRUDER_CALIBRATION: ("nav.back",),
     Page.CALIBRATION_Z: ("nav.back",),
-    Page.Z_OFFSET_SUMMARY: (
-        "nav.back", "z.selection.next", "z.load.toggle", "z.save",
-        "z.discard.cancel", "z.discard.confirm"),
-    Page.Z_OFFSET_BRIEFING: ("nav.back", "z.briefing.continue"),
-    Page.Z_OFFSET_PAPER_BRIEFING: (
-        "nav.back", "z.paper_briefing.continue"),
-    Page.Z_OFFSET_PAPER: (
-        "nav.back", "z.probe", "z.move_1_5", "z.step.5", "z.step.10",
-        "z.step.25", "z.step.50", "z.closer", "z.farther", "z.reset",
-        "z.accept", "z.pressure.ok"),
+    Page.Z_OFFSET_SUMMARY: ("nav.back",),
+    Page.Z_OFFSET_PAPER_BRIEFING: ("nav.back",),
+    Page.Z_OFFSET_PAPER: ("nav.back",),
+    Page.SAFE_Z_BRIEFING: ("nav.back",),
+    Page.SAFE_Z_CALIBRATION: ("nav.back",),
     Page.LIVE_Z_OFFSET: (
         "nav.back", "live_z.step.0005", "live_z.step.001",
         "live_z.step.005", "live_z.closer", "live_z.farther",
@@ -127,36 +123,108 @@ EXACT_ACTIONS = {
     Page.ERROR: ("error.restart", "error.firmware_restart"),
 }
 
-PRINT_EMERGENCY_STATES = frozenset((
+ACTIVE_PRINT_STATES = frozenset((
     PrintState.PREPARING, PrintState.PRINTING, PrintState.PAUSED,
 ))
 
-PRINT_EMERGENCY_PAGES = frozenset((
-    Page.PRINTING, Page.PAUSED, Page.CANCEL_CONFIRM,
-))
-
-HEAT_EMERGENCY_PAGES = frozenset((
+CORE_SAFETY_ARMED_PAGES = frozenset((
     Page.CONTROL_HEAT,
     Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION,
-    Page.CALIBRATION_PROGRESS,
 ))
 
-MOTION_EMERGENCY_PAGES = frozenset((
-    Page.CONTROL_MOVE,
-    Page.CALIBRATION_PROGRESS, Page.LIVE_Z_OFFSET,
-    Page.Z_OFFSET_SUMMARY, Page.Z_OFFSET_BRIEFING,
-    Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
-))
 
-EMERGENCY_PAGES = frozenset().union(
-    PRINT_EMERGENCY_PAGES,
-    HEAT_EMERGENCY_PAGES,
-    MOTION_EMERGENCY_PAGES,
+_FEATURE_MANAGER_PACKAGE = LazyFeatureManager.__module__.rpartition(".")[0]
+_FEATURE_MODULE_PREFIX = (
+    "%s." % _FEATURE_MANAGER_PACKAGE if _FEATURE_MANAGER_PACKAGE else "")
+
+
+def _feature_module(name):
+    return _FEATURE_MODULE_PREFIX + name
+
+
+FEATURE_SPECS = (
+    FeatureSpec("ui_test", _feature_module("feather_feature_ui_test"),
+                "UITestFeature"),
+    FeatureSpec("filament", _feature_module("feather_feature_filament"),
+                "FilamentFeature", (
+                    Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION)),
+    FeatureSpec("calibration", _feature_module("feather_feature_calibration"),
+                "CalibrationFeature", (
+                    Page.CALIBRATION_HOME, Page.CALIBRATION_GUIDE,
+                    Page.CALIBRATION_CONFIRM, Page.CALIBRATION_PROGRESS,
+                    Page.CALIBRATION_RESULT)),
+    FeatureSpec("z", _feature_module("feather_feature_z"),
+                "ZCalibrationFeature", (
+        Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY,
+        Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
+        Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
+        Page.LIVE_Z_OFFSET)),
+    FeatureSpec("extruder", _feature_module("feather_feature_extruder"),
+                "ExtruderCalibrationFeature", (
+                    Page.EXTRUDER_CALIBRATION,)),
+    FeatureSpec("settings", _feature_module("feather_feature_settings"),
+                "SettingsFeature", (
+        Page.SETTINGS, Page.MOD_SETTINGS, Page.MOD_ENUM, Page.MOD_VALUE)),
 )
 
 
-class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
-                    FeatherZCalibrationMixin):
+class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
+    def __getattr__(self, name):
+        """Lazy compatibility for callers of the former scenario mixins.
+
+        Product routing goes through feature_manager. Keeping this fallback
+        lets external controller tests and extensions call an old scenario
+        helper explicitly without reintroducing startup imports.
+        """
+        if (name.startswith("_render_z") or
+                name.startswith("_render_safe_z") or
+                name.startswith("_safe_z") or
+                name.startswith("_z_") or name.startswith("_start_z_") or
+                name.startswith("_run_z_") or name.startswith("_choose_z_") or
+                name.startswith("_capture_z_") or
+                name.startswith("_restore_z_") or
+                name.startswith("_begin_safe_z") or
+                name.startswith("_continue_after_safe_z") or
+                name.startswith("_skip_safe_z") or
+                name.startswith("_probe_safe_z") or
+                name.startswith("_adjust_safe_z") or
+                name.startswith("_save_safe_z") or
+                name.startswith("_enter_z_zone") or
+                name.startswith("_probe_z_zone") or
+                name.startswith("_move_z_") or
+                name.startswith("_reset_z_") or
+                name.startswith("_accept_z_") or
+                name.startswith("_finish_z_") or
+                name.startswith("_save_z_") or
+                name.startswith("_cancel_z_")):
+            module = importlib.import_module(
+                _feature_module("feather_z_calibration"))
+            descriptor = module.FeatherZCalibrationMixin.__dict__.get(name)
+            if descriptor is not None:
+                return descriptor.__get__(self, type(self))
+        if (name.startswith("_extruder_") or
+                name.startswith("_render_extruder") or
+                name.startswith("_start_extruder") or
+                name.startswith("_runtime_rotation") or
+                name.startswith("_refresh_extruder") or
+                name.startswith("_cold_extrusion") or
+                name.startswith("_prepare_extruder") or
+                name.startswith("_set_extruder") or
+                name.startswith("_poll_extruder") or
+                name.startswith("_append_extruder") or
+                name.startswith("_save_extruder") or
+                name.startswith("_show_extruder") or
+                name.startswith("_restore_extruder") or
+                name.startswith("_cancel_extruder") or
+                name.startswith("_handle_extruder")):
+            module = importlib.import_module(
+                _feature_module("feather_extruder_calibration"))
+            descriptor = module.FeatherExtruderCalibrationMixin.__dict__.get(
+                name)
+            if descriptor is not None:
+                return descriptor.__get__(self, type(self))
+        raise AttributeError(name)
+
     def __init__(self, config):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
@@ -182,16 +250,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         if any(low >= high for low, high in self.joystick_limits):
             raise config.error(
                 "feather_screen joystick minimum must be below maximum")
-        self.preheat = {}
-        for material, defaults in PREHEAT.items():
-            key = material.lower().replace("-", "_")
-            self.preheat[material] = (
-                config.getfloat("preheat_%s_nozzle" % key, defaults[0], minval=0),
-                config.getfloat("preheat_%s_bed" % key, defaults[1], minval=0))
+        self.heating_materials = ()
+        self.heating_profiles = {}
+        self.cold_pull_materials = ()
+        self.cold_pull_profiles = {}
         self.renderer = FeatherRenderer(self.debug)
-        self.renderer.set_retry_scheduler(
-            lambda callback: self.reactor.register_callback(
-                callback, self.reactor.monotonic() + 0.01))
+        register_async = getattr(
+            self.reactor, "register_async_callback", None)
+        if register_async is None:
+            raise config.error(
+                "feather_screen requires reactor.register_async_callback")
+        self.renderer.configure_worker(
+            register_async, self._renderer_event_fd_changed,
+            self._renderer_restarted)
+        self.feature_manager = LazyFeatureManager(self, FEATURE_SPECS)
+        self.safety = self._build_safety_registry()
 
         self.page = Page.IDLE_HOME
         self.previous_page = Page.IDLE_HOME
@@ -202,7 +275,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.startup_phase = 0
         self.event_handle = None
         self.event_partial = ""
-        self.renderer_retry_at = 0.0
         self.last_touch_time = self.reactor.monotonic()
         self.last_action_time = -1.0
         self.touch_feedback_pending = False
@@ -238,31 +310,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.joystick_timer_active = False
         self.joystick_busy_since = None
         self.joystick_cursor = None
-        self.joystick_drawn_cursor = None
-        self.joystick_drawn_inertia = None
         self.joystick_feedback_at = 0.0
         self.move_caution_acknowledged = False
         self.move_caution_signature = None
-        self.live_z_step = 0.01
-        self.live_z_dialog = None
-        self.live_z_limit_warned = False
         self.weight_sensor = None
         self.chamber_light = None
-        self.z_weight_gauge = None
-        self.z_calibration = ZCalibrationSession()
-
-        self.mod_page = 0
-        self.mod_parameter = None
-        self.mod_return_page = Page.MOD_SETTINGS
-        self.mod_edit_value = ""
-        self.mod_enum_selection = None
-        self.mod_enum_page = 0
-        self.mod_keyboard_shift = False
-        self.mod_keyboard_symbols = False
-        self.mod_update_pending = False
-        self.mod_update_token = 0
-        self.mod_update_modal_visible = False
-        self.mod_update_complete = None
 
         self.network_process = None
         self.network_stopping = []
@@ -283,20 +335,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.filament_from_pause = False
         self.filament_original_target = 0.0
         self._filament_request_token = 0
-        self.calibration_kind = None
-        self.calibration_page = 0
-        self.calibration_guide_kind = None
-        self.calibration_material = "PLA"
-        self.calibration_clean_nozzle = True
-        self.calibration_repeat_probe = False
-        self.calibration_results = []
-        self.calibration_mesh = []
-        self.calibration_error = None
-        self.calibration_cancel_requested = False
-        self.calibration_cancel_dispatched = False
-        self.calibration_cancelled = False
-        self._last_calibration_label = None
-        self._last_calibration_cancel_visible = False
         self._last_filament_heat = None
         self.recovery_action = None
         self.recovery_status = None
@@ -325,6 +363,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self._last_filename = None
         self._last_heat = None
         self.heat_return_page = Page.CONTROL_HOME
+        self.move_return_page = Page.CONTROL_HOME
+        self.filament_return_page = Page.MAIN_MENU
         self._last_dashboard = None
         self.last_job_name = "NONE"
 
@@ -332,24 +372,54 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
         self.printer.register_event_handler("klippy:disconnect", self._disconnect)
         self.gcode.register_command("FEATHER_PRINT_STATUS", self.cmd_FEATHER_PRINT_STATUS)
+        self.gcode.register_command(
+            "FEATHER_ABORT", self.cmd_FEATHER_ABORT,
+            desc=self.cmd_FEATHER_ABORT_help)
+        self.gcode.register_immediate_command("FEATHER_ABORT")
+        # Intentionally undocumented.  The implementation remains a cold
+        # lazy feature until ACTION=RUN is explicitly requested on a printer.
+        self.gcode.register_command("_FEATHER_UI_TEST", self.cmd_FEATHER_UI_TEST)
+        # Start only once the reactor can accept callbacks posted by worker.
+        self.reactor.register_callback(self._deferred_start_pre_ready_ui)
+
+    def _deferred_start_pre_ready_ui(self, eventtime):
         self._start_pre_ready_ui()
 
-    def _ensure_renderer_started(self):
-        if self.renderer.active:
-            if self.event_handle is None:
-                self.event_handle = self.reactor.register_fd(
-                    self.renderer.event_fd, self._process_touch_events)
-            return False
+    def _renderer_event_fd_changed(self, old_fd, new_fd):
         if self.event_handle is not None:
             try:
                 self.reactor.unregister_fd(self.event_handle)
             except Exception:
-                pass
+                logging.exception(
+                    "[feather_screen] unable to unregister old touch FIFO")
+                raise
             self.event_handle = None
-        self.renderer.stop()
+        self.event_partial = ""
+        if new_fd is not None:
+            self.event_handle = self.reactor.register_fd(
+                new_fd, self._process_touch_events)
+
+    def _renderer_restarted(self):
+        if self.renderer.output_frozen:
+            return
+        try:
+            if self.print_state == PrintState.INACTIVE:
+                self.renderer.startup_modal(
+                    self.startup_phase, restarting=self.startup_restarting)
+            else:
+                self._show_page(self.page)
+        except Exception:
+            logging.exception(
+                "[feather_screen] unable to redraw after typer restart")
+
+    def _ensure_renderer_started(self):
+        if self.renderer.active:
+            return False
+        if getattr(self.renderer, "_worker", None) is not None:
+            return False
+        if not hasattr(self.renderer, "start"):
+            return False
         self.renderer.start()
-        self.event_handle = self.reactor.register_fd(
-            self.renderer.event_fd, self._process_touch_events)
         return True
 
     def _start_pre_ready_ui(self, restarting=None):
@@ -382,8 +452,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self.renderer.startup_modal(
                     self.startup_phase, restarting=self.startup_restarting)
             else:
-                self.renderer.send(
-                    self.renderer.startup_pulse(self.startup_phase))
+                pulse = self.renderer.startup_pulse(self.startup_phase)
+                send_animation = getattr(
+                    self.renderer, "send_animation", None)
+                if send_animation is None:
+                    self.renderer.send(pulse)
+                else:
+                    send_animation(pulse, "startup-pulse")
         except Exception:
             logging.exception("[feather_screen] startup animation failed")
         return eventtime + STARTUP_ANIMATION_PERIOD
@@ -406,16 +481,23 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.error_recovery = None
         self.renderer.thaw_output()
         self.params = self.printer.lookup_object("mod_params")
+        self.extruder = self.printer.lookup_object("extruder")
+        self.heater_bed = self.printer.lookup_object("heater_bed")
+        catalog = load_material_catalog(
+            self.printer, self.extruder, self.heater_bed)
+        self.heating_materials = catalog.heating_materials
+        self.heating_profiles = catalog.heating_profiles
+        self.cold_pull_materials = catalog.cold_pull_materials
+        self.cold_pull_profiles = catalog.cold_pull_profiles
         self._enable_backlight()
         self._set_backlight(self._setting("backlight", 100))
         self.renderer.ensure_user_theme_directory()
         self.renderer.reload_themes()
         self.renderer.set_theme(self._setting("feather_theme", "DEFAULT"))
         self.filament_material = self._current_material()
-        self.extruder = self.printer.lookup_object("extruder")
-        self.heater_bed = self.printer.lookup_object("heater_bed")
         self.toolhead = self.printer.lookup_object("toolhead")
         self.input_shaper = self.printer.lookup_object("input_shaper", None)
+        self.motion_report = self.printer.lookup_object("motion_report", None)
         self.idle_timeout = self.printer.lookup_object("idle_timeout")
         self.pause_resume = self.printer.lookup_object("pause_resume")
         self.display_status = self.printer.lookup_object("display_status")
@@ -438,7 +520,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             "temperature_sensor weightValue", None)
         self.chamber_light = self.printer.lookup_object(
             "led chamber_light", None)
-        self.fan = self.printer.lookup_object("fan", None)
+        # FlashForge exposes the part-cooling fan as a named generic fan.
+        self.fan = self.printer.lookup_object("fan_generic fanM106", None)
         self.filament_sensor = self.printer.lookup_object(
             "filament_switch_sensor e0_sensor", None)
         self.resurrection = self.printer.lookup_object("resurrection", None)
@@ -465,8 +548,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         # invoke_shutdown() calls this synchronously. Stop every producer and
         # discard its queued output before submitting the one final screen.
         self.shutdown_active = True
-        if getattr(self, "z_calibration", None) is not None:
-            self.z_calibration.clear()
         self._deactivate_components()
         if self.renderer.active:
             self.renderer.discard_pending_output()
@@ -492,6 +573,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
     def _deactivate_components(self):
         # Suppress any final ToolHead flush after the MCU has already stopped.
         self.print_state = PrintState.DESTROYED
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            manager.deactivate()
+        safety = getattr(self, "safety", None)
+        if safety is not None:
+            safety.reset()
         self._stop_startup_animation()
         self._stop_joystick()
         self.print_state = PrintState.INACTIVE
@@ -525,10 +612,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.touch_feedback_pending = False
         self.busy_message = None
         self.toast_until = 0.0
-        self.mod_update_pending = False
-        self.mod_update_modal_visible = False
-        self.mod_update_complete = None
-        self.mod_update_token = getattr(self, "mod_update_token", 0) + 1
         self.action_prompt = None
         self.action_prompt_visible = False
         self.action_prompt_page = 0
@@ -543,8 +626,46 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.print_status_text = status
         if self.page in (Page.PRINTING, Page.PAUSED):
             self._draw_print_status(status)
-        elif self.page == Page.CALIBRATION_PROGRESS:
-            self._update_calibration_progress()
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            manager.notify("on_print_status", status)
+
+    def get_status(self, eventtime):
+        status = self.renderer.get_status()
+        status.update({
+            "page": getattr(self.page, "name", str(self.page)),
+            "generation": self.renderer.generation,
+            "output_frozen": self.renderer.output_frozen,
+        })
+        return status
+
+    def cmd_FEATHER_UI_TEST(self, gcmd):
+        """Route the hidden on-printer test command without eager imports."""
+        action = str(gcmd.get("ACTION", "STATUS")).strip().upper()
+        feature = self.feature_manager.peek("ui_test")
+        if action == "STATUS":
+            if feature is None:
+                gcmd.respond_info("Feather UI test: idle (feature not loaded)")
+            else:
+                feature.respond_status(gcmd)
+            return
+        if action == "ABORT":
+            if feature is None:
+                gcmd.respond_info("Feather UI test: nothing to abort")
+            else:
+                feature.abort(gcmd)
+            return
+        if action != "RUN":
+            raise gcmd.error("Unknown Feather UI test ACTION=%s" % action)
+        try:
+            feature = self.feature_manager.get("ui_test")
+            feature.run(
+                gcmd, str(gcmd.get("SUITE", "FULL")).strip().upper(),
+                str(gcmd.get("MATERIAL", "")).strip(),
+                int(gcmd.get_int("CONFIRM", 0)),
+                str(gcmd.get("CASES", "")).strip())
+        except Exception as exc:
+            raise gcmd.error(str(exc))
 
     def _process_touch_events(self, eventtime):
         try:
@@ -608,27 +729,34 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             return
         decode = getattr(self.renderer, "decode_action", lambda value: value)
         action = decode(raw_action)
+        semantic_action = (
+            None if action is None else self._resolve_semantic_ui_action(action))
+        joystick_axis = None
+        if isinstance(semantic_action, Command):
+            if semantic_action.key == move_ui.MoveCommand.JOYSTICK_XY:
+                joystick_axis = "xy"
+            elif semantic_action.key == move_ui.MoveCommand.JOYSTICK_Z:
+                joystick_axis = "z"
         if phase == "begin":
             logging.info("[feather_screen] continuous begin action=%s x=%d y=%d",
                          action if action is not None else raw_action, x, y)
             if self._wake_if_dimmed():
                 self.joystick_suppressed = raw_action
                 return
-            if (action == "move.joy.xy"
+            if (joystick_axis == "xy"
                     and getattr(self, "move_caution_signature",
                                 (False, None))[0]):
                 self.joystick_suppressed = raw_action
                 return
-            if (action not in ("move.joy.xy", "move.joy.z")
+            if (joystick_axis is None
                     or self.page != Page.CONTROL_MOVE
                     or self.move_mode != "joystick"
-                    or not self._action_allowed(self.page, action)
                     or self.print_state != PrintState.IDLE
                     or self.command_depth > 0):
                 self.joystick_suppressed = raw_action
                 return
             homed = str(self.toolhead.get_status(now).get("homed_axes", ""))
-            required = "xy" if action == "move.joy.xy" else "z"
+            required = joystick_axis
             if any(axis not in homed for axis in required):
                 self.joystick_suppressed = raw_action
                 self._toast("HOME %s BEFORE MOVING" % required.upper())
@@ -642,7 +770,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self.joystick.release()
             self.joystick_action = None
             self.joystick_cursor = None
-        elif action == "move.joy.xy":
+        elif joystick_axis == "xy":
             self.joystick.set_xy(
                 x, y, now, JOYSTICK_XY_CENTER[0], JOYSTICK_XY_CENTER[1],
                 JOYSTICK_XY_RADIUS)
@@ -655,13 +783,18 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self._update_joystick_feedback(now, force=phase in ("begin", "end"))
 
     def _handle_touch_action(self, action):
+        # The renderer's background hitbox makes empty-area taps observable.
+        # _process_touch_events() has already refreshed last_touch_time and
+        # restored the configured brightness, so no page action is required.
+        if action == "global.wake":
+            return
         # Safety actions must not wait for button animation, the normal action
         # debounce, or an active G-code dispatcher mutex.  In particular, a
         # calibration redraw during the 80 ms touch animation would change the
         # hitbox generation and discard M108 before it reached the immediate
         # G-code handler.
-        if action in ("global.abort", "cal.emergency_stop"):
-            if not self._emergency_stop_active():
+        if action == "global.abort":
+            if not self._safety_decision().visible:
                 logging.info(
                     "[feather_screen] ignored inactive emergency stop")
                 return
@@ -670,15 +803,33 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self.page.name)
             self._run_immediate_command("M112")
             return
-        if (action == "cal.cancel.heat"
-                and self.page == Page.CALIBRATION_PROGRESS
-                and self.calibration_kind in ("screws", "mesh", "z")):
+        manager = getattr(self, "feature_manager", None)
+        if (manager is not None and
+                manager.handle_immediate_action(self.page, action)):
             logging.info(
-                "[feather_screen] immediate heating cancellation requested "
-                "during %s calibration", self.calibration_kind)
+                "[feather_screen] immediate feature action=%s page=%s",
+                action, self.page.name)
+            return
+        if (manager is None and action == "cal.cancel.heat"
+                and self.page == Page.CALIBRATION_PROGRESS
+                and getattr(self, "calibration_kind", None) in (
+                    "screws", "mesh", "z")):
             self._cancel_calibration_heat()
             return
-        if getattr(self, "mod_update_pending", False):
+        if self._blocking_operation_active():
+            logging.info(
+                "[feather_screen] touch ignored while blocking operation "
+                "is active: action=%s operation=%s",
+                action, self.busy_message)
+            return
+        test_feature = (None if manager is None
+                        else manager.peek("ui_test"))
+        test_dispatch = bool(getattr(
+            test_feature, "dispatching_test_action", False))
+        if ((manager is not None and manager.input_blocked
+             and not test_dispatch) or
+                (manager is None and
+                 getattr(self, "mod_update_pending", False))):
             logging.info("[feather_screen] touch ignored while mod update is active: %s",
                          action)
             return
@@ -739,37 +890,40 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return True
 
     def _restart_renderer(self, eventtime):
-        if eventtime < self.renderer_retry_at:
-            return False
-        self.renderer_retry_at = eventtime + 5.0
-        logging.warning("[feather_screen] typer stopped; restarting")
-        if self.event_handle is not None:
-            self.reactor.unregister_fd(self.event_handle)
-            self.event_handle = None
-        self.renderer.stop()
-        try:
-            self.renderer.start()
-            self.event_handle = self.reactor.register_fd(
-                self.renderer.event_fd, self._process_touch_events)
-            self.event_partial = ""
-            self._show_page(self.page)
-            self.renderer_retry_at = 0.0
-            return True
-        except Exception:
-            logging.exception("[feather_screen] unable to restart typer")
-            self.renderer.stop()
-            return False
+        # Lifecycle and backoff are worker-owned. The reactor only signals.
+        return self.renderer.restart()
 
     def _dispatch_action(self, action):
         if self.print_state == PrintState.DESTROYED:
             return
-        if action == "global.abort":
-            if self._emergency_stop_active():
-                self._run_immediate_command("M112")
-            else:
-                logging.info(
-                    "[feather_screen] ignored inactive emergency stop")
+        # Recheck here as well as in _handle_touch_action(). A button may have
+        # entered its 80 ms feedback delay immediately before a blocking
+        # operation replaced the page with a loader.
+        if self._blocking_operation_active():
+            logging.info(
+                "[feather_screen] delayed action ignored while blocking "
+                "operation is active: action=%s operation=%s",
+                action, self.busy_message)
             return
+        manager = getattr(self, "feature_manager", None)
+        test_feature = (None if manager is None
+                        else manager.peek("ui_test"))
+        if (test_feature is not None
+                and test_feature.blocks_action(action)):
+            logging.warning(
+                "[feather_screen] test mode blocked persistent action=%s",
+                action)
+            return
+        owner = None
+        if manager is not None and manager.owner_name(self.page) is not None:
+            try:
+                owner, semantic_action = manager.resolve_semantic_action(
+                    self.page, action)
+            except FeatureLoadError as exc:
+                self._show_message(str(exc), self.previous_page)
+                return
+        else:
+            semantic_action = self._resolve_semantic_ui_action(action)
         now = self.reactor.monotonic()
         if now - self.last_action_time < ACTION_DEBOUNCE:
             logging.info("[feather_screen] debounced action=%s", action)
@@ -778,7 +932,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 "print.pause", "print.resume", "print.cancel.confirm"):
             logging.info("[feather_screen] action already in progress=%s", action)
             return
-        if not self._action_allowed(self.page, action):
+        allowed = (owner.allows_action(self.page, action)
+                   if owner is not None
+                   else self._action_allowed(self.page, action))
+        if semantic_action is None and not allowed:
             logging.info("[feather_screen] ignored action=%s page=%s",
                          action, self.page.name)
             return
@@ -786,7 +943,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         logging.info("[feather_screen] action=%s page=%s", action, self.page.name)
 
         try:
-            if action == "nav.back":
+            if semantic_action is not None:
+                if owner is not None:
+                    owner.handle_semantic_action(self.page, semantic_action)
+                else:
+                    self._dispatch_semantic_ui_action(semantic_action)
+            elif action == "nav.back":
                 self._go_back()
             elif action == "nav.home":
                 self.home_during_print = self.print_state in (
@@ -804,6 +966,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 self._show_page(Page.CONTROL_HOME)
             elif action == "nav.move":
                 self._require_idle()
+                self.move_return_page = self.page
                 self._cancel_delayed_tasks()
                 self._show_page(Page.CONTROL_MOVE)
             elif action == "nav.heat":
@@ -815,7 +978,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             elif action == "nav.calibration":
                 self._require_idle()
                 self._cancel_delayed_tasks()
-                self.calibration_page = 0
+                if manager is not None:
+                    manager.get("calibration").calibration_page = 0
                 self._show_page(Page.CALIBRATION_HOME)
             elif action == "nav.settings":
                 self._require_idle()
@@ -833,18 +997,20 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     self.file_page = 0
                     self.file_source = "internal"
                     self._show_page(Page.FILE_BROWSER)
+            elif owner is not None and owner.handle_action(self.page, action):
+                pass
             elif action.startswith("file."):
                 self._handle_file_action(action)
             elif action.startswith("print."):
                 self._handle_print_action(action)
-            elif action.startswith("move."):
-                self._handle_move_action(action)
             elif action.startswith("heat."):
                 self._handle_heat_action(action)
             elif action.startswith("filament."):
                 self._handle_filament_action(action)
-            elif action.startswith("cal.") or action.startswith("z."):
+            elif action.startswith("cal."):
                 self._handle_calibration_action(action)
+            elif action.startswith("extruder."):
+                self._handle_extruder_calibration_action(action)
             elif action.startswith("live_z."):
                 self._handle_live_z_action(action)
             elif action.startswith("settings."):
@@ -865,24 +1031,25 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             logging.exception("[feather_screen] action failed: %s", action)
             self._show_message(str(exc), self.page)
 
-    @staticmethod
-    def _action_allowed(page, action):
+    def _action_allowed(self, page, action):
         if action in EXACT_ACTIONS.get(page, ()):
             return True
         return ((page == Page.FILE_BROWSER and action.startswith("file.item"))
-                or (page == Page.CONTROL_MOVE and action.startswith("move."))
-                or (page == Page.CONTROL_HEAT and action.startswith("heat."))
+                or (page == Page.FILAMENT_MATERIAL
+                    and action.startswith("filament.")
+                    and action.split(".", 1)[1] in self.heating_materials)
                 or (page == Page.CALIBRATION_CONFIRM and
-                    action.startswith("cal.material."))
-                or (page == Page.Z_OFFSET_SUMMARY and
-                    action.startswith("z.zone."))
+                    action.startswith("cal.material.") and
+                    action.rsplit(".", 1)[1] in self.heating_materials)
                 or (page == Page.MOD_SETTINGS and action.startswith("mod.item."))
                 or (page == Page.MOD_ENUM and action.startswith("mod.option."))
                 or (page == Page.MOD_VALUE and action.startswith("mod.key."))
                 or (page == Page.WIFI_SCAN and action.startswith("net.item"))
                 or (page == Page.WIFI_PASSWORD and action.startswith("key."))
                 or (page == Page.ACTION_PROMPT
-                    and action.startswith("prompt.button.")))
+                    and action.startswith("prompt.button."))
+                or (page == Page.EXTRUDER_CALIBRATION
+                    and action.startswith("extruder.")))
 
     def _show_page(self, page):
         if (page != Page.ERROR
@@ -890,18 +1057,25 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     getattr(self, "renderer", None),
                     "output_frozen", False)):
             return
-        set_emergency = getattr(
-            getattr(self, "renderer", None),
-            "set_emergency_stop_visible", None)
-        if set_emergency is not None:
-            set_emergency(self._emergency_stop_active(page))
+        manager = getattr(self, "feature_manager", None)
+        feature = None
+        if manager is not None and manager.owner_name(page) is not None:
+            try:
+                feature = manager.get_for_page(page)
+            except FeatureLoadError as exc:
+                logging.error("[feather_screen] feature page failed: %s", exc)
+                self._show_message(str(exc), getattr(self, "page", Page.IDLE_HOME))
+                return
+        self._apply_safety_visibility(page)
         if (self.page == Page.CONTROL_MOVE
                 and (page != Page.CONTROL_MOVE
                      or getattr(self, "joystick_action", None) is not None)):
             self._stop_joystick()
         self.previous_page = self.page
         self.page = page
-        if page == Page.IDLE_HOME:
+        if feature is not None:
+            feature.render(page)
+        elif page == Page.IDLE_HOME:
             self._render_home()
         elif page == Page.MAIN_MENU:
             self._render_main_menu()
@@ -919,24 +1093,24 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_move()
         elif page == Page.CONTROL_HEAT:
             self._render_heat()
-        elif page == Page.FILAMENT_MATERIAL:
-            self._render_filament_material()
-        elif page == Page.FILAMENT_ACTION:
-            self._render_filament_action()
         elif page == Page.CALIBRATION_HOME:
             self._render_calibration_home()
         elif page == Page.CALIBRATION_GUIDE:
             self._render_calibration_guide()
+        elif page == Page.EXTRUDER_CALIBRATION:
+            self._render_extruder_calibration()
         elif page == Page.CALIBRATION_Z:
             self._render_z_summary()
         elif page == Page.Z_OFFSET_SUMMARY:
             self._render_z_summary()
-        elif page == Page.Z_OFFSET_BRIEFING:
-            self._render_z_briefing()
         elif page == Page.Z_OFFSET_PAPER_BRIEFING:
             self._render_z_paper_briefing()
         elif page == Page.Z_OFFSET_PAPER:
             self._render_z_paper()
+        elif page == Page.SAFE_Z_BRIEFING:
+            self._render_safe_z_briefing()
+        elif page == Page.SAFE_Z_CALIBRATION:
+            self._render_safe_z()
         elif page == Page.LIVE_Z_OFFSET:
             self._render_live_z_offset()
         elif page == Page.CALIBRATION_CONFIRM:
@@ -973,6 +1147,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_error()
 
     def _go_back(self):
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None and manager.owner_name(self.page) is not None:
+            feature = manager.peek(manager.owner_name(self.page))
+            if feature is not None and feature.back(self.page):
+                return
         if (self.page == Page.FILE_BROWSER
                 and getattr(self, "file_source", "internal") == "usb"):
             self.file_source = "internal"
@@ -984,6 +1163,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         elif self.page in (Page.CONTROL_HOME, Page.FILAMENT_MATERIAL):
             if self.page == Page.FILAMENT_MATERIAL and self.filament_from_pause:
                 self._show_page(self.page_for_print_state())
+            elif self.page == Page.FILAMENT_MATERIAL:
+                self._show_page(getattr(
+                    self, "filament_return_page", Page.MAIN_MENU))
             else:
                 self._show_page(Page.MAIN_MENU)
         elif self.page == Page.NETWORK_HOME:
@@ -994,11 +1176,15 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         elif self.page == Page.CONTROL_HEAT:
             self._show_page(getattr(
                 self, "heat_return_page", Page.CONTROL_HOME))
-        elif self.page in (Page.CONTROL_MOVE, Page.CALIBRATION_HOME,
-                           Page.SETTINGS):
+        elif self.page == Page.CONTROL_MOVE:
+            self._show_page(getattr(
+                self, "move_return_page", Page.CONTROL_HOME))
+        elif self.page in (Page.CALIBRATION_HOME, Page.SETTINGS):
             self._show_page(Page.CONTROL_HOME)
         elif self.page == Page.CALIBRATION_GUIDE:
             self._show_page(Page.CALIBRATION_HOME)
+        elif self.page == Page.EXTRUDER_CALIBRATION:
+            self._cancel_extruder_calibration()
         elif self.page == Page.MOD_SETTINGS:
             self._show_page(Page.SETTINGS)
         elif self.page in (Page.MOD_ENUM, Page.MOD_VALUE):
@@ -1006,21 +1192,30 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._show_page(getattr(
                 self, "mod_return_page", Page.MOD_SETTINGS))
         elif self.page == Page.FILAMENT_ACTION:
-            self._finish_filament(False)
+            self._show_page(Page.FILAMENT_MATERIAL)
         elif self.page in (Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY):
             if self.z_calibration.results:
                 self.z_calibration.dialog = "discard"
                 self._render_z_summary()
+            elif (self.page == Page.Z_OFFSET_SUMMARY
+                  and self.z_calibration.active):
+                self._begin_safe_z_calibration(preserve_result=True)
             else:
                 self._cancel_z_calibration()
-        elif self.page == Page.Z_OFFSET_BRIEFING:
-            self._show_page(Page.Z_OFFSET_SUMMARY)
+        elif self.page == Page.SAFE_Z_BRIEFING:
+            self._cancel_z_calibration()
+        elif self.page == Page.SAFE_Z_CALIBRATION:
+            self._run_blocking_gcode(
+                "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" %
+                self._safe_z_preparation_height(),
+                "LIFTING Z...")
+            self._show_page(Page.SAFE_Z_BRIEFING)
         elif self.page == Page.Z_OFFSET_PAPER_BRIEFING:
             self._show_page(Page.Z_OFFSET_SUMMARY)
         elif self.page == Page.Z_OFFSET_PAPER:
             self.z_calibration.dialog = None
             self._run_blocking_gcode(
-                "MOVE_SAFE Z=5.0 ABSOLUTE=1 F=600", "LIFTING Z...")
+                self._safe_z_move_command(), "LIFTING Z...")
             self._show_page(Page.Z_OFFSET_SUMMARY)
         elif self.page == Page.LIVE_Z_OFFSET:
             self.live_z_dialog = None
@@ -1060,12 +1255,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
     def _cancel_delayed_tasks(self):
         self._run_script("_CANCEL_DELAYED_COMMANDS", show_notice=False)
 
-    @staticmethod
-    def _normalize_material(value):
+    def _normalize_material(self, value):
         material = str(value or "n/a").strip().upper().replace("/", "-")
         if material in ("N/A", "NONE", "UNKNOWN", ""):
             return "n/a"
-        return material if material in PREHEAT else "n/a"
+        return material if material in self.heating_materials else "n/a"
 
     def _current_material(self):
         return self._normalize_material(self._setting("current_material", "n/a"))
@@ -1105,86 +1299,148 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return bool(wait is not None and
                     getattr(wait, "variables", {}).get("cancel", False))
 
-    def _active_print_job(self, eventtime):
-        if getattr(self, "print_state", None) in PRINT_EMERGENCY_STATES:
+    def _build_safety_registry(self):
+        registry = SafetyRegistry(excluded_routes=(Page.IDLE_HOME,))
+        registry.register_source("print-job", self._safety_print_active)
+        registry.register_source("heaters", self._safety_heaters_active)
+        registry.register_source(
+            "temperature-wait",
+            lambda _eventtime: self._temperature_wait_active())
+        registry.register_source("motion", self._safety_motion_active)
+        registry.register_source("joystick", self._safety_joystick_active)
+        registry.register_source("features", self._safety_features_active)
+        return registry
+
+    def _ensure_safety_registry(self):
+        registry = getattr(self, "safety", None)
+        if registry is None:
+            registry = self._build_safety_registry()
+            self.safety = registry
+        return registry
+
+    def _safety_print_active(self, eventtime):
+        if getattr(self, "print_state", None) in ACTIVE_PRINT_STATES:
             return True
 
         print_stats = getattr(self, "print_stats", None)
         if print_stats is not None:
-            try:
-                state = str(print_stats.get_status(eventtime).get(
-                    "state", "")).lower()
-                if state in ("printing", "paused"):
-                    return True
-            except Exception:
-                pass
+            state = str(print_stats.get_status(eventtime).get(
+                "state", "")).lower()
+            if state in ("printing", "paused"):
+                return True
 
-        idle_timeout = getattr(self, "idle_timeout", None)
-        if idle_timeout is not None:
-            try:
-                if (str(idle_timeout.get_status(eventtime).get(
-                        "state", "")).lower() == "printing"):
-                    return True
-            except Exception:
-                pass
+        virtual_sdcard = getattr(self, "virtual_sdcard", None)
+        if (virtual_sdcard is not None
+                and callable(getattr(virtual_sdcard, "is_active", None))
+                and virtual_sdcard.is_active()):
+            return True
         return False
 
-    def _active_heating(self, eventtime):
+    def _safety_heaters_active(self, eventtime):
         for heater in (getattr(self, "extruder", None),
                        getattr(self, "heater_bed", None)):
             if heater is None:
                 continue
-            try:
-                target = float(heater.get_status(eventtime).get("target", 0.0))
-            except (AttributeError, TypeError, ValueError):
-                continue
-            except Exception:
-                continue
+            target = float(heater.get_status(eventtime).get("target", 0.0))
             if target > 0.0:
                 return True
         return False
+
+    def _safety_motion_active(self, eventtime):
+        report = getattr(self, "motion_report", None)
+        if report is None:
+            return False
+        status = report.get_status(eventtime)
+        velocity = abs(float(status.get("live_velocity", 0.0)))
+        extruder_velocity = abs(float(
+            status.get("live_extruder_velocity", 0.0)))
+        return max(velocity, extruder_velocity) > 0.000001
+
+    def _safety_joystick_active(self, eventtime):
+        stream = getattr(self, "joystick_stream", None)
+        return bool(getattr(stream, "active", False)
+                    or getattr(self, "joystick_action", None) is not None)
+
+    def _safety_features_active(self, eventtime):
+        manager = getattr(self, "feature_manager", None)
+        if manager is None:
+            return False
+        return bool(manager.safety_active_reasons(eventtime))
 
     def _homed_motion_available(self, eventtime):
         toolhead = getattr(self, "toolhead", None)
         if toolhead is None:
             return False
         try:
-            homed_axes = str(toolhead.get_status(eventtime).get(
+            homed = str(toolhead.get_status(eventtime).get(
                 "homed_axes", "")).lower()
         except Exception:
+            # Unknown homing state must not arm an otherwise idle movement
+            # page. Actual operations remain covered by activity leases and
+            # observable printer state.
             return False
-        # Partial homing is a valid completed state (for example HOME XY).
-        # As soon as any axis is homed, motion can be commanded on that axis.
-        return any(axis in homed_axes for axis in "xyz")
+        # Partial homing is useful and safe to expose: each movement action
+        # still validates its own required axis before dispatch.
+        return any(axis in homed for axis in "xyz")
 
-    def _emergency_stop_active(self, page=None, eventtime=None):
+    def _safety_armed_reasons(self, page, eventtime):
+        reasons = []
+        if page == Page.CONTROL_MOVE:
+            if self._homed_motion_available(eventtime):
+                reasons.append("homed-motion-controls")
+        elif page in CORE_SAFETY_ARMED_PAGES:
+            reasons.append("core-controls")
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            try:
+                reasons.extend(manager.safety_armed_reasons(page, eventtime))
+            except Exception:
+                failures = getattr(self, "_feature_safety_failures", 0) + 1
+                self._feature_safety_failures = failures
+                if failures == 1 or failures % 60 == 0:
+                    logging.exception(
+                        "[feather_screen] feature safety policy failed "
+                        "page=%s failures=%d",
+                        getattr(page, "name", page), failures)
+                # Policy failure is fail-safe just like a provider failure.
+                reasons.append("feature-policy-error")
+            else:
+                self._feature_safety_failures = 0
+        return tuple(reasons)
+
+    def _safety_decision(self, page=None, eventtime=None):
         page = page if page is not None else getattr(
             self, "page", Page.IDLE_HOME)
-        if page not in EMERGENCY_PAGES:
-            return False
         if eventtime is None:
             reactor = getattr(self, "reactor", None)
             eventtime = (reactor.monotonic()
                          if reactor is not None else time.monotonic())
+        state = getattr(self, "print_state", PrintState.IDLE)
+        renderer = getattr(self, "renderer", None)
+        enabled = (state not in (PrintState.INACTIVE, PrintState.DESTROYED)
+                   and not bool(getattr(renderer, "output_frozen", False)))
+        return self._ensure_safety_registry().evaluate(
+            page, eventtime,
+            self._safety_armed_reasons(page, eventtime), enabled=enabled)
 
-        # Visibility is derived only from stable printer state. Transient UI
-        # loaders, nested commands, temperature-wait macros, and the G-code
-        # dispatcher mutex must not make the header appear and disappear.
-        if self._active_print_job(eventtime):
-            return True
-        if page in HEAT_EMERGENCY_PAGES and self._active_heating(eventtime):
-            return True
-        if (page in MOTION_EMERGENCY_PAGES
-                and self._homed_motion_available(eventtime)):
-            return True
-        return False
-
-    def _refresh_emergency_stop(self, eventtime=None):
+    def _apply_safety_visibility(self, page=None, eventtime=None):
         renderer = getattr(self, "renderer", None)
         setter = getattr(renderer, "set_emergency_stop_visible", None)
         if setter is None:
             return False
-        if not setter(self._emergency_stop_active(eventtime=eventtime)):
+        page = page if page is not None else getattr(
+            self, "page", Page.IDLE_HOME)
+        decision = self._safety_decision(page, eventtime)
+        if not setter(decision.visible):
+            return False
+        logging.info(
+            "[feather_screen] emergency action visible=%s page=%s reasons=%s",
+            decision.visible, getattr(page, "name", page),
+            ",".join(decision.reasons) or "none")
+        return True
+
+    def _refresh_emergency_stop(self, eventtime=None):
+        if not self._apply_safety_visibility(eventtime=eventtime):
             return False
         # A full page render clears the old Typer hitbox as well as its
         # framebuffer. This is required when an operation ends; merely
@@ -1198,6 +1454,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         run_script_from_command() bypasses the mutex and may recursively enter
         a yielding macro. run_script() serializes normal commands while still
         extracting patched immediate commands before acquiring the mutex.
+        Serialization alone is not evidence of danger: callers which own a
+        long-running operation must use _run_blocking_gcode() or an explicit
+        safety activity lease.
         """
         outermost = getattr(self, "command_depth", 0) == 0
         reactor = getattr(self, "reactor", None)
@@ -1207,15 +1466,16 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         command_name = (first_line.split(None, 1) or ["UNKNOWN"])[0]
         self.command_depth = getattr(self, "command_depth", 0) + 1
         renderer = getattr(self, "renderer", None)
-        if outermost:
-            page = getattr(self, "page", "UNKNOWN")
-            logging.info("[feather_screen] command start name=%s page=%s",
-                         command_name, getattr(page, "name", page))
-            if renderer is not None and show_notice:
-                notice = getattr(renderer, "busy_notice", None)
-                if notice is not None:
-                    notice("KLIPPER BUSY")
         try:
+            if outermost:
+                page = getattr(self, "page", "UNKNOWN")
+                logging.info("[feather_screen] command start name=%s page=%s",
+                             command_name, getattr(page, "name", page))
+                if renderer is not None and show_notice:
+                    notice = getattr(renderer, "busy_notice", None)
+                    if notice is not None:
+                        notice("KLIPPER BUSY")
+                self._refresh_emergency_stop()
             runner = getattr(self.gcode, "run_script", None)
             if runner is not None:
                 runner(command)
@@ -1231,6 +1491,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     clear = getattr(renderer, "clear_busy_notice", None)
                     if clear is not None:
                         clear()
+                self._refresh_emergency_stop()
 
     def _run_immediate_command(self, command):
         """Dispatch a patched immediate command without entering the G-code mutex.
@@ -1244,6 +1505,15 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             raise ValueError("Unsupported immediate Feather command")
         self.gcode.run_script_from_command(command)
 
+    def _blocking_operation_active(self):
+        """Whether a loader owns the whole interactive surface.
+
+        This is intentionally distinct from command_depth. Short serialized
+        commands may keep normal page navigation, while a loader operation
+        must reject every stale page action until its owning call completes.
+        """
+        return bool(getattr(self, "busy_message", None))
+
     def _run_blocking_gcode(self, command, message):
         # Unit tests and early startup may not have a live renderer yet.
         renderer = getattr(self, "renderer", None)
@@ -1251,16 +1521,19 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._run_script(command)
             return
         page = self.page
+        safety_lease = self._ensure_safety_registry().activity(
+            "blocking-gcode")
         self.busy_message = message
         self.busy_phase = 0
         logging.info("[feather_screen] operation start label=%s page=%s",
                      message, page.name)
-        self._refresh_emergency_stop()
-        renderer.loader(message, 0)
         try:
+            self._refresh_emergency_stop()
+            renderer.loader(message, 0)
             self._run_script(command)
         finally:
             self.busy_message = None
+            safety_lease.release()
             logging.info("[feather_screen] operation finish label=%s page=%s",
                          message, self.page.name)
             if self.page == page and self.print_state != PrintState.DESTROYED:
@@ -1306,6 +1579,19 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         return None
 
     def _show_error(self, message, category="", recovery=None):
+        # A shutdown/disconnect screen is frozen after its complete frame has
+        # reached Typer.  A late exception from the interrupted operation may
+        # report the same error again.  Calling begin_page() while output is
+        # frozen would advance the renderer generation without replacing the
+        # visible hitboxes, making the recovery button permanently stale.
+        if (getattr(self, "page", None) == Page.ERROR
+                and getattr(
+                    getattr(self, "renderer", None),
+                    "output_frozen", False)):
+            logging.info(
+                "[feather_screen] duplicate error ignored while error "
+                "screen is frozen")
+            return
         self.error_message = str(message).replace("\n", " ")
         self.error_category = str(category or "")
         self.error_recovery = (
@@ -1340,6 +1626,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 400, 235, advice, "d9e4e8", "JetBrainsMono 8pt", "center",
                 "middle", max_width=584, truncate=True),
         ]
+        self.renderer.prioritize_next_batch("critical", "error-screen")
         self.renderer.send(commands)
 
     def _handle_error_action(self, action):
@@ -1353,8 +1640,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self._restart_klipper(command)
 
     def _restart_klipper(self, command):
-        if self.restart_pending:
+        if not self._begin_restart_ui():
             return
+        self._run_script(command, show_notice=False)
+
+    def _begin_restart_ui(self):
+        if self.restart_pending:
+            return False
         self.renderer.thaw_output()
         self.error_message = ""
         self.error_category = ""
@@ -1362,21 +1654,39 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.shutdown_active = False
         self.restart_pending = True
         self.startup_phase = 0
-        if self.timer is not None:
+        if getattr(self, "timer", None) is not None:
             try:
                 self.reactor.unregister_timer(self.timer)
             except Exception:
                 pass
             self.timer = None
         self._start_pre_ready_ui(restarting=True)
-        self._run_script(command, show_notice=False)
+        return True
 
     def _update(self, eventtime):
         if self.print_state == PrintState.DESTROYED:
             return None
-        if not self.renderer.active:
-            self._restart_renderer(eventtime)
-        if (not getattr(self, "mod_update_pending", False)
+        try:
+            waketime = self._update_cycle(eventtime)
+        except Exception:
+            failures = getattr(self, "_update_failures", 0) + 1
+            self._update_failures = failures
+            # A UI/status failure must never escape a reactor timer callback:
+            # Klipper treats that as a host failure and shuts the printer down.
+            # Avoid flooding the log for a persistent bad status value while
+            # retaining periodic evidence that the UI still needs attention.
+            if failures == 1 or failures % 60 == 0:
+                page = getattr(getattr(self, "page", None), "name", "UNKNOWN")
+                logging.exception(
+                    "[feather_screen] periodic update failed page=%s "
+                    "failures=%d", page, failures)
+            return eventtime + REFRESH_TIME
+        self._update_failures = 0
+        return waketime
+
+    def _update_cycle(self, eventtime):
+        manager = getattr(self, "feature_manager", None)
+        if ((manager is None or not manager.theme_update_blocked)
                 and self.renderer.set_theme(
                     self._setting("feather_theme", "DEFAULT"))):
             logging.info("[feather_screen] color theme changed to %s",
@@ -1408,6 +1718,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         if new_state != self.print_state:
             self._change_print_state(new_state, state)
         self._poll_usb_storage(eventtime)
+        if manager is not None:
+            manager.update(eventtime)
         self._refresh_emergency_stop(eventtime)
         if self.pending_action is not None:
             expected = {"print.pause": "paused", "print.resume": "printing",
@@ -1445,19 +1757,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._update_move_status(eventtime)
         elif self.page == Page.CONTROL_HEAT:
             self._update_heat_status(eventtime)
-        elif self.page == Page.FILAMENT_ACTION:
-            self._update_filament_status(eventtime)
-        elif self.page in (
-                Page.CALIBRATION_Z, Page.Z_OFFSET_PAPER,
-                Page.LIVE_Z_OFFSET):
-            if not (self.page == Page.LIVE_Z_OFFSET
-                    and self.live_z_dialog is not None) and not (
-                    self.page == Page.Z_OFFSET_PAPER
-                    and self.z_calibration.dialog is not None):
-                self._update_z_weight_status(eventtime)
-        elif self.page == Page.CALIBRATION_PROGRESS and self.calibration_kind in (
-                "screws", "mesh", "z", "recovery"):
-            self._update_calibration_progress()
         if self.filament_sensor is not None:
             sensor = self.filament_sensor.get_status(eventtime)
             present = sensor.get("filament_detected")
@@ -1508,8 +1807,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     PrintState.PREPARING, PrintState.PRINTING,
                     PrintState.PAUSED)):
             self._record_current_print()
-            self.live_z_limit_warned = False
-            self.live_z_dialog = None
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            manager.notify(
+                "on_print_state_changed", old_state, new_state, stats_state)
         if (new_state in (PrintState.PREPARING, PrintState.PRINTING,
                           PrintState.PAUSED)
                 and getattr(self, "network_process", None) is not None):
@@ -1620,3 +1921,20 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
 
 def load_config(config):
     return FeatherScreen(config)
+
+
+def __getattr__(name):
+    """Expose legacy session classes without importing scenarios at startup."""
+    targets = {
+        "ZCalibrationSession": (
+            _feature_module("feather_z_calibration"), "ZCalibrationSession"),
+        "ExtruderCalibrationSession": (
+            _feature_module("feather_extruder_calibration"),
+            "ExtruderCalibrationSession"),
+    }
+    target = targets.get(name)
+    if target is None:
+        raise AttributeError(name)
+    value = getattr(importlib.import_module(target[0]), target[1])
+    globals()[name] = value
+    return value

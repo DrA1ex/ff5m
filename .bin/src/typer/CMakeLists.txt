@@ -41,6 +41,7 @@ endif()
 file(GLOB font_headers ../common/fonts/*.h)
 
 add_executable(typer main.cpp interactive.cpp batch_protocol.cpp framebuffer.cpp
+        font_manifest.cpp
         ${font_headers})
 
 target_link_libraries(typer forge_screen_text)
@@ -142,10 +143,18 @@ if(BUILD_TESTING)
             compact_font_maps_disjoint_unicode_ranges
             bundled_compact_font_renders_cyrillic
             text_wrap_uses_font_metrics_and_word_boundaries
+            text_wrap_handles_short_lines_long_words_and_newlines
             text_wrap_limits_by_rendered_height_and_adds_ellipsis
             text_wrap_without_truncate_has_no_ellipsis
             text_wrap_splits_long_utf8_words_without_corruption
             text_truncate_uses_font_metrics_and_preserves_utf8)
+
+    add_executable(typer_font_manifest_test
+            tests/font_manifest_test.cpp
+            font_manifest.cpp)
+    add_typer_test_cases(typer_font_manifest_test
+            schema_and_sorting
+            metrics_ranges_and_monospacing)
 
     add_custom_target(typer_tests
             DEPENDS
@@ -154,5 +163,6 @@ if(BUILD_TESTING)
             typer_batch_protocol_test
             typer_fifo_integration_test
             typer_framebuffer_test
-            typer_text_buffer_test)
+            typer_text_buffer_test
+            typer_font_manifest_test)
 endif()

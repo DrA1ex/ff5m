@@ -1,448 +1,406 @@
 # Printing
 
-Printing starts and ends with `START_PRINT` and `END_PRINT` macros.  
-You can pause and resume printing using the `PAUSE` and `RESUME` macros.  
-To cancel a print, use the `CANCEL_PRINT` macro.    
+Forge-X uses the normal print macros: `START_PRINT` starts a job, `END_PRINT` finishes it, and `PAUSE`, `RESUME`, and `CANCEL_PRINT` control an active print. If a temperature wait created by Forge-X is active, `M108` stops that wait.
 
-If there is a pending temperature change operation (initiated by the mod only, Klipper's M109 and M190 won't work), you can cancel the wait using the `M108` macro.   
-This cancels the active wait and executes `CANCEL_PRINT` if printing is active.
-
-For detailed instructions on configuring your slicer, refer to the [Slicing](../docs/SLICING.md) section.
+For the required slicer start/end G-code and upload configuration, see [Slicing](SLICING.md).
 
 > [!WARNING]
-> After installing the mod, some printer parameters may revert to stock or change. This can affect settings like Z-Offset and Mesh Bed Leveling. It is **strongly recommended** to review and recalibrate these settings to avoid potential damage.
+> After installing or updating Forge-X, changing the nozzle or build plate, or enabling motion/config tuning, inspect the bed mesh and Z offset before the next real print. Incorrect values can damage the nozzle or bed.
 
 ## Using stock Firmware with mod
 
-To use this mod with a stock screen, enable "LAN-mode". Some features require this setting, and WebUI/slicer interactions may be unstable without it.
-
-Enable it on the stock screen: _Settings → Network → Network Mode → **LAN-mode**_
+- With the Stock screen, enable **Settings → Network → Network Mode → LAN-mode**. Some Web UI, slicer, and API interactions are unreliable without it.
+- With Feather, Guppy, or Headless, upload and control jobs through Fluidd/Mainsail or the supported local UI.
+- Confirm the persistent bed-mesh profile:
+  - Stock screen: `MESH_DATA`
+  - Feather, Guppy, or Headless: `auto`
+- Enable MD5 validation in the slicer if you use the Forge-X G-code integrity check.
+- Verify the first layer with a small test before starting a long print.
 
 ## Calibration
 
-To calibrate the printer, use only these macros (or the Stock screen).  
+Use the Stock screen's supported workflow, Feather's **Control → Calibration** pages, or the Forge-X macros exposed in Fluidd/Mainsail:
+
+- `BED_LEVEL_SCREWS_TUNE` — fully prepares the printer and calculates screw adjustments.
+- `BED_LEVEL_SCREWS_PROBE` — repeats only the probing stage after the initial preparation.
+- `AUTO_FULL_BED_LEVEL` — creates a bed mesh.
+- `PID_TUNE_BED` — bed PID calibration.
+- `PID_TUNE_EXTRUDER` — hotend PID calibration.
+- `ZSHAPER` — input-shaper calibration.
 
 > [!CAUTION]
-> Read about [how bed mesh works](/docs/CALIBRATION.md#before-you-start) before trying to calibrate the printer.
+> Read [Before you start](CALIBRATION.md#before-you-start) before changing the mesh or Z geometry.
 
-> [!WARNING]  
-> The Stock Screen doesn’t support the `SAVE_CONFIG` macro, which will cause freezing. A reboot is required afterward.
-> Learn how to work around this [here](/docs/FAQ.md#stock-screen-freezes-i-cant-print-anything).
+> [!WARNING]
+> The Stock screen can freeze when given `SAVE_CONFIG` or `RESTART`. Use `NEW_SAVE_CONFIG` instead. See the [FAQ](FAQ.md#stock-screen-freezes-i-cant-print-anything) if it has already frozen.
 
-The full calibration workflows are available in the Fluidd/Mainsail main screen in the section **Calibration**. The probing-only helper described below is intentionally not a general standalone button because it requires an already prepared printer.
-
-
-- `BED_LEVEL_SCREWS_TUNE`: Adjusts bed leveling screws (calculates adjustments for **nuts under the bed**).   
-  ⚠️ **Recalibrate** the bed mesh after making changes.
-  - `EXTRUDER_TEMP` nozzle temperature used by `CLEAR_NOZZLE` (default `230`)
-  - `BED_TEMP` temperature of the bed used by `CLEAR_NOZZLE` (default `80`)
-  - `CLEAN` runs `CLEAR_NOZZLE` when `1` (default); when `0`, cleaning is skipped, `EXTRUDER_TEMP` and `BED_TEMP` are ignored, the current bed target remains unchanged, and only the nozzle is heated to `clear_cooldown_temp` (default `120`)
-
-- `BED_LEVEL_SCREWS_PROBE`: Repeats only load-cell tare and corner probing after the printer has already been prepared by `BED_LEVEL_SCREWS_TUNE`.
-  - Does not select material, clean the nozzle, home, or wait for heating.
-  - Use it for repeated measurements while adjusting the screws. If the printer has cooled down or lost homing, run `BED_LEVEL_SCREWS_TUNE` again.
-
-- `AUTO_FULL_BED_LEVEL`: Bed meshing.  
-  - `EXTRUDER_TEMP` temperature of the nozzle (default `240`)  
-  - `BED_TEMP` temperature of the bed (default `80`)  
-  - `PROFILE` profile to save (default `auto`)  
-
-- `PID_TUNE_BED`: Bed PID calibration.  
-  - `TEMPERATURE` temperature of the bed (default `80`)  
-
-- `PID_TUNE_EXTRUDER`: Extruder PID calibration.  
-  - `TEMPERATURE` temperature of the nozzle (default `245`)  
-
-- `ZSHAPER`: Shaper calibration  
-
-You can read more about Klipper calibration in the Klipper documentation: [https://www.klipper3d.org/](https://www.klipper3d.org/)
-
-> [!NOTE]  
-> You can't use the standard Klipper macro for calibration, since AD5M uses non-standard features, which need special preparation steps, and the default macro will not work as expected.  
-> For example: the standard Klipper macro `BED_MESH_CALIBRATE` doesn’t perform the weight sensor reset, as it’s a non-standard step specific to AD5M, which may lead to weight exceed warnings or incorrect bed meshing altogether.
+Do not substitute generic Klipper probing macros. The AD5M requires Forge-X preparation such as load-cell tare and printer-specific movement handling. See the full [Calibration guide](CALIBRATION.md).
 
 ## Bed Mesh
 
-The printer uses different bed meshes depending on the scenario:
+The printer uses different profile names depending on the display workflow:
 
-- When using the Stock UI, the firmware will load the `MESH_DATA` profile.
-- When using the Feather Screen, the mod will load the `auto` profile.
-- When using the option to [force leveling](https://github.com/DrA1ex/ff5m/blob/main/docs/SLICING.md#parameters), the mod will save the mesh to the `default` profile. After the print is completed, the profile will be deleted.
+- Stock screen loads `MESH_DATA`.
+- Feather, Guppy, and Headless load `auto`.
+- KAMP and forced leveling use the temporary `default` profile.
 
-> [!NOTE]  
-> If no profile with the required name exists, the printer will perform leveling before the print begins.    
-> Make sure to use the `SAVE_CONFIG` command after leveling to save the mesh properly.
+A temporary `default` profile must not be saved. A persistent profile should be measured at a bed temperature close to the intended print temperature and recreated after changes to the plate, nozzle, screws, or relevant motion settings.
+
+If the required profile is missing, the selected print workflow may create a mesh automatically. Do not rely on that fallback without checking the result.
 
 ## KAMP
 
 > [!CAUTION]
-> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
+> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do not enable or use KAMP, or call `MOVE_SAFE` while relative positioning (`G91`) is active, until the printer is updated to **1.4.1-11 or later**.
 
-Follow these steps to set up KAMP (Klipper Adaptive Meshing and Purging):
+To configure KAMP (Klipper Adaptive Meshing and Purging):
 
-1. **Enable the Mod Parameter**  
-   ```
+1. Enable it:
+
+   ```gcode
    SET_MOD PARAM=use_kamp VALUE=1
-   ```   
-   Optionally, temporarily enable it via `START_PRINT`:  
    ```
+
+   Or enable it for one print through `START_PRINT`:
+
+   ```gcode
    START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single] FORCE_KAMP=1
    ```
 
-2. **Enable "Exclude Objects" in Slicer**  
-   - **Orca Slicer**: *Process Profile → Other → Exclude objects*  
-   - **Prusa Slicer**: Go to *Print Settings → Output options → Label objects*, check the "Label objects"
+2. Enable object labels/exclusion in the slicer:
+   - OrcaSlicer: **Process Profile → Other → Exclude objects**
+   - PrusaSlicer: **Print Settings → Output options → Label objects**
 
-3. **Modify Starting G-Code in Slicer**  
-   Add this before the START_PRINT macro. Without it, you'll experience leveling and purging problems when printing supports, skirts, or other non-model objects:  
-   - **For Orca**:  
-     ```
-     KAMP_DEFINE_AREA MIN={first_layer_print_min[0]},{first_layer_print_min[1]} MAX={first_layer_print_max[0]},{first_layer_print_max[1]}
-     ```   
-   - **For Prusa**: 
-     ```
-     KAMP_DEFINE_AREA MIN={min_x},{min_y} MAX={max_x},{max_y}
-     ```
+3. Add the area definition before `START_PRINT`:
 
-4. **Purging Notes**  
-   *KAMP* defaults to `LINE_PURGE` instead of other cleaning algorithms. Avoid adding alternative algorithms (e.g., directly in starting G-code), as KAMP meshes a limited bed region, and default cleaning methods may damage the bed.  
-   To disable priming entirely *(optional)*:  
+   **OrcaSlicer:**
+
+   ```gcode
+   KAMP_DEFINE_AREA MIN={first_layer_print_min[0]},{first_layer_print_min[1]} MAX={first_layer_print_max[0]},{first_layer_print_max[1]}
    ```
-   SET_MOD PARAM=disable_priming VALUE=1
-   ```   
+
+   **PrusaSlicer:**
+
+   ```gcode
+   KAMP_DEFINE_AREA MIN={min_x},{min_y} MAX={max_x},{max_y}
+   ```
+
+4. Do not add another purge algorithm to the start G-code. KAMP uses `LINE_PURGE`, and another cleaning path may leave the adaptively meshed area.
+
+To disable priming entirely:
+
+```gcode
+SET_MOD PARAM=disable_priming VALUE=1
+```
 
 ## Bed Collision Protection
 
-To avoid bed scratching caused by the nozzle hitting the bed, the mod includes a collision detection feature.  
-It is controlled by the following mod's [parameters](/docs/CONFIGURATION.md):
-- `weight_check`: Enables or disables collision detection.
-- `weight_check_max`: Sets the maximum tolerable weight (in grams).
+Forge-X can stop a print when the load cell detects unexpected force. The related [configuration parameters](CONFIGURATION.md) are:
 
-For protection to work correctly without false triggers, ensure your bed’s weight sensor isn’t defective and shows accurate values when the bed is cold and after it’s warmed up.   
-Some users experience weight sensor degradation, where the difference between a cold and warm bed can be 2-3 kg (2000-3000 g).  
-Read this before enabling: [About bed pressure error](/docs/FAQ.md#why-am-i-getting-a-bed-pressure-detected-error), [About MCU shutdown](/docs/FAQ.md#why-am-i-getting-shutdown-due-to-sensor-value-exceeding-the-limit), [About 'endstop_state' error / Timer too close](/docs/FAQ.md#why-am-i-getting-mcu-shutdown-with-unable-to-obtain-endstop_state-response-or-timer-too-close-during-start_print)
+- `weight_check` — enables collision detection;
+- `weight_check_max` — maximum tolerated load in grams.
+
+For reliable protection, the load cell must report sensible values both cold and hot. Some degraded sensors drift by several kilograms as the bed warms.
+
+Read the related troubleshooting notes before enabling or tightening the threshold:
+
+- [Bed pressure detected](FAQ.md#why-am-i-getting-a-bed-pressure-detected-error)
+- [Sensor value exceeding the limit](FAQ.md#why-am-i-getting-shutdown-due-to-sensor-value-exceeding-the-limit)
+- [Endstop response or Timer too close](FAQ.md#why-am-i-getting-mcu-shutdown-with-unable-to-obtain-endstop_state-response-or-timer-too-close-during-start_print)
 
 > [!WARNING]
-> Don’t set `weight_check_max` too low. Legitimate situations, such as the nozzle scratching an overextruded model or the weight of the model itself, can trigger false stops.  
-> Over time, the bed's weight may also increase during long prints (weight of the model itself).
+> Do not set `weight_check_max` too low. The model's weight, normal nozzle contact, or an over-extruded area can otherwise cause false stops.
 
 ## Power Loss Recovery (Resurrection)
 
-The mod includes a **Power Loss Recovery** feature that automatically saves print progress and can resume printing after an unexpected power loss or printer shutdown. This feature continuously monitors the print status and saves critical information to restore the exact position, temperatures, and settings.
-
-Common scenarios where this is useful include:
-- Unexpected power outages during long prints.
-- Accidental printer shutdown or reboot.
-- System crashes or MCU errors during printing.
-- Voluntary pause and resume across reboots.
+Forge-X can periodically save print state and attempt to resume after an unexpected power loss, reboot, system crash, or MCU shutdown.
 
 ### Important Limitations and Considerations:
 
-Due to the inherent limitations of how Klipper works and the mechanical nature of 3D printers, **perfect position restoration is not guaranteed**. This is especially true for Z-height positioning, which may not match exactly.
+Treat recovery as a last-resort salvage feature, not as reliable protection:
 
-**Realistic Expectations:**
-- This feature should be considered a **last resort** to salvage long prints rather than a reliable solution
-- Position accuracy, especially Z-height, may be compromised
-- The print may have visible artifacts at the recovery point
-- Layer adhesion at the resume point may be weaker
-
-**Mechanical Risks:**
-- The part may have **detached from the bed** during power loss
-- The part may have **shifted or moved** on the build plate
-- Bed temperature changes may have affected adhesion
-- Nozzle may have cooled and hardened, affecting first layer after recovery
-
-**Safety Recommendations:**
-- **Always monitor the recovery process closely**
-- Be prepared to **stop the print immediately** if something goes wrong
-- Consider the **part may be ruined** and recovery may not be worth the risk
-- For reliable printing, **invest in a UPS (Uninterruptible Power Supply)** instead of relying on recovery
-
-> [!CAUTION]
-> Ensure your printer's mechanical state (bed level, nozzle cleanliness) hasn't changed between the power loss and recovery attempt. Manual intervention may be required. Always monitor this process, and if something goes wrong - power off the printer immediately!
+- exact position restoration, especially Z, is not guaranteed;
+- the part may have detached or shifted;
+- the bed may have cooled enough to lose adhesion;
+- the resumed layer may have visible artifacts or weak bonding;
+- the nozzle may have cooled with solidified material inside it.
 
 > [!WARNING]
-> **This is not a replacement for stable power!** The best solution is to prevent power loss with a UPS. Recovery should only be used as an emergency measure for very long prints where the time investment justifies the risk.
+> Stable power or a UPS is safer than recovery. Inspect the part, bed, nozzle, and printer position before accepting a recovery prompt, and watch the first resumed movements closely.
 
 ### How to Enable:
-Enable the Power Loss Recovery feature using the mod parameter:
-```bash
+
+```gcode
 SET_MOD PARAM=power_loss_recovery VALUE=1
 ```
 
-Optionally, you can customize the behavior by adding configuration to your `user.cfg` file:
+Optional `user.cfg` configuration:
+
 ```ini
 [resurrection]
 dump_time: 3.0
 ```
 
 ### Configuration Parameters:
-- `power_loss_recovery`: Enable or disable the resurrection feature (mod parameter, default: 0)
-- `dump_time`: How often to save the print state in seconds (user.cfg, default: 3.0)
+
+- `power_loss_recovery` — enables the feature; default `0`.
+- `dump_time` — interval between state saves; default `3.0` seconds.
 
 ### Available G-code Commands:
-- `RESURRECT`: Manually trigger print recovery from the saved state
-- `RESURRECT_ABORT`: Cancel any pending resurrection and delete the saved state file
+
+- `RESURRECT` — manually starts recovery from saved state.
+- `RESURRECT_ABORT` — cancels pending recovery and removes the saved state.
 
 ### How it works:
-- During printing, the mod continuously saves the current position, temperatures, feed rates, and other critical state information.
-- The state is saved every `dump_time` seconds to minimize data loss.
-- After a power loss, the mod detects the saved state file and offers to resume the print.
-- A recovery dialog appears in Fluidd/Mainsail and GuppyScreen interfaces, allowing you to choose whether to resume or cancel the recovery.
-- The recovery process restores extruder and bed temperatures, moves to the last known position, and continues printing.
-- The mod intelligently handles various G-code commands and maintains compatibility with advanced features like bed mesh and KAMP.
+
+During printing, Forge-X stores the current file position and important runtime state. After a restart, it detects the saved state and offers to resume or discard it. The recovery procedure restores temperatures and relevant settings, approaches the saved position, and continues from the stored file location.
 
 ### Recovery Process:
-1. **Detection**: On startup, the mod checks for an existing resurrection state file.
-2. **Dialog**: If a saved state is found, a recovery dialog will appear in Fluidd/Mainsail and GuppyScreen with options to resume or cancel.
-3. **Verification**: The mod verifies that the saved state is valid and matches the last print.
-4. **Preparation**: Temperatures are restored, and the printer moves to the saved position.
-5. **Resume**: Printing continues from the exact point where it was interrupted.
 
-> [!NOTE]
-> Resurrection feature is only available for Feather Screen, Headless Mode, and Guppy Screen. Stock Screen has its own built-in power loss recovery system that the mod cannot override.
+1. Forge-X detects a valid saved state during startup.
+2. Feather, Guppy, or Fluidd/Mainsail presents a recovery choice where supported.
+3. The user verifies the physical print and accepts or rejects recovery.
+4. Forge-X restores temperatures and runtime state.
+5. The printer moves back to the saved area and resumes the file.
+
+The Stock screen uses its own power-loss recovery system; Forge-X Resurrection is for Feather, Guppy, and Headless workflows.
 
 ### State Information Saved:
-- Current XYZ position and feed rates
-- Extruder and bed temperatures
-- Fans, Presure Advance, Speed limits 
-- Active bed mesh and Z-offset
-- G-code file position and progress
+
+The saved state includes information such as:
+
+- XYZ position and feed rates;
+- hotend and bed temperatures;
+- fans, pressure advance, and speed limits;
+- active bed mesh and Z offset;
+- G-code file position and progress.
 
 ## Bed Mesh Validation
 
-To prevent printing issues caused by an invalid bed mesh, the mod includes a **Bed Mesh Validation** feature. This feature checks the bed mesh before starting a print and ensures it matches the current printer configuration.   
-Common scenarios where this is useful include:
-- Using a bed mesh created for a different bed plate.
-- Printing without a bed plate installed.
-- Accidentally changing essential kinematics parameters that affect Z movement.
+Bed mesh validation checks the current geometry before printing and can cancel a job if the measured position differs from the expected mesh by too much.
 
-It is controlled by the following mod's [parameters](/docs/CONFIGURATION.md):
-- `bed_mesh_validation`: Enable or disable bed mesh validation. Set to 1 to enable.
-- `bed_mesh_validation_clear`: Enable or disable nozzle cleaning before bed mesh validation. Set to 1 to enable.
-- `bed_mesh_validation_tolerance`: Set the maximum allowed Z-offset tolerance (in mm). The default value is 0.2.
+Relevant [configuration parameters](CONFIGURATION.md):
+
+- `bed_mesh_validation` — enables validation;
+- `bed_mesh_validation_clear` — cleans the nozzle before validation;
+- `bed_mesh_validation_tolerance` — maximum allowed difference in millimetres; default `0.2`.
+
+This can catch scenarios such as the wrong plate, a missing plate, a stale mesh, or motion parameters changed after calibration.
 
 > [!NOTE]
-> Ensure the `bed_mesh_validation_tolerance` is set appropriately for your setup. A value too low may trigger false negatives, while a value too high may miss critical issues.
+> A dirty nozzle can create a false validation failure. Keep the nozzle clean, and do not set the tolerance so low that normal measurement variation cancels valid prints.
 
 ### How it works:
-- Before starting a print, the mod compares the current bed mesh with the printer's expected Z movement.
-- If the Z-offset exceeds the configured tolerance (`bed_mesh_validation_tolerance`), the print is canceled to prevent potential damage.
-- A warning is logged, and the user is notified to recalibrate the bed mesh or check the printer configuration.
 
-> [!NOTE]
-> Bed Mesh Validation may produce false negatives if your nozzle is very dirty, as this can affect the accuracy of probing and the correct Z-offset position. Always ensure your nozzle is clean before starting a print.
+Before the print begins, Forge-X probes the expected position and compares it with the active mesh. If the difference exceeds `bed_mesh_validation_tolerance`, the print is cancelled and the user is asked to inspect the setup or recreate the mesh.
 
 ## Z-Offset
 
-In stock screen mode, Z-Offset is managed via the firmware’s screen. It’s automatically saved and loaded for the next print.
+The Stock screen manages and persists its own Z offset.
 
-Feather provides two separate Z-Offset workflows:
+Feather provides two workflows:
 
-- Use **Controls → Calibration → Z Offset** while the printer is idle to calibrate and save the normal nozzle height.
-- Use **Z Adjust** on the print screen to make a temporary correction during the current Klipper session. The screen clearly shows the saved value, current value, and unsaved difference. Choose a step, then use **Closer** to decrease Z-Offset or **Farther** to increase it. On the FF5M, a negative adjustment raises the bed toward the nozzle.
+- **Control → Calibration → Z Offset** calibrates and saves the normal nozzle height while idle.
+- **Z Adjust** on the print screen applies a live correction during the current Klipper session.
 
-Both Feather Z-Offset screens show the current load-cell force on a vertical scale. The accent line marks the force measured when the screen was opened. The scale expands automatically if a later reading falls outside its initial range, and the bar turns red above 400 g.
+The Feather screens show the saved value, current value, and unsaved difference. Live changes take effect immediately but are not persisted until **Save** is pressed. If automatic loading is disabled, Feather can offer to enable it while saving.
 
-Live adjustments take effect immediately but are not saved until you explicitly press **Save**. If automatic loading is disabled, Feather will offer to enable it while saving. Without automatic loading, the saved value remains available but is not restored after Klipper restarts.
+On the AD5M, decreasing Z offset moves the bed closer to the nozzle; increasing it moves the bed farther away.
 
-Enable the `load_zoffset` mod [parameter](/docs/CONFIGURATION.md) to load the saved Z-Offset before each print, like the stock firmware does. When it is disabled, starting another print does not replace the current runtime value.
+Enable automatic loading for non-stock modes:
 
-Once `load_zoffset` is enabled, adjust Z-Offset through Fluidd or Mainsail’s standard controls (which use `SET_GCODE_OFFSET`). The mod will then save the Z-Offset to the configuration and load it automatically after a reboot, right before the print starts.
+```gcode
+SET_MOD PARAM=load_zoffset VALUE=1
+```
 
-To use Z-offset during nozzle cleaning, set the `load_zoffset_cleaning` parameter.   
-This can help prevent bed scratches if the default (0.0) offset is too low for your setup.
+Then adjust through Fluidd/Mainsail controls or `SET_GCODE_OFFSET`. Forge-X stores the chosen value and loads it before a print after Klipper restarts.
+
+To apply the saved offset during nozzle cleaning, enable `load_zoffset_cleaning`. This may prevent contact on setups where the default cleaning offset is too low, but residual material on the nozzle can affect later probing.
 
 ### Macros
-- **[SET_GCODE_OFFSET](https://www.klipper3d.org/G-Codes.html#set_gcode_offset)**: Standard Klipper macro to apply Z-Offset; also saves the value to the mod’s parameter.  
-- **`LOAD_GCODE_OFFSET`**: Loads and applies the last-saved Z-Offset from the mod’s parameter.
 
+- [`SET_GCODE_OFFSET`](https://www.klipper3d.org/G-Codes.html#set_gcode_offset) — applies an offset; the Forge-X wrapper also stores the selected value.
+- `LOAD_GCODE_OFFSET` — loads and applies the last saved Forge-X Z offset.
 
 ### Example
-```
-# Enable Z-offset loading
-SET_MOD PARAM="load_zoffset" VALUE=1
 
-# Set Z-offset (will be saved to `z_offset` mod parameter)
+```gcode
+# Enable automatic loading
+SET_MOD PARAM=load_zoffset VALUE=1
+
+# Apply and save an offset
 SET_GCODE_OFFSET Z=-0.2
 
-# Set Z-offset (will NOT be saved to `z_offset` mod parameter)
+# Apply without saving through the Forge-X wrapper
 _SET_GCODE_OFFSET Z=0.25
 
-# Set saved Z-offset value (will not be applied immediately but will be loaded before print if `load_zoffset` is enabled)
-SET_MOD PARAM="z_offset" VALUE=0.25
+# Change the saved value without applying it immediately
+SET_MOD PARAM=z_offset VALUE=0.25
 ```
 
 ## Sound
-You can customize sound indications or completely disable them. Additionally, you can configure MIDI playback for specific events. Available MIDI files are located in **Configuration -> mod_data -> midi**. You can also add your own MIDI files by uploading them to the **midi** folder.
 
-It is controlled by the following mod's [parameters](/docs/CONFIGURATION.md):
-- `sound`: Disable all sound indication by setting this parameter to 0.
-- `midi_on`: Play MIDI when the printer boots.
-- `midi_start`: Play MIDI when a print starts.
-- `midi_end`: Play MIDI when a print finishes.
+Sound indications can be changed or disabled. MIDI files are stored in **Configuration → mod_data → midi**, and custom files can be uploaded to the same directory.
+
+Related [configuration parameters](CONFIGURATION.md):
+
+- `sound` — set to `0` to disable sound indications;
+- `midi_on` — MIDI played at boot;
+- `midi_start` — MIDI played when printing starts;
+- `midi_end` — MIDI played when printing finishes.
 
 ### Playing MIDI Files
-You can play specific MIDI files using the **PLAY_MIDI** macro. This macro allows you to specify a MIDI file from the **midi** folder.
 
 #### Usage
-- Macro: `PLAY_MIDI`
-- Parameter: `FILE` (string, default: `For_Elise.mid`)
-- Example:
-  ```plaintext
-  PLAY_MIDI FILE=For_Elise.mid
-  ```
-> [!NOTE]
-> The `PLAY_MIDI` macro will only function if the `sound` parameter is enabled.
+
+```gcode
+PLAY_MIDI FILE=For_Elise.mid
+```
+
+`PLAY_MIDI` works only while `sound` is enabled.
 
 ## LED light Control
 
-Use the `LED S=<PERCENT>` macro to set LED brightness (e.g., LED S=75).
-Use `LED_ON` and `LED_OFF` to toggle the LED.
-The selected brightness is saved in the mod variables and restored after
-Klipper restarts. New installations default to 50%.
+Set chamber-light brightness with:
 
-The mod also includes a LED klipper's plugin, which allows inverting LED controls in cases where the LED is connected using a non-standard scheme.   
-To enable this feature, you need to add a parameter in the `user.cfg` file (see [Configuration](/docs/CONFIGURATION.md)).  
+```gcode
+LED S=75
+```
+
+Use `LED_ON` and `LED_OFF` to toggle it. The selected brightness is saved in Forge-X variables and restored after Klipper restarts. New installations default to 50%.
+
+For an inverted or non-standard LED connection, add an override to `user.cfg`:
 
 ```ini
-[led chamber_light]  
-invert: False       ; Use inverted control when set to True (Default: False).
-initial_WHITE: 0.2  ; Optional: Set the initial brightness value.
-```  
-
-> [!NOTE]
-> The stock firmware controls the LED by default. You can disable this behavior by configuring the mod (as described in [Configuration](/docs/CONFIGURATION.md)).  
-> - If left enabled, you won’t be able to manage the initial brightness using user.cfg.  
-> - If disabled, LED control from the stock screen will no longer work.  
-
-
-```bash
-SET_MOD PARAM="disable_screen_led" VALUE=1
+[led chamber_light]
+invert: False
+initial_WHITE: 0.2
 ```
+
+The Stock firmware normally controls the LED. To give Forge-X exclusive control:
+
+```gcode
+SET_MOD PARAM=disable_screen_led VALUE=1
+```
+
+When this is enabled, Stock-screen LED controls no longer work.
 
 ## Automation
 
-It is controlled by the following mod's [parameters](/docs/CONFIGURATION.md):
-- `stop_motor`: Automatically disables motors after inactivity.   
-- `auto_reboot`: Reboots the printer after a print finishes.   
-- `close_dialogs`: Automatically dismiss stock firmware dialogs after 20 seconds.   
+Relevant [configuration parameters](CONFIGURATION.md):
+
+- `stop_motor` — disables motors after inactivity;
+- `auto_reboot` — controls automatic restart after a print;
+- `close_dialogs` — dismisses Stock firmware dialogs according to the selected mode.
 
 ## Nozzle Cleaning
 
-The mod provides several options for priming line and nozzle cleaning before a print.   
-These are controlled by the following [parameters](/docs/CONFIGURATION.md):
-- `zclear`: Configure the purge line algorithm (e.g., `ORCA` - like Orca Slicer do).
-- `disable_priming`: Set to 1 to disable nozzle priming before print.
-- `disable_cleaning`: Set to 1 to disable nozzle cleaning before bed mesh calibration.
+Forge-X provides several priming and cleaning controls:
+
+- `zclear` — selects the purge-line algorithm;
+- `disable_priming` — disables the purge line when set to `1`;
+- `disable_cleaning` — disables nozzle cleaning before bed probing when set to `1`.
+
+These are described in [Configuration](CONFIGURATION.md).
 
 ## Fixing Communication Timeout (E0011) / Move Queue Overflow (EO017) Error
-In stock firmware, some internal Klipper parameters controlling **MCU Communication** and the **Move Queue**  are not optimally configured, which can cause the **E0011** and the **E0017** error.   
 
-To fix this, enable the mod [parameter](/docs/CONFIGURATION.md):
-```bash
-SET_MOD PARAM="tune_klipper" VALUE=1
+The Stock Klipper build uses communication and move-queue values that can trigger E0011 or E0017 under some workloads. Enable the Forge-X patch with:
+
+```gcode
+SET_MOD PARAM=tune_klipper VALUE=1
 ```
+
+Changing this parameter restarts the relevant printer services. Recreate the bed mesh and verify Z offset if other motion/config tuning was enabled at the same time.
 
 ## Reducing Resource Usage
 
-If you’re planning a long or complex print, it’s a waste of filament if it stops due to low resources.    
-You can reduce resource usage to the bare minimum while ensuring printing still works correctly.
+Start by running `MEM` after boot and again while reproducing the problem. Try to keep memory use below roughly 75–80%. A *Timer too close*, E0011, or E0017 error is not automatically a memory problem: memory pressure, CPU contention, and MCU workload require different fixes.
 
-Start by running the `MEM` macro after boot and again while the printer is doing the work that causes the problem. Aim to keep memory use below 75–80%. A *Timer too close*, E0011, or E0017 error is not automatically a memory problem: Klipper timing, a busy CPU, and memory pressure need different fixes.
+### Built-in optimizations
 
-### Built-in Optimizations
+Recent Forge-X versions apply baseline memory optimizations automatically:
 
-Recent versions apply the following baseline optimization automatically:
+- Moonraker and GuppyScreen limit glibc to two malloc arenas, avoiding several megabytes of unused per-thread heaps.
+- The Forge-X camera implementation uses substantially less memory than the Stock camera service.
 
-- Moonraker and GuppyScreen limit glibc to two malloc arenas. This avoids unused per-thread heaps consuming several megabytes of RAM on the printer’s 128 MB system.
-
-When enabled, the mod camera implementation also uses substantially less memory than the stock camera service. These changes reduce the baseline only; they cannot make an overloaded camera, web UI, or third-party service free.
+These changes reduce the baseline but cannot make an overloaded camera, browser UI, or third-party service free.
 
 #### Switch to Feather Screen
-The stock screen consumes 10-20 MB of RAM, while Feather uses only 1-2 MB.
+
+The Stock screen normally uses around 10–20 MB of RAM, while Feather uses roughly 1–2 MB. Switching to Feather is usually the simplest way to reduce the baseline without losing local control.
 
 #### Reduce Camera Resource Usage
-Disable the camera, lower its resolution to the minimum, or switch to the mod’s camera implementation.   
-The camera (especially controlled by stock firmware) uses significant memory.   
-Switching to the mod’s camera can reduce usage by about 4x.
+
+Disable the camera, lower its resolution or frame rate, or use the Forge-X camera implementation. The Stock camera service is often one of the largest optional consumers.
 
 #### Disable Moonraker
-Moonraker consumes around 30 MB of RAM. It’s not required for the stock screen or Feather, but disabling it means losing access to Fluidd/Mainsail.  
 
-To disable Moonraker before printing and re-enable it afterward, modify your G-code:  
-- **Starting G-code** (add as the first line):  
-  ```
-  STOP_MOD
-  ```   
-- **Ending G-code** (add as the last line):  
-  ```
-  START_MOD
-  ```   
+Moonraker can use around 30 MB. It is not required by the Stock screen or Feather during printing, but disabling it removes Fluidd/Mainsail and also stops integrations that depend on Moonraker.
 
-This stops Moonraker (and related services like Telegram bots or Discord notifications) before the print and restarts it after a successful finish. Test the complete start/end G-code flow before relying on it for an unattended print: a cancelled print will not run `START_MOD` automatically.
+To stop it before a print and restart it after a successful finish:
 
-### Klipper Timing and CPU Contention
+**First line of start G-code:**
 
-Use these settings for Klipper/MCU timing errors, not as a response to high memory use:
+```gcode
+STOP_MOD
+```
 
-- **`tune_klipper`** adjusts the stock Klipper communication timeout and move-queue settings for E0011/E0017. This is the normal first step for those errors and reboots the printer when changed:
+**Last line of end G-code:**
 
-  ```
+```gcode
+START_MOD
+```
+
+Test the complete start, finish, cancel, and failure paths before relying on this for unattended printing. A cancelled or failed print may not execute the normal end G-code, leaving Moonraker stopped.
+
+### Klipper timing and CPU contention
+
+Use these settings for timing/MCU errors, not merely because memory usage is high:
+
+- `tune_klipper` adjusts the Stock communication timeout and move-queue behavior for E0011/E0017:
+
+  ```gcode
   SET_MOD PARAM=tune_klipper VALUE=1
   ```
 
-- **`klipper_rt`** starts Klipper with a low real-time `SCHED_RR` priority. It can help when the CPU is busy with Moonraker, the web UI, or camera streaming and Klipper reports *Timer too close* or an MCU timeout. It restarts Klipper when changed:
+- `klipper_rt` starts Klipper with low-priority real-time scheduling:
 
-  ```
+  ```gcode
   SET_MOD PARAM=klipper_rt VALUE=1
   ```
 
-  Leave it off unless CPU contention is the suspected cause. It does not solve out-of-memory failures, and it cannot fix motion workloads that exceed the MCU’s own capacity.
+  Leave this off unless CPU contention is the suspected cause of *Timer too close* or MCU timeouts. It does not solve out-of-memory failures and cannot make an excessive MCU motion workload safe.
 
-### Swap and Compressed Memory
+#### Disable SWAP (Only if Moonraker is Disabled)
 
-Swap is a safety net for memory pressure; it is not a way to create free RAM. The default `MMC` mode uses an eMMC swapfile. `ZRAM` stores swapped-out pages compressed in RAM, uses it before the eMMC file, and keeps the eMMC swapfile only as an overflow fallback. This can avoid slow eMMC I/O, but compression also consumes CPU and RAM, so do not enable it as a blanket performance optimization.
+This was the earlier recommendation for very small Stock/Feather-only setups. Current Forge-X supports selectable `MMC`, `USB`, `ZRAM`, and `OFF` modes, so disabling swap is no longer recommended as a general resource optimization. Use `OFF` only after verifying the complete workload, including calibration and recovery paths.
 
-To prepare a USB drive for storage or swap, connect exactly one drive and run:
+### Swap and compressed memory
+
+Swap is a safety net, not additional free RAM. Available `use_swap` modes are:
+
+- `MMC` — eMMC swapfile; the predictable default for memory-intensive or latency-sensitive Klipper operations.
+- `USB` — swapfile on a prepared USB drive.
+- `ZRAM` — compressed RAM-backed swap with lower-priority eMMC overflow; it can reduce slow storage I/O but consumes CPU and RAM for compression.
+- `OFF` — disables swap.
+
+Change the mode with, for example:
+
+```gcode
+SET_MOD PARAM=use_swap VALUE=MMC
+SET_MOD PARAM=use_swap VALUE=ZRAM
+SET_MOD PARAM=use_swap VALUE=OFF
+```
+
+Do not disable swap as a general optimization. A minimal print may work without it, while input-shaper calibration, camera use, or a larger web workload can still trigger an out-of-memory failure.
+
+Feather automatically detects supported USB storage and exposes it as a separate file source. You can browse folders and start G-code directly from the drive. Avoid removing the drive while Feather is browsing it or while a print from USB is active.
+
+To prepare a USB drive for Forge-X storage or swap, connect exactly one intended drive and run:
 
 ```gcode
 PREPARE_USB
 ```
 
-The dialog works in Feather, Fluidd, and compatible web interfaces. Choose `FAT32` for the widest printer and desktop compatibility, or `Linux EXT` as an alternative; both can store files and host USB swap.
-
-On the Feather screen, a supported connected drive appears automatically as **USB DRIVE** at the top of **Print files**. Open it to select G-code using the same flat, recent-first list as internal storage; the entry disappears when the drive is removed.
-
-> [!WARNING]
-> Confirming the second dialog erases all data on the selected USB drive.
-
-Keep the printer powered and the drive connected while the progress dialog is visible. Formatting stages are also shown in the console; the dialog reports whether preparation completed or failed.
-
-After preparing the drive, enable USB swap with:
-
-```gcode
-SET_MOD PARAM=use_swap VALUE=USB
-```
-
-If the USB drive is unavailable, unsupported, read-only, or too small, Forge-X reports the problem and uses the normal eMMC swap instead.
-
-For a resource-constrained print where Moonraker has already been stopped, prefer ZRAM over relying on the eMMC swapfile:
-
-```
-SET_MOD PARAM=use_swap VALUE=ZRAM
-```
-
-The default `zstd` compressor provides the best memory reduction. Leave it unchanged unless compression itself is competing for CPU during a print; in that case `lzo-rle` is the lower-CPU alternative:
-
-```
-SET_MOD PARAM=zram_algo VALUE=lzo-rle
-```
-
-Changing the compression algorithm takes effect the next time ZRAM is initialized. Reboot the printer, or select `ZRAM` again with `use_swap`, after changing it.
-
-Avoid turning swap off as a standalone optimization. Without swap, a memory spike can cause an out-of-memory failure, and shaper calibration may not be possible. Use `OFF` only together with disabling Moonraker for a tested, minimal print workflow, and restore the normal setting afterward:
-
-```
-SET_MOD PARAM=use_swap VALUE=OFF
-```
+The preparation workflow is unavailable while printing. It erases and reformats the selected drive, so read both confirmation screens and verify the device before accepting them.

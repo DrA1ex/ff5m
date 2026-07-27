@@ -139,6 +139,7 @@ public:
 
     [[nodiscard]] TextBoundary calcTextBoundaries(const std::string_view &text, int32_t x = 0, int32_t y = 0) const;
     [[nodiscard]] TextBoundary calcTextBoundaries(const char *text, int32_t x = 0, int32_t y = 0) const;
+    [[nodiscard]] int32_t calcTextAdvance(const std::string_view &text) const;
     [[nodiscard]] std::vector<std::string> wrapText(
         const std::string_view &text, int32_t maxWidth,
         int32_t maxHeight, bool truncateOverflow = false) const;

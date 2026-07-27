@@ -65,7 +65,7 @@ config/feather.cfg
 ```
 
 1. [`config/feather.cfg`](../../config/feather.cfg) includes common/headless/client macro layers and declares `[feather_screen]`.
-2. [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is installed as a Forge-X-added Klipper `extras` plugin. During config load it starts `typer`, registers the nonblocking event FIFO with the Klipper reactor, and shows an animated loading modal until Klippy is ready. After that, it redraws complete pages only on navigation/state changes.
+2. [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is installed as a Forge-X-added Klipper `extras` plugin. A deferred reactor callback starts the daemon render worker; that worker owns Typer, draw-FIFO backpressure and recovery, while the nonblocking touch FIFO stays registered directly with the Klipper reactor. Feather shows an animated loading modal until Klippy is ready and then redraws complete pages only on navigation/state changes.
 3. The bundled `typer` executable is exposed as `/root/printer_data/bin/typer`. Its interactive module polls the draw FIFO and calibrated Linux input fd in one thread, maintains only the current page’s hitboxes, and emits opaque action IDs rather than executing printer commands.
 4. [`.shell/commands/znetwork.sh`](../../.shell/commands/znetwork.sh) owns bounded asynchronous Wi-Fi/Ethernet operations. The plugin polls the child process from its existing one-second timer instead of blocking Klipper’s reactor. Scan, Wi-Fi connect and Ethernet DHCP are terminated after 15, 45 and 30 seconds respectively.
 
@@ -75,17 +75,17 @@ Idle Z calibration and live print adjustment are deliberately separate pages and
 
 ```text
 preparation choice
+  -> Safe Z briefing -> [skip | home -> center probe -> adjust -> save]
   -> PREP / HOME / HEAT / [CLEAN] / TARE / READY
   -> zone summary
-  -> one-time briefing
   -> paper test
   -> accept zone -> zone summary
   -> select average or zone -> save
 ```
 
-The preparation choice supports PLA, PETG, ABS, and ABS-PC. Its cleaning path calls the normal `CLEAR_NOZZLE` sequence and performs a final `LOAD_CELL_TARE`; the no-clean path never sends a bed temperature command and brings only the nozzle to `clear_cooldown_temp` before homing, lifting, and taring. M108 interrupts a live temperature wait. M112 remains owned by the global shutdown handler.
+The shared heating-material selector reads the merged `_MATERIAL_CONFIG` after `klippy:ready` and uses its ordered `heating_slots` on Heat, Filament, nozzle-cleaning, mesh, Z, and PID preparation screens. Cold Pull independently uses `cold_pull_slots`. Defaults, Fluidd prompt construction, and validation live in `config/material.cfg`; Feather parsing and centered 0–5 item selector layouts live in `feather_materials.py`, so the UI and macros cannot silently diverge. Empty Heating keeps manual Heat controls and the screws/Z no-clean path while disabling material-dependent starts; empty Cold Pull preserves the extruder calibration's Filament Ready path. Safe Z is checked or skipped before either preparation path starts, so `CLEAR_NOZZLE` can use the newly verified value. The cleaning path then calls the normal `CLEAR_NOZZLE` sequence and performs a final `LOAD_CELL_TARE`; the no-clean path never sends a bed temperature command and brings only the nozzle to `clear_cooldown_temp` before homing, lifting, and taring. M108 interrupts a live temperature wait. M112 remains owned by the global shutdown handler.
 
-At active-session entry, [`feather_z_calibration.py`](../../.py/klipper/plugins/feather_z_calibration.py) records `gcode_move.homing_origin.z`, the current `load_zoffset` choice, the bed mesh profile identity, and the exact in-memory `bed_mesh.z_mesh` object. Feather then sends `_SET_GCODE_OFFSET Z=0 MOVE=0` and clears the mesh. Holding the object itself is essential: loading a profile by name cannot reproduce an unsaved temporary or adaptive mesh. Every normal exit first lifts to Z=5 when homed, turns off both heaters, restores either the original runtime offset or the saved candidate, and passes the original mesh object back to `bed_mesh.set_mesh()` while restoring its profile identity. If no mesh was active, it restores `None`. A Klipper shutdown only clears local session bookkeeping; it neither issues motion during shutdown nor replaces the global error/Firmware Restart screen.
+At active-session entry, [`feather_z_calibration.py`](../../.py/klipper/plugins/feather_z_calibration.py) records `gcode_move.homing_origin.z`, the current `load_zoffset` choice, `safe_z`, the bed mesh profile identity, and the exact in-memory `bed_mesh.z_mesh` object. Feather clears skew correction, sends `_SET_GCODE_OFFSET Z=0 MOVE=0`, and clears the mesh before measuring. Holding the mesh object itself is essential: loading a profile by name cannot reproduce an unsaved temporary or adaptive mesh. Before nozzle cleaning, the optional Safe Z stage homes, moves to twice the current `safe_z`, centers the toolhead, tares the load cells, runs the configured two-sample `PROBE`, and uses `probe.last_z_result + 5.0` as its coarse candidate. The operator can move that absolute candidate by 1 mm in either direction before `SET_MOD PARAM=safe_z` persists it. Saving or skipping then starts the selected cleaning/cooldown preparation, which ends at twice the active `safe_z`. Every normal exit first lifts to the active session's `safe_z` height when homed, turns off both heaters, restores either the original runtime Z-offset or the saved candidate, and passes the original mesh object back to `bed_mesh.set_mesh()` while restoring its profile identity. If no mesh was active, it restores `None`. A Klipper shutdown only clears local session bookkeeping; it neither issues motion during shutdown nor replaces the global error/Firmware Restart screen.
 
 Each zone starts with the configured two-sample `PROBE`. `probe.last_z_result` becomes the zone-local trigger zero, then Feather retracts 0.5 mm before enabling manual controls. The result matches Klipper `PROBE_CALIBRATE`:
 
@@ -94,7 +94,7 @@ candidate_z_offset =
     paper_contact_z - probe_trigger_z + configured_probe_z_offset
 ```
 
-The machine's configured probe offset is currently `-0.25`, compensating for the load-cell trigger threshold without rewriting `[probe]`. Because local height is `paper_contact_z - probe_trigger_z`, `CLOSER` decreases both local height and the candidate; `FARTHER` increases them. Reset sets local height to the negative configured probe offset, which makes the candidate exactly `0.000`, and physically moves to that position. No UI magnitude limit is applied in this idle paper-test phase; Klipper's axis limits remain authoritative. Accepted results are keyed by zone, so a repeated measurement replaces the earlier value. One result selects itself; multiple results select their arithmetic mean rounded to 0.001 mm. A spread above 0.025 mm warns without blocking save.
+The machine's configured probe offset is currently `-0.25`, compensating for the load-cell trigger threshold without rewriting `[probe]`. Because local height is `paper_contact_z - probe_trigger_z`, `CLOSER` decreases both local height and the candidate; `FARTHER` increases them. Reset sets local height to the negative configured probe offset, which makes the candidate exactly `0.000`, and physically moves to that position. The manual fallback starts at half of the active `safe_z`, and the selectable paper-test steps are 0.005, 0.010, 0.025, 0.050, and 0.100 mm. No UI magnitude limit is applied in this idle paper-test phase; Klipper's axis limits remain authoritative. Accepted results are keyed by zone, so a repeated measurement replaces the earlier value. One result selects itself; multiple results select their arithmetic mean rounded to 0.001 mm. A spread above 0.025 mm warns without blocking save.
 
 The live page still reads the effective value from `gcode_move.homing_origin.z` and sends `_SET_GCODE_OFFSET Z_ADJUST=... MOVE=1`, bypassing persistence until the operator presses Save. Klipper defines a positive offset as an addition to future G-Code Z heights, but the physical compensation depends on the machine kinematics. On FF5M mechanics, a negative adjustment raises the bed, so `CLOSER` is negative and `FARTHER` is positive. The live page remains available after the first layer, warns once per print when the runtime value differs from the saved value by more than 0.3 mm, and does not restore the old runtime value when the page or print ends. `START_PRINT` loads the saved value only when `load_zoffset` is enabled.
 
@@ -116,7 +116,7 @@ replaces the symlink. Feather watches that symlink and calls `time.tzset()` when
 it changes, so an already running Klipper process starts using the new timezone
 without a restart.
 
-Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
+Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. A saved name no longer present in `heating_slots` is normalized to `n/a`; calibration selects the first active Heating slot. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
 
 ### How print status reaches Feather
 
@@ -130,7 +130,7 @@ FEATHER_PRINT_STATUS S="PREPARING..."
 
 ### Extending Feather safely
 
-For a deliberately small custom indicator or status overlay, use the shipped `typer` tool and its documented batch interface; [`docs/TYPER.md`](../../docs/TYPER.md) is the operator/developer reference. The established Feather plugin is the canonical example of safe FIFO ownership, double-buffered drawing, and state refresh.
+For a deliberately small custom indicator or status overlay, use the shipped `typer` tool and its documented batch interface; [Feather runtime, Typer, and Klipper plugin wiring](feather-runtime.md) is the developer reference. The established Feather plugin is the canonical example of safe FIFO ownership, double-buffered drawing, and state refresh.
 
 Do **not** start a second process that writes arbitrary concurrent data to `/tmp/typer`. New actions must be registered as hitboxes and revalidate current `print_stats`/homing state in Python. Normal actions dispatch through reviewed Klipper macros or a bounded system helper. Direct toolhead access is reserved for the joystick planner, which must retain its acceleration, queue-horizon, watchdog, homing, and boundary tests.
 
@@ -160,5 +160,5 @@ Choose Guppy for its broader independent UI. Choose Feather when the priority is
 - Operator behavior and recovery: [`docs/SCREEN.md`](../../docs/SCREEN.md)
 - Selection/config deltas: [`.shell/commands/zdisplay.sh`](../../.shell/commands/zdisplay.sh), [`config/`](../../config/), and [`.cfg/init.display.*.cfg`](../../.cfg/)
 - Non-stock boot/fallback: [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh)
-- Feather implementation: [`config/feather.cfg`](../../config/feather.cfg), [`.py/klipper/plugins/feather_screen.py`](../../.py/klipper/plugins/feather_screen.py), and [`docs/TYPER.md`](../../docs/TYPER.md)
+- Feather implementation: [`config/feather.cfg`](../../config/feather.cfg), [`.py/klipper/plugins/feather_screen.py`](../../.py/klipper/plugins/feather_screen.py), and [Feather runtime](feather-runtime.md)
 - Guppy lifecycle: [`.root/guppyscreen`](../../.root/guppyscreen), [`.root/S80guppyscreen`](../../.root/S80guppyscreen)

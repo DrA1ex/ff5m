@@ -141,7 +141,7 @@ class Resurrector:
                 self.gcode.respond_raw("// action:prompt_text Resurrection is available! Would you like to restore the print?")
                 self.gcode.respond_raw("// action:prompt_footer_button Restore|RESURRECT")
                 self.gcode.respond_raw("// action:prompt_footer_button Cleanup|RESURRECT_ABORT")
-                self.gcode.respond_raw("// action:prompt_footer_button Abort|RESPOND TYPE=command MSG=action:prompt_end")
+                self.gcode.respond_raw("// action:prompt_footer_button Later|RESPOND TYPE=command MSG=action:prompt_end")
                 self.gcode.respond_raw("// action:prompt_show")
 
                 self.gcode.respond_raw("// Resurrection is available!")

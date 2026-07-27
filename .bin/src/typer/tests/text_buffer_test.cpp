@@ -1,6 +1,6 @@
 // Tests for typer text buffering.
 //
-// Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+// Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 //
 // This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -196,18 +196,31 @@ void text_wrap_uses_font_metrics_and_word_boundaries() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono12ptb2);
-    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+    const auto width = drawer.calcTextAdvance("ONE TWO");
 
     const auto lines = drawer.wrapText("ONE TWO THREE FOUR", width, 480);
 
     TYPER_CHECK((lines == std::vector<std::string>{"ONE TWO", "THREE", "FOUR"}));
 }
 
+void text_wrap_handles_short_lines_long_words_and_newlines() {
+    std::vector<uint32_t> screen(800 * 480, 0xff000000);
+    TextDrawer drawer(screen.data(), 800, 480);
+    drawer.setFont(&JetBrainsMono12ptb2);
+
+    TYPER_CHECK((drawer.wrapText("SHORT", 200, 480)
+                 == std::vector<std::string>{"SHORT"}));
+    TYPER_CHECK((drawer.wrapText("ABCDE", 2 * 16, 480)
+                 == std::vector<std::string>{"AB", "CD", "E"}));
+    TYPER_CHECK((drawer.wrapText("ONE\nTWO THREE\n\nFOUR", 9 * 16, 480)
+                 == std::vector<std::string>{"ONE", "TWO THREE", "", "FOUR"}));
+}
+
 void text_wrap_limits_by_rendered_height_and_adds_ellipsis() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono12ptb2);
-    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+    const auto width = drawer.calcTextAdvance("ONE TWO");
     const auto first = drawer.calcTextBoundaries("ONE TWO", 0, 0);
     const auto second = drawer.calcTextBoundaries(
         "THREE", 0, JetBrainsMono12ptb2.advanceY);
@@ -220,14 +233,14 @@ void text_wrap_limits_by_rendered_height_and_adds_ellipsis() {
     TYPER_CHECK(lines.size() == 2);
     TYPER_CHECK(lines[0] == "ONE TWO");
     TYPER_CHECK(lines[1].ends_with("..."));
-    TYPER_CHECK(drawer.calcTextBoundaries(lines[1]).size().first <= width);
+    TYPER_CHECK(drawer.calcTextAdvance(lines[1]) <= width);
 }
 
 void text_wrap_without_truncate_has_no_ellipsis() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono12ptb2);
-    const auto width = drawer.calcTextBoundaries("ONE TWO").size().first;
+    const auto width = drawer.calcTextAdvance("ONE TWO");
     const auto oneLineHeight = drawer.calcTextBoundaries("ONE TWO").size().second;
 
     const auto lines = drawer.wrapText(
@@ -241,7 +254,7 @@ void text_wrap_splits_long_utf8_words_without_corruption() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono12ptb2);
-    const auto width = drawer.calcTextBoundaries("АБ").size().first;
+    const auto width = drawer.calcTextAdvance("АБ");
 
     const auto lines = drawer.wrapText("АБВГД", width, 480);
 
@@ -252,12 +265,12 @@ void text_truncate_uses_font_metrics_and_preserves_utf8() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono12ptb2);
-    const auto width = drawer.calcTextBoundaries("АБ...").size().first;
+    const auto width = drawer.calcTextAdvance("АБ...");
 
-    const auto text = drawer.truncateText("АБВГД", width);
+    const auto text = drawer.truncateText("АБВГДЕ", width);
 
     TYPER_CHECK(text == "АБ...");
-    TYPER_CHECK(drawer.calcTextBoundaries(text).size().first <= width);
+    TYPER_CHECK(drawer.calcTextAdvance(text) <= width);
 }
 
 } // namespace
@@ -275,6 +288,7 @@ int main(int argc, char **argv) {
         {"compact_font_maps_disjoint_unicode_ranges", compact_font_maps_disjoint_unicode_ranges},
         {"bundled_compact_font_renders_cyrillic", bundled_compact_font_renders_cyrillic},
         {"text_wrap_uses_font_metrics_and_word_boundaries", text_wrap_uses_font_metrics_and_word_boundaries},
+        {"text_wrap_handles_short_lines_long_words_and_newlines", text_wrap_handles_short_lines_long_words_and_newlines},
         {"text_wrap_limits_by_rendered_height_and_adds_ellipsis", text_wrap_limits_by_rendered_height_and_adds_ellipsis},
         {"text_wrap_without_truncate_has_no_ellipsis", text_wrap_without_truncate_has_no_ellipsis},
         {"text_wrap_splits_long_utf8_words_without_corruption", text_wrap_splits_long_utf8_words_without_corruption},

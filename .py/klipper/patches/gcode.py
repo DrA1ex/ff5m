@@ -94,6 +94,11 @@ class GCodeCommand:
 class GCodeDispatch:
     error = CommandError
     Coord = Coord
+    default_immediate_commands = frozenset((
+        "M108", "TONE", "ALARM", "BEEP",
+    ))
+    command_name_r = re.compile(
+        r'^([a-zA-Z_][a-zA-Z0-9_]*|[a-zA-Z][0-9]+)(?:\s|$)')
     def __init__(self, printer):
         self.printer = printer
         self.is_fileinput = not not printer.get_start_args().get("debuginput")
@@ -109,8 +114,9 @@ class GCodeDispatch:
         self.ready_gcode_handlers = {}
         self.mux_commands = {}
         self.gcode_help = {}
+        self.immediate_commands = set(self.default_immediate_commands)
         # Register commands needed before config file is loaded
-        handlers = ['M108', 'FEATHER_ABORT', 'M110', 'M112', 'M115',
+        handlers = ['M108', 'M110', 'M112', 'M115',
                     'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP', 'NOOP']
         for cmd in handlers:
             func = getattr(self, 'cmd_' + cmd)
@@ -165,6 +171,13 @@ class GCodeDispatch:
                 "mux command %s %s %s already registered (%s)" % (
                     cmd, key, value, prev_values))
         prev_values[value] = func
+    def register_immediate_command(self, cmd):
+        """Allow a registered command to run ahead of the G-code mutex."""
+        if cmd not in self.ready_gcode_handlers:
+            raise self.printer.config_error(
+                "gcode command %s must be registered before it is immediate"
+                % (cmd,))
+        self.immediate_commands.add(cmd)
     def get_command_help(self):
         return dict(self.gcode_help)
     def get_status(self, eventtime):
@@ -241,7 +254,11 @@ class GCodeDispatch:
         lines = []
         immediate = []
         for line in script.split('\n'):
-            if self.immediate_cmds_r.match(line.strip()):
+            match = self.command_name_r.match(line.strip())
+            immediate_commands = getattr(
+                self, "immediate_commands", self.default_immediate_commands)
+            if (match is not None
+                    and match.group(1).upper() in immediate_commands):
                 immediate.append(line)
             else:
                 lines.append(line)
@@ -286,8 +303,6 @@ class GCodeDispatch:
         r'(?P<cmd>[a-zA-Z_][a-zA-Z0-9_]+)(?:\s+|$)'
         r'(?P<args>[^#*;]*?)'
         r'\s*(?:[#*;].*)?$')
-    immediate_cmds = [ "M108", "FEATHER_ABORT", "TONE", "ALARM", "BEEP" ]
-    immediate_cmds_r = re.compile(r'^(' + '|'.join(re.escape(cmd) for cmd in immediate_cmds) + r')(?:\s|$)', re.IGNORECASE)
     def _get_extended_params(self, gcmd):
         m = self.extended_r.match(gcmd.get_commandline())
         if m is None:
@@ -358,31 +373,6 @@ class GCodeDispatch:
         wait_cmd.variables = dict(wait_cmd.variables)
         wait_cmd.variables["cancel"] = True
         self.respond_raw("Set cancellation flag for _WAIT_TEMPERATURE!")
-
-    cmd_FEATHER_ABORT_help = "Request cooperative cancellation of START_PRINT"
-    def cmd_FEATHER_ABORT(self, gcmd):
-        """Set cancellation flags without waiting for the G-code mutex.
-
-        START_PRINT may hold the dispatcher while G28, leveling, or a
-        temperature wait is running.  The macro observes this flag at safe
-        boundaries; an active temperature wait is interrupted immediately.
-        """
-        flow = self.printer.lookup_object("gcode_macro _PRINT_FLOW", None)
-        if flow is None or "cancel_requested" not in flow.variables:
-            raise self.error("_PRINT_FLOW is not configured")
-        if not flow.variables.get("active", False):
-            self.respond_raw("There is no active START_PRINT flow")
-            return
-        flow.variables = dict(flow.variables)
-        flow.variables["cancel_requested"] = True
-
-        wait_cmd = self.printer.lookup_object(
-            "gcode_macro _WAIT_TEMPERATURE", None)
-        if (wait_cmd is not None
-                and wait_cmd.variables.get("active", False)):
-            wait_cmd.variables = dict(wait_cmd.variables)
-            wait_cmd.variables["cancel"] = True
-        self.respond_raw("Feather cancellation requested")
 
     def cmd_M110(self, gcmd):
         # Set Current Line Number

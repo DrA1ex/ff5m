@@ -1,232 +1,167 @@
 # Screen Configuration
 
-The stock screen implementation on the Flashforge AD5M (Pro) is not optimized for direct interaction with Fluidd or Moonraker. 
-This is because FlashForge's firmware is designed to work exclusively with its own services and does not handle external control well.
+The FlashForge Stock screen is tightly coupled to the vendor services. It is convenient for the original workflow, but direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze the vendor application, and the screen consumes considerably more memory than the lightweight alternatives.
 
-For example, you can't just do `RESTART` or `SAVE_CONFIG` via Klipper's console — it freezes the screen, and you have to reboot the printer afterward because you can't do anything with a frozen firmware application.
+Forge-X supports four display modes:
 
-Also, the screen consumes a lot of RAM — about 7-15 MiB—and with the printer's limited memory of just 128 MiB, it's a dealbreaker.
+| Mode | Use it when |
+| --- | --- |
+| `STOCK` | You want the original FlashForge screen, upload path, and vendor workflow. |
+| `FEATHER` | You want Forge-X's lightweight local touchscreen controls. |
+| `GUPPY` | You prefer the separate Guppy touchscreen interface. |
+| `HEADLESS` | You control the printer remotely or provide your own display process. |
 
-However, we don't have to use the stock screen. To free up resources, we can run the printer headless (in early mod builds) or use the alternative Feather screen implementation.
+> [!WARNING]
+> Do not change display mode during a print. Before switching, make sure you have a working network connection or a recovery route through [Dual Boot](DUAL_BOOT.md).
 
 ## Alternative Screens
 
-If you want to reduce memory usage and don't need the full functionality of the stock screen, you can switch to one of the alternative screens included in the mod. These options use much less memory and focus on displaying the most important information, which is helpful for larger prints or when using extra modifications.
+### Stock screen
 
-Here's what each option does:
+The Stock screen keeps the original FlashForge services and workflows. Enable **Settings → Network → Network Mode → LAN-mode** if you use Fluidd, Mainsail, slicer upload, or Forge-X features that communicate with the vendor API.
+
+When using the Stock screen:
+
+- the persistent bed-mesh profile is `MESH_DATA`;
+- Z offset is managed by the vendor workflow;
+- use `NEW_SAVE_CONFIG`, not `SAVE_CONFIG` or `RESTART`.
 
 ### Feather Screen
 
-Feather is Forge-X's lightweight interactive screen. It displays print status,
-temperatures, and estimated time while also supporting:
+Feather is Forge-X's built-in low-resource touchscreen. Unlike the early display-only implementation, current Feather versions provide the main local workflows needed for everyday printing.
 
-- browsing uploaded G-code files and starting a print;
-- pausing, resuming, and cancelling a print;
-- progress, elapsed/estimated time, layer metadata and macro status;
-- guided PLA/PETG/ABS/ABS-PC filament loading during idle or pause;
-- homing and safe XYZ movement while idle, using either fixed jog steps or
-  acceleration-limited XY/Z joystick controls;
-- preheat presets plus heater and part-fan control while idle;
-- first-layer Z adjustment, bed-screw guidance and an `auto` bed-mesh workflow;
-- brightness, ECO brightness and sound settings;
-- browsing and editing Forge-X mod parameters with switches, option selectors,
-  and numeric or text input;
-- Wi-Fi scanning/password entry and Ethernet DHCP selection;
-- local Restore/Cleanup/Later handling for Power Loss Recovery.
+#### Home screen and navigation
 
-Feather deliberately remains smaller than a full desktop-style UI. File deletion,
-static IP configuration, enterprise/hidden Wi-Fi, PID/input-shaper tuning and
-unrestricted G-code remain
-available through Fluidd/Mainsail or the documented console workflows.
+The home screen shows the current job, nozzle and bed state, material, toolhead, network, and the previous print. The main menu provides direct access to printing, printer controls, filament handling, calibration, networking, and settings.
 
-Every page has a compact footer with actual/target nozzle and bed temperatures,
-network/IP and current printer state. After 60 seconds without touch the panel
-uses the persisted `backlight_eco` value. The first touch after dimming only wakes
-the panel; it never activates the button underneath.
+The first touch after the panel dims only wakes the display; it does not activate the control under the finger.
 
-Filament extrusion buttons remain disabled until Klipper reports
-`min_extrude_temp`. Live Z adjustment is intentionally unavailable without layer
-metadata and closes after layer 1. Bed mesh always replaces profile `auto`; once
-the existing leveling macro starts, Feather does not offer an unsafe partial
-cancel.
+#### Local files and print control
 
-The dashboard remembers the latest material selected by Feather, `LOAD_MATERIAL`,
-`PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...`. Until a material is selected
-it displays `n/a`. The value is stored with the other Forge-X parameters and
-survives Klipper and printer restarts.
+Feather can browse G-code stored on the printer or on a connected USB drive. It supports folders, multi-page file lists, refresh, file information, print confirmation, and a recent-print list.
 
-Touch, dim/wake, actions, rejected input, backlight changes, and long Feather
-operations are written to Klipper's normal `printer.log` with the
-`[feather_screen]` prefix. The same log is available from Fluidd for diagnostics.
+During a print, Feather shows progress, elapsed and remaining time, layer and height information. It provides pause, resume, filament change, live Z adjustment, and guarded cancellation. Cancellation is also available while the printer is preparing a job, including homing, leveling, heating, and priming.
+
+#### Movement, heating, and lighting
+
+Feather provides both step movement and joystick movement. The printer must be in an appropriate idle state, and movement is kept within the configured limits. Separate controls are available for homing, nozzle and bed heating, material preheat, cooldown, the part-cooling fan, and chamber-light brightness. Hardware-active pages provide emergency-stop access.
+
+#### Filament and calibration
+
+Material presets are shared with the Forge-X filament macros. Feather remembers the selected material and provides guided loading, unloading, purging, and filament-change actions, including during a paused print.
+
+The Calibration page includes guided workflows for bed screws, bed mesh, Safe Z, Z offset, extruder feed, PID, and Input Shaper. Follow the instructions on the screen and review the result before saving it.
+
+#### Network, settings, and themes
+
+Feather can scan for Wi-Fi networks, enter normal WPA/WPA2-PSK credentials with the on-screen keyboard, configure DHCP Ethernet, and show the active connection, signal, and IP address. Static addressing and enterprise Wi-Fi still require advanced configuration outside Feather.
+
+Feather Settings provides display brightness, chamber-light level, sound feedback, Forge-X parameters, and theme selection. Settings that require a Klipper or printer restart are identified before they are applied.
+
+Advanced operations such as unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics remain in Fluidd or Mainsail.
+
+Feather can operate without a network after configuration. It uses the `auto` bed-mesh profile. Recreate or rename the persistent mesh after switching from Stock mode.
 
 ### Guppy Screen
 
-Guppy is also resource-friendly, but in addition to showing print information, it allows you to control the printer directly from the screen. You can pause, resume, or cancel prints using Guppy, making it a good choice if you want some interactive features while still saving memory.
+Guppy provides a separate interactive touchscreen interface with lower resource usage than the Stock screen. It can control printing and common printer functions, but its workflows and feature coverage differ from Feather.
+
+Guppy uses the `auto` bed-mesh profile and relies on Moonraker-compatible upload and control paths rather than the FlashForge vendor services.
+
+### Headless mode
+
+Headless mode disables the local UI and is intended for remote control or a custom display implementation. Make sure networking and remote access work before enabling it.
+
+Headless mode also uses the `auto` bed-mesh profile. Z offset, camera, and print control must be handled through Forge-X, Fluidd/Mainsail, or your own integration.
 
 ### Switching to Alternative Screens / Headless
 
-**Disabling the stock screen completely disables FlashForge's additional software.**  
+#### Switching to Feather Screen
 
-However, the printer still operates via Klipper, so the actual printing process remains largely unchanged, though some workflows may behave differently.
+Run one of these commands from the console:
 
-Since FlashForge's software won’t start, you can no longer upload G-code or control the printer through FlashPrint or FlashForge Orca, as the required services will not be running.
-
-Instead, you must use the **Moonraker protocol** for uploading files and managing print jobs. Learn more in the [Slicing](/docs/SLICING.md) section.
-
-The printer will also **no longer load** the `MESH_DATA` bed profile and will instead use the `auto` profile. **Be sure** to save your bed mesh using the name `auto`.
-
-FlashForge’s software also handled **Z-Offset** — a feature not native to Klipper. After switching, you’ll need to manage Z-Offset manually. See the [Printing](/docs/PRINTING.md#z-offset) section for details.
-
-The stock screen also controls the camera, so you’ll need to use Forge-X’s camera controls instead. Learn more in the [Camera](/docs/CAMERA.md) section.
-
-
-To enable the Feather screen and free up system resources, set the following mod parameter:
-
-```bash
-SET_MOD PARAM="display" VALUE="FEATHER"
+```gcode
+SET_MOD PARAM=display VALUE=FEATHER
+SET_MOD PARAM=display VALUE=GUPPY
+SET_MOD PARAM=display VALUE=HEADLESS
+SET_MOD PARAM=display VALUE=STOCK
 ```
 
-To enable the Guppy screen, set the following mod parameter:
+Switching away from Stock stops the FlashForge companion services. As a result:
 
-```bash
-SET_MOD PARAM="display" VALUE="GUPPY"
-```
+- FlashPrint and FlashForge Orca vendor upload/control paths are unavailable;
+- upload and control jobs through the [Moonraker slicing workflow](SLICING.md);
+- the persistent mesh changes from `MESH_DATA` to `auto`;
+- use the non-stock [Z-offset workflow](CALIBRATION.md#z-offset-calibration);
+- use Forge-X camera control instead of the Stock screen camera service.
 
-This will disable the stock screen and activate the selected alternative screen immediately. **Make sure to wait until the current print finishes before doing this! :)**
+For Guppy or Headless, configure Wi-Fi or Ethernet before disabling the Stock screen. Feather can configure normal DHCP Ethernet and WPA/WPA2-PSK Wi-Fi itself. Static addressing and enterprise Wi-Fi require advanced configuration outside Feather.
 
-To switch back to the stock screen, run this command:
+If the selected mode leaves the printer inaccessible:
 
-```bash
-SET_MOD PARAM="display" VALUE="STOCK"
-```
+1. Boot through the [Dual Boot recovery route](DUAL_BOOT.md).
+2. Restore `STOCK` mode with the console or configuration script.
 
-If you want to free up more resources (usually you don't need this) or run a custom screen implementation yourself, run this command:
+From SSH or a recovery shell, the mode can also be changed directly:
 
-```bash
-SET_MOD PARAM="display" VALUE="HEADLESS"
-```
-
-> [!NOTE]
-> Feather can boot and control the printer without a network connection. Use its
-> **Network** page to scan for a WPA/WPA2-PSK Wi-Fi network or select Ethernet.
-> Existing stock Wi-Fi configuration is still reused until Feather saves a new
-> network. The active Wi-Fi configuration remains `/etc/wpa_supplicant.conf`.
-
-> [!WARNING]
-> Only DHCP mode is supported!
-
-**If you lose access** to the printer after disabling the screen, flash this image:  
-- [Adventurer5M-ForgeX-feather-off.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-ForgeX-feather-off.tgz)   
-
-Rename it to match your printer version.
-
-**Alternatively**, you can temporarily prevent the mod from booting using the [Dual Boot](/docs/DUAL_BOOT.md) option.   
-Then edit the `variables.cfg` file to disable the `display` parameter manually:
-
-```bash
-# Enable stock screen using script
+```sh
+# Enable Stock
 /opt/config/mod/.shell/commands/zdisplay.sh stock
 
-# Enable feather screen using script
+# Enable Feather
 /opt/config/mod/.shell/commands/zdisplay.sh feather
 
-# Enable guppy screen using script
+# Enable Guppy
 /opt/config/mod/.shell/commands/zdisplay.sh guppy
 
-# Enable headless mode using script
+# Enable Headless
 /opt/config/mod/.shell/commands/zdisplay.sh headless
-
-# Or change parameter in variables.cfg using this script
-/opt/config/mod/.shell/commands/zconf.sh /opt/config/mod_data/variables.cfg --set "display='STOCK'"
-
-# Or edit manually
-nano /opt/config/mod_data/variables.cfg
 ```
 
+As a last resort, update the stored parameter:
+
+```sh
+/opt/config/mod/.shell/commands/zconf.sh /opt/config/mod_data/variables.cfg --set "display='STOCK'"
+```
 
 ### Extending Screen Functionality
 
-The Feather screen is not a monolithic application but rather a flexible system that can be extended to display additional information.
-To customize or extend the screen's functionality, you can use the typer tool, located at `/root/printer_data/bin/typer`.
-This tool allows you to draw or print information on the screen.
+Feather uses the `typer` renderer at `/root/printer_data/bin/typer`. The renderer supports text, shapes, buffered batches, and touch regions; see the [Typer documentation](TYPER.md).
 
-To see usage instructions, run:
-```bash
-/root/printer_data/bin/typer --help
-```
+Do not start a second Typer process while Feather is active. Concurrent framebuffer or pipe access can corrupt the UI. For a custom full-screen implementation, switch to `HEADLESS` and test it while the printer is idle.
 
-Feather adds interaction without turning `typer` into a printer-control service:
-`typer` only renders and reports named touch hitboxes. The Klipper plugin owns UI
-state, validates printer state, and executes reviewed macros.
+Useful implementation references in the full repository include:
 
-Documentation for `typer` is available here: [link](/docs/TYPER.md)   
-
-For examples you can view [feather.cfg](/config/feather.cfg) for macros and [screen.sh](/.shell/screen.sh) script.
-Implementation of Feather itself you can find in [feather_screen.py](/.py/klipper/plugins/feather_screen.py)
-with page groups in
-[feather_screen_pages.py](/.py/klipper/plugins/feather_screen_pages.py),
-[feather_screen_controls.py](/.py/klipper/plugins/feather_screen_controls.py).
-Renderer/layout helpers remain in
-[feather_ui.py](/.py/klipper/plugins/feather_ui.py).
-The lightweight mod-parameter editor helpers live in
-[feather_mod_settings.py](/.py/klipper/plugins/feather_mod_settings.py).
-Joystick normalization, inertia and boundary braking are kept in
-[feather_joystick.py](/.py/klipper/plugins/feather_joystick.py); motion remains
-inside the Klipper process and does not add an idle service.
-
-### Feather Color Themes
-
-Feather ships its palettes as standalone schema-versioned JSON files. Bundled
-themes include Default, Cyberpunk Red/Yellow, Ocean, Dark, Synth, Forest,
-Aurora, the Fallout 2-era **Pip-Boy 2000**, and the Fallout 4-style
-**Pip-Boy 3000**. Select them from the normal Feather Settings page or the
-Forge-X mod parameters.
-
-Custom themes can be added to `/opt/config/mod_data/themes`. Use
-[`theme.schema.json`](/.py/klipper/plugins/feather_themes/theme.schema.json) as
-the format reference; opening the theme selector reloads both bundled and user
-directories. Themes may optionally define separate `button_*` and `header_*`
-component colors. When omitted, Feather derives them from the original panel,
-primary, secondary, and border roles, so existing version 1 themes remain
-compatible.
+- `/.py/klipper/plugins/feather_screen.py` — Feather controller and UI integration;
+- `/config/feather.cfg` — related macros and configuration;
+- `/.shell/screen.sh` — display startup integration.
 
 ### Custom Loading and Splash Screens
 
-Set any image as your splash/loading screen.
+Choose a bundled Feather theme from Feather Settings. Custom theme JSON files can be placed in:
 
-The checked-in Feather screens are generated reproducibly from
-`.bin/src/splash/generate.py`. Pillow is needed only on the development machine;
-it is not installed on the printer:
-
-```sh
-python3 -m pip install Pillow
-python3 .bin/src/splash/generate.py \
-  --font /path/to/monospace.ttf \
-  --bold-font /path/to/monospace-bold.ttf \
-  --preview-dir docs/images
+```text
+/opt/config/mod_data/themes
 ```
 
-This updates `splash.img.xz` and `load.img.xz` in the repository root and
-optionally writes the `forge-x-splash.png`, `forge-x-loading.png`, and separate
-`feather-splash.png` previews. The first two are system-wide Forge-X screens;
-Feather branding is intentionally kept separate. The generator validates the
-required `800×480×4` BGRA framebuffer size before XZ compression. The lower
-130 pixels of the loading image stay empty because `screen.sh` uses them for
-five boot-log rows and uptime.
+Use a bundled theme file as the schema reference.
 
-For a custom externally-created image:
+For a custom boot image:
 
-- Create PNG image (800×480)
-- Convert to raw bgra with xz compression:
+1. Create an 800 × 480 PNG.
 
 #### Example of Conversion (ImageMagick)
 
-```sh
-convert -size 800x480 xc:none ./splash.png -geometry +0+0 -composite -depth 8 bgra:- | xz -c > "splash.img.xz"
-```
+2. Convert it to compressed BGRA, for example with ImageMagick:
+
+   ```sh
+   convert -size 800x480 xc:none splash.png -geometry +0+0 -composite -depth 8 bgra:- | xz -c > splash.img.xz
+   ```
 
 #### Installation
 
-Place in `Fluidd Config → mod_data`:   
-- Loading screen: `load.img.xz`   
-- Splash screen: `splash.img.xz`   
+3. Upload the file to `mod_data` in Fluidd:
+   - `splash.img.xz` — splash image;
+   - `load.img.xz` — loading image.
+
+Keep the lower area of the loading image clear so boot messages remain readable.

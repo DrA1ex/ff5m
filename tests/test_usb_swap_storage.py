@@ -620,7 +620,7 @@ class UsbStorageTest(unittest.TestCase):
         result = self._run_prepare("prompt")
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("Found %s: 512.0 MiB" % (self.dev / "sda"), result.stdout)
+        self.assertRegex(result.stdout, r"Found %s: 512[.,]0 MiB" % re.escape(str(self.dev / "sda")))
         self.assertIn("FAT32 (recommended)|_PREPARE_USB_CONFIRM", result.stdout)
         self.assertIn("Linux EXT|_PREPARE_USB_CONFIRM", result.stdout)
         self.assertLess(

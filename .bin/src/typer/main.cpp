@@ -22,6 +22,7 @@
 #include "../common/text.h"
 #include "interactive.h"
 #include "batch_protocol.h"
+#include "font_manifest.h"
 #include "framebuffer.h"
 
 
@@ -305,6 +306,8 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
     result->program.add_argument("--debug").flag();
     result->program.add_argument("--double-buffered", "-db").flag();
     result->program.add_argument("--list-fonts").help("List loaded fonts and exit.").flag();
+    result->program.add_argument("--font-manifest")
+        .help("Print the font-metrics/v1 JSON manifest and exit.").flag();
     result->program.add_argument("--touch-device")
         .default_value("")
         .help("Read normalized Linux input events from this device.");
@@ -589,6 +592,11 @@ int main(int argc, char *argv[]) {
         }
 
         return 1;
+    }
+
+    if (main->program.get<bool>("--font-manifest")) {
+        std::cout << typer::font_manifest::build(fonts);
+        return 0;
     }
 
 #ifdef __linux__

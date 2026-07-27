@@ -120,7 +120,8 @@
       "type": "bool",
       "default": 0,
       "label": "Klipper real-time priority (SCHED_RR)",
-      "description": "Give Klipper low real-time CPU priority."
+      "description": "Give Klipper low real-time CPU priority.",
+      "restart": "klipper"
     },
     {
       "key": "tune_klipper",
@@ -128,6 +129,7 @@
       "default": 0,
       "label": "Tune klipper parameters",
       "description": "Apply Forge-X Klipper compatibility tuning.",
+      "restart": "printer",
       "deprecated": {
         "key": "fix_e0017",
         "mapping": {
@@ -175,6 +177,15 @@
       "label": "Z-OFFSET",
       "description": "Set the saved nozzle-to-bed Z offset.",
       "order": 10002
+    },
+    {
+      "key": "safe_z",
+      "type": "float",
+      "default": 10.0,
+      "label": "Safe Z height, mm",
+      "description": "Set the absolute Z height used before lateral parking and calibration moves.",
+      "warning": "Bed leveling and a non-standard nozzle can reduce the real nozzle-to-bed clearance. Use a value that is safe for your printer and verify Z-offset calibration after changing the bed or nozzle.",
+      "order": 10003
     },
     {
       "key": "sound",
@@ -329,6 +340,7 @@
       "default": "STOCK",
       "label": "Display",
       "description": "Choose the active local screen.",
+      "restart": "klipper",
       "options": {
         "STOCK": "Use Stock Screen",
         "FEATHER": "Use Feather Screen",
@@ -415,6 +427,7 @@
       "default": 0,
       "label": "Firmware parameter tuning",
       "description": "Apply tuned Forge-X printer parameters.",
+      "restart": "klipper",
       "order": 15,
       "warning": "!! After changing the value, be sure to recreate the bed mesh and adjust the Z-Offset.\n!! If you have performed dimension calibration, it must also be updated.\n!! Additionally, you may need to recalibrate the flow and Pressure Advance.\n!! Printing with an old bed mesh or Z-Offset may damage the printer!\nYou can view the changing parameters in the Configuration -> 'mod' -> 'tuning.cfg' section."
     },
@@ -448,6 +461,7 @@
       "default": 0,
       "label": "Enable Power Loss Recovery Feature",
       "description": "Offer recovery after unexpected power loss.",
+      "restart": "klipper",
       "order": 30000
     }
   ]
