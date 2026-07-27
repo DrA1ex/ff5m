@@ -91,6 +91,13 @@ RESURRECT_ABORT
 
 `RESURRECT` validates the file and saved state, loads the saved mesh and virtual-SD position, restores selected motion/fan/pressure-advance state found in the G-code, homes, tares the load cell, returns to position, and resumes. `RESURRECT_ABORT` performs cleanup instead. This procedure can move a hot printer and is explicitly emergency recovery rather than a substitute for stable power. Follow the warnings and monitoring procedure in [`docs/PRINTING.md`](../../docs/PRINTING.md#power-loss-recovery); a UPS remains the reliable solution.
 
+Pause-safe checkpoints do not require a patched `virtual_sdcard`. The shared
+`PAUSE` macro calls the private `_RESURRECTION_PAUSE` marker immediately before
+`PAUSE_BASE`, and `RESUME` calls `_RESURRECTION_RESUME` immediately after a
+successful `RESUME_BASE`. A third-party macro set should preserve that ordering.
+Both calls are guarded by the `resurrection.supports_pause_markers` status field,
+so the same macros remain compatible when the extension is absent or older.
+
 ## `feather_screen`: alternative display integration
 
 [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is loaded only in the Feather configuration (`SET_MOD PARAM=display VALUE=FEATHER`). It starts the bundled `typer` renderer, sends drawing commands through `/tmp/typer`, and receives named touch actions through `/tmp/feather-events`. The plugin owns the UI state machine and validates printer state before starting files, invoking pause/resume/cancel macros, moving homed axes, controlling heaters/fan, or starting an asynchronous network operation.

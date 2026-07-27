@@ -382,6 +382,134 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             self.assertEqual(checkpoint["position"], [1., 2., 3., 4.])
             self.assertEqual(resurrector._checkpoint_cache, checkpoint)
 
+    def test_pause_freezes_pre_park_checkpoint_until_position_is_restored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gcode_path = os.path.join(directory, "part.gcode")
+            checkpoint_path = os.path.join(directory, "resurrection.json")
+            with open(gcode_path, "wb") as stream:
+                stream.write(b"G90\nM82\n")
+
+            toolhead_status = {
+                "position": [10., 20., 3.25, 4.],
+            }
+            print_stats_status = {"state": "printing"}
+            sd_status = {
+                "file_path": gcode_path,
+                "file_position": 4,
+                "file_size": 8,
+            }
+
+            resurrector = RESURRECTION.Resurrector.__new__(
+                RESURRECTION.Resurrector)
+            resurrector.enabled = True
+            resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+            resurrector._pause_checkpoint_active = False
+            resurrector._resume_pending = False
+            resurrector.dump_time = 3.
+            resurrector.file_path = checkpoint_path
+            resurrector.reactor = CooperativeReactor()
+            resurrector.print_stats = type("Stats", (), {
+                "get_status": lambda self, eventtime: print_stats_status,
+            })()
+            resurrector.start_print_macro = type("Start", (), {
+                "variables": {"print_started": True},
+            })()
+            resurrector.virtual_sdcard = type("SD", (), {
+                "get_status": lambda self, eventtime: sd_status,
+                "is_cmd_from_sd": lambda self: False,
+                "get_file_position": lambda self: 8,
+            })()
+            resurrector.toolhead = type("Toolhead", (), {
+                "get_status": lambda self, eventtime: toolhead_status,
+            })()
+            resurrector.extruder = type("Extruder", (), {
+                "get_status": lambda self, eventtime: {"target": 220.},
+            })()
+            resurrector.heater_bed = type("Bed", (), {
+                "get_status": lambda self, eventtime: {"target": 60.},
+            })()
+            resurrector.bed_mesh = type("Mesh", (), {
+                "get_status": lambda self, eventtime: {
+                    "profile_name": "auto",
+                },
+            })()
+            resurrector.gcode_move = type("Move", (), {
+                "get_status": lambda self, eventtime: {
+                    "homing_origin": [0., 0., -.08],
+                },
+            })()
+            resurrector._checkpoint_cache = None
+            resurrector._checkpoint_cache_loaded = False
+
+            resurrector.cmd_RESURRECTION_PAUSE(Command())
+
+            self.assertTrue(resurrector._pause_checkpoint_active)
+            self.assertEqual(
+                resurrector.state, RESURRECTION.ResurrectorState.PAUSED)
+            with open(checkpoint_path) as stream:
+                paused_checkpoint = json.load(stream)
+            self.assertEqual(paused_checkpoint["position"][2], 3.25)
+
+            # A PAUSE command originating in the SD worker remains
+            # "printing" while the surrounding macro parks the toolhead.
+            toolhead_status["position"] = [0., 0., 25., 4.]
+            resurrector._dump_timer_handler(resurrector.reactor.monotonic())
+            with open(checkpoint_path) as stream:
+                parked_checkpoint = json.load(stream)
+            self.assertEqual(parked_checkpoint, paused_checkpoint)
+
+            print_stats_status["state"] = "paused"
+            resurrector._dump_timer_handler(resurrector.reactor.monotonic())
+            with open(checkpoint_path) as stream:
+                long_pause_checkpoint = json.load(stream)
+            self.assertEqual(long_pause_checkpoint, paused_checkpoint)
+
+            # RESUME_BASE restores PAUSE_STATE before the recovery resume
+            # marker runs.
+            toolhead_status["position"] = [10., 20., 3.25, 4.]
+            resurrector.cmd_RESURRECTION_RESUME(Command())
+            with open(checkpoint_path) as stream:
+                resumed_checkpoint = json.load(stream)
+            self.assertEqual(resumed_checkpoint["position"][2], 3.25)
+            self.assertFalse(resurrector._pause_checkpoint_active)
+            self.assertTrue(resurrector._resume_pending)
+            self.assertEqual(
+                resurrector.state, RESURRECTION.ResurrectorState.PRINTING)
+
+            # print_stats is updated by the SD worker.  If the periodic timer
+            # runs first, it must not mistake this transition for a new pause.
+            resurrector._dump_timer_handler(
+                resurrector.reactor.monotonic())
+            self.assertFalse(resurrector._pause_checkpoint_active)
+            self.assertTrue(resurrector._resume_pending)
+
+            print_stats_status["state"] = "printing"
+            resurrector._dump_timer_handler(
+                resurrector.reactor.monotonic())
+            self.assertFalse(resurrector._resume_pending)
+
+    def test_observed_pause_keeps_last_periodic_checkpoint(self):
+        resurrector = RESURRECTION.Resurrector.__new__(
+            RESURRECTION.Resurrector)
+        resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+        resurrector._pause_checkpoint_active = False
+        resurrector._resume_pending = False
+        resurrector.dump_time = 3.
+        resurrector.print_stats = type("Stats", (), {
+            "get_status": lambda self, eventtime: {"state": "paused"},
+        })()
+        resurrector.start_print_macro = type("Start", (), {
+            "variables": {"print_started": True},
+        })()
+        resurrector._dump = mock.Mock()
+
+        resurrector._dump_timer_handler(100.)
+
+        resurrector._dump.assert_not_called()
+        self.assertTrue(resurrector._pause_checkpoint_active)
+        self.assertEqual(
+            resurrector.state, RESURRECTION.ResurrectorState.PAUSED)
+
     def test_checkpoint_accepts_nested_virtual_sd_path(self):
         with tempfile.TemporaryDirectory() as directory:
             nested = os.path.join(directory, "models")
@@ -550,6 +678,37 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         self.assertTrue(any(
             "preparation failed" in response
             for response in command.responses))
+
+
+class RecoveryMacroIntegrationTest(unittest.TestCase):
+    def test_pause_and_resume_markers_bracket_base_operations(self):
+        macro_path = pathlib.Path(__file__).parents[1] / "macros" / "client.cfg"
+        contents = macro_path.read_text(encoding="utf-8")
+        pause = contents.split("[gcode_macro PAUSE]", 1)[1].split(
+            "[gcode_macro RESUME]", 1)[0]
+        resume = contents.split("[gcode_macro RESUME]", 1)[1].split(
+            "[gcode_macro SET_PAUSE_NEXT_LAYER]", 1)[0]
+        pause = pause.split("gcode:", 1)[1]
+        resume = resume.split("gcode:", 1)[1]
+
+        self.assertLess(
+            pause.index("_RESURRECTION_PAUSE"),
+            pause.index("PAUSE_BASE"))
+        self.assertLess(
+            resume.index("RESUME_BASE"),
+            resume.index("_RESURRECTION_RESUME"))
+        self.assertIn("supports_pause_markers", pause)
+        self.assertIn("supports_pause_markers", resume)
+
+    def test_virtual_sdcard_has_no_recovery_specific_integration(self):
+        virtual_sd_path = (
+            pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
+            "patches" / "extras" / "virtual_sdcard.py")
+        contents = virtual_sd_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("resurrection", contents.lower())
+        self.assertNotIn("virtual_sdcard:pause", contents)
+        self.assertNotIn("virtual_sdcard:resume", contents)
 
 
 if __name__ == "__main__":

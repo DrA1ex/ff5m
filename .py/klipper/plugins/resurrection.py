@@ -50,6 +50,9 @@ class Resurrector:
 
         self.dump_time = config.getfloat("dump_time", 3., minval=1.)
         self.file_path = config.get("filename")
+        self.enabled = False
+        self._pause_checkpoint_active = False
+        self._resume_pending = False
         self._checkpoint_cache = None
         self._checkpoint_cache_loaded = False
         self._worker = None
@@ -60,6 +63,10 @@ class Resurrector:
 
         self.gcode.register_command("RESURRECT", self.cmd_RESURRECT)
         self.gcode.register_command("RESURRECT_ABORT", self.cmd_RESURRECT_ABORT)
+        self.gcode.register_command(
+            "_RESURRECTION_PAUSE", self.cmd_RESURRECTION_PAUSE)
+        self.gcode.register_command(
+            "_RESURRECTION_RESUME", self.cmd_RESURRECTION_RESUME)
 
     def get_status(self, eventtime):
         """Return a small, path-safe summary for local displays.
@@ -70,6 +77,7 @@ class Resurrector:
         result = {
             "state": self.state.name.lower(),
             "available": self.state == ResurrectorState.RESURRECTION,
+            "supports_pause_markers": True,
             "filename": "",
             "progress": 0.0,
             "extruder_target": 0.0,
@@ -120,6 +128,7 @@ class Resurrector:
         self.gcode_move = self.printer.lookup_object("gcode_move")
 
         self.start_print_macro = self.printer.lookup_object('gcode_macro _START_PRINT')
+        self.enabled = True
 
         if os.path.isfile(self.file_path):
             logging.info("[resurrection] Resurrection file exists.")
@@ -169,7 +178,10 @@ class Resurrector:
         stats = self.print_stats.get_status(eventtime)
         stats_state = stats["state"]
 
-        if stats_state == "printing" and self.start_print_macro.variables["print_started"]:
+        if (stats_state == "printing"
+                and self.start_print_macro.variables["print_started"]
+                and not self._pause_checkpoint_active):
+            self._resume_pending = False
             self._change_state(ResurrectorState.PRINTING)
         elif (stats_state in {"complete", "cancelled"}
               and self.state in {
@@ -177,6 +189,8 @@ class Resurrector:
                   ResurrectorState.PAUSED,
                   ResurrectorState.ERROR,
               }):
+            self._pause_checkpoint_active = False
+            self._resume_pending = False
             self._change_state(ResurrectorState.IDLE)
             self._clear(eventtime)
 
@@ -184,12 +198,23 @@ class Resurrector:
             if stats_state == "printing":
                 self._dump(eventtime)
             elif stats_state == "paused":
+                if self._resume_pending:
+                    return eventtime + self.dump_time
+                # Normally _RESURRECTION_PAUSE has already saved the exact
+                # pre-park position. If a custom PAUSE macro omitted the
+                # marker, keep the last periodic checkpoint instead of
+                # overwriting it with the parked toolhead coordinates.
+                self._pause_checkpoint_active = True
+                self._resume_pending = False
                 self._change_state(ResurrectorState.PAUSED)
-                self._dump(eventtime)
             elif stats_state == "error":
+                self._pause_checkpoint_active = False
+                self._resume_pending = False
                 self._change_state(ResurrectorState.IDLE)
                 self._dump(eventtime)
             elif stats_state == "idle":
+                self._pause_checkpoint_active = False
+                self._resume_pending = False
                 self._change_state(ResurrectorState.IDLE)
                 self._clear(eventtime)
 
@@ -199,6 +224,46 @@ class Resurrector:
         if self.state != new_state:
             logging.info(f"[resurrection] Change state: {self.state.name} -> {new_state.name}")
             self.state = new_state
+
+    def _print_has_started(self):
+        return bool(self.start_print_macro.variables["print_started"])
+
+    def cmd_RESURRECTION_PAUSE(self, gcmd):
+        if (not self.enabled or self.state == ResurrectorState.DESTROYED
+                or self._pause_checkpoint_active
+                or not self._print_has_started()):
+            return
+        eventtime = self.reactor.monotonic()
+        stats_state = self.print_stats.get_status(eventtime)["state"]
+        if stats_state != "printing":
+            return
+
+        # Freeze checkpoint updates before PAUSE_BASE captures state and the
+        # surrounding macro parks the toolhead.  For a PAUSE command coming
+        # from the SD file, _dump() uses next_file_position and therefore
+        # resumes at the following line instead of pausing again.
+        self._dump(eventtime)
+        self._pause_checkpoint_active = True
+        self._resume_pending = False
+        self._change_state(ResurrectorState.PAUSED)
+
+    def cmd_RESURRECTION_RESUME(self, gcmd):
+        if (not self.enabled or self.state == ResurrectorState.DESTROYED
+                or not self._pause_checkpoint_active):
+            return
+        if not self._print_has_started():
+            self._pause_checkpoint_active = False
+            self._resume_pending = False
+            return
+
+        # pause_resume restores PAUSE_STATE before virtual SD is resumed.
+        # Save that restored position before scheduling the next file line,
+        # then allow periodic checkpoints again.
+        eventtime = self.reactor.monotonic()
+        self._pause_checkpoint_active = False
+        self._resume_pending = True
+        self._change_state(ResurrectorState.PRINTING)
+        self._dump(eventtime)
 
     def _cancel_worker(self):
         worker = getattr(self, "_worker", None)
