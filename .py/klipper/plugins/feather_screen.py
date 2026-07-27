@@ -93,7 +93,7 @@ EXACT_ACTIONS = {
         "live_z.save", "live_z.warning.ok", "live_z.save.no",
         "live_z.save.yes"),
     Page.CALIBRATION_CONFIRM: ("nav.back", "cal.confirm", "cal.clean.skip"),
-    Page.CALIBRATION_PROGRESS: ("cal.cancel.heat", "cal.emergency_stop"),
+    Page.CALIBRATION_PROGRESS: ("cal.cancel.heat",),
     Page.CALIBRATION_RESULT: (
         "cal.repeat", "cal.done", "cal.mesh.discard", "cal.mesh.save"),
     Page.SETTINGS: ("nav.back", "settings.brightness.minus",
@@ -614,12 +614,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         # calibration redraw during the 80 ms touch animation would change the
         # hitbox generation and discard M108 before it reached the immediate
         # G-code handler.
-        if (action == "cal.emergency_stop"
-                and self.page == Page.CALIBRATION_PROGRESS
-                and self.calibration_kind in ("screws", "mesh", "z")):
+        if action in ("global.abort", "cal.emergency_stop"):
             logging.warning(
-                "[feather_screen] emergency stop requested during %s calibration",
-                self.calibration_kind)
+                "[feather_screen] immediate emergency stop requested page=%s",
+                self.page.name)
             self._run_immediate_command("M112")
             return
         if (action == "cal.cancel.heat"
@@ -714,6 +712,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
 
     def _dispatch_action(self, action):
         if self.print_state == PrintState.DESTROYED:
+            return
+        if action == "global.abort":
+            self._run_immediate_command("M112")
             return
         now = self.reactor.monotonic()
         if now - self.last_action_time < ACTION_DEBOUNCE:
@@ -834,6 +835,20 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     getattr(self, "renderer", None),
                     "output_frozen", False)):
             return
+        emergency = (
+            page in (
+                Page.PRINTING, Page.PAUSED,
+                Page.CONTROL_MOVE, Page.CONTROL_HEAT,
+                Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION,
+                Page.CANCEL_CONFIRM,
+                Page.CALIBRATION_PROGRESS, Page.LIVE_Z_OFFSET,
+                Page.Z_OFFSET_SUMMARY, Page.Z_OFFSET_BRIEFING,
+                Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER))
+        set_emergency = getattr(
+            getattr(self, "renderer", None),
+            "set_emergency_stop_visible", None)
+        if set_emergency is not None:
+            set_emergency(emergency)
         if (self.page == Page.CONTROL_MOVE
                 and (page != Page.CONTROL_MOVE
                      or getattr(self, "joystick_action", None) is not None)):

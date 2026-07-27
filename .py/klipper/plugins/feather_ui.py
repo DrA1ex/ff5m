@@ -205,6 +205,8 @@ class FeatherRenderer:
         self._retry_scheduled = False
         self._retry_scheduler = None
         self._busy_label = None
+        self._emergency_stop_visible = False
+        self._menu_suppressed = False
         self._output_frozen = False
 
     def set_retry_scheduler(self, scheduler):
@@ -924,6 +926,13 @@ class FeatherRenderer:
         if state not in ("disabled", "busy"):
             self._buttons[action] = (x, y, width, height, label, state, font,
                                      subtitle, layout)
+        if (action == "nav.menu"
+                and (self._busy_label is not None
+                     or self._emergency_stop_visible)):
+            self._menu_suppressed = True
+            return []
+        if action == "nav.menu":
+            self._menu_suppressed = False
         return self._button_commands(self._wire_action(action), x, y, width,
                                      height, label, state, font, subtitle,
                                      True, layout)
@@ -945,6 +954,9 @@ class FeatherRenderer:
         }
         border = tones.get(tone, COLOR_CYAN)
         commands = []
+        preserve_emergency = (
+            self._emergency_stop_visible
+            or "global.abort" in self._buttons)
         if modal:
             self._buttons = {}
             self._toggles = {}
@@ -974,6 +986,8 @@ class FeatherRenderer:
                     action, x + margin + index * (button_width + gap),
                     button_y, button_width, 42, label, state=state,
                     font="JetBrainsMono 8pt")
+        if modal and preserve_emergency:
+            commands += self._emergency_stop_commands()
         return commands
 
     def flash_button(self, action):
@@ -994,10 +1008,20 @@ class FeatherRenderer:
                                         state, font, subtitle, False, layout))
         return True
 
-    def begin_page(self, title, back=False):
+    def set_emergency_stop_visible(self, visible):
+        self._emergency_stop_visible = bool(visible)
+
+    def _emergency_stop_commands(self):
+        return self.button(
+            "global.abort", 648, 7, 132, 46, "ABORT",
+            state="danger", font="JetBrainsMono Bold 8pt")
+
+    def begin_page(self, title, back=False, abort=False):
         self._generation += 1
         self._buttons = {}
         self._toggles = {}
+        self._menu_suppressed = False
+        show_abort = self._emergency_stop_visible or bool(abort)
         commands = [
             "--batch clear-hitboxes",
             # Preserve the footer framebuffer. It is a persistent status area
@@ -1022,7 +1046,7 @@ class FeatherRenderer:
             self.fill(18, HEADER_BOTTOM, 764, 1, "header_border"),
             self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
         ]
-        if self._busy_label is not None:
+        if self._busy_label is not None and not show_abort:
             busy_label = self._busy_label
             commands += [
                 self.fill(622, 9, 160, 38, "header_background"),
@@ -1031,6 +1055,8 @@ class FeatherRenderer:
                           "JetBrainsMono Bold 8pt", "center", "middle",
                           max_width=132, truncate=True),
             ]
+        if show_abort:
+            commands += self._emergency_stop_commands()
         if self._footer_values is not None and not self._footer_drawn:
             commands += self._footer_commands(self._footer_values)
             self._last_footer = self._footer_values
@@ -1072,6 +1098,9 @@ class FeatherRenderer:
         if label == self._busy_label:
             return
         self._busy_label = label
+        if (self._emergency_stop_visible
+                or "global.abort" in self._buttons):
+            return
         self.send([
             self.fill(622, 9, 160, 38, "header_background"),
             self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
@@ -1084,18 +1113,25 @@ class FeatherRenderer:
         if self._busy_label is None:
             return
         self._busy_label = None
+        if (self._emergency_stop_visible
+                or "global.abort" in self._buttons):
+            return
         menu = self._buttons.get("nav.menu")
         if menu is not None:
             x, y, width, height, label, state, font, subtitle, layout = menu
             self.send(self._button_commands(
                 "nav.menu", x, y, width, height, label, state, font,
-                subtitle, False, layout))
+                subtitle, self._menu_suppressed, layout))
+            self._menu_suppressed = False
         else:
             self.send([
                 self.fill(622, 9, 160, 38, "header_background")])
 
     def loader(self, message, phase=0):
         """Draw a non-interactive busy overlay for a yielding G-code call."""
+        preserve_emergency = (
+            self._emergency_stop_visible
+            or "global.abort" in self._buttons)
         self._buttons = {}
         commands = [
             "--batch clear-hitboxes",
@@ -1109,6 +1145,8 @@ class FeatherRenderer:
         for index in range(5):
             color = COLOR_CYAN if index == phase % 5 else "263238"
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
+        if preserve_emergency:
+            commands += self._emergency_stop_commands()
         self.send(commands)
 
     def startup_modal(self, phase=0, restarting=False):

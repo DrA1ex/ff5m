@@ -165,6 +165,27 @@ class ControllerSafetyTest(unittest.TestCase):
             controller._show_page(page)
             self.assertEqual(called, [method], page)
 
+    def test_active_print_keeps_menu_available_on_home_page(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller.page = FEATHER.Page.IDLE_HOME
+        drawing = []
+
+        def render_home():
+            commands = controller.renderer.begin_page("Home")
+            commands += controller.renderer.button(
+                "nav.menu", 648, 9, 132, 38, "MENU")
+            drawing.extend(commands)
+
+        controller._render_home = render_home
+
+        controller._show_page(FEATHER.Page.IDLE_HOME)
+
+        self.assertFalse(controller.renderer._emergency_stop_visible)
+        self.assertIn("nav.menu", "\n".join(drawing))
+        self.assertNotIn("global.abort", "\n".join(drawing))
+
     def test_dashboard_refresh_redraws_only_changed_panel(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.page = FEATHER.Page.IDLE_HOME
@@ -282,6 +303,11 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("+0.510 mm", drawing)
         self.assertIn("CLOSER  -0.005", drawing)
         self.assertIn("FARTHER  +0.005", drawing)
+        self.assertIn("global.abort", drawing)
+        self.assertIn("live_z.save", drawing)
+        self.assertFalse(UI.rectangles_overlap(
+            controller.renderer._buttons["global.abort"][:4],
+            controller.renderer._buttons["live_z.save"][:4]))
         self.assertIn("-c ff4d5a", drawing)
 
     def test_live_z_offset_load_warning_has_explicit_choice(self):
@@ -307,6 +333,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("AUTO LOAD IS OFF", drawing)
         self.assertIn("live_z.save.no", drawing)
         self.assertIn("live_z.save.yes", drawing)
+        self.assertIn("global.abort", controller.renderer._buttons)
 
     def test_weight_gauge_uses_history_and_expands_without_clamping(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -442,7 +469,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("stroke -p 335 225 -s 128 38 -c 263238", drawing)
         self.assertEqual(drawing.count("-c b47aff"), 2)
 
-    def test_calibration_heating_offers_m108_cancel_and_emergency_stop(self):
+    def test_calibration_heating_offers_m108_cancel_and_global_abort(self):
         for kind in ("screws", "mesh", "z"):
             with self.subTest(kind=kind):
                 controller = FEATHER.FeatherScreen.__new__(
@@ -464,8 +491,10 @@ class ControllerSafetyTest(unittest.TestCase):
                 drawing = "\n".join(batches[-1])
                 self.assertIn("cal.cancel.heat", drawing)
                 self.assertIn("CANCEL HEATING", drawing)
-                self.assertIn("cal.emergency_stop", drawing)
-                self.assertIn("EMERGENCY STOP", drawing)
+                self.assertIn("global.abort", drawing)
+                self.assertIn('ABORT', drawing)
+                self.assertIn(
+                    "--batch button -p 648 7 -s 132 46", drawing)
 
     def test_z_preparation_has_clean_and_no_clean_command_paths(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -790,7 +819,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(dispatched, [])
         self.assertFalse(controller.touch_feedback_pending)
 
-    def test_homing_progress_keeps_emergency_stop_registered(self):
+    def test_homing_progress_keeps_global_abort_registered(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "mesh"
@@ -809,11 +838,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
         drawing = "\n".join(batches[-1])
         self.assertIn("clear-hitboxes", drawing)
-        self.assertIn("cal.emergency_stop", drawing)
-        self.assertIn("EMERGENCY STOP", drawing)
-        self.assertIn("--batch button -p 235 335 -s 330 72", drawing)
+        self.assertIn("global.abort", drawing)
+        self.assertIn('ABORT', drawing)
+        self.assertIn("--batch button -p 648 7 -s 132 46", drawing)
 
-    def test_calibration_emergency_stop_bypasses_busy_and_touch_feedback(self):
+    def test_global_abort_bypasses_busy_and_touch_feedback(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.page = FEATHER.Page.CALIBRATION_PROGRESS
         controller.calibration_kind = "screws"
@@ -823,7 +852,7 @@ class ControllerSafetyTest(unittest.TestCase):
         immediate = []
         controller._run_immediate_command = immediate.append
 
-        controller._handle_touch_action("cal.emergency_stop")
+        controller._handle_touch_action("global.abort")
 
         self.assertEqual(immediate, ["M112"])
 
@@ -1120,6 +1149,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._update_print_progress = lambda eventtime: None
         controller._render_print_page()
         drawing = "\n".join(batches[0])
+        self.assertIn("--id 1:global.abort", drawing)
+        self.assertIn("--batch button -p 648 7 -s 132 46", drawing)
         self.assertIn("-p 605 355 -s 175 72", drawing)
         self.assertIn("--id 1:print.cancel", drawing)
         for label in ("PAUSE", "FILAMENT", "Z ADJUST", "CANCEL"):
@@ -1149,6 +1180,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("print.pause", controller.renderer._buttons)
         self.assertNotIn("print.filament", controller.renderer._buttons)
         self.assertIn("print.cancel", controller.renderer._buttons)
+        self.assertIn("global.abort", controller.renderer._buttons)
 
     def test_print_progress_shows_remaining_layer_and_height(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

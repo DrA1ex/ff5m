@@ -225,7 +225,8 @@ class FeatherZCalibrationMixin:
     """Render and execute the multi-stage idle Z-calibration workflow."""
     def _render_z_summary(self):
         session = self.z_calibration
-        commands = self.renderer.begin_page("Z offset zones", back=True)
+        commands = self.renderer.begin_page(
+            "Z offset zones", back=True, abort=True)
         geometry = {
             "rear_left": (75, 72, 210, 64),
             "center": (295, 72, 210, 64),
@@ -292,7 +293,8 @@ class FeatherZCalibrationMixin:
         self.renderer.send(commands)
 
     def _render_z_briefing(self):
-        commands = self.renderer.begin_page("Z offset calibration", back=True)
+        commands = self.renderer.begin_page(
+            "Z offset calibration", back=True, abort=True)
         lines = (
             "Z OFFSET SETS THE NOZZLE-TO-BED HEIGHT FOR THE FIRST LAYER.",
             "CHOOSE ONE OR MORE BED ZONES; FEATHER GUIDES EACH PAPER TEST.",
@@ -312,7 +314,8 @@ class FeatherZCalibrationMixin:
 
     def _render_z_paper_briefing(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
-        commands = self.renderer.begin_page("Paper test briefing", back=True)
+        commands = self.renderer.begin_page(
+            "Paper test briefing", back=True, abort=True)
         lines = (
             "PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.",
             "PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.",
@@ -338,7 +341,7 @@ class FeatherZCalibrationMixin:
         session = self.z_calibration
         point = ZONE_BY_KEY[session.zone]
         commands = self.renderer.begin_page(
-            "Paper test - %s" % point[1], back=True)
+            "Paper test - %s" % point[1], back=True, abort=True)
         reference = ("--" if session.reference_z is None else
                      "%+.3f" % session.reference_z)
         nozzle = ("--" if session.paper_contact_z is None else

@@ -250,7 +250,7 @@ class PrintWorkflowTest(unittest.TestCase):
         controller._run_script("G28")
         self.assertEqual(calls, [("serialized", "G28")])
 
-    def test_pending_cancel_page_has_no_repeat_or_back_hitboxes(self):
+    def test_pending_cancel_page_keeps_only_global_abort_hitbox(self):
         controller = base_controller("paused")
         controller.pending_action = "print.cancel.confirm"
         controller.renderer = FEATHER.FeatherRenderer()
@@ -260,8 +260,9 @@ class PrintWorkflowTest(unittest.TestCase):
         drawing = "\n".join(batches[0])
         self.assertIn("CANCELLING PRINT", drawing)
         self.assertIn("REQUEST ACCEPTED // CONTROLS LOCKED", drawing)
-        self.assertNotIn("--batch hitbox --id", drawing)
-        self.assertNotIn("--id ", drawing)
+        self.assertNotIn("print.cancel.confirm", drawing)
+        self.assertNotIn("nav.back", drawing)
+        self.assertIn("global.abort", drawing)
 
     def test_print_state_transition_selects_correct_page(self):
         controller = base_controller("idle")

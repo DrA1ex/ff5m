@@ -983,6 +983,60 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-c 24200e", "\n".join(sent[1]))
         self.assertNotIn("-c 071305", "\n".join(sent[1]))
 
+    def test_busy_notice_replaces_menu_until_command_finishes(self):
+        renderer = FEATHER.FeatherRenderer()
+        sent = []
+        renderer.send = sent.append
+        renderer.busy_notice("Klipper busy")
+
+        page = renderer.begin_page("Home")
+        menu = renderer.button(
+            "nav.menu", 648, 9, 132, 38, "MENU")
+
+        self.assertIn("KLIPPER BUSY", "\n".join(page))
+        self.assertEqual(menu, [])
+        self.assertIn("nav.menu", renderer._buttons)
+
+        renderer.clear_busy_notice()
+
+        restored = "\n".join(sent[-1])
+        self.assertIn("MENU", restored)
+        self.assertIn("nav.menu", restored)
+
+    def test_emergency_stop_has_priority_over_busy_notice_and_loader(self):
+        renderer = FEATHER.FeatherRenderer()
+        sent = []
+        renderer.send = sent.append
+        renderer.set_emergency_stop_visible(True)
+        page = renderer.begin_page("Printing")
+        sent_before_busy = len(sent)
+
+        renderer.busy_notice("Klipper busy")
+        renderer.loader("Moving", 0)
+        renderer.clear_busy_notice()
+
+        self.assertIn("global.abort", "\n".join(page))
+        self.assertEqual(sent_before_busy + 1, len(sent))
+        loader = "\n".join(sent[-1])
+        self.assertIn("global.abort", loader)
+        self.assertIn('ABORT', loader)
+        self.assertNotIn("KLIPPER BUSY", loader)
+
+    def test_modal_dialog_preserves_emergency_stop_hitbox(self):
+        renderer = FEATHER.FeatherRenderer()
+        commands = renderer.begin_page("Live Z", abort=True)
+        commands += renderer.dialog(
+            "Warning", ("Check the first layer",),
+            (("warning.ok", "OK", "warning"),))
+
+        drawing = "\n".join(commands)
+        self.assertEqual(drawing.count("--batch clear-hitboxes"), 2)
+        self.assertIn("warning.ok", renderer._buttons)
+        self.assertIn("global.abort", renderer._buttons)
+        self.assertGreater(
+            drawing.rfind("global.abort"),
+            drawing.rfind("clear-hitboxes"))
+
     def test_primary_layouts_do_not_overlap_footer(self):
         footer = (0, UI.FOOTER_Y, UI.SCREEN_WIDTH, UI.FOOTER_HEIGHT)
         rectangles = [

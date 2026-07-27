@@ -282,7 +282,7 @@ class FeatherControlsMixin:
         now = self.reactor.monotonic()
         if snapshot is None:
             snapshot = self._move_status_snapshot(now)
-        commands = self.renderer.begin_page("Move", back=True)
+        commands = self.renderer.begin_page("Move", back=True, abort=True)
         if getattr(self, "move_mode", "step") == "joystick":
             self.joystick_drawn_cursor = None
             self.joystick_drawn_inertia = None
@@ -828,7 +828,8 @@ class FeatherControlsMixin:
         bed = self.heater_bed.get_status(now)
         fan_speed = (self.fan.get_status(now).get("speed", 0.0) * 100
                      if self.fan is not None else 0.0)
-        commands = self.renderer.begin_page("Heat / fan", back=True)
+        commands = self.renderer.begin_page(
+            "Heat / fan", back=True, abort=True)
         rows = (("NOZZLE", 95, "selected", "heat.e"),
                 ("BED", 175, "warning", "heat.b"))
         for label, y, state, prefix in rows:
@@ -990,8 +991,9 @@ class FeatherControlsMixin:
         status = self.extruder.get_status(now)
         minimum = getattr(self.extruder, "min_extrude_temp", 170.0)
         hot = status["temperature"] >= minimum
-        commands = self.renderer.begin_page("Filament - %s" % self.filament_material,
-                                            back=True)
+        commands = self.renderer.begin_page(
+            "Filament - %s" % self.filament_material,
+            back=True, abort=True)
         commands.append(self.renderer.text(
             400, 80, "Nozzle %.1f / %.0fC" % (status["temperature"], status["target"]),
             "ffb000" if not hot else "00f0f0", "Roboto Bold 14pt", "center"))
@@ -1113,10 +1115,8 @@ class FeatherControlsMixin:
         outside_warning = (
             abs(unsaved) > self.z_adjust_warning_threshold + 0.0001)
         value_color = "ff4d5a" if outside_warning else "ffffff"
-        commands = self.renderer.begin_page("Live Z offset", back=True)
-        commands += self.renderer.button(
-            "live_z.save", 640, 7, 146, 46, "SAVE",
-            font="JetBrainsMono Bold 10pt")
+        commands = self.renderer.begin_page(
+            "Live Z offset", back=True, abort=True)
 
         cards = (
             ("SAVED", saved, 20, "35d9e6"),
@@ -1152,13 +1152,16 @@ class FeatherControlsMixin:
         controls_enabled = self._live_z_adjust_allowed(now)
         state = "enabled" if controls_enabled else "disabled"
         commands += self.renderer.button(
-            "live_z.closer", 20, 322, 330, 88,
+            "live_z.closer", 20, 322, 215, 88,
             "CLOSER  -%.3f" % self.live_z_step,
-            state=state, font="JetBrainsMono Bold 12pt")
+            state=state, font="JetBrainsMono Bold 10pt")
         commands += self.renderer.button(
-            "live_z.farther", 360, 322, 330, 88,
+            "live_z.farther", 245, 322, 215, 88,
             "FARTHER  +%.3f" % self.live_z_step,
-            state=state, font="JetBrainsMono Bold 12pt")
+            state=state, font="JetBrainsMono Bold 10pt")
+        commands += self.renderer.button(
+            "live_z.save", 470, 322, 220, 88, "SAVE",
+            font="JetBrainsMono Bold 12pt")
         commands += self._z_weight_gauge_commands(now)
 
         if self.live_z_dialog == "limit":
@@ -1523,22 +1526,15 @@ class FeatherControlsMixin:
     def _render_calibration_progress(self):
         label = self.print_status_text or "Calibration running..."
         title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
-        commands = self.renderer.begin_page(title)
+        commands = self.renderer.begin_page(title, abort=True)
         commands.append(self.renderer.text(
             400, 142, label, "b47aff", "JetBrainsMono Bold 12pt", "center",
             max_width=704, truncate=True))
         commands += self._calibration_stage_commands(label)
         cancel_visible = self._calibration_heat_cancel_visible()
-        emergency_visible = self.calibration_kind in ("screws", "mesh", "z")
-        if emergency_visible:
-            commands += self.renderer.button(
-                "cal.emergency_stop", 50 if cancel_visible else 235, 335,
-                330, 72,
-                "EMERGENCY STOP", state="danger",
-                font="JetBrainsMono Bold 12pt")
         if cancel_visible:
             commands += self.renderer.button(
-                "cal.cancel.heat", 420, 335, 330, 72,
+                "cal.cancel.heat", 235, 335, 330, 72,
                 "CANCELLING..." if getattr(
                     self, "calibration_cancel_requested", False)
                 else "CANCEL HEATING",
