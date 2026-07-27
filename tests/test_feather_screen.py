@@ -928,7 +928,6 @@ class RendererStateTest(unittest.TestCase):
             {"name": "part-%d.gcode" % index, "directory": False}
             for index in range(5)]
         controller.file_page = 0
-        controller.current_directory = ""
         controller._load_file_entries = lambda: None
         controller._render_file_browser()
         file_buttons = dict(controller.renderer._buttons)

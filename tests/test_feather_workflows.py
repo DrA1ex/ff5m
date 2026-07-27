@@ -19,12 +19,16 @@ except ImportError:
 
 
 class VirtualSD:
-    def __init__(self, root=None, active=False):
+    def __init__(self, root=None, active=False, file_path=None):
         self.sdcard_dirname = root
         self.active = active
+        self.current_path = file_path
 
     def is_active(self):
         return self.active
+
+    def file_path(self):
+        return self.current_path
 
 
 class FinishedProcess:
@@ -80,32 +84,81 @@ def base_controller(state="idle"):
 
 
 class FileWorkflowTest(unittest.TestCase):
-    def test_file_browser_sorts_directories_then_newest_files(self):
+    def test_file_browser_flattens_two_levels_and_skips_hidden_trees(self):
         with tempfile.TemporaryDirectory() as root:
-            os.mkdir(os.path.join(root, "zeta"))
-            os.mkdir(os.path.join(root, "Alpha"))
-            old = os.path.join(root, "old.gcode")
-            new = os.path.join(root, "new.gco")
-            ignored = os.path.join(root, "notes.txt")
-            for path in (old, new, ignored):
+            level_one = os.path.join(root, "models")
+            level_two = os.path.join(level_one, "project")
+            level_three = os.path.join(level_two, "archive")
+            hidden = os.path.join(root, ".hidden")
+            hidden_nested = os.path.join(level_one, ".cache")
+            os.makedirs(level_three)
+            os.mkdir(hidden)
+            os.mkdir(hidden_nested)
+            os.symlink(level_two, os.path.join(root, "linked-project"))
+            paths = (
+                os.path.join(root, "root.gcode"),
+                os.path.join(level_one, "level-one.gco"),
+                os.path.join(level_two, "level-two.g"),
+                os.path.join(level_three, "too-deep.gcode"),
+                os.path.join(hidden, "secret.gcode"),
+                os.path.join(hidden_nested, "cached.gcode"),
+                os.path.join(level_one, "notes.txt"),
+            )
+            for path in paths:
                 pathlib.Path(path).write_text("G28\n", encoding="utf-8")
-            os.utime(old, (10, 10))
-            os.utime(new, (20, 20))
 
             controller = base_controller()
             controller.virtual_sdcard = VirtualSD(root)
-            controller.current_directory = ""
             controller._load_file_entries()
-            self.assertEqual([entry["name"] for entry in controller.file_entries],
-                             ["Alpha", "zeta", "new.gco", "old.gcode"])
+            self.assertEqual(
+                {entry["name"] for entry in controller.file_entries},
+                {"root.gcode", "models/level-one.gco",
+                 "models/project/level-two.g"})
+            self.assertTrue(all(
+                not entry["directory"] for entry in controller.file_entries))
 
-    def test_safe_directory_rejects_parent_traversal(self):
+    def test_file_browser_uses_newest_of_print_and_file_times(self):
         with tempfile.TemporaryDirectory() as root:
+            old_printed = os.path.join(root, "old-printed.gcode")
+            recently_added = os.path.join(root, "recently-added.gcode")
+            for path in (old_printed, recently_added):
+                pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            os.utime(old_printed, (10, 10))
+            os.utime(recently_added, (30, 30))
+            history_path = os.path.join(root, ".feather-history.json")
+            history = FEATHER.PrintHistory(history_path)
+            history.record(root, old_printed, 40)
+            history.record(root, recently_added, 20)
+
             controller = base_controller()
             controller.virtual_sdcard = VirtualSD(root)
-            controller.current_directory = "../outside"
-            with self.assertRaisesRegex(RuntimeError, "Invalid print directory"):
-                controller._safe_directory()
+            controller.print_history = FEATHER.PrintHistory(history_path)
+            controller._load_file_entries()
+
+            self.assertEqual(
+                [entry["name"] for entry in controller.file_entries],
+                ["old-printed.gcode", "recently-added.gcode"])
+
+    def test_real_print_transition_persists_history(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "models", "part.gcode")
+            os.makedirs(os.path.dirname(path))
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            history_path = os.path.join(root, ".feather-history.json")
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root, True, path)
+            controller.print_history = FEATHER.PrintHistory(history_path)
+            controller._show_page = lambda page: None
+
+            with mock.patch("feather_screen_pages.time.time",
+                            return_value=1234.0):
+                controller._change_print_state(
+                    FEATHER.PrintState.PRINTING, "printing")
+
+            reloaded = FEATHER.PrintHistory(history_path)
+            self.assertEqual(
+                reloaded.last_printed("models/part.gcode"), 1234.0)
+            self.assertEqual(controller.last_job_name, "part.gcode")
 
     def test_start_file_rechecks_path_and_escapes_filename(self):
         with tempfile.TemporaryDirectory() as root:

@@ -15,8 +15,9 @@ import time
 try:
     from .feather_ui import FeatherRenderer, Page, PrintState
     from .feather_screen_pages import (
-        FeatherPagesMixin, FILE_ROWS, VALID_GCODE_EXTS, mod_ui,
+        FeatherPagesMixin, FILE_ROWS, mod_ui,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
+    from .feather_files import DEFAULT_HISTORY_PATH, PrintHistory
     from .feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -33,8 +34,9 @@ except (ImportError, ValueError):
     sys.path.insert(0, os.path.dirname(__file__))
     from feather_ui import FeatherRenderer, Page, PrintState
     from feather_screen_pages import (
-        FeatherPagesMixin, FILE_ROWS, VALID_GCODE_EXTS, mod_ui,
+        FeatherPagesMixin, FILE_ROWS, mod_ui,
         NETWORK_HELPER, NETWORK_TIMEOUTS)
+    from feather_files import DEFAULT_HISTORY_PATH, PrintHistory
     from feather_screen_controls import (
         FeatherControlsMixin, PREHEAT, MOVE_CAUTION_Z,
         joystick_ui, joystick_motion,
@@ -143,6 +145,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         config.getfloat("z_adjust_session_limit", 0.5, minval=0.05)
         self.z_adjust_warning_threshold = config.getfloat(
             "z_adjust_warning_threshold", 0.3, minval=0.05)
+        self.print_history = PrintHistory(
+            config.get("print_history_path", DEFAULT_HISTORY_PATH))
         self.joystick_limits = (
             (config.getfloat("joystick_x_min", -110.0),
              config.getfloat("joystick_x_max", 110.0)),
@@ -194,7 +198,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
         self.toast_until = 0.0
         self.toast_message = ""
 
-        self.current_directory = ""
         self.file_page = 0
         self.file_entries = []
         self.selected_file = None
@@ -760,7 +763,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             elif action == "nav.menu":
                 self._show_page(Page.MAIN_MENU)
             elif action == "nav.files":
-                self.current_directory = ""
                 self.file_page = 0
                 self._show_page(Page.FILE_BROWSER)
             elif action == "nav.control":
@@ -793,7 +795,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                     self.home_during_print = False
                     self._show_page(self.page_for_print_state())
                 else:
-                    self.current_directory = ""
                     self.file_page = 0
                     self._show_page(Page.FILE_BROWSER)
             elif action.startswith("file."):
@@ -934,11 +935,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
             self._render_error()
 
     def _go_back(self):
-        if self.page == Page.FILE_BROWSER and self.current_directory:
-            self.current_directory = os.path.dirname(self.current_directory)
-            self.file_page = 0
-            self._render_file_browser()
-        elif self.page == Page.FILE_CONFIRM:
+        if self.page == Page.FILE_CONFIRM:
             self._show_page(Page.FILE_BROWSER)
         elif self.page in (Page.CONTROL_HOME, Page.FILAMENT_MATERIAL):
             if self.page == Page.FILAMENT_MATERIAL and self.filament_from_pause:
@@ -1414,6 +1411,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin,
                 and old_state not in (
                     PrintState.PREPARING, PrintState.PRINTING,
                     PrintState.PAUSED)):
+            self._record_current_print()
             self.live_z_limit_warned = False
             self.live_z_dialog = None
         if (new_state in (PrintState.PREPARING, PrintState.PRINTING,

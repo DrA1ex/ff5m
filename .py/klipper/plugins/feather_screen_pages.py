@@ -15,14 +15,15 @@ try:
     from .feather_ui import Page, PrintState
     from . import feather_mod_settings as mod_ui
     from .feather_keyboard import keyboard_rows
+    from .feather_files import FileEntry, scan_gcode_files
 except (ImportError, ValueError):
     from feather_ui import Page, PrintState
     import feather_mod_settings as mod_ui
     from feather_keyboard import keyboard_rows
+    from feather_files import FileEntry, scan_gcode_files
 
 
 FILE_ROWS = 5
-VALID_GCODE_EXTS = (".gcode", ".g", ".gco")
 NETWORK_HELPER = "/root/printer_data/scripts/commands/znetwork.sh"
 NETWORK_TIMEOUTS = {
     "scan": 15.0,
@@ -32,24 +33,6 @@ NETWORK_TIMEOUTS = {
     "status-background": 5.0,
 }
 NETWORK_ROWS = 5
-
-
-class FileEntry:
-    """Compact mapping-compatible record for one browser row."""
-
-    __slots__ = ("name", "path", "directory", "size", "mtime")
-
-    def __init__(self, name, path, directory, size=0, mtime=0):
-        self.name = name
-        self.path = path
-        self.directory = bool(directory)
-        self.size = size
-        self.mtime = mtime
-
-    def __getitem__(self, key):
-        if key not in self.__slots__:
-            raise KeyError(key)
-        return getattr(self, key)
 
 
 class FeatherPagesMixin:
@@ -264,53 +247,36 @@ class FeatherPagesMixin:
                                              font="JetBrainsMono 12pt")
         self.renderer.send(commands)
 
-    def _safe_directory(self):
-        root = os.path.realpath(self.virtual_sdcard.sdcard_dirname)
-        candidate = os.path.realpath(os.path.join(root, self.current_directory))
-        if candidate != root and not candidate.startswith(root + os.sep):
-            raise RuntimeError("Invalid print directory")
-        return root, candidate
-
     def _load_file_entries(self):
-        root, directory = self._safe_directory()
-        entries = []
-        try:
-            with os.scandir(directory) as listing:
-                for entry in listing:
-                    if entry.name.startswith("."):
-                        continue
-                    path = os.path.realpath(entry.path)
-                    if path != root and not path.startswith(root + os.sep):
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        entries.append(FileEntry(
-                            entry.name, path, True))
-                    elif (entry.is_file(follow_symlinks=False)
-                          and entry.name.lower().endswith(VALID_GCODE_EXTS)):
-                        stat = entry.stat(follow_symlinks=False)
-                        entries.append(FileEntry(
-                            entry.name, path, False, stat.st_size,
-                            stat.st_mtime))
-        except OSError as exc:
-            raise RuntimeError("Unable to list files: %s" % exc)
-        entries.sort(key=lambda item: (
-            0, item.name.lower()) if item.directory else (
-                1, -item.mtime, item.name.lower()))
-        self.file_entries = entries
+        self.file_entries = scan_gcode_files(
+            self.virtual_sdcard.sdcard_dirname,
+            getattr(self, "print_history", None))
+
+    def _record_current_print(self):
+        history = getattr(self, "print_history", None)
+        virtual_sdcard = getattr(self, "virtual_sdcard", None)
+        if history is None or virtual_sdcard is None:
+            return
+        path = (virtual_sdcard.file_path()
+                if hasattr(virtual_sdcard, "file_path") else None)
+        if not path:
+            return
+        root = virtual_sdcard.sdcard_dirname
+        if history.record(root, path, time.time()):
+            self.last_job_name = os.path.basename(path)
 
     def _render_file_browser(self):
         self._load_file_entries()
         max_page = max(0, (len(self.file_entries) - 1) // FILE_ROWS)
         self.file_page = max(0, min(self.file_page, max_page))
-        title = "/" + self.current_directory if self.current_directory else "Print files"
-        commands = self.renderer.begin_page(title, back=True)
+        commands = self.renderer.begin_page("Print files", back=True)
         start = self.file_page * FILE_ROWS
         rows = self.file_entries[start:start + FILE_ROWS]
         for index, entry in enumerate(rows):
             y = 62 + index * 65
-            label = ("[DIR] " if entry["directory"] else "") + entry["name"]
             commands += self.renderer.button("file.item%d" % index, 30, y, 740, 56,
-                                             label, font="JetBrainsMono 12pt")
+                                             entry["name"],
+                                             font="JetBrainsMono 12pt")
         commands += self.renderer.button("file.prev", 210, 390, 150, 50, "< Page",
                                          active=self.file_page > 0)
         commands.append(self.renderer.text(400, 415, "%d / %d" % (
@@ -339,14 +305,8 @@ class FeatherPagesMixin:
             if offset >= len(self.file_entries):
                 return
             entry = self.file_entries[offset]
-            if entry["directory"]:
-                root = os.path.realpath(self.virtual_sdcard.sdcard_dirname)
-                self.current_directory = os.path.relpath(entry["path"], root)
-                self.file_page = 0
-                self._render_file_browser()
-            else:
-                self.selected_file = entry
-                self._show_page(Page.FILE_CONFIRM)
+            self.selected_file = entry
+            self._show_page(Page.FILE_CONFIRM)
 
     def _render_file_confirm(self):
         entry = self.selected_file
