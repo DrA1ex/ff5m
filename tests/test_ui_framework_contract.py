@@ -1,6 +1,8 @@
 """Version and migration contracts between FF5M and the ui subtree."""
 
 import pathlib
+import os
+import subprocess
 import sys
 import unittest
 
@@ -36,6 +38,19 @@ class FrameworkContractTest(unittest.TestCase):
             "reflection_schema_version": 2,
             "capabilities": list(ui.FRAMEWORK_CAPABILITIES),
         })
+
+    def test_product_startup_does_not_construct_declarative_pages(self):
+        script = (
+            "import sys; import feather_screen; "
+            "blocked=('ui.layout','ui.components','ui.properties','ui.source'); "
+            "pages=[name for name in sys.modules "
+            "if name.startswith('ff5m_ui.') and name.endswith('.page')]; "
+            "assert not any(name in sys.modules for name in blocked), blocked; "
+            "assert not pages, pages")
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(PLUGINS)
+        subprocess.run([sys.executable, "-c", script], check=True,
+                       env=environment)
 
     def test_product_key_wire_namespaces_survive_package_move(self):
         namespaces = {

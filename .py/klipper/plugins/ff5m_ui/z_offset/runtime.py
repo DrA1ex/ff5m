@@ -5,16 +5,34 @@ from .actions import (
     RESET, SAVE, SELECTION_NEXT, Adjustment, AdjustmentRequest, ZONE_ACTIONS,
     Zone, ZoneRequest, ZOffsetCommand,
 )
-from .common import CONTENT, FONT, PAPER_STEPS, Z_WEIGHT_DANGER
-from .briefing.page import PAGE as BRIEFING_PAGE, render as render_briefing
 from .paper.state import PaperState
 from .paper_briefing.state import PaperBriefingState
 from .summary.state import SummaryState
-from .paper.page import (
-    PAGE as PAPER_PAGE, render as render_paper,
-    update_gauge as update_paper_gauge,
-)
-from .paper_briefing.page import (
-    PAGE as PAPER_BRIEFING_PAGE, render as render_paper_briefing,
-)
-from .summary.page import PAGE as SUMMARY_PAGE, render as render_summary
+
+
+_LAZY_EXPORTS = {
+    "CONTENT": ("common", "CONTENT"),
+    "FONT": ("common", "FONT"),
+    "PAPER_STEPS": ("constants", "PAPER_STEPS"),
+    "Z_WEIGHT_DANGER": ("constants", "Z_WEIGHT_DANGER"),
+    "BRIEFING_PAGE": ("briefing.page", "PAGE"),
+    "render_briefing": ("briefing.page", "render"),
+    "PAPER_PAGE": ("paper.page", "PAGE"),
+    "render_paper": ("paper.page", "render"),
+    "update_paper_gauge": ("paper.page", "update_gauge"),
+    "PAPER_BRIEFING_PAGE": ("paper_briefing.page", "PAGE"),
+    "render_paper_briefing": ("paper_briefing.page", "render"),
+    "SUMMARY_PAGE": ("summary.page", "PAGE"),
+    "render_summary": ("summary.page", "render"),
+}
+
+
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    module = __import__("%s.%s" % (__package__, target[0]),
+                        fromlist=(target[1],))
+    value = getattr(module, target[1])
+    globals()[name] = value
+    return value

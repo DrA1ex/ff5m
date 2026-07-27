@@ -6,13 +6,30 @@ from .actions import (
     Y_PLUS, Z_MINUS, Z_PLUS, Axis, HomeRequest, JogRequest, JoystickRequest,
     MoveCommand, ProfileMode, ProfileRequest,
 )
-from .common import FONT, MOVE_CONTENT, STEP_VALUES
 from .state import MoveState, ToolheadState, snapshot_values
-from .joystick.page import (
-    PAGE as JOYSTICK_PAGE, JoystickRef, render as render_joystick,
-    update as update_joystick,
-)
-from .step.page import (
-    PAGE as STEP_PAGE, StepRef, render as render_step,
-    update_status as render_step_status,
-)
+
+
+_LAZY_EXPORTS = {
+    "FONT": ("common", "FONT"),
+    "MOVE_CONTENT": ("common", "MOVE_CONTENT"),
+    "STEP_VALUES": ("common", "STEP_VALUES"),
+    "JOYSTICK_PAGE": ("joystick.page", "PAGE"),
+    "JoystickRef": ("joystick.page", "JoystickRef"),
+    "render_joystick": ("joystick.page", "render"),
+    "update_joystick": ("joystick.page", "update"),
+    "STEP_PAGE": ("step.page", "PAGE"),
+    "StepRef": ("step.page", "StepRef"),
+    "render_step": ("step.page", "render"),
+    "render_step_status": ("step.page", "update_status"),
+}
+
+
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    module = __import__("%s.%s" % (__package__, target[0]),
+                        fromlist=(target[1],))
+    value = getattr(module, target[1])
+    globals()[name] = value
+    return value

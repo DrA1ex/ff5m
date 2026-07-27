@@ -1,6 +1,6 @@
 ## Session state and pure calculations for Feather Z-offset calibration.
 ##
-## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -9,9 +9,13 @@ from decimal import Decimal, ROUND_HALF_UP
 import logging
 
 try:
-    from .feather_ui import Page, PrintState
+    from .ui import Page, PrintState
+    from .ff5m_ui.z_offset import runtime as z_offset_ui
+    from .ff5m_ui.z_offset.constants import PAPER_STEPS
 except (ImportError, ValueError):
-    from feather_ui import Page, PrintState
+    from ui import Page, PrintState
+    from ff5m_ui.z_offset import runtime as z_offset_ui
+    from ff5m_ui.z_offset.constants import PAPER_STEPS
 
 
 ZONE_POINTS = (
@@ -22,7 +26,6 @@ ZONE_POINTS = (
     ("rear_right", "REAR RIGHT", 94.0, 94.0),
 )
 ZONE_BY_KEY = dict((point[0], point) for point in ZONE_POINTS)
-PAPER_STEPS = (0.005, 0.010, 0.025, 0.050)
 POSITIONAL_WARNING = 0.025
 PRESSURE_WARN = 800.0
 PRESSURE_REARM = 600.0
@@ -223,186 +226,83 @@ class ZCalibrationSession:
 
 class FeatherZCalibrationMixin:
     """Render and execute the multi-stage idle Z-calibration workflow."""
-    def _render_z_summary(self):
+    @staticmethod
+    def _z_zone_labels():
+        return dict((key, label) for key, label, _x, _y in ZONE_POINTS)
+
+    def _z_summary_ui_state(self):
         session = self.z_calibration
-        commands = self.renderer.begin_page(
-            "Z offset zones", back=True)
-        geometry = {
-            "rear_left": (75, 72, 210, 64),
-            "center": (295, 72, 210, 64),
-            "rear_right": (515, 72, 210, 64),
-            "front_left": (130, 146, 260, 64),
-            "front_right": (410, 146, 260, 64),
+        return {
+            z_offset_ui.SummaryState.ZONE_LABELS: self._z_zone_labels(),
+            z_offset_ui.SummaryState.RESULTS: dict(session.results),
+            z_offset_ui.SummaryState.SPREAD: float(session.spread),
+            z_offset_ui.SummaryState.POSITIONAL_WARNING: float(
+                POSITIONAL_WARNING),
+            z_offset_ui.SummaryState.SELECTED: session.selected,
+            z_offset_ui.SummaryState.AVERAGE: session.average,
+            z_offset_ui.SummaryState.LOAD_ZOFFSET: bool(
+                session.load_zoffset),
+            z_offset_ui.SummaryState.DIALOG: session.dialog,
         }
-        zone_order = ("rear_left", "center", "rear_right", "front_left",
-                      "front_right")
-        for key in zone_order:
-            point = ZONE_BY_KEY[key]
-            x, y, width, height = geometry[key]
-            key, label = point[:2]
-            result = session.results.get(key)
-            caption = (label if result is None else
-                       "%s  %+.3f" % (label, result))
-            commands += self.renderer.button(
-                "z.zone.%s" % key, x, y, width, height, caption,
-                state=("selected" if result is not None else "enabled"),
-                font="JetBrainsMono 8pt")
-        if session.spread > POSITIONAL_WARNING:
-            commands.append(self.renderer.text(
-                400, 230, "POSITIONAL SPREAD %.3f MM - CHECK BED / PROBE" %
-                session.spread, "f2c94c", "JetBrainsMono 8pt",
-                "center", "middle"))
-        elif session.results:
-            commands.append(self.renderer.text(
-                400, 230, "%d ZONE%s MEASURED" %
-                (len(session.results),
-                 "" if len(session.results) == 1 else "S"),
-                "56656c", "JetBrainsMono 8pt", "center", "middle"))
-        else:
-            commands.append(self.renderer.text(
-                400, 230, "SELECT A POSITION TO START THE PAPER TEST",
-                "56656c", "JetBrainsMono 8pt", "center", "middle"))
-        selected = session.selected
-        if selected == "average":
-            selection = "USE AVERAGE  %+.3f" % session.average
-        elif selected in ZONE_BY_KEY:
-            selection = "USE %s  %+.3f" % (
-                ZONE_BY_KEY[selected][1], session.results[selected])
-        else:
-            selection = "NO RESULT SELECTED"
-        selection_state = "enabled" if session.results else "disabled"
-        commands += self.renderer.button(
-            "z.selection.next", 65, 258, 455, 58, selection,
-            state=selection_state, font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "z.load.toggle", 535, 258, 200, 58,
-            "AUTO LOAD: %s" % ("ON" if session.load_zoffset else "OFF"),
-            state="selected" if session.load_zoffset else "enabled",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "z.save", 65, 334, 670, 82, "SAVE SELECTED Z OFFSET",
-            state=selection_state, font="JetBrainsMono Bold 12pt")
-        if session.dialog == "discard":
-            commands += self.renderer.dialog(
-                "DISCARD Z CALIBRATION?",
-                ("ALL MEASURED ZONE RESULTS WILL BE LOST.",
-                 "THE ORIGINAL MESH AND RUNTIME OFFSET WILL BE RESTORED."),
-                (("z.discard.cancel", "KEEP", "enabled"),
-                 ("z.discard.confirm", "DISCARD", "danger")),
-                x=85, y=105, width=630, height=275, tone="danger")
+
+    def _render_z_summary(self):
+        commands = self.renderer.begin_page("Z offset zones", back=True)
+        commands += z_offset_ui.render_summary(
+            self.renderer, self._z_summary_ui_state())
         self.renderer.send(commands)
 
     def _render_z_briefing(self):
         commands = self.renderer.begin_page(
             "Z offset calibration", back=True)
-        lines = (
-            "Z OFFSET SETS THE NOZZLE-TO-BED HEIGHT FOR THE FIRST LAYER.",
-            "CHOOSE ONE OR MORE BED ZONES; FEATHER GUIDES EACH PAPER TEST.",
-            "THE SCREEN COLLECTS THE RESULTS AND CAN USE THEIR AVERAGE.",
-            "WITH AUTO LOAD ON, THE CHOSEN Z OFFSET IS APPLIED BEFORE",
-            "EVERY PRINT.",
-        )
-        for index, line in enumerate(lines):
-            commands.append(self.renderer.text(
-                400, 78 + index * 43, line,
-                "d9e4e8" if index else "35d9e6",
-                "JetBrainsMono 8pt", "center", "middle"))
-        commands += self.renderer.button(
-            "z.briefing.continue", 170, 340, 460, 74,
-            "SELECT ZONES", font="JetBrainsMono Bold 12pt")
+        commands += z_offset_ui.render_briefing(self.renderer)
         self.renderer.send(commands)
 
     def _render_z_paper_briefing(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
         commands = self.renderer.begin_page(
             "Paper test briefing", back=True)
-        lines = (
-            "PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.",
-            "PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.",
-            "MOVE TO 1.5 MM RECORDS THAT HEIGHT AS REFERENCE Z, SO YOU",
-            "CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.",
-            "SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.",
-            "WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.",
-        )
-        for index, line in enumerate(lines):
-            commands.append(self.renderer.text(
-                400, 64 + index * 36, line,
-                "d9e4e8" if index else "35d9e6",
-                "JetBrainsMono 8pt", "center", "middle"))
-        commands.append(self.renderer.text(
-            400, 285, "SELECTED ZONE: %s" % point[1],
-            "b47aff", "JetBrainsMono Bold 12pt", "center", "middle"))
-        commands += self.renderer.button(
-            "z.paper_briefing.continue", 170, 340, 460, 74,
-            "POSITION HEAD", font="JetBrainsMono Bold 12pt")
+        commands += z_offset_ui.render_paper_briefing(
+            self.renderer, {
+                z_offset_ui.PaperBriefingState.ZONE_LABEL: str(point[1]),
+            })
         self.renderer.send(commands)
 
-    def _render_z_paper(self):
+    def _z_paper_ui_state(self, eventtime=None):
         session = self.z_calibration
-        point = ZONE_BY_KEY[session.zone]
+        if eventtime is None:
+            eventtime = self.reactor.monotonic()
+        gauge = self._update_z_weight_gauge(eventtime)
+        return {
+            z_offset_ui.PaperState.MANUAL:
+                session.start_mode == "manual",
+            z_offset_ui.PaperState.REFERENCE:
+                ("--" if session.reference_z is None
+                 else "%+.3f" % session.reference_z),
+            z_offset_ui.PaperState.NOZZLE:
+                ("--" if session.paper_contact_z is None
+                 else "%+.3f" % session.paper_contact_z),
+            z_offset_ui.PaperState.CANDIDATE:
+                ("--" if session.candidate is None
+                 else "%+.3f" % session.candidate),
+            z_offset_ui.PaperState.PROBING: bool(session.probing),
+            z_offset_ui.PaperState.MOVING_TO_START:
+                bool(session.moving_to_start),
+            z_offset_ui.PaperState.STEP: float(session.step),
+            z_offset_ui.PaperState.READY:
+                bool(session.ready_for_paper_test),
+            z_offset_ui.PaperState.GAUGE:
+                None if gauge is None else dict(gauge),
+            z_offset_ui.PaperState.DIALOG: session.dialog,
+            z_offset_ui.PaperState.DIALOG_WEIGHT: float(
+                getattr(session, "dialog_weight", 0.0)),
+        }
+
+    def _render_z_paper(self):
+        point = ZONE_BY_KEY[self.z_calibration.zone]
         commands = self.renderer.begin_page(
             "Paper test - %s" % point[1], back=True)
-        reference = ("--" if session.reference_z is None else
-                     "%+.3f" % session.reference_z)
-        nozzle = ("--" if session.paper_contact_z is None else
-                  "%+.3f" % session.paper_contact_z)
-        candidate = ("--" if session.candidate is None else
-                     "%+.3f" % session.candidate)
-        for label, value, x in (
-                ("TRIGGER Z" if session.start_mode != "manual"
-                 else "REFERENCE Z", reference, 20),
-                ("NOZZLE Z", nozzle, 245),
-                ("Z OFFSET", candidate, 470)):
-            commands += self.renderer.panel(
-                x, 70, 210, 72, border="295c66", background="050c0f")
-            commands.append(self.renderer.text(
-                x + 105, 88, label, "35d9e6",
-                "JetBrainsMono 8pt", "center", "middle"))
-            commands.append(self.renderer.text(
-                x + 105, 119, "%s MM" % value, "ffffff",
-                "JetBrainsMono Bold 12pt", "center", "middle"))
-        commands += self.renderer.button(
-            "z.probe", 20, 154, 325, 70, "PROBE",
-            state=("busy" if session.probing else
-                   "disabled" if session.moving_to_start else "danger"),
-            font="JetBrainsMono Bold 14pt")
-        commands += self.renderer.button(
-            "z.move_1_5", 365, 154, 325, 70, "MOVE TO 1.5 MM",
-            state=("busy" if session.moving_to_start else
-                   "disabled" if session.probing else "enabled"),
-            font="JetBrainsMono Bold 12pt")
-        for index, step in enumerate(PAPER_STEPS):
-            token = ("%04d" % round(step * 1000)).lstrip("0")
-            commands += self.renderer.button(
-                "z.step.%s" % token, 20 + index * 168, 238, 158, 48,
-                "%.3f MM" % step,
-                state=("selected" if step == session.step else "enabled"),
-                font="JetBrainsMono 8pt")
-        ready = session.ready_for_paper_test
-        state = "enabled" if ready else "disabled"
-        commands += self.renderer.button(
-            "z.closer", 20, 300, 325, 66,
-            "CLOSER  -%.3f" % session.step,
-            state=state, font="JetBrainsMono Bold 12pt")
-        commands += self.renderer.button(
-            "z.farther", 365, 300, 325, 66,
-            "FARTHER  +%.3f" % session.step,
-            state=state, font="JetBrainsMono Bold 12pt")
-        commands += self.renderer.button(
-            "z.reset", 20, 380, 205, 48, "RESET TO 0.000",
-            state=state, font="JetBrainsMono 8pt")
-        commands += self.renderer.button(
-            "z.accept", 245, 380, 445, 48, "ACCEPT ZONE",
-            state=state, font="JetBrainsMono Bold 10pt")
-        commands += self._z_weight_gauge_commands(self.reactor.monotonic())
-        if session.dialog == "pressure":
-            weight = getattr(session, "dialog_weight", 0.0)
-            commands += self.renderer.dialog(
-                "HIGH BED PRESSURE",
-                ("CURRENT LOAD: %.0F G" % weight,
-                 "MOVE FARTHER AND CHECK THE PAPER / NOZZLE."),
-                (("z.pressure.ok", "OK", "danger"),),
-                x=95, y=112, width=610, height=260, tone="danger")
+        commands += z_offset_ui.render_paper(
+            self.renderer, self._z_paper_ui_state())
         self.renderer.send(commands)
 
     def _z_offset_head_state(self):

@@ -95,6 +95,25 @@ class StateDeclarationTest(unittest.TestCase):
             derived(lambda value: value,
                     bind(BindingState.COUNT), bind(BindingState.MODE))
 
+    def test_lightweight_arity_validation_handles_python_callables(self):
+        class Formatter:
+            def format_value(self, count, suffix=""):
+                return "%d%s" % (count, suffix)
+
+        formatter = Formatter()
+        self.assertEqual(
+            derived(formatter.format_value, bind(BindingState.COUNT)).resolve(
+                StateStore(BindingState)),
+            "2")
+        self.assertEqual(
+            derived(lambda *values: sum(values),
+                    bind(BindingState.COUNT),
+                    bind(BindingState.COUNT)).resolve(StateStore(BindingState)),
+            4)
+        with self.assertRaisesRegex(TypeError, "does not accept 1 inputs"):
+            derived(lambda value, *, required: (value, required),
+                    bind(BindingState.COUNT))
+
     def test_raw_state_callable_is_rejected_instead_of_receiving_page_state(self):
         page = PageTree(
             Text(lambda values: values), Rect(0, 0, 100, 20),

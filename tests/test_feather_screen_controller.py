@@ -328,9 +328,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_page = 1
         controller._render_calibration_home()
         drawing = "\n".join(batches[-1])
-        self.assertIn("EXTRUDER ROTATION", drawing)
-        self.assertIn("INPUT SHAPER", drawing)
-        self.assertIn("AXIS DIMENSIONS", drawing)
+        self.assertIn('-t "EXTRUDER"', drawing)
+        self.assertIn('-t "SHAPER"', drawing)
+        self.assertIn('-t "AXIS"', drawing)
         self.assertIn("2 / 3", drawing)
 
         controller.calibration_page = 2

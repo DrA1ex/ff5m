@@ -1,7 +1,6 @@
 ## Typed state declarations and bindings for the Feather UI framework.
 
 import copy
-import inspect
 from enum import Enum
 
 from .identity import StateKey, serialize_key
@@ -315,15 +314,29 @@ class DerivedBinding(Binding):
 
 
 def _validate_callable_arity(function, count):
-    try:
-        signature = inspect.signature(function)
-    except (AttributeError, TypeError, ValueError):
+    target = function
+    code = getattr(target, "__code__", None)
+    bound = getattr(target, "__self__", None) is not None
+    if code is None:
+        target = getattr(function, "__call__", None)
+        code = getattr(target, "__code__", None)
+        bound = target is not None
+    if code is None:
+        # Some extension callables do not expose a Python signature. Their
+        # invocation remains the authoritative compatibility check.
         return
-    try:
-        signature.bind(*([None] * count))
-    except TypeError as error:
-        raise TypeError("derived() callable does not accept %d inputs: %s" % (
-            count, error))
+
+    positional = int(code.co_argcount) - int(bound)
+    defaults = getattr(target, "__defaults__", None) or ()
+    minimum = max(0, positional - len(defaults))
+    maximum = None if code.co_flags & 0x04 else positional
+    keyword_defaults = getattr(target, "__kwdefaults__", None) or {}
+    required_keywords = max(
+        0, int(getattr(code, "co_kwonlyargcount", 0))
+        - len(keyword_defaults))
+    if (required_keywords or count < minimum
+            or (maximum is not None and count > maximum)):
+        raise TypeError("derived() callable does not accept %d inputs" % count)
 
 
 def bind(key):

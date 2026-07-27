@@ -1,6 +1,6 @@
 ## Movement, heating, filament, and calibration controls for Feather.
 ##
-## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -15,7 +15,12 @@ try:
         SetValue, Toggle, state_spec,
     )
     from .ff5m_ui.keys import AppPage
+    from .ff5m_ui.move.geometry import (
+        JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
+        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
+    )
     from .ff5m_ui.move import runtime as move_ui
+    from .ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
     from .ff5m_ui.z_offset import runtime as z_offset_ui
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
@@ -27,7 +32,12 @@ except (ImportError, ValueError):
         SetValue, Toggle, state_spec,
     )
     from ff5m_ui.keys import AppPage
+    from ff5m_ui.move.geometry import (
+        JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
+        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
+    )
     from ff5m_ui.move import runtime as move_ui
+    from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
     from ff5m_ui.z_offset import runtime as z_offset_ui
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
@@ -35,24 +45,9 @@ except (ImportError, ValueError):
     from feather_pagination import Pagination, pagination_footer
 
 
-STEP_PAGE = move_ui.STEP_PAGE
-JOYSTICK_PAGE = move_ui.JOYSTICK_PAGE
-
-
 MOVE_CAUTION_Z = 5.0
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
-Z_WEIGHT_DANGER = z_offset_ui.Z_WEIGHT_DANGER
-
-_JOYSTICK_XY_PAD = JOYSTICK_PAGE.rect("xy.pad")
-_JOYSTICK_Z_TRACK = JOYSTICK_PAGE.rect("z.track")
-
-# Input normalization still needs the centers and force radii. Visual cursor
-# clamping and damage geometry belong to the declarative joystick components.
-JOYSTICK_XY_CENTER = _JOYSTICK_XY_PAD.center
-JOYSTICK_XY_RADIUS = 138
-JOYSTICK_Z_CENTER = _JOYSTICK_Z_TRACK.center
-JOYSTICK_Z_RADIUS = (_JOYSTICK_Z_TRACK.height - 3) // 2
 PREHEAT = {
     "PLA": (220, 60),
     "PETG": (250, 70),
@@ -77,7 +72,6 @@ CALIBRATION_ITEMS = (
     ("cal.pid_extruder", "HOTEND PID",
      ("TUNE NOZZLE HEATER", "TEMPERATURE CONTROL")),
 )
-
 
 class FeatherControlsMixin:
     @staticmethod
@@ -486,15 +480,18 @@ class FeatherControlsMixin:
 
     def _semantic_ui_page(self):
         if self.page == Page.CONTROL_MOVE:
-            return (JOYSTICK_PAGE if getattr(self, "move_mode", "step") == "joystick"
-                    else STEP_PAGE)
-        pages = {
-            Page.Z_OFFSET_BRIEFING: z_offset_ui.BRIEFING_PAGE,
-            Page.Z_OFFSET_SUMMARY: z_offset_ui.SUMMARY_PAGE,
-            Page.Z_OFFSET_PAPER_BRIEFING: z_offset_ui.PAPER_BRIEFING_PAGE,
-            Page.Z_OFFSET_PAPER: z_offset_ui.PAPER_PAGE,
-        }
-        return pages.get(self.page)
+            return (move_ui.JOYSTICK_PAGE
+                    if getattr(self, "move_mode", "step") == "joystick"
+                    else move_ui.STEP_PAGE)
+        if self.page == Page.Z_OFFSET_BRIEFING:
+            return z_offset_ui.BRIEFING_PAGE
+        if self.page == Page.Z_OFFSET_SUMMARY:
+            return z_offset_ui.SUMMARY_PAGE
+        if self.page == Page.Z_OFFSET_PAPER_BRIEFING:
+            return z_offset_ui.PAPER_BRIEFING_PAGE
+        if self.page == Page.Z_OFFSET_PAPER:
+            return z_offset_ui.PAPER_PAGE
+        return None
 
     def _resolve_semantic_ui_action(self, wire_id):
         page = self._semantic_ui_page()
@@ -1165,59 +1162,12 @@ class FeatherControlsMixin:
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
                 self._restart_klipper("SAVE_CONFIG")
-<<<<<<< HEAD
         elif action == "cal.tuning.discard":
             if self._tuning_save_available():
                 self._show_page(Page.CALIBRATION_HOME)
         elif action == "cal.tuning.save":
             if self._tuning_save_available():
                 self._restart_klipper("SAVE_CONFIG")
-        elif action.startswith("z.step."):
-            steps = dict(("z.step.%s" %
-                          (("%04d" % round(step * 1000)).lstrip("0")),
-                          step) for step in PAPER_STEPS)
-            if action in steps:
-                self.z_calibration.step = steps[action]
-                self._render_z_paper()
-        elif action in ("z.closer", "z.farther"):
-            delta = (-self.z_calibration.step
-                     if action == "z.closer"
-                     else self.z_calibration.step)
-            self._move_z_paper(delta)
-        elif action == "z.load.toggle":
-            self.z_calibration.load_zoffset = (
-                not self.z_calibration.load_zoffset)
-            self._render_z_summary()
-        elif action.startswith("z.zone."):
-            self._choose_z_zone(action.rsplit(".", 1)[1])
-        elif action == "z.briefing.continue":
-            self._show_page(Page.Z_OFFSET_SUMMARY)
-        elif action == "z.paper_briefing.continue":
-            self._enter_z_zone()
-        elif action == "z.probe":
-            self._probe_z_zone()
-        elif action == "z.move_1_5":
-            self._move_z_manual_start()
-        elif action == "z.reset":
-            self._reset_z_paper()
-        elif action == "z.accept":
-            self._accept_z_zone()
-        elif action == "z.selection.next":
-            self.z_calibration.select_next()
-            self._render_z_summary()
-        elif action == "z.save":
-            self._save_z_calibration()
-        elif action == "z.discard.cancel":
-            self.z_calibration.dialog = None
-            self._render_z_summary()
-        elif action == "z.discard.confirm":
-            self._cancel_z_calibration()
-        elif action == "z.pressure.ok":
-            self.z_calibration.dialog = None
-            self._render_z_paper()
-=======
-
->>>>>>> 8fbc718 (Introduce UI component model)
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()

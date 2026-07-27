@@ -21,6 +21,7 @@ from ui import (  # noqa: E402
     WrapPanel, bind, state, subdivision_positions,
 )
 from ff5m_ui.move import runtime as move  # noqa: E402
+from ff5m_ui.move import geometry as move_geometry  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset  # noqa: E402
 
 
@@ -267,6 +268,12 @@ class MovementLayoutTest(unittest.TestCase):
                          page.rect("xy.actions").bottom)
         self.assertLessEqual(page.rect("z.hitbox").bottom,
                              move.MOVE_CONTENT.bottom)
+        self.assertEqual(move_geometry.JOYSTICK_XY_CENTER,
+                         page.rect("xy.pad").center)
+        self.assertEqual(move_geometry.JOYSTICK_Z_CENTER,
+                         page.rect("z.track").center)
+        self.assertEqual(move_geometry.JOYSTICK_Z_RADIUS,
+                         (page.rect("z.track").height - 3) // 2)
 
     def test_step_grid_keeps_axis_buttons_symmetric(self):
         page = move.STEP_PAGE

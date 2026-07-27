@@ -25,42 +25,69 @@ def framework_manifest():
         "capabilities": list(FRAMEWORK_CAPABILITIES),
     }
 
-from .renderer import (
-    COLOR_CYAN, COLOR_ROLES, COLOR_TEXT, COLOR_VIOLET, CONTENT_BOTTOM,
-    FALLBACK_THEME, FOOTER_HEIGHT, FOOTER_Y, HEADER_BOTTOM,
-    MAX_ATOMIC_DRAW, MAX_PENDING_DRAW, SCREEN_HEIGHT, SCREEN_WIDTH,
-    THEME_DIRECTORY, FeatherRenderer, Page, PrintState,
-    rectangles_overlap,
+_EXPORT_GROUPS = (
+    ("renderer", (
+        "COLOR_CYAN", "COLOR_ROLES", "COLOR_TEXT", "COLOR_VIOLET",
+        "CONTENT_BOTTOM", "FALLBACK_THEME", "FOOTER_HEIGHT", "FOOTER_Y",
+        "HEADER_BOTTOM", "MAX_ATOMIC_DRAW", "MAX_PENDING_DRAW",
+        "SCREEN_HEIGHT", "SCREEN_WIDTH", "THEME_DIRECTORY",
+        "FeatherRenderer", "Page", "PrintState", "rectangles_overlap",
+    )),
+    ("identity", (
+        "CommandKey", "FrameworkKey", "PageKey", "StateKey",
+        "serialize_key",
+    )),
+    ("actions", (
+        "Action", "Back", "CancellationHint", "Command", "CompletionHint",
+        "ContinuousMovementHint", "CoolingHint", "DispatchResult",
+        "HeatingHint", "HomingHint", "Increment", "MotorStateHint",
+        "MovementHint", "Navigate", "ProgressHint", "ProbingHint",
+        "Replace", "Router", "SetValue", "SimulationHint", "Toggle",
+        "action_metadata", "action_wire_id", "collect_actions",
+    )),
+    ("bindings", (
+        "Binding", "DerivedBinding", "DirectBinding", "StateSpec",
+        "StateStore", "bind", "derived", "state", "state_spec",
+    )),
+    ("properties", (
+        "CreationFieldSpec", "EditorSpec", "Invalidation", "PropertySpec",
+        "RewritePolicy", "SourceSpec", "ValidationSpec", "property_names",
+        "property_schema",
+    )),
+    ("reflection", ("reflect_page",)),
+    ("source", ("capture_enabled", "source_capture")),
+    ("layout", (
+        "EMPTY", "FLEX", "Column", "CreationContract", "DeclarativePage",
+        "Dirty", "Equal", "EqualTracks", "Flex", "Grid", "Insets",
+        "LAYOUT_SCHEMA", "LayoutResult", "List", "Node", "Overlay",
+        "Override", "PageTree", "Rect", "Row", "Spacer", "Span",
+        "StructureContract", "Tree", "When", "WrapPanel", "split",
+        "subdivision_positions",
+    )),
+    ("components", (
+        "Button", "ButtonStyle", "CornerMarks", "Crosshair", "Dialog",
+        "DotGrid", "Fill", "Hitbox", "JoystickKnob", "Metric", "Panel",
+        "Section", "Stroke", "Text", "VerticalGauge", "VerticalScale",
+    )),
 )
-from .identity import CommandKey, FrameworkKey, PageKey, StateKey, serialize_key
-from .actions import (
-    Action, Back, CancellationHint, Command, CompletionHint,
-    ContinuousMovementHint, CoolingHint, DispatchResult, HeatingHint,
-    HomingHint, Increment, MotorStateHint, MovementHint, Navigate, ProgressHint,
-    ProbingHint, Replace, Router, SetValue, SimulationHint, Toggle,
-    action_metadata, action_wire_id, collect_actions,
-)
-from .bindings import (
-    Binding, DerivedBinding, DirectBinding, StateSpec, StateStore,
-    bind, derived, state, state_spec,
-)
-from .properties import (
-    CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy,
-    SourceSpec, ValidationSpec, property_names, property_schema,
-)
-from .reflection import reflect_page
-from .source import capture_enabled, source_capture
-from .layout import (
-    EMPTY, FLEX, Column, CreationContract, DeclarativePage, Dirty, Equal, EqualTracks, Flex,
-    Grid, Insets, LAYOUT_SCHEMA, LayoutResult, List, Node, Overlay, Override,
-    PageTree, Rect, Row, Spacer, Span, StructureContract, Tree, When, WrapPanel,
-    split, subdivision_positions,
-)
-from .components import (
-    Button, ButtonStyle, CornerMarks, Crosshair, Dialog, DotGrid, Fill,
-    Hitbox, JoystickKnob, Metric, Panel, Section, Stroke, Text,
-    VerticalGauge, VerticalScale,
-)
+_EXPORTS = dict(
+    (name, module_name)
+    for module_name, names in _EXPORT_GROUPS
+    for name in names)
+
+
+def __getattr__(name):
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    module = __import__("%s.%s" % (__name__, module_name), fromlist=(name,))
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()).union(_EXPORTS))
 
 __all__ = (
     "__version__", "FRAMEWORK_API_VERSION", "REFLECTION_SCHEMA_VERSION",
