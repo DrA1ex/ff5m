@@ -25,9 +25,9 @@ If you’re using the Stock screen, you can perform calibrations directly throug
 Feather exposes the workflows below through the paginated **Control →
 Calibration** menu. Z-offset, bed screws, bed mesh, input shaper, and bed/hotend
 PID tuning run their guarded Forge-X workflows directly. Extruder rotation and
-axis dimensions remain measurement-based procedures: Feather shows their steps,
-but applying the calculated `rotation_distance` still requires an explicit
-`user.cfg` edit in Fluidd/Mainsail.
+axis dimensions remain measurement-based procedures. Feather guides extruder
+rotation from preparation through measurement and safely updates `user.cfg`;
+axis dimensions still require a manual calculation and edit.
 
 However, if you want to go further, here’s what you need to know:
 
@@ -116,32 +116,23 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
 ---
 
 ## Extruder Calibration
-1. **Extrude Filament**:
-   - Set relative extrusion mode
-     ```
-     M83
-     ```
-   - Heat nozzle:
-     ```
-     M104 S220; Set nozzle to 220°C (adjust for filament)
-     ```
-   - Extrude 100 mm:
-     ```
-     G1 E100 F100
-     ```
-   - Mark 100 mm filament, measure actual extrusion (e.g., 98 mm).
-3. **Calculate**:
-   - Get current `rotation_distance` (e.g., `4.7`).
-   - Formula: `new_rotation_distance = old_rotation_distance * (measured_distance / expected_distance)`
-     - E.g., `4.7 * (98 / 100) ≈ 4.6`
-4. **Update**:
-   - Add to `user.cfg`:
-     ```
-     [extruder]
-     rotation_distance: 4.6
-     ```
-   - Run `NEW_SAVE_CONFIG`.
-5. **Note**: `tuning.cfg` has a near-accurate baseline.
+
+On Feather, open **Control → Calibration → Extruder**. The guided workflow:
+
+1. Offers an optional cold pull for the loaded material.
+2. Turns the heater off, positions the head, waits below 50°C, and beeps.
+3. Guides removal of the nozzle and direct loading of clean filament.
+4. Feeds 50 mm to seat the filament, then 100 mm between two marks.
+5. Asks only for the measured distance and calculates `rotation_distance`.
+6. Lets you save immediately or apply the candidate and repeat the measurement.
+7. Backs up and atomically updates `mod_data/user.cfg` without restarting
+   Klipper.
+
+Values more than 20% away from the expected 100 mm require an additional
+confirmation. Install the nozzle securely before leaving the workflow.
+
+After changing extruder rotation distance, recalibrate **Flow / Flow Ratio**
+and then **Pressure Advance**. Bed Mesh and Z Offset do not need recalibration.
 
 ---
 

@@ -35,6 +35,9 @@ class Parameter:
     order: int = 0
     warning: Optional[str] = None
     deprecated: Optional[DeprecationParameter] = None
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    fraction_digits: Optional[int] = None
 
 
 class ModParamManagement:
@@ -121,6 +124,9 @@ class ModParamManagement:
                 hidden=param_data.get("hidden", False),
                 order=param_data.get("order", 0),
                 warning=param_data.get("warning", None),
+                minimum=param_data.get("minimum"),
+                maximum=param_data.get("maximum"),
+                fraction_digits=param_data.get("fraction_digits"),
                 deprecated=DeprecationParameter(
                     key=param_data["deprecated"]["key"],
                     new_key=param_data["key"],

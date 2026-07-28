@@ -10,6 +10,7 @@ from .actions import Action, action_wire_id
 from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
 from .layout import CreationContract, Node, Rect, subdivision_positions
+from .numeric_input import NumericInputSpec
 from .properties import (
     CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy, SourceSpec,
     ValidationSpec, property_schema,
@@ -365,6 +366,69 @@ class Metric(Component):
             bounds.x, bounds.center_y, bounds.width,
             resolve(self.label, state), resolve(self.value, state),
             resolve(self.unit, state), **kwargs)
+
+
+class NumericKeypad(Component):
+    """Reusable numeric entry window; the surrounding page owns its chrome."""
+
+    covers_bounds = True
+    property_schema = property_schema(
+        _text("title", group="Content", live=True),
+        _text("subtitle", group="Content", live=True),
+        _text("value", group="Content", live=True),
+        _select("mode", NumericInputSpec.MODES, "decimal", group="Behavior"),
+        _number("minimum", None, integer=False, nullable=True,
+                group="Validation"),
+        _number("maximum", None, integer=False, nullable=True,
+                group="Validation"),
+        _number("max_length", 10, minimum=1, maximum=64,
+                group="Validation"),
+        _number("fraction_digits", None, minimum=0, maximum=12,
+                nullable=True, group="Validation"),
+        _text("confirm_label", "CONFIRM", group="Content", live=True),
+        _color("border", group="Appearance"),
+        _color("background", "panel", group="Appearance"))
+
+    def __init__(self, title, value, actions, subtitle="", mode="decimal",
+                 minimum=None, maximum=None, max_length=10,
+                 fraction_digits=None, confirm_label="CONFIRM",
+                 border="35d9e6", background="050c0f", key=None):
+        super().__init__(key=key)
+        if not isinstance(actions, dict):
+            raise TypeError("NumericKeypad actions must be a dictionary")
+        for name, action in actions.items():
+            if not isinstance(action, Action):
+                raise TypeError(
+                    "NumericKeypad action %s must be a semantic Action" % name)
+        self.title = title
+        self.subtitle = subtitle
+        self.value = value
+        self.actions = dict(actions)
+        # collect_actions already understands dialog-style button tuples.
+        self.buttons = tuple((action, name, "enabled")
+                             for name, action in self.actions.items())
+        self.mode = mode
+        self.minimum = minimum
+        self.maximum = maximum
+        self.max_length = max_length
+        self.fraction_digits = fraction_digits
+        self.confirm_label = confirm_label
+        self.border = border
+        self.background = background
+
+    def draw(self, renderer, state, bounds):
+        return renderer.numeric_keypad(
+            *bounds, resolve(self.title, state), resolve(self.value, state),
+            resolve_deep(self.actions, state),
+            subtitle=resolve(self.subtitle, state),
+            mode=resolve(self.mode, state),
+            minimum=resolve(self.minimum, state),
+            maximum=resolve(self.maximum, state),
+            max_length=resolve(self.max_length, state),
+            fraction_digits=resolve(self.fraction_digits, state),
+            confirm_label=resolve(self.confirm_label, state),
+            border=resolve(self.border, state),
+            background=resolve(self.background, state))
 
 
 class DotGrid(Component):

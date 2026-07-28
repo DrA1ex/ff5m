@@ -7,6 +7,8 @@
 # Changes:
 # - Backported Klipper commit 01f089e: scale the minimum PWM change threshold
 #   with max_power, allowing heaters configured below 0.05 power to start.
+# - Added an internal, runtime-only cold-extrusion override for guided Feather
+#   service operations. It is deliberately not exposed as a G-code command.
 # - Python-only patch; no MCU firmware or host binary rebuild is required.
 import os, logging, threading
 
@@ -38,7 +40,11 @@ class Heater:
             minval=self.min_temp, maxval=self.max_temp)
         is_fileoutput = (self.printer.get_start_args().get('debugoutput')
                          is not None)
-        self.can_extrude = self.min_extrude_temp <= 0. or is_fileoutput
+        self._extrusion_temperature_disabled = (
+            self.min_extrude_temp <= 0. or is_fileoutput)
+        self._temperature_can_extrude = self._extrusion_temperature_disabled
+        self._extrusion_override = False
+        self.can_extrude = self._temperature_can_extrude
         self.max_power = config.getfloat('max_power', 1., above=0., maxval=1.)
         self.min_pwm_change = self.max_power * MIN_PWM_CHANGE_RATIO
         self.smooth_time = config.getfloat('smooth_time', 1., above=0.)
@@ -91,7 +97,11 @@ class Heater:
             temp_diff = temp - self.smoothed_temp
             adj_time = min(time_diff * self.inv_smooth_time, 1.)
             self.smoothed_temp += temp_diff * adj_time
-            self.can_extrude = (self.smoothed_temp >= self.min_extrude_temp)
+            self._temperature_can_extrude = (
+                self._extrusion_temperature_disabled
+                or self.smoothed_temp >= self.min_extrude_temp)
+            self.can_extrude = (
+                self._temperature_can_extrude or self._extrusion_override)
         #logging.debug("temp: %.3f %f = %f", read_time, temp)
     # External commands
     def get_pwm_delay(self):
@@ -100,6 +110,17 @@ class Heater:
         return self.max_power
     def get_smooth_time(self):
         return self.smooth_time
+    def set_extrusion_override(self, enabled):
+        """Temporarily allow extrusion below min_extrude_temp.
+
+        This is an internal runtime switch for tightly scoped service moves.
+        It intentionally has no config or G-code interface, so a Klipper
+        restart always restores the normal temperature interlock.
+        """
+        with self.lock:
+            self._extrusion_override = bool(enabled)
+            self.can_extrude = (
+                self._temperature_can_extrude or self._extrusion_override)
     def set_temp(self, degrees):
         if degrees and (degrees < self.min_temp or degrees > self.max_temp):
             raise self.printer.command_error(

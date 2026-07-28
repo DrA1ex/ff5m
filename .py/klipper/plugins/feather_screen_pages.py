@@ -1074,15 +1074,17 @@ class FeatherPagesMixin:
 
             self._set_mod_value(param, value, complete)
             return
-        if action == "mod.backspace":
+        if kind in ("int", "float") and (
+                action in ("mod.backspace", "mod.sign", "mod.dot")
+                or action.startswith("mod.key.")):
+            token = ({"mod.backspace": "backspace", "mod.sign": "sign",
+                      "mod.dot": "decimal"}.get(action))
+            if token is None:
+                token = action[len("mod.key."):]
+            self.mod_edit_value = mod_ui.numeric_input_spec(param).apply(
+                self.mod_edit_value, token)
+        elif action == "mod.backspace":
             self.mod_edit_value = self.mod_edit_value[:-1]
-        elif action == "mod.sign" and kind in ("int", "float"):
-            self.mod_edit_value = (self.mod_edit_value[1:]
-                                   if self.mod_edit_value.startswith("-")
-                                   else "-" + self.mod_edit_value)
-        elif action == "mod.dot" and kind == "float":
-            if "." not in self.mod_edit_value:
-                self.mod_edit_value += "."
         elif action == "mod.shift" and kind == "str":
             self.mod_keyboard_shift = not self.mod_keyboard_shift
         elif action == "mod.symbols" and kind == "str":
@@ -1172,6 +1174,10 @@ class FeatherPagesMixin:
             return
         kind = mod_ui.parameter_kind(param)
         commands = self.renderer.begin_page("Edit value", back=True)
+        if kind in ("int", "float"):
+            commands += self._render_mod_numeric_keys(param)
+            self.renderer.send(commands)
+            return
         commands += [
             self.renderer.text(25, 73, str(param.label).upper(), "35d9e6",
                                "JetBrainsMono Bold 12pt"),
@@ -1186,32 +1192,24 @@ class FeatherPagesMixin:
                                "JetBrainsMono 12pt", max_width=710,
                                truncate=True),
         ]
-        if kind in ("int", "float"):
-            commands += self._render_mod_numeric_keys(kind)
-        else:
-            commands += self._render_mod_text_keys()
+        commands += self._render_mod_text_keys()
         self.renderer.send(commands)
 
-    def _render_mod_numeric_keys(self, kind):
-        commands = []
-        rows = (("1", "2", "3"), ("4", "5", "6"),
-                ("7", "8", "9"), ("sign", "0", "dot"))
-        for row, keys in enumerate(rows):
-            for column, token in enumerate(keys):
-                label = "-" if token == "sign" else "." if token == "dot" else token
-                action = "mod.%s" % token if token in ("sign", "dot") else "mod.key.%s" % token
-                state = "disabled" if token == "dot" and kind == "int" else "enabled"
-                commands += self.renderer.button(
-                    action, 25 + column * 155, 185 + row * 47, 140, 40,
-                    label, state=state, font="JetBrainsMono 12pt")
-        commands += self.renderer.button("mod.backspace", 500, 185, 275, 181,
-                                         "BACKSPACE", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("mod.cancel", 25, 383, 360, 54,
-                                         "CANCEL", state="danger",
-                                         font="JetBrainsMono Bold 8pt")
-        commands += self.renderer.button("mod.save", 415, 383, 360, 54,
-                                         "SAVE", font="JetBrainsMono Bold 8pt")
-        return commands
+    def _render_mod_numeric_keys(self, param):
+        spec = mod_ui.numeric_input_spec(param)
+        actions = dict((digit, "mod.key.%s" % digit)
+                       for digit in "0123456789")
+        actions.update({
+            "backspace": "mod.backspace",
+            "confirm": "mod.save",
+        })
+        if spec.allows_decimal:
+            actions["decimal"] = "mod.dot"
+        if spec.allows_negative:
+            actions["sign"] = "mod.sign"
+        return self.renderer.numeric_keypad(
+            18, 65, 764, 370, param.label, self.mod_edit_value, actions,
+            subtitle=param.key, mode=spec, confirm_label="SAVE")
 
     def _render_mod_text_keys(self):
         commands = []

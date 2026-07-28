@@ -139,6 +139,8 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.FILAMENT_ACTION: "_render_filament_action",
             FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
             FEATHER.Page.CALIBRATION_GUIDE: "_render_calibration_guide",
+            FEATHER.Page.EXTRUDER_CALIBRATION:
+                "_render_extruder_calibration",
             FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
             FEATHER.Page.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
@@ -341,7 +343,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("HOTEND PID", drawing)
         self.assertIn("3 / 3", drawing)
 
-    def test_manual_calibrations_open_measurement_guides(self):
+    def test_extruder_opens_guided_workflow_and_axes_keeps_measurement_guide(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
@@ -349,14 +351,12 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._require_idle = lambda: None
         pages = []
         controller._show_page = pages.append
+        extruder_started = []
+        controller._start_extruder_calibration = (
+            lambda: extruder_started.append(True))
 
         controller._handle_calibration_action("cal.extruder")
-        self.assertEqual(
-            pages[-1], FEATHER.Page.CALIBRATION_GUIDE)
-        controller._render_calibration_guide()
-        drawing = "\n".join(batches[-1])
-        self.assertIn("EXTRUDE 100 MM", drawing)
-        self.assertIn("EXTRUDER ROTATION_DISTANCE", drawing)
+        self.assertEqual(extruder_started, [True])
 
         controller._handle_calibration_action("cal.axes")
         controller._render_calibration_guide()
@@ -1341,6 +1341,26 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_mod_action("mod.save")
         self.assertEqual(controller.params.updated, [("park_dz", 75)])
 
+    def test_mod_numeric_editor_uses_shared_window_title_and_constraints(self):
+        param = mod_param("speed", float, 5.0, "Travel speed")
+        param.minimum = 1.0
+        param.maximum = 10.0
+        param.fraction_digits = 1
+        controller = mod_controller([param], {"speed": 5.0})
+
+        controller._handle_mod_action("mod.item.0")
+        drawing = "\n".join(controller.draw_batches[-1])
+        self.assertIn("TRAVEL SPEED // SPEED", drawing)
+        self.assertIn("--id 1:mod.dot", drawing)
+        self.assertNotIn("--id 1:mod.sign", drawing)
+        controller.mod_edit_value = ""
+        for action in ("mod.key.9", "mod.dot", "mod.key.5", "mod.key.9"):
+            controller._handle_mod_action(action)
+        self.assertEqual(controller.mod_edit_value, "9.5")
+        controller.mod_edit_value = "11"
+        with self.assertRaisesRegex(ValueError, "at most 10"):
+            controller._handle_mod_action("mod.save")
+
     def test_mod_string_editor_supports_shift_symbols_space_and_backspace(self):
         param = mod_param("midi_on", str, "", "Startup MIDI")
         controller = mod_controller([param], {"midi_on": ""})
@@ -1379,6 +1399,11 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertTrue(controller._wake_if_dimmed())
         self.assertFalse(controller._wake_if_dimmed())
         self.assertEqual(values, [55])
+
+    def test_background_wake_action_has_no_page_side_effect(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+
+        controller._handle_touch_action("global.wake")
 
     def test_pending_print_action_rejects_repeat_tap(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1889,6 +1914,26 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(controller.page, FEATHER.Page.ERROR)
         self.assertEqual(rendered, [])
+
+    def test_frozen_shutdown_screen_preserves_recovery_hitbox_generation(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.ERROR
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer._generation = 9
+        controller.renderer.freeze_output()
+        controller.error_message = "Shutdown due to M112 command"
+        controller.error_category = "shutdown"
+        controller.error_recovery = "firmware_restart"
+
+        controller._show_message(
+            "Shutdown due to M112 command; use FIRMWARE_RESTART",
+            FEATHER.Page.ERROR)
+
+        self.assertEqual(controller.renderer.generation, 9)
+        self.assertEqual(controller.error_message,
+                         "Shutdown due to M112 command")
+        self.assertEqual(controller.error_category, "shutdown")
+        self.assertEqual(controller.error_recovery, "firmware_restart")
 
     def test_error_classification_honors_firmware_restart_state_message(self):
         classify = FEATHER.FeatherScreen._classify_error

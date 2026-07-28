@@ -8,13 +8,13 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import enum
-import math
-import re
 
 try:
     from .feather_keyboard import SYMBOL_KEYS, key_character
+    from .ui import NumericInputSpec
 except (ImportError, ValueError):
     from feather_keyboard import SYMBOL_KEYS, key_character
+    from ui import NumericInputSpec
 
 
 VISIBLE_ROWS = 5
@@ -37,6 +37,19 @@ def parameter_kind(param):
     if param_type is float:
         return "float"
     return "str"
+
+
+def numeric_input_spec(param):
+    kind = parameter_kind(param)
+    if kind not in ("int", "float"):
+        raise TypeError("Parameter is not numeric")
+    return NumericInputSpec(
+        "integer" if kind == "int" else "decimal",
+        minimum=getattr(param, "minimum", None),
+        maximum=getattr(param, "maximum", None),
+        max_length=MAX_VALUE_LENGTH,
+        fraction_digits=(0 if kind == "int" else
+                         getattr(param, "fraction_digits", None)))
 
 
 def enum_names(param):
@@ -94,17 +107,8 @@ def validate_value(param, text):
     if len(text) > MAX_VALUE_LENGTH:
         raise ValueError("Value is too long")
     kind = parameter_kind(param)
-    if kind == "int":
-        if re.match(r"^-?\d+$", text) is None:
-            raise ValueError("Enter a whole number")
-        return int(text)
-    if kind == "float":
-        if re.match(r"^-?(?:\d+(?:\.\d*)?|\.\d+)$", text) is None:
-            raise ValueError("Enter a decimal number")
-        value = float(text)
-        if not math.isfinite(value):
-            raise ValueError("Enter a finite number")
-        return value
+    if kind in ("int", "float"):
+        return numeric_input_spec(param).parse(text)
     if kind == "str":
         if any(ord(char) < 32 or ord(char) > 126 for char in text):
             raise ValueError("Only printable ASCII is supported")

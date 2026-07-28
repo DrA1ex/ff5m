@@ -49,6 +49,7 @@ _EXPORT_GROUPS = (
         "Binding", "DerivedBinding", "DirectBinding", "StateSpec",
         "StateStore", "bind", "derived", "state", "state_spec",
     )),
+    ("numeric_input", ("NumericInputSpec",)),
     ("properties", (
         "CreationFieldSpec", "EditorSpec", "Invalidation", "PropertySpec",
         "RewritePolicy", "SourceSpec", "ValidationSpec", "property_names",
@@ -67,7 +68,8 @@ _EXPORT_GROUPS = (
     ("components", (
         "Button", "ButtonStyle", "CornerMarks", "Crosshair", "Dialog",
         "DotGrid", "Fill", "Hitbox", "JoystickKnob", "Metric", "Panel",
-        "Section", "Stroke", "Text", "VerticalGauge", "VerticalScale",
+        "NumericKeypad", "Section", "Stroke", "Text", "VerticalGauge",
+        "VerticalScale",
     )),
 )
 _EXPORTS = dict(
@@ -106,6 +108,7 @@ __all__ = (
     "action_wire_id", "collect_actions",
     "Binding", "DirectBinding", "DerivedBinding", "StateSpec", "StateStore",
     "state", "state_spec", "bind", "derived",
+    "NumericInputSpec",
     "Invalidation", "RewritePolicy", "EditorSpec", "SourceSpec",
     "ValidationSpec", "CreationFieldSpec", "PropertySpec", "property_names",
     "property_schema",
@@ -116,6 +119,6 @@ __all__ = (
     "Spacer", "Span", "StructureContract", "Tree", "When", "WrapPanel", "split",
     "subdivision_positions", "Button",
     "ButtonStyle", "CornerMarks", "Crosshair", "Dialog", "DotGrid",
-    "Fill", "Hitbox", "JoystickKnob", "Metric", "Panel", "Section",
-    "Stroke", "Text", "VerticalGauge", "VerticalScale",
+    "Fill", "Hitbox", "JoystickKnob", "Metric", "NumericKeypad", "Panel",
+    "Section", "Stroke", "Text", "VerticalGauge", "VerticalScale",
 )

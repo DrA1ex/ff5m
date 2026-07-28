@@ -1146,7 +1146,9 @@ class FeatherControlsMixin:
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
             self._show_page(Page.CALIBRATION_CONFIRM)
-        elif action in ("cal.extruder", "cal.axes"):
+        elif action == "cal.extruder":
+            self._start_extruder_calibration()
+        elif action == "cal.axes":
             self._require_idle()
             self.calibration_guide_kind = action.split(".", 1)[1]
             self._show_page(Page.CALIBRATION_GUIDE)
