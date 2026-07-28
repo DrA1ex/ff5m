@@ -19,6 +19,7 @@ _LAZY_EXPORTS = {
     "PAPER_STEPS": ("constants", "PAPER_STEPS"),
     "Z_WEIGHT_DANGER": ("constants", "Z_WEIGHT_DANGER"),
     "SAFE_BRIEFING_PAGE": ("safe_briefing.page", "PAGE"),
+    "BRIEFING_PAGE": ("safe_briefing.page", "PAGE"),
     "render_safe_briefing": ("safe_briefing.page", "render"),
     "SAFE_PAGE": ("safe.page", "PAGE"),
     "render_safe": ("safe.page", "render"),

@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import errno
+import importlib
 import logging
 import os
 import signal
@@ -13,16 +14,33 @@ import time
 
 try:
     from .ui import Page, PrintState
-    from . import feather_mod_settings as mod_ui
     from .feather_keyboard import keyboard_rows
     from .feather_files import FileEntry, scan_gcode_files
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from ui import Page, PrintState
-    import feather_mod_settings as mod_ui
     from feather_keyboard import keyboard_rows
     from feather_files import FileEntry, scan_gcode_files
     from feather_pagination import Pagination, pagination_footer
+
+
+class _LazyModUI:
+    """Do not import Mod Settings helpers before Settings is opened."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            name = ("%s.feather_mod_settings" % __package__
+                    if __package__ else "feather_mod_settings")
+            self._module = importlib.import_module(name)
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+mod_ui = _LazyModUI()
 
 
 FILE_ROWS = 5
@@ -599,11 +617,15 @@ class FeatherPagesMixin:
                     return
             self._open_filament(True)
         elif action == "print.z" and stats in ("printing", "paused"):
-            if not self._live_z_adjust_allowed(self.reactor.monotonic()):
-                raise RuntimeError("Z adjust is not available yet")
-            self.live_z_dialog = None
-            self._begin_z_weight_gauge()
-            self._show_page(Page.LIVE_Z_OFFSET)
+            manager = getattr(self, "feature_manager", None)
+            if manager is not None:
+                manager.get("z").open_live_z()
+            else:
+                if not self._live_z_adjust_allowed(self.reactor.monotonic()):
+                    raise RuntimeError("Z adjust is not available yet")
+                self.live_z_dialog = None
+                self._begin_z_weight_gauge()
+                self._show_page(Page.LIVE_Z_OFFSET)
         elif action == "print.cancel" and stats in ("printing", "paused"):
             self._show_page(Page.CANCEL_CONFIRM)
         elif action == "print.cancel.confirm" and stats in ("printing", "paused"):
@@ -1699,10 +1721,14 @@ class FeatherPagesMixin:
             self._show_page(Page.RECOVERY_CONFIRM)
         elif action == "recovery.confirm":
             command = "RESURRECT" if self.recovery_action == "restore" else "RESURRECT_ABORT"
-            self.calibration_kind = "recovery"
-            self.print_status_text = ("STARTING RECOVERY..."
-                                      if command == "RESURRECT"
-                                      else "STARTING CLEANUP...")
+            status = ("STARTING RECOVERY..."
+                      if command == "RESURRECT" else "STARTING CLEANUP...")
+            manager = getattr(self, "feature_manager", None)
+            if manager is not None:
+                manager.get("calibration").begin_recovery(status)
+            else:
+                self.calibration_kind = "recovery"
+                self.print_status_text = status
             self._show_page(Page.CALIBRATION_PROGRESS)
             self.reactor.register_callback(
                 lambda eventtime, cmd=command: self._run_recovery(eventtime, cmd))

@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import logging
+import importlib
 import math
 import re
 import time
@@ -20,11 +21,8 @@ try:
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
     from .ff5m_ui.move import runtime as move_ui
-    from .ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
-    from .ff5m_ui.z_offset import runtime as z_offset_ui
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
-    from .feather_z_calibration import PAPER_STEPS, SAFE_Z_ADJUST_STEP
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from ui import (
@@ -37,12 +35,31 @@ except (ImportError, ValueError):
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
     from ff5m_ui.move import runtime as move_ui
-    from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
-    from ff5m_ui.z_offset import runtime as z_offset_ui
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
-    from feather_z_calibration import PAPER_STEPS, SAFE_Z_ADJUST_STEP
     from feather_pagination import Pagination, pagination_footer
+
+
+class _LazyZOffsetUI:
+    """Delay the product Z package until a Z feature page is used."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            name = ("%s.ff5m_ui.z_offset.runtime" % __package__
+                    if __package__ else "ff5m_ui.z_offset.runtime")
+            self._module = importlib.import_module(name)
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+z_offset_ui = _LazyZOffsetUI()
+PAPER_STEPS = (0.005, 0.010, 0.025, 0.050, 0.100)
+Z_WEIGHT_DANGER = 400.0
+SAFE_Z_ADJUST_STEP = 1.0
 
 
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
@@ -1880,8 +1897,11 @@ class FeatherControlsMixin:
     def _handle_gcode_output(self, message):
         for line in self._prompt_response_lines(message):
             self._handle_action_prompt_response(line)
-        if (getattr(self, "calibration_kind", None) == "screws"
-                and self.page == Page.CALIBRATION_PROGRESS):
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            manager.notify("on_gcode_output", message)
+        elif (getattr(self, "calibration_kind", None) == "screws"
+              and self.page == Page.CALIBRATION_PROGRESS):
             result = self.parse_screw_result(message)
             if result:
                 self.calibration_results.append(result)
