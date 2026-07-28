@@ -1350,7 +1350,10 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._handle_mod_action("mod.item.0")
         drawing = "\n".join(controller.draw_batches[-1])
-        self.assertIn("TRAVEL SPEED // SPEED", drawing)
+        self.assertIn('-t "SPEED"', drawing)
+        self.assertIn('-t "TRAVEL SPEED"', drawing)
+        self.assertLess(drawing.index('-t "SPEED"'),
+                        drawing.index('-t "TRAVEL SPEED"'))
         self.assertIn("--id 1:mod.dot", drawing)
         self.assertNotIn("--id 1:mod.sign", drawing)
         controller.mod_edit_value = ""

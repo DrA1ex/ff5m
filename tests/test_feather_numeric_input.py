@@ -63,7 +63,9 @@ class NumericKeypadTest(unittest.TestCase):
             subtitle="mm", minimum=0.001, fraction_digits=3,
             confirm_label="CALCULATE"))
 
-        self.assertIn("DISTANCE BETWEEN MARKS // MM", drawing)
+        self.assertIn("DISTANCE BETWEEN MARKS", drawing)
+        self.assertIn('-t "MM"', drawing)
+        self.assertNotIn("DISTANCE BETWEEN MARKS // MM", drawing)
         self.assertIn("CALCULATE", drawing)
         self.assertIn("--id 1:key.dot", drawing)
         self.assertIn("--id 1:key.back", drawing)
@@ -88,6 +90,44 @@ class NumericKeypadTest(unittest.TestCase):
         drawing = keypad.draw(
             FeatherRenderer(), {}, Rect(18, 65, 764, 370))
         self.assertTrue(drawing)
+
+    def test_sign_is_rendered_once_in_each_numeric_mode(self):
+        actions = dict((digit, "key.%s" % digit)
+                       for digit in "0123456789")
+        actions.update({"decimal": "key.dot", "sign": "key.sign",
+                        "backspace": "key.back", "confirm": "key.save"})
+        renderer = FeatherRenderer()
+        decimal = "\n".join(renderer.numeric_keypad(
+            18, 65, 764, 370, "VALUE", "-1.5", actions,
+            mode="decimal"))
+        integer = "\n".join(renderer.numeric_keypad(
+            18, 65, 764, 370, "VALUE", "-15", actions,
+            mode="integer", fraction_digits=0))
+
+        self.assertEqual(decimal.count(":key.sign"), 1)
+        self.assertEqual(decimal.count(":key.dot"), 1)
+        self.assertEqual(integer.count(":key.sign"), 1)
+        self.assertNotIn(":key.dot", integer)
+
+    def test_theme_roles_create_readable_visual_hierarchy(self):
+        renderer = FeatherRenderer()
+        renderer.set_theme("CYBERPUNK_YELLOW")
+        actions = dict((digit, "key.%s" % digit)
+                       for digit in "0123456789")
+        actions.update({"sign": "key.sign", "backspace": "key.back",
+                        "confirm": "key.save"})
+        drawing = "\n".join(renderer.numeric_keypad(
+            18, 65, 764, 370,
+            "Cooldown temperature for CLEAR_NOZZLE, C", "150", actions,
+            subtitle="clear_cooldown_temp", mode="integer"))
+
+        self.assertIn("-c fff8cc", drawing)  # title/text
+        self.assertIn("-c 8a8150", drawing)  # subtitle
+        self.assertIn("-c ff9f1c", drawing)  # input/auxiliary accent
+        self.assertGreaterEqual(
+            drawing.count(
+                "--background 514900 --border ffe600 --text-color fffde8"),
+            11)
 
 
 if __name__ == "__main__":

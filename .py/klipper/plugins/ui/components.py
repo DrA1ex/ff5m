@@ -386,13 +386,19 @@ class NumericKeypad(Component):
         _number("fraction_digits", None, minimum=0, maximum=12,
                 nullable=True, group="Validation"),
         _text("confirm_label", "CONFIRM", group="Content", live=True),
-        _color("border", group="Appearance"),
-        _color("background", "panel", group="Appearance"))
+        _color("border", "border", group="Appearance"),
+        _color("background", "panel", group="Appearance"),
+        _color("title_color", "text", group="Appearance"),
+        _color("subtitle_color", "dim", group="Appearance"),
+        _color("input_border", "secondary", group="Appearance"),
+        _color("value_color", "bright", group="Appearance"))
 
     def __init__(self, title, value, actions, subtitle="", mode="decimal",
                  minimum=None, maximum=None, max_length=10,
                  fraction_digits=None, confirm_label="CONFIRM",
-                 border="35d9e6", background="050c0f", key=None):
+                 border="border", background="panel", title_color="text",
+                 subtitle_color="dim", input_border="secondary",
+                 value_color="bright", key=None):
         super().__init__(key=key)
         if not isinstance(actions, dict):
             raise TypeError("NumericKeypad actions must be a dictionary")
@@ -415,6 +421,10 @@ class NumericKeypad(Component):
         self.confirm_label = confirm_label
         self.border = border
         self.background = background
+        self.title_color = title_color
+        self.subtitle_color = subtitle_color
+        self.input_border = input_border
+        self.value_color = value_color
 
     def draw(self, renderer, state, bounds):
         return renderer.numeric_keypad(
@@ -428,7 +438,11 @@ class NumericKeypad(Component):
             fraction_digits=resolve(self.fraction_digits, state),
             confirm_label=resolve(self.confirm_label, state),
             border=resolve(self.border, state),
-            background=resolve(self.background, state))
+            background=resolve(self.background, state),
+            title_color=resolve(self.title_color, state),
+            subtitle_color=resolve(self.subtitle_color, state),
+            input_border=resolve(self.input_border, state),
+            value_color=resolve(self.value_color, state))
 
 
 class DotGrid(Component):

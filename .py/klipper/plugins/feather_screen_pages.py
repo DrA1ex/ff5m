@@ -1208,8 +1208,8 @@ class FeatherPagesMixin:
         if spec.allows_negative:
             actions["sign"] = "mod.sign"
         return self.renderer.numeric_keypad(
-            18, 65, 764, 370, param.label, self.mod_edit_value, actions,
-            subtitle=param.key, mode=spec, confirm_label="SAVE")
+            18, 65, 764, 370, param.key, self.mod_edit_value, actions,
+            subtitle=param.label, mode=spec, confirm_label="SAVE")
 
     def _render_mod_text_keys(self):
         commands = []

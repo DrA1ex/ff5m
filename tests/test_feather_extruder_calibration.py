@@ -474,7 +474,8 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
         self.assertEqual(session.input_text, "100.500")
         drawing = "\n".join(batches[-1])
-        self.assertIn("DISTANCE BETWEEN MARKS // MM", drawing)
+        self.assertIn("DISTANCE BETWEEN MARKS", drawing)
+        self.assertIn('-t "MM"', drawing)
         self.assertIn("extruder.key.backspace", drawing)
         self.assertIn("CALCULATE", drawing)
 
