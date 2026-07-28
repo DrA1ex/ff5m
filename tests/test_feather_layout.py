@@ -255,6 +255,16 @@ class DirtyRenderingTest(unittest.TestCase):
 
 
 class MovementLayoutTest(unittest.TestCase):
+    def test_post_home_park_position_is_valid_telemetry(self):
+        renderer = FeatherRenderer()
+        values = move.snapshot_values(
+            (120.0, 120.0, 230.0, "HOMED: XYZ", True, True))
+
+        drawing = "\n".join(move.render_step(renderer, values))
+
+        self.assertIn("X  120.00   Y  120.00", drawing)
+        self.assertIn("Z  230.00", drawing)
+
     def test_joystick_columns_and_controls_derive_from_page_tree(self):
         page = move.JOYSTICK_PAGE
 

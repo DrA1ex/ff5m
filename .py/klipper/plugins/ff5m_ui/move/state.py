@@ -6,15 +6,17 @@ from ui.identity import StateKey
 
 class ToolheadState(StateKey):
     __key_namespace__ = "ui.pages.move.state.ToolheadState"
-    X = state(float, default=0.0, minimum=-110.0, maximum=110.0,
-              unit="mm", category="toolhead",
-              simulation_role="position.x", simulation_home=110.0)
-    Y = state(float, default=0.0, minimum=-110.0, maximum=110.0,
-              unit="mm", category="toolhead",
-              simulation_role="position.y", simulation_home=110.0)
-    Z = state(float, default=0.0, minimum=0.0, maximum=220.0,
-              unit="mm", category="toolhead",
-              simulation_role="position.z", simulation_home=220.0)
+    # Current coordinates are telemetry, not movement targets.  Homing and
+    # parking legitimately leave the FF5M outside Feather's conservative
+    # manual-movement workspace (up to approximately 120/120/230).  Target
+    # limits belong to the movement controller; validating telemetry against
+    # them used to raise from the reactor timer and shut Klipper down.
+    X = state(float, default=0.0, unit="mm", category="toolhead",
+              simulation_role="position.x", simulation_home=120.0)
+    Y = state(float, default=0.0, unit="mm", category="toolhead",
+              simulation_role="position.y", simulation_home=120.0)
+    Z = state(float, default=0.0, unit="mm", category="toolhead",
+              simulation_role="position.z", simulation_home=230.0)
     HOMED_X = state(bool, default=False, category="toolhead",
                     simulation_role="homed.x")
     HOMED_Y = state(bool, default=False, category="toolhead",

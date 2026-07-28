@@ -119,7 +119,7 @@ class JoystickPlannerTest(unittest.TestCase):
     def test_xy_does_not_clamp_inactive_axes_after_homing(self):
         planner = self.planner()
         planner.set_xy(100, 200, 0.0, 200, 200, 100)
-        position = (110.01, 110.04, 220.0)
+        position = (120.0, 120.0, 230.0)
 
         segment = planner.advance(position, 0.025)
 
@@ -127,6 +127,23 @@ class JoystickPlannerTest(unittest.TestCase):
         self.assertEqual(segment.position[1], position[1])
         self.assertEqual(segment.position[2], position[2])
         self.assertEqual(segment.acceleration, planner.xy_accel)
+
+    def test_post_home_position_allows_only_inward_z_motion(self):
+        inward = self.planner()
+        inward.set_z(100, 0.0, 200, 100)
+        position = (120.0, 120.0, 230.0)
+
+        segment = inward.advance(position, 0.025)
+
+        self.assertEqual(segment.position[0], position[0])
+        self.assertEqual(segment.position[1], position[1])
+        self.assertLess(segment.position[2], position[2])
+
+        outward = self.planner()
+        outward.set_z(300, 0.0, 200, 100)
+
+        self.assertIsNone(outward.advance(position, 0.025))
+        self.assertEqual(outward.velocity, [0.0, 0.0, 0.0])
 
     def test_half_stick_uses_nonlinear_force_and_terminal_speed(self):
         full = self.planner()
