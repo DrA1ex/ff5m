@@ -5,10 +5,10 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
-import re
 
 from .actions import Action, action_wire_id
 from .bindings import resolve, resolve_deep
+from .font_metrics import get_font_metrics
 from .layout import CreationContract, Node, Rect, subdivision_positions
 from .properties import (
     CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy, SourceSpec,
@@ -268,10 +268,6 @@ class Text(Component):
             "auto_height", bool, False, kind="checkbox", group="Text layout",
             invalidation=Invalidation.LAYOUT))
 
-    _FONT_POINTS = re.compile(r"(\d+)pt$")
-    _FONT_SIZES = (8, 12, 16, 20, 28)
-    _FONT_ADVANCE = {8: 11, 12: 16, 16: 22, 20: 28, 28: 38}
-
     def __init__(self, value, color="35d9e6", font=None,
                  horizontal="center", vertical="center", key=None,
                  auto_height=False, **kwargs):
@@ -290,48 +286,16 @@ class Text(Component):
         elif name == "text_color" and self.color is None:
             self.color = value
 
-    def _font_points(self):
-        value = self.font if isinstance(self.font, str) else "JetBrainsMono 8pt"
-        match = self._FONT_POINTS.search(value)
-        return int(match.group(1)) if match else 8
-
-    def _normalized_font_points(self):
-        requested = self._font_points()
-        return min(
-            self._FONT_SIZES,
-            key=lambda candidate: abs(candidate - requested))
-
-    @staticmethod
-    def _wrapped_line_count(value, columns):
-        columns = max(1, int(columns))
-        total = 0
-        for paragraph in str(value).split("\n"):
-            words = paragraph.split()
-            if not words:
-                total += 1
-                continue
-            first = words[0]
-            lines = max(1, (len(first) + columns - 1) // columns)
-            length = len(first) % columns or min(len(first), columns)
-            for word in words[1:]:
-                candidate = length + 1 + len(word)
-                if candidate <= columns:
-                    length = candidate
-                    continue
-                word_lines = max(1, (len(word) + columns - 1) // columns)
-                lines += word_lines
-                length = len(word) % columns or min(len(word), columns)
-            total += lines
-        return max(1, total)
-
     def preferred_extent(self, direction, cross_extent=None):
         if direction != "vertical" or not self.auto_height:
             return None
         if not isinstance(self.value, str):
             return None
-        points = self._normalized_font_points()
-        line_height = max(16, int(round(points * 1.65)))
+        metrics = get_font_metrics()
+        font = self.font if isinstance(self.font, str) else "JetBrainsMono 8pt"
+        metric = metrics.metric(font)
         wrap = bool(self.kwargs.get("wrap", False))
+        width = None
         if wrap:
             width = self.kwargs.get("max_width")
             if width is None:
@@ -339,16 +303,13 @@ class Text(Component):
             if width is None:
                 return None
             width = max(1, int(width) - self.layout_options.padding.horizontal)
-            character_width = self._FONT_ADVANCE[points]
-            lines = self._wrapped_line_count(
-                self.value, int(width / float(character_width)))
-        else:
-            lines = max(1, len(self.value.split("\n")))
         maximum = self.kwargs.get("max_height")
-        height = lines * line_height + self.layout_options.padding.vertical
+        text_height = metrics.text_height(
+            self.value, font, max_width=width, wrap=wrap)
+        height = text_height + self.layout_options.padding.vertical
         if maximum is not None:
             height = min(height, int(maximum))
-        return max(line_height, height)
+        return max(metric.glyph_height, height)
 
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)

@@ -124,7 +124,7 @@ class DeclarativeContainerTest(unittest.TestCase):
             Text("Short", wrap=True, auto_height=True).ref("text"),
             Fill("222222").height(10).ref("after"),
             gap=2,
-        ), Rect(0, 0, 120, 120))
+        ), Rect(0, 0, 120, 320))
         long = Tree(Column(
             Text(
                 "A long briefing sentence that wraps across several lines "
@@ -133,7 +133,7 @@ class DeclarativeContainerTest(unittest.TestCase):
             ).ref("text"),
             Fill("222222").height(10).ref("after"),
             gap=2,
-        ), Rect(0, 0, 120, 120))
+        ), Rect(0, 0, 120, 320))
 
         self.assertGreater(long.rect("text").height, short.rect("text").height)
         self.assertGreater(long.rect("after").y, short.rect("after").y)
@@ -350,6 +350,33 @@ class MovementLayoutTest(unittest.TestCase):
 
 
 class ZOffsetLayoutTest(unittest.TestCase):
+    def test_safe_z_briefing_text_has_sufficient_non_overlapping_layout(self):
+        page = z_offset.SAFE_BRIEFING_PAGE
+        static_text = [
+            node for node in page.root.walk()
+            if isinstance(node, Text) and isinstance(node.value, str)
+        ]
+        rectangles = [page.layout.rect(node) for node in static_text]
+
+        self.assertEqual(len(rectangles), 4)
+        for node, rectangle in zip(static_text, rectangles):
+            self.assertGreater(rectangle.height, 0)
+            self.assertGreaterEqual(
+                rectangle.height,
+                node.preferred_extent("vertical", rectangle.width))
+        for previous, following in zip(rectangles, rectangles[1:]):
+            self.assertLessEqual(previous.bottom, following.y)
+
+        commands = z_offset.render_safe_briefing(FeatherRenderer(), {
+            z_offset.SafeBriefingState.CURRENT: 10.0,
+            z_offset.SafeBriefingState.START: 20.0,
+        })
+        text_commands = [command for command in commands
+                         if command.startswith("--batch text")]
+        for node in static_text:
+            self.assertTrue(any(str(node.value) in command
+                                for command in text_commands))
+
     def test_complete_z_offset_flow_uses_declarative_pages(self):
         self.assertEqual(
             z_offset.SUMMARY_PAGE.rect("summary.save").as_tuple(),

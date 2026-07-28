@@ -41,7 +41,7 @@ void wraps_with_shared_font_metrics() {
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono8ptb4);
     const auto width =
-        drawer.calcTextBoundaries("ONE TWO").size().first;
+        drawer.calcTextAdvance("ONE TWO");
     ScreenQueue queue(drawer, 5, width, width);
 
     queue.push({LogLevel::INFO, "ONE TWO THREE FOUR"});
@@ -55,16 +55,16 @@ void bottom_row_uses_reserved_uptime_width() {
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono8ptb4);
     const auto normal_width =
-        drawer.calcTextBoundaries("AAAAAA").size().first;
+        drawer.calcTextAdvance("AAAAAA");
     const auto bottom_width =
-        drawer.calcTextBoundaries("AAA").size().first;
+        drawer.calcTextAdvance("AAA");
     ScreenQueue queue(drawer, 5, normal_width, bottom_width);
 
     queue.push({LogLevel::WARN, "AAAAAA"});
 
     CHECK((texts(queue) == std::vector<std::string>{"AAA", "AAA"}));
     CHECK(queue.rows().back().log_level == LogLevel::WARN);
-    CHECK(drawer.calcTextBoundaries(queue.rows().back().str).size().first
+    CHECK(drawer.calcTextAdvance(queue.rows().back().str)
           <= bottom_width);
 }
 
@@ -72,7 +72,7 @@ void rotation_counts_physical_rows() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono8ptb4);
-    const auto width = drawer.calcTextBoundaries("AAA").size().first;
+    const auto width = drawer.calcTextAdvance("AAA");
     ScreenQueue queue(drawer, 3, width, width);
 
     queue.push({LogLevel::INFO, "AAAAAA"});
@@ -89,9 +89,9 @@ void reset_migrates_legacy_logical_messages_as_one_layout() {
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono8ptb4);
     const auto normal_width =
-        drawer.calcTextBoundaries("AAAAAA").size().first;
+        drawer.calcTextAdvance("AAAAAA");
     const auto bottom_width =
-        drawer.calcTextBoundaries("AAA").size().first;
+        drawer.calcTextAdvance("AAA");
     ScreenQueue queue(drawer, 5, normal_width, bottom_width);
 
     queue.reset({
@@ -106,7 +106,7 @@ void wrapping_preserves_utf8() {
     std::vector<uint32_t> screen(800 * 480, 0xff000000);
     TextDrawer drawer(screen.data(), 800, 480);
     drawer.setFont(&JetBrainsMono8ptb4);
-    const auto width = drawer.calcTextBoundaries("АБ").size().first;
+    const auto width = drawer.calcTextAdvance("АБ");
     ScreenQueue queue(drawer, 5, width, width);
 
     queue.push({LogLevel::INFO, "АБВГД"});

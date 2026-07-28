@@ -451,9 +451,24 @@ TextBoundary TextDrawer::calcTextBoundaries(const std::string_view &text, int32_
     return boundary;
 }
 
+int32_t TextDrawer::calcTextAdvance(const std::string_view &text) const {
+    int32_t widest = 0;
+    int32_t current = 0;
+    for (const auto symbol: UTF8Reader{text}) {
+        if (symbol == '\n') {
+            widest = std::max(widest, current);
+            current = 0;
+            continue;
+        }
+        const auto *glyph = _glyphByCode(symbol);
+        if (glyph != nullptr) current += glyph->advanceX * _scaleX;
+    }
+    return std::max(widest, current);
+}
+
 std::string TextDrawer::truncateText(const std::string_view &text,
                                      int32_t maxWidth) const {
-    if (maxWidth <= 0 || calcTextBoundaries(text).size().first <= maxWidth) {
+    if (maxWidth <= 0 || calcTextAdvance(text) <= maxWidth) {
         return std::string(text);
     }
 
@@ -469,13 +484,13 @@ std::string TextDrawer::truncateText(const std::string_view &text,
 
     std::string ellipsis = "...";
     while (!ellipsis.empty()
-           && calcTextBoundaries(ellipsis).size().first > maxWidth) {
+           && calcTextAdvance(ellipsis) > maxWidth) {
         ellipsis.pop_back();
     }
 
     auto result = std::string(text);
     while (!result.empty()
-           && calcTextBoundaries(result + ellipsis).size().first > maxWidth) {
+           && calcTextAdvance(result + ellipsis) > maxWidth) {
         removeLastCodepoint(result);
     }
     return result + ellipsis;
@@ -487,7 +502,7 @@ std::vector<std::string> TextDrawer::wrapText(
     if (maxWidth <= 0) return {std::string(text)};
 
     const auto fits = [this, maxWidth](const std::string_view &line) {
-        return calcTextBoundaries(line).size().first <= maxWidth;
+        return calcTextAdvance(line) <= maxWidth;
     };
     const auto utf8Length = [](unsigned char firstByte) -> std::size_t {
         if (firstByte < 0x80) return 1;

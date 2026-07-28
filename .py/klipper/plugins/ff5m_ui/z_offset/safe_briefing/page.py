@@ -26,13 +26,13 @@ class SafeBriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "SAFE Z IS THE CLEARANCE USED BEFORE THE PRINTER PARKS OR MOVES SIDEWAYS.",
+            "SAFE Z DEFINES HOW HIGH THE TOOLHEAD MOVES BEFORE PARKING OR MAKING XY MOVES.",
             color="35d9e6", font=FONT, wrap=True, auto_height=True),
         Text(
             "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True),
         Text(
-            "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF SAFE CLEARANCE.",
+            "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF CLEARANCE.",
             color="d9e4e8", font=FONT, wrap=True, auto_height=True),
         Text(
             "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
