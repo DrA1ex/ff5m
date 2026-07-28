@@ -530,6 +530,28 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(controller.extruder_calibration.phase, "remove")
         self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
 
+    def test_cooling_publishes_terminal_state_before_yielding_beep(self):
+        controller = calibration_controller()
+        session = controller.extruder_calibration
+        session.phase = "cooling"
+        session.cooling_fan_active = True
+        controller.extruder.status.update(temperature=45.0, target=0.0)
+        commands = []
+
+        def reentrant_script(command, show_notice=True):
+            commands.append(command)
+            if command == "BEEP":
+                controller._poll_extruder_calibration(101.0)
+
+        controller._run_script = reentrant_script
+        controller._show_page = lambda page: None
+
+        controller._poll_extruder_calibration(100.0)
+
+        self.assertEqual(commands, ["M107", "BEEP"])
+        self.assertTrue(session.cooling_beeped)
+        self.assertEqual(session.phase, "remove")
+
     def test_prepare_runs_head_fan_at_full_speed_while_cooling(self):
         controller = calibration_controller()
         controller.extruder.status.update(temperature=60.0, target=0.0)
@@ -618,7 +640,39 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             self.assertEqual(session.phase, "saved")
             self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
 
-    def test_runtime_apply_failure_rolls_user_cfg_back(self):
+    def test_runtime_apply_failure_keeps_saved_file_and_shows_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "user.cfg"
+            path.write_text(
+                "[extruder]\nrotation_distance: 4.380\n",
+                encoding="utf-8")
+            controller = calibration_controller(path)
+            session = controller.extruder_calibration
+            session.set_measurement("98")
+            session.file_snapshot = EXTRUDER_CAL.inspect_user_cfg(path)
+            controller._set_extruder_runtime_rotation = (
+                lambda value: (_ for _ in ()).throw(
+                    RuntimeError("runtime rejected")))
+            batches = []
+            controller.renderer.send = batches.append
+
+            controller._save_extruder_rotation(session.candidate)
+
+            self.assertIn(
+                "rotation_distance: 4.292",
+                path.read_text(encoding="utf-8"))
+            self.assertFalse(session.saved)
+            self.assertTrue(session.save_file_written)
+            self.assertEqual(session.candidate, 4.292)
+            self.assertEqual(float(session.file_snapshot.existing_value), 4.292)
+            self.assertIsNotNone(session.backup_path)
+            drawing = "\n".join(batches[-1])
+            self.assertIn("RUNTIME APPLY FAILED", drawing)
+            self.assertIn("ROTATION_DISTANCE 4.292", drawing)
+            self.assertIn("USER.CFG IS SAVED", drawing)
+            self.assertIn("RESTART KLIPPER", drawing)
+
+    def test_file_save_failure_preserves_candidate_in_recovery_modal(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "user.cfg"
             original = "[extruder]\nrotation_distance: 4.380\n"
@@ -627,15 +681,34 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             session = controller.extruder_calibration
             session.set_measurement("98")
             session.file_snapshot = EXTRUDER_CAL.inspect_user_cfg(path)
-            controller._set_extruder_runtime_rotation = (
-                lambda value: (_ for _ in ()).throw(
-                    RuntimeError("runtime rejected")))
-
-            with self.assertRaisesRegex(RuntimeError, "runtime rejected"):
+            batches = []
+            controller.renderer.send = batches.append
+            method_globals = (
+                controller._save_extruder_rotation.__func__.__globals__)
+            original_writer = method_globals["write_user_rotation_distance"]
+            method_globals["write_user_rotation_distance"] = (
+                lambda *args, **kwargs: (_ for _ in ()).throw(
+                    OSError("read-only filesystem")))
+            try:
                 controller._save_extruder_rotation(session.candidate)
+            finally:
+                method_globals["write_user_rotation_distance"] = original_writer
 
             self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(session.candidate, 4.292)
+            self.assertFalse(session.save_file_written)
             self.assertFalse(session.saved)
+            drawing = "\n".join(batches[-1])
+            self.assertIn("SAVE FAILED", drawing)
+            self.assertIn("ROTATION_DISTANCE 4.292", drawing)
+            self.assertIn("USER.CFG WAS NOT UPDATED", drawing)
+            self.assertIn("WRITE THIS VALUE MANUALLY", drawing)
+            self.assertIn("KEEP RESULT", drawing)
+            controller._handle_extruder_calibration_action(
+                "extruder.save_error.ok")
+            self.assertIsNone(session.save_error)
+            self.assertEqual(session.candidate, 4.292)
+            self.assertEqual(session.phase, "result")
 
     def test_every_phase_renders_commands_and_expected_actions(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -375,6 +375,7 @@ class ExtruderCalibrationSession:
         self.cooling_message = None
         self.file_snapshot = None
         self.save_error = None
+        self.save_file_written = False
         self.backup_path = None
         self.exit_return_phase = None
 
@@ -407,6 +408,7 @@ class ExtruderCalibrationSession:
         self.warning_acknowledged = False
         self.file_snapshot = None
         self.save_error = None
+        self.save_file_written = False
 
     def apply_candidate_for_verification(self):
         if self.candidate is None:
@@ -646,6 +648,29 @@ class FeatherExtruderCalibrationMixin:
             commands += self.renderer.button(
                 action, 24 + index * 383, 372, width, 56, label,
                 state=state, font="JetBrainsMono Bold 8pt")
+        if session.save_error:
+            value_text = ("--" if session.candidate is None
+                          else "%.3f" % session.candidate)
+            if session.save_file_written:
+                title = "RUNTIME APPLY FAILED"
+                lines = (
+                    "ROTATION_DISTANCE %s" % value_text,
+                    "USER.CFG IS SAVED.",
+                    "RESTART KLIPPER TO LOAD THE VALUE.",
+                    session.save_error,
+                )
+            else:
+                title = "SAVE FAILED"
+                lines = (
+                    "ROTATION_DISTANCE %s" % value_text,
+                    "USER.CFG WAS NOT UPDATED.",
+                    "WRITE THIS VALUE MANUALLY.",
+                    session.save_error,
+                )
+            commands += self.renderer.dialog(
+                title, lines,
+                (("extruder.save_error.ok", "KEEP RESULT", "enabled"),),
+                x=70, y=82, width=660, height=320, tone="danger")
         self.renderer.send(commands)
 
     def _cold_extrusion_move(self, distance, speed=300):
@@ -723,11 +748,15 @@ class FeatherExtruderCalibrationMixin:
         session.cooling_message = None
         if temperature < 50.0:
             self._set_extruder_cooling_fan(False)
-            if not session.cooling_beeped:
-                self._run_script("BEEP", show_notice=False)
-                session.cooling_beeped = True
+            should_beep = not session.cooling_beeped
+            # BEEP yields while playing its tone sequence. Publish the
+            # terminal state first so a reactor callback cannot re-enter this
+            # branch and recursively invoke the same macro.
+            session.cooling_beeped = True
             session.phase = "remove"
             self._show_page(Page.EXTRUDER_CALIBRATION)
+            if should_beep:
+                self._run_script("BEEP", show_notice=False)
         elif force or old_display != int(temperature):
             self._render_extruder_calibration()
 
@@ -745,34 +774,65 @@ class FeatherExtruderCalibrationMixin:
     def _save_extruder_rotation(self, value):
         session = self.extruder_calibration
         if session.file_snapshot is None:
-            self._refresh_extruder_file_snapshot()
+            try:
+                self._refresh_extruder_file_snapshot()
+            except Exception as exc:
+                self._show_extruder_save_error(exc, file_written=False)
+                return
         try:
             backup = write_user_rotation_distance(
                 session.user_cfg_path, value,
                 session.file_snapshot.digest)
         except ConcurrentUserConfigEdit as exc:
             session.file_snapshot = None
-            self._refresh_extruder_file_snapshot()
-            session.save_error = str(exc)
-            self._render_extruder_result()
+            try:
+                self._refresh_extruder_file_snapshot()
+            except Exception:
+                logging.exception(
+                    "[feather_screen] unable to refresh user.cfg after "
+                    "concurrent edit")
+            self._show_extruder_save_error(exc, file_written=False)
             return
-        saved_snapshot = inspect_user_cfg(session.user_cfg_path)
+        except Exception as exc:
+            logging.exception(
+                "[feather_screen] unable to save extruder rotation distance")
+            self._show_extruder_save_error(exc, file_written=False)
+            return
+        session.backup_path = backup
+        try:
+            session.file_snapshot = inspect_user_cfg(session.user_cfg_path)
+        except Exception as exc:
+            logging.exception(
+                "[feather_screen] unable to refresh saved user.cfg")
+            self._show_extruder_save_error(exc, file_written=True)
+            return
         try:
             self._set_extruder_runtime_rotation(value)
-        except Exception:
-            if backup is not None or not session.file_snapshot.exists:
-                try:
-                    rollback_user_rotation_distance(
-                        session.user_cfg_path, session.file_snapshot,
-                        saved_snapshot.digest, backup)
-                except Exception:
-                    logging.exception(
-                        "[feather_screen] unable to roll back user.cfg")
-            raise
+        except Exception as exc:
+            logging.exception(
+                "[feather_screen] extruder rotation saved but runtime "
+                "application failed")
+            self._show_extruder_save_error(exc, file_written=True)
+            return
         session.current_rotation = round_rotation_distance(value)
         session.saved = True
-        session.backup_path = backup
+        session.save_error = None
+        session.save_file_written = False
         session.phase = "saved"
+        self._show_page(Page.EXTRUDER_CALIBRATION)
+
+    def _show_extruder_save_error(self, error, file_written):
+        session = self.extruder_calibration
+        session.save_error = str(error) or "Unknown save error"
+        session.save_file_written = bool(file_written)
+        session.phase = "result"
+        value_text = ("--" if session.candidate is None
+                      else "%.3f" % session.candidate)
+        logging.error(
+            "[feather_screen] extruder calibration save recovery "
+            "rotation_distance=%s file_written=%s error=%s",
+            value_text, session.save_file_written,
+            session.save_error)
         self._show_page(Page.EXTRUDER_CALIBRATION)
 
     def _restore_extruder_runtime(self):
@@ -846,6 +906,10 @@ class FeatherExtruderCalibrationMixin:
             session.warning_acknowledged = True
             session.phase = "result"
             self._refresh_extruder_file_snapshot()
+        elif action == "extruder.save_error.ok":
+            session.save_error = None
+            session.save_file_written = False
+            session.phase = "result"
         elif action == "extruder.save":
             self._save_extruder_rotation(session.candidate)
             return

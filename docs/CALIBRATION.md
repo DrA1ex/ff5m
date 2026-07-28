@@ -126,7 +126,13 @@ On Feather, open **Control → Calibration → Extruder**. The guided workflow:
 5. Asks only for the measured distance and calculates `rotation_distance`.
 6. Lets you save immediately or apply the candidate and repeat the measurement.
 7. Backs up and atomically updates `mod_data/user.cfg` without restarting
-   Klipper.
+   Klipper, then applies the same value to the live extruder runtime.
+
+The result remains visible if saving fails. Feather shows the exact
+`rotation_distance` in a recovery dialog so it can be copied into `user.cfg`
+manually. If the file was saved but only the live runtime update failed,
+Feather keeps the saved file instead of rolling it back and explains that a
+Klipper restart will load it.
 
 Values more than 20% away from the expected 100 mm require an additional
 confirmation. Install the nozzle securely before leaving the workflow.
