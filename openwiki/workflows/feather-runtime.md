@@ -2,6 +2,54 @@
 
 This is the low-level runtime reference for Feather. For display selection, operator behavior, and recovery, see [Screen modes and first-party Feather](screens-and-feather.md).
 
+## Framework dependency and updates
+
+The UI framework is vendored at `.py/klipper/plugins/ui` from the
+`feather-ui-designer` repository (`framework-v2.0.0`). It must remain a real
+repository subtree: do not replace it with a symlink, pip package, or Designer
+checkout on the printer.
+
+```sh
+git subtree add --prefix .py/klipper/plugins/ui <feather-ui-designer-repository> framework-v2.0.0 --squash
+git subtree pull --prefix .py/klipper/plugins/ui <feather-ui-designer-repository> framework-v2.x.y --squash
+```
+
+Product pages/controllers belong in `.py/klipper/plugins/ff5m_ui`, not in the
+framework subtree. The Typer transport is framework-owned in `ui/renderer.py`
+and `ui/render_worker.py`; after a subtree update, explicitly preserve or
+reconcile the matching renderer-worker implementation.
+
+## Typer command reference
+
+`/root/printer_data/bin/typer` draws to the 800×480 framebuffer. Its normal
+commands are `text`, `fill`, `stroke`, `line`, `clear`, `flush`, and `batch`.
+Use `--list-fonts` to inspect installed fonts and `--font-manifest` to emit the
+machine-readable metrics used by Feather. `--double-buffered` requires an
+explicit `flush`.
+
+`text` accepts a position, string, color, font, scale and alignment; it also
+supports width/height limits, wrapping and ellipsis truncation. The shape
+commands accept their expected positions, sizes, colors, and (where relevant)
+line widths. Exact syntax is intentionally supplied by the deployed binary:
+
+```sh
+/root/printer_data/bin/typer --help
+/root/printer_data/bin/typer <command> --help
+```
+
+`batch` accepts repeated `--batch <command> ...` entries or reads frames from a
+named `--pipe`. End each pipe frame with `--end`; only one owner may write the
+pipe. In double-buffered mode the renderer uses the non-visible framebuffer
+page where possible and falls back safely to a heap buffer.
+
+Interactive mode uses `--touch-device /dev/input/guppy` and
+`--event-pipe /tmp/feather-events`. A `hitbox` maps a rectangle to an opaque,
+restricted action ID; `clear-hitboxes` replaces the previous page's regions.
+Regular hitboxes emit `tap <id>`. A `--continuous` hitbox emits
+`touch <id> begin|move|end <x> <y>` plus stationary heartbeats. Typer never
+interprets these IDs or executes printer actions: the Klipper plugin must
+revalidate state and own all motion/safety policy.
+
 ## Ownership model
 
 Feather is not an init service and neither is Typer. The long-lived owner is the Klippy process:
@@ -256,4 +304,4 @@ with a before/after PSS profile demonstrating a net process-total reduction.
 - Preserve padding through the shared hint/dialog primitives. Dynamic hint widths include their horizontal inset, and dialog lines are clipped to the padded content area.
 - For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/guppy`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
 
-Primary implementation references: [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py), [`feather_ui.py`](../../.py/klipper/plugins/feather_ui.py), [`typer/main.cpp`](../../.bin/src/typer/main.cpp), [`typer/interactive.cpp`](../../.bin/src/typer/interactive.cpp), and [`S35tslib`](../../.root/S35tslib). For Typer's command interface, see [`docs/TYPER.md`](../../docs/TYPER.md).
+Primary implementation references: [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py), [`feather_ui.py`](../../.py/klipper/plugins/feather_ui.py), [`typer/main.cpp`](../../.bin/src/typer/main.cpp), [`typer/interactive.cpp`](../../.bin/src/typer/interactive.cpp), and [`S35tslib`](../../.root/S35tslib).

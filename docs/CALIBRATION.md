@@ -1,275 +1,89 @@
-# Calibration Guide for Flashforge Adventurer 5M (Pro) with Forge-X Firmware
+# Calibration
 
-This concise guide provides instructions for calibrating the axes, extruder, bed mesh, input shaper, and PID settings of your Flashforge Adventurer 5M or 5M Pro running the Forge-X firmware mod. For advanced calibration, use the Calilantern model.
+Calibrate only on an idle printer. A wrong mesh or Z offset can damage the
+nozzle or bed. After changing the nozzle, build plate, motion settings, or bed
+screws, recheck the mesh and first layer.
 
-## Disclaimer
-This AI-generated guide is based on Forge-X documentation and general 3D printing practices. Verify settings with official Forge-X resources for your setup.
+Use the Stock screen for its normal calibration flow. In Feather, open
+**Control → Calibration**. Headless and Guppy users can run the Forge-X macros
+from Fluidd or Mainsail. Do not use generic Klipper probing macros: Forge-X
+macros include the preparation required by this printer.
 
-## Prerequisites
-- **Belt Tension**: Ensure belts are tensioned (check YouTube/Flashforge guides).
-- **Klipper Tuning**: Enable with `SET_MOD PARAM=tune_klipper VALUE=1`.
-- **Config Tuning**: Enable with `SET_MOD PARAM=tune_config VALUE=1`.
-- **Tools**: Caliper/Ruler, Fluidd/Mainsail access.
+> [!WARNING]
+> On the Stock screen, use `NEW_SAVE_CONFIG`, never `SAVE_CONFIG` or `RESTART`.
+> The latter commands can freeze the vendor application.
 
-## Configuration Overrides
-Edit `user.cfg` via Fluidd/Mainsail (port 80) or manually. Backup config using Forge-X Backup and Restore before changes.
+## Bed screws and mesh
 
-**Notice**: For STOCK screen users, use `NEW_SAVE_CONFIG` instead of `SAVE_CONFIG` or `RESTART` to save changes.
+1. Clean the nozzle and run bed-screw tuning:
 
-## BEFORE YOU START
-
-First, it’s important to understand how calibration works. This is crucial because misunderstanding can lead to printer damage.
-
-If you’re using the Stock screen, you can perform calibrations directly through the screen as usual — Forge-X adds new features without altering existing ones.
-
-Feather exposes the workflows below through the paginated **Control →
-Calibration** menu. Z-offset, bed screws, bed mesh, input shaper, and bed/hotend
-PID tuning run their guarded Forge-X workflows directly. Extruder rotation and
-axis dimensions remain measurement-based procedures. Feather guides extruder
-rotation from preparation through measurement and safely updates `user.cfg`;
-axis dimensions still require a manual calculation and edit.
-
-However, if you want to go further, here’s what you need to know:
-
-- The printer uses a bed mesh to know where to print. If the mesh doesn’t match your setup (e.g., servo configuration or nozzle height), the printer may print in mid-air, scrape the bed, or even cause hardware damage (broken nozzle, burnt servos or drivers, mechanical issues).
-- The bed mesh only reflects the state when it was taken. If you change anything affecting movement — such as the bed plate, nozzle, or Klipper motion parameters (like `tune_klipper`) — you must redo the mesh.
-- The printer’s build plate is metal and expands when heated. Always take the mesh at the temperature you plan to print with. For example:
-  - 60°C for PLA or 70°C for PETG: a mesh at 65°C may work, but for 40°C or 80°C, you’ll need separate meshes.
-- Bed meshes are stored with specific names. It’s not enough to create a mesh — you must save it with the correct name. Saving with the wrong name after changes can lead to printer damage.
-  - For Stock screens, name the mesh **`MESH_DATA`**
-  - For non-Stock screens (Feather, Guppy, Headless), name it **`auto`**
-- If no mesh is found, the printer will generate one before printing, but I strongly recommend managing this yourself.
-- Temporary meshes (like from KAMP or force-leveling) are saved as **`default`**. You don’t need to save these. If Fluidd or Mainsail prompts you to save, ignore it — the firmware will delete this profile automatically.
-
-To calibrate the bed mesh using Klipper, run:
-
-**For Stock screen:**
-```bash
-AUTO_FULL_BED_LEVEL PROFILE=MESH_DATA BED_TEMP=65
-```
-
-**For other screens:**
-```bash
-AUTO_FULL_BED_LEVEL PROFILE=auto BED_TEMP=65
-```
-
-### Using different meshes for different materials:
-Create slicer profiles with different `START_PRINT` g-code variations.
-
-**Example (using `MESH` parameter):**
-
-```gcode
-START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single] MESH=PLA_profile
-```
-
-**Or use Orca’s variables to set the mesh name by filament type:**   
-The printer will look for a profile named **`<filament_type>_profile`** (e.g., `PLA_profile`, `ABS_profile`):
-
-```gcode
-START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single] MESH={filament_type[0]}_profile
-```
-
----
-
-## Bed Leveling Screws
-1. **Prepare and run the first measurement**:
    ```gcode
    BED_LEVEL_SCREWS_TUNE EXTRUDER_TEMP=220 BED_TEMP=60
    ```
-   - The default `CLEAN=1` path homes the printer and runs `CLEAR_NOZZLE` at the specified material temperatures before probing.
-   - To deliberately skip nozzle cleaning, use:
-     ```gcode
-     BED_LEVEL_SCREWS_TUNE CLEAN=0
-     ```
-     In this mode, the printer does not send any temperature command to the bed and holds only the nozzle at the configured `clear_cooldown_temp` (120°C by default). The existing bed target remains unchanged; `EXTRUDER_TEMP` and `BED_TEMP` are ignored.
-   - During the heating stage, Feather offers **Cancel heating** for both screw calibration and bed-mesh calibration. It stops heating owned by the calibration and exits before probing begins. For `CLEAN=0`, only the nozzle is stopped and the bed target remains unchanged.
-   - Feather always shows **Emergency stop** while either calibration is running, including after navigating to another live page. Home keeps its Menu control instead. Emergency stop immediately invokes Klipper's shutdown and requires `FIRMWARE_RESTART` before further use.
-2. **Adjust and repeat**:
-   - Adjust the nuts under the bed according to the reported directions.
-   - While the printer remains homed and at the calibration temperatures, repeat only the corner measurement:
-     ```gcode
-     BED_LEVEL_SCREWS_PROBE
-     ```
-   - `BED_LEVEL_SCREWS_PROBE` performs load-cell tare and `SCREWS_TILT_CALCULATE` only. It does not clean, home, select material, or wait for heating.
-   - If the printer is no longer homed or has cooled down, run the full `BED_LEVEL_SCREWS_TUNE` workflow again.
-   - On Feather, selecting any active Heating material uses the cleaning path; **Without cleaning** uses the cooldown-temperature path; **Repeat** runs only `BED_LEVEL_SCREWS_PROBE`. If no Heating profiles are active, only **Without cleaning** can start.
-3. **Check Load Cell**:
-   - If your bed height variation exceeds 1 mm, you must perform load cell tare calibration after adjusting the bed screws (see [Forge-X FAQ](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md#resolving-the-issue-by-calibrating-the-load-cell)).
-4. **Recalibrate Load Cells**: Follow the official Flashforge [guide](https://docs.google.com/document/d/1Oou4A56g5HTrxBAMoH-bTnTZZ3IZyGr_3jL9tUYYiow/edit?usp=drivesdk). If you're not using the Stock screen, temporarily reload it with `SKIP_MOD`.   
-5. **Recalibrate Mesh** ⚠️
-6. **Save**: `NEW_SAVE_CONFIG`.
 
----
+2. Adjust the screws as directed and repeat the measurement until satisfied.
+   In Feather, use **Repeat**. From the console, use
+   `BED_LEVEL_SCREWS_PROBE` only while the printer is still homed and warm.
+3. Create a mesh at the temperature used for the material:
 
-## Bed Mesh Calibration
-1. **Run**:
-   ```
+   ```gcode
    AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=220 BED_TEMP=60 PROFILE=auto
-   ```
-   - Adjust `EXTRUDER_TEMP` (e.g., 220°C for PLA), `BED_TEMP` (e.g., 60°C).
-   - Use correct mesh `PROFILE` for your setup (`MESH_DATA` - for Stock or `auto` - for others)
-2. **Save**:
-   ```
    NEW_SAVE_CONFIG
    ```
 
----
+Use profile `MESH_DATA` with the Stock screen and `auto` with Feather, Guppy,
+or Headless. A temporary KAMP mesh is `default`; do not save it.
 
-## Extruder Calibration
+## Z offset
 
-On Feather, open **Control → Calibration → Extruder**. The guided workflow:
+The Stock screen manages its own Z-offset workflow. In Feather use
+**Control → Calibration → Z Offset**: follow the on-screen preparation and
+paper-test steps, then save the selected result. Re-run Safe Z after changing
+the nozzle or bed setup.
 
-1. Offers an optional cold pull for the loaded material.
-2. Turns the heater off, positions the head, waits below 50°C, and beeps.
-3. Guides removal of the nozzle and direct loading of clean filament.
-4. Feeds 50 mm to seat the filament, then 100 mm between two marks.
-5. Asks only for the measured distance and calculates `rotation_distance`.
-6. Lets you save immediately or apply the candidate and repeat the measurement.
-7. Backs up and atomically updates `mod_data/user.cfg` without restarting
-   Klipper, then applies the same value to the live extruder runtime.
-
-The result remains visible if saving fails. Feather shows the exact
-`rotation_distance` in a recovery dialog so it can be copied into `user.cfg`
-manually. If the file was saved but only the live runtime update failed,
-Feather keeps the saved file instead of rolling it back and explains that a
-Klipper restart will load it.
-
-Values more than 20% away from the expected 100 mm require an additional
-confirmation. Install the nozzle securely before leaving the workflow.
-
-After changing extruder rotation distance, recalibrate **Flow / Flow Ratio**
-and then **Pressure Advance**. Bed Mesh and Z Offset do not need recalibration.
-
----
-
-## Input Shaper Calibration
-1. **Run**:
-   ```
-   ZSHAPER
-   ```
-   - Plots generated in Fluidd/Mainsail.
-2. **Save**:
-   ```
-   NEW_SAVE_CONFIG
-   ```
-3. **Verify** (Optionally): Print ringing test model.
-
----
-
-## Axis Calibration Models
-
-You have two calibration options:   
-1. Simple method: Follow this basic guide   
-2. Advanced method: Use calibration models that measure both axis dimensions and skew in a single print   
-
-Follow these steps for manual calibration if you don't have (or prefer not to use) the Calilantern model:   
-
-1. **X/Y Calibration**:
-   - In slicer (e.g., PrusaSlicer/OrcaSlicer), create a 200x200x0.2 mm flat square (1-2 layers).
-   - Export G-code, print via Fluidd/Mainsail.
-2. **Z Calibration**:
-   - In Slicer, cylinder a 20x20x200 mm hollow rectangle (no infill, no top layers, 1 wall).
-   - Export G-code and print via Fluidd/Mainsail.
-  
-**Note:** If your measurement tools (e.g., calipers or ruler) cannot accommodate this size, scale the model (X/Y and Z axes accordingly) to match your equipment's capacity.
-
-### Axis Calibration Steps
-1. **Measure**:
-   - X/Y: Measure printed square (e.g., 201x201 mm).
-   - Z: Measure height (e.g., 199 mm).
-2. **Calculate Rotation Distance**:
-   - Get current `rotation_distance` from `printer.base.cfg`/`user.cfg`.
-   - Formula: `new_distance = current_distance * (actual_size / expected_size)`
-     - E.g., X/Y: `40 * (201 / 200) ≈ 40.2`, Z: `8 * (199 / 200) ≈ 7.96`
-3. **Update**:
-   - Add to `user.cfg`:
-     ```
-     [stepper_x]
-     rotation_distance: 40.2
-     [stepper_y]
-     rotation_distance: 40.2
-     [stepper_z]
-     rotation_distance: 7.96
-     ```
-   - Run `NEW_SAVE_CONFIG` (or `SAVE_CONFIG` for non-STOCK screens).
-
-### Skew Distortion
-- Use the Calilantern model (or similar) to measure and correct skew. Upload the model via Fluidd/Mainsail, print, and follow its instructions for skew compensation. The printer will load a profile named `skew_profile` automatically, so save the profile with this name:
-  ```
-  SET_SKEW XY=140.4,142.8,99.8 XZ=141.6,141.4,99.8 YZ=142.4,140.5,99.5
-  SKEW_PROFILE SAVE=skew_profile
-  NEW_SAVE_CONFIG
-  ```
-- Alternatively, add a `[skew_correction]` section in `user.cfg` with the skew values, then run `NEW_SAVE_CONFIG` to save the configuration.
-- Set `disable_skew` mod parameter to '0', to automatically apply `skew_profile` before print:
-  ```
-  SET_MOD PARAM="disable_skew" VALUE=0
-  ```
-
----
-
-## PID Calibration
-1. **Hotend**:
-   ```
-   PID_TUNE_EXTRUDER TEMPERATURE=220
-   ```
-   - Adjust `TEMPERATURE` (e.g., 220°C for PLA).
-2. **Bed**:
-   ```
-   PID_TUNE_BED TEMPERATURE=60
-   ```
-   - Adjust `TEMPERATURE` (e.g., 60°C for PLA).
-3. **Save**: `NEW_SAVE_CONFIG`.
-4. **Verify**: Check temperature stability in Fluidd/Mainsail.
-
----
-
-
-## Z-Offset Calibration
-Calibrate Z-offset only while the printer is idle. The Stock screen retains its normal firmware workflow. Feather provides a guided multi-position paper test; Headless and Guppy users can continue using Fluidd/Mainsail.
-
-### Feather guided paper test
-
-1. Open **Control → Calibration → Z Offset**.
-2. Select any material active in `_MATERIAL_CONFIG.heating_slots` and press **Start**. Select **Without cleaning** to leave the bed temperature completely unchanged during the later preparation and use only `clear_cooldown_temp` for the nozzle. If the Heating list is empty, **Without cleaning** remains available while material-dependent mesh/PID operations remain disabled.
-3. Feather first offers to calibrate **Safe Z**, the absolute height used before lateral parking and calibration moves. This deliberately happens before nozzle cleaning so the cleaning motion can use a verified clearance. Choose **Calibrate Safe Z** after changing the nozzle or bed setup. Feather homes, moves to twice the current Safe Z, tares the load cells, probes the bed center, adds 5 mm, and lets you adjust the result in 1 mm increments before saving. Choose **Skip** when Safe Z has already been verified for the current hardware.
-4. Feather then performs the selected nozzle-cleaning or cooldown preparation, lifts Z, and tares the load cells. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
-5. Feather opens zone selection directly. Select one or more zones: **Rear Left**, **Center**, **Rear Right**, **Front Left**, or **Front Right**. The results page lets you save one measured zone or the average of several zones. When **Auto Load** is enabled, the saved value is applied automatically before every print.
-6. After selecting a zone, read the paper-test instructions. Put normal printer paper under the clean nozzle, then press **Probe**. After the two-sample probe completes and the bed retracts, begin the paper test. If probing is unreliable, use the alternative move button; it positions Z at half of the saved Safe Z height and establishes that position as the manual paper-test reference.
-7. Select a step of 0.005, 0.010, 0.025, 0.050, or 0.100 mm:
-   - **Closer** increases paper drag.
-   - **Farther** decreases paper drag.
-   - **Reset to 0.000** physically moves to the position represented by a true zero Z-offset. The displayed nozzle coordinate can differ from `0.000` because the probe or manual reference is accounted for; the displayed Z-offset remains `0.000`.
-8. When the paper has consistent light drag, press **Accept Zone**. Measure any other positions you want; measuring a position again replaces its earlier result.
-9. On the results screen:
-   - one measured position is selected automatically;
-   - with several positions, their average is selected by default;
-   - tap the selected-result control to cycle between the average and individual positions;
-   - a spread above 0.025 mm displays a warning but does not prevent saving.
-10. Set **Auto Load** to the desired state and press **Save Selected Z Offset**. Back asks for confirmation before discarding measured results.
-
-The right-side load indicator turns red above 400 g. During manual paper movement Feather warns above 800 g; move **Farther** and inspect the paper/nozzle before continuing.
-
-### First-layer verification
-
-Print a 50×50×0.2 mm single-layer square after saving. Use the separate **Live Z Offset** page during a print only for a small visual correction, then save it deliberately. The guided idle calibration never changes the live-print adjustment while a job is active.
-
-For Fluidd/Mainsail-only operation, save a chosen value with `SET_GCODE_OFFSET Z=<value>` and enable startup loading with:
+For Fluidd/Mainsail, adjust carefully in small steps and save the chosen value:
 
 ```gcode
-SET_MOD PARAM="load_zoffset" VALUE=1
+SET_GCODE_OFFSET Z=<value>
+SET_MOD PARAM=load_zoffset VALUE=1
 ```
 
-**Optional**: For nozzle cleaning, enable `load_zoffset_cleaning`; it may prevent bed scratches if the default (0.0) offset is too low for your setup:
-   ```
-   SET_MOD PARAM="load_zoffset_cleaning" VALUE=1
-   ```
-After cleaning with Z-offset, ensure the nozzle is thoroughly clean because residual material affects subsequent probing and bed meshing.
+Confirm the result with a small single-layer test print. Feather's **Live Z
+Offset** is for a small correction during a print; save it deliberately if it
+should become the normal value.
 
----
+## Extruder, PID, and input shaper
 
-## Post-Calibration
-1. **Verify**: Print Calilantern/50x50x50 mm cube.
-2. **Recalibrate Mesh** after changes.
-3. **Backup**: Use Forge-X Backup and Restore.
-4. **Maintenance**: Recheck belt tension periodically.
+- Feather: **Control → Calibration → Extruder** guides the 100 mm extruder
+  measurement and saves the result. Then calibrate flow and pressure advance.
+- From the console, use the normal measurement procedure and put the calculated
+  `rotation_distance` in `user.cfg`.
+- PID tuning:
+
+  ```gcode
+  PID_TUNE_EXTRUDER TEMPERATURE=220
+  PID_TUNE_BED TEMPERATURE=60
+  NEW_SAVE_CONFIG
+  ```
+
+- Input shaper:
+
+  ```gcode
+  ZSHAPER
+  NEW_SAVE_CONFIG
+  ```
+
+Inspect the generated graphs before accepting input-shaper results.
+
+## Axis and skew calibration
+
+Use a suitable calibration model, measure it accurately, and update only the
+needed `rotation_distance` values in `user.cfg`. Recheck the bed mesh after
+changing motion dimensions. Save a skew profile as `skew_profile` and enable it
+with `SET_MOD PARAM=disable_skew VALUE=0`.
+
+## After calibration
+
+Print a small test model, check the first layer, and keep a backup of the
+working configuration. For macro behavior and implementation details, see the
+[engineering calibration notes](../openwiki/workflows/configuration-and-printing.md#calibration-and-safety).
