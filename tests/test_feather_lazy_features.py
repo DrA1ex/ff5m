@@ -315,6 +315,29 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         self.assertEqual(started, [manager.peek("z")])
         self.assertIs(manager.get("z"), manager.peek("z"))
 
+    def test_z_motion_pages_arm_abort_only_after_homing(self):
+        controller = self.controller()
+        status = {"homed_axes": ""}
+        controller.toolhead = type("Toolhead", (), {
+            "get_status": lambda self, eventtime: status,
+        })()
+        feature = controller.feature_manager.get("z")
+        pages = (
+            FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
+            FEATHER.Page.Z_OFFSET_PAPER,
+            FEATHER.Page.SAFE_Z_BRIEFING,
+            FEATHER.Page.SAFE_Z_CALIBRATION,
+            FEATHER.Page.LIVE_Z_OFFSET,
+        )
+
+        for page in pages:
+            self.assertEqual(feature.safety_armed_reasons(page, 1.0), ())
+
+        status["homed_axes"] = "z"
+        for page in pages:
+            self.assertEqual(
+                feature.safety_armed_reasons(page, 2.0), ("z-controls",))
+
     def test_settings_state_and_modal_flags_live_on_feature(self):
         controller = self.controller()
         controller.params = type("Params", (), {"variables": {}})()

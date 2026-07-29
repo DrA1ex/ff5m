@@ -102,11 +102,12 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         return True
 
     def safety_armed_reasons(self, page, eventtime):
-        if page in (Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
-                    Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
-                    Page.LIVE_Z_OFFSET):
-            return ("z-controls",)
-        return ()
+        if page not in (Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
+                        Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
+                        Page.LIVE_Z_OFFSET):
+            return ()
+        return ("z-controls",) if self._homed_motion_available(
+            eventtime) else ()
 
     def back(self, page):
         session = self.z_calibration

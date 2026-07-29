@@ -207,6 +207,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.heater_bed = StatusObject({"target": 0.0})
         controller.motion_report = StatusObject({
             "live_velocity": 0.0, "live_extruder_velocity": 0.0})
+        controller.toolhead = StatusObject({"homed_axes": ""})
         controller.joystick_stream = type(
             "Stream", (), {"active": False})()
         controller.joystick_action = None
@@ -237,11 +238,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller.print_stats.status["state"] = "standby"
         mutex.busy = True
-        self.assertTrue(controller._safety_decision().visible)
+        self.assertFalse(controller._safety_decision().visible)
         mutex.busy = False
 
         controller.idle_timeout.status["state"] = "Printing"
-        self.assertTrue(controller._safety_decision().visible)
+        self.assertFalse(controller._safety_decision().visible)
         controller.idle_timeout.status["state"] = "Ready"
 
         controller.temperature_wait.variables["active"] = True
@@ -260,8 +261,12 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertTrue(controller._safety_decision().visible)
         controller.joystick_stream.active = False
 
-        self.assertTrue(controller._safety_decision(
+        self.assertFalse(controller._safety_decision(
             FEATHER.Page.CONTROL_MOVE).visible)
+        controller.toolhead.status["homed_axes"] = "x"
+        move = controller._safety_decision(FEATHER.Page.CONTROL_MOVE)
+        self.assertTrue(move.visible)
+        self.assertEqual(move.armed_reasons, ("homed-motion-controls",))
         self.assertTrue(controller._safety_decision(
             FEATHER.Page.CONTROL_HEAT).visible)
         self.assertFalse(controller._safety_decision(
@@ -299,7 +304,7 @@ class ControllerSafetyTest(unittest.TestCase):
                          ("feature-policy-error",))
         logged.assert_called_once()
 
-    def test_inactive_operation_page_removes_abort_hitbox(self):
+    def test_short_gcode_state_does_not_flash_abort(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.reactor = Reactor()
         controller.page = FEATHER.Page.MAIN_MENU
@@ -330,12 +335,24 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_main_menu = render_menu
         render_menu()
         self.assertNotIn("global.abort", controller.renderer._buttons)
+        batch_count = len(batches)
 
+        # Klipper briefly reports both of these for ordinary bookkeeping
+        # commands. They are not an emergency-operation contract.
         mutex.busy = True
+        controller.idle_timeout.status["state"] = "Printing"
+        self.assertFalse(controller._refresh_emergency_stop())
+        self.assertNotIn("global.abort", controller.renderer._buttons)
+        self.assertEqual(len(batches), batch_count)
+
+        mutex.busy = False
+        controller.idle_timeout.status["state"] = "Ready"
+        lease = controller._ensure_safety_registry().activity(
+            "explicit-operation")
         self.assertTrue(controller._refresh_emergency_stop())
         self.assertIn("global.abort", controller.renderer._buttons)
 
-        mutex.busy = False
+        lease.release()
         self.assertTrue(controller._refresh_emergency_stop())
         self.assertNotIn("global.abort", controller.renderer._buttons)
         self.assertNotIn("global.abort", "\n".join(batches[-1]))
