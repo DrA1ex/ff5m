@@ -582,6 +582,26 @@ class FeatherPagesMixin:
                                "JetBrainsMono 8pt", "left", "middle",
                                max_width=750, truncate=True)])
 
+    cmd_FEATHER_ABORT_help = "Request cooperative cancellation of START_PRINT"
+    def cmd_FEATHER_ABORT(self, gcmd):
+        """Request cancellation while START_PRINT owns the G-code mutex."""
+        flow = getattr(self, "print_flow", None)
+        variables = getattr(flow, "variables", {})
+        if "cancel_requested" not in variables:
+            raise gcmd.error("_PRINT_FLOW is not configured")
+        if not variables.get("active", False):
+            gcmd.respond_raw("There is no active START_PRINT flow")
+            return
+        flow.variables = dict(variables)
+        flow.variables["cancel_requested"] = True
+
+        wait_cmd = getattr(self, "temperature_wait", None)
+        wait_variables = getattr(wait_cmd, "variables", {})
+        if wait_variables.get("active", False):
+            wait_cmd.variables = dict(wait_variables)
+            wait_cmd.variables["cancel"] = True
+        gcmd.respond_raw("Feather cancellation requested")
+
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
         if action in ("print.pause", "print.filament"):

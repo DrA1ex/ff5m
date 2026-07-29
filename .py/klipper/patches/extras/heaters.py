@@ -7,8 +7,8 @@
 # Changes:
 # - Backported Klipper commit 01f089e: scale the minimum PWM change threshold
 #   with max_power, allowing heaters configured below 0.05 power to start.
-# - Added an internal, runtime-only cold-extrusion override for guided Feather
-#   service operations. It is deliberately not exposed as a G-code command.
+# - Added an internal, runtime-only cold-extrusion override for guided service
+#   operations. It is deliberately not exposed as a G-code command.
 # - Python-only patch; no MCU firmware or host binary rebuild is required.
 import os, logging, threading
 

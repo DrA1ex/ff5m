@@ -57,8 +57,14 @@ class Reactor:
         return None
 
 class GCode:
-    def register_command(self, name, callback):
-        pass
+    def __init__(self):
+        self.commands = {}
+        self.immediate = set()
+    def register_command(self, name, callback, desc=None):
+        self.commands[name] = callback
+    def register_immediate_command(self, name):
+        assert name in self.commands
+        self.immediate.add(name)
 
 class Printer:
     def __init__(self):
@@ -88,6 +94,7 @@ class Config:
 feather_screen.FeatherScreen._start_pre_ready_ui = lambda self: None
 controller = feather_screen.FeatherScreen(Config())
 assert controller.feature_manager.loaded() == ()
+assert controller.gcode.immediate == {'FEATHER_ABORT'}
 blocked = (
     'feather_feature_ui_test',
     'feather_feature_calibration', 'feather_feature_z',
