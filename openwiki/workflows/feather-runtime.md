@@ -157,6 +157,16 @@ services through `FeatureHostProxy` where page ownership is required.
 Lifecycle and safety broadcasts only visit loaded instances, so idle startup,
 update, shutdown, and disconnect never import cold feature modules.
 
+The Heat/Fan screen is a declarative `ff5m_ui.heat` page. Its heater and part
+fan rows use explicit grid tracks for label, live value, and controls, so text
+width cannot consume a neighboring button or hitbox. Material presets are
+constructed from the active Heating slot order. Screen actions are typed and
+resolved through the page action catalog; old free-form Heat wire actions are
+not accepted by the page gate. Live nozzle, bed, and `fanM106` telemetry sits
+in independent repaint boundaries, which keeps normal status refreshes to the
+changed value rectangle. The page module itself remains lazy and is imported
+only when the Heat page is first opened.
+
 ## Memory budget and measurement
 
 Measure resident processes from `/proc/<pid>/smaps`, not by adding raw RSS

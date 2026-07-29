@@ -12,6 +12,8 @@ sys.path.insert(0, str(PLUGINS))
 
 import ui  # noqa: E402
 from ff5m_ui.keys import AppPage  # noqa: E402
+from ff5m_ui.heat.actions import HeatCommand  # noqa: E402
+from ff5m_ui.heat.state import HeatState  # noqa: E402
 from ff5m_ui.move.actions import MoveCommand  # noqa: E402
 from ff5m_ui.move.state import MoveState, ToolheadState  # noqa: E402
 from ff5m_ui.z_offset.actions import ZOffsetCommand  # noqa: E402
@@ -75,6 +77,8 @@ class FrameworkContractTest(unittest.TestCase):
     def test_product_key_wire_namespaces_survive_package_move(self):
         namespaces = {
             AppPage: "ui.pages.keys.AppPage",
+            HeatCommand: "ui.pages.heat.actions.HeatCommand",
+            HeatState: "ui.pages.heat.state.HeatState",
             MoveCommand: "ui.pages.move.actions.MoveCommand",
             MoveState: "ui.pages.move.state.MoveState",
             ToolheadState: "ui.pages.move.state.ToolheadState",
@@ -97,6 +101,7 @@ class FrameworkContractTest(unittest.TestCase):
         self.assertEqual(
             {ui.serialize_key(page) for page in AppPage},
             {
+                "ui.pages.keys.AppPage.HEAT",
                 "ui.pages.keys.AppPage.MOVE_STEP",
                 "ui.pages.keys.AppPage.MOVE_JOYSTICK",
                 "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",

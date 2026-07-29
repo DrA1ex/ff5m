@@ -22,6 +22,7 @@ from ui import (  # noqa: E402
 )
 from ff5m_ui.move import runtime as move  # noqa: E402
 from ff5m_ui.move import geometry as move_geometry  # noqa: E402
+from ff5m_ui.heat import runtime as heat  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset  # noqa: E402
 
 
@@ -252,6 +253,102 @@ class DirtyRenderingTest(unittest.TestCase):
         drawing = "\n".join(page.update(renderer))
 
         self.assertEqual(drawing.count("--batch fill"), 1)
+
+
+class HeatLayoutTest(unittest.TestCase):
+    MATERIALS = ("PLA", "PETG", "ABS", "ABS-PC", "TPU")
+
+    def setUp(self):
+        self.page = heat.get_page(self.MATERIALS)
+
+    def assert_ordered_without_overlap(self, refs):
+        rectangles = [self.page.rect(ref) for ref in refs]
+        for previous, following in zip(rectangles, rectangles[1:]):
+            self.assertLessEqual(previous.right, following.x)
+
+    def test_fan_row_has_independent_non_overlapping_tracks(self):
+        refs = (
+            heat.HeatRef.FAN_LABEL, heat.HeatRef.FAN_VALUE,
+            heat.HeatRef.FAN_0, heat.HeatRef.FAN_50,
+            heat.HeatRef.FAN_100,
+        )
+
+        self.assert_ordered_without_overlap(refs)
+        label = self.page.rect(heat.HeatRef.FAN_LABEL)
+        self.assertGreaterEqual(
+            label.width,
+            FeatherRenderer.text_width("PART FAN", "JetBrainsMono 8pt"))
+        for ref in refs:
+            rectangle = self.page.rect(ref)
+            self.assertGreaterEqual(rectangle.x, self.page.bounds.x)
+            self.assertLessEqual(rectangle.right, self.page.bounds.right)
+
+    def test_heater_rows_share_the_same_grid_geometry(self):
+        nozzle = (
+            heat.HeatRef.NOZZLE_LABEL, heat.HeatRef.NOZZLE_VALUE,
+            heat.HeatRef.NOZZLE_MINUS, heat.HeatRef.NOZZLE_PLUS,
+            heat.HeatRef.NOZZLE_OFF,
+        )
+        bed = (
+            heat.HeatRef.BED_LABEL, heat.HeatRef.BED_VALUE,
+            heat.HeatRef.BED_MINUS, heat.HeatRef.BED_PLUS,
+            heat.HeatRef.BED_OFF,
+        )
+
+        self.assert_ordered_without_overlap(nozzle)
+        self.assert_ordered_without_overlap(bed)
+        self.assertEqual(
+            [self.page.rect(ref).x for ref in nozzle],
+            [self.page.rect(ref).x for ref in bed])
+        self.assertLess(
+            self.page.rect(heat.HeatRef.HEATERS).bottom,
+            self.page.rect(heat.HeatRef.FAN_ROW).y)
+
+    def test_five_presets_are_centered_inside_content(self):
+        presets = [self.page.rect("heat.preset.%d" % index)
+                   for index in range(5)]
+
+        for previous, following in zip(presets, presets[1:]):
+            self.assertLessEqual(previous.right, following.x)
+        self.assertEqual(
+            (presets[0].x + presets[-1].right) // 2,
+            self.page.bounds.center[0])
+        self.assertLess(
+            self.page.rect(heat.HeatRef.PRESETS).bottom,
+            self.page.rect(heat.HeatRef.COOLDOWN).y)
+
+    def test_actions_are_typed_and_preserve_material_order(self):
+        preheats = [
+            action for action in self.page.actions.values()
+            if action.key == heat.HeatCommand.PREHEAT
+        ]
+
+        self.assertEqual(
+            [action.payload for action in preheats], list(self.MATERIALS))
+        self.assertTrue(all(action.key.__class__ is heat.HeatCommand
+                            for action in self.page.actions.values()))
+
+    def test_telemetry_update_redraws_only_changed_value_boundary(self):
+        renderer = FeatherRenderer()
+        initial = {
+            heat.HeatState.NOZZLE: 21.5,
+            heat.HeatState.NOZZLE_TARGET: 220.0,
+            heat.HeatState.BED: 24.0,
+            heat.HeatState.BED_TARGET: 60.0,
+            heat.HeatState.FAN: 25.0,
+            heat.HeatState.FAN_AVAILABLE: True,
+        }
+        self.page.draw(renderer, initial)
+        drawing = "\n".join(self.page.update(renderer, {
+            heat.HeatState.FAN: 50.0,
+        }))
+
+        fan = self.page.rect(heat.HeatRef.FAN_VALUE)
+        self.assertIn(
+            "-p %d %d -s %d %d" % fan.as_tuple(), drawing)
+        self.assertIn('-t "50%"', drawing)
+        self.assertNotIn("PART FAN", drawing)
+        self.assertNotIn("COOLDOWN", drawing)
 
 
 class MovementLayoutTest(unittest.TestCase):

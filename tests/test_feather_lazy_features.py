@@ -40,6 +40,7 @@ blocked = (
 assert not [name for name in blocked if name in sys.modules]
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.z_offset')]
+assert 'ff5m_ui.heat.page' not in sys.modules
 """)
 
     def test_controller_construction_keeps_product_features_cold(self):
@@ -93,6 +94,7 @@ blocked = (
     'feather_mod_settings', 'ff5m_ui.z_offset',
 )
 assert not [name for name in blocked if name in sys.modules]
+assert 'ff5m_ui.heat.page' not in sys.modules
 """)
 
     def test_features_load_sequentially_and_are_singletons(self):

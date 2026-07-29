@@ -671,15 +671,14 @@ class UITestFeature:
         self._add_call(steps, "heat-open", lambda: self._show(Page.CONTROL_HEAT))
         self._add_call(steps, "heat-initial", self._save_heat_initial)
         self._add_capture(steps, "heat-cold")
-        self._add_tap(steps, "heat.preheat.%s" % self.material,
-                      Page.CONTROL_HEAT)
+        self._add_tap_label(steps, self.material, Page.CONTROL_HEAT)
         self._add_wait(steps, "heat-targets", self._heat_targets_set, 10.0)
         self._add_capture(steps, "heat-target-accepted")
         self._add_wait(steps, "heat-rising", self._heat_is_rising, 120.0, 1.0)
         self._add_capture(steps, "heat-rising")
         self._add_wait(steps, "heat-stable", self._heat_is_stable, 900.0, 2.0)
         self._add_capture(steps, "heat-target-reached")
-        self._add_tap(steps, "heat.alloff", Page.CONTROL_HEAT)
+        self._add_tap_label(steps, "COOLDOWN", Page.CONTROL_HEAT)
         self._add_wait(steps, "heat-off", self._heaters_off, 10.0)
         self._add_capture(steps, "heat-cooldown-start")
 

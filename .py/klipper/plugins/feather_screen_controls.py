@@ -21,6 +21,7 @@ try:
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
     from .ff5m_ui.move import runtime as move_ui
+    from .ff5m_ui.heat import runtime as heat_ui
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
     from .feather_pagination import Pagination, pagination_footer
@@ -38,6 +39,7 @@ except (ImportError, ValueError):
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
     from ff5m_ui.move import runtime as move_ui
+    from ff5m_ui.heat import runtime as heat_ui
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
     from feather_pagination import Pagination, pagination_footer
@@ -499,6 +501,8 @@ class FeatherControlsMixin:
                 self.renderer.send(commands)
 
     def _semantic_ui_page(self):
+        if self.page == Page.CONTROL_HEAT:
+            return heat_ui.get_page(self.heating_materials)
         if self.page == Page.CONTROL_MOVE:
             return (move_ui.JOYSTICK_PAGE
                     if getattr(self, "move_mode", "step") == "joystick"
@@ -592,6 +596,9 @@ class FeatherControlsMixin:
                 return
             raise KeyError("Unsupported product increment: %s" % action.key)
         if isinstance(action, Command):
+            if isinstance(action.key, heat_ui.HeatCommand):
+                self._handle_heat_command(action)
+                return
             if isinstance(action.key, move_ui.MoveCommand):
                 self._handle_move_command(action)
                 return
@@ -599,6 +606,19 @@ class FeatherControlsMixin:
                 self._handle_z_offset_command(action)
                 return
         raise TypeError("Unsupported semantic action: %r" % (action,))
+
+    def _handle_heat_command(self, command):
+        if command.key == heat_ui.HeatCommand.PREHEAT:
+            material = str(command.payload)
+            if material not in self.heating_materials:
+                raise RuntimeError(
+                    "Unknown or inactive heating material: %s" % material)
+            self._handle_heat_action("heat.preheat.%s" % material)
+            return
+        action = heat_ui.LEGACY_ACTIONS.get(command.key)
+        if action is None:
+            raise KeyError("Unsupported Heat command: %s" % command.key)
+        self._handle_heat_action(action)
 
     def _handle_move_command(self, command):
         self._require_idle()
@@ -720,91 +740,43 @@ class FeatherControlsMixin:
 
     def _render_heat(self):
         now = self.reactor.monotonic()
-        extruder = self.extruder.get_status(now)
-        bed = self.heater_bed.get_status(now)
-        fan_speed = (self.fan.get_status(now).get("speed", 0.0) * 100
-                     if self.fan is not None else 0.0)
-        commands = self.renderer.begin_page(
-            "Heat / fan", back=True)
-        rows = (("NOZZLE", 95, "selected", "heat.e"),
-                ("BED", 175, "warning", "heat.b"))
-        for label, y, state, prefix in rows:
-            commands.append(self.renderer.text(30, y, label,
-                                               "b47aff" if state == "selected" else "f2c94c",
-                                               "JetBrainsMono 12pt", "left", "middle"))
-            commands += self.renderer.button(prefix + "minus", 430, y - 25, 100, 50,
-                                             "-5", state=state)
-            commands += self.renderer.button(prefix + "plus", 550, y - 25, 100, 50,
-                                             "+5", state=state)
-            commands += self.renderer.button(prefix + "off", 670, y - 25, 100, 50,
-                                             "OFF", state=state)
-            commands.append(self.renderer.fill(30, y + 39, 740, 1, "295c66"))
-        commands.append(self.renderer.text(30, 255, "PART FAN", "35d9e6",
-                                           "JetBrainsMono 12pt", "left", "middle"))
-        commands.append(self.renderer.text(
-            270, 255, "%.0f%%" % fan_speed if self.fan is not None else "N/A",
-            "d9e4e8" if self.fan is not None else "56656c",
-            "JetBrainsMono 12pt", "center", "middle"))
-        for index, percent in enumerate((0, 50, 100)):
-            commands += self.renderer.button("heat.fan%d" % percent,
-                                             430 + index * 120, 230, 100, 50,
-                                             "%d%%" % percent,
-                                             active=self.fan is not None)
-        commands.append(self.renderer.text(400, 315, "PREHEAT PRESETS", "35d9e6",
-                                           "JetBrainsMono 8pt", "center", "middle"))
-        materials = self.heating_materials
-        if materials:
-            gap = 10
-            width = min(170, (745 - gap * (len(materials) - 1)) //
-                        len(materials))
-            commands += render_material_selector(
-                self.renderer, "heat.preheat.", 25, 335, width, 42,
-                column_gap=gap, font="JetBrainsMono 8pt",
-                materials=materials, area_width=745)
-        else:
-            commands.append(self.renderer.text(
-                400, 356, "NO MATERIALS ENABLED", "56656c",
-                "JetBrainsMono Bold 10pt", "center", "middle"))
-        commands += self.renderer.button("heat.alloff", 25, 392, 745, 42,
-                                         "COOLDOWN", state="danger",
-                                         font="JetBrainsMono 12pt")
-        commands.append(self.renderer.text(
-            270, 95, "%.1f / %.0f C" %
-            (extruder["temperature"], extruder["target"]),
-            "d9e4e8", "JetBrainsMono 12pt", "center", "middle"))
-        commands.append(self.renderer.text(
-            270, 175, "%.1f / %.0f C" %
-            (bed["temperature"], bed["target"]),
-            "d9e4e8", "JetBrainsMono 12pt", "center", "middle"))
+        values, signature = self._heat_ui_values(now)
+        commands = self.renderer.begin_page("Heat / fan", back=True)
+        commands += heat_ui.render(
+            self.renderer, self.heating_materials, values)
         self.renderer.send(commands)
-        self._last_heat = (round(extruder["temperature"], 1), round(extruder["target"]),
-                           round(bed["temperature"], 1), round(bed["target"]),
-                           round(fan_speed))
+        self._last_heat = signature
 
-    def _update_heat_status(self, eventtime):
+    def _heat_ui_values(self, eventtime):
         extruder = self.extruder.get_status(eventtime)
         bed = self.heater_bed.get_status(eventtime)
+        fan_available = self.fan is not None
         fan_speed = (self.fan.get_status(eventtime).get("speed", 0.0) * 100
-                     if self.fan is not None else 0.0)
-        values = (round(extruder["temperature"], 1), round(extruder["target"]),
-                  round(bed["temperature"], 1), round(bed["target"]),
-                  round(fan_speed))
-        if values == self._last_heat:
+                     if fan_available else 0.0)
+        values = {
+            heat_ui.HeatState.NOZZLE: float(extruder["temperature"]),
+            heat_ui.HeatState.NOZZLE_TARGET: float(extruder["target"]),
+            heat_ui.HeatState.BED: float(bed["temperature"]),
+            heat_ui.HeatState.BED_TARGET: float(bed["target"]),
+            heat_ui.HeatState.FAN: float(fan_speed),
+            heat_ui.HeatState.FAN_AVAILABLE: fan_available,
+        }
+        signature = (
+            round(extruder["temperature"], 1), round(extruder["target"]),
+            round(bed["temperature"], 1), round(bed["target"]),
+            round(fan_speed), fan_available,
+        )
+        return values, signature
+
+    def _update_heat_status(self, eventtime):
+        values, signature = self._heat_ui_values(eventtime)
+        if signature == self._last_heat:
             return
-        self._last_heat = values
-        self.renderer.send([
-            self.renderer.fill(145, 70, 250, 50),
-            self.renderer.text(270, 95, "%.1f / %.0f C" % values[:2],
-                               "d9e4e8", "JetBrainsMono 12pt", "center", "middle"),
-            self.renderer.fill(145, 150, 250, 50),
-            self.renderer.text(270, 175, "%.1f / %.0f C" % values[2:4],
-                               "d9e4e8", "JetBrainsMono 12pt", "center", "middle"),
-            self.renderer.fill(145, 230, 250, 50),
-            self.renderer.text(270, 255,
-                               "%.0f%%" % values[4] if self.fan is not None else "N/A",
-                               "d9e4e8" if self.fan is not None else "56656c",
-                               "JetBrainsMono 12pt", "center", "middle"),
-        ])
+        self._last_heat = signature
+        commands = heat_ui.update(
+            self.renderer, self.heating_materials, values)
+        if commands:
+            self.renderer.send(commands)
 
     def _handle_heat_action(self, action):
         now = self.reactor.monotonic()
