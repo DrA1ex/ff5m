@@ -58,6 +58,12 @@ class ControllerSafetyTest(unittest.TestCase):
 
         drawing = "\n".join(batches[0])
         self.assertNotIn("Typicons", drawing)
+        self.assertNotIn("SYSTEM // STANDBY", drawing)
+        self.assertNotIn("OPEN MENU TO CONTROL PRINTER", drawing)
+        self.assertIn("nav.heat -p 25 72 -s 492 132", drawing)
+        self.assertIn("nav.network -p 539 72 -s 236 132", drawing)
+        self.assertIn("nav.filament -p 283 345 -s 259 97", drawing)
+        self.assertIn("nav.move -p 543 345 -s 232 97", drawing)
         self.assertIn("nav.heat", drawing)
         self.assertIn("nav.network", drawing)
         self.assertIn("nav.job", drawing)
@@ -374,16 +380,73 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._read_text = lambda path: ""
         controller._update_dashboard(100)
         initial = "\n".join(batches[0])
-        self.assertIn("-p 650 60 -s 125 40", initial)
-        self.assertIn("-p 29 292 -s 742 42", initial)
+        self.assertIn("-p 18 7 -s 142 46", initial)
+        self.assertIn("-p 28 29", initial)
+        self.assertIn("-p 29 252 -s 742 76", initial)
         self.assertNotIn("-p 29 284", initial)
         controller.extruder.status["temperature"] = 22.0
         controller._update_dashboard(101)
         update = "\n".join(batches[1])
-        self.assertIn("-p 28 153 -s 229 78", update)
-        self.assertNotIn("-p 285 153", update)
-        self.assertNotIn("-p 542 153", update)
+        self.assertIn("-p 28 112 -s 229 87", update)
+        self.assertNotIn("-p 285 112", update)
+        self.assertNotIn("-p 542 112", update)
         self.assertNotIn("NO ACTIVE JOB", update)
+
+    def test_dashboard_worst_case_content_is_bounded(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.print_state = FEATHER.PrintState.PREPARING
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.reactor = Reactor()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.extruder = StatusObject(
+            {"temperature": 299.0, "target": 300.0})
+        controller.heater_bed = StatusObject(
+            {"temperature": 129.0, "target": 130.0})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.network_status = {
+            "mode": "WIFI", "ssid": "VERY-LONG-WIRELESS-NETWORK-NAME",
+            "signal": "100%", "ip": "255.255.255.255",
+        }
+        controller.last_job_name = (
+            "THIS-IS-A-VERY-LONG-PREVIOUS-PRINT-FILENAME.gcode")
+        controller._current_material = (
+            lambda: "CARBON-FIBER-POLYCARBONATE")
+        controller.print_stats = StatusObject({
+            "state": "printing", "print_duration": 359999.0,
+            "info": {"current_layer": 9999, "total_layer": 9999},
+        })
+        controller.virtual_sdcard = type("VirtualSD", (), {
+            "is_active": lambda self: True,
+            "file_path": lambda self:
+                "/data/THIS-IS-A-VERY-LONG-PRINT-FILENAME-FOR-UI.gcode",
+        })()
+        controller._print_progress = lambda eventtime, stats: 1.0
+        controller._print_time_values = (
+            lambda eventtime, stats, progress: (359999.0, 359999.0))
+        controller.print_status_text = (
+            "CALIBRATING AND PREPARING PRINT SURFACE")
+        controller._last_dashboard = None
+        controller._read_text = lambda path: ""
+        controller._refresh_local_timezone = lambda: None
+
+        controller._render_home()
+
+        drawing = "\n".join("\n".join(batch) for batch in batches)
+        material = next(line for line in drawing.splitlines()
+                        if "CARBON-FIBER-POLYCARBONATE" in line)
+        network = next(line for line in drawing.splitlines()
+                       if "VERY-LONG-WIRELESS-NETWORK-NAME" in line)
+        progress = next(line for line in drawing.splitlines()
+                        if "100% //" in line)
+        self.assertIn("--max-width 220 --truncate", material)
+        self.assertIn("--max-width 210 --truncate", network)
+        self.assertIn("--max-width 350 --truncate", progress)
+        self.assertLessEqual(
+            controller.renderer.text_width(
+                "299 / 300 C", "JetBrainsMono 12pt"),
+            209)
 
     def test_calibration_menu_contains_workflow_context(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

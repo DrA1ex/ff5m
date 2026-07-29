@@ -620,8 +620,14 @@ class UITestFeature:
 
     def _steps_ui(self, steps):
         self._add_call(steps, "ui-pause-timer", self._pause_ui_timer)
+        self._add_call(steps, "ui-home-filled", self._render_filled_home)
+        self._add_capture(steps, "ui-home-filled")
         self._add_call(steps, "ui-home", lambda: self._show(Page.IDLE_HOME))
         self._add_capture(steps, "ui-home")
+        self._add_tap(steps, "nav.filament", Page.FILAMENT_MATERIAL)
+        self._add_tap(steps, "nav.back", Page.IDLE_HOME)
+        self._add_tap(steps, "nav.move", Page.CONTROL_MOVE)
+        self._add_tap(steps, "nav.back", Page.IDLE_HOME)
         self._add_tap(steps, "nav.menu", Page.MAIN_MENU)
         self._add_capture(steps, "ui-main-menu")
         self._add_tap(steps, "nav.files", Page.FILE_BROWSER)
@@ -667,6 +673,58 @@ class UITestFeature:
         self._add_tap(steps, "nav.back", Page.MAIN_MENU)
         self._add_tap(steps, "nav.back", Page.IDLE_HOME)
         self._add_call(steps, "ui-resume-timer", self._resume_ui_timer)
+
+    def _render_filled_home(self):
+        """Render a worst-case dashboard without mutating printer hardware."""
+        host = self.host
+
+        class Status:
+            def __init__(self, values):
+                self.values = values
+
+            def get_status(self, _eventtime):
+                return dict(self.values)
+
+        class VirtualSD:
+            def is_active(self):
+                return True
+
+            def file_path(self):
+                return "/data/THIS-IS-A-VERY-LONG-PRINT-FILENAME-FOR-UI.gcode"
+
+        names = (
+            "extruder", "heater_bed", "toolhead", "network_status",
+            "last_job_name", "print_state", "print_stats", "virtual_sdcard",
+            "_current_material", "_print_progress", "_print_time_values",
+            "print_status_text", "_last_dashboard",
+        )
+        original = dict((name, getattr(host, name)) for name in names)
+        try:
+            host.extruder = Status({"temperature": 299.0, "target": 300.0})
+            host.heater_bed = Status({"temperature": 129.0, "target": 130.0})
+            host.toolhead = Status({"homed_axes": "xyz"})
+            host.network_status = {
+                "mode": "WIFI", "ssid": "VERY-LONG-WIRELESS-NETWORK-NAME",
+                "signal": "100%", "ip": "255.255.255.255",
+            }
+            host.last_job_name = (
+                "THIS-IS-A-VERY-LONG-PREVIOUS-PRINT-FILENAME.gcode")
+            host.print_state = PrintState.PREPARING
+            host.print_stats = Status({
+                "state": "printing", "print_duration": 359999.0,
+                "info": {"current_layer": 9999, "total_layer": 9999},
+            })
+            host.virtual_sdcard = VirtualSD()
+            host._current_material = lambda: "CARBON-FIBER-POLYCARBONATE"
+            host._print_progress = lambda _eventtime, _stats: 1.0
+            host._print_time_values = (
+                lambda _eventtime, _stats, _progress: (359999.0, 359999.0))
+            host.print_status_text = "CALIBRATING AND PREPARING PRINT SURFACE"
+            host._last_dashboard = None
+            host._render_home()
+        finally:
+            for name, value in original.items():
+                setattr(host, name, value)
 
     def _steps_motion(self, steps):
         self._add_call(steps, "motion-open", lambda: self._show(Page.CONTROL_MOVE))
@@ -941,11 +999,22 @@ class UITestFeature:
                     or spec[0] + spec[2] > SCREEN_WIDTH
                     or spec[1] + spec[3] > SCREEN_HEIGHT):
                 raise RuntimeError("Invalid hitbox: %s" % action)
+        hitboxes = {}
+        for action, spec in getattr(renderer, "_hitboxes", {}).items():
+            hitboxes[str(action)] = {
+                "x": spec[0], "y": spec[1], "width": spec[2],
+                "height": spec[3], "continuous": bool(spec[4]),
+            }
+            if (spec[0] < 0 or spec[1] < 0 or spec[2] <= 0 or spec[3] <= 0
+                    or spec[0] + spec[2] > SCREEN_WIDTH
+                    or spec[1] + spec[3] > SCREEN_HEIGHT):
+                raise RuntimeError("Invalid hitbox: %s" % action)
         return {
             "time": time.time(), "phase": self.phase,
             "page": self.host.page.name,
             "generation": getattr(renderer, "generation", None),
             "buttons": buttons,
+            "hitboxes": hitboxes,
             "toggles": _jsonable(getattr(renderer, "_toggles", {})),
             "renderer": renderer.get_status(),
             "temperatures": self._temperatures(),
@@ -954,7 +1023,12 @@ class UITestFeature:
 
     def _tap(self, action):
         action = str(action)
-        if action not in getattr(self.host.renderer, "_buttons", {}):
+        renderer = self.host.renderer
+        interactive = (
+            action in getattr(renderer, "_buttons", {})
+            or action in getattr(renderer, "_toggles", {})
+            or action in getattr(renderer, "_hitboxes", {}))
+        if not interactive:
             raise RuntimeError("Button is absent or disabled: %s" % action)
         if action in PERSISTENT_ACTIONS:
             raise RuntimeError("Persistent action is forbidden: %s" % action)

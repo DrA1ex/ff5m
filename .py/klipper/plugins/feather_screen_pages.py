@@ -60,36 +60,33 @@ class FeatherPagesMixin:
         commands = self.renderer.begin_page("FORGE-X // FEATHER")
         commands += self.renderer.button("nav.menu", 648, 9, 132, 38, "MENU",
                                          font="JetBrainsMono Bold 8pt")
-        commands += [
-            self.renderer.text(28, 80, "SYSTEM // STANDBY", "35d9e6",
-                               "JetBrainsMono Bold 16pt", "left", "middle"),
-            self.renderer.fill(25, 104, 750, 1, "295c66"),
-        ]
-        panels = ((25, 124, 235, 112, "NOZZLE", "b47aff"),
-                  (282, 124, 235, 112, "BED", "f2c94c"),
-                  (539, 124, 236, 112, "NETWORK", "35d9e6"))
+        panels = ((25, 72, 235, 132, "NOZZLE", "b47aff"),
+                  (282, 72, 235, 132, "BED", "f2c94c"),
+                  (539, 72, 236, 132, "NETWORK", "35d9e6"))
         for x, y, width, height, label, color in panels:
             commands += [self.renderer.fill(x, y, width, height, "050c0f"),
                          self.renderer.stroke(x, y, width, height, color, 2),
-                         self.renderer.text(x + 16, y + 20, label, color,
-                                            "JetBrainsMono 8pt", "left", "middle")]
+                         self.renderer.text(x + width // 2, y + 28, label, color,
+                                            "JetBrainsMono 8pt", "center", "middle")]
         commands += [
-            self.renderer.fill(25, 256, 750, 82, "050c0f"),
-            self.renderer.stroke(25, 256, 750, 82, "295c66", 2),
-            self.renderer.text(44, 274, "JOB STATUS", "35d9e6",
+            self.renderer.fill(25, 220, 750, 112, "050c0f"),
+            self.renderer.stroke(25, 220, 750, 112, "295c66", 2),
+            self.renderer.text(44, 240, "JOB STATUS", "35d9e6",
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(25, 354, 750, 1, "295c66"),
-            self.renderer.text(28, 374, "LAST JOB", "56656c",
+            self.renderer.fill(25, 345, 750, 1, "295c66"),
+            self.renderer.text(28, 365, "LAST JOB", "56656c",
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(300, 374, "MATERIAL", "56656c",
+            self.renderer.text(300, 365, "MATERIAL", "56656c",
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(570, 374, "TOOLHEAD", "56656c",
+            self.renderer.text(570, 365, "TOOLHEAD", "56656c",
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(400, 424, "OPEN MENU TO CONTROL PRINTER", "56656c",
-                               "JetBrainsMono 8pt", "center", "middle"),
-            self.renderer.action_hitbox("nav.heat", 25, 124, 492, 112),
-            self.renderer.action_hitbox("nav.network", 539, 124, 236, 112),
-            self.renderer.action_hitbox("nav.job", 25, 256, 750, 82),
+            self.renderer.fill(282, 353, 1, 74, "295c66"),
+            self.renderer.fill(542, 353, 1, 74, "295c66"),
+            self.renderer.action_hitbox("nav.heat", 25, 72, 492, 132),
+            self.renderer.action_hitbox("nav.network", 539, 72, 236, 132),
+            self.renderer.action_hitbox("nav.job", 25, 220, 750, 112),
+            self.renderer.action_hitbox("nav.filament", 283, 345, 259, 97),
+            self.renderer.action_hitbox("nav.move", 543, 345, 232, 97),
         ]
         self.renderer.send(commands)
         self._last_dashboard = None
@@ -131,77 +128,73 @@ class FeatherPagesMixin:
         commands = []
         if previous is None or values[:2] != previous[:2]:
             commands += [
-                self.renderer.fill(28, 153, 229, 78, "050c0f"),
-                self.renderer.text(142, 178, "%d / %d C" % values[:2], "d9e4e8",
+                self.renderer.fill(28, 112, 229, 87, "050c0f"),
+                self.renderer.text(142, 139, "%d / %d C" % values[:2], "d9e4e8",
                                    "JetBrainsMono 12pt", "center", "middle"),
-                self.renderer.text(142, 211,
+                self.renderer.text(142, 181,
                                    "HEATING" if values[1] > 0 else "OFF",
                                    "b47aff" if values[1] > 0 else "56656c",
                                    "JetBrainsMono 8pt", "center", "middle")]
         if previous is None or values[2:4] != previous[2:4]:
             commands += [
-                self.renderer.fill(285, 153, 229, 78, "050c0f"),
-                self.renderer.text(399, 178, "%d / %d C" % values[2:4], "d9e4e8",
+                self.renderer.fill(285, 112, 229, 87, "050c0f"),
+                self.renderer.text(399, 139, "%d / %d C" % values[2:4], "d9e4e8",
                                    "JetBrainsMono 12pt", "center", "middle"),
-                self.renderer.text(399, 211,
+                self.renderer.text(399, 181,
                                    "HEATING" if values[3] > 0 else "OFF",
                                    "f2c94c" if values[3] > 0 else "56656c",
                                    "JetBrainsMono 8pt", "center", "middle")]
         if previous is None or values[4:6] != previous[4:6]:
             commands += [
-                self.renderer.fill(542, 153, 230, 78, "050c0f"),
-                self.renderer.text(657, 178,
+                self.renderer.fill(542, 112, 230, 87, "050c0f"),
+                self.renderer.text(657, 139,
                                    values[4], "d9e4e8", "JetBrainsMono 8pt",
                                    "center", "middle", max_width=210,
                                    truncate=True),
-                self.renderer.text(657, 211,
+                self.renderer.text(657, 181,
                                    values[5], "35d9e6", "JetBrainsMono 8pt",
                                    "center", "middle", max_width=210,
                                    truncate=True)]
         if previous is None or values[9] != previous[9]:
             active, state, filename, progress, elapsed, remaining, detail = values[9]
             commands += [
-                self.renderer.fill(25, 60, 500, 40, "030607"),
+                self.renderer.fill(29, 252, 742, 76, "050c0f"),
                 self.renderer.text(
-                    28, 80, "SYSTEM // %s" % (
-                        state if active else "STANDBY"),
-                    "35d9e6", "JetBrainsMono Bold 16pt",
-                    "left", "middle"),
-                self.renderer.fill(29, 292, 742, 42, "050c0f"),
-                self.renderer.text(
-                    44, 305, filename if active else "NO ACTIVE JOB",
+                    44, 270, filename if active else "NO ACTIVE JOB",
                     "d9e4e8" if active else "35d9e6",
                     "JetBrainsMono Bold 8pt", "left", "middle",
                     max_width=560, truncate=True),
                 self.renderer.text(
-                    756, 305, state if active else "READY",
+                    756, 270, state if active else "READY",
                     "f2c94c" if state == "PAUSED" else "35d9e6",
                     "JetBrainsMono 8pt", "right", "middle")]
             if active:
                 commands += [
                     self.renderer.text(
-                        44, 327, detail, "56656c", "JetBrainsMono 8pt",
+                        44, 307, detail, "56656c", "JetBrainsMono 8pt",
                         "left", "middle", max_width=330, truncate=True),
                     self.renderer.text(
-                        756, 327, "%d%% // %s / %s" % (
+                        756, 307, "%d%% // %s / %s" % (
                             progress, elapsed, remaining),
-                        "d9e4e8", "JetBrainsMono 8pt", "right", "middle")]
+                        "d9e4e8", "JetBrainsMono 8pt", "right", "middle",
+                        max_width=350, truncate=True)]
         if previous is None or values[6:9] != previous[6:9]:
             commands += [
-                self.renderer.fill(25, 386, 750, 27, "030607"),
-                self.renderer.text(28, 400, values[6], "d9e4e8",
+                self.renderer.fill(25, 393, 750, 34, "030607"),
+                self.renderer.text(28, 410, values[6], "d9e4e8",
                                    "JetBrainsMono 8pt", "left", "middle",
                                    max_width=240, truncate=True),
-                self.renderer.text(300, 400, values[7], "d9e4e8",
-                                   "JetBrainsMono 8pt", "left", "middle"),
-                self.renderer.text(570, 400, values[8],
+                self.renderer.text(300, 410, values[7], "d9e4e8",
+                                   "JetBrainsMono 8pt", "left", "middle",
+                                   max_width=220, truncate=True),
+                self.renderer.text(570, 410, values[8],
                                    "35d9e6" if values[8] == "XYZ" else "f2c94c",
                                    "JetBrainsMono 8pt", "left", "middle")]
         if previous is None or values[10] != previous[10]:
             commands += [
-                self.renderer.fill(650, 60, 125, 40, "030607"),
-                self.renderer.text(772, 80, values[10], "d9e4e8",
-                                   "JetBrainsMono 16pt", "right", "middle")]
+                self.renderer.fill(18, 7, 142, 46, "header_background"),
+                self.renderer.text(28, 29, values[10], "d9e4e8",
+                                   "JetBrainsMono 16pt", "left", "middle")]
         self.renderer.send(commands)
 
     def _dashboard_job(self, eventtime):

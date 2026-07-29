@@ -838,6 +838,7 @@ class FeatherControlsMixin:
     def _open_filament(self, from_pause):
         if not from_pause:
             self._require_idle()
+            self.filament_return_page = self.page
         else:
             state = self.print_stats.get_status(
                 self.reactor.monotonic())["state"]
@@ -868,7 +869,7 @@ class FeatherControlsMixin:
                 columns=columns, column_gap=gap, row_gap=20,
                 area_width=730, materials=materials,
                 label=lambda material: material,
-                subtitle=lambda material: "NOZZLE %.0fC" %
+                subtitle=lambda material: "%.0fC" %
                 self._limited_preheat(material)[0],
                 font="Roboto Bold 16pt",
                 subtitle_font="JetBrainsMono Bold 12pt",

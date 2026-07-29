@@ -46,6 +46,14 @@ batches submitted before that capture have rendered or been accounted for; an
 unexpected dropped batch fails the step instead of silently photographing an
 older stable framebuffer.
 
+`SUITE=UI` is also non-physical. In addition to the normal page traversal it
+renders a temporary worst-case home dashboard (maximum temperatures, long
+network/job/material strings, full progress and long durations) and captures it
+before restoring the live state. Synthetic taps are resolved from the
+renderer’s button, toggle, and declarative action-hitbox registries, so clickable
+text/panels are covered without importing development-only page modules into
+Feather’s normal startup path.
+
 The harness validates live page generations and hitboxes before synthetic taps,
 blocks physical non-emergency input plus every persistent Save action during a
 run, and stops later hardware phases on the first unsafe failure. Before a new
