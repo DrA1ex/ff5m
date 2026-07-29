@@ -1760,6 +1760,32 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertIn("--id 1:%s" % action, drawing)
         self.assertIn('-t "CONTINUE"', drawing)
 
+    def test_filament_actions_wait_for_selected_target_temperature(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.reactor = Reactor()
+        controller.filament_material = "PETG"
+        controller.filament_from_pause = False
+        controller.extruder = StatusObject({
+            "temperature": 200.0, "target": 250.0})
+        controller.extruder.min_extrude_temp = 170.0
+
+        controller._render_filament_action()
+
+        drawing = "\n".join(batches[0])
+        self.assertIn('"Heating - please wait"', drawing)
+        for action in ("filament.load", "filament.unload", "filament.purge"):
+            self.assertNotIn("--id 1:%s" % action, drawing)
+
+        controller.extruder.status["temperature"] = 248.0
+        batches.clear()
+        controller._render_filament_action()
+        drawing = "\n".join(batches[0])
+        for action in ("filament.load", "filament.unload", "filament.purge"):
+            self.assertIn("--id 2:%s" % action, drawing)
+
     def test_terminal_print_state_becomes_idle_and_reports_result(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.print_state = FEATHER.PrintState.PAUSED
@@ -1784,13 +1810,17 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.reactor = Reactor()
         controller.filament_from_pause = True
         controller.print_stats = StatusObject({"state": "paused"})
-        controller.extruder = StatusObject({"temperature": 160})
+        controller.extruder = StatusObject({
+            "temperature": 160, "target": 220})
         controller.extruder.min_extrude_temp = 170
         controller.gcode = GCodeRecorder()
         controller._require_idle = lambda: None
-        with self.assertRaisesRegex(RuntimeError, "not hot enough"):
+        with self.assertRaisesRegex(RuntimeError, "has not reached the target"):
             controller._handle_filament_action("filament.load")
         controller.extruder.status["temperature"] = 180
+        with self.assertRaisesRegex(RuntimeError, "has not reached the target"):
+            controller._handle_filament_action("filament.purge")
+        controller.extruder.status["temperature"] = 218
         controller._toast = lambda message: None
         controller._handle_filament_action("filament.purge")
         self.assertEqual(controller.gcode.commands, ["PURGE_FILAMENT"])

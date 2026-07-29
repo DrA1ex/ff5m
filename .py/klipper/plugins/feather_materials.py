@@ -148,7 +148,8 @@ def render_material_selector(renderer, action_prefix, x, y,
                              button_width, button_height,
                              columns=None, column_gap=0, row_gap=0,
                              materials=(), selected=None, label=None,
-                             font=None, area_width=None):
+                             font=None, area_width=None, subtitle=None,
+                             subtitle_font=None, subtitle_color=None):
     """Render an ordered selector and center every incomplete row."""
     materials = tuple(materials)
     if not materials:
@@ -172,6 +173,12 @@ def render_material_selector(renderer, action_prefix, x, y,
             }
             if font is not None:
                 options["font"] = font
+            if subtitle is not None:
+                options["subtitle"] = subtitle(material)
+            if subtitle_font is not None:
+                options["subtitle_font"] = subtitle_font
+            if subtitle_color is not None:
+                options["subtitle_color"] = subtitle_color
             commands += renderer.button(
                 "%s%s" % (action_prefix, material),
                 row_x + column * (button_width + column_gap),

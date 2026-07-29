@@ -157,6 +157,22 @@ class MaterialLayoutTest(unittest.TestCase):
         self.assertEqual(positions[:3], [(0, 0), (110, 0), (220, 0)])
         self.assertEqual(positions[3:], [(55, 50), (165, 50)])
 
+    def test_selector_keeps_material_and_temperature_on_separate_lines(self):
+        renderer = RecordingRenderer()
+        MATERIALS.render_material_selector(
+            renderer, "material.", 0, 0, 230, 135,
+            materials=("ABS-PC",), label=lambda material: material,
+            subtitle=lambda material: "NOZZLE 270C",
+            subtitle_font="JetBrainsMono Bold 12pt",
+            subtitle_color="d9e4e8")
+
+        button = renderer.buttons[0]
+        self.assertEqual(button[5], "ABS-PC")
+        self.assertEqual(button[6]["subtitle"], "NOZZLE 270C")
+        self.assertEqual(
+            button[6]["subtitle_font"], "JetBrainsMono Bold 12pt")
+        self.assertEqual(button[6]["subtitle_color"], "d9e4e8")
+
 
 class MaterialMacroContractTest(unittest.TestCase):
     def test_base_includes_material_config_and_material_macros_live_there(self):

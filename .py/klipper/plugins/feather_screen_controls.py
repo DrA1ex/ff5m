@@ -739,7 +739,7 @@ class FeatherControlsMixin:
             commands += self.renderer.button(prefix + "off", 670, y - 25, 100, 50,
                                              "OFF", state=state)
             commands.append(self.renderer.fill(30, y + 39, 740, 1, "295c66"))
-        commands.append(self.renderer.text(30, 255, "FAN", "35d9e6",
+        commands.append(self.renderer.text(30, 255, "PART FAN", "35d9e6",
                                            "JetBrainsMono 12pt", "left", "middle"))
         commands.append(self.renderer.text(
             270, 255, "%.0f%%" % fan_speed if self.fan is not None else "N/A",
@@ -837,7 +837,8 @@ class FeatherControlsMixin:
             if getattr(self, "fan", None) is None:
                 raise RuntimeError("Part fan is not configured")
             percent = int(action[len("heat.fan"):])
-            self._run_script("M106 S%d" % round(percent * 255 / 100))
+            self._run_script(
+                "SET_FAN_SPEED FAN=fanM106 SPEED=%.2f" % (percent / 100.0))
             self._toast("Fan: %d%%" % percent)
         self.reactor.register_callback(self._refresh_heat_after_action,
                                       self.reactor.monotonic() + 0.1)
@@ -894,9 +895,12 @@ class FeatherControlsMixin:
                 self.renderer, "filament.", 35, 80, width, height,
                 columns=columns, column_gap=gap, row_gap=20,
                 area_width=730, materials=materials,
-                label=lambda material: "%s  %.0fC" % (
-                    material, self._limited_preheat(material)[0]),
-                font="Roboto Bold 16pt")
+                label=lambda material: material,
+                subtitle=lambda material: "NOZZLE %.0fC" %
+                self._limited_preheat(material)[0],
+                font="Roboto Bold 16pt",
+                subtitle_font="JetBrainsMono Bold 12pt",
+                subtitle_color="d9e4e8")
         else:
             commands.append(self.renderer.text(
                 400, 225, "NO MATERIALS ENABLED", "56656c",
@@ -906,18 +910,17 @@ class FeatherControlsMixin:
     def _render_filament_action(self):
         now = self.reactor.monotonic()
         status = self.extruder.get_status(now)
-        minimum = getattr(self.extruder, "min_extrude_temp", 170.0)
-        hot = status["temperature"] >= minimum
+        ready = self._filament_temperature_ready(status)
         commands = self.renderer.begin_page(
             "Filament - %s" % self.filament_material,
             back=True)
         commands.append(self.renderer.text(
             400, 80, "Nozzle %.1f / %.0fC" % (status["temperature"], status["target"]),
-            "ffb000" if not hot else "00f0f0", "Roboto Bold 14pt", "center"))
-        if not hot:
+            "ffb000" if not ready else "00f0f0", "Roboto Bold 14pt", "center"))
+        if not ready:
             commands.append(self.renderer.text(400, 120, "Heating - please wait",
                                                "ffffff", "Roboto 10pt", "center"))
-        state = "enabled" if hot else "disabled"
+        state = "enabled" if ready else "disabled"
         commands += self.renderer.button("filament.load", 20, 165, 175, 100,
                                          "LOAD", state=state, font="Roboto Bold 14pt")
         commands += self.renderer.button("filament.unload", 215, 165, 175, 100,
@@ -932,13 +935,20 @@ class FeatherControlsMixin:
                                              "DONE", font="Roboto Bold 14pt")
         self.renderer.send(commands)
         self._last_filament_heat = (round(status["temperature"], 1),
-                                    round(status["target"]), hot)
+                                    round(status["target"]), ready)
+
+    def _filament_temperature_ready(self, status):
+        temperature = float(status.get("temperature", 0.0))
+        target = float(status.get("target", 0.0))
+        minimum = float(getattr(
+            self.extruder, "min_extrude_temp", 170.0))
+        return (target >= minimum and temperature >= minimum
+                and temperature >= target - 2.0)
 
     def _update_filament_status(self, eventtime):
         status = self.extruder.get_status(eventtime)
-        minimum = getattr(self.extruder, "min_extrude_temp", 170.0)
         values = (round(status["temperature"], 1), round(status["target"]),
-                  status["temperature"] >= minimum)
+                  self._filament_temperature_ready(status))
         if values == self._last_filament_heat:
             return
         if self._last_filament_heat is None or values[2] != self._last_filament_heat[2]:
@@ -969,9 +979,10 @@ class FeatherControlsMixin:
             return
         now = self.reactor.monotonic()
         if action in ("filament.load", "filament.unload", "filament.purge"):
-            minimum = getattr(self.extruder, "min_extrude_temp", 170.0)
-            if self.extruder.get_status(now)["temperature"] < minimum:
-                raise RuntimeError("Nozzle is not hot enough")
+            if not self._filament_temperature_ready(
+                    self.extruder.get_status(now)):
+                raise RuntimeError(
+                    "Nozzle has not reached the target temperature")
             macro = {"filament.load": "LOAD_FILAMENT",
                      "filament.unload": "UNLOAD_FILAMENT",
                      "filament.purge": "PURGE_FILAMENT"}[action]

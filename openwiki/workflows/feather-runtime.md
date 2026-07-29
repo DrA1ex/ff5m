@@ -21,6 +21,13 @@ display=FEATHER
 
 `_run_blocking_gcode()` owns a controller-level interaction lock for homing, probing, positioning, filament moves, Live Z saves, and similar loader operations. The loader is a new renderer generation, clears the entire page header and all previous hitboxes, and exposes only the global emergency action when safety policy requires it. The controller rechecks the lock both when a touch arrives and after delayed button feedback, so a queued Back event cannot escape the workflow underneath the loader. Calibration and recovery progress pages have no Back action and retain the command-depth gate for their long dispatcher-owned macros.
 
+The Heat page binds its part-fan status directly to `fan_generic fanM106` and
+uses `SET_FAN_SPEED FAN=fanM106`; it must not infer availability from a generic
+`fan` object that this printer does not expose. Filament load, unload, and purge
+hitboxes remain disabled until the nozzle is at least the configured extrusion
+minimum and within 2 °C of its active target. The action handler repeats the
+same predicate so a stale touch event cannot bypass the visual lock.
+
 `ts_uinput` is the only separate supporting service. The init-style [`S35tslib`](../../.root/S35tslib) helper starts it, calibrates/translates physical touch input, and maintains `/dev/input/guppy`, the stable device Typer reads.
 
 ## How the plugin is installed and loaded
