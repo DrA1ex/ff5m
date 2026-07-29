@@ -967,13 +967,16 @@ class FeatherPagesMixin:
         self.mod_update_started = now
         self.mod_update_not_before = now + max(0.0, minimum_duration)
         self.mod_update_complete = complete
+        restart_effect = mod_ui.restart_effect(param)
+        previous_value = self.params.variables.get(param.key)
         block = getattr(self.renderer, "block_input", None)
         if block is not None:
             block()
-        self.reactor.register_callback(
-            lambda eventtime, operation=token:
-            self._show_mod_update_modal(eventtime, operation),
-            now + 0.3)
+        if restart_effect is None:
+            self.reactor.register_callback(
+                lambda eventtime, operation=token:
+                self._show_mod_update_modal(eventtime, operation),
+                now + 0.3)
         try:
             result = setter(param.key, value)
         except Exception:
@@ -981,6 +984,18 @@ class FeatherPagesMixin:
             self.mod_update_token += 1
             self.mod_update_complete = None
             raise
+        changed = previous_value != self.params.variables.get(param.key)
+        if restart_effect is not None and changed:
+            # set_value() only schedules its change hook. Draw and latch the
+            # restart UI synchronously before the reactor can run that hook.
+            self.mod_update_pending = False
+            self.mod_update_token += 1
+            self.mod_update_complete = None
+            logging.info(
+                "[feather_screen] parameter requires %s restart key=%s",
+                restart_effect, param.key)
+            self._begin_restart_ui()
+            return result
         self.reactor.register_callback(
             lambda eventtime, operation=token:
             self._finish_mod_update(eventtime, operation))
@@ -1131,9 +1146,9 @@ class FeatherPagesMixin:
             25, 76, mod_ui.description(param), "d9e4e8",
             "JetBrainsMono 8pt", max_width=650, max_height=44, wrap=True,
             truncate=True))
-        if param.key == "display":
+        if mod_ui.restart_effect(param) is not None:
             commands.append(self.renderer.text(
-                25, 108, "CHANGING DISPLAY RESTARTS KLIPPER.", "f2c94c",
+                25, 108, "APPLYING THIS VALUE RESTARTS KLIPPER.", "f2c94c",
                 "JetBrainsMono 8pt"))
         if param.key == "feather_theme":
             options = list(self.renderer.theme_names(reload=True))

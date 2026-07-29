@@ -1428,6 +1428,64 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(len(completed), 1)
         self.assertAlmostEqual(completed[0], 100.525)
 
+    def test_restart_parameter_draws_loader_before_scheduled_change_hook(self):
+        param = mod_param(
+            "klipper_rt", bool, False, "Klipper real-time priority",
+            restart="klipper")
+        controller = mod_controller([param], {"klipper_rt": False})
+        reactor = DeferredReactor()
+        controller.reactor = reactor
+        events = []
+
+        class RestartingManager(ModManager):
+            def set_value(manager, key, value):
+                result = super(RestartingManager, manager).set_value(key, value)
+                reactor.register_callback(
+                    lambda eventtime: events.append("change-hook"))
+                return result
+
+        controller.params = RestartingManager(
+            [param], {"klipper_rt": False})
+        controller._begin_restart_ui = (
+            lambda: events.append("restart-loader") or True)
+
+        controller._set_mod_value(param, "1")
+
+        self.assertEqual(events, ["restart-loader"])
+        self.assertFalse(controller.mod_update_pending)
+        drawing = "\n".join("\n".join(batch)
+                            for batch in controller.draw_batches)
+        self.assertNotIn("APPLYING CHANGES", drawing)
+        reactor.run_until(100.0)
+        self.assertEqual(events, ["restart-loader", "change-hook"])
+
+    def test_unchanged_restart_parameter_does_not_show_loader(self):
+        param = mod_param(
+            "klipper_rt", bool, True, "Klipper real-time priority",
+            restart="klipper")
+        controller = mod_controller([param], {"klipper_rt": True})
+        controller.reactor = DeferredReactor()
+        loaders = []
+        controller._begin_restart_ui = lambda: loaders.append(True) or True
+
+        controller._set_mod_value(param, "1")
+        controller.reactor.run_until(100.0)
+
+        self.assertEqual(loaders, [])
+        self.assertFalse(controller.mod_update_pending)
+
+    def test_restart_metadata_matches_parameter_change_hooks(self):
+        declaration = json.loads((pathlib.Path(__file__).parents[1] /
+                                  "mod_params.json").read_text(encoding="utf-8"))
+        effects = dict((item["key"], item.get("restart"))
+                       for item in declaration["parameters"])
+        self.assertEqual(effects["display"], "klipper")
+        self.assertEqual(effects["klipper_rt"], "klipper")
+        self.assertEqual(effects["tune_config"], "klipper")
+        self.assertEqual(effects["power_loss_recovery"], "klipper")
+        self.assertEqual(effects["tune_klipper"], "printer")
+        self.assertIsNone(effects["camera"])
+
     def test_mod_enum_selection_is_staged_until_apply(self):
         Display = enum.Enum("Display", {"STOCK": 0, "FEATHER": 1,
                                          "HEADLESS": 2, "GUPPY": 3})

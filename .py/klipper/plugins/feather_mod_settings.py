@@ -19,6 +19,7 @@ except (ImportError, ValueError):
 
 VISIBLE_ROWS = 5
 MAX_VALUE_LENGTH = 64
+RESTART_EFFECTS = frozenset(("klipper", "printer"))
 
 
 def visible_parameters(manager):
@@ -37,6 +38,11 @@ def parameter_kind(param):
     if param_type is float:
         return "float"
     return "str"
+
+
+def restart_effect(param):
+    effect = getattr(param, "restart", None)
+    return effect if effect in RESTART_EFFECTS else None
 
 
 def numeric_input_spec(param):

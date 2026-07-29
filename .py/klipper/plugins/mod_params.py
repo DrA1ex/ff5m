@@ -38,6 +38,7 @@ class Parameter:
     minimum: Optional[float] = None
     maximum: Optional[float] = None
     fraction_digits: Optional[int] = None
+    restart: Optional[str] = None
 
 
 class ModParamManagement:
@@ -127,6 +128,7 @@ class ModParamManagement:
                 minimum=param_data.get("minimum"),
                 maximum=param_data.get("maximum"),
                 fraction_digits=param_data.get("fraction_digits"),
+                restart=param_data.get("restart"),
                 deprecated=DeprecationParameter(
                     key=param_data["deprecated"]["key"],
                     new_key=param_data["key"],
