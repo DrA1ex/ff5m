@@ -17,6 +17,8 @@ display=FEATHER
 
 `feather_screen.py` owns UI state, page transitions, safety validation, and printer actions. `typer` only renders display-list commands and maps named hitboxes to opaque touch-event strings. It does not execute G-code, control the MCU, or launch shell commands.
 
+`feather_safety.py` composes named Klipper activity providers, bounded reference-counted operation leases, and armed-page reasons. Active printing, G-code, motion, heating, temperature waits, joystick motion, and loaded-feature activity expose `global.abort` on every live page except Home. Direct-control pages expose it before an operation begins. Provider failures are fail-safe and cannot silently remove the M112 path; the renderer only receives the final visibility boolean.
+
 `ts_uinput` is the only separate supporting service. The init-style [`S35tslib`](../../.root/S35tslib) helper starts it, calibrates/translates physical touch input, and maintains `/dev/input/guppy`, the stable device Typer reads.
 
 ## How the plugin is installed and loaded
@@ -122,6 +124,8 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 | Component | Owns | Does not own |
 |---|---|---|
 | `feather_screen.py` | Klipper lifecycle, UI state machine, safety gates, reactor timers/fds, G-code/macro dispatch, shared status/error handling | Page-specific rendering or a separate motion process |
+| `feather_safety.py` | Bounded activity providers, operation leases, armed-page composition, safety diagnostics | Page rendering, feature loading, or printer commands |
+| `feather_feature_manager.py` | Lazy feature ownership, single-instance construction, loaded-only lifecycle and safety hooks | Importing cold features during update/shutdown |
 | `feather_screen_pages.py` | Dashboard, files, USB browser presentation, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, USB mount ownership, motion planning, and direct display access |
 | `feather_files.py` | Compact file entries, print recency history, bounded USB discovery/helper lifecycle | Page rendering, destructive formatting, or direct block-device mounting |
 | `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
@@ -134,10 +138,11 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 
 `mod_params`, `resurrection`, and patched G-code logic are related Klipper-resident plugins/patches installed by the same overlay. They are not child services started by Feather.
 
-The screen class uses two bounded behavior mixins rather than forwarding proxy
-objects. This keeps the existing `FeatherScreen` action API and one state owner
-while limiting each production Python file to fewer than 1,500 lines. Do not
-reintroduce copies of controller state into the page modules.
+Calibration, Z-offset, extruder calibration, and settings are lazy feature
+objects reached through `LazyFeatureManager`. Each keeps its own scenario state
+and receives shared printer/renderer services through `FeatureHostProxy`.
+Lifecycle and safety broadcasts only visit loaded instances, so idle startup,
+update, shutdown, and disconnect never import cold feature modules.
 
 ## Memory budget and measurement
 

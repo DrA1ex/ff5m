@@ -83,7 +83,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
      ```
      In this mode, the printer does not send any temperature command to the bed and holds only the nozzle at the configured `clear_cooldown_temp` (120°C by default). The existing bed target remains unchanged; `EXTRUDER_TEMP` and `BED_TEMP` are ignored.
    - During the heating stage, Feather offers **Cancel heating** for both screw calibration and bed-mesh calibration. It stops heating owned by the calibration and exits before probing begins. For `CLEAN=0`, only the nozzle is stopped and the bed target remains unchanged.
-   - Feather always shows **Emergency stop** while either calibration is running. It immediately invokes Klipper's emergency shutdown and requires `FIRMWARE_RESTART` before further use.
+   - Feather always shows **Emergency stop** while either calibration is running, including after navigating to another live page. Home keeps its Menu control instead. Emergency stop immediately invokes Klipper's shutdown and requires `FIRMWARE_RESTART` before further use.
 2. **Adjust and repeat**:
    - Adjust the nuts under the bed according to the reported directions.
    - While the printer remains homed and at the calibration temperatures, repeat only the corner measurement:

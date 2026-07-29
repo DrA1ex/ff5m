@@ -109,6 +109,23 @@ class LazyFeatureManager:
                 return True
         return False
 
+    def safety_active_reasons(self, eventtime):
+        reasons = []
+        for feature in self.loaded():
+            callback = getattr(feature, "safety_active_reasons", None)
+            if callback is not None:
+                reasons.extend(callback(eventtime) or ())
+        return tuple(reasons)
+
+    def safety_armed_reasons(self, page, eventtime):
+        name = self.owner_name(page)
+        feature = self._instances.get(name)
+        if feature is None:
+            return ()
+        callback = getattr(feature, "safety_armed_reasons", None)
+        return () if callback is None else tuple(
+            callback(page, eventtime) or ())
+
     @property
     def input_blocked(self):
         return any(bool(getattr(feature, "input_blocked", False))
@@ -181,6 +198,12 @@ class FeatureHostProxy:
 
     def handle_immediate_action(self, page, action):
         return False
+
+    def safety_active_reasons(self, eventtime):
+        return ()
+
+    def safety_armed_reasons(self, page, eventtime):
+        return ()
 
     def deactivate(self):
         pass

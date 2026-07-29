@@ -115,6 +115,10 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
             return True
         return False
 
+    def safety_armed_reasons(self, page, eventtime):
+        return (("calibration-controls",)
+                if page == Page.CALIBRATION_PROGRESS else ())
+
     def deactivate(self):
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False

@@ -194,15 +194,22 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("nav.menu", "\n".join(drawing))
         self.assertNotIn("global.abort", "\n".join(drawing))
 
-    def test_emergency_stop_requires_real_printer_activity(self):
+    def test_safety_composes_armed_pages_and_global_printer_activity(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.Page.MAIN_MENU
+        controller.print_state = FEATHER.PrintState.IDLE
         controller.print_stats = StatusObject({"state": "standby"})
         controller.idle_timeout = StatusObject({"state": "Ready"})
         controller.temperature_wait = type(
             "Wait", (), {"variables": {"active": False}})()
-        controller.command_depth = 0
+        controller.extruder = StatusObject({"target": 0.0})
+        controller.heater_bed = StatusObject({"target": 0.0})
+        controller.motion_report = StatusObject({
+            "live_velocity": 0.0, "live_extruder_velocity": 0.0})
+        controller.joystick_stream = type(
+            "Stream", (), {"active": False})()
+        controller.joystick_action = None
 
         class Mutex:
             busy = False
@@ -215,36 +222,87 @@ class ControllerSafetyTest(unittest.TestCase):
             "get_mutex": lambda self: mutex,
         })()
 
-        for state in ("standby", "paused", "complete", "cancelled", "error"):
+        for state in ("standby", "complete", "cancelled", "error"):
             controller.print_stats.status["state"] = state
             self.assertFalse(
-                controller._emergency_stop_active(), state)
+                controller._safety_decision().visible, state)
+
+        controller.print_stats.status["state"] = "paused"
+        self.assertTrue(controller._safety_decision().visible)
 
         controller.print_stats.status["state"] = "printing"
-        self.assertTrue(controller._emergency_stop_active())
-        self.assertFalse(controller._emergency_stop_active(
-            FEATHER.Page.IDLE_HOME))
+        self.assertTrue(controller._safety_decision().visible)
+        self.assertFalse(controller._safety_decision(
+            FEATHER.Page.IDLE_HOME).visible)
 
         controller.print_stats.status["state"] = "standby"
         mutex.busy = True
-        self.assertTrue(controller._emergency_stop_active())
+        self.assertTrue(controller._safety_decision().visible)
         mutex.busy = False
 
         controller.idle_timeout.status["state"] = "Printing"
-        self.assertTrue(controller._emergency_stop_active())
+        self.assertTrue(controller._safety_decision().visible)
         controller.idle_timeout.status["state"] = "Ready"
 
         controller.temperature_wait.variables["active"] = True
-        self.assertTrue(controller._emergency_stop_active())
+        self.assertTrue(controller._safety_decision().visible)
         controller.temperature_wait.variables["active"] = False
 
-        controller.command_depth = 1
-        self.assertTrue(controller._emergency_stop_active())
+        controller.extruder.status["target"] = 180.0
+        self.assertTrue(controller._safety_decision().visible)
+        controller.extruder.status["target"] = 0.0
+
+        controller.motion_report.status["live_velocity"] = 25.0
+        self.assertTrue(controller._safety_decision().visible)
+        controller.motion_report.status["live_velocity"] = 0.0
+
+        controller.joystick_stream.active = True
+        self.assertTrue(controller._safety_decision().visible)
+        controller.joystick_stream.active = False
+
+        self.assertTrue(controller._safety_decision(
+            FEATHER.Page.CONTROL_MOVE).visible)
+        self.assertTrue(controller._safety_decision(
+            FEATHER.Page.CONTROL_HEAT).visible)
+        self.assertFalse(controller._safety_decision(
+            FEATHER.Page.FILE_CONFIRM).visible)
+
+    def test_active_process_shows_abort_on_every_live_page_except_home(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.page = FEATHER.Page.MAIN_MENU
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller.print_stats = StatusObject({"state": "printing"})
+
+        for page in FEATHER.Page:
+            decision = controller._safety_decision(page)
+            self.assertEqual(decision.visible,
+                             page != FEATHER.Page.IDLE_HOME, page)
+
+    def test_feature_armed_policy_failure_is_fail_safe(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.page = FEATHER.Page.SETTINGS
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.feature_manager = type("Manager", (), {
+            "safety_active_reasons": lambda self, eventtime: (),
+            "safety_armed_reasons": lambda self, page, eventtime: (
+                (_ for _ in ()).throw(ValueError("bad feature state"))),
+        })()
+
+        with mock.patch.object(FEATHER.logging, "exception") as logged:
+            decision = controller._safety_decision()
+            controller._safety_decision()
+
+        self.assertTrue(decision.visible)
+        self.assertEqual(decision.armed_reasons,
+                         ("feature-policy-error",))
+        logged.assert_called_once()
 
     def test_inactive_operation_page_removes_abort_hitbox(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.Page.MAIN_MENU
         controller.print_state = FEATHER.PrintState.IDLE
         controller.print_stats = StatusObject({"state": "standby"})
         controller.idle_timeout = StatusObject({"state": "Ready"})
@@ -265,12 +323,12 @@ class ControllerSafetyTest(unittest.TestCase):
         batches = []
         controller.renderer.send = batches.append
 
-        def render_move():
+        def render_menu():
             controller.renderer.send(
-                controller.renderer.begin_page("Move", back=True))
+                controller.renderer.begin_page("Menu", back=True))
 
-        controller._render_move = render_move
-        render_move()
+        controller._render_main_menu = render_menu
+        render_menu()
         self.assertNotIn("global.abort", controller.renderer._buttons)
 
         mutex.busy = True
@@ -1098,18 +1156,20 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_global_abort_bypasses_busy_and_touch_feedback(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
-        controller.calibration_kind = "screws"
+        controller.page = FEATHER.Page.MAIN_MENU
+        controller.print_state = FEATHER.PrintState.IDLE
         controller.command_depth = 1
         controller.mod_update_pending = False
         controller.touch_feedback_pending = True
         immediate = []
         controller._run_immediate_command = immediate.append
+        lease = controller._ensure_safety_registry().activity("test-operation")
 
         controller._handle_touch_action("global.abort")
 
         self.assertEqual(immediate, ["M112"])
 
+        lease.release()
         controller.command_depth = 0
         immediate[:] = []
         controller._handle_touch_action("global.abort")

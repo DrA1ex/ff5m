@@ -44,5 +44,9 @@ class ExtruderCalibrationFeature(FeatherExtruderCalibrationMixin,
     def update(self, eventtime):
         self._poll_extruder_calibration(eventtime)
 
+    def safety_armed_reasons(self, page, eventtime):
+        return (("extruder-controls",)
+                if page == Page.EXTRUDER_CALIBRATION else ())
+
     def deactivate(self):
         self.extruder_calibration.clear()

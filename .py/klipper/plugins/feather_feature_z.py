@@ -101,6 +101,13 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         self._dispatch_semantic_ui_action(action)
         return True
 
+    def safety_armed_reasons(self, page, eventtime):
+        if page in (Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
+                    Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
+                    Page.LIVE_Z_OFFSET):
+            return ("z-controls",)
+        return ()
+
     def back(self, page):
         session = self.z_calibration
         if page in (Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY):

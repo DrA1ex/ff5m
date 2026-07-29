@@ -187,9 +187,41 @@ class FeatureManagerTest(unittest.TestCase):
 
         manager.update(1.0)
         manager.notify("on_gcode_output", "message")
+        self.assertEqual(manager.safety_active_reasons(1.0), ())
+        self.assertEqual(manager.safety_armed_reasons(1, 1.0), ())
         manager.deactivate()
 
         self.assertEqual(manager.loaded(), ())
+
+    def test_safety_hooks_only_query_loaded_feature_instances(self):
+        module_name = "_feather_test_safety_feature"
+        module = types.ModuleType(module_name)
+
+        class Factory:
+            def __init__(self, host):
+                pass
+
+            def safety_active_reasons(self, eventtime):
+                return ("background-task",)
+
+            def safety_armed_reasons(self, page, eventtime):
+                return ("page-controls",)
+
+        module.Factory = Factory
+        sys.modules[module_name] = module
+        try:
+            manager = LazyFeatureManager(object(), (
+                FeatureSpec("safe", module_name, "Factory", (7,)),
+            ))
+            self.assertEqual(manager.safety_active_reasons(1.0), ())
+            self.assertEqual(manager.safety_armed_reasons(7, 1.0), ())
+            manager.get("safe")
+            self.assertEqual(manager.safety_active_reasons(1.0),
+                             ("background-task",))
+            self.assertEqual(manager.safety_armed_reasons(7, 1.0),
+                             ("page-controls",))
+        finally:
+            sys.modules.pop(module_name, None)
 
     def test_failed_and_circular_factories_are_not_cached(self):
         failing_name = "_feather_test_failing_feature"

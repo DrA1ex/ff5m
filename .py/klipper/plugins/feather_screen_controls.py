@@ -453,13 +453,6 @@ class FeatherControlsMixin:
         self.renderer.send(self._move_status_commands(
             values, axes=axes_changed, caution=caution))
 
-    def _safe_update_move_status(self, eventtime):
-        """Keep a display update failure from stopping the Klipper reactor."""
-        try:
-            self._update_move_status(eventtime)
-        except Exception:
-            logging.exception("[feather_screen] move status update failed")
-
     def _joystick_inertia_snapshot(self):
         planner = getattr(self, "joystick", None)
         state = (planner.inertia() if planner is not None

@@ -1754,7 +1754,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.page == Page.IDLE_HOME:
             self._update_dashboard(eventtime)
         elif self.page == Page.CONTROL_MOVE:
-            self._safe_update_move_status(eventtime)
+            self._update_move_status(eventtime)
         elif self.page == Page.CONTROL_HEAT:
             self._update_heat_status(eventtime)
         if self.filament_sensor is not None:
