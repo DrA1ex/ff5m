@@ -31,6 +31,7 @@ class LazyImportContractTest(unittest.TestCase):
 import sys
 import feather_screen
 blocked = (
+    'feather_feature_ui_test',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',
@@ -85,6 +86,7 @@ feather_screen.FeatherScreen._start_pre_ready_ui = lambda self: None
 controller = feather_screen.FeatherScreen(Config())
 assert controller.feature_manager.loaded() == ()
 blocked = (
+    'feather_feature_ui_test',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',

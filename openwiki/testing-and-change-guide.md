@@ -4,6 +4,57 @@
 
 The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
 
+## Feather on-printer regression runner
+
+Feather provides a hidden, opt-in G-code harness whose implementation remains a
+cold lazy feature until a run actually starts. It is Feather-only; Headless has
+no display plugin and does not register the command.
+
+After deploying a changed Feather Python module, use a hard Klipper process
+restart before testing. A normal Klipper `RESTART` rebuilds printer state in the
+existing interpreter and can retain an already imported module in `sys.modules`.
+
+Run the complete unattended trace on an observed, idle printer with an empty
+bed:
+
+```gcode
+_FEATHER_UI_TEST ACTION=RUN SUITE=FULL CONFIRM=1
+```
+
+`FULL` runs safe page traversal, Home All plus reversible 1 mm XYZ moves,
+material preheat/cooldown, `BED_LEVEL_SCREWS_TUNE CLEAN=0`, an unsaved
+`AUTO_FULL_BED_LEVEL`, and a simulated center-zone Z-offset paper test. The Z
+test uses the actual `PROBE`, ten 0.100 mm `FARTHER` actions to create 1 mm of
+additional clearance, ten matching `CLOSER` actions, temporary Accept, and
+mandatory Discard. It never saves the candidate. PID, input-shaper, and
+extruder calibration are intentionally outside the physical suite.
+
+Each hardware/UI phase is also independently runnable with `SUITE=UI`,
+`MOTION`, `HEAT`, `SCREWS`, `MESH`, or `Z`; pass an active material name through
+`MATERIAL=PETG` when needed. Use these control commands while diagnosing a run:
+
+```gcode
+_FEATHER_UI_TEST ACTION=STATUS
+_FEATHER_UI_TEST ACTION=ABORT
+```
+
+The harness validates live page generations and hitboxes before synthetic taps,
+blocks physical non-emergency input plus every persistent Save action during a
+run, and stops later hardware phases on the first unsafe failure. Before a new
+run it consumes `/data/feather-ui-tests/active.json`; same-Klipper-session
+recovery turns off heaters, restores the recorded runtime Z-offset and named
+mesh state, and disables motors. A changed session treats volatile state as
+already cleared by Klipper restart and marks the previous trace interrupted.
+
+Artifacts live under `/data/feather-ui-tests/<timestamp>-<suite>/`: top-down
+32-bit BMP files, `manifest.json`, `environment.json`, `run.log`, a sliced
+`printer.log`, `temperatures.csv`, `positions.csv`, and `summary.json` with
+calibration stages/results. Framebuffer reads, stability hashing, BMP encoding,
+log copying, CSV/JSON updates, and retention execute in the artifact worker
+thread. The reactor only schedules steps and receives completion callbacks.
+Retention keeps at most ten completed runs and 512 MiB, never deletes the active
+run, and preserves the newest failure for inspection.
+
 This is not a gap to hide: Forge-X changes early boot, services, printer motion, calibration, and low-memory behavior on specific hardware. A unit-like syntax check cannot prove the crucial outcomes.
 
 ## Minimum checks by change area

@@ -131,6 +131,7 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 | `feather_screen_pages.py` | Dashboard, files, USB browser presentation, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, USB mount ownership, motion planning, and direct display access |
 | `feather_files.py` | Compact file entries, print recency history, bounded USB discovery/helper lifecycle | Page rendering, destructive formatting, or direct block-device mounting |
 | `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
+| `feather_feature_ui_test.py` | Opt-in on-printer page/action sequencing, hardware-test safety gates, stale-run cleanup, framebuffer artifact worker, and bounded `/data` retention | Normal Feather startup, Headless, persistent calibration saves, or renderer ownership |
 | `feather_z_calibration.py` | Idle Z-calibration state, formula, zone aggregation, pressure hysteresis, pages, motion, and exact mesh/runtime restoration | Live-print Z adjustment or unrestricted G-code |
 | `feather_ui.py` | Layout primitives, frame construction, FIFO and Typer child lifecycle, generation-tagged hitboxes | Klipper state decisions and printer commands |
 | `feather_joystick.py` | Touch normalization, ramps/braking, bounded motion queue planning | Rendering or direct touch-fd I/O |
@@ -140,9 +141,12 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 
 `mod_params`, `resurrection`, and patched G-code logic are related Klipper-resident plugins/patches installed by the same overlay. They are not child services started by Feather.
 
-Calibration, Z-offset, extruder calibration, and settings are lazy feature
-objects reached through `LazyFeatureManager`. Each keeps its own scenario state
-and receives shared printer/renderer services through `FeatureHostProxy`.
+Calibration, Z-offset, extruder calibration, settings, and the on-printer test
+harness are lazy feature objects reached through `LazyFeatureManager`. The test
+harness has no page ownership and remains cold until `_FEATHER_UI_TEST
+ACTION=RUN`; status/abort queries use `peek()` and do not import it. Each product
+feature keeps its own scenario state and receives shared printer/renderer
+services through `FeatureHostProxy` where page ownership is required.
 Lifecycle and safety broadcasts only visit loaded instances, so idle startup,
 update, shutdown, and disconnect never import cold feature modules.
 
