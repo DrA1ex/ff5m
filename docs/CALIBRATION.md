@@ -92,7 +92,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
      ```
    - `BED_LEVEL_SCREWS_PROBE` performs load-cell tare and `SCREWS_TILT_CALCULATE` only. It does not clean, home, select material, or wait for heating.
    - If the printer is no longer homed or has cooled down, run the full `BED_LEVEL_SCREWS_TUNE` workflow again.
-   - On Feather, selecting PLA/PETG/ABS uses the cleaning path; **Without cleaning** uses the cooldown-temperature path; **Repeat** runs only `BED_LEVEL_SCREWS_PROBE`.
+   - On Feather, selecting any active Heating material uses the cleaning path; **Without cleaning** uses the cooldown-temperature path; **Repeat** runs only `BED_LEVEL_SCREWS_PROBE`. If no Heating profiles are active, only **Without cleaning** can start.
 3. **Check Load Cell**:
    - If your bed height variation exceeds 1 mm, you must perform load cell tare calibration after adjusting the bed screws (see [Forge-X FAQ](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md#resolving-the-issue-by-calibrating-the-load-cell)).
 4. **Recalibrate Load Cells**: Follow the official Flashforge [guide](https://docs.google.com/document/d/1Oou4A56g5HTrxBAMoH-bTnTZZ3IZyGr_3jL9tUYYiow/edit?usp=drivesdk). If you're not using the Stock screen, temporarily reload it with `SKIP_MOD`.   
@@ -231,7 +231,7 @@ Calibrate Z-offset only while the printer is idle. The Stock screen retains its 
 ### Feather guided paper test
 
 1. Open **Control → Calibration → Z Offset**.
-2. Select PLA, PETG, ABS, or ABS-PC and press **Start**. Select **Without cleaning** to leave the bed temperature completely unchanged during the later preparation and use only `clear_cooldown_temp` for the nozzle.
+2. Select any material active in `_MATERIAL_CONFIG.heating_slots` and press **Start**. Select **Without cleaning** to leave the bed temperature completely unchanged during the later preparation and use only `clear_cooldown_temp` for the nozzle. If the Heating list is empty, **Without cleaning** remains available while material-dependent mesh/PID operations remain disabled.
 3. Feather first offers to calibrate **Safe Z**, the absolute height used before lateral parking and calibration moves. This deliberately happens before nozzle cleaning so the cleaning motion can use a verified clearance. Choose **Calibrate Safe Z** after changing the nozzle or bed setup. Feather homes, moves to twice the current Safe Z, tares the load cells, probes the bed center, adds 5 mm, and lets you adjust the result in 1 mm increments before saving. Choose **Skip** when Safe Z has already been verified for the current hardware.
 4. Feather then performs the selected nozzle-cleaning or cooldown preparation, lifts Z, and tares the load cells. Wait for the preparation stages to reach **Ready**. **Cancel heating** stops a temperature wait immediately; **Emergency stop** is available throughout preparation and requires `FIRMWARE_RESTART`.
 5. Feather opens zone selection directly. Select one or more zones: **Rear Left**, **Center**, **Rear Right**, **Front Left**, or **Front Right**. The results page lets you save one measured zone or the average of several zones. When **Auto Load** is enabled, the saved value is applied automatically before every print.

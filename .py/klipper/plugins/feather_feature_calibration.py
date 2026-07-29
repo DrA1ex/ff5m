@@ -25,7 +25,8 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         self.calibration_kind = None
         self.calibration_page = 0
         self.calibration_guide_kind = None
-        self.calibration_material = "PLA"
+        materials = getattr(host, "heating_materials", ())
+        self.calibration_material = materials[0] if materials else "n/a"
         self.calibration_clean_nozzle = True
         self.calibration_repeat_probe = False
         self.calibration_results = []
@@ -62,7 +63,8 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         }
         return (action in exact.get(page, ()) or
                 (page == Page.CALIBRATION_CONFIRM and
-                 action.startswith("cal.material.")))
+                 action.startswith("cal.material.") and
+                 action.rsplit(".", 1)[1] in self.heating_materials))
 
     def handle_action(self, page, action):
         if not action.startswith("cal."):

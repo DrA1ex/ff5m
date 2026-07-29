@@ -281,6 +281,10 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller.busy_message = None
         controller.toast_until = 0.0
         controller.filament_material = "PLA"
+        controller.heating_materials = ("PLA",)
+        controller.heating_profiles = {"PLA": (220, 60)}
+        controller.cold_pull_materials = ()
+        controller.cold_pull_profiles = {}
         controller.temperature_wait = None
         controller._setting = lambda key, default: default
         controller._cancel_delayed_tasks = lambda: None

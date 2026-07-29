@@ -55,19 +55,20 @@ This document provides a concise overview of the G-code macros defined in the `b
   - **Description**: Loads filament with a specified distance and speed, followed by a beep.
   - **Parameters**:
     - `SPEED` (int, default: 450): Extrusion speed (mm/min).
-    - `MATERIAL` (optional): `PLA`, `PETG`, `ABS`, or `ABS-PC`. When supplied, the material is saved after a successful load and shown by Feather after restarts.
+    - `MATERIAL` (optional): Any name active in `_MATERIAL_CONFIG.heating_slots`. When supplied, the material is saved after a successful load and shown by Feather after restarts.
   - **Defaults**: Uses `load_distance` variable (125 mm).
 
 - **SET_MATERIAL**
   - **Description**: Saves the currently loaded material without changing temperatures or moving filament.
   - **Parameters**:
-    - `MATERIAL`: `PLA`, `PETG`, `ABS`, `ABS-PC`, or `n/a`.
+    - `MATERIAL`: Any name active in `_MATERIAL_CONFIG.heating_slots`, or `n/a`. `n/a` is always accepted; unknown and inactive names are rejected.
 
 - **PREHEAT_MATERIAL**
   - **Description**: Applies the nozzle/bed preset and saves the selected material. This is suitable for a Fluidd macro button.
   - **Parameters**:
-    - `MATERIAL`: `PLA`, `PETG`, `ABS`, or `ABS-PC`.
+    - `MATERIAL`: Any name active in `_MATERIAL_CONFIG.heating_slots`. If omitted, the first active slot is used.
     - `EXTRUDER_TEMP` and `BED_TEMP` (optional): Override the preset temperatures.
+  - **Empty configuration**: Fails before issuing any heater command.
 
 - **UNLOAD_FILAMENT**
   - **Description**: Unloads filament with a specified distance and speed, followed by a beep.
@@ -84,7 +85,7 @@ This document provides a concise overview of the G-code macros defined in the `b
 - **LOAD_MATERIAL**
   - **Description**: Guides manual filament loading/changing with material selection prompts.
   - **Parameters**: None.
-  - **Defaults**: Prompts for material selection (PLA, PETG, ABS) if extruder is not preheated.
+  - **Defaults**: Prompts in `heating_slots` order if the extruder is not preheated. With no active Heating slots it shows an informational prompt and Cancel without heating or moving.
 
 - **M600**
   - **Description**: Pauses printing for filament switching, offering load/unload/purge options.
@@ -97,7 +98,11 @@ This document provides a concise overview of the G-code macros defined in the `b
 - **COLDPULL**
   - **Description**: Performs a cold pull to clean the nozzle, supporting multiple material types.
   - **Parameters**: None (material selection via prompt).
-  - **Defaults**: Offers PETG (250°C/100°C), ABS (260°C/105°C), NYLON (265°C/120°C) options.
+  - **Defaults**: Offers every active `cold_pull_slots` profile in configured order. With no active Cold Pull slots it shows an informational prompt and Cancel without heating or moving.
+
+Material workflow macros and defaults live in `config/material.cfg`; see
+[Material slots](/docs/CONFIGURATION.md#material-slots) for ordering, disabling,
+validation, and persistent override examples.
 
 ### Nozzle Cleaning
 

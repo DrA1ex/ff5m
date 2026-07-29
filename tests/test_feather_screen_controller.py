@@ -768,7 +768,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("WITHOUT CLEANING", drawing)
         self.assertIn("CLEAN NOZZLE FOR PETG, THEN HOME AND TARE", drawing)
         self.assertIn("cal.material.PETG", drawing)
-        self.assertIn("--batch button -p 310 145", drawing)
+        self.assertIn("cal.material.ABS-PC", drawing)
+        self.assertIn("--batch button -p 182 145", drawing)
 
         controller.calibration_clean_nozzle = False
         controller._render_calibration_confirm()
@@ -776,6 +777,48 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("cal.clean.skip", drawing)
         self.assertIn("--border b47aff", drawing)
         self.assertIn("WITHOUT CLEANING: USE COOLDOWN TEMPERATURE", drawing)
+
+    def test_mesh_cleaning_uses_complete_shared_material_selector(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_kind = "mesh"
+        controller.calibration_material = "ABS-PC"
+
+        controller._render_calibration_confirm()
+
+        drawing = "\n".join(batches[-1])
+        for material in controller.heating_materials:
+            self.assertIn("cal.material.%s" % material, drawing)
+        self.assertIn("--border b47aff", drawing)
+
+    def test_empty_heating_disables_mesh_but_preserves_no_clean_screws(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.heating_materials = ()
+        controller.heating_profiles = {}
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.calibration_material = "n/a"
+        controller.calibration_clean_nozzle = True
+
+        controller.calibration_kind = "mesh"
+        controller._render_calibration_confirm()
+        mesh = "\n".join(batches[-1])
+        self.assertIn("NO MATERIALS ENABLED", mesh)
+        self.assertNotIn("cal.material.", mesh)
+        self.assertNotIn(":cal.confirm", mesh)
+
+        controller.calibration_kind = "screws"
+        controller._render_calibration_confirm()
+        screws = "\n".join(batches[-1])
+        self.assertIn("cal.clean.skip", screws)
+        self.assertNotIn(":cal.confirm", screws)
+        controller.calibration_clean_nozzle = False
+        controller._render_calibration_confirm()
+        screws = "\n".join(batches[-1])
+        self.assertIn(":cal.confirm", screws)
 
     def test_screw_calibration_marks_only_current_phase_with_accent(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1676,7 +1719,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.extruder = type("Extruder", (), {
             "heater": type("Heater", (), {"min_temp": 0, "max_temp": 251})()})()
         controller.heater_bed = type("Bed", (), {"min_temp": 0, "max_temp": 91})()
-        self.assertEqual(controller._limited_preheat("ABS"), (250, 90))
+        self.assertEqual(controller._limited_preheat("ABS"), (250, 85))
 
     def test_filament_extrusion_is_blocked_when_cold(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

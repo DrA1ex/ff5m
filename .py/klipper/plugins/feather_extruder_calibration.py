@@ -16,8 +16,11 @@ import time
 
 try:
     from .ui import NumericInputSpec, Page
+    from .feather_materials import (
+        adaptive_grid_columns, render_material_selector)
 except (ImportError, ValueError):
     from ui import NumericInputSpec, Page
+    from feather_materials import adaptive_grid_columns, render_material_selector
 
 
 USER_CFG_PATH = "/opt/config/mod_data/user.cfg"
@@ -27,13 +30,6 @@ ROTATION_QUANTUM = Decimal("0.001")
 MEASUREMENT_INPUT = NumericInputSpec(
     "decimal", minimum=Decimal("0.001"), max_length=10,
     fraction_digits=3)
-
-MATERIALS = {
-    "PLA": (220, 100),
-    "PETG": (250, 100),
-    "ABS": (260, 105),
-    "NYLON": (265, 120),
-}
 
 _SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:[;#].*)?$")
 _ROTATION_RE = re.compile(
@@ -475,7 +471,8 @@ class FeatherExtruderCalibrationMixin:
                 "material change, or if residue may remain. Choose FILAMENT "
                 "READY only after cleaning. Feather then moves exactly 100 "
                 "mm and calculates the setting.",
-                (("extruder.coldpull", "COLD PULL", "enabled"),
+                (("extruder.coldpull", "COLD PULL",
+                  "enabled" if self.cold_pull_materials else "disabled"),
                  ("extruder.skip", "FILAMENT READY", "enabled")),
                 note="NOZZLE REMOVAL IS REQUIRED")
         elif phase == "material":
@@ -483,12 +480,20 @@ class FeatherExtruderCalibrationMixin:
             commands.append(self.renderer.text(
                 400, 90, "SELECT THE FILAMENT CURRENTLY LOADED",
                 "d9e4e8", "JetBrainsMono 8pt", "center", "middle"))
-            for index, material in enumerate(("PLA", "PETG", "ABS", "NYLON")):
-                x = 95 + (index % 2) * 315
-                y = 135 + (index // 2) * 100
-                commands += self.renderer.button(
-                    "extruder.material.%s" % material, x, y, 295, 72,
-                    material, font="JetBrainsMono Bold 12pt")
+            materials = self.cold_pull_materials
+            if materials:
+                columns = adaptive_grid_columns(len(materials))
+                gap = 20
+                width = min(295, (690 - gap * (columns - 1)) // columns)
+                commands += render_material_selector(
+                    self.renderer, "extruder.material.", 55, 135, width, 72,
+                    columns=columns, column_gap=gap, row_gap=28,
+                    area_width=690, materials=materials,
+                    font="JetBrainsMono Bold 12pt")
+            else:
+                commands.append(self.renderer.text(
+                    400, 230, "NO COLD PULL MATERIALS ENABLED", "56656c",
+                    "JetBrainsMono Bold 10pt", "center", "middle"))
             self.renderer.send(commands)
         elif phase == "cut":
             self._extruder_simple_page(
@@ -860,16 +865,18 @@ class FeatherExtruderCalibrationMixin:
     def _handle_extruder_calibration_action(self, action):
         session = self.extruder_calibration
         if action == "extruder.coldpull":
+            if not self.cold_pull_materials:
+                raise RuntimeError("No cold-pull materials are enabled")
             session.phase = "material"
         elif action == "extruder.skip":
             session.phase = "cut"
         elif action.startswith("extruder.material."):
             material = action.rsplit(".", 1)[1]
-            if material not in MATERIALS:
+            if material not in self.cold_pull_profiles:
                 raise ValueError("Unknown cold-pull material")
-            hot, cold = MATERIALS[material]
+            hot, cold = self.cold_pull_profiles[material]
             self._run_blocking_gcode(
-                "_COLDPULL_LOAD_MATERIAL TEMP=%d COLD=%d" % (hot, cold),
+                "_COLDPULL_LOAD_MATERIAL TEMP=%g COLD=%g" % (hot, cold),
                 "COLD PULL %s..." % material)
             session.phase = "cut"
         elif action == "extruder.prepared":

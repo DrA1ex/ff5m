@@ -24,6 +24,9 @@ try:
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
     from .feather_pagination import Pagination, pagination_footer
+    from .feather_materials import (
+        adaptive_grid_columns, render_material_selector,
+    )
 except (ImportError, ValueError):
     from ui import (
         Back, Command, Increment, Navigate, Page, PrintState, Replace,
@@ -38,6 +41,9 @@ except (ImportError, ValueError):
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
     from feather_pagination import Pagination, pagination_footer
+    from feather_materials import (
+        adaptive_grid_columns, render_material_selector,
+    )
 
 
 class _LazyZOffsetUI:
@@ -64,12 +70,6 @@ SAFE_Z_ADJUST_STEP = 1.0
 
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
-PREHEAT = {
-    "PLA": (220, 60),
-    "PETG": (250, 70),
-    "ABS": (260, 100),
-    "ABS-PC": (270, 105),
-}
 CALIBRATION_ROWS = 3
 CALIBRATION_ITEMS = (
     ("cal.z", "Z OFFSET", ("SET NOZZLE HEIGHT",)),
@@ -752,10 +752,19 @@ class FeatherControlsMixin:
                                              active=self.fan is not None)
         commands.append(self.renderer.text(400, 315, "PREHEAT PRESETS", "35d9e6",
                                            "JetBrainsMono 8pt", "center", "middle"))
-        for index, material in enumerate(("PLA", "PETG", "ABS", "ABS-PC")):
-            commands += self.renderer.button("heat.preheat.%s" % material,
-                                             25 + index * 190, 335, 170, 42,
-                                             material, font="JetBrainsMono 8pt")
+        materials = self.heating_materials
+        if materials:
+            gap = 10
+            width = min(170, (745 - gap * (len(materials) - 1)) //
+                        len(materials))
+            commands += render_material_selector(
+                self.renderer, "heat.preheat.", 25, 335, width, 42,
+                column_gap=gap, font="JetBrainsMono 8pt",
+                materials=materials, area_width=745)
+        else:
+            commands.append(self.renderer.text(
+                400, 356, "NO MATERIALS ENABLED", "56656c",
+                "JetBrainsMono Bold 10pt", "center", "middle"))
         commands += self.renderer.button("heat.alloff", 25, 392, 745, 42,
                                          "COOLDOWN", state="danger",
                                          font="JetBrainsMono 12pt")
@@ -847,8 +856,9 @@ class FeatherControlsMixin:
         return max(minimum, min(target, maximum))
 
     def _limited_preheat(self, material):
-        nozzle, bed = getattr(self, "preheat", PREHEAT).get(material,
-                                                            PREHEAT[material])
+        if material not in self.heating_profiles:
+            raise ValueError("Unknown or inactive heating material")
+        nozzle, bed = self.heating_profiles[material]
         return (self._clamp_heater_target(nozzle, self.extruder.heater, 300),
                 self._clamp_heater_target(bed, self.heater_bed, 130))
 
@@ -873,13 +883,24 @@ class FeatherControlsMixin:
 
     def _render_filament_material(self):
         commands = self.renderer.begin_page("Select material", back=True)
-        for index, material in enumerate(("PLA", "PETG", "ABS", "ABS-PC")):
-            x = 35 + (index % 2) * 380
-            y = 80 + (index // 2) * 165
-            nozzle = self._limited_preheat(material)[0]
-            commands += self.renderer.button("filament.%s" % material, x, y, 350, 135,
-                                             "%s  %.0fC" % (material, nozzle),
-                                             font="Roboto Bold 16pt")
+        materials = self.heating_materials
+        if materials:
+            columns = adaptive_grid_columns(len(materials))
+            gap = 20
+            width = min(350, (730 - gap * (columns - 1)) // columns)
+            rows = (len(materials) + columns - 1) // columns
+            height = 135 if rows <= 2 else 90
+            commands += render_material_selector(
+                self.renderer, "filament.", 35, 80, width, height,
+                columns=columns, column_gap=gap, row_gap=20,
+                area_width=730, materials=materials,
+                label=lambda material: "%s  %.0fC" % (
+                    material, self._limited_preheat(material)[0]),
+                font="Roboto Bold 16pt")
+        else:
+            commands.append(self.renderer.text(
+                400, 225, "NO MATERIALS ENABLED", "56656c",
+                "JetBrainsMono Bold 12pt", "center", "middle"))
         self.renderer.send(commands)
 
     def _render_filament_action(self):
@@ -938,7 +959,8 @@ class FeatherControlsMixin:
                 raise RuntimeError("Filament change requires a paused print")
         else:
             self._require_idle()
-        if action.startswith("filament.") and action.split(".", 1)[1] in PREHEAT:
+        if (action.startswith("filament.")
+                and action.split(".", 1)[1] in self.heating_materials):
             self.filament_material = action.split(".", 1)[1]
             target = self._limited_preheat(self.filament_material)[0]
             self._run_script("SET_MATERIAL MATERIAL=%s\nM104 S%.0f" %
@@ -1159,7 +1181,9 @@ class FeatherControlsMixin:
             self.calibration_kind = action.split(".", 1)[1]
             current_material = self._current_material()
             self.calibration_material = (
-                current_material if current_material in PREHEAT else "PLA")
+                current_material if current_material in self.heating_materials
+                else (self.heating_materials[0]
+                      if self.heating_materials else "n/a"))
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
             self._show_page(Page.CALIBRATION_CONFIRM)
@@ -1170,7 +1194,10 @@ class FeatherControlsMixin:
             self.calibration_guide_kind = action.split(".", 1)[1]
             self._show_page(Page.CALIBRATION_GUIDE)
         elif action.startswith("cal.material."):
-            self.calibration_material = action.rsplit(".", 1)[1]
+            material = action.rsplit(".", 1)[1]
+            if material not in self.heating_materials:
+                raise ValueError("Unknown or inactive heating material")
+            self.calibration_material = material
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
             self._render_calibration_confirm()
@@ -1179,6 +1206,15 @@ class FeatherControlsMixin:
             self.calibration_repeat_probe = False
             self._render_calibration_confirm()
         elif action == "cal.confirm":
+            if (self.calibration_kind in (
+                    "mesh", "pid_bed", "pid_extruder")
+                    and not self.heating_materials):
+                raise RuntimeError("No heating materials are enabled")
+            if (self.calibration_kind in ("screws", "z")
+                    and getattr(self, "calibration_clean_nozzle", True)
+                    and not self.heating_materials):
+                raise RuntimeError(
+                    "Select WITHOUT CLEANING when no materials are enabled")
             if self.calibration_kind == "z":
                 self._start_z_calibration()
             else:
@@ -1397,37 +1433,30 @@ class FeatherControlsMixin:
         commands.append(self.renderer.text(
             400, 85, text, "ffffff", "Roboto 10pt", "center", "middle",
             max_width=572, max_height=70, wrap=True, truncate=True))
-        if kind in ("screws", "mesh"):
-            materials = ("PLA", "PETG", "ABS")
-        elif kind in ("z", "pid_bed", "pid_extruder"):
-            materials = ("PLA", "PETG", "ABS", "ABS-PC")
-        else:
-            materials = ()
+        materials = (self.heating_materials
+                     if kind in ("screws", "mesh", "z",
+                                 "pid_bed", "pid_extruder") else ())
         if materials:
-            width = 135 if len(materials) == 4 else 180
+            width = 135
             gap = 15
-            total = len(materials) * width + (len(materials) - 1) * gap
-            left = (800 - total) // 2
-            for index, material in enumerate(materials):
-                commands += self.renderer.button("cal.material.%s" % material,
-                                                 left + index * (width + gap),
-                                                 145, width, 55,
-                                                 material,
-                                                 state=("selected" if
-                                                        material ==
-                                                        self.calibration_material and
-                                                        (kind not in ("screws", "z") or
-                                                         getattr(
-                                                             self,
-                                                             "calibration_clean_nozzle",
-                                                             True))
-                                                        else "enabled"))
+            selected = (self.calibration_material
+                        if (kind not in ("screws", "z") or getattr(
+                            self, "calibration_clean_nozzle", True)) else None)
+            commands += render_material_selector(
+                self.renderer, "cal.material.", 25, 145, width, 55,
+                column_gap=gap, materials=materials, selected=selected,
+                area_width=750)
+        elif kind in ("screws", "mesh", "z", "pid_bed", "pid_extruder"):
+            commands.append(self.renderer.text(
+                400, 173, "NO MATERIALS ENABLED", "56656c",
+                "JetBrainsMono Bold 10pt", "center", "middle"))
         if kind in ("screws", "z"):
             commands += self.renderer.button(
                 "cal.clean.skip", 115, 215, 570, 52, "WITHOUT CLEANING",
                 state=("enabled" if getattr(
                     self, "calibration_clean_nozzle", True) else "selected"))
-            if getattr(self, "calibration_clean_nozzle", True):
+            if (getattr(self, "calibration_clean_nozzle", True)
+                    and materials):
                 mode_hint = (
                     "CLEAN NOZZLE FOR %s, THEN HOME AND TARE" %
                     self.calibration_material)
@@ -1437,7 +1466,7 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(
                 400, 290, mode_hint,
                 "56656c", "JetBrainsMono 8pt", "center"))
-        elif kind in ("pid_bed", "pid_extruder"):
+        elif kind in ("pid_bed", "pid_extruder") and materials:
             nozzle, bed = self._limited_preheat(
                 self.calibration_material)
             target = bed if kind == "pid_bed" else nozzle
@@ -1449,9 +1478,14 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(
                 400, 255, "STRONG MACHINE VIBRATION IS EXPECTED",
                 "f2c94c", "JetBrainsMono Bold 10pt", "center"))
+        material_required = kind in ("mesh", "pid_bed", "pid_extruder")
+        cleaning_required = (kind in ("screws", "z") and getattr(
+            self, "calibration_clean_nozzle", True))
+        can_start = bool(materials) or not (
+            material_required or cleaning_required)
         commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
                                          "START",
-                                         state="enabled",
+                                         state="enabled" if can_start else "disabled",
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
 

@@ -381,6 +381,23 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertIn("required if filament is loaded", drawing)
         self.assertIn("Choose FILAMENT READY only after cleaning", drawing)
 
+    def test_empty_cold_pull_disables_only_cold_pull_path(self):
+        controller = calibration_controller()
+        controller.cold_pull_materials = ()
+        controller.cold_pull_profiles = {}
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_extruder_calibration()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("COLD PULL", drawing)
+        self.assertNotIn("--id 1:extruder.coldpull", drawing)
+        self.assertIn("extruder.skip", drawing)
+        with self.assertRaisesRegex(RuntimeError, "No cold-pull"):
+            controller._handle_extruder_calibration_action(
+                "extruder.coldpull")
+
     def test_cold_move_scopes_override_and_restores_gcode_state(self):
         controller = calibration_controller()
         commands = []

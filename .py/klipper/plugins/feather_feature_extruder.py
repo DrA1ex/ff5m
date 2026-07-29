@@ -27,7 +27,13 @@ class ExtruderCalibrationFeature(FeatherExtruderCalibrationMixin,
         self._render_extruder_calibration()
 
     def allows_action(self, page, action):
-        return action == "nav.back" or action.startswith("extruder.")
+        if action == "nav.back":
+            return True
+        if action.startswith("extruder.material."):
+            return action.rsplit(".", 1)[1] in self.cold_pull_materials
+        if action == "extruder.coldpull":
+            return bool(self.cold_pull_materials)
+        return action.startswith("extruder.")
 
     def handle_action(self, page, action):
         if not action.startswith("extruder."):
