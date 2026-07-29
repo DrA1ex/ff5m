@@ -33,6 +33,9 @@ PRINTER_LOG = "/data/logFiles/printer.log"
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
 FRAME_BYTES = SCREEN_WIDTH * SCREEN_HEIGHT * 4
+FRAME_SAMPLE_INTERVAL = 0.05
+FRAME_SETTLE_INTERVAL = 0.25
+FRAME_SETTLE_TIMEOUT = 3.0
 MAX_RUNS = 10
 MAX_BYTES = 512 * 1024 * 1024
 TAP_OPERATION_TIMEOUT = 1900.0
@@ -183,18 +186,27 @@ class ArtifactWorker:
         return data
 
     def _stable_frame(self):
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + FRAME_SETTLE_TIMEOUT
         previous = None
+        changed_at = time.monotonic()
         data = None
         while True:
             data = self._read_frame()
             digest = hashlib.sha256(data).hexdigest()
-            if digest == previous:
+            now = time.monotonic()
+            if digest != previous:
+                previous = digest
+                changed_at = now
+            elif now - changed_at >= FRAME_SETTLE_INTERVAL:
                 return data, digest
-            if time.monotonic() >= deadline:
+            if now >= deadline:
                 return data, digest
-            previous = digest
-            time.sleep(0.05)
+            # Typer may still be consuming later protocol frames after the
+            # render worker has completed its FIFO writes.  Require a quiet
+            # framebuffer window instead of accepting the first equal pair;
+            # this wait belongs only to the artifact thread, never Klipper's
+            # reactor.
+            time.sleep(FRAME_SAMPLE_INTERVAL)
 
     @staticmethod
     def _bmp(data):
@@ -325,6 +337,7 @@ class UITestFeature:
         self.calibration_stages = []
         self.test_results = {}
         self.renderer_dropped = 0
+        self.ui_filament_target = None
 
     @property
     def reactor(self):
@@ -665,8 +678,15 @@ class UITestFeature:
         self._add_call(steps, "ui-filament-action",
                        self._render_safe_filament_action)
         self._add_capture(steps, "ui-filament-action")
-        self._add_call(steps, "ui-filament-return",
-                       lambda: self._show(Page.FILAMENT_MATERIAL))
+        self._add_call(steps, "ui-filament-cooling",
+                       self._render_safe_filament_cooling)
+        self._add_capture(steps, "ui-filament-cooling")
+        self._add_call(steps, "ui-filament-target",
+                       self._remember_ui_filament_target)
+        self._add_tap(steps, "nav.back", Page.FILAMENT_MATERIAL)
+        self._add_call(steps, "ui-filament-target-preserved",
+                       self._assert_ui_filament_target_preserved)
+        self._add_capture(steps, "ui-filament-back-materials")
         self._add_tap(steps, "nav.back", Page.MAIN_MENU)
         self._add_tap(steps, "nav.network", Page.NETWORK_HOME)
         self._add_capture(steps, "ui-network")
@@ -1100,10 +1120,60 @@ class UITestFeature:
             self.host._update, self.reactor.NOW)
 
     def _render_safe_filament_action(self):
+        self._render_safe_filament_snapshot(130.4, 250.0)
+
+    def _render_safe_filament_cooling(self):
+        self._render_safe_filament_snapshot(260.4, 250.0, update=True)
+
+    def _render_safe_filament_snapshot(self, temperature, target,
+                                       update=False):
         if not self.host.heating_materials:
             return
         self.host.filament_material = self.material or self.host.heating_materials[0]
-        self._show(Page.FILAMENT_ACTION)
+        extruder = self.host.extruder
+
+        class SnapshotExtruder:
+            heater = extruder.heater
+            min_extrude_temp = getattr(extruder, "min_extrude_temp", 170.0)
+
+            def get_status(self, eventtime):
+                status = dict(extruder.get_status(eventtime))
+                status.update({
+                    "temperature": float(temperature),
+                    "target": float(target),
+                })
+                return status
+
+        # Exercise deliberately wide heating/cooling states without touching
+        # either heater or fan. Restoring the object keeps the test read-only.
+        self.host.extruder = SnapshotExtruder()
+        try:
+            if update:
+                if self.host.page != Page.FILAMENT_ACTION:
+                    raise RuntimeError(
+                        "Filament telemetry update requires action page")
+                # Exercise the same declarative dirty-tree path used by live
+                # HEATING -> COOLING transitions.  Reopening the current page
+                # would clear the framebuffer and test navigation instead of
+                # state updates.
+                self.host.feature_manager.get("filament").update(
+                    self.reactor.monotonic())
+            else:
+                self._show(Page.FILAMENT_ACTION)
+        finally:
+            self.host.extruder = extruder
+
+    def _remember_ui_filament_target(self):
+        self.ui_filament_target = float(self.host.extruder.get_status(
+            self.reactor.monotonic()).get("target", 0.0))
+
+    def _assert_ui_filament_target_preserved(self):
+        target = float(self.host.extruder.get_status(
+            self.reactor.monotonic()).get("target", 0.0))
+        if target != self.ui_filament_target:
+            raise RuntimeError(
+                "Filament Back changed nozzle target: %.1f -> %.1f" %
+                (self.ui_filament_target, target))
 
     def _dismiss_move_caution(self):
         buttons = self.host.renderer._buttons

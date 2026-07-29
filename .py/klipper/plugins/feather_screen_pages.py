@@ -194,7 +194,8 @@ class FeatherPagesMixin:
             commands += [
                 self.renderer.fill(18, 7, 142, 46, "header_background"),
                 self.renderer.text(28, 29, values[10], "d9e4e8",
-                                   "JetBrainsMono 16pt", "left", "middle")]
+                                   "Roboto Thin 16pt", "left", "middle",
+                                   proportional=True)]
         self.renderer.send(commands)
 
     def _dashboard_job(self, eventtime):
@@ -911,12 +912,10 @@ class FeatherPagesMixin:
         previous_state = (
             "enabled" if pagination.has_previous else "disabled")
         next_state = "enabled" if pagination.has_next else "disabled"
-        commands += self.renderer.button("mod.prev", 728, 88, 52, 48, "^",
-                                         state=previous_state,
-                                         font="JetBrainsMono 12pt")
-        commands += self.renderer.button("mod.next", 728, 365, 52, 48, "v",
-                                         state=next_state,
-                                         font="JetBrainsMono 12pt")
+        commands += self.renderer.arrow_button(
+            "mod.prev", 728, 88, 52, 48, "up", state=previous_state)
+        commands += self.renderer.arrow_button(
+            "mod.next", 728, 365, 52, 48, "down", state=next_state)
         track_y, track_height = 146, 209
         commands += [self.renderer.stroke(749, track_y, 10, track_height,
                                           "295c66", 1)]

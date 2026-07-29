@@ -855,85 +855,14 @@ class FeatherControlsMixin:
         self._show_page(Page.FILAMENT_MATERIAL)
         return True
 
-    def _render_filament_material(self):
-        commands = self.renderer.begin_page("Select material", back=True)
-        materials = self.heating_materials
-        if materials:
-            columns = adaptive_grid_columns(len(materials))
-            gap = 20
-            width = min(350, (730 - gap * (columns - 1)) // columns)
-            rows = (len(materials) + columns - 1) // columns
-            height = 135 if rows <= 2 else 90
-            commands += render_material_selector(
-                self.renderer, "filament.", 35, 80, width, height,
-                columns=columns, column_gap=gap, row_gap=20,
-                area_width=730, materials=materials,
-                label=lambda material: material,
-                subtitle=lambda material: "%.0fC" %
-                self._limited_preheat(material)[0],
-                font="Roboto Bold 16pt",
-                subtitle_font="JetBrainsMono Bold 12pt",
-                subtitle_color="d9e4e8")
-        else:
-            commands.append(self.renderer.text(
-                400, 225, "NO MATERIALS ENABLED", "56656c",
-                "JetBrainsMono Bold 12pt", "center", "middle"))
-        self.renderer.send(commands)
-
-    def _render_filament_action(self):
-        now = self.reactor.monotonic()
-        status = self.extruder.get_status(now)
-        ready = self._filament_temperature_ready(status)
-        commands = self.renderer.begin_page(
-            "Filament - %s" % self.filament_material,
-            back=True)
-        commands.append(self.renderer.text(
-            400, 80, "Nozzle %.1f / %.0fC" % (status["temperature"], status["target"]),
-            "ffb000" if not ready else "00f0f0", "Roboto Bold 14pt", "center"))
-        if not ready:
-            commands.append(self.renderer.text(400, 120, "Heating - please wait",
-                                               "ffffff", "Roboto 10pt", "center"))
-        state = "enabled" if ready else "disabled"
-        commands += self.renderer.button("filament.load", 20, 165, 175, 100,
-                                         "LOAD", state=state, font="Roboto Bold 14pt")
-        commands += self.renderer.button("filament.unload", 215, 165, 175, 100,
-                                         "UNLOAD", state=state, font="Roboto Bold 14pt")
-        commands += self.renderer.button("filament.purge", 410, 165, 175, 100,
-                                         "PURGE", state=state, font="Roboto Bold 14pt")
-        if self.filament_from_pause:
-            commands += self.renderer.button("filament.resume", 605, 165, 175, 100,
-                                             "CONTINUE", font="Roboto Bold 14pt")
-        else:
-            commands += self.renderer.button("filament.done", 605, 165, 175, 100,
-                                             "DONE", font="Roboto Bold 14pt")
-        self.renderer.send(commands)
-        self._last_filament_heat = (round(status["temperature"], 1),
-                                    round(status["target"]), ready)
-
     def _filament_temperature_ready(self, status):
         temperature = float(status.get("temperature", 0.0))
         target = float(status.get("target", 0.0))
         minimum = float(getattr(
             self.extruder, "min_extrude_temp", 170.0))
         return (target >= minimum and temperature >= minimum
-                and temperature >= target - 2.0)
-
-    def _update_filament_status(self, eventtime):
-        status = self.extruder.get_status(eventtime)
-        values = (round(status["temperature"], 1), round(status["target"]),
-                  self._filament_temperature_ready(status))
-        if values == self._last_filament_heat:
-            return
-        if self._last_filament_heat is None or values[2] != self._last_filament_heat[2]:
-            self._render_filament_action()
-            return
-        self._last_filament_heat = values
-        self.renderer.send([
-            self.renderer.fill(150, 58, 500, 70),
-            self.renderer.text(400, 80, "Nozzle %.1f / %.0fC" % values[:2],
-                               "00f0f0" if values[2] else "ffb000",
-                               "Roboto Bold 14pt", "center"),
-        ])
+                and temperature >= target - 2.0
+                and temperature <= target + 5.0)
 
     def _handle_filament_action(self, action):
         state = self.print_stats.get_status(self.reactor.monotonic())["state"]

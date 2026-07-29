@@ -6,6 +6,8 @@ from ui.identity import PageKey
 class AppPage(PageKey):
     __key_namespace__ = "ui.pages.keys.AppPage"
     HEAT = "heat.control"
+    FILAMENT_MATERIAL = "filament.material"
+    FILAMENT_ACTION = "filament.action"
     MOVE_STEP = "move.step"
     MOVE_JOYSTICK = "move.joystick"
     Z_OFFSET_SUMMARY = "z_offset.summary"

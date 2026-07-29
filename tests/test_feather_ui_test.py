@@ -43,6 +43,24 @@ class GCmd:
 
 
 class ArtifactWorkerTest(unittest.TestCase):
+    def test_frame_capture_requires_continuous_quiet_window(self):
+        worker = object.__new__(UI_TEST.ArtifactWorker)
+        frames = [b"first", b"first", b"second", b"second",
+                  b"second", b"second"]
+        worker._read_frame = mock.Mock(side_effect=frames)
+
+        with mock.patch.object(UI_TEST, "FRAME_SETTLE_INTERVAL", 0.15), \
+                mock.patch.object(UI_TEST, "FRAME_SETTLE_TIMEOUT", 2.0), \
+                mock.patch.object(UI_TEST.time, "monotonic", side_effect=(
+                    0.0, 0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30)), \
+                mock.patch.object(UI_TEST.time, "sleep") as sleep:
+            data, digest = worker._stable_frame()
+
+        self.assertEqual(data, b"second")
+        self.assertEqual(digest, UI_TEST.hashlib.sha256(b"second").hexdigest())
+        self.assertEqual(worker._read_frame.call_count, 6)
+        self.assertEqual(sleep.call_count, 5)
+
     def test_writes_bmp_manifest_telemetry_and_log_slice(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -284,6 +302,74 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(
             (steps[returned + 2]["action"], steps[returned + 2]["page"]),
             ("nav.menu", FEATHER.Page.MAIN_MENU))
+
+    def test_ui_filament_back_preserves_target_before_leaving_materials(self):
+        feature = UI_TEST.UITestFeature(object())
+        steps = feature._build_steps("UI")
+        labels = [step["label"] for step in steps]
+        action_capture = next(
+            index for index, step in enumerate(steps)
+            if step["label"] == "ui-filament-action"
+            and step["kind"] == "capture")
+
+        self.assertEqual(labels[action_capture + 1], "ui-filament-cooling")
+        self.assertEqual(labels[action_capture + 2], "ui-filament-cooling")
+        self.assertEqual(labels[action_capture + 3], "ui-filament-target")
+        self.assertEqual(
+            (steps[action_capture + 4]["action"],
+             steps[action_capture + 4]["page"]),
+            ("nav.back", FEATHER.Page.FILAMENT_MATERIAL))
+        self.assertEqual(
+            labels[action_capture + 5], "ui-filament-target-preserved")
+        self.assertEqual(labels[action_capture + 6],
+                         "ui-filament-back-materials")
+
+    def test_safe_filament_snapshot_supports_real_extruder_shape(self):
+        class Extruder:
+            heater = object()
+
+            def get_status(self, eventtime):
+                return {"temperature": 31.0, "target": 0.0}
+
+        original = Extruder()
+        seen = []
+        host = type("Host", (), {})()
+        host.heating_materials = ("PETG",)
+        host.filament_material = None
+        host.extruder = original
+        host.page = FEATHER.Page.FILAMENT_MATERIAL
+        host.reactor = type("Reactor", (), {
+            "monotonic": lambda self: 1.0,
+        })()
+
+        def show(page):
+            snapshot = host.extruder.get_status(0.0)
+            seen.append(("show", snapshot, host.extruder.min_extrude_temp))
+            host.page = page
+
+        class FilamentFeature:
+            def update(self, eventtime):
+                snapshot = host.extruder.get_status(eventtime)
+                seen.append((
+                    "update", snapshot, host.extruder.min_extrude_temp))
+
+        filament = FilamentFeature()
+        host.feature_manager = type("FeatureManager", (), {
+            "get": lambda self, name: filament,
+        })()
+        host._show_page = show
+        feature = UI_TEST.UITestFeature(host)
+        feature.material = "PETG"
+
+        feature._render_safe_filament_action()
+        feature._render_safe_filament_cooling()
+
+        self.assertIs(host.extruder, original)
+        self.assertEqual(host.filament_material, "PETG")
+        self.assertEqual(seen, [
+            ("show", {"temperature": 130.4, "target": 250.0}, 170.0),
+            ("update", {"temperature": 260.4, "target": 250.0}, 170.0),
+        ])
 
     def test_hardware_calibration_open_resets_ui_catalog_page(self):
         calibration = type("Calibration", (), {"calibration_page": 2})()

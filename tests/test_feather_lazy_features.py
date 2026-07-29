@@ -32,6 +32,7 @@ import sys
 import feather_screen
 blocked = (
     'feather_feature_ui_test',
+    'feather_feature_filament', 'ff5m_ui.filament',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',
@@ -40,6 +41,8 @@ blocked = (
 assert not [name for name in blocked if name in sys.modules]
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.z_offset')]
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
 """)
 
@@ -97,12 +100,15 @@ assert controller.feature_manager.loaded() == ()
 assert controller.gcode.immediate == {'FEATHER_ABORT'}
 blocked = (
     'feather_feature_ui_test',
+    'feather_feature_filament', 'ff5m_ui.filament',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',
     'feather_mod_settings', 'ff5m_ui.z_offset',
 )
 assert not [name for name in blocked if name in sys.modules]
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
 """)
 
@@ -122,6 +128,12 @@ host.renderer.send = lambda commands: None
 host._setting = lambda key, default: default
 host.feature_manager = LazyFeatureManager(host, feather_screen.FEATURE_SPECS)
 manager = host.feature_manager
+filament = manager.get('filament')
+assert filament is manager.get('filament')
+assert 'feather_feature_filament' in sys.modules
+assert 'ff5m_ui.filament.runtime' in sys.modules
+assert 'ff5m_ui.filament.material.page' not in sys.modules
+assert 'ff5m_ui.filament.action.page' not in sys.modules
 calibration = manager.get('calibration')
 calibration.render(Page.CALIBRATION_HOME)
 assert calibration is manager.get('calibration')
@@ -331,6 +343,32 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
 
         self.assertEqual(started, [manager.peek("z")])
         self.assertIs(manager.get("z"), manager.peek("z"))
+
+    def test_filament_pages_load_their_declarations_only_when_opened(self):
+        controller = self.controller()
+        controller.filament_from_pause = False
+        controller.extruder = type("Extruder", (), {
+            "heater": type("Heater", (), {
+                "min_temp": 0, "max_temp": 300})(),
+            "min_extrude_temp": 170.0,
+            "get_status": lambda self, eventtime: {
+                "temperature": 25.0, "target": 0.0},
+        })()
+        controller.heater_bed = type("Bed", (), {
+            "min_temp": 0, "max_temp": 130,
+            "get_status": lambda self, eventtime: {
+                "temperature": 25.0, "target": 0.0},
+        })()
+        manager = controller.feature_manager
+
+        self.assertIsNone(manager.peek("filament"))
+        controller._show_page(FEATHER.Page.FILAMENT_MATERIAL)
+
+        self.assertIsNotNone(manager.peek("filament"))
+        self.assertEqual(controller.page, FEATHER.Page.FILAMENT_MATERIAL)
+
+        controller._show_page(FEATHER.Page.FILAMENT_ACTION)
+        self.assertEqual(controller.page, FEATHER.Page.FILAMENT_ACTION)
 
     def test_z_motion_pages_arm_abort_only_after_homing(self):
         controller = self.controller()

@@ -60,7 +60,7 @@ class FontMetrics:
         self.fonts = dict((metric.name, metric) for metric in fonts)
         self.names = tuple(sorted(self.fonts))
 
-    def normalize_font(self, font):
+    def normalize_font(self, font, allow_proportional=False):
         match = _FONT_NAME.match(str(font))
         if match is None:
             logging.warning(
@@ -71,7 +71,7 @@ class FontMetrics:
         # Feather's UI font must cover the bundled Cyrillic strings. Typer
         # still reports Roboto, but legacy Roboto requests intentionally map to
         # the equivalent JetBrains Mono face as they did before the manifest.
-        if family.startswith("Roboto"):
+        if family.startswith("Roboto") and not allow_proportional:
             family = family.replace("Roboto", "JetBrainsMono", 1)
         candidates = []
         for name in self.names:

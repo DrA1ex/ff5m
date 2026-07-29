@@ -29,6 +29,8 @@ from tests.test_feather_screen import (
     mod_param,
 )
 from ff5m_ui.move import runtime as MOVE_UI
+from ff5m_ui.filament import actions as FILAMENT_ACTIONS
+from feather_feature_filament import FilamentFeature
 
 
 
@@ -141,8 +143,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.CANCEL_CONFIRM: "_render_cancel_confirm",
             FEATHER.Page.CONTROL_MOVE: "_render_move",
             FEATHER.Page.CONTROL_HEAT: "_render_heat",
-            FEATHER.Page.FILAMENT_MATERIAL: "_render_filament_material",
-            FEATHER.Page.FILAMENT_ACTION: "_render_filament_action",
             FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
             FEATHER.Page.CALIBRATION_GUIDE: "_render_calibration_guide",
             FEATHER.Page.EXTRUDER_CALIBRATION:
@@ -431,7 +431,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._read_text = lambda path: ""
         controller._refresh_local_timezone = lambda: None
 
-        controller._render_home()
+        with mock.patch("feather_screen_pages.time.strftime",
+                        return_value="18:09"):
+            controller._render_home()
 
         drawing = "\n".join("\n".join(batch) for batch in batches)
         material = next(line for line in drawing.splitlines()
@@ -440,9 +442,12 @@ class ControllerSafetyTest(unittest.TestCase):
                        if "VERY-LONG-WIRELESS-NETWORK-NAME" in line)
         progress = next(line for line in drawing.splitlines()
                         if "100% //" in line)
+        clock = next(line for line in drawing.splitlines()
+                     if '-t "18:09"' in line)
         self.assertIn("--max-width 220 --truncate", material)
         self.assertIn("--max-width 210 --truncate", network)
         self.assertIn("--max-width 350 --truncate", progress)
+        self.assertIn('-f "Roboto Thin 16pt"', clock)
         self.assertLessEqual(
             controller.renderer.text_width(
                 "299 / 300 C", "JetBrainsMono 12pt"),
@@ -1354,12 +1359,16 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn('[ >OFF< |', first)
         self.assertIn("--id 1:mod.next", first)
         self.assertNotIn("--id 1:mod.prev", first)
+        self.assertNotIn('-t "^"', first)
+        self.assertNotIn('-t "v"', first)
+        self.assertIn("--batch fill -p 745 390 -s 19 2 -c 35d9e6", first)
 
         controller._handle_mod_action("mod.next")
         second = "\n".join(controller.draw_batches[-1])
         self.assertIn("06-07 / 07", second)
         self.assertIn("--id 2:mod.prev", second)
         self.assertNotIn("--id 2:mod.next", second)
+        self.assertIn("--batch fill -p 751 111 -s 7 12 -c 35d9e6", second)
 
     def test_mod_boolean_toggle_updates_without_opening_an_editor(self):
         flag = mod_param("camera", bool, False, "Alt camera")
@@ -1814,14 +1823,16 @@ class ControllerSafetyTest(unittest.TestCase):
             "temperature": 220.0, "target": 220.0})
         controller.extruder.min_extrude_temp = 170.0
 
-        controller._render_filament_action()
+        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_ACTION)
 
         drawing = "\n".join(batches[0])
-        for action, x in (("filament.load", 20), ("filament.unload", 215),
-                          ("filament.purge", 410), ("filament.resume", 605)):
-            self.assertIn("-p %d 165 -s 175 100" % x, drawing)
-            self.assertIn("--id 1:%s" % action, drawing)
-        self.assertIn('-t "CONTINUE"', drawing)
+        for action, y in ((FILAMENT_ACTIONS.LOAD, 72),
+                          (FILAMENT_ACTIONS.UNLOAD, 164),
+                          (FILAMENT_ACTIONS.PURGE, 256)):
+            self.assertIn("-p 320 %d -s 460 76" % y, drawing)
+            self.assertIn("--id 1:%s" % action.wire_id, drawing)
+        self.assertIn("--id 1:%s" % FILAMENT_ACTIONS.RESUME.wire_id, drawing)
+        self.assertIn('-t "CONTINUE PRINT"', drawing)
 
     def test_filament_actions_wait_for_selected_target_temperature(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1835,19 +1846,39 @@ class ControllerSafetyTest(unittest.TestCase):
             "temperature": 200.0, "target": 250.0})
         controller.extruder.min_extrude_temp = 170.0
 
-        controller._render_filament_action()
+        feature = FilamentFeature(controller)
+        feature.render(FEATHER.Page.FILAMENT_ACTION)
 
         drawing = "\n".join(batches[0])
-        self.assertIn('"Heating - please wait"', drawing)
-        for action in ("filament.load", "filament.unload", "filament.purge"):
-            self.assertNotIn("--id 1:%s" % action, drawing)
+        self.assertIn('"HEATING"', drawing)
+        self.assertIn('"HEATING TO TARGET"', drawing)
+        self.assertIn('"200 / 250C"', drawing)
+        self.assertIn('"MATERIAL"', drawing)
+        self.assertIn('"PETG"', drawing)
+        self.assertNotIn('-t "TARGET"', drawing)
+        self.assertNotIn("200.0", drawing)
+        for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
+                       FILAMENT_ACTIONS.PURGE):
+            self.assertNotIn("--id 1:%s" % action.wire_id, drawing)
 
         controller.extruder.status["temperature"] = 248.0
         batches.clear()
-        controller._render_filament_action()
+        feature.render(FEATHER.Page.FILAMENT_ACTION)
         drawing = "\n".join(batches[0])
-        for action in ("filament.load", "filament.unload", "filament.purge"):
-            self.assertIn("--id 2:%s" % action, drawing)
+        self.assertIn('"TEMPERATURE STABLE"', drawing)
+        for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
+                       FILAMENT_ACTIONS.PURGE):
+            self.assertIn("--id 2:%s" % action.wire_id, drawing)
+
+        controller.extruder.status["temperature"] = 260.0
+        batches.clear()
+        feature.render(FEATHER.Page.FILAMENT_ACTION)
+        drawing = "\n".join(batches[0])
+        self.assertIn('"COOLING"', drawing)
+        self.assertIn('"COOLING TO TARGET"', drawing)
+        for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
+                       FILAMENT_ACTIONS.PURGE):
+            self.assertNotIn("--id 3:%s" % action.wire_id, drawing)
 
     def test_terminal_print_state_becomes_idle_and_reports_result(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

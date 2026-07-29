@@ -78,6 +78,14 @@ class FontManifestTest(unittest.TestCase):
         self.assertEqual(len(loaded.fonts), 30)
         self.assertEqual(tuple(sorted(loaded.names)), loaded.names)
         self.assertTrue(loaded.metric("JetBrainsMono 12pt").monospaced)
+        self.assertEqual(
+            loaded.normalize_font("Roboto Thin 16pt"),
+            "JetBrainsMono Thin 16pt")
+        self.assertEqual(
+            loaded.normalize_font(
+                "Roboto Thin 16pt", allow_proportional=True),
+            "Roboto Thin 16pt")
+        self.assertFalse(loaded.fonts["Roboto Thin 16pt"].monospaced)
 
 
 class WordV1ParityTest(unittest.TestCase):

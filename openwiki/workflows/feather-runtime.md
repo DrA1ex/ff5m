@@ -249,6 +249,18 @@ in independent repaint boundaries, which keeps normal status refreshes to the
 changed value rectangle. The page module itself remains lazy and is imported
 only when the Heat page is first opened.
 
+The filament material and action screens follow the same declarative contract
+under `ff5m_ui.filament`. Their feature runtime owns navigation and printer
+commands, while the material and action declarations are imported separately
+only when each screen is first opened. The action status card is a repaint
+boundary, so transitions between heating values cannot leave fragments of an
+older label. Back from the action screen returns to material selection without
+turning off the active nozzle target; finishing the workflow retains the
+existing heater shutdown behavior. If the nozzle is more than 5 C above the
+selected material target, the feature owns `fanM106` at 100% until the nozzle
+reaches that band. It suppresses extrusion actions while cooling and restores
+the fan to 0% when the band is reached or the filament workflow exits.
+
 ## Memory budget and measurement
 
 Measure resident processes from `/proc/<pid>/smaps`, not by adding raw RSS
