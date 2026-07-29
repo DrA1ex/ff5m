@@ -22,3 +22,10 @@ git subtree pull --prefix .py/klipper/plugins/ui \
 Product pages and controllers belong to `.py/klipper/plugins/ff5m_ui`; they
 must never be added to the framework subtree. Framework tags contain only the
 contents of the canonical `framework/ui` directory.
+
+The low-level renderer transport is framework-owned. FF5M's asynchronous Typer
+integration therefore lives in `ui/renderer.py` and `ui/render_worker.py`, not
+in a product page/controller. When updating the subtree, carry the render-worker
+files from the matching framework release (or reconcile the local transport
+patch explicitly); a plain subtree pull must not restore reactor-side FIFO or
+process lifecycle code.

@@ -53,6 +53,8 @@ class Reactor:
         return 10.0
     def register_callback(self, callback, when=None):
         return None
+    def register_async_callback(self, callback):
+        return None
 
 class GCode:
     def register_command(self, name, callback):

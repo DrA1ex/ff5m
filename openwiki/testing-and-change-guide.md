@@ -21,7 +21,7 @@ bed:
 _FEATHER_UI_TEST ACTION=RUN SUITE=FULL CONFIRM=1
 ```
 
-`FULL` runs safe page traversal, Home All plus reversible 1 mm XYZ moves,
+`FULL` runs safe page traversal, render-worker restart/recovery, Home All plus reversible 1 mm XYZ moves,
 material preheat/cooldown, `BED_LEVEL_SCREWS_TUNE CLEAN=0`, an unsaved
 `AUTO_FULL_BED_LEVEL`, and a simulated center-zone Z-offset paper test. The Z
 test uses the actual `PROBE`, ten 0.100 mm `FARTHER` actions to create 1 mm of
@@ -30,13 +30,21 @@ mandatory Discard. It never saves the candidate. PID, input-shaper, and
 extruder calibration are intentionally outside the physical suite.
 
 Each hardware/UI phase is also independently runnable with `SUITE=UI`,
-`MOTION`, `HEAT`, `SCREWS`, `MESH`, or `Z`; pass an active material name through
+`RENDER`, `MOTION`, `HEAT`, `SCREWS`, `MESH`, or `Z`; pass an active material name through
 `MATERIAL=PETG` when needed. Use these control commands while diagnosing a run:
 
 ```gcode
 _FEATHER_UI_TEST ACTION=STATUS
 _FEATHER_UI_TEST ACTION=ABORT
 ```
+
+`SUITE=RENDER` is non-physical: on an observed idle printer it requests a
+worker-owned Typer restart, waits for the touch FIFO handoff and surface redraw,
+then captures the recovered screen. It does not home, move, or heat the printer.
+Every capture records renderer queue/restart diagnostics and waits until all
+batches submitted before that capture have rendered or been accounted for; an
+unexpected dropped batch fails the step instead of silently photographing an
+older stable framebuffer.
 
 The harness validates live page generations and hitboxes before synthetic taps,
 blocks physical non-emergency input plus every persistent Save action during a

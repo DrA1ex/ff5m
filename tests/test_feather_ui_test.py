@@ -123,24 +123,153 @@ class ArtifactWorkerTest(unittest.TestCase):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_tap_waits_for_active_gcode_before_advancing(self):
+        callbacks = []
+        reactor = type("Reactor", (), {
+            "register_callback": lambda self, callback, when=None:
+                callbacks.append((callback, when)),
+        })()
+        host = type("Host", (), {
+            "reactor": reactor,
+            "page": FEATHER.Page.CONTROL_MOVE,
+            "command_depth": 1,
+            "busy_message": "HOMING...",
+        })()
+        feature = UI_TEST.UITestFeature(host)
+        feature.running = True
+        feature.step_index = 4
+        events = []
+        schedules = []
+        feature._event = events.append
+        feature._schedule = schedules.append
+        step = {"kind": "tap", "label": "move.homeall"}
+
+        feature._after_tap(10.0, step, FEATHER.Page.CONTROL_MOVE)
+
+        self.assertEqual(feature.step_index, 4)
+        self.assertEqual(step["operation_deadline"],
+                         10.0 + UI_TEST.TAP_OPERATION_TIMEOUT)
+        self.assertTrue(step["expected_page_seen"])
+        self.assertEqual(callbacks[0][1], 10.1)
+        host.command_depth = 0
+        host.busy_message = None
+        # A long operation may legitimately advance from its progress page to
+        # a result page before synthetic tap completion is acknowledged.
+        host.page = FEATHER.Page.CALIBRATION_RESULT
+        callbacks[0][0](10.1)
+        self.assertEqual(feature.step_index, 5)
+        self.assertEqual(events, ["PASS move.homeall"])
+        self.assertEqual(schedules, [0.02])
+
+    def test_motion_return_clamps_homing_overshoot_to_ui_limits(self):
+        position = [110.0, 109.1, 220.0]
+        dispatched = []
+        toolhead = type("Toolhead", (), {
+            "get_status": lambda self, eventtime: {
+                "position": tuple(position), "homed_axes": "xyz",
+            },
+        })()
+
+        def dispatch(_host, action):
+            dispatched.append(action)
+            position[1] = 110.0
+
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 10.0,
+            })(),
+            "toolhead": toolhead,
+            "_feather_move_limits": lambda self, status: (
+                (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
+            "_dispatch_action": dispatch,
+        })()
+        feature = UI_TEST.UITestFeature(host)
+        feature.motion_origin = (110.0, 110.099675, 220.0)
+
+        feature._motion_step("y", -1)
+
+        self.assertEqual(
+            dispatched, [UI_TEST.move_actions.Y_PLUS.wire_id])
+        self.assertEqual(feature.motion_expected, 110.0)
+
+    def test_render_suite_is_nonphysical_and_waits_for_recovery(self):
+        statuses = [
+            {"worker_state": "running", "typer_restarts": 2},
+            {"worker_state": "running", "typer_restarts": 3},
+        ]
+        renderer = type("Renderer", (), {
+            "get_status": lambda self: statuses.pop(0) if len(statuses) > 1
+            else statuses[0],
+            "restart": lambda self: True,
+        })()
+        feature = UI_TEST.UITestFeature(type("Host", (), {
+            "renderer": renderer,
+        })())
+        steps = feature._build_steps("RENDER")
+        labels = [step["label"] for step in steps]
+
+        self.assertEqual(labels, [
+            "baseline", "render-pause-timer", "render-restart-signal",
+            "render-recovered", "render-recovered", "render-resume-timer"])
+        steps[2]["callback"]()
+        self.assertTrue(steps[3]["predicate"]())
+
+    def test_capture_waits_for_worker_and_fails_on_dropped_batch(self):
+        status = {
+            "submitted_batches": 5, "rendered_batches": 4,
+            "coalesced_batches": 0, "dropped_batches": 0,
+        }
+        renderer = type("Renderer", (), {
+            "get_status": lambda self: dict(status),
+        })()
+        reactor = type("Reactor", (), {"monotonic": lambda self: 10.0})()
+        feature = UI_TEST.UITestFeature(type("Host", (), {
+            "renderer": renderer, "reactor": reactor,
+        })())
+        scheduled = []
+        feature._schedule = scheduled.append
+        feature._screen_metadata = lambda: {"page": "IDLE_HOME"}
+        captures = []
+        feature.worker = type("Worker", (), {
+            "capture": lambda self, *args: captures.append(args),
+        })()
+        step = {"kind": "capture", "label": "settled"}
+
+        feature._capture(step)
+        self.assertEqual(scheduled, [0.02])
+        self.assertEqual(captures, [])
+
+        status["dropped_batches"] = 1
+        with self.assertRaisesRegex(RuntimeError, "batch dropped"):
+            feature._capture(step)
+
     def test_full_suite_order_and_z_safety_sequence(self):
-        feature = UI_TEST.UITestFeature(object())
+        renderer = type("Renderer", (), {
+            "get_status": lambda self: {"typer_restarts": 0},
+        })()
+        feature = UI_TEST.UITestFeature(type("Host", (), {
+            "renderer": renderer,
+        })())
         feature.material = "PLA"
         steps = feature._build_steps("FULL")
         labels = [step["label"] for step in steps]
 
         first = dict((phase, next(index for index, label in enumerate(labels)
                                   if label.startswith(phase + "-")))
-                     for phase in ("ui", "motion", "heat", "screws",
+                     for phase in ("ui", "render", "motion", "heat", "screws",
                                    "mesh", "z"))
         self.assertEqual(list(first), [
-            "ui", "motion", "heat", "screws", "mesh", "z"])
+            "ui", "render", "motion", "heat", "screws", "mesh", "z"])
         self.assertEqual(list(first.values()), sorted(first.values()))
         actions = [step.get("action") for step in steps]
-        self.assertEqual(actions.count("z.farther"), 10)
-        self.assertEqual(actions.count("z.closer"), 10)
-        self.assertIn("z.discard.confirm", actions)
-        self.assertNotIn("z.save", actions)
+        self.assertIn(UI_TEST.move_actions.HOME_ALL.wire_id, actions)
+        self.assertNotIn("move.homeall", actions)
+        self.assertEqual(
+            actions.count(UI_TEST.z_actions.FARTHER.wire_id), 10)
+        self.assertEqual(
+            actions.count(UI_TEST.z_actions.CLOSER.wire_id), 10)
+        self.assertIn(UI_TEST.z_actions.DISCARD_CONFIRM.wire_id, actions)
+        self.assertNotIn(UI_TEST.z_actions.SAVE.wire_id, actions)
         self.assertFalse(any("pid" in label.lower() for label in labels))
 
     def test_ui_file_browser_returns_home_before_reopening_menu(self):
@@ -156,12 +285,33 @@ class RunnerContractTest(unittest.TestCase):
             (steps[returned + 2]["action"], steps[returned + 2]["page"]),
             ("nav.menu", FEATHER.Page.MAIN_MENU))
 
+    def test_hardware_calibration_open_resets_ui_catalog_page(self):
+        calibration = type("Calibration", (), {"calibration_page": 2})()
+        manager = type("Manager", (), {
+            "get": lambda self, name: calibration,
+        })()
+        host = type("Host", (), {
+            "feature_manager": manager,
+            "page": FEATHER.Page.IDLE_HOME,
+            "_show_page": lambda self, page: setattr(self, "page", page),
+        })()
+        feature = UI_TEST.UITestFeature(host)
+
+        feature._open_calibration_home()
+
+        self.assertEqual(calibration.calibration_page, 0)
+        self.assertEqual(host.page, FEATHER.Page.CALIBRATION_HOME)
+
     def test_test_mode_blocks_only_persistent_actions(self):
         feature = UI_TEST.UITestFeature(object())
         self.assertFalse(feature.blocks_action("z.save"))
         feature.running = True
         self.assertTrue(feature.input_blocked)
         self.assertTrue(feature.blocks_action("z.save"))
+        self.assertTrue(feature.blocks_action(
+            UI_TEST.z_actions.SAVE.wire_id))
+        self.assertTrue(feature.blocks_action(
+            UI_TEST.z_actions.SAFE_SAVE.wire_id))
         self.assertTrue(feature.blocks_action("cal.mesh.save"))
         self.assertFalse(feature.blocks_action("z.farther"))
 
@@ -179,7 +329,7 @@ class RunnerContractTest(unittest.TestCase):
         # additional controller fixture is needed for this safety check.
         controller._dispatch_action("cal.mesh.save")
 
-    def test_ui_only_cleanup_does_not_issue_hardware_gcode(self):
+    def test_nonphysical_cleanup_does_not_issue_hardware_gcode(self):
         shown = []
         host = type("Host", (), {
             "timer": None,
@@ -189,18 +339,18 @@ class RunnerContractTest(unittest.TestCase):
                 AssertionError("UI suite issued hardware G-code: %s" % command)),
             "_show_page": lambda self, page: shown.append(page),
         })()
-        feature = UI_TEST.UITestFeature(host)
-        feature.suite = "UI"
-        feature.original = {
-            "filament_material": "PLA", "timer_active": False,
-            "page": FEATHER.Page.IDLE_HOME,
-            "previous_page": FEATHER.Page.CONTROL_HOME,
-        }
-
-        feature._restore_state()
+        for suite in ("UI", "RENDER"):
+            feature = UI_TEST.UITestFeature(host)
+            feature.suite = suite
+            feature.original = {
+                "filament_material": "PLA", "timer_active": False,
+                "page": FEATHER.Page.IDLE_HOME,
+                "previous_page": FEATHER.Page.CONTROL_HOME,
+            }
+            feature._restore_state()
 
         self.assertEqual(host.filament_material, "PLA")
-        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME])
+        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME] * 2)
         self.assertEqual(host.previous_page, FEATHER.Page.CONTROL_HOME)
 
     def test_status_does_not_load_lazy_feature(self):

@@ -48,7 +48,10 @@ A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feathe
 
 ## Klippy and Typer lifecycle
 
-When Klipper constructs `[feather_screen]` during config load, Feather starts `FeatherRenderer` immediately rather than leaving the previous framebuffer content visible until `klippy:ready`. The renderer executes Typer as a Klippy child:
+When Klipper constructs `[feather_screen]`, it builds the frontend first and
+defers `TyperRenderWorker` startup to a reactor callback. The daemon worker then
+executes Typer as a Klippy child; the reactor never launches or waits for the
+process:
 
 ```sh
 /root/printer_data/bin/typer \
@@ -58,11 +61,26 @@ When Klipper constructs `[feather_screen]` during config load, Feather starts `F
   batch --pipe /tmp/typer
 ```
 
-The event FIFO is registered with Klipper's reactor. Before `klippy:ready`, a short reactor timer redraws a modal startup panel with a pulsating circle and an explicit `KLIPPER IS LOADING` message. This makes the not-yet-ready state visible and keeps the touch transport alive without allowing printer actions.
+The worker hands the event FIFO to Klipper's reactor through
+`register_async_callback`; touch remains a direct reactor FD for low-latency
+emergency and joystick input. Before `klippy:ready`, a short reactor timer
+publishes a modal startup panel and keyed pulse frames without allowing printer
+actions.
 
-At `klippy:ready`, `FeatherScreen._init()` resolves Klipper objects (toolhead, heaters, virtual SD, print statistics, pause state, display status, optional resurrection, and others), stops the startup animation, creates the normal timers, and renders an initial recovery or home page. The existing periodic timer then owns state refresh. If Typer dies, the timer rate-limits restart attempts to once per five seconds.
+At `klippy:ready`, `FeatherScreen._init()` resolves Klipper objects (toolhead,
+heaters, virtual SD, print statistics, pause state, display status, optional
+resurrection, and others), stops the startup animation, creates the normal
+timers, and publishes an initial recovery or home page. If Typer exits or its
+draw FIFO stalls, the worker performs TERM/KILL, bounded backoff, FIFO handoff,
+restart, and requests a current-surface redraw through the thread-safe reactor
+callback. The periodic UI timer does not own renderer recovery.
 
-Pipe-mode Typer configures Linux `PR_SET_PDEATHSIG=SIGTERM`, so it exits if the Klippy process actually dies. A Klippy shutdown or disconnect event does not necessarily end that process, so Feather stops operational timers, network work, and joystick motion but deliberately keeps Typer and its event FIFO available for recovery UI. It classifies common MCU communication, scheduling, and shutdown messages, displays an explicit error panel, and offers `FIRMWARE_RESTART` when that is the appropriate recovery command. A config error detected before `klippy:ready` offers `RESTART`; a plain disconnect is displayed as a waiting state instead of looking like an unresponsive last page. If the process exits or Feather performs normal renderer cleanup, `FeatherRenderer.stop()` allows two seconds before escalating to `kill()`.
+Pipe-mode Typer configures Linux `PR_SET_PDEATHSIG=SIGTERM`, so it exits if the
+Klippy process actually dies. A Klippy shutdown or disconnect event does not
+necessarily end that process, so Feather stops operational producers, submits
+one final critical error batch, freezes the frontend, and deliberately leaves
+the worker alive to deliver that screen and recovery hitbox. Process waiting
+and the two-second TERM/KILL escalation occur only in the worker.
 
 ## Runtime files and devices
 
@@ -94,7 +112,12 @@ Formatting, swap initialization, and browser attach share the atomic `/tmp/forge
 
 ## FIFO protocol and concurrency
 
-Before a start, `FeatherRenderer` kills any existing `typer`, waits for exit, unlinks both FIFO paths, recreates them with mode `0666`, opens the event FIFO read/write non-blocking, spawns Typer, and opens the draw FIFO read/write non-blocking. The ordering prevents the Python and C++ sides opening different FIFO inodes under the same paths.
+Before a start, `TyperRenderWorker` terminates any owned or orphaned `typer` and
+waits for exit off-reactor. On restart it first posts an unregister request for
+the old event FD and waits for reactor acknowledgement; only then does it close
+the descriptor, unlink both FIFO paths, recreate them with mode `0666`, spawn
+Typer, and hand the new event FD back to the reactor. This prevents the Python
+and C++ sides opening different FIFO inodes and prevents a stale registered FD.
 
 Each draw frame is a newline-delimited batch protocol ending in `--end`, for example:
 
@@ -108,7 +131,18 @@ Each draw frame is a newline-delimited batch protocol ending in `--end`, for exa
 
 Typer buffers data through `--end`, tokenizes it as an argument protocol rather than a shell command, and processes its `--batch` operations in sequence. `flush` makes accumulated changes visible.
 
-Feather keeps frames below 3,584 bytes (`PIPE_BUF`) and caps queued draw data at 256 KiB. A full pipe schedules a reactor retry rather than blocking Klippy. Queue overflow clears pending drawing and terminates Typer so the lifecycle timer can restore a known-good renderer. Typer likewise rejects frames larger than 256 KiB and locks the draw FIFO to reject a competing Typer daemon.
+`FeatherRenderer.send()` converts commands to an immutable batch and performs
+only a non-blocking publication to a queue capped at 16 batches and 64 KiB of
+characters per batch. Complete surfaces supersede older generations, keyed
+animation is latest-wins, and critical restart/error/shutdown batches evict
+untouched ordinary work. The worker encodes frames below 3,584 bytes
+(`PIPE_BUF`) and blocks in `poll(POLLOUT)` when the FIFO is full; no retry loop
+is scheduled on the reactor. Typer also locks the draw FIFO to reject a
+competing daemon.
+
+The `[feather_screen]` status object exposes `worker_state`, queue depth/capacity
+and high-watermark, submitted/rendered/coalesced/dropped batch counters,
+`typer_restarts`, and `worker_last_error` for on-printer diagnosis.
 
 ## Touch transport
 

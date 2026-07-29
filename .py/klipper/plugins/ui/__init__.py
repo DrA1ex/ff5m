@@ -33,6 +33,10 @@ _EXPORT_GROUPS = (
         "SCREEN_HEIGHT", "SCREEN_WIDTH", "THEME_DIRECTORY",
         "FeatherRenderer", "Page", "PrintState", "rectangles_overlap",
     )),
+    ("render_worker", (
+        "MAX_BATCHES", "MAX_BATCH_CHARS", "RenderBatch",
+        "RenderBatchQueue", "TyperRenderWorker",
+    )),
     ("identity", (
         "CommandKey", "FrameworkKey", "PageKey", "StateKey",
         "serialize_key",
@@ -98,6 +102,8 @@ __all__ = (
     "CONTENT_BOTTOM", "FALLBACK_THEME", "FOOTER_HEIGHT", "FOOTER_Y",
     "HEADER_BOTTOM", "MAX_ATOMIC_DRAW", "MAX_PENDING_DRAW",
     "SCREEN_HEIGHT", "SCREEN_WIDTH", "THEME_DIRECTORY",
+    "MAX_BATCHES", "MAX_BATCH_CHARS", "RenderBatch", "RenderBatchQueue",
+    "TyperRenderWorker",
     "rectangles_overlap", "FeatherRenderer", "Page", "PrintState",
     "FrameworkKey", "PageKey", "StateKey", "CommandKey", "serialize_key",
     "Action", "Navigate", "Back", "Replace", "SetValue", "Toggle",

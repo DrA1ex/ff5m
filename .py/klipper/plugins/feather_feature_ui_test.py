@@ -18,8 +18,12 @@ from datetime import datetime
 
 try:
     from .ui import Page, PrintState
+    from .ff5m_ui.move import actions as move_actions
+    from .ff5m_ui.z_offset import actions as z_actions
 except (ImportError, ValueError):
     from ui import Page, PrintState
+    from ff5m_ui.move import actions as move_actions
+    from ff5m_ui.z_offset import actions as z_actions
 
 
 ARTIFACT_ROOT = "/data/feather-ui-tests"
@@ -31,13 +35,15 @@ SCREEN_HEIGHT = 480
 FRAME_BYTES = SCREEN_WIDTH * SCREEN_HEIGHT * 4
 MAX_RUNS = 10
 MAX_BYTES = 512 * 1024 * 1024
+TAP_OPERATION_TIMEOUT = 1900.0
 PERSISTENT_ACTIONS = frozenset((
     "cal.mesh.save", "cal.tuning.save", "z.save", "live_z.save",
     "live_z.save.yes", "mod.apply", "mod.save", "error.restart",
-    "error.firmware_restart",
+    "error.firmware_restart", z_actions.SAVE.wire_id,
+    z_actions.SAFE_SAVE.wire_id,
 ))
 VALID_SUITES = frozenset((
-    "FULL", "UI", "MOTION", "HEAT", "SCREWS", "MESH", "Z",
+    "FULL", "UI", "RENDER", "MOTION", "HEAT", "SCREWS", "MESH", "Z",
 ))
 
 
@@ -255,7 +261,7 @@ class ArtifactWorker:
             if path == self.run_directory or not os.path.isdir(path):
                 continue
             if re.match(
-                    r"^\d{8}-\d{6}-\d{6}-(full|ui|motion|heat|screws|mesh|z)$",
+                    r"^\d{8}-\d{6}-\d{6}-(full|ui|render|motion|heat|screws|mesh|z)$",
                     name) is None:
                 continue
             summary_path = os.path.join(path, "summary.json")
@@ -318,6 +324,7 @@ class UITestFeature:
         self._last_stage_status = None
         self.calibration_stages = []
         self.test_results = {}
+        self.renderer_dropped = 0
 
     @property
     def reactor(self):
@@ -422,6 +429,8 @@ class UITestFeature:
         self.capture_number = 0
         self.calibration_stages = []
         self.test_results = {}
+        self.renderer_dropped = self.host.renderer.get_status()[
+            "dropped_batches"]
         self._capture_original_state()
         self._recover_stale_marker()
         # Recovery may have restored a profile or runtime offset belonging to
@@ -467,7 +476,7 @@ class UITestFeature:
         status = self.host.toolhead.get_status(self.reactor.monotonic())
         if abs(float(status.get("velocity", 0.0) or 0.0)) > 0.0001:
             raise RuntimeError("Toolhead is moving")
-        if hardware_targets and suite != "UI":
+        if hardware_targets and suite not in ("UI", "RENDER"):
             if suite in ("FULL", "MESH") and getattr(
                     self.host, "bed_mesh", None) is None:
                 raise RuntimeError("Bed mesh is not configured")
@@ -512,7 +521,7 @@ class UITestFeature:
         return {
             "run_id": self.run_id, "pid": os.getpid(), "suite": self.suite,
             "session": self.session_id,
-            "hardware": self.suite != "UI",
+            "hardware": self.suite not in ("UI", "RENDER"),
             "phase": phase, "runtime_z": self.original.get("runtime_z", 0.0),
             "mesh_profile": self.original.get("mesh_profile", ""),
             "directory": self.run_directory, "updated_at": time.time(),
@@ -565,12 +574,13 @@ class UITestFeature:
             "current_material": self.host._current_material(),
             "print": self.host.print_stats.get_status(now),
             "toolhead": self.host.toolhead.get_status(now),
+            "renderer": self.host.renderer.get_status(),
         }
 
     def _build_steps(self, suite):
         steps = []
         self._add_capture(steps, "baseline")
-        phases = (["ui", "motion", "heat", "screws", "mesh", "z"]
+        phases = (["ui", "render", "motion", "heat", "screws", "mesh", "z"]
                   if suite == "FULL" else [suite.lower()])
         for phase in phases:
             getattr(self, "_steps_%s" % phase)(steps)
@@ -585,6 +595,13 @@ class UITestFeature:
     def _add_tap(steps, action, page=None, label=None):
         steps.append({"kind": "tap", "action": action, "page": page,
                       "label": label or str(action)})
+
+    @classmethod
+    def _add_semantic_tap(cls, steps, action, page=None):
+        """Tap the exact deterministic wire identity of a typed command."""
+        cls._add_tap(
+            steps, action.wire_id, page,
+            label=str(action.key.value))
 
     @staticmethod
     def _add_tap_label(steps, button_label, page=None):
@@ -655,7 +672,8 @@ class UITestFeature:
         self._add_call(steps, "motion-open", lambda: self._show(Page.CONTROL_MOVE))
         self._add_capture(steps, "motion-before-home")
         self._add_call(steps, "motion-caution", self._dismiss_move_caution)
-        self._add_tap(steps, "move.homeall", Page.CONTROL_MOVE)
+        self._add_semantic_tap(
+            steps, move_actions.HOME_ALL, Page.CONTROL_MOVE)
         self._add_call(steps, "motion-origin", self._save_motion_origin)
         self._add_capture(steps, "motion-homed")
         for axis in "xyz":
@@ -666,6 +684,31 @@ class UITestFeature:
                            lambda axis=axis: self._motion_step(axis, -1))
             self._add_capture(steps, "motion-%s-return" % axis)
         self._add_call(steps, "motion-disable", lambda: self.host._run_script("M84"))
+
+    def _steps_render(self, steps):
+        before_status = self.host.renderer.get_status()
+        before = before_status["typer_restarts"]
+        before_error = before_status.get("worker_last_error", "")
+        self._add_call(steps, "render-pause-timer", self._pause_ui_timer)
+        self._add_call(
+            steps, "render-restart-signal",
+            lambda: self._request_renderer_restart(before))
+        self._add_wait(
+            steps, "render-recovered",
+            lambda: self._renderer_recovered(before, before_error),
+            15.0, 0.1)
+        self._add_capture(steps, "render-recovered")
+        self._add_call(steps, "render-resume-timer", self._resume_ui_timer)
+
+    def _request_renderer_restart(self, before):
+        if not self.host.renderer.restart():
+            raise RuntimeError("Renderer restart signal was not accepted")
+
+    def _renderer_recovered(self, before, before_error=""):
+        status = self.host.renderer.get_status()
+        return (status["worker_state"] == "running"
+                and status["typer_restarts"] > before
+                and status.get("worker_last_error", "") == before_error)
 
     def _steps_heat(self, steps):
         self._add_call(steps, "heat-open", lambda: self._show(Page.CONTROL_HEAT))
@@ -683,7 +726,7 @@ class UITestFeature:
         self._add_capture(steps, "heat-cooldown-start")
 
     def _steps_screws(self, steps):
-        self._add_call(steps, "screws-open", lambda: self._show(Page.CALIBRATION_HOME))
+        self._add_call(steps, "screws-open", self._open_calibration_home)
         self._add_tap(steps, "cal.screws", Page.CALIBRATION_CONFIRM)
         self._add_tap(steps, "cal.clean.skip", Page.CALIBRATION_CONFIRM)
         self._add_capture(steps, "screws-confirm")
@@ -695,7 +738,7 @@ class UITestFeature:
 
     def _steps_mesh(self, steps):
         self._add_call(steps, "mesh-snapshot", self._save_mesh_snapshot)
-        self._add_call(steps, "mesh-open", lambda: self._show(Page.CALIBRATION_HOME))
+        self._add_call(steps, "mesh-open", self._open_calibration_home)
         self._add_tap(steps, "cal.mesh", Page.CALIBRATION_CONFIRM)
         self._add_capture(steps, "mesh-confirm")
         self._add_tap(steps, "cal.confirm", Page.CALIBRATION_PROGRESS)
@@ -707,23 +750,26 @@ class UITestFeature:
         self._add_call(steps, "mesh-cleanup", self._hardware_cleanup)
 
     def _steps_z(self, steps):
-        self._add_call(steps, "z-open", lambda: self._show(Page.CALIBRATION_HOME))
+        self._add_call(steps, "z-open", self._open_calibration_home)
         self._add_tap(steps, "cal.z", Page.CALIBRATION_CONFIRM)
         self._add_tap(steps, "cal.clean.skip", Page.CALIBRATION_CONFIRM)
         self._add_capture(steps, "z-confirm")
         self._add_tap(steps, "cal.confirm", Page.SAFE_Z_BRIEFING)
         self._add_capture(steps, "z-safe-briefing")
-        self._add_tap(steps, "z.safe.skip")
+        self._add_semantic_tap(steps, z_actions.SAFE_SKIP)
         self._add_wait(steps, "z-preparation", self._z_summary_ready,
                        1200.0, 1.0)
         self._add_capture(steps, "z-summary-empty")
-        self._add_tap(steps, "z.zone.center", Page.Z_OFFSET_PAPER_BRIEFING)
+        self._add_semantic_tap(
+            steps, z_actions.ZONE_ACTIONS["center"],
+            Page.Z_OFFSET_PAPER_BRIEFING)
         self._add_capture(steps, "z-paper-briefing")
-        self._add_tap(steps, "z.paper_briefing.continue")
+        self._add_semantic_tap(steps, z_actions.ENTER_ZONE)
         self._add_wait(steps, "z-positioned", self._z_paper_ready,
                        120.0, 0.5)
         self._add_capture(steps, "z-paper-before-probe")
-        self._add_tap(steps, "z.probe", Page.Z_OFFSET_PAPER)
+        self._add_semantic_tap(
+            steps, z_actions.PROBE, Page.Z_OFFSET_PAPER)
         self._add_call(steps, "z-dismiss-pressure", self._dismiss_pressure)
         self._add_call(steps, "z-probe-position", self._save_z_probe_position)
         self._add_capture(steps, "z-paper-probed")
@@ -732,20 +778,22 @@ class UITestFeature:
         # requested 1 mm safety margin, then ten CLOSER presses return to the
         # post-probe point without ever crossing it.
         for _index in range(10):
-            self._add_tap(steps, "z.farther", Page.Z_OFFSET_PAPER)
+            self._add_semantic_tap(
+                steps, z_actions.FARTHER, Page.Z_OFFSET_PAPER)
         self._add_call(steps, "z-farther-verify", self._verify_z_farther)
         self._add_capture(steps, "z-paper-farther-1mm")
         for _index in range(10):
-            self._add_tap(steps, "z.closer", Page.Z_OFFSET_PAPER)
+            self._add_semantic_tap(
+                steps, z_actions.CLOSER, Page.Z_OFFSET_PAPER)
         self._add_call(steps, "z-return-verify", self._verify_z_return)
         self._add_capture(steps, "z-paper-returned")
-        self._add_tap(steps, "z.accept")
+        self._add_semantic_tap(steps, z_actions.ACCEPT)
         self._add_wait(steps, "z-summary-result", self._z_summary_ready,
                        120.0, 0.5)
         self._add_capture(steps, "z-summary-result")
         self._add_tap(steps, "nav.back", Page.Z_OFFSET_SUMMARY)
         self._add_capture(steps, "z-discard-dialog")
-        self._add_tap(steps, "z.discard.confirm")
+        self._add_semantic_tap(steps, z_actions.DISCARD_CONFIRM)
         self._add_wait(steps, "z-discarded", self._z_discarded,
                        120.0, 0.5)
         self._add_call(steps, "z-cleanup-verify", self._verify_z_cleanup)
@@ -805,10 +853,33 @@ class UITestFeature:
         if not self.running or self.finalizing:
             return
         try:
-            if expected is not None and self.host.page != expected:
+            if self.abort_requested:
+                self._complete("aborted", "abort requested")
+                return
+            expected_seen = step.get("expected_page_seen", expected is None)
+            if not expected_seen and self.host.page == expected:
+                step["expected_page_seen"] = True
+                expected_seen = True
+            operation_active = (
+                int(getattr(self.host, "command_depth", 0)) > 0
+                or getattr(self.host, "busy_message", None) is not None)
+            if operation_active:
+                deadline = step.setdefault(
+                    "operation_deadline",
+                    eventtime + TAP_OPERATION_TIMEOUT)
+                if eventtime >= deadline:
+                    raise RuntimeError(
+                        "Timed out waiting for action to finish: %s" %
+                        step["label"])
+                self.reactor.register_callback(
+                    lambda now, target=expected, item=step:
+                    self._after_tap(now, item, target),
+                    eventtime + 0.1)
+                return
+            if not expected_seen:
                 raise RuntimeError(
-                    "Action %s left page at %s, expected %s" %
-                    (step["label"], self.host.page.name, expected.name))
+                    "Action %s did not reach page %s; stopped at %s" %
+                    (step["label"], expected.name, self.host.page.name))
             self.step_index += 1
             self._event("PASS %s" % step["label"])
             self._schedule(0.02)
@@ -824,6 +895,22 @@ class UITestFeature:
             self._schedule(delay)
 
     def _capture(self, step):
+        renderer_status = self.host.renderer.get_status()
+        target = step.setdefault(
+            "render_target", renderer_status["submitted_batches"])
+        settled = (renderer_status["rendered_batches"]
+                   + renderer_status["coalesced_batches"]
+                   + renderer_status["dropped_batches"])
+        if renderer_status["dropped_batches"] > self.renderer_dropped:
+            raise RuntimeError("Render batch dropped before capture")
+        if settled < target:
+            deadline = step.setdefault(
+                "render_deadline", self.reactor.monotonic() + 6.0)
+            if self.reactor.monotonic() >= deadline:
+                raise RuntimeError("Renderer did not settle before capture")
+            self._schedule(0.02)
+            return
+        self.renderer_dropped = renderer_status["dropped_batches"]
         self.capture_number += 1
         metadata = self._screen_metadata()
         self.worker.capture(
@@ -860,6 +947,7 @@ class UITestFeature:
             "generation": getattr(renderer, "generation", None),
             "buttons": buttons,
             "toggles": _jsonable(getattr(renderer, "_toggles", {})),
+            "renderer": renderer.get_status(),
             "temperatures": self._temperatures(),
             "position": self._position(),
         }
@@ -894,6 +982,14 @@ class UITestFeature:
         calibration = self.host.feature_manager.get("calibration")
         if "cal.next" in self.host.renderer._buttons:
             calibration._handle_calibration_action("cal.next")
+
+    def _open_calibration_home(self):
+        calibration = self.host.feature_manager.get("calibration")
+        # UI coverage intentionally leaves the paginated catalog on its next
+        # page. Hardware phases must be independent from that presentation
+        # state and the three tested entries all live on page zero.
+        calibration.calibration_page = 0
+        self._show(Page.CALIBRATION_HOME)
 
     def _open_safe_file_confirm(self):
         entries = list(getattr(self.host, "file_entries", ()))
@@ -937,8 +1033,9 @@ class UITestFeature:
 
     def _dismiss_move_caution(self):
         buttons = self.host.renderer._buttons
-        for action in ("move.caution.auto", "move.caution.dismiss",
-                       "move.caution.unload"):
+        for action in (move_actions.CAUTION_AUTO.wire_id,
+                       move_actions.CAUTION_DISMISS.wire_id,
+                       move_actions.CAUTION_UNLOAD.wire_id):
             if action in buttons:
                 # Caution actions do not move the toolhead. Use direct semantic
                 # dispatch here so the next Home tap remains a separate step.
@@ -967,9 +1064,22 @@ class UITestFeature:
             self.motion_expected = current + direction
         else:
             origin = self.motion_origin[index]
-            direction = 1 if origin > current else -1
-            self.motion_expected = origin
-        action = "move.%s%s" % (axis, "p" if direction > 0 else "m")
+            # Homing may report a position a fraction beyond the configured UI
+            # travel bound (for example Y=110.099675 with a 110.0 maximum).
+            # MOVE_SAFE correctly clamps the return, so compare against that
+            # reachable coordinate rather than the raw homing overshoot.
+            target = max(low, min(high, origin))
+            direction = 1 if target > current else -1
+            self.motion_expected = target
+        actions = {
+            ("x", 1): move_actions.X_PLUS,
+            ("x", -1): move_actions.X_MINUS,
+            ("y", 1): move_actions.Y_PLUS,
+            ("y", -1): move_actions.Y_MINUS,
+            ("z", 1): move_actions.Z_PLUS,
+            ("z", -1): move_actions.Z_MINUS,
+        }
+        action = actions[(axis, direction)].wire_id
         self.dispatching_test_action = True
         try:
             self.host._dispatch_action(action)
@@ -1142,7 +1252,7 @@ class UITestFeature:
 
     def _restore_state(self):
         first_error = None
-        if self.suite != "UI":
+        if self.suite not in ("UI", "RENDER"):
             try:
                 z = self.host.feature_manager.peek("z")
                 if z is not None and z.z_calibration.active:
