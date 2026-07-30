@@ -57,6 +57,20 @@ renderer’s button, toggle, and declarative action-hitbox registries, so clicka
 text/panels are covered without importing development-only page modules into
 Feather’s normal startup path.
 
+`SUITE=COMPONENT` is a second non-physical, cold test path used only by the
+extended parity regression. It discovers module-level declarative pages after
+the explicitly requested test has started, renders their default typed state
+plus bounded additional scenarios through the real Feather renderer/Typer
+path, and captures them without dispatching product actions or G-code. An
+additional scenario accepts only a discovered page ID and bounded JSON values
+for that page's declared typed-state keys; unknown pages, invalid
+types/choices, actions, and extra fields are rejected. Runtime read-only values
+are injected only into the isolated state snapshot and never written back to
+product controllers. Both `UI` and
+`COMPONENT` manifests
+record the renderer's passive `semantic_page_id`; imperative legacy screens
+record no semantic ID.
+
 The harness validates live page generations and hitboxes before synthetic taps,
 blocks physical non-emergency input plus every persistent Save action during a
 run, and stops later hardware phases on the first unsafe failure. Before a new
@@ -73,6 +87,170 @@ log copying, CSV/JSON updates, and retention execute in the artifact worker
 thread. The reactor only schedules steps and receives completion callbacks.
 Retention keeps at most ten completed runs and 512 MiB, never deletes the active
 run, and preserves the newest failure for inspection.
+
+## Development-only semantic screenshot checks
+
+Semantic screenshot review is a separate Mac host-side tool under
+`tests/visual_checks/`. It is not imported, registered, configured, or executed
+by Feather, Klipper, printer startup, or the on-printer UI test runner.
+`sync.sh` excludes the complete `tests/` directory, so the checker is not
+included in printer synchronization archives. It uses only Python's standard
+library and adds no project, build, or printer dependency.
+
+The tool is disabled unless the developer explicitly passes `--enable`. It
+accepts either an already downloaded UI-test artifact directory (using its
+`manifest.json`) or explicit BMP/PNG/JPEG/WebP files. It then uses the common
+OpenAI-compatible `/models` and `/chat/completions` contract; there is no
+provider-specific discovery, model download, or service management.
+Feather's uncompressed 24/32-bit BMP frames are converted in memory to PNG
+with the Python standard library before submission because some compatible
+servers reject BMP vision input. The saved source artifact, its hash, and its
+byte count remain unchanged. Responses use the OpenAI-compatible
+`json_schema` format and are independently validated again by the checker.
+
+Connection settings are host-local:
+
+- `FF5M_VISUAL_BASE_URL` supplies the OpenAI-compatible base URL;
+- `--model` or `FF5M_VISUAL_MODEL` supplies exactly one loaded model name;
+- `FF5M_VISUAL_API_KEY` is optional and is never logged or serialized;
+- `--timeout` / `FF5M_VISUAL_TIMEOUT` bound each HTTP request;
+- `--mode advisory|strict` / `FF5M_VISUAL_MODE` select enforcement in the
+  image-only command; the regression command uses `--check-mode`.
+
+A safe invocation shape, intentionally omitting endpoint and credentials, is:
+
+```bash
+python3 -m tests.visual_checks.run \
+  /path/to/saved-ui-test-artifacts \
+  --enable \
+  --model loaded-vision-model \
+  --mode advisory
+```
+
+The generated `visual-checks.json` keeps, for every screenshot and its selected model, the
+verdict, non-pass reasons, JSON-validation status, elapsed request time, and
+normalized errors. It also distinguishes a disabled checker, unavailable
+endpoint, absent configured model, rejected vision input, malformed response,
+and other request failures. The endpoint address, API key, and raw error bodies
+are not stored.
+
+`advisory` is the default: warnings, model failures, and unavailable services
+are recorded but return a successful process status. `strict` is honored only
+when explicitly selected and returns a failure for any non-pass verdict or
+integration error. Even in strict mode, semantic review supplements the
+existing deterministic contracts and UI tests; it is never the sole source of
+truth.
+
+Host-side tests use an in-memory fake OpenAI-compatible endpoint. They open no
+socket, invoke no model, and cover image payloads, fixed-schema validation,
+error mapping, disabled/advisory/strict behavior, and two-image parity
+payloads.
+
+### Hybrid regression orchestration
+
+`tests.visual_checks.regression` is the higher-level development command. It
+validates the FF5M project with Feather UI Designer, automatically renders
+every discovered module-level `DeclarativePage`, and creates a default case
+for every discovered stable `PageKey`. The checked-in `scenarios.json` adds
+only meaningful non-default typed states; it is not a page registry.
+The current automatic/default plus explicit matrix contains 23 cases over
+seven discovered pages, including unhomed/homed movement, joystick feedback,
+fine/coarse steps, paper-test positioning/probing/ready states, Safe Z
+probing/result, measured summary results, warnings, and dialogs. Runtime
+read-only values are installed into an isolated Designer-host checkpoint for
+rendering; the product state declarations and controllers are not changed.
+
+The modes are:
+
+- `designer`: local Designer frames only. While legacy pages remain, a clean
+  result is reported as `partial`, not as a complete release gate.
+- `hybrid`: Designer frames plus every frame from the existing printer
+`SUITE=UI` whose `semantic_page_id` was not rendered by Designer. A printer
+  frame with no semantic ID, or an unknown ID, stays in the corpus.
+- `parity`: the hybrid corpus plus paired Designer/real-renderer checks for
+  the same default and additional typed-state cases captured by the cold
+  `SUITE=COMPONENT` harness.
+
+The default invocation shape is:
+
+```bash
+python3 -m tests.visual_checks.regression \
+  --mode hybrid \
+  --designer-root /path/to/feather-ui-designer \
+  --printer-host <printer-host> \
+  --confirm-printer-idle \
+  --model <loaded-vision-model> \
+  --enable
+```
+
+#### First local run and result review
+
+Start with the local-only Designer corpus. It does not contact the printer and
+is the normal first check after UI changes:
+
+```bash
+python3 -m tests.visual_checks.regression \
+  --mode designer \
+  --designer-root /path/to/feather-ui-designer \
+  --enable
+```
+
+The default local `.env` may provide the single selected model, base URL,
+timeout, and optional API key. Do not print, commit, or copy that file. An
+explicit `--model loaded-vision-model` overrides only the model selection for
+that run. The command creates an ignored timestamped directory below
+`tests/artifacts/ui-regression/` and prints the absolute path to `report.json`.
+
+Read the result in this order:
+
+1. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
+   corpus. A Designer-only run intentionally reports `partial` after a clean
+   review because legacy printer screens are absent.
+2. `coverage` shows Designer cases, retained legacy printer frames, replaced
+   duplicates, and parity pairs.
+3. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
+   textual-expectation references, and `case_result` with verdict, reasons,
+   JSON-validation status, elapsed time, and normalized error.
+4. `needs_baseline` means a newly discovered page or scenario has no approved
+   textual expectation. The candidate file is written locally; add a reviewed
+   text expectation before enabling model review again.
+
+Use `--check-mode strict` only when an explicit CI/release gate is intended.
+The usual local run is advisory; deterministic contract and UI tests remain the
+primary checks in either mode.
+
+After a successful local Designer run, a real hybrid or parity run still needs
+separate explicit approval, an idle printer, and the command shown above with
+`--confirm-printer-idle`. It must not be combined with synchronization or a
+Klipper restart.
+
+The live modes are deliberately blocked unless the printer host is explicit
+and `--confirm-printer-idle` is present. Their preflight rejects printing,
+paused, active virtual-SD, or non-zero heater-target states. They only invoke
+the non-physical `UI`/`COMPONENT` suites and download their artifacts; they
+never synchronize files or restart Klipper. Every printer artifact contains a
+fingerprint of the deployed Feather UI/framework Python files; a missing or
+different fingerprint stops the run before model review. A saved printer artifact directory
+can be supplied with `--printer-artifacts` for a fully offline rerun.
+
+Textual structured expectations and the fixed checklist are the only
+checked-in baselines. Captured PNG/BMP files, model responses, reports, and
+candidate baselines go under the ignored `tests/artifacts/` tree. If any
+automatically discovered case lacks an expectation, no model request is made:
+the run writes `expectations.candidate.json` and returns `needs_baseline`.
+
+Only one model is accepted in a run. To choose between local models, rerun the
+same saved corpus once per model, then compare reports without making requests:
+
+```bash
+python3 -m tests.visual_checks.compare_reports \
+  /path/to/model-a/report.json \
+  /path/to/model-b/report.json
+```
+
+The comparison reports JSON-validity, verdict counts, review rate, mean
+latency, and normalized error counts. Endpoint addresses, API keys, and raw
+secret-bearing errors are excluded from all regression artifacts.
 
 This is not a gap to hide: Forge-X changes early boot, services, printer motion, calibration, and low-memory behavior on specific hardware. A unit-like syntax check cannot prove the crucial outcomes.
 

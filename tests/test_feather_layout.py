@@ -220,6 +220,21 @@ class DeclarativeContainerTest(unittest.TestCase):
 
 
 class DirtyRenderingTest(unittest.TestCase):
+    def test_declarative_page_sets_and_begin_page_resets_semantic_identity(self):
+        page = PageTree(
+            Text("IDENTIFIED"), Rect(0, 0, 100, 20),
+            page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        renderer.begin_page("identified")
+        self.assertIsNone(renderer.get_status()["semantic_page_id"])
+        page.draw(renderer)
+        self.assertEqual(
+            renderer.get_status()["semantic_page_id"],
+            page.page_id)
+        renderer.begin_page("legacy")
+        self.assertIsNone(renderer.get_status()["semantic_page_id"])
+
     def test_page_redraws_only_the_dirty_repaint_boundary(self):
         page = PageTree(Overlay(
             Overlay(

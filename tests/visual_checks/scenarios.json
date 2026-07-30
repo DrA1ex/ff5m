@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "move-joystick-homed",
+      "label": "Move joystick / homed",
+      "page": "ui.pages.keys.AppPage.MOVE_JOYSTICK",
+      "state": {
+        "ui.pages.move.state.MoveState.AUTO_PROFILE_STATE": "available",
+        "ui.pages.move.state.MoveState.CAUTION_ACKNOWLEDGED": true,
+        "ui.pages.move.state.ToolheadState.HOMED_X": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Y": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Z": true,
+        "ui.pages.move.state.ToolheadState.X": 120.0,
+        "ui.pages.move.state.ToolheadState.Y": 120.0,
+        "ui.pages.move.state.ToolheadState.Z": 230.0
+      }
+    },
+    {
+      "id": "move-joystick-active",
+      "label": "Move joystick / active",
+      "page": "ui.pages.keys.AppPage.MOVE_JOYSTICK",
+      "state": {
+        "ui.pages.move.state.MoveState.AUTO_PROFILE_STATE": "active",
+        "ui.pages.move.state.MoveState.CAUTION_ACKNOWLEDGED": true,
+        "ui.pages.move.state.MoveState.INERTIA": 0.8,
+        "ui.pages.move.state.ToolheadState.HOMED_X": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Y": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Z": true,
+        "ui.pages.move.state.ToolheadState.X": 42.5,
+        "ui.pages.move.state.ToolheadState.Y": 81.25,
+        "ui.pages.move.state.ToolheadState.Z": 12.75
+      }
+    },
+    {
+      "id": "move-step-homed",
+      "label": "Move step / homed",
+      "page": "ui.pages.keys.AppPage.MOVE_STEP",
+      "state": {
+        "ui.pages.move.state.MoveState.CAUTION_ACKNOWLEDGED": true,
+        "ui.pages.move.state.ToolheadState.HOMED_X": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Y": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Z": true,
+        "ui.pages.move.state.ToolheadState.X": 120.0,
+        "ui.pages.move.state.ToolheadState.Y": 120.0,
+        "ui.pages.move.state.ToolheadState.Z": 230.0
+      }
+    },
+    {
+      "id": "move-step-fine",
+      "label": "Move step / 0.1 mm",
+      "page": "ui.pages.keys.AppPage.MOVE_STEP",
+      "state": {
+        "ui.pages.move.state.MoveState.CAUTION_ACKNOWLEDGED": true,
+        "ui.pages.move.state.MoveState.JOG_STEP": 0.1,
+        "ui.pages.move.state.ToolheadState.HOMED_X": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Y": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Z": true,
+        "ui.pages.move.state.ToolheadState.X": 10.1,
+        "ui.pages.move.state.ToolheadState.Y": 20.2,
+        "ui.pages.move.state.ToolheadState.Z": 3.3
+      }
+    },
+    {
+      "id": "move-step-coarse",
+      "label": "Move step / 10 mm",
+      "page": "ui.pages.keys.AppPage.MOVE_STEP",
+      "state": {
+        "ui.pages.move.state.MoveState.JOG_STEP": 10.0,
+        "ui.pages.move.state.ToolheadState.HOMED_X": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Y": true,
+        "ui.pages.move.state.ToolheadState.HOMED_Z": false
+      }
+    },
+    {
+      "id": "z-paper-manual",
+      "label": "Z offset paper / manual positioning",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+      "state": {
+        "ui.pages.z_offset.paper.state.PaperState.MANUAL": true,
+        "ui.pages.z_offset.paper.state.PaperState.STEP": 0.1
+      }
+    },
+    {
+      "id": "z-paper-pressure-dialog",
+      "label": "Z offset paper / pressure dialog",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+      "state": {
+        "ui.pages.z_offset.paper.state.PaperState.DIALOG": "pressure"
+      }
+    },
+    {
+      "id": "z-paper-positioning",
+      "label": "Z offset paper / positioning",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+      "state": {
+        "ui.pages.z_offset.paper.state.PaperState.MOVING_TO_START": true
+      }
+    },
+    {
+      "id": "z-paper-probing",
+      "label": "Z offset paper / probing",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+      "state": {
+        "ui.pages.z_offset.paper.state.PaperState.PROBING": true
+      }
+    },
+    {
+      "id": "z-paper-ready",
+      "label": "Z offset paper / ready",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+      "state": {
+        "ui.pages.z_offset.paper.state.PaperState.CANDIDATE": "-0.125",
+        "ui.pages.z_offset.paper.state.PaperState.NOZZLE": "9.850",
+        "ui.pages.z_offset.paper.state.PaperState.READY": true,
+        "ui.pages.z_offset.paper.state.PaperState.REFERENCE": "9.975"
+      }
+    },
+    {
+      "id": "safe-z-probing",
+      "label": "Safe Z calibration / probing",
+      "page": "ui.pages.keys.AppPage.SAFE_Z_CALIBRATION",
+      "state": {
+        "ui.pages.z_offset.safe.state.SafeState.PROBING": true
+      }
+    },
+    {
+      "id": "safe-z-ready",
+      "label": "Safe Z calibration / result ready",
+      "page": "ui.pages.keys.AppPage.SAFE_Z_CALIBRATION",
+      "state": {
+        "ui.pages.z_offset.safe.state.SafeState.CANDIDATE": 9.85,
+        "ui.pages.z_offset.safe.state.SafeState.CURRENT": 10.0,
+        "ui.pages.z_offset.safe.state.SafeState.READY": true,
+        "ui.pages.z_offset.safe.state.SafeState.TRIGGER": 4.85
+      }
+    },
+    {
+      "id": "z-summary-results",
+      "label": "Z offset summary / measured results",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "state": {
+        "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.123,
+        "ui.pages.z_offset.summary.state.SummaryState.RESULTS": {
+          "center": -0.125,
+          "front_left": -0.121,
+          "front_right": -0.122,
+          "rear_left": -0.124,
+          "rear_right": -0.123
+        },
+        "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center",
+        "ui.pages.z_offset.summary.state.SummaryState.SPREAD": 0.004
+      }
+    },
+    {
+      "id": "z-summary-warning",
+      "label": "Z offset summary / warning",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "state": {
+        "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.125,
+        "ui.pages.z_offset.summary.state.SummaryState.POSITIONAL_WARNING": 0.025,
+        "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center",
+        "ui.pages.z_offset.summary.state.SummaryState.SPREAD": 0.035
+      }
+    },
+    {
+      "id": "z-summary-load",
+      "label": "Z offset summary / auto load",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "state": {
+        "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.125,
+        "ui.pages.z_offset.summary.state.SummaryState.LOAD_ZOFFSET": true,
+        "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center"
+      }
+    },
+    {
+      "id": "z-summary-discard-dialog",
+      "label": "Z offset summary / discard dialog",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "state": {
+        "ui.pages.z_offset.summary.state.SummaryState.DIALOG": "discard"
+      }
+    }
+  ]
+}

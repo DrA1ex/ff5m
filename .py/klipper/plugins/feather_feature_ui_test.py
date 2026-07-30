@@ -3,7 +3,10 @@
 ## This module is deliberately absent from Feather's normal import graph.  It
 ## is loaded only by the hidden _FEATHER_UI_TEST command.
 
+import base64
+import binascii
 import hashlib
+import importlib
 import json
 import logging
 import math
@@ -46,8 +49,17 @@ PERSISTENT_ACTIONS = frozenset((
     z_actions.SAFE_SAVE.wire_id,
 ))
 VALID_SUITES = frozenset((
-    "FULL", "UI", "RENDER", "MOTION", "HEAT", "SCREWS", "MESH", "Z",
+    "FULL", "UI", "COMPONENT", "RENDER", "MOTION", "HEAT", "SCREWS",
+    "MESH", "Z",
 ))
+NONPHYSICAL_SUITES = frozenset(("UI", "COMPONENT", "RENDER"))
+UI_FINGERPRINT_FILES = (
+    "feather_screen.py",
+    "feather_feature_ui_test.py",
+)
+COMPONENT_CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
+MAX_COMPONENT_CASE_BYTES = 32 * 1024
+MAX_COMPONENT_CASES = 64
 
 
 def _jsonable(value):
@@ -60,6 +72,24 @@ def _jsonable(value):
         return [_jsonable(item) for item in value]
     name = getattr(value, "name", None)
     return str(name if name is not None else value)
+
+
+def _bounded_component_value(value, depth=0):
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        return len(value) <= 256
+    if depth >= 3:
+        return False
+    if isinstance(value, list):
+        return len(value) <= 32 and all(
+            _bounded_component_value(item, depth + 1) for item in value)
+    if isinstance(value, dict):
+        return len(value) <= 32 and all(
+            isinstance(key, str) and len(key) <= 128
+            and _bounded_component_value(item, depth + 1)
+            for key, item in value.items())
+    return False
 
 
 def _atomic_json(path, value):
@@ -273,7 +303,7 @@ class ArtifactWorker:
             if path == self.run_directory or not os.path.isdir(path):
                 continue
             if re.match(
-                    r"^\d{8}-\d{6}-\d{6}-(full|ui|render|motion|heat|screws|mesh|z)$",
+                    r"^\d{8}-\d{6}-\d{6}-(full|ui|component|render|motion|heat|screws|mesh|z)$",
                     name) is None:
                 continue
             summary_path = os.path.join(path, "summary.json")
@@ -395,7 +425,7 @@ class UITestFeature:
 
     def safety_active_reasons(self, eventtime):
         return (("ui-test",) if self.running and not self.finalizing
-                and self.phase != "ui" else ())
+                and self.phase not in ("ui", "component") else ())
 
     def safety_armed_reasons(self, page, eventtime):
         return ()
@@ -423,15 +453,19 @@ class UITestFeature:
         gcmd.respond_info("Feather UI test abort requested: %s" % self.run_id)
         self._schedule(0.0)
 
-    def run(self, gcmd, suite, material, confirm):
+    def run(self, gcmd, suite, material, confirm, encoded_cases=""):
         if self.running:
             raise gcmd.error("Feather UI test is already running")
         if suite not in VALID_SUITES:
             raise gcmd.error("Unknown Feather UI test SUITE=%s" % suite)
         if confirm != 1:
             raise gcmd.error("Feather UI test requires CONFIRM=1")
+        if encoded_cases and suite != "COMPONENT":
+            raise gcmd.error("CASES is supported only by SUITE=COMPONENT")
         self._preflight(suite, hardware_targets=False)
         self.suite = suite
+        self.component_cases = self._decode_component_cases(
+            encoded_cases) if suite == "COMPONENT" else ()
         self.material = self._resolve_material(material, suite)
         self.gcmd = gcmd
         self.started_at = time.time()
@@ -489,7 +523,7 @@ class UITestFeature:
         status = self.host.toolhead.get_status(self.reactor.monotonic())
         if abs(float(status.get("velocity", 0.0) or 0.0)) > 0.0001:
             raise RuntimeError("Toolhead is moving")
-        if hardware_targets and suite not in ("UI", "RENDER"):
+        if hardware_targets and suite not in NONPHYSICAL_SUITES:
             if suite in ("FULL", "MESH") and getattr(
                     self.host, "bed_mesh", None) is None:
                 raise RuntimeError("Bed mesh is not configured")
@@ -534,7 +568,7 @@ class UITestFeature:
         return {
             "run_id": self.run_id, "pid": os.getpid(), "suite": self.suite,
             "session": self.session_id,
-            "hardware": self.suite not in ("UI", "RENDER"),
+            "hardware": self.suite not in NONPHYSICAL_SUITES,
             "phase": phase, "runtime_z": self.original.get("runtime_z", 0.0),
             "mesh_profile": self.original.get("mesh_profile", ""),
             "directory": self.run_directory, "updated_at": time.time(),
@@ -580,6 +614,7 @@ class UITestFeature:
             "run_id": self.run_id, "suite": self.suite,
             "material": self.material, "pid": os.getpid(),
             "software_version": start_args.get("software_version"),
+            "ui_fingerprint": self._ui_fingerprint(),
             "theme": getattr(self.host.renderer, "theme_name", None),
             "page": getattr(self.host.page, "name", str(self.host.page)),
             "heating_materials": self.host.heating_materials,
@@ -589,6 +624,36 @@ class UITestFeature:
             "toolhead": self.host.toolhead.get_status(now),
             "renderer": self.host.renderer.get_status(),
         }
+
+    @staticmethod
+    def _ui_fingerprint():
+        """Hash the deployed UI/framework sources only when a test starts."""
+        root = os.path.dirname(os.path.abspath(__file__))
+        files = []
+        for relative in UI_FINGERPRINT_FILES:
+            path = os.path.join(root, relative)
+            if os.path.isfile(path):
+                files.append((relative, path))
+        for package in ("ui", "ff5m_ui"):
+            package_root = os.path.join(root, package)
+            for current, directories, names in os.walk(package_root):
+                directories[:] = [
+                    name for name in directories if name != "__pycache__"]
+                for name in names:
+                    if not name.endswith(".py"):
+                        continue
+                    path = os.path.join(current, name)
+                    relative = os.path.relpath(path, root)
+                    files.append((relative, path))
+        digest = hashlib.sha256()
+        for relative, path in sorted(files):
+            digest.update(relative.replace(os.sep, "/").encode("utf-8"))
+            digest.update(b"\0")
+            with open(path, "rb") as stream:
+                for chunk in iter(lambda: stream.read(128 * 1024), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     def _build_steps(self, suite):
         steps = []
@@ -630,6 +695,12 @@ class UITestFeature:
     @staticmethod
     def _add_capture(steps, label):
         steps.append({"kind": "capture", "label": label})
+
+    @staticmethod
+    def _add_case_capture(steps, label, case_id):
+        steps.append({
+            "kind": "capture", "label": label, "case_id": case_id,
+        })
 
     def _steps_ui(self, steps):
         self._add_call(steps, "ui-pause-timer", self._pause_ui_timer)
@@ -693,6 +764,127 @@ class UITestFeature:
         self._add_tap(steps, "nav.back", Page.MAIN_MENU)
         self._add_tap(steps, "nav.back", Page.IDLE_HOME)
         self._add_call(steps, "ui-resume-timer", self._resume_ui_timer)
+
+    @staticmethod
+    def _component_pages():
+        """Discover module-level declarative pages only in the cold test path."""
+        try:
+            from . import ff5m_ui as package
+            from .ui.layout import DeclarativePage
+        except (ImportError, ValueError):
+            import ff5m_ui as package
+            from ui.layout import DeclarativePage
+        package_root = os.path.dirname(package.__file__)
+        modules = set()
+        for root, directories, files in os.walk(package_root):
+            directories[:] = [
+                name for name in directories if name != "__pycache__"]
+            for filename in files:
+                if not filename.endswith(".py"):
+                    continue
+                relative = os.path.relpath(
+                    os.path.join(root, filename), package_root)
+                parts = relative[:-3].split(os.sep)
+                if parts[-1] == "__init__":
+                    parts.pop()
+                modules.add(package.__name__ + (
+                    "." + ".".join(parts) if parts else ""))
+        pages = {}
+        for module_name in sorted(modules):
+            module = importlib.import_module(module_name)
+            for value in vars(module).values():
+                if not isinstance(value, DeclarativePage):
+                    continue
+                pages.setdefault(value.page_id, value)
+        return tuple(pages[key] for key in sorted(pages))
+
+    def _steps_component(self, steps):
+        self._add_call(
+            steps, "component-pause-timer", self._pause_ui_timer)
+        for page in self._component_pages():
+            slug = re.sub(
+                r"[^a-z0-9]+", "-",
+                page.page_id.rsplit(".", 1)[-1].lower()).strip("-")
+            case_id = "default-" + slug
+            self._add_call(
+                steps, "component-render-" + slug,
+                lambda item=page: self._render_component_default(item))
+            self._add_case_capture(
+                steps, "component-" + case_id, case_id)
+        for case in getattr(self, "component_cases", ()):
+            self._add_call(
+                steps, "component-render-" + case["id"],
+                lambda item=case: self._render_component_case(item))
+            self._add_case_capture(
+                steps, "component-" + case["id"], case["id"])
+        self._add_call(
+            steps, "component-resume-timer", self._resume_ui_timer)
+
+    def _render_component_default(self, page):
+        title = str(getattr(page.page_key, "value", page.page_key))
+        title = title.replace("_", " ").replace(".", " / ")
+        commands = self.host.renderer.begin_page(title, back=False)
+        commands += page.draw(self.host.renderer, {})
+        self.host.renderer.send(commands)
+
+    def _render_component_case(self, case):
+        page = case["page"]
+        title = str(getattr(page.page_key, "value", page.page_key))
+        title = title.replace("_", " ").replace(".", " / ")
+        commands = self.host.renderer.begin_page(title, back=False)
+        commands += page.draw(self.host.renderer, case["state"])
+        self.host.renderer.send(commands)
+
+    def _decode_component_cases(self, encoded):
+        if not encoded:
+            return ()
+        if len(encoded) > MAX_COMPONENT_CASE_BYTES * 2:
+            raise ValueError("COMPONENT cases payload is too large")
+        try:
+            padding = "=" * (-len(encoded) % 4)
+            raw = base64.urlsafe_b64decode(
+                (encoded + padding).encode("ascii"))
+        except (UnicodeEncodeError, binascii.Error, ValueError) as exc:
+            raise ValueError("COMPONENT cases payload is invalid") from exc
+        if len(raw) > MAX_COMPONENT_CASE_BYTES:
+            raise ValueError("COMPONENT cases payload is too large")
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("COMPONENT cases payload is invalid") from exc
+        if not isinstance(value, list) or len(value) > MAX_COMPONENT_CASES:
+            raise ValueError("COMPONENT cases must be a bounded array")
+        pages = dict((page.page_id, page)
+                     for page in self._component_pages())
+        result = []
+        seen = set()
+        for item in value:
+            if not isinstance(item, dict) or set(item) != {
+                    "id", "page", "state"}:
+                raise ValueError(
+                    "COMPONENT case accepts only id, page, and state")
+            case_id = str(item["id"])
+            page_id = str(item["page"])
+            state = item["state"]
+            if (not COMPONENT_CASE_ID.match(case_id) or case_id in seen
+                    or page_id not in pages or not isinstance(state, dict)
+                    or len(state) > 32):
+                raise ValueError("COMPONENT case is invalid")
+            page = pages[page_id]
+            schema = dict((str(key), key) for key in page.state_schema)
+            typed = {}
+            for name, raw_value in state.items():
+                key = schema.get(str(name))
+                if key is None or not _bounded_component_value(raw_value):
+                    raise ValueError(
+                        "COMPONENT state is not bounded declared state: %s" %
+                        name)
+                typed[key] = raw_value
+            # StateStore validation checks types, choices and numeric bounds.
+            page._fresh_state(typed)
+            seen.add(case_id)
+            result.append({"id": case_id, "page": page, "state": typed})
+        return tuple(result)
 
     def _render_filled_home(self):
         """Render a worst-case dashboard without mutating printer hardware."""
@@ -991,6 +1183,8 @@ class UITestFeature:
         self.renderer_dropped = renderer_status["dropped_batches"]
         self.capture_number += 1
         metadata = self._screen_metadata()
+        if step.get("case_id"):
+            metadata["case_id"] = step["case_id"]
         self.worker.capture(
             self.capture_number, step["label"], metadata,
             lambda result, item=step: self._capture_finished(item, result))
@@ -1008,6 +1202,7 @@ class UITestFeature:
 
     def _screen_metadata(self):
         renderer = self.host.renderer
+        renderer_status = renderer.get_status()
         buttons = {}
         for action, spec in getattr(renderer, "_buttons", {}).items():
             buttons[str(action)] = {
@@ -1033,10 +1228,11 @@ class UITestFeature:
             "time": time.time(), "phase": self.phase,
             "page": self.host.page.name,
             "generation": getattr(renderer, "generation", None),
+            "semantic_page_id": renderer_status.get("semantic_page_id"),
             "buttons": buttons,
             "hitboxes": hitboxes,
             "toggles": _jsonable(getattr(renderer, "_toggles", {})),
-            "renderer": renderer.get_status(),
+            "renderer": renderer_status,
             "temperatures": self._temperatures(),
             "position": self._position(),
         }
@@ -1396,7 +1592,7 @@ class UITestFeature:
 
     def _restore_state(self):
         first_error = None
-        if self.suite not in ("UI", "RENDER"):
+        if self.suite not in NONPHYSICAL_SUITES:
             try:
                 z = self.host.feature_manager.peek("z")
                 if z is not None and z.z_calibration.active:

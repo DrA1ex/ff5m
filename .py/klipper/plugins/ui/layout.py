@@ -1263,6 +1263,9 @@ class DeclarativePage(Tree):
     def draw(self, renderer, state=None):
         self.state = self._fresh_state(state)
         self.root.update(self.state, initialize=True)
+        set_page_identity = getattr(renderer, "set_semantic_page", None)
+        if set_page_identity is not None:
+            set_page_identity(self.page_id)
         commands = self.root.render(renderer, self.state, self.layout)
         self.root.clear_dirty()
         self.initialized = True

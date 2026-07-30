@@ -17,6 +17,7 @@ sys.path.insert(0, str(PLUGINS))
 import feather_feature_ui_test as UI_TEST  # noqa: E402
 import feather_screen as FEATHER  # noqa: E402
 from feather_feature_manager import LazyFeatureManager  # noqa: E402
+from tests.visual_checks import hybrid as HYBRID  # noqa: E402
 
 
 class AsyncReactor:
@@ -303,6 +304,70 @@ class RunnerContractTest(unittest.TestCase):
             (steps[returned + 2]["action"], steps[returned + 2]["page"]),
             ("nav.menu", FEATHER.Page.MAIN_MENU))
 
+    def test_component_suite_discovers_declarative_pages_without_hardware(self):
+        feature = UI_TEST.UITestFeature(object())
+
+        steps = feature._build_steps("COMPONENT")
+        labels = [step["label"] for step in steps]
+        captures = [
+            label for step, label in zip(steps, labels)
+            if step["kind"] == "capture"]
+
+        self.assertEqual(labels[0], "baseline")
+        self.assertEqual(labels[1], "component-pause-timer")
+        self.assertEqual(labels[-1], "component-resume-timer")
+        self.assertEqual(len(captures), 8)
+        self.assertEqual(len(set(captures)), 8)
+        self.assertTrue(all(
+            label == "baseline" or label.startswith("component-default-")
+            for label in captures))
+
+    def test_component_cases_accept_only_known_mutable_typed_state(self):
+        feature = UI_TEST.UITestFeature(object())
+        payload = [{
+            "id": "move-fine",
+            "page": "ui.pages.keys.AppPage.MOVE_STEP",
+            "state": {
+                "ui.pages.move.state.MoveState.JOG_STEP": 0.1,
+            },
+        }]
+        encoded = UI_TEST.base64.urlsafe_b64encode(
+            json.dumps(payload).encode("utf-8")).decode("ascii")
+
+        cases = feature._decode_component_cases(encoded)
+
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0]["id"], "move-fine")
+        self.assertEqual(
+            [str(key) for key in cases[0]["state"]],
+            ["ui.pages.move.state.MoveState.JOG_STEP"])
+
+        payload[0]["state"] = {
+            "ui.pages.move.state.MoveState.CURSOR": [10, 20],
+        }
+        encoded = UI_TEST.base64.urlsafe_b64encode(
+            json.dumps(payload).encode("utf-8")).decode("ascii")
+        with self.assertRaisesRegex(ValueError, "bounded declared state"):
+            feature._decode_component_cases(encoded)
+
+        payload[0].update({
+            "page": "ui.pages.keys.AppPage.Z_OFFSET_PAPER",
+            "state": {
+                "ui.pages.z_offset.paper.state.PaperState.PROBING": True,
+            },
+        })
+        encoded = UI_TEST.base64.urlsafe_b64encode(
+            json.dumps(payload).encode("utf-8")).decode("ascii")
+        readonly = feature._decode_component_cases(encoded)
+        self.assertEqual(
+            [str(key) for key in readonly[0]["state"]],
+            ["ui.pages.z_offset.paper.state.PaperState.PROBING"])
+
+    def test_printer_and_host_use_the_same_ui_fingerprint_contract(self):
+        self.assertEqual(
+            UI_TEST.UITestFeature._ui_fingerprint(),
+            HYBRID.ui_fingerprint(ROOT))
+
     def test_ui_filament_back_preserves_target_before_leaving_materials(self):
         feature = UI_TEST.UITestFeature(object())
         steps = feature._build_steps("UI")
@@ -425,7 +490,7 @@ class RunnerContractTest(unittest.TestCase):
                 AssertionError("UI suite issued hardware G-code: %s" % command)),
             "_show_page": lambda self, page: shown.append(page),
         })()
-        for suite in ("UI", "RENDER"):
+        for suite in ("UI", "COMPONENT", "RENDER"):
             feature = UI_TEST.UITestFeature(host)
             feature.suite = suite
             feature.original = {
@@ -436,7 +501,7 @@ class RunnerContractTest(unittest.TestCase):
             feature._restore_state()
 
         self.assertEqual(host.filament_material, "PLA")
-        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME] * 2)
+        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME] * 3)
         self.assertEqual(host.previous_page, FEATHER.Page.CONTROL_HOME)
 
     def test_status_does_not_load_lazy_feature(self):
@@ -465,7 +530,7 @@ class RunnerContractTest(unittest.TestCase):
 
         feature = controller.feature_manager.peek("ui_test")
         self.assertIsNotNone(feature)
-        self.assertEqual(calls, [(feature, (gcmd, "UI", "", 1))])
+        self.assertEqual(calls, [(feature, (gcmd, "UI", "", 1, ""))])
 
     def test_stale_same_process_run_is_cleaned_before_next_run(self):
         with tempfile.TemporaryDirectory() as temporary:

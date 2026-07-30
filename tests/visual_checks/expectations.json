@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "default-move-joystick": {
+      "description": "Default unhomed joystick movement page.",
+      "required": ["movement title", "XYZ position readouts", "joystick movement area", "disabled or caution state for unsafe movement"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-move-step": {
+      "description": "Default unhomed step movement page.",
+      "required": ["movement title", "XYZ position readouts", "axis movement controls", "step selector"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-safe-z-briefing": {
+      "description": "Safe Z calibration briefing before work starts.",
+      "required": ["safe Z calibration explanation", "clear continue or back action"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-safe-z-calibration": {
+      "description": "Safe Z calibration work page in its initial state.",
+      "required": ["Z calibration title", "current status or instruction", "available navigation or calibration actions"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-z-offset-paper": {
+      "description": "Paper Z-offset page before positioning or probing.",
+      "required": ["paper calibration title", "Z adjustment controls or initial instruction", "step information"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-z-offset-paper-briefing": {
+      "description": "Paper Z-offset briefing page.",
+      "required": ["paper calibration explanation", "clear continue or back action"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "default-z-offset-summary": {
+      "description": "Z-offset result summary before a result is selected.",
+      "required": ["Z calibration result summary", "zone or result area", "save action visibly gated until selection"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "move-joystick-active": {
+      "description": "Homed joystick page with active movement feedback.",
+      "required": ["XYZ readouts", "joystick movement area", "active or emphasized input feedback"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["minor anti-aliasing differences", "theme colors"]
+    },
+    "move-joystick-homed": {
+      "description": "Homed joystick page ready for safe manual movement.",
+      "required": ["XYZ readouts near 120, 120 and 230", "joystick movement area", "available movement state"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "move-step-coarse": {
+      "description": "Step movement page with 10 mm selected and Z unhomed.",
+      "required": ["10 mm selected", "axis movement controls", "visible unhomed or caution treatment for Z"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "move-step-fine": {
+      "description": "Homed step movement page with 0.1 mm selected.",
+      "required": ["0.1 mm selected", "XYZ readouts", "axis movement controls"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "move-step-homed": {
+      "description": "Homed step movement page in its normal ready state.",
+      "required": ["XYZ readouts near 120, 120 and 230", "axis movement controls", "step selector"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "safe-z-probing": {
+      "description": "Safe Z calibration while the center probe is active.",
+      "required": ["safe Z calibration content", "probe action shown busy", "adjust and save actions remain unavailable"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "safe-z-ready": {
+      "description": "Safe Z calibration with a validated candidate ready.",
+      "required": ["current 10.000 mm", "trigger 4.850 mm", "new safe Z 9.850 mm", "adjust and save actions available"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "z-paper-manual": {
+      "description": "Paper Z-offset page in manual positioning with coarse step.",
+      "required": ["manual positioning state", "0.1 mm step", "Z adjustment controls"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "z-paper-pressure-dialog": {
+      "description": "Paper Z-offset pressure confirmation dialog.",
+      "required": ["modal pressure or paper-drag guidance", "clear confirmation and cancellation actions"],
+      "forbidden": ["dialog content outside screen", "dialog controls overlapped", "blank frame"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "z-paper-positioning": {
+      "description": "Paper Z-offset page while moving to the safe start.",
+      "required": ["move-to-start action shown busy", "probe action unavailable", "paper calibration controls remain visible"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "z-paper-probing": {
+      "description": "Paper Z-offset page while probing.",
+      "required": ["probe action shown busy", "move-to-start action unavailable", "paper calibration controls remain visible"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "z-paper-ready": {
+      "description": "Paper Z-offset page ready for adjustment and acceptance.",
+      "required": ["reference 9.975", "nozzle 9.850", "Z offset -0.125", "closer, farther, reset and accept actions available"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "z-summary-discard-dialog": {
+      "description": "Discard confirmation over the Z-offset summary.",
+      "required": ["discard calibration confirmation", "keep action", "discard action"],
+      "forbidden": ["dialog content outside screen", "dialog controls overlapped", "blank frame"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "z-summary-load": {
+      "description": "Z-offset summary with center selected and auto-load enabled.",
+      "required": ["center selection", "auto load shown as on", "save selected Z offset action"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "z-summary-results": {
+      "description": "Z-offset summary with all five measured zone results.",
+      "required": ["five measured zone values", "center selected near -0.125", "average near -0.123", "save action available"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "z-summary-warning": {
+      "description": "Z-offset summary with a spread warning and center selection.",
+      "required": ["center selection", "spread or positional warning", "average near -0.125 mm"],
+      "forbidden": ["blank frame", "overlapping controls", "clipped important text"],
+      "allowed_variations": ["numeric formatting", "theme colors"]
+    },
+    "printer:baseline": {
+      "description": "Initial real-printer UI frame before the UI suite.",
+      "required": ["a complete readable FF5M screen", "visible navigation or status context"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live temperatures", "network status", "time and progress"]
+    },
+    "printer:ui-calibration": {
+      "description": "Real-printer calibration menu.",
+      "required": ["calibration choices", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live values", "theme colors"]
+    },
+    "printer:ui-calibration-variants": {
+      "description": "Real-printer calibration page variants.",
+      "required": ["calibration content", "clear available actions"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live values", "selected calibration variant"]
+    },
+    "printer:ui-control": {
+      "description": "Real-printer control menu.",
+      "required": ["control categories", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live temperatures", "theme colors"]
+    },
+    "printer:ui-file-confirm": {
+      "description": "Safe file selection confirmation dialog.",
+      "required": ["selected file context", "confirmation and cancellation actions"],
+      "forbidden": ["blank or corrupted framebuffer", "dialog outside screen", "overlapping controls"],
+      "allowed_variations": ["file name", "theme colors"]
+    },
+    "printer:ui-files": {
+      "description": "Real-printer file browser.",
+      "required": ["file browser content", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["available files", "timestamps"]
+    },
+    "printer:ui-filament-action": {
+      "description": "Real-printer filament action screen with synthetic heating data.",
+      "required": ["filament action controls", "temperature near 130.4 / 250C"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "printer:ui-filament-back-materials": {
+      "description": "Material selection after returning from a filament action.",
+      "required": ["material choices", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["configured materials", "theme colors"]
+    },
+    "printer:ui-filament-cooling": {
+      "description": "Real-printer filament action screen with synthetic cooling data.",
+      "required": ["filament action controls", "temperature near 260.4 / 250C", "cooling state"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["theme colors", "font rasterization"]
+    },
+    "printer:ui-filament-materials": {
+      "description": "Real-printer filament material selection.",
+      "required": ["material choices", "clear load or unload flow"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["configured materials", "theme colors"]
+    },
+    "printer:ui-heat": {
+      "description": "Real-printer heat controls.",
+      "required": ["nozzle and bed temperature controls", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live temperatures", "configured presets"]
+    },
+    "printer:ui-home": {
+      "description": "Real-printer normal home screen.",
+      "required": ["printer status", "main navigation", "temperature information"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live temperatures", "network and job state"]
+    },
+    "printer:ui-home-filled": {
+      "description": "Synthetic worst-case populated home dashboard.",
+      "required": ["long job and material text", "full progress and duration content", "maximum temperature values"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["font rasterization", "theme colors"]
+    },
+    "printer:ui-main-menu": {
+      "description": "Real-printer main menu.",
+      "required": ["primary menu choices", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["theme colors", "status indicators"]
+    },
+    "printer:ui-mod-parameters": {
+      "description": "Real-printer mod settings page.",
+      "required": ["mod parameter content", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["configured parameter values", "theme colors"]
+    },
+    "printer:ui-move": {
+      "description": "Real-printer movement controls.",
+      "required": ["movement controls", "position or homing context", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["live position", "homed state", "theme colors"]
+    },
+    "printer:ui-network": {
+      "description": "Real-printer network page.",
+      "required": ["network status or connection details", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["network name", "address", "connection state"]
+    },
+    "printer:ui-settings": {
+      "description": "Real-printer settings menu.",
+      "required": ["settings choices", "back navigation"],
+      "forbidden": ["blank or corrupted framebuffer", "overlapping controls", "clipped important content"],
+      "allowed_variations": ["configured values", "theme colors"]
+    }
+  }
+}
