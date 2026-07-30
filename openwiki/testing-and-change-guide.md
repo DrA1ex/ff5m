@@ -199,19 +199,44 @@ The default local `.env` may provide the single selected model, base URL,
 timeout, and optional API key. Do not print, commit, or copy that file. An
 explicit `--model loaded-vision-model` overrides only the model selection for
 that run. The command creates an ignored timestamped directory below
-`tests/artifacts/ui-regression/` and prints the absolute path to `report.json`.
+`tests/artifacts/ui-regression/` and prints the absolute paths to `report.html`
+and `report.json`.
+
+Open `report.html` for the normal human review. It is an offline report with no
+external scripts, fonts, services, or network requests. Keep it together with
+the surrounding timestamped artifact directory because its images use safe
+relative paths. The top summary shows the run status, selected model, source
+coverage, and verdict counts. Frame cards include:
+
+- the Designer, printer, or parity image pair;
+- case, page, semantic ID, source file, elapsed time, retry count, and
+  JSON-validation status;
+- the complete textual baseline (required, forbidden, and allowed items);
+- the model summary, non-pass reasons, and expandable per-check verdicts.
+
+Use the report buttons to show all frames, only problems/not-run frames, or
+only passing frames. `report.json` remains the machine-readable source of
+truth, while `report.md` is a short terminal-friendly summary.
+
+The runner also writes all three reports when discovery, printer collection,
+fingerprint validation, image handling, or model setup fails before ordinary
+review. In that case `report.html` starts with an infrastructure-failure
+banner, and any images already collected inside the run directory remain
+visible with `not_run` status. This makes every failed invocation reviewable
+without bypassing a safety check or losing the evidence gathered before it.
 
 Read the result in this order:
 
-1. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
+1. Open `report.html` and check the status banner and source-coverage cards.
+2. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
    corpus. A Designer-only run intentionally reports `partial` after a clean
    review because legacy printer screens are absent.
-2. `coverage` shows Designer cases, retained legacy printer frames, replaced
+3. `coverage` shows Designer cases, retained legacy printer frames, replaced
    duplicates, and parity pairs.
-3. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
+4. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
    textual-expectation references, and `case_result` with verdict, reasons,
    JSON-validation status, elapsed time, and normalized error.
-4. `needs_baseline` means a newly discovered page or scenario has no approved
+5. `needs_baseline` means a newly discovered page or scenario has no approved
    textual expectation. The candidate file is written locally; add a reviewed
    text expectation before enabling model review again.
 

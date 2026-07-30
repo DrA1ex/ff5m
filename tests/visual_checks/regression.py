@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 from . import hybrid
+from . import html_report
 from . import openai_compatible as vision
 from . import printer
 from . import run as image_runner
@@ -169,6 +170,108 @@ def _flatten_case_results(artifact):
         }
 
 
+def _relative_artifact(output, path):
+    if path is None:
+        return None
+    path = pathlib.Path(path).resolve()
+    output = pathlib.Path(output).resolve()
+    try:
+        return path.relative_to(output).as_posix()
+    except ValueError:
+        return None
+
+
+def _attach_artifact_paths(artifact, records, output):
+    frames = artifact.get("screenshots", ())
+    for frame, record in zip(frames, records):
+        screenshot = frame.get("screenshot", {})
+        screenshot["artifact"] = _relative_artifact(
+            output, record.get("path"))
+        screenshot["comparison_artifact"] = _relative_artifact(
+            output, record.get("comparison_path"))
+
+
+def _unreviewed_artifacts(output):
+    output = pathlib.Path(output).resolve()
+    records = []
+    for path in sorted(output.rglob("*")):
+        if (
+            not path.is_file()
+            or path.suffix.lower() not in image_runner.SUPPORTED_SUFFIXES
+        ):
+            continue
+        artifact = _relative_artifact(output, path)
+        parts = pathlib.PurePosixPath(artifact).parts if artifact else ()
+        source = parts[0] if parts else "unknown"
+        records.append({
+            "status": "not_run",
+            "models": [],
+            "case_result": {
+                "verdict": "not_run",
+                "reasons": [],
+                "json_validation": {
+                    "status": "not_run", "error": None,
+                },
+                "elapsed_seconds": 0.0,
+                "error": None,
+            },
+            "screenshot": {
+                "label": path.stem,
+                "file": path.name,
+                "artifact": artifact,
+                "source": source,
+            },
+        })
+    return records
+
+
+def _redacted_error(args, exc):
+    message = " ".join(str(exc).split())[:500]
+    values = [
+        getattr(args, "base_url", None),
+        os.environ.get("FF5M_VISUAL_BASE_URL"),
+        os.environ.get(getattr(args, "api_key_env", ""), ""),
+    ]
+    for value in values:
+        if value:
+            message = message.replace(str(value), "[redacted]")
+    return message
+
+
+def _infrastructure_report(args, output, exc):
+    frames = _unreviewed_artifacts(output)
+    return {
+        "schema_version": 1,
+        "status": "fail",
+        "mode": args.mode,
+        "coverage": {
+            "designer": sum(
+                1 for item in frames
+                if item["screenshot"].get("source") == "designer"),
+            "legacy_printer": sum(
+                1 for item in frames
+                if item["screenshot"].get("source") == "printer"),
+            "replaced": 0,
+            "parity_pairs": 0,
+        },
+        "configuration": {
+            "model": (
+                args.model or os.environ.get("FF5M_VISUAL_MODEL", "")),
+        },
+        "summary": {
+            "screenshots": len(frames),
+            "statuses": {"not_run": len(frames)},
+            "verdicts": {},
+        },
+        "missing_expectations": [],
+        "screenshots": frames,
+        "infrastructure_error": {
+            "category": type(exc).__name__,
+            "message": _redacted_error(args, exc),
+        },
+    }
+
+
 def _markdown_report(report):
     coverage = report["coverage"]
     lines = [
@@ -190,11 +293,27 @@ def _markdown_report(report):
             % len(report["missing_expectations"]),
             "",
         ])
+    error = report.get("infrastructure_error")
+    if isinstance(error, dict):
+        lines.extend([
+            "## Infrastructure failure",
+            "",
+            "- Category: `%s`" % error.get("category", "error"),
+            "- Message: %s" % error.get("message", ""),
+            "",
+        ])
     return "\n".join(lines)
 
 
-def execute(args):
-    output = _output_directory(args.output)
+def _write_reports(output, report):
+    image_runner.write_artifact(output / "report.json", report)
+    (output / "report.md").write_text(
+        _markdown_report(report), encoding="utf-8")
+    html_report.write(output / "report.html", report)
+
+
+def execute(args, output=None):
+    output = pathlib.Path(output or _output_directory(args.output)).resolve()
     output.mkdir(parents=True, exist_ok=True)
     scenarios = hybrid.load_scenarios(args.scenarios)
     expectations = hybrid.load_expectations(args.expectations)
@@ -277,6 +396,7 @@ def execute(args):
                 or os.environ.get("FF5M_VISUAL_MODE", "advisory")))
         artifact = image_runner.run_checks(
             settings, _image_inputs(ready))
+        _attach_artifact_paths(artifact, ready, output)
         _flatten_case_results(artifact)
         report = dict(artifact)
         report.update({
@@ -292,24 +412,30 @@ def execute(args):
             "discovered_page_ids": merged["discovered_page_ids"],
             "missing_expectations": [],
         })
-    image_runner.write_artifact(output / "report.json", report)
-    (output / "report.md").write_text(
-        _markdown_report(report), encoding="utf-8")
+    if not report.get("screenshots"):
+        report["screenshots"] = _unreviewed_artifacts(output)
+    _write_reports(output, report)
     return report, output
 
 
 def main(argv=None):
     args = _arguments(argv)
     _load_env(args.env_file)
+    output = _output_directory(args.output)
+    output.mkdir(parents=True, exist_ok=True)
     try:
-        report, output = execute(args)
+        report, output = execute(args, output=output)
     except (OSError, ValueError, subprocess.SubprocessError,
             printer.PrinterCollectionError) as exc:
-        print("UI regression configuration/infrastructure error: %s" % exc,
-              file=sys.stderr)
+        report = _infrastructure_report(args, output, exc)
+        _write_reports(output, report)
+        print(
+            "UI regression configuration/infrastructure error: %s; "
+            "report=%s" % (exc, output / "report.html"),
+            file=sys.stderr)
         return 2
-    print("UI regression: %s; artifact=%s" % (
-        report["status"], output / "report.json"))
+    print("UI regression: %s; report=%s; artifact=%s" % (
+        report["status"], output / "report.html", output / "report.json"))
     if report["status"] in ("pass", "disabled"):
         return 0
     if report["status"] in ("review", "partial", "needs_baseline"):

@@ -199,6 +199,7 @@ def run_checks(settings, images, evaluator=None):
             "bytes": len(data),
             "input_mime_type": image["mime_type"],
             "submitted_mime_type": request_mime_type,
+            "expectation": image["context"].get("expectation"),
             "expectation_references": [
                 "cases.%s.%s[%d]" % (
                     image["context"].get("case_id"), section, index)

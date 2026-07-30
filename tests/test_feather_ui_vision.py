@@ -29,6 +29,7 @@ from tests.visual_checks import printer as PRINTER  # noqa: E402
 from tests.visual_checks import compare_reports as COMPARE  # noqa: E402
 from tests.visual_checks import regression as REGRESSION  # noqa: E402
 from tests.visual_checks import run as PIPELINE  # noqa: E402
+from tests.visual_checks import html_report as HTML_REPORT  # noqa: E402
 
 
 def verdict(status="pass"):
@@ -706,6 +707,94 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
 
 
 class RegressionOrchestratorTest(unittest.TestCase):
+    def test_html_report_contains_images_baselines_and_model_evidence(self):
+        report = {
+            "status": "review",
+            "mode": "designer",
+            "coverage": {
+                "designer": 1, "legacy_printer": 0,
+                "replaced": 0, "parity_pairs": 0,
+            },
+            "configuration": {"model": "vision-model"},
+            "summary": {
+                "verdicts": {"warn": 1},
+            },
+            "screenshots": [{
+                "case_result": {
+                    "verdict": "warn",
+                    "json_validation": {"status": "valid"},
+                    "elapsed_seconds": 1.25,
+                    "reasons": [{
+                        "check_id": "layout_overlap",
+                        "reason": "Header needs review.",
+                    }],
+                },
+                "models": [{
+                    "attempts": 1,
+                    "response": {
+                        "verdict": "warn",
+                        "summary": "Review <header> alignment.",
+                        "checks": [{
+                            "id": "layout_overlap",
+                            "status": "warn",
+                            "reason": "Possible overlap.",
+                        }],
+                    },
+                }],
+                "screenshot": {
+                    "label": "Main <menu>",
+                    "case_id": "main-menu",
+                    "source": "designer",
+                    "artifact": "designer/frame one.png",
+                    "file": "frame one.png",
+                    "expectation": {
+                        "description": "Readable menu.",
+                        "required": ["navigation choices"],
+                        "forbidden": ["overlap"],
+                        "allowed_variations": ["colors"],
+                    },
+                    "expectation_references": [
+                        "cases.main-menu.required[0]",
+                    ],
+                },
+            }],
+        }
+
+        page = HTML_REPORT.render(report)
+
+        self.assertIn('src="designer/frame%20one.png"', page)
+        self.assertIn("Main &lt;menu&gt;", page)
+        self.assertIn("Review &lt;header&gt; alignment.", page)
+        self.assertIn("Textual baseline", page)
+        self.assertIn("navigation choices", page)
+        self.assertIn("Model checklist (1)", page)
+        self.assertNotIn("<menu>", page)
+
+    def test_infrastructure_failure_always_writes_html_and_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "failed-run"
+            error = HYBRID.RegressionConfigurationError(
+                "deployed UI fingerprint does not match <local>")
+            with mock.patch.object(
+                    REGRESSION, "execute", side_effect=error):
+                result = REGRESSION.main([
+                    "--mode", "designer",
+                    "--designer-root", str(pathlib.Path(temporary) / "designer"),
+                    "--output", str(output),
+                ])
+            report = json.loads(
+                (output / "report.json").read_text(encoding="utf-8"))
+            page = (output / "report.html").read_text(encoding="utf-8")
+
+        self.assertEqual(result, 2)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(
+            report["infrastructure_error"]["category"],
+            "RegressionConfigurationError")
+        self.assertIn("Infrastructure failure", page)
+        self.assertIn(
+            "deployed UI fingerprint does not match &lt;local&gt;", page)
+
     def test_offline_parity_uses_fake_printer_artifacts_without_network(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
