@@ -34,9 +34,11 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - **Klipper** with many patches/fixes/plugins specially adapted for AD5M
 - **Moonraker**
 - **Fluidd** & **Mainsail**
-- Adapted **Guppy** and custom **Feather** screens
+- Fully interactive **Feather** touchscreen and adapted **Guppy**  
+- Local and USB G-code browsing and print control from Feather
+- GuidedZ-offset, bed, extruder, PID, and Input Shaper calibration
 - Originally developed **Power Loss Recovery** specially for AD5M
-- **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen.
+- **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
 - Patched **video streamer** with dramatically reduced memory usage
@@ -57,26 +59,29 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 ## TL;DR
 
 > [!CAUTION]
-> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
+> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug.   
+> Do **not** enable or use KAMP.   
+> Do **not** `MOVE_SAFE`, while relative positioning (`G91`) is active.   
+> Upgrade to **1.4.1-11 or later** first.
 
 1. Uninstall any other installed mods first (⚠️ make a backup!).   
 2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
 3. Update slicer [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
 4. Update slicer [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
-5. Enable [LAN-mode](/docs/PRINTING.md#before-the-first-print)
+5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod)
 6. Enable [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
 7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).
-8. **⚠️ Mandatory**: Read about [bed mesh calibration](/docs/CALIBRATION.md#bed-screws-and-mesh)
+8. **⚠️ Mandatory**: Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start)
 9. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
 10. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
-11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) Bed Mesh, shaper, and Z-offset.
-12. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset-light-sound-and-automation)
+11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset.
+12. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
 13. **Optional**: Enable the mod’s [Camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
-14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#z-offset-light-sound-and-automation)
-15. **Optional**: Enable [Feather/Guppy Screen](/docs/SCREEN.md#change-the-mode).
-16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#safety-features).
-17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#safety-features).
-18. **Optional**: Enable [Power Loss Recovery](docs/PRINTING.md#safety-features).
+14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)
+15. **Optional**: Enable [Feather/Guppy Screen](/docs/SCREEN.md#switching-to-feather-screen).
+16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
+17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
+18. **Optional**: Enable [Power Loss Recovery](/docs/PRINTING.md#power-loss-recovery-resurrection).
 
 ## Get Started
 
@@ -88,7 +93,7 @@ To begin, follow the instructions on the [Installation page](/docs/INSTALL.md). 
 This modification also includes additional features. It is highly recommended that you thoroughly read the [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages before getting started.
 
 > [!NOTE]
-> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. For recurring memory-pressure, E0011/E0017, or *Timer too close* errors, see [Reliability and resources](/docs/PRINTING.md#reliability-and-resources). It explains when to reduce running services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
+> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. For recurring memory-pressure, E0011/E0017, or *Timer too close* errors, see [Reliability and resources](/docs/PRINTING.md#reducing-resource-usage). It explains when to reduce running services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
 
 For additional help, check out the [F.A.Q.](/docs/FAQ.md).
 

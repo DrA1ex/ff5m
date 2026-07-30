@@ -156,7 +156,7 @@ Issues accessing Mainsail or Fluidd on the Flashforge Adventurer 5M (AD5M) with 
 - **Verify IP Address**: Check the printer’s current IP address on the touchscreen or in your router’s device list. Update your browser’s URL or router’s static IP settings if the address has changed.
 - **Clear Browser Cache***: Clear your browser’s cache to resolve issues caused by outdated or corrupted cache data (refer to your browser’s documentation for instructions). Alternatively, try accessing Mainsail/Fluidd using a different browser.   
 - **Configure Wi-Fi Manually**:  If your router uses the same SSID for 5GHz and 2.4GHz bands, manually edit `/etc/wpa_supplicant.conf` to [force 2.4 GHz network](#the-mod-isnt-loading-and-is-stuck-at-the-network-connection-step). Restart the printer after editing.   
-- **Monitor Resources**: Run the `MEM` macro in Fluidd/Mainsail to check memory usage. If usage is high (e.g., >75%), reduce resource-intensive features like camera streaming or Spoolman (see [Reliability and resources](PRINTING.md#reliability-and-resources)).
+- **Monitor Resources**: Run the `MEM` macro in Fluidd/Mainsail to check memory usage. If usage is high (e.g., >75%), reduce resource-intensive features like camera streaming or Spoolman (see [Reliability and resources](PRINTING.md#reducing-resource-usage)).
 - **Ensure Mod Installation**: Confirm Forge-X is fully installed and running (e.g., GuppyScreen or Feather screen is active). Re-flash the mod if necessary (see [Installation Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/INSTALL.md)).
 - **Restart Printer**: Reboot the printer to reset network services and clear potential resource bottlenecks.
 
@@ -196,7 +196,7 @@ network={
 
 If the mod still cannot connect within 5 minutes, the stock screen will load instead.
 
-If the mod doesn’t load at all, use [screen-mode recovery](SCREEN.md#change-the-mode) to switch back to the original stock screen.
+If the mod doesn’t load at all, use [screen-mode recovery](SCREEN.md#switching-to-feather-screen) to switch back to the original stock screen.
 
 ### Why did the Wi-Fi credentials get forgotten?
 
@@ -238,7 +238,7 @@ To reduce memory usage:
 - **Switch to Feather or Headless Mode**: The Feather screen uses ~10MB less memory, and Headless mode uses ~12MB less than the Stock screen.
 - **Disable Resource-Intensive Features**: Spoolman, or KAMP’s “exclude objects” feature.
 - **Optimize Camera Settings**: Use the mod’s camera implementation for lower resource usage.
-- **Follow the Resource Guide**: Refer to [Reliability and resources](PRINTING.md#reliability-and-resources).
+- **Follow the Resource Guide**: Refer to [Reliability and resources](PRINTING.md#reducing-resource-usage).
 
 ### Can I use KlipperScreen or other resource-heavy features with Forge-X?
 KlipperScreen can be used with Forge-X by moving configs/binaries from Klipper Mod, as they are binary compatible. However, it consumes significant resources (75–80% memory usage when running with Mainsail, Fluidd, and a camera). This may lead to “Timer Too Close” or MCU errors, especially on resource-constrained AD5M printers.
@@ -249,25 +249,18 @@ KlipperScreen can be used with Forge-X by moving configs/binaries from Klipper M
 - Alternatively, use a Raspberry Pi with a BTT screen for a richer interface without overloading the printer.
 
 ### What is the Feather screen, and how does it help?
-The Feather screen is a lightweight interface for the Forge-X mod, designed to minimize resource usage (10–15x less than the Stock screen). It displays essential printing information and is ideal for users prioritizing performance over UI features.
+Feather is Forge-X's lightweight interactive touchscreen. It uses much less memory than the Stock screen while still covering the main local workflows needed for normal printing.
 
-**Benefits**:
-- Reduces memory usage by ~10-15MB compared to the Stock screen.
-- Eliminates issues like the Stock screen freezing during Moonraker commands (e.g., `SAVE_CONFIG`).
-- Avoids firmware bugs in Flashforge 3.1.* versions (e.g., network-related freezes).
-- Supports displaying information with minimal overhead.
+From Feather you can browse and print local or USB files, control an active print, move and home the printer, manage temperatures and cooling, change filament, run supported calibrations, configure normal Wi-Fi or Ethernet, adjust lighting and sound, and change Forge-X settings. It also presents Forge-X power-loss recovery when a valid recovery state is available.
 
-**Limitations**:
-- Lacks some UI features of KlipperScreen or GuppyScreen (e.g., advanced macros like chamber LED control).
-
-Switch to Feather using the [Screen Configuration guide](SCREEN.md#change-the-mode).
+Fluidd or Mainsail is still required for unrestricted G-code, file deletion, advanced networking, and detailed diagnostics. See the [Screen Configuration guide](SCREEN.md#feather-screen) for the current feature list and switching instructions.
 
 ### Why am I getting MCU shutdown with “Unable to obtain ‘endstop_state’ response” or “Timer too close” during START_PRINT?
 This occurs when the printer’s weight sensor fails to respond within the requested time due to insufficient system resources or loose wiring.
 
 **Solutions**:
 - **Check Connections**: Reattach all wiring, especially for the weight sensor.
-- **Reduce Resource Usage**: Follow [Reliability and resources](PRINTING.md#reliability-and-resources) and use Feather or Headless mode.
+- **Reduce Resource Usage**: Follow [Reliability and resources](PRINTING.md#reducing-resource-usage) and use Feather or Headless mode.
 - **Update Firmware**: Use stock firmware 3.1.4+ or later and Forge-X 1.3.3+ for optimized performance.
 
 
@@ -329,7 +322,7 @@ This error may result from memory limitations, MCU issues, or overheating.
 - **Memory Issues**:
   - Run the `MEM` macro to check memory usage.
   - Switch to the mod’s [Camera Implementation](https://github.com/DrA1ex/ff5m/blob/main/docs/CAMERA.md) for lower resource usage.
-  - Follow [Reliability and resources](PRINTING.md#reliability-and-resources).
+  - Follow [Reliability and resources](PRINTING.md#reducing-resource-usage).
 - **MCU Issues**:
   - Disable `weight_check`, `filament_switch_sensor`, or similar parameters.
   - Avoid changing fan or LED settings during printing.
@@ -407,13 +400,13 @@ This occurs if Klipper or the MCU fails to become ready, often due to a broken c
 ### Why does the printer boot in Failsafe mode but still show Feather?
 Failsafe mode skips all mod code execution to prevent bricking but may still display Feather if the mod partially loads. Use [Dual Boot](https://github.com/DrA1ex/ff5m/blob/main/docs/DUAL_BOOT.md) to skip the mod gracefully and boot into the stock system.
 
-### #Why is my nozzle gouging the build plate during the first layer?
+### Why is my nozzle gouging the build plate during the first layer?
 
 Nozzle gouging, where the nozzle scrapes or digs into the build plate during the first layer, often occurs due to an incorrect Z-offset or bed mesh after installing Forge-X.
 
 **Solutions**:
-- **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset guidance](CALIBRATION.md#z-offset). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
-- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `NEW_SAVE_CONFIG` (Stock screen) or `SAVE_CONFIG` (Feather screen).
+- **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset guidance](CALIBRATION.md#z-offset-calibration). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
+- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `NEW_SAVE_CONFIG` (Stock screen) or through the supported Forge-X workflow (or use SAVE_CONFIG).
 - **Check Weight Sensor**: Recalibrate the load cell following Flashforge’s guide.
 - **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see Uninstall Guide).
 - Refer to the [Printing Page](/docs/PRINTING.md) for calibration details.
