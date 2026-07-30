@@ -159,6 +159,13 @@
       "state": {
         "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.125,
         "ui.pages.z_offset.summary.state.SummaryState.POSITIONAL_WARNING": 0.025,
+        "ui.pages.z_offset.summary.state.SummaryState.RESULTS": {
+          "center": -0.125,
+          "front_left": -0.125,
+          "front_right": -0.125,
+          "rear_left": -0.1425,
+          "rear_right": -0.1075
+        },
         "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center",
         "ui.pages.z_offset.summary.state.SummaryState.SPREAD": 0.035
       }

@@ -24,6 +24,7 @@ MAX_RESPONSE_BYTES = 256 * 1024
 MAX_ERROR_BYTES = 8 * 1024
 MAX_REASON_LENGTH = 400
 MAX_SUMMARY_LENGTH = 600
+MAX_VALIDATION_ATTEMPTS = 2
 VALID_MODES = frozenset(("advisory", "strict"))
 VALID_VERDICTS = frozenset(("pass", "warn", "fail"))
 CHECKLIST = (
@@ -291,7 +292,8 @@ def _response_json_schema():
     }
 
 
-def _completion_payload(model, image_bytes, mime_type, context):
+def _completion_payload(model, image_bytes, mime_type, context,
+                        corrective_retry=False):
     screenshot = {
         "label": _safe_text(context.get("label"), 120),
         "page": _safe_text(context.get("page"), 120),
@@ -341,6 +343,18 @@ def _completion_payload(model, image_bytes, mime_type, context):
                 "detail": "high",
             },
         })
+    system_instruction = (
+        "Return exactly one JSON object and no markdown. "
+        "Use only the supplied checklist. Do not infer printer "
+        "safety, functionality, or behavior from the image. "
+        "Use every checklist id exactly once and add no fields. "
+        "The top-level verdict must equal the most severe checklist "
+        "status: pass only if every check passes, warn if the worst "
+        "check warns, and fail if any check fails.")
+    if corrective_retry:
+        system_instruction += (
+            " A previous response violated this contract. Re-evaluate the "
+            "same frame and obey the verdict rule exactly.")
     return {
         "model": model,
         "temperature": 0,
@@ -355,11 +369,7 @@ def _completion_payload(model, image_bytes, mime_type, context):
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "Return exactly one JSON object and no markdown. "
-                    "Use only the supplied checklist. Do not infer printer "
-                    "safety, functionality, or behavior from the image. "
-                    "Use every checklist id exactly once and add no fields."),
+                "content": system_instruction,
             },
             {
                 "role": "user",
@@ -438,7 +448,7 @@ def _json_validation(status, error=None):
 
 
 def _error_result(model, category, message, elapsed=0.0,
-                  json_status="not_run"):
+                  json_status="not_run", attempts=1):
     return {
         "model": model,
         "status": category,
@@ -447,6 +457,7 @@ def _error_result(model, category, message, elapsed=0.0,
         "json_validation": _json_validation(
             json_status, message if json_status == "invalid" else None),
         "elapsed_seconds": round(max(0.0, elapsed), 6),
+        "attempts": attempts,
         "error": {
             "category": category,
             "message": _safe_text(message, 300),
@@ -541,20 +552,27 @@ class VisualCheckEvaluator:
 
     def _evaluate_model(self, model, image_bytes, mime_type, context):
         started = self.clock()
-        try:
-            response = self.transport.request_json(
-                "POST", "/chat/completions",
-                _completion_payload(model, image_bytes, mime_type, context))
-        except TransportFailure as exc:
+        last_validation_error = None
+        for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+            try:
+                response = self.transport.request_json(
+                    "POST", "/chat/completions", _completion_payload(
+                        model, image_bytes, mime_type, context,
+                        corrective_retry=attempt > 1))
+            except TransportFailure as exc:
+                return _error_result(
+                    model, exc.category, exc.message,
+                    self.clock() - started, attempts=attempt)
+            try:
+                verdict = validate_verdict(_completion_content(response))
+                break
+            except ValueError as exc:
+                last_validation_error = str(exc)
+        else:
             return _error_result(
-                model, exc.category, exc.message,
-                self.clock() - started)
-        try:
-            verdict = validate_verdict(_completion_content(response))
-        except ValueError as exc:
-            return _error_result(
-                model, "invalid_response", str(exc),
-                self.clock() - started, json_status="invalid")
+                model, "invalid_response", last_validation_error,
+                self.clock() - started, json_status="invalid",
+                attempts=MAX_VALIDATION_ATTEMPTS)
         reasons = [
             {
                 "check_id": item["id"], "status": item["status"],
@@ -570,6 +588,7 @@ class VisualCheckEvaluator:
             "json_validation": _json_validation("valid"),
             "elapsed_seconds": round(
                 max(0.0, self.clock() - started), 6),
+            "attempts": attempt,
             "error": None,
             "response": verdict,
         }

@@ -219,6 +219,18 @@ Use `--check-mode strict` only when an explicit CI/release gate is intended.
 The usual local run is advisory; deterministic contract and UI tests remain the
 primary checks in either mode.
 
+If the report says `model_unavailable`, the local endpoint was reachable but
+the selected model name did not exactly match its `/models` catalog. Load the
+intended vision model in the local service, set its exact catalog ID through
+`--model` or the ignored `.env`, and rerun. If it says `vision_unsupported`,
+select a vision-capable model; do not weaken the image payload or JSON schema.
+`invalid_response` means the model returned a response that failed independent
+JSON validation. The checker makes one corrective retry with the same frame and
+an explicit schema reminder; if it remains invalid, inspect the normalized
+error, repeat the affected saved frame once, and rerun the complete corpus
+before accepting a result. Repeated schema failures make that model unsuitable
+for this regression gate.
+
 After a successful local Designer run, a real hybrid or parity run still needs
 separate explicit approval, an idle printer, and the command shown above with
 `--confirm-printer-idle`. It must not be combined with synchronization or a

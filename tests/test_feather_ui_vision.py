@@ -89,6 +89,8 @@ class FakeOpenAIEndpoint:
             }).encode("utf-8"))
         if request.method == "POST" and path == "/v1/chat/completions":
             response = self.model_responses[payload["model"]]
+            if isinstance(response, list):
+                response = response.pop(0)
             if isinstance(response, tuple):
                 status, value = response
                 body = io.BytesIO(json.dumps(value).encode("utf-8"))
@@ -281,6 +283,30 @@ class VisualEvaluatorTest(unittest.TestCase):
             invalid["models"][0]["json_validation"]["status"], "invalid")
         self.assertIsNotNone(
             invalid["models"][0]["json_validation"]["error"])
+
+    def test_invalid_verdict_gets_one_corrective_retry(self):
+        invalid = verdict("pass")
+        invalid["checks"][0] = {
+            "id": VISION.CHECKLIST[0]["id"],
+            "status": "warn", "reason": "Needs review.",
+        }
+        with FakeOpenAIEndpoint(
+                ("vision-a",),
+                {"vision-a": [invalid, verdict("warn")]}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"image", "image/bmp", {})
+
+        model_result = result["models"][0]
+        self.assertEqual(model_result["status"], "completed")
+        self.assertEqual(model_result["verdict"], "warn")
+        self.assertEqual(model_result["attempts"], 2)
+        posts = [item for item in server.requests if item[0] == "POST"]
+        self.assertEqual(len(posts), 2)
+        self.assertIn(
+            "previous response violated this contract",
+            posts[1][2]["messages"][0]["content"])
 
     def test_strict_is_explicit_and_turns_any_non_pass_into_failure(self):
         with FakeOpenAIEndpoint(
