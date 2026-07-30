@@ -215,6 +215,20 @@ that run. The command creates an ignored timestamped directory below
 `tests/artifacts/ui-regression/` and prints the absolute paths to `report.html`
 and `report.json`.
 
+While it runs, the command prints its current pipeline stage and then one line
+for every completed model review. The review line includes the completed and
+total frame counts, case ID, last-frame time, total elapsed time, and an ETA
+derived from the mean time of the completed frames. Before the first result,
+the ETA is reported as `estimating`. Output is flushed immediately and remains
+visible when the regression is launched by the LM Studio benchmark command.
+For example:
+
+```text
+[stage 5/6] Reviewing 63 screenshots
+[review 0/63] waiting for first result; ETA estimating
+[review 17/63] move-ready; last 6.8s; elapsed 1m 55s; ETA 5m 11s
+```
+
 Open `report.html` for the normal human review. It is an offline report with no
 external scripts, fonts, services, or network requests. Keep it together with
 the surrounding timestamped artifact directory because its images use safe
