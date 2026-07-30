@@ -14,6 +14,7 @@ import os
 import pathlib
 import struct
 import sys
+import time
 import zlib
 
 from . import openai_compatible as vision
@@ -163,10 +164,23 @@ def discover_images(inputs):
     return images
 
 
-def run_checks(settings, images, evaluator=None):
+def run_checks(settings, images, evaluator=None, progress=None, clock=None):
     evaluator = evaluator or vision.VisualCheckEvaluator(settings)
+    clock = clock or time.monotonic
     records = []
-    for image in images:
+    total = len(images)
+    started = clock()
+    if progress is not None:
+        progress({
+            "completed": 0,
+            "total": total,
+            "case_id": None,
+            "last_elapsed_seconds": None,
+            "elapsed_seconds": 0.0,
+            "eta_seconds": None,
+        })
+    for index, image in enumerate(images, 1):
+        frame_started = clock()
         path = image["path"]
         size = path.stat().st_size
         if size > MAX_IMAGE_BYTES:
@@ -211,6 +225,22 @@ def run_checks(settings, images, evaluator=None):
             ],
         }
         records.append(result)
+        if progress is not None:
+            now = clock()
+            elapsed = max(0.0, now - started)
+            remaining = total - index
+            progress({
+                "completed": index,
+                "total": total,
+                "case_id": (
+                    image["context"].get("case_id")
+                    or image["context"].get("label")
+                    or path.stem),
+                "last_elapsed_seconds": max(0.0, now - frame_started),
+                "elapsed_seconds": elapsed,
+                "eta_seconds": (
+                    elapsed / index * remaining if remaining else 0.0),
+            })
     artifact = evaluator.artifact(records)
     artifact["summary"] = evaluator.summary(records)
     statuses = [item["status"] for item in records]

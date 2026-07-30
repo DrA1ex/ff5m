@@ -809,6 +809,36 @@ class LMStudioBenchmarkTest(unittest.TestCase):
             "CUSTOM_VISUAL_TOKEN")
         self.assertNotIn("secret", command)
 
+    def test_benchmark_regression_inherits_console_progress_streams(self):
+        class Args:
+            designer_root = "/designer"
+            env_file = "/ignored/.env"
+            printer_artifacts = ["/saved/ui", "/saved/component"]
+            api_key_env = "FF5M_VISUAL_API_KEY"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+
+            def fake_run(_command, **kwargs):
+                (output / "report.json").write_text(json.dumps({
+                    "status": "pass",
+                    "configuration": {"model": "vision-a"},
+                    "screenshots": [],
+                }), encoding="utf-8")
+                return mock.Mock(returncode=0)
+
+            with mock.patch.object(
+                    BENCHMARK.subprocess, "run", side_effect=fake_run) as call:
+                BENCHMARK._regression_runner(Args(), {})({
+                    "key": "vision-a",
+                    "inference_model": "instance-a",
+                }, output)
+
+        kwargs = call.call_args.kwargs
+        self.assertNotIn("capture_output", kwargs)
+        self.assertNotIn("stdout", kwargs)
+        self.assertNotIn("stderr", kwargs)
+
     def test_verdict_validator_rejects_extra_fields_and_wrong_severity(self):
         extra = verdict("pass")
         extra["extra"] = True
@@ -911,6 +941,44 @@ class HostPipelineTest(unittest.TestCase):
             self.assertEqual(
                 artifact["screenshots"][0]["status"], "disabled")
             self.assertEqual(transport.calls, [])
+
+    def test_run_checks_reports_frame_count_and_eta(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            images = self._artifact_input(directory)
+            second = directory / "002-settings.bmp"
+            second.write_bytes(images[0]["path"].read_bytes())
+            images.append({
+                "path": second,
+                "context": {
+                    "number": 2,
+                    "label": "Settings",
+                    "page": "SETTINGS",
+                    "case_id": "settings",
+                    "source": "designer",
+                },
+                "mime_type": "image/bmp",
+            })
+            settings = VISION.VisualCheckSettings()
+            evaluator = VISION.VisualCheckEvaluator(
+                settings,
+                transport=FailingTransport(
+                    "service_unavailable", "must not be called"))
+            events = []
+
+            PIPELINE.run_checks(
+                settings, images, evaluator=evaluator,
+                progress=events.append,
+                clock=iter((10.0, 10.0, 12.0, 12.0, 16.0)).__next__)
+
+        self.assertEqual(
+            [(item["completed"], item["total"]) for item in events],
+            [(0, 2), (1, 2), (2, 2)])
+        self.assertIsNone(events[0]["eta_seconds"])
+        self.assertEqual(events[1]["last_elapsed_seconds"], 2.0)
+        self.assertEqual(events[1]["eta_seconds"], 2.0)
+        self.assertEqual(events[2]["eta_seconds"], 0.0)
+        self.assertEqual(events[2]["case_id"], "settings")
 
     def test_cli_requires_explicit_enable_flag(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -1174,6 +1242,49 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
 
 
 class RegressionOrchestratorTest(unittest.TestCase):
+    def test_main_streams_stage_frame_count_and_eta_to_stderr(self):
+        output = io.StringIO()
+
+        def execute(_args, output=None, progress=None):
+            self.assertIsNotNone(progress)
+            progress.stage(1, 6, "Preparing regression")
+            progress.review({
+                "completed": 3,
+                "total": 10,
+                "case_id": "move-ready",
+                "last_elapsed_seconds": 2.25,
+                "elapsed_seconds": 9.0,
+                "eta_seconds": 21.0,
+            })
+            return {
+                "status": "disabled",
+                "mode": "designer",
+                "coverage": {
+                    "designer": 0,
+                    "legacy_printer": 0,
+                    "replaced": 0,
+                    "parity_pairs": 0,
+                },
+            }, pathlib.Path(output)
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(REGRESSION, "execute",
+                                  side_effect=execute), \
+                mock.patch.object(sys, "stderr", output):
+            code = REGRESSION.main([
+                "--mode", "designer",
+                "--designer-root", str(pathlib.Path(temporary) / "designer"),
+                "--output", str(pathlib.Path(temporary) / "output"),
+            ])
+
+        progress = output.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("[stage 1/6] Preparing regression", progress)
+        self.assertIn("[review 3/10] move-ready", progress)
+        self.assertIn("last 2.2s", progress)
+        self.assertIn("elapsed 9s", progress)
+        self.assertIn("ETA 21s", progress)
+
     def test_printer_theme_is_automatic_and_mismatches_are_rejected(self):
         runs = [{"theme": "OCEAN"}, {"theme": "OCEAN"}]
         self.assertEqual(

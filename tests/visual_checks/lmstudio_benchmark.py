@@ -435,11 +435,13 @@ def _regression_runner(args, environment):
             ])
         result = subprocess.run(
             command, cwd=str(ROOT), env=environment,
-            check=False, capture_output=True, text=True)
+            check=False)
         report = output / "report.json"
         if not report.is_file():
-            message = (result.stderr or result.stdout or
-                       "regression did not write report.json")
+            message = (
+                getattr(result, "stderr", None)
+                or getattr(result, "stdout", None)
+                or "regression did not write report.json")
             raise RuntimeError(" ".join(message.split())[:300])
         report_value = json.loads(report.read_text(encoding="utf-8"))
         infrastructure = report_value.get("infrastructure_error")

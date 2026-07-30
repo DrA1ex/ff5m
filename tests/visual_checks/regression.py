@@ -31,6 +31,50 @@ DEFAULT_SCENARIOS = pathlib.Path(__file__).with_name("scenarios.json")
 DEFAULT_EXPECTATIONS = pathlib.Path(__file__).with_name("expectations.json")
 
 
+def _duration(value):
+    if value is None:
+        return "estimating"
+    seconds = max(0, int(round(float(value))))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return "%dh %02dm %02ds" % (hours, minutes, seconds)
+    if minutes:
+        return "%dm %02ds" % (minutes, seconds)
+    return "%ds" % seconds
+
+
+class ConsoleProgress:
+    def __init__(self, stream=None):
+        self.stream = stream or sys.stderr
+
+    def _write(self, message):
+        print(message, file=self.stream, flush=True)
+
+    def stage(self, current, total, message):
+        self._write("[stage %d/%d] %s" % (current, total, message))
+
+    def review(self, event):
+        completed = event["completed"]
+        total = event["total"]
+        if completed == 0:
+            self._write(
+                "[review 0/%d] waiting for first result; ETA estimating"
+                % total)
+            return
+        case_id = " ".join(str(event.get("case_id") or "frame").split())[:120]
+        self._write(
+            "[review %d/%d] %s; last %.1fs; elapsed %s; ETA %s"
+            % (
+                completed,
+                total,
+                case_id,
+                float(event.get("last_elapsed_seconds") or 0.0),
+                _duration(event.get("elapsed_seconds")),
+                _duration(event.get("eta_seconds")),
+            ))
+
+
 def _load_env(path):
     path = pathlib.Path(path)
     if not path.is_file():
@@ -465,9 +509,11 @@ def _write_reports(output, report):
     html_report.write(output / "report.html", report)
 
 
-def execute(args, output=None):
+def execute(args, output=None, progress=None):
     output = pathlib.Path(output or _output_directory(args.output)).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if progress is not None:
+        progress.stage(1, 6, "Loading scenarios and discovering pages")
     scenarios = hybrid.load_scenarios(args.scenarios)
     expectations = hybrid.load_expectations(args.expectations)
     discovery = hybrid.discover_designer(
@@ -486,6 +532,14 @@ def execute(args, output=None):
         "page": item["semantic_page_id"],
         "state": item["state"],
     } for item in cases if item["state"]]
+    if progress is not None:
+        progress.stage(
+            2, 6,
+            "Preparing saved printer artifacts"
+            if args.printer_artifacts else
+            "Collecting printer artifacts"
+            if args.mode != "designer" else
+            "Printer artifacts are not required")
     printer_directories = _printer_directories(
         args, output, printer_component_cases)
     for directory in printer_directories:
@@ -504,9 +558,14 @@ def execute(args, output=None):
     designer_theme = _designer_theme(args.theme, printer_runs)
     cases = hybrid.build_designer_cases(
         discovery, scenarios, theme=designer_theme)
+    if progress is not None:
+        progress.stage(
+            3, 6, "Rendering %d Designer screenshots" % len(cases))
     designer_records = hybrid.DesignerCapture(
         args.designer_root, args.project_root).capture(
             cases, output / "designer")
+    if progress is not None:
+        progress.stage(4, 6, "Building the merged review corpus")
     if args.mode == "designer":
         merged = {
             "records": designer_records,
@@ -530,6 +589,11 @@ def execute(args, output=None):
     ready, missing = hybrid.attach_expectations(
         merged["records"], expectations)
     if missing:
+        if progress is not None:
+            progress.stage(
+                5, 6,
+                "Skipping model review: %d baselines are missing"
+                % len(missing))
         hybrid.write_candidates(output / "expectations.candidate.json", missing)
         report = {
             "schema_version": 1,
@@ -553,6 +617,9 @@ def execute(args, output=None):
                 missing=missing),
         }
     else:
+        if progress is not None:
+            progress.stage(
+                5, 6, "Reviewing %d screenshots" % len(ready))
         model = args.model or os.environ.get("FF5M_VISUAL_MODEL", "")
         base_url = args.base_url or os.environ.get(
             "FF5M_VISUAL_BASE_URL", "")
@@ -565,7 +632,8 @@ def execute(args, output=None):
                 args.check_mode
                 or os.environ.get("FF5M_VISUAL_MODE", "advisory")))
         artifact = image_runner.run_checks(
-            settings, _image_inputs(ready))
+            settings, _image_inputs(ready),
+            progress=progress.review if progress is not None else None)
         _attach_artifact_paths(artifact, ready, output)
         _flatten_case_results(artifact)
         report = dict(artifact)
@@ -591,6 +659,8 @@ def execute(args, output=None):
         })
     if not report.get("screenshots"):
         report["screenshots"] = _unreviewed_artifacts(output)
+    if progress is not None:
+        progress.stage(6, 6, "Writing JSON, Markdown, and HTML reports")
     _write_reports(output, report)
     return report, output
 
@@ -600,8 +670,9 @@ def main(argv=None):
     _load_env(args.env_file)
     output = _output_directory(args.output)
     output.mkdir(parents=True, exist_ok=True)
+    progress = ConsoleProgress()
     try:
-        report, output = execute(args, output=output)
+        report, output = execute(args, output=output, progress=progress)
     except Exception as exc:
         report = _infrastructure_report(args, output, exc)
         _write_reports(output, report)
