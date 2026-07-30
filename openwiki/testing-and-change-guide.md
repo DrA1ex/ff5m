@@ -178,6 +178,12 @@ requested typed state. It then verifies every requested value against the
 rendered scene metadata. A silently ignored or normalized-away state fails
 before capture and before any model request.
 
+In `hybrid` and `parity`, the runner reads the active theme from the downloaded
+printer artifact and uses that exact theme for Designer capture. UI and
+COMPONENT artifacts must report the same theme. `--theme` remains an explicit
+override for targeted diagnostics; Designer-only mode falls back to `DEFAULT`
+when no override is supplied.
+
 The default invocation shape is:
 
 ```bash
@@ -212,32 +218,28 @@ and `report.json`.
 Open `report.html` for the normal human review. It is an offline report with no
 external scripts, fonts, services, or network requests. Keep it together with
 the surrounding timestamped artifact directory because its images use safe
-relative paths. The top summary shows the run status, selected model, source
-coverage, and verdict counts. Frame cards include:
+relative paths.
 
-- the Designer, printer, or parity image pair;
-- case, page, semantic ID, source file, elapsed time, retry count, and
-  JSON-validation status;
-- the complete textual baseline (required, forbidden, and allowed items);
-- the model summary, non-pass reasons, and expandable per-check verdicts.
+The report is screenshot-first:
 
-The **What this run actually did** section records Designer
-discovery/capture, real-printer suite capture and download, hybrid composition,
-and structured LLM review as four separate stages. Coverage distinguishes raw
-printer frames captured from printer frames retained in the final corpus and
-Designer-replaced duplicates. The corpus is then split into
-**Designer-generated frames**, **Real printer framebuffer frames**, and, in
-parity mode, **Designer / printer parity pairs**. Each parity card shows the
-Designer and printer images next to each other and includes the model's
-`source_parity` result. The first parity image is always the Designer frame and
-the second is always the real Typer/framebuffer frame. Theme/rasterization and
-footer-only live status (temperatures, network address, preview/standby label)
-may differ; page titles, controls, dialogs, selections, and typed-state values
-must remain equivalent.
+- **Screenshot overview** is a dense grid of Designer pages and retained
+  real-printer screens;
+- **Designer ↔ real printer** is a separate continuation grid whose tiles show
+  both renderer outputs side by side;
+- warning/failure tiles use prominent yellow/red borders and markers;
+- clicking any tile opens a large modal with the images, textual baseline,
+  model summary, reasons, JSON-validation evidence, timings, and checklist;
+- run stages and collection/model evidence stay collapsed until requested.
 
-Use the report buttons to filter by outcome or to isolate Designer, real
-printer, and parity galleries. `report.json` remains the machine-readable
-source of truth, while `report.md` is a short terminal-friendly summary.
+The first parity image is always the Designer frame and the second is always
+the real Typer/framebuffer frame. Hybrid/parity theme synchronization removes
+normal theme-color differences. Footer-only live status (temperatures, network
+address, preview/standby label) may still differ; page titles, controls,
+dialogs, selections, and typed-state values must remain equivalent.
+
+Use the compact toolbar to filter by outcome or source. `report.json` remains
+the machine-readable source of truth, while `report.md` is a short
+terminal-friendly summary.
 
 The runner also writes all three reports when discovery, printer collection,
 fingerprint validation, image handling, or model setup fails before ordinary

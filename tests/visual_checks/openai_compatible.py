@@ -376,7 +376,8 @@ def _completion_payload(model, image_bytes, mime_type, context,
             "equivalent. Apply source_parity_allowances only to theme, "
             "rasterization, and footer-only live status. Do not use them for "
             "page titles, controls, dialogs, selections, or typed-state "
-            "values.")
+            "values. If every observed difference is covered by "
+            "source_parity_allowances, source_parity must pass, not warn.")
     return {
         "model": model,
         "temperature": 0,

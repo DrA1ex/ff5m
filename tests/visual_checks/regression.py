@@ -63,7 +63,11 @@ def _arguments(argv=None):
     parser.add_argument("--confirm-printer-idle", action="store_true")
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--expectations", default=str(DEFAULT_EXPECTATIONS))
-    parser.add_argument("--theme", default="DEFAULT")
+    parser.add_argument(
+        "--theme",
+        help=(
+            "explicit Designer theme; hybrid/parity otherwise use the "
+            "theme recorded by the printer artifact"))
     parser.add_argument("--model")
     parser.add_argument("--base-url")
     parser.add_argument("--timeout", type=float)
@@ -356,7 +360,22 @@ def _printer_run(directory, records, suite, output):
             environment.get("run_id") or pathlib.Path(directory).name),
         "captured": len(records),
         "artifact": _relative_artifact(output, directory),
+        "theme": str(environment.get("theme") or ""),
     }
+
+
+def _designer_theme(requested, printer_runs):
+    requested = str(requested or "").strip()
+    if requested:
+        return requested
+    themes = sorted(set(
+        str(item.get("theme") or "").strip()
+        for item in printer_runs
+        if str(item.get("theme") or "").strip()))
+    if len(themes) > 1:
+        raise hybrid.RegressionConfigurationError(
+            "printer artifacts use different UI themes")
+    return themes[0] if themes else "DEFAULT"
 
 
 def _redacted_error(args, exc):
@@ -453,11 +472,11 @@ def execute(args, output=None):
     expectations = hybrid.load_expectations(args.expectations)
     discovery = hybrid.discover_designer(
         args.designer_root, args.project_root)
+    # The component payload needs only IDs and typed state. Build it before
+    # collection, then rebuild the render cases with the printer's captured
+    # theme once artifact metadata is available.
     cases = hybrid.build_designer_cases(
-        discovery, scenarios, theme=args.theme)
-    designer_records = hybrid.DesignerCapture(
-        args.designer_root, args.project_root).capture(
-            cases, output / "designer")
+        discovery, scenarios, theme=args.theme or "DEFAULT")
     ui_records = []
     component_records = []
     printer_runs = []
@@ -482,6 +501,12 @@ def execute(args, output=None):
             ui_records.extend(records)
         else:
             component_records.extend(records)
+    designer_theme = _designer_theme(args.theme, printer_runs)
+    cases = hybrid.build_designer_cases(
+        discovery, scenarios, theme=designer_theme)
+    designer_records = hybrid.DesignerCapture(
+        args.designer_root, args.project_root).capture(
+            cases, output / "designer")
     if args.mode == "designer":
         merged = {
             "records": designer_records,
@@ -519,7 +544,10 @@ def execute(args, output=None):
             },
             "discovered_page_ids": merged["discovered_page_ids"],
             "missing_expectations": missing,
-            "configuration": {"model": args.model or ""},
+            "configuration": {
+                "model": args.model or "",
+                "designer_theme": designer_theme,
+            },
             "pipeline": _pipeline_stages(
                 args.mode, designer_records, printer_runs, merged,
                 missing=missing),
@@ -541,6 +569,9 @@ def execute(args, output=None):
         _attach_artifact_paths(artifact, ready, output)
         _flatten_case_results(artifact)
         report = dict(artifact)
+        report["configuration"] = dict(
+            report.get("configuration", {}))
+        report["configuration"]["designer_theme"] = designer_theme
         report.update({
             "schema_version": 1,
             "status": _regression_status(artifact, args.mode),
