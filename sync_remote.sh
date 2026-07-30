@@ -2,7 +2,7 @@
 
 ## Synchronize changes, printer-side script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -144,6 +144,33 @@ fi
 echo -e "${BLUE}Comparing files...${NC}"
 
 CHANGED=0
+
+# These package trees are fully managed by the project. Remove Python sources
+# absent from the incoming archive before S00init reload cleans their matching
+# Klipper extras symlinks.
+for package in \
+    ".py/klipper/plugins/ui" \
+    ".py/klipper/plugins/ff5m_ui"; do
+    SRC_PACKAGE="./.sync/${package}"
+    DEST_PACKAGE="./mod/${package}"
+    if [ ! -d "$SRC_PACKAGE" ] || [ ! -d "$DEST_PACKAGE" ]; then
+        continue
+    fi
+    while read -r dest_file; do
+        relative="${dest_file#./mod/}"
+        if [ -f "./.sync/${relative}" ]; then
+            continue
+        fi
+        echo -e "${YELLOW}► Removing obsolete file: ${dest_file}${NC}"
+        rm -f -- "$dest_file"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to remove obsolete file: ${dest_file}${NC}"
+            cleanup
+            exit 2
+        fi
+        CHANGED=1
+    done < <(find "$DEST_PACKAGE" -type f -name "*.py")
+done
 
 while read -r file; do
     SRC_FILE="$file"

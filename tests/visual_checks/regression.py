@@ -86,8 +86,8 @@ def _output_directory(value):
 
 
 def _printer_directories(args, output, component_cases):
+    directories = []
     if args.printer_artifacts:
-        directories = []
         for index, value in enumerate(args.printer_artifacts, 1):
             source = pathlib.Path(value).resolve()
             if not source.is_dir():
@@ -443,8 +443,7 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=True)
     try:
         report, output = execute(args, output=output)
-    except (OSError, ValueError, subprocess.SubprocessError,
-            printer.PrinterCollectionError) as exc:
+    except Exception as exc:
         report = _infrastructure_report(args, output, exc)
         _write_reports(output, report)
         print(

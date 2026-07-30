@@ -2,7 +2,7 @@
 
 ## Synchronize local changes to the printer
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -256,6 +256,7 @@ trap "abort" INT
 declare -a EXCLUDES=(
     "./${ARCHIVE_NAME}"
     ".git"
+    "./.env"
     ".idea"
     ".vscode"
     "*/__pycache__"
@@ -285,6 +286,15 @@ if [ "$SKIP_HEAVY" -eq 1 ]; then
         "./.zsh/.oh-my-zsh/"
         "./.bin/"
     )
+fi
+
+# Git-ignored paths are local-only. Ordinary untracked paths remain eligible
+# for the archive so new deployment files can be tested before they are added.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r ignored_path; do
+        [ -z "$ignored_path" ] && continue
+        EXCLUDES+=("./${ignored_path}")
+    done < <(git ls-files --others --ignored --exclude-standard --directory)
 fi
 
 echo

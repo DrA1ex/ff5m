@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -510,12 +511,34 @@ class HostPipelineTest(unittest.TestCase):
             "feather_feature_ui_test.py"
         ).read_text(encoding="utf-8")
         sync = (ROOT / "sync.sh").read_text(encoding="utf-8")
+        remote_sync = (ROOT / "sync_remote.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("visual_checks", screen)
         self.assertNotIn("openai_compatible", screen)
         self.assertNotIn("visual_checks", runner)
         self.assertNotIn("openai_compatible", runner)
         self.assertIn('"./tests/"', sync)
+        self.assertIn('"./.env"', sync)
+        self.assertIn(
+            "git ls-files --others --ignored --exclude-standard", sync)
+        self.assertIn('".py/klipper/plugins/ui"', remote_sync)
+        self.assertIn('".py/klipper/plugins/ff5m_ui"', remote_sync)
+        self.assertIn("S00init reload", remote_sync)
+        self.assertIn("Removing obsolete file", remote_sync)
+
+    def test_sync_keeps_nonignored_untracked_paths_archive_eligible(self):
+        sync = (ROOT / "sync.sh").read_text(encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+                dir=str(ROOT), prefix="ff5m-sync-untracked-") as candidate:
+            ignored = subprocess.check_output([
+                "git", "ls-files", "--others", "--ignored",
+                "--exclude-standard", "--directory",
+            ], cwd=str(ROOT), text=True).splitlines()
+            relative = pathlib.Path(candidate.name).relative_to(ROOT).as_posix()
+
+        self.assertIn(
+            "Ordinary untracked paths remain eligible", sync)
+        self.assertNotIn(relative, ignored)
 
 
 class HybridCompositionTest(unittest.TestCase):
@@ -794,6 +817,26 @@ class RegressionOrchestratorTest(unittest.TestCase):
         self.assertIn("Infrastructure failure", page)
         self.assertIn(
             "deployed UI fingerprint does not match &lt;local&gt;", page)
+
+    def test_unexpected_runtime_failure_always_writes_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "failed-run"
+            with mock.patch.object(
+                    REGRESSION, "execute",
+                    side_effect=RuntimeError("unexpected regression defect")):
+                result = REGRESSION.main([
+                    "--mode", "designer",
+                    "--designer-root", str(pathlib.Path(temporary) / "designer"),
+                    "--output", str(output),
+                ])
+            report = json.loads(
+                (output / "report.json").read_text(encoding="utf-8"))
+            page = (output / "report.html").read_text(encoding="utf-8")
+
+        self.assertEqual(result, 2)
+        self.assertEqual(
+            report["infrastructure_error"]["category"], "RuntimeError")
+        self.assertIn("unexpected regression defect", page)
 
     def test_offline_parity_uses_fake_printer_artifacts_without_network(self):
         with tempfile.TemporaryDirectory() as temporary:
