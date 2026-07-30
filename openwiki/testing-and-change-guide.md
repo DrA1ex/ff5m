@@ -171,6 +171,13 @@ The modes are:
   the same default and additional typed-state cases captured by the cold
   `SUITE=COMPONENT` harness.
 
+Before a Designer scenario is accepted, the scenario adapter applies mutable
+values through the Designer host state API so simulator-owned roles (for
+example homing, position, inertia, and movement step) cannot overwrite the
+requested typed state. It then verifies every requested value against the
+rendered scene metadata. A silently ignored or normalized-away state fails
+before capture and before any model request.
+
 The default invocation shape is:
 
 ```bash
@@ -214,9 +221,23 @@ coverage, and verdict counts. Frame cards include:
 - the complete textual baseline (required, forbidden, and allowed items);
 - the model summary, non-pass reasons, and expandable per-check verdicts.
 
-Use the report buttons to show all frames, only problems/not-run frames, or
-only passing frames. `report.json` remains the machine-readable source of
-truth, while `report.md` is a short terminal-friendly summary.
+The **What this run actually did** section records Designer
+discovery/capture, real-printer suite capture and download, hybrid composition,
+and structured LLM review as four separate stages. Coverage distinguishes raw
+printer frames captured from printer frames retained in the final corpus and
+Designer-replaced duplicates. The corpus is then split into
+**Designer-generated frames**, **Real printer framebuffer frames**, and, in
+parity mode, **Designer / printer parity pairs**. Each parity card shows the
+Designer and printer images next to each other and includes the model's
+`source_parity` result. The first parity image is always the Designer frame and
+the second is always the real Typer/framebuffer frame. Theme/rasterization and
+footer-only live status (temperatures, network address, preview/standby label)
+may differ; page titles, controls, dialogs, selections, and typed-state values
+must remain equivalent.
+
+Use the report buttons to filter by outcome or to isolate Designer, real
+printer, and parity galleries. `report.json` remains the machine-readable
+source of truth, while `report.md` is a short terminal-friendly summary.
 
 The runner also writes all three reports when discovery, printer collection,
 fingerprint validation, image handling, or model setup fails before ordinary
@@ -231,8 +252,9 @@ Read the result in this order:
 2. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
    corpus. A Designer-only run intentionally reports `partial` after a clean
    review because legacy printer screens are absent.
-3. `coverage` shows Designer cases, retained legacy printer frames, replaced
-   duplicates, and parity pairs.
+3. `coverage` shows captured printer frames, retained legacy printer frames,
+   replaced duplicates, and parity pairs. A real parity run must have a
+   non-zero `parity_pairs` count.
 4. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
    textual-expectation references, and `case_result` with verdict, reasons,
    JSON-validation status, elapsed time, and normalized error.

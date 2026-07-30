@@ -13,6 +13,26 @@ import pickle
 import sys
 
 
+def _state_metadata(scene):
+    return dict(
+        (str(item.get("key")), item)
+        for item in scene.get("state_schema", ())
+        if isinstance(item, dict) and item.get("key"))
+
+
+def _assert_requested_state(case, scene):
+    metadata = _state_metadata(scene)
+    for key, expected in (case.get("state") or {}).items():
+        item = metadata.get(str(key))
+        if item is None or not item.get("value_available"):
+            raise ValueError(
+                "Designer scene omitted requested state key: %s" % key)
+        if item.get("value") != expected:
+            raise ValueError(
+                "Designer scene did not apply requested state key: %s"
+                % key)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) != 3:
@@ -41,6 +61,35 @@ def main(argv=None):
             restored = base64.b64encode(pickle.dumps(
                 checkpoint, protocol=pickle.HIGHEST_PROTOCOL)).decode("ascii")
             client.call("host.restore", {"checkpoint": restored})
+            # Restoring a checkpoint correctly applies read-only page state,
+            # but the Designer simulator owns values with simulation roles
+            # (positions, homing, movement step, inertia) and restores its own
+            # model afterward. Re-apply every mutable requested value through
+            # the public state API so the simulator and page state agree.
+            viewport = {
+                "width": case["width"], "height": case["height"],
+            }
+            scene = client.call("page.render", {
+                "screen": screen,
+                "theme": case["theme"],
+                "viewport": viewport,
+            })
+            metadata = _state_metadata(scene)
+            unknown = sorted(
+                set(case.get("state") or {}) - set(metadata))
+            if unknown:
+                raise ValueError(
+                    "unknown Designer scenario state key: %s" % unknown[0])
+            for key, value in (case.get("state") or {}).items():
+                if not metadata[key].get("mutable"):
+                    continue
+                client.call("state.update", {
+                    "screen": screen,
+                    "key": key,
+                    "value": value,
+                    "theme": case["theme"],
+                    "viewport": viewport,
+                })
             for action in case.get("actions") or ():
                 client.call("action.dispatch", {
                     "screen": screen,
@@ -50,10 +99,9 @@ def main(argv=None):
             case["scene"] = client.call("page.render", {
                 "screen": screen,
                 "theme": case["theme"],
-                "viewport": {
-                    "width": case["width"], "height": case["height"],
-                },
+                "viewport": viewport,
             })
+            _assert_requested_state(case, case["scene"])
     finally:
         client.close()
     plan_path.write_text(

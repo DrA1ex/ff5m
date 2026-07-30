@@ -87,6 +87,22 @@ def _checklist(model):
     )
 
 
+def _parity_result(model):
+    response = model.get("response") if isinstance(model, dict) else None
+    checks = response.get("checks", ()) if isinstance(response, dict) else ()
+    parity = next(
+        (item for item in checks if item.get("id") == "source_parity"),
+        None)
+    if parity is None:
+        return ""
+    return (
+        '<div class="parity-result"><strong>Designer ↔ real printer:</strong>'
+        " %s %s</div>" % (
+            _badge(parity.get("status")),
+            _text(parity.get("reason"), ""),
+        ))
+
+
 def _frame(frame, number):
     screenshot = frame.get("screenshot", {})
     case = frame.get("case_result", {})
@@ -105,15 +121,19 @@ def _frame(frame, number):
     )
     images = []
     if image:
+        primary_caption = "Designer" if source == "parity" else source
         images.append(
             '<figure><img loading="lazy" src="%s" alt="%s">'
             "<figcaption>%s</figcaption></figure>" % (
-                image, _text(title), _text(source)))
+                image, _text(title), _text(primary_caption)))
     if comparison:
+        comparison_caption = (
+            "Real printer Typer/framebuffer"
+            if source == "parity" else "comparison")
         images.append(
             '<figure><img loading="lazy" src="%s" alt="Comparison for %s">'
-            "<figcaption>comparison</figcaption></figure>" % (
-                comparison, _text(title)))
+            "<figcaption>%s</figcaption></figure>" % (
+                comparison, _text(title), _text(comparison_caption)))
     if not images:
         images.append('<div class="image-missing">Image unavailable</div>')
 
@@ -170,12 +190,14 @@ def _frame(frame, number):
                         for item in references),
             ))
     return """
-<article class="frame %(frame_class)s" data-outcome="%(frame_class)s">
+<article class="frame %(frame_class)s" data-outcome="%(frame_class)s"
+         data-source="%(source_class)s">
   <header>
     <div><span class="index">#%(number)d</span><h3>%(title)s</h3></div>
     %(verdict)s
   </header>
   <div class="images">%(images)s</div>
+  %(parity)s
   <dl>%(meta)s</dl>
   %(error)s
   %(summary)s
@@ -185,10 +207,12 @@ def _frame(frame, number):
   %(references)s
 </article>""" % {
         "frame_class": _class(verdict),
+        "source_class": _text(source.lower()),
         "number": number,
         "title": _text(title),
         "verdict": _badge(verdict),
         "images": "".join(images),
+        "parity": _parity_result(model) if source == "parity" else "",
         "meta": "".join(
             "<div><dt>%s</dt><dd>%s</dd></div>" % (
                 _text(name), _text(value))
@@ -203,6 +227,90 @@ def _frame(frame, number):
         "checks": _checklist(model),
         "references": references_html,
     }
+
+
+def _pipeline(report):
+    stages = report.get("pipeline", ())
+    if not stages:
+        return ""
+    cards = []
+    for index, stage in enumerate(stages, 1):
+        counts = stage.get("counts", {})
+        runs = stage.get("runs", ())
+        details = [
+            "<span><code>%s</code>: %s</span>" % (
+                _text(str(key).replace("_", " ")), _text(value))
+            for key, value in counts.items()
+        ]
+        run_html = ""
+        if runs:
+            run_html = "<ul class=\"runs\">%s</ul>" % "".join(
+                "<li><strong>%s</strong> — %s frames"
+                "<br><code>%s</code></li>" % (
+                    _text(item.get("suite")),
+                    _text(item.get("captured", 0)),
+                    _text(item.get("run_id")),
+                )
+                for item in runs
+            )
+        cards.append("""
+<article class="stage %(stage_class)s">
+  <header><span class="stage-number">%(number)d</span>
+    <div><h3>%(title)s</h3>%(status)s</div></header>
+  <p>%(summary)s</p>
+  <div class="stage-counts">%(counts)s</div>
+  %(runs)s
+</article>""" % {
+            "stage_class": _class(stage.get("status")),
+            "number": index,
+            "title": _text(stage.get("title")),
+            "status": _badge(stage.get("status")),
+            "summary": _text(stage.get("summary"), ""),
+            "counts": "".join(details),
+            "runs": run_html,
+        })
+    return (
+        '<section class="pipeline"><h2>What this run actually did</h2>'
+        '<div class="pipeline-grid">%s</div></section>' % "".join(cards)
+    )
+
+
+def _frame_groups(frames):
+    order = ("designer", "printer", "parity", "unknown")
+    buckets = {}
+    for number, frame in enumerate(frames, 1):
+        source = str(
+            frame.get("screenshot", {}).get("source") or "unknown").lower()
+        buckets.setdefault(source, []).append((number, frame))
+    groups = []
+    extra = tuple(item for item in sorted(buckets) if item not in order)
+    for source in order + extra:
+        items = buckets.get(source)
+        if not items:
+            continue
+        title = {
+            "designer": "Designer-generated frames",
+            "printer": "Real printer framebuffer frames",
+            "parity": "Designer / printer parity pairs",
+            "unknown": "Unclassified frames",
+        }.get(source, source.title() + " frames")
+        groups.append("""
+<section class="source-group" id="source-%(source)s"
+         data-source-group="%(source)s">
+  <header class="source-heading">
+    <div><h2>%(title)s</h2>
+      <p>%(count)d frame(s) in the final LLM review corpus.</p></div>
+    <span class="source-count">%(count)d</span>
+  </header>
+  %(frames)s
+</section>""" % {
+            "source": _text(source),
+            "title": _text(title),
+            "count": len(items),
+            "frames": "".join(
+                _frame(frame, number) for number, frame in items),
+        })
+    return "".join(groups)
 
 
 def render(report):
@@ -220,8 +328,13 @@ def render(report):
         ("Model", _text(configuration.get("model"), "disabled")),
         ("Frames", _text(len(frames), "0")),
         ("Designer", _text(coverage.get("designer", 0))),
-        ("Printer legacy", _text(coverage.get("legacy_printer", 0))),
+        ("Printer captured", _text(coverage.get(
+            "printer_captured", coverage.get("legacy_printer", 0)))),
+        ("Printer in review", _text(coverage.get("legacy_printer", 0))),
+        ("Printer replaced", _text(coverage.get("replaced", 0))),
         ("Parity pairs", _text(coverage.get("parity_pairs", 0))),
+        ("LLM reviewed", _text(
+            summary.get("statuses", {}).get("completed", 0))),
         ("Pass / Warn / Fail", "%s / %s / %s" % (
             _text(verdicts.get("pass", 0)),
             _text(verdicts.get("warn", 0)),
@@ -242,10 +355,7 @@ def render(report):
             '<section class="alert warn"><h2>Baselines required</h2>'
             "<p>%d case(s) need a reviewed textual baseline.</p></section>"
             % len(missing))
-    frame_html = "".join(
-        _frame(frame, index)
-        for index, frame in enumerate(frames, 1)
-    )
+    frame_html = _frame_groups(frames)
     if not frame_html:
         frame_html = (
             '<p class="empty">No screenshots reached the review stage.</p>')
@@ -281,8 +391,11 @@ font-weight:700;text-transform:uppercase;font-size:12px}.badge.pass{color:var(--
 gap:12px;margin:12px 0}.images figure{margin:0}.images img{display:block;width:100%%;
 max-height:600px;object-fit:contain;background:#050809;border:1px solid var(--line)}
 figcaption{text-align:center;color:var(--muted);padding:4px}.image-missing{padding:60px;
-text-align:center;color:var(--muted);border:1px dashed var(--line)}dl{display:grid;
-grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:7px;margin:12px 0}
+text-align:center;color:var(--muted);border:1px dashed var(--line)}
+.parity-result{padding:10px 12px;background:#0e171d;border:1px solid var(--line);
+border-radius:7px;margin:10px 0}
+dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+gap:7px;margin:12px 0}
 dl div{background:#0e171d;padding:8px;border-radius:6px}dt{color:var(--muted);font-size:12px}
 dd{margin:2px 0 0;overflow-wrap:anywhere}.expectation{background:#0e171d;padding:12px;
 border-radius:7px}.expectation h5{color:var(--muted);margin-top:10px}.error{padding:12px;
@@ -290,28 +403,60 @@ border:1px solid var(--fail);background:#2a1118;border-radius:7px}.model-summary
 table{width:100%%;border-collapse:collapse;margin-top:10px}th,td{padding:8px;
 border:1px solid var(--line);text-align:left;vertical-align:top}code{overflow-wrap:anywhere}
 details{margin-top:12px}summary{cursor:pointer;color:#b8d9e8}.empty{color:var(--muted)}
-body[data-filter="problem"] .frame.pass{display:none}
-body[data-filter="pass"] .frame:not(.pass){display:none}
+.pipeline{margin:24px 0}.pipeline-grid{display:grid;
+grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.stage{padding:15px;
+background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--muted);
+border-radius:10px}.stage.pass{border-top-color:var(--pass)}.stage.warn{border-top-color:var(--warn)}
+.stage.fail{border-top-color:var(--fail)}.stage header{display:flex;gap:10px;align-items:start}
+.stage header h3{margin:0 0 5px}.stage-number{display:grid;place-items:center;width:28px;
+height:28px;border-radius:50%%;background:#20313b;font-weight:700;flex:0 0 auto}
+.stage-counts{display:flex;gap:6px;flex-wrap:wrap}.stage-counts span{padding:4px 7px;
+background:#0e171d;border-radius:5px;font-size:12px}.runs{padding-left:20px}
+.source-group{scroll-margin-top:16px}.source-heading{display:flex;justify-content:space-between;
+align-items:center;margin:34px 0 10px;padding:14px 16px;background:#16232b;
+border:1px solid var(--line);border-radius:10px}.source-heading h2{margin:0}
+.source-heading p{margin:4px 0 0;color:var(--muted)}.source-count{font-size:24px;
+font-weight:800}.toolbar-label{align-self:center;color:var(--muted);margin-left:8px}
+body[data-outcome-filter="problem"] .frame.pass{display:none}
+body[data-outcome-filter="pass"] .frame:not(.pass){display:none}
+body[data-source-filter="designer"] .frame:not([data-source="designer"]),
+body[data-source-filter="printer"] .frame:not([data-source="printer"]),
+body[data-source-filter="parity"] .frame:not([data-source="parity"]){display:none}
+body[data-source-filter="designer"] .source-group:not([data-source-group="designer"]),
+body[data-source-filter="printer"] .source-group:not([data-source-group="printer"]),
+body[data-source-filter="parity"] .source-group:not([data-source-group="parity"]){display:none}
 @media(max-width:600px){main{padding:12px}.images{grid-template-columns:1fr}}
 </style>
 </head>
-<body data-filter="all">
+<body data-outcome-filter="all" data-source-filter="all">
 <main>
   <h1>FF5M UI regression %(status)s</h1>
   <p class="sub">Offline review report. Images and model evidence remain local.</p>
   <section class="summary">%(cards)s</section>
   %(alerts)s
+  %(pipeline)s
   <nav class="toolbar" aria-label="Frame filter">
-    <button type="button" data-filter="all">All frames</button>
-    <button type="button" data-filter="problem">Problems / not run</button>
-    <button type="button" data-filter="pass">Pass only</button>
+    <span class="toolbar-label">Outcome:</span>
+    <button type="button" data-outcome="all">All</button>
+    <button type="button" data-outcome="problem">Problems / not run</button>
+    <button type="button" data-outcome="pass">Pass only</button>
+    <span class="toolbar-label">Source:</span>
+    <button type="button" data-source="all">All</button>
+    <button type="button" data-source="designer">Designer</button>
+    <button type="button" data-source="printer">Real printer</button>
+    <button type="button" data-source="parity">Parity</button>
   </nav>
   <section id="frames">%(frames)s</section>
 </main>
 <script>
-document.querySelectorAll("[data-filter]").forEach(function(button){
-  if(button.tagName==="BUTTON")button.addEventListener("click",function(){
-    document.body.dataset.filter=button.dataset.filter;
+document.querySelectorAll("button[data-outcome]").forEach(function(button){
+  button.addEventListener("click",function(){
+    document.body.dataset.outcomeFilter=button.dataset.outcome;
+  });
+});
+document.querySelectorAll("button[data-source]").forEach(function(button){
+  button.addEventListener("click",function(){
+    document.body.dataset.sourceFilter=button.dataset.source;
   });
 });
 </script>
@@ -326,6 +471,7 @@ document.querySelectorAll("[data-filter]").forEach(function(button){
             for label, value in cards
         ),
         "alerts": "".join(alerts),
+        "pipeline": _pipeline(report),
         "frames": frame_html,
     }
 

@@ -243,6 +243,122 @@ def _unreviewed_artifacts(output):
     return records
 
 
+def _pipeline_stages(mode, designer_records, printer_runs, merged,
+                     artifact=None, missing=None):
+    discovered = set(
+        item.get("semantic_page_id") for item in designer_records
+        if item.get("semantic_page_id"))
+    printer_captured = sum(item["captured"] for item in printer_runs)
+    stages = [{
+        "id": "designer",
+        "status": "completed",
+        "title": "Designer discovery and capture",
+        "summary": (
+            "%d component pages discovered; %d scenario frames rendered."
+            % (len(discovered), len(designer_records))),
+        "counts": {
+            "discovered_pages": len(discovered),
+            "captured_frames": len(designer_records),
+        },
+    }]
+    if mode == "designer":
+        stages.append({
+            "id": "printer",
+            "status": "not_required",
+            "title": "Real-printer UI capture",
+            "summary": "Skipped by the explicit Designer-only mode.",
+            "counts": {"captured_frames": 0},
+            "runs": [],
+        })
+    else:
+        stages.append({
+            "id": "printer",
+            "status": "completed",
+            "title": "Real-printer UI capture",
+            "summary": (
+                "%d framebuffer frames downloaded from %d completed "
+                "printer suite run(s)." %
+                (printer_captured, len(printer_runs))),
+            "counts": {"captured_frames": printer_captured},
+            "runs": list(printer_runs),
+        })
+    stages.append({
+        "id": "merge",
+        "status": "completed",
+        "title": "Hybrid composition",
+        "summary": (
+            "%d Designer frames and %d retained printer frames; "
+            "%d printer duplicate(s) replaced by Designer."
+            % (
+                len(merged["designer"]),
+                len(merged["legacy"]),
+                len(merged["replaced"]),
+            )),
+        "counts": {
+            "designer_frames": len(merged["designer"]),
+            "printer_frames": len(merged["legacy"]),
+            "replaced_duplicates": len(merged["replaced"]),
+            "parity_pairs": len(merged["pairs"]),
+            "review_corpus": len(merged["records"]),
+        },
+    })
+    if missing:
+        stages.append({
+            "id": "llm",
+            "status": "not_run",
+            "title": "LLM visual review",
+            "summary": (
+                "Not started because %d textual baseline(s) are missing."
+                % len(missing)),
+            "counts": {"submitted_frames": 0},
+        })
+        return stages
+    summary = (artifact or {}).get("summary", {})
+    statuses = summary.get("statuses", {})
+    completed = int(statuses.get("completed", 0))
+    enabled = bool(summary.get("enabled"))
+    stages.append({
+        "id": "llm",
+        "status": (
+            "completed" if enabled and completed == len(merged["records"])
+            else "disabled" if not enabled else "failed"),
+        "title": "LLM visual review",
+        "summary": (
+            "%d of %d merged frames received a structured model result."
+            % (completed, len(merged["records"]))
+            if enabled else
+            "Disabled; no images were submitted to a model."),
+        "counts": {
+            "submitted_frames": len(merged["records"]) if enabled else 0,
+            "completed_results": completed,
+            "json_valid_results": sum(
+                1 for frame in (artifact or {}).get("screenshots", ())
+                for result in frame.get("models", ())
+                if result.get("json_validation", {}).get("status") == "valid"),
+        },
+    })
+    return stages
+
+
+def _printer_run(directory, records, suite, output):
+    environment_path = pathlib.Path(directory) / "environment.json"
+    environment = {}
+    if environment_path.is_file():
+        try:
+            value = json.loads(environment_path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                environment = value
+        except (OSError, ValueError):
+            pass
+    return {
+        "suite": suite,
+        "run_id": str(
+            environment.get("run_id") or pathlib.Path(directory).name),
+        "captured": len(records),
+        "artifact": _relative_artifact(output, directory),
+    }
+
+
 def _redacted_error(args, exc):
     message = " ".join(str(exc).split())[:500]
     values = [
@@ -344,18 +460,22 @@ def execute(args, output=None):
             cases, output / "designer")
     ui_records = []
     component_records = []
+    printer_runs = []
     expected_fingerprint = hybrid.ui_fingerprint(args.project_root)
     printer_component_cases = [{
         "id": item["id"],
         "page": item["semantic_page_id"],
         "state": item["state"],
     } for item in cases if item["state"]]
-    for directory in _printer_directories(
-            args, output, printer_component_cases):
+    printer_directories = _printer_directories(
+        args, output, printer_component_cases)
+    for directory in printer_directories:
         hybrid.verify_artifact_fingerprint(
             directory, expected_fingerprint)
         records = hybrid.load_manifest(directory, source="printer")
         suite = hybrid.artifact_suite(directory)
+        printer_runs.append(
+            _printer_run(directory, records, suite, output))
         for item in records:
             item["printer_suite"] = suite
         if suite == "UI":
@@ -392,6 +512,7 @@ def execute(args, output=None):
             "mode": args.mode,
             "coverage": {
                 "designer": len(merged["designer"]),
+                "printer_captured": len(ui_records) + len(component_records),
                 "legacy_printer": len(merged["legacy"]),
                 "replaced": len(merged["replaced"]),
                 "parity_pairs": len(merged["pairs"]),
@@ -399,6 +520,9 @@ def execute(args, output=None):
             "discovered_page_ids": merged["discovered_page_ids"],
             "missing_expectations": missing,
             "configuration": {"model": args.model or ""},
+            "pipeline": _pipeline_stages(
+                args.mode, designer_records, printer_runs, merged,
+                missing=missing),
         }
     else:
         model = args.model or os.environ.get("FF5M_VISUAL_MODEL", "")
@@ -423,12 +547,16 @@ def execute(args, output=None):
             "mode": args.mode,
             "coverage": {
                 "designer": len(merged["designer"]),
+                "printer_captured": len(ui_records) + len(component_records),
                 "legacy_printer": len(merged["legacy"]),
                 "replaced": len(merged["replaced"]),
                 "parity_pairs": len(merged["pairs"]),
             },
             "discovered_page_ids": merged["discovered_page_ids"],
             "missing_expectations": [],
+            "pipeline": _pipeline_stages(
+                args.mode, designer_records, printer_runs, merged,
+                artifact=artifact),
         })
     if not report.get("screenshots"):
         report["screenshots"] = _unreviewed_artifacts(output)
