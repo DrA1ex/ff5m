@@ -76,6 +76,7 @@ def _run_capture_command(command, timeout, progress=None, clock=None,
     selector.register(process.stdout, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout
     stdout = []
+    completion_intervals = []
 
     def consume(line):
         nonlocal initialized, last_update
@@ -105,15 +106,24 @@ def _run_capture_command(command, timeout, progress=None, clock=None,
             initialized = True
         now = clock()
         elapsed = max(0.0, now - started)
+        interval = max(0.0, now - last_update)
+        if completed > 1:
+            completion_intervals.append(interval)
+        remaining = total - completed
+        if not remaining:
+            eta = 0.0
+        elif completion_intervals:
+            recent = completion_intervals[-8:]
+            eta = sum(recent) / len(recent) * remaining
+        else:
+            eta = None
         progress({
             "completed": completed,
             "total": total,
             "case_id": case_id,
-            "last_elapsed_seconds": max(0.0, now - last_update),
+            "last_elapsed_seconds": interval,
             "elapsed_seconds": elapsed,
-            "eta_seconds": (
-                elapsed / completed * (total - completed)
-                if completed < total else 0.0),
+            "eta_seconds": eta,
         })
         last_update = now
 
@@ -301,9 +311,13 @@ class DesignerCapture:
         self.node = str(node)
         self.command_runner = command_runner or subprocess.run
 
-    def capture(self, cases, output_directory, timeout=120, progress=None):
+    def capture(self, cases, output_directory, timeout=120, progress=None,
+                workers=2):
         output_directory = pathlib.Path(output_directory).resolve()
         output_directory.mkdir(parents=True, exist_ok=True)
+        workers = int(workers)
+        if not 1 <= workers <= 8:
+            raise ValueError("Designer capture workers must be between 1 and 8")
         browser_module = (
             self.designer_root / "ui_preview" / "node_modules" /
             "playwright")
@@ -344,7 +358,7 @@ class DesignerCapture:
             url = self._server_url(process, timeout=30)
             command = [
                 self.node, str(capture_script), str(self.designer_root),
-                url, str(plan_path), str(output_directory),
+                url, str(plan_path), str(output_directory), str(workers),
             ]
             if progress is not None and self.command_runner is subprocess.run:
                 result = _run_capture_command(

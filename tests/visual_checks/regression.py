@@ -115,6 +115,9 @@ def _arguments(argv=None):
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--expectations", default=str(DEFAULT_EXPECTATIONS))
     parser.add_argument(
+        "--designer-workers", type=int, default=2,
+        help="parallel Designer capture pages (1-8; default: 2)")
+    parser.add_argument(
         "--theme",
         help=(
             "explicit Designer theme; hybrid/parity otherwise use the "
@@ -567,11 +570,13 @@ def execute(args, output=None, progress=None):
         discovery, scenarios, theme=designer_theme)
     if progress is not None:
         progress.stage(
-            3, 6, "Rendering %d Designer screenshots" % len(cases))
+            3, 6, "Rendering %d Designer screenshots with %d workers"
+            % (len(cases), args.designer_workers))
     designer_records = hybrid.DesignerCapture(
         args.designer_root, args.project_root).capture(
             cases, output / "designer",
-            progress=progress.render if progress is not None else None)
+            progress=progress.render if progress is not None else None,
+            workers=args.designer_workers)
     if progress is not None:
         progress.stage(4, 6, "Building the merged review corpus")
     if args.mode == "designer":

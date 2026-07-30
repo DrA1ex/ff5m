@@ -1042,6 +1042,34 @@ class HostPipelineTest(unittest.TestCase):
 
 
 class HybridCompositionTest(unittest.TestCase):
+    def test_designer_capture_worker_pool_is_bounded_and_ordered(self):
+        script = pathlib.Path(
+            HYBRID.__file__).with_name("designer_capture.cjs")
+        program = """
+const capture = require(process.argv[1]);
+let active = 0;
+let maximum = 0;
+capture.mapConcurrent([40, 5, 20, 1], 2, async (delay, index) => {
+  active += 1;
+  maximum = Math.max(maximum, active);
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  active -= 1;
+  return `case-${index}`;
+}).then((results) => {
+  process.stdout.write(JSON.stringify({ maximum, results }));
+});
+"""
+
+        result = subprocess.run(
+            ["node", "-e", program, str(script)],
+            check=False, capture_output=True, text=True, timeout=5)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "maximum": 2,
+            "results": ["case-0", "case-1", "case-2", "case-3"],
+        })
+
     def test_designer_capture_command_streams_frame_count_and_eta(self):
         command = [
             sys.executable,
@@ -1066,7 +1094,7 @@ class HybridCompositionTest(unittest.TestCase):
         self.assertIsNone(events[0]["eta_seconds"])
         self.assertEqual(events[1]["case_id"], "alpha")
         self.assertEqual(events[1]["last_elapsed_seconds"], 2.0)
-        self.assertEqual(events[1]["eta_seconds"], 2.0)
+        self.assertIsNone(events[1]["eta_seconds"])
         self.assertEqual(events[2]["case_id"], "beta")
         self.assertEqual(events[2]["eta_seconds"], 0.0)
 
@@ -1322,6 +1350,13 @@ class RegressionOrchestratorTest(unittest.TestCase):
         self.assertIn("last 2.2s", progress)
         self.assertIn("elapsed 9s", progress)
         self.assertIn("ETA 21s", progress)
+
+    def test_regression_defaults_to_two_bounded_designer_workers(self):
+        args = REGRESSION._arguments([
+            "--designer-root", "/designer",
+        ])
+
+        self.assertEqual(args.designer_workers, 2)
 
     def test_user_cancellation_writes_partial_html_and_json_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1620,8 +1655,8 @@ class RegressionOrchestratorTest(unittest.TestCase):
 
             captured = {}
 
-            def capture(cases, _output, progress=None):
-                del progress
+            def capture(cases, _output, progress=None, workers=2):
+                del progress, workers
                 captured["themes"] = set(
                     item["theme"] for item in cases)
                 return designer
