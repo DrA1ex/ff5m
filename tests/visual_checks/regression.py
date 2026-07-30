@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 
@@ -85,9 +86,26 @@ def _output_directory(value):
 
 
 def _printer_directories(args, output, component_cases):
-    directories = [pathlib.Path(value).resolve()
-                   for value in args.printer_artifacts]
-    if directories:
+    if args.printer_artifacts:
+        directories = []
+        for index, value in enumerate(args.printer_artifacts, 1):
+            source = pathlib.Path(value).resolve()
+            if not source.is_dir():
+                raise hybrid.RegressionConfigurationError(
+                    "saved printer artifact is not a directory")
+            destination = output / "printer" / ("saved-%02d" % index)
+            destination.mkdir(parents=True, exist_ok=False)
+            for name in ("environment.json", "manifest.json"):
+                path = source / name
+                if path.is_file():
+                    shutil.copy2(path, destination / name)
+            for path in sorted(source.iterdir()):
+                if (
+                    path.is_file()
+                    and path.suffix.lower() in image_runner.SUPPORTED_SUFFIXES
+                ):
+                    shutil.copy2(path, destination / path.name)
+            directories.append(destination)
         return directories
     if args.mode == "designer":
         return []

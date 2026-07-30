@@ -267,8 +267,11 @@ paused, active virtual-SD, or non-zero heater-target states. They only invoke
 the non-physical `UI`/`COMPONENT` suites and download their artifacts; they
 never synchronize files or restart Klipper. Every printer artifact contains a
 fingerprint of the deployed Feather UI/framework Python files; a missing or
-different fingerprint stops the run before model review. A saved printer artifact directory
-can be supplied with `--printer-artifacts` for a fully offline rerun.
+different fingerprint stops the run before model review. A saved printer
+artifact directory can be supplied with `--printer-artifacts` for a fully
+offline rerun. The runner copies only its manifest, environment metadata, and
+image files into the new timestamped run directory, so the HTML report remains
+portable and never depends on the original artifact location.
 
 Textual structured expectations and the fixed checklist are the only
 checked-in baselines. Captured PNG/BMP files, model responses, reports, and

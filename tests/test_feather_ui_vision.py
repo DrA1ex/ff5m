@@ -904,12 +904,19 @@ class RegressionOrchestratorTest(unittest.TestCase):
                         REGRESSION.hybrid.DesignerCapture, "capture",
                         return_value=designer):
                 report, _output = REGRESSION.execute(args)
+            page = (output / "report.html").read_text(encoding="utf-8")
+            copied_ui = output / "printer" / "saved-01"
+            copied_component = output / "printer" / "saved-02"
 
-        self.assertEqual(report["status"], "disabled")
-        self.assertEqual(report["coverage"]["designer"], 2)
-        self.assertEqual(report["coverage"]["legacy_printer"], 17)
-        self.assertEqual(report["coverage"]["replaced"], 1)
-        self.assertEqual(report["coverage"]["parity_pairs"], 2)
+            self.assertEqual(report["status"], "disabled")
+            self.assertEqual(report["coverage"]["designer"], 2)
+            self.assertEqual(report["coverage"]["legacy_printer"], 17)
+            self.assertEqual(report["coverage"]["replaced"], 1)
+            self.assertEqual(report["coverage"]["parity_pairs"], 2)
+            self.assertIn("printer/saved-01/frame.png", page)
+            self.assertIn("printer/saved-02/frame.png", page)
+            self.assertTrue(copied_ui.is_dir())
+            self.assertTrue(copied_component.is_dir())
 
 
 if __name__ == "__main__":
