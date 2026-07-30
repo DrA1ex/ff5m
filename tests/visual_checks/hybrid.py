@@ -43,10 +43,109 @@ UI_SUITE_LABELS = frozenset((
     "ui-filament-back-materials",
     "ui-network",
 ))
+CAPTURE_PROGRESS_PREFIX = "FF5M_CAPTURE_PROGRESS "
 
 
 class RegressionConfigurationError(ValueError):
     pass
+
+
+def _run_capture_command(command, timeout, progress=None, clock=None,
+                         total=None):
+    clock = clock or time.monotonic
+    started = clock()
+    last_update = started
+    initialized = False
+    if progress is not None and total is not None:
+        total = int(total)
+        if total <= 0:
+            raise ValueError("Designer capture total must be positive")
+        progress({
+            "completed": 0,
+            "total": total,
+            "case_id": None,
+            "last_elapsed_seconds": None,
+            "elapsed_seconds": 0.0,
+            "eta_seconds": None,
+        })
+        initialized = True
+    process = subprocess.Popen(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        bufsize=1)
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    stdout = []
+
+    def consume(line):
+        nonlocal initialized, last_update
+        stdout.append(line)
+        if progress is None or not line.startswith(CAPTURE_PROGRESS_PREFIX):
+            return
+        try:
+            event = json.loads(line[len(CAPTURE_PROGRESS_PREFIX):])
+            completed = int(event["completed"])
+            total = int(event["total"])
+            case_id = str(event["case_id"])
+        except (KeyError, TypeError, ValueError):
+            raise RegressionConfigurationError(
+                "Designer capture returned invalid progress")
+        if total <= 0 or completed <= 0 or completed > total:
+            raise RegressionConfigurationError(
+                "Designer capture returned invalid progress counts")
+        if not initialized:
+            progress({
+                "completed": 0,
+                "total": total,
+                "case_id": None,
+                "last_elapsed_seconds": None,
+                "elapsed_seconds": 0.0,
+                "eta_seconds": None,
+            })
+            initialized = True
+        now = clock()
+        elapsed = max(0.0, now - started)
+        progress({
+            "completed": completed,
+            "total": total,
+            "case_id": case_id,
+            "last_elapsed_seconds": max(0.0, now - last_update),
+            "elapsed_seconds": elapsed,
+            "eta_seconds": (
+                elapsed / completed * (total - completed)
+                if completed < total else 0.0),
+        })
+        last_update = now
+
+    try:
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            for key, _mask in selector.select(min(0.25, remaining)):
+                line = key.fileobj.readline()
+                if line:
+                    consume(line)
+        for line in process.stdout:
+            consume(line)
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+        raise
+    finally:
+        selector.close()
+    stderr = process.stderr.read()
+    process.stdout.close()
+    process.stderr.close()
+    return subprocess.CompletedProcess(
+        command, process.returncode, "".join(stdout), stderr)
 
 
 def _load_json(path, default):
@@ -202,7 +301,7 @@ class DesignerCapture:
         self.node = str(node)
         self.command_runner = command_runner or subprocess.run
 
-    def capture(self, cases, output_directory, timeout=120):
+    def capture(self, cases, output_directory, timeout=120, progress=None):
         output_directory = pathlib.Path(output_directory).resolve()
         output_directory.mkdir(parents=True, exist_ok=True)
         browser_module = (
@@ -243,11 +342,18 @@ class DesignerCapture:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             url = self._server_url(process, timeout=30)
-            result = self.command_runner(
-                [self.node, str(capture_script), str(self.designer_root),
-                 url, str(plan_path), str(output_directory)],
-                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=timeout)
+            command = [
+                self.node, str(capture_script), str(self.designer_root),
+                url, str(plan_path), str(output_directory),
+            ]
+            if progress is not None and self.command_runner is subprocess.run:
+                result = _run_capture_command(
+                    command, timeout=timeout, progress=progress,
+                    total=len(cases))
+            else:
+                result = self.command_runner(
+                    command, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, timeout=timeout)
             if result.returncode != 0:
                 raise RegressionConfigurationError(
                     "Designer capture failed: %s" %

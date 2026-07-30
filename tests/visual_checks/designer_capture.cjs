@@ -24,6 +24,12 @@ async function main() {
   const browser = await playwright.chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const records = [];
+  const manifestPath = path.join(outputDirectory, "manifest.json");
+  const writeManifest = () => {
+    const temporary = `${manifestPath}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(records, null, 2)}\n`);
+    fs.renameSync(temporary, manifestPath);
+  };
   let activeScene = null;
   try {
     await page.route("**/api/render", async (route) => {
@@ -92,13 +98,19 @@ async function main() {
         diagnostics: scene.diagnostics || [],
         operations: (scene.operations || []).length,
       });
+      writeManifest();
+      process.stdout.write(
+        `FF5M_CAPTURE_PROGRESS ${JSON.stringify({
+          completed: index + 1,
+          total: plan.cases.length,
+          case_id: item.id,
+        })}\n`
+      );
     }
   } finally {
     await browser.close();
   }
-  fs.writeFileSync(
-    path.join(outputDirectory, "manifest.json"),
-    `${JSON.stringify(records, null, 2)}\n`);
+  writeManifest();
 }
 
 main().catch((error) => {

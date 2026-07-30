@@ -1042,6 +1042,34 @@ class HostPipelineTest(unittest.TestCase):
 
 
 class HybridCompositionTest(unittest.TestCase):
+    def test_designer_capture_command_streams_frame_count_and_eta(self):
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "print('FF5M_CAPTURE_PROGRESS "
+                "{\"completed\":1,\"total\":2,\"case_id\":\"alpha\"}');"
+                "print('FF5M_CAPTURE_PROGRESS "
+                "{\"completed\":2,\"total\":2,\"case_id\":\"beta\"}')"
+            ),
+        ]
+        events = []
+
+        result = HYBRID._run_capture_command(
+            command, timeout=5, progress=events.append,
+            clock=iter((10.0, 12.0, 16.0)).__next__, total=2)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            [(item["completed"], item["total"]) for item in events],
+            [(0, 2), (1, 2), (2, 2)])
+        self.assertIsNone(events[0]["eta_seconds"])
+        self.assertEqual(events[1]["case_id"], "alpha")
+        self.assertEqual(events[1]["last_elapsed_seconds"], 2.0)
+        self.assertEqual(events[1]["eta_seconds"], 2.0)
+        self.assertEqual(events[2]["case_id"], "beta")
+        self.assertEqual(events[2]["eta_seconds"], 0.0)
+
     def test_discovery_creates_defaults_without_page_registry(self):
         discovery = {"pages": [
             {"id": "ui.Pages.BETA", "title": "Beta"},
@@ -1248,6 +1276,14 @@ class RegressionOrchestratorTest(unittest.TestCase):
         def execute(_args, output=None, progress=None):
             self.assertIsNotNone(progress)
             progress.stage(1, 6, "Preparing regression")
+            progress.render({
+                "completed": 7,
+                "total": 23,
+                "case_id": "move-ready",
+                "last_elapsed_seconds": 1.75,
+                "elapsed_seconds": 14.0,
+                "eta_seconds": 32.0,
+            })
             progress.review({
                 "completed": 3,
                 "total": 10,
@@ -1280,10 +1316,44 @@ class RegressionOrchestratorTest(unittest.TestCase):
         progress = output.getvalue()
         self.assertEqual(code, 0)
         self.assertIn("[stage 1/6] Preparing regression", progress)
+        self.assertIn("[render 7/23] move-ready", progress)
+        self.assertIn("ETA 32s", progress)
         self.assertIn("[review 3/10] move-ready", progress)
         self.assertIn("last 2.2s", progress)
         self.assertIn("elapsed 9s", progress)
         self.assertIn("ETA 21s", progress)
+
+    def test_user_cancellation_writes_partial_html_and_json_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "cancelled-run"
+
+            def interrupted(_args, output=None, progress=None):
+                del progress
+                designer = pathlib.Path(output) / "designer"
+                designer.mkdir(parents=True)
+                (designer / "001-alpha.png").write_bytes(
+                    b"\x89PNG\r\n\x1a\npartial")
+                raise KeyboardInterrupt()
+
+            with mock.patch.object(
+                    REGRESSION, "execute", side_effect=interrupted):
+                result = REGRESSION.main([
+                    "--mode", "designer",
+                    "--designer-root", str(
+                        pathlib.Path(temporary) / "designer"),
+                    "--output", str(output),
+                ])
+
+            report = json.loads(
+                (output / "report.json").read_text(encoding="utf-8"))
+            page = (output / "report.html").read_text(encoding="utf-8")
+
+        self.assertEqual(result, 130)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(
+            report["infrastructure_error"]["category"], "UserCancelled")
+        self.assertEqual(len(report["screenshots"]), 1)
+        self.assertIn("designer/001-alpha.png", page)
 
     def test_printer_theme_is_automatic_and_mismatches_are_rejected(self):
         runs = [{"theme": "OCEAN"}, {"theme": "OCEAN"}]
@@ -1550,7 +1620,8 @@ class RegressionOrchestratorTest(unittest.TestCase):
 
             captured = {}
 
-            def capture(cases, _output):
+            def capture(cases, _output, progress=None):
+                del progress
                 captured["themes"] = set(
                     item["theme"] for item in cases)
                 return designer

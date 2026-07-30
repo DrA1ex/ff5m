@@ -54,18 +54,19 @@ class ConsoleProgress:
     def stage(self, current, total, message):
         self._write("[stage %d/%d] %s" % (current, total, message))
 
-    def review(self, event):
+    def _item(self, name, event):
         completed = event["completed"]
         total = event["total"]
         if completed == 0:
             self._write(
-                "[review 0/%d] waiting for first result; ETA estimating"
-                % total)
+                "[%s 0/%d] waiting for first result; ETA estimating"
+                % (name, total))
             return
         case_id = " ".join(str(event.get("case_id") or "frame").split())[:120]
         self._write(
-            "[review %d/%d] %s; last %.1fs; elapsed %s; ETA %s"
+            "[%s %d/%d] %s; last %.1fs; elapsed %s; ETA %s"
             % (
+                name,
                 completed,
                 total,
                 case_id,
@@ -73,6 +74,12 @@ class ConsoleProgress:
                 _duration(event.get("elapsed_seconds")),
                 _duration(event.get("eta_seconds")),
             ))
+
+    def render(self, event):
+        self._item("render", event)
+
+    def review(self, event):
+        self._item("review", event)
 
 
 def _load_env(path):
@@ -563,7 +570,8 @@ def execute(args, output=None, progress=None):
             3, 6, "Rendering %d Designer screenshots" % len(cases))
     designer_records = hybrid.DesignerCapture(
         args.designer_root, args.project_root).capture(
-            cases, output / "designer")
+            cases, output / "designer",
+            progress=progress.render if progress is not None else None)
     if progress is not None:
         progress.stage(4, 6, "Building the merged review corpus")
     if args.mode == "designer":
@@ -673,6 +681,19 @@ def main(argv=None):
     progress = ConsoleProgress()
     try:
         report, output = execute(args, output=output, progress=progress)
+    except KeyboardInterrupt:
+        report = _infrastructure_report(
+            args, output, RuntimeError("cancelled by user"))
+        report["infrastructure_error"] = {
+            "category": "UserCancelled",
+            "message": "Run cancelled by user; partial artifacts retained.",
+        }
+        _write_reports(output, report)
+        print(
+            "UI regression cancelled; partial report=%s"
+            % (output / "report.html"),
+            file=sys.stderr)
+        return 130
     except Exception as exc:
         report = _infrastructure_report(args, output, exc)
         _write_reports(output, report)
