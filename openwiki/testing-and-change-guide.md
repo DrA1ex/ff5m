@@ -226,6 +226,9 @@ The report is screenshot-first:
   real-printer screens;
 - **Designer ↔ real printer** is a separate continuation grid whose tiles show
   both renderer outputs side by side;
+- desktop tiles deliberately use a large inspection scale: standalone frames
+  target about 480 CSS pixels and parity pairs about 720 CSS pixels, reducing
+  the number of columns so small visual differences remain visible;
 - warning/failure tiles use prominent yellow/red borders and markers;
 - clicking any tile opens a large modal with the images, textual baseline,
   model summary, reasons, JSON-validation evidence, timings, and checklist;
@@ -236,6 +239,17 @@ the real Typer/framebuffer frame. Hybrid/parity theme synchronization removes
 normal theme-color differences. Footer-only live status (temperatures, network
 address, preview/standby label) may still differ; page titles, controls,
 dialogs, selections, and typed-state values must remain equivalent.
+
+The semantic reviewer classifies evidence as `dynamic_runtime`,
+`rendering_only`, or `product_semantic`. Live and mock values are compared by
+their role, plausible format, readability, and location rather than by their
+literal value. Exact or approximate numeric equality is required only when the
+case expectation explicitly constrains that value. A model response cannot
+use `dynamic_runtime` or `rendering_only` evidence for a warning or failure;
+such a response receives the same single corrective retry used for malformed
+JSON. Structural, content, dialog, selection, typed-state, clipping, overlap,
+missing-content, and explicitly constrained-value defects remain
+`product_semantic` findings and are never suppressed.
 
 Use the compact toolbar to filter by outcome or source. `report.json` remains
 the machine-readable source of truth, while `report.md` is a short
@@ -315,6 +329,32 @@ python3 -m tests.visual_checks.compare_reports \
 The comparison reports JSON-validity, verdict counts, review rate, mean
 latency, and normalized error counts. Endpoint addresses, API keys, and raw
 secret-bearing errors are excluded from all regression artifacts.
+
+To benchmark every already downloaded LM Studio vision model with a declared
+parameter count no greater than 12B, use the separate host-only command. It
+uses the native LM Studio API only for catalog, load, and unload lifecycle;
+each visual inference still uses the provider-neutral OpenAI-compatible
+pipeline:
+
+```bash
+python3 -m tests.visual_checks.lmstudio_benchmark \
+  --designer-root /path/to/feather-ui-designer \
+  --printer-artifacts /path/to/saved-ui-artifacts \
+  --printer-artifacts /path/to/saved-component-artifacts
+```
+
+The command never contacts the printer and never downloads models or
+dependencies. It excludes non-vision models, models above 12B, and models with
+an unknown parameter count. Models run sequentially against the same saved
+artifacts. Every loaded instance is unloaded and its absence verified before
+the next model starts; an unload-verification failure stops the benchmark.
+
+The ignored `benchmark.json` records structured-response validity, verdicts,
+review rate, errors, model load time, complete corpus wall time, mean request
+latency, model file size, and the LM Studio memory estimate when the local CLI
+can provide one. Both LM Studio's reported load time and independently
+measured load wall time are retained. Each model also has its own large-grid
+HTML report. The API key and endpoint are not included in any report.
 
 This is not a gap to hide: Forge-X changes early boot, services, printer motion, calibration, and low-memory behavior on specific hardware. A unit-like syntax check cannot prove the crucial outcomes.
 

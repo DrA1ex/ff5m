@@ -32,17 +32,21 @@ from tests.visual_checks import designer_scenes as DESIGNER_SCENES  # noqa: E402
 from tests.visual_checks import regression as REGRESSION  # noqa: E402
 from tests.visual_checks import run as PIPELINE  # noqa: E402
 from tests.visual_checks import html_report as HTML_REPORT  # noqa: E402
+from tests.visual_checks import lmstudio_benchmark as BENCHMARK  # noqa: E402
 
 
-def verdict(status="pass"):
+def verdict(status="pass", evidence_class=None, reason=None):
     checks = []
     for index, item in enumerate(VISION.CHECKLIST):
         item_status = status if index == 0 else "pass"
         checks.append({
             "id": item["id"],
             "status": item_status,
+            "evidence_class": (
+                evidence_class or "product_semantic"
+                if item_status != "pass" else "none"),
             "reason": (
-                "Visible overlap near the header."
+                reason or "Visible overlap near the header."
                 if item_status != "pass" else ""),
         })
     return {
@@ -311,6 +315,59 @@ class VisualEvaluatorTest(unittest.TestCase):
             "previous response violated this contract",
             posts[1][2]["messages"][0]["content"])
 
+    def test_allowed_runtime_difference_is_retried_instead_of_reviewed(self):
+        first = verdict(
+            "warn", evidence_class="dynamic_runtime",
+            reason="Only live footer temperatures differ.")
+        with FakeOpenAIEndpoint(
+                ("vision-a",),
+                {"vision-a": [first, verdict("pass")]}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"designer", "image/png", {
+                    "_comparison_image": (b"printer", "image/png"),
+                })
+
+        model = result["models"][0]
+        self.assertEqual(model["verdict"], "pass")
+        self.assertEqual(model["attempts"], 2)
+
+    def test_product_semantic_difference_remains_a_valid_warning(self):
+        response = verdict(
+            "warn", evidence_class="product_semantic",
+            reason="The selected movement step differs.")
+        with FakeOpenAIEndpoint(
+                ("vision-a",), {"vision-a": response}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"designer", "image/png", {
+                    "_comparison_image": (b"printer", "image/png"),
+                })
+
+        model = result["models"][0]
+        self.assertEqual(model["verdict"], "warn")
+        self.assertEqual(model["attempts"], 1)
+        self.assertEqual(
+            model["reasons"][0]["evidence_class"], "product_semantic")
+
+    def test_non_pass_without_product_semantic_evidence_is_retried(self):
+        first = verdict(
+            "warn", evidence_class="none",
+            reason="No product defect was identified.")
+        with FakeOpenAIEndpoint(
+                ("vision-a",),
+                {"vision-a": [first, verdict("pass")]}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"designer", "image/png", {})
+
+        model = result["models"][0]
+        self.assertEqual(model["verdict"], "pass")
+        self.assertEqual(model["attempts"], 2)
+
     def test_strict_is_explicit_and_turns_any_non_pass_into_failure(self):
         with FakeOpenAIEndpoint(
                 ("vision-a",),
@@ -389,6 +446,368 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertEqual(
             sum(1 for item in server.requests if item[0] == "POST"),
             len(names))
+
+
+class LMStudioBenchmarkTest(unittest.TestCase):
+    def test_memory_estimate_parser_uses_binary_gigabytes(self):
+        self.assertEqual(
+            BENCHMARK.parse_estimated_memory(
+                "Estimated GPU Memory: 4.10 GB\n"
+                "Estimated Total Memory: 5.72 GB\n"),
+            round(5.72 * 1024 ** 3))
+        self.assertEqual(
+            BENCHMARK.parse_estimated_memory(
+                "Estimated Total Memory: 8.95 GiB\n"),
+            round(8.95 * 1024 ** 3))
+        self.assertIsNone(
+            BENCHMARK.parse_estimated_memory("Estimate unavailable"))
+
+    def test_catalog_filter_requires_declared_vision_and_at_most_12b(self):
+        catalog = {
+            "models": [
+                {
+                    "type": "llm",
+                    "key": "vision-4b",
+                    "params_string": "4B",
+                    "size_bytes": 2_000_000_000,
+                    "capabilities": {"vision": True},
+                },
+                {
+                    "type": "llm",
+                    "key": "vision-12b",
+                    "params_string": "12B",
+                    "size_bytes": 7_000_000_000,
+                    "capabilities": {"vision": True},
+                },
+                {
+                    "type": "llm",
+                    "key": "vision-12.1b",
+                    "params_string": "12.1B",
+                    "size_bytes": 7_100_000_000,
+                    "capabilities": {"vision": True},
+                },
+                {
+                    "type": "llm",
+                    "key": "text-7b",
+                    "params_string": "7B",
+                    "size_bytes": 4_000_000_000,
+                    "capabilities": {"vision": False},
+                },
+                {
+                    "type": "llm",
+                    "key": "vision-unknown",
+                    "params_string": None,
+                    "size_bytes": 3_000_000_000,
+                    "capabilities": {"vision": True},
+                },
+            ],
+        }
+
+        eligible = BENCHMARK.eligible_models(catalog, max_billions=12.0)
+
+        self.assertEqual(
+            [item["key"] for item in eligible],
+            ["vision-12b", "vision-4b"])
+        self.assertEqual(
+            [item["parameter_billions"] for item in eligible],
+            [12.0, 4.0])
+        with self.assertRaisesRegex(ValueError, "at most 12B"):
+            BENCHMARK.eligible_models(catalog, max_billions=120.0)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            BENCHMARK.eligible_models(catalog, max_billions=float("nan"))
+
+    def test_preflight_unloads_only_selected_model_instances(self):
+        events = []
+
+        class Manager:
+            def unload(self, instance_id):
+                events.append(("unload", instance_id))
+
+            def is_loaded(self, instance_id):
+                events.append(("verify_unloaded", instance_id))
+                return False
+
+        BENCHMARK.unload_selected_instances(Manager(), [
+            {
+                "key": "vision-a",
+                "loaded_instances": [{"id": "vision-a-loaded"}],
+            },
+            {
+                "key": "vision-b",
+                "loaded_instances": [],
+            },
+        ])
+
+        self.assertEqual(events, [
+            ("unload", "vision-a-loaded"),
+            ("verify_unloaded", "vision-a-loaded"),
+        ])
+
+    def test_failed_regression_unloads_before_the_next_model(self):
+        events = []
+
+        class Manager:
+            def load(self, model):
+                events.append(("load", model["key"]))
+                return {
+                    "instance_id": "instance-" + model["key"],
+                    "load_time_seconds": 1.25,
+                }
+
+            def unload(self, instance_id):
+                events.append(("unload", instance_id))
+
+            def is_loaded(self, instance_id):
+                events.append(("verify_unloaded", instance_id))
+                return False
+
+        def run_regression(model, output):
+            events.append(("regression", model["key"]))
+            if model["key"] == "vision-a":
+                raise RuntimeError("fake inference failure")
+            return {
+                "returncode": 0,
+                "report": str(output / "report.json"),
+                "summary": {"status": "pass", "cases": 63},
+            }
+
+        runner = BENCHMARK.BenchmarkRunner(
+            Manager(), run_regression, clock=iter((
+                0.0, 1.0, 2.0, 5.0,
+                6.0, 7.0, 9.0, 12.0,
+            )).__next__)
+        result = runner.run([
+            {
+                "key": "vision-a", "params_string": "4B",
+                "parameter_billions": 4.0, "size_bytes": 2_000_000_000,
+            },
+            {
+                "key": "vision-b", "params_string": "8B",
+                "parameter_billions": 8.0, "size_bytes": 4_000_000_000,
+            },
+        ], pathlib.Path("/ignored/benchmark"))
+
+        self.assertEqual(events, [
+            ("load", "vision-a"),
+            ("regression", "vision-a"),
+            ("unload", "instance-vision-a"),
+            ("verify_unloaded", "instance-vision-a"),
+            ("load", "vision-b"),
+            ("regression", "vision-b"),
+            ("unload", "instance-vision-b"),
+            ("verify_unloaded", "instance-vision-b"),
+        ])
+        self.assertEqual(
+            [item["status"] for item in result["models"]],
+            ["error", "completed"])
+        self.assertEqual(
+            [item["load_wall_time_seconds"] for item in result["models"]],
+            [1.0, 2.0])
+
+    def test_unload_verification_failure_stops_before_next_load(self):
+        events = []
+
+        class Manager:
+            def load(self, model):
+                events.append(("load", model["key"]))
+                return {
+                    "instance_id": "instance-" + model["key"],
+                    "load_time_seconds": 0.5,
+                }
+
+            def unload(self, instance_id):
+                events.append(("unload", instance_id))
+
+            def is_loaded(self, instance_id):
+                return True
+
+        runner = BENCHMARK.BenchmarkRunner(
+            Manager(),
+            lambda model, output: {
+                "returncode": 0,
+                "report": str(output / "report.json"),
+                "summary": {"status": "pass"},
+            },
+            clock=iter((0.0, 0.1, 0.6, 1.0)).__next__)
+
+        with self.assertRaisesRegex(
+                BENCHMARK.BenchmarkIsolationError, "remained loaded"):
+            runner.run([
+                {
+                    "key": "vision-a", "params_string": "4B",
+                    "parameter_billions": 4.0, "size_bytes": 2_000_000_000,
+                },
+                {
+                    "key": "vision-b", "params_string": "8B",
+                    "parameter_billions": 8.0, "size_bytes": 4_000_000_000,
+                },
+            ], pathlib.Path("/ignored/benchmark"))
+
+        self.assertEqual(events, [
+            ("load", "vision-a"),
+            ("unload", "instance-vision-a"),
+        ])
+
+    def test_benchmark_redacts_exception_secrets(self):
+        secret = "local-secret-value"
+        endpoint = "http://127.0.0.1:1234"
+
+        class Manager:
+            def load(self, model):
+                raise RuntimeError("%s failed at %s" % (secret, endpoint))
+
+            def loaded_instance_ids(self, model):
+                return []
+
+        runner = BENCHMARK.BenchmarkRunner(
+            Manager(), lambda *_args: {},
+            clock=iter((0.0, 0.1, 0.5, 1.0)).__next__,
+            redactor=lambda value: str(value).replace(
+                secret, "<redacted>").replace(endpoint, "<endpoint>"))
+        result = runner.run([{
+            "key": "vision-a", "params_string": "4B",
+            "parameter_billions": 4.0, "size_bytes": 2_000_000_000,
+        }], pathlib.Path("/ignored/benchmark"))
+
+        encoded = json.dumps(result)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn(endpoint, encoded)
+
+    def test_regression_infrastructure_result_marks_benchmark_error(self):
+        class Manager:
+            def load(self, model):
+                return {
+                    "instance_id": "instance-a",
+                    "load_time_seconds": 0.5,
+                }
+
+            def unload(self, instance_id):
+                pass
+
+            def is_loaded(self, instance_id):
+                return False
+
+        runner = BENCHMARK.BenchmarkRunner(
+            Manager(),
+            lambda model, output: {
+                "status": "error",
+                "returncode": 2,
+                "report": str(output / "report.json"),
+                "summary": {
+                    "status": "fail", "errors": 1,
+                    "infrastructure_error": True,
+                },
+                "error": {
+                    "category": "RuntimeError",
+                    "message": "Designer unavailable",
+                },
+            },
+            clock=iter((0.0, 0.1, 0.6, 1.0)).__next__)
+        result = runner.run([{
+            "key": "vision-a", "params_string": "4B",
+            "parameter_billions": 4.0, "size_bytes": 2_000_000_000,
+        }], pathlib.Path("/ignored/benchmark"))
+
+        self.assertEqual(result["status"], "completed_with_errors")
+        self.assertEqual(result["models"][0]["status"], "error")
+        self.assertEqual(result["models"][0]["returncode"], 2)
+        self.assertEqual(
+            result["models"][0]["error"]["category"], "RuntimeError")
+
+    def test_ambiguous_load_failure_cleans_instance_before_next_model(self):
+        events = []
+
+        class Manager:
+            def load(self, model):
+                events.append(("load", model["key"]))
+                if model["key"] == "vision-a":
+                    raise TimeoutError("response lost after load")
+                return {
+                    "instance_id": "instance-b",
+                    "load_time_seconds": 0.5,
+                }
+
+            def loaded_instance_ids(self, model):
+                events.append(("discover", model["key"]))
+                return ["leaked-a"] if model["key"] == "vision-a" else []
+
+            def unload(self, instance_id):
+                events.append(("unload", instance_id))
+
+            def is_loaded(self, instance_id):
+                events.append(("verify_unloaded", instance_id))
+                return False
+
+        def regression(model, output):
+            events.append(("regression", model["key"]))
+            return {
+                "returncode": 0,
+                "report": str(output / "report.json"),
+                "summary": {"status": "pass"},
+            }
+
+        runner = BENCHMARK.BenchmarkRunner(
+            Manager(), regression,
+            clock=iter((
+                0.0, 0.1, 0.5, 1.0,
+                2.0, 2.1, 2.6, 3.0,
+            )).__next__)
+        result = runner.run([
+            {
+                "key": "vision-a", "params_string": "4B",
+                "parameter_billions": 4.0, "size_bytes": 2_000_000_000,
+            },
+            {
+                "key": "vision-b", "params_string": "8B",
+                "parameter_billions": 8.0, "size_bytes": 4_000_000_000,
+            },
+        ], pathlib.Path("/ignored/benchmark"))
+
+        self.assertEqual(events, [
+            ("load", "vision-a"),
+            ("discover", "vision-a"),
+            ("unload", "leaked-a"),
+            ("verify_unloaded", "leaked-a"),
+            ("load", "vision-b"),
+            ("regression", "vision-b"),
+            ("unload", "instance-b"),
+            ("verify_unloaded", "instance-b"),
+        ])
+        self.assertEqual(
+            [item["status"] for item in result["models"]],
+            ["error", "completed"])
+
+    def test_regression_subprocess_forwards_custom_api_key_env(self):
+        class Args:
+            designer_root = "/designer"
+            env_file = "/ignored/.env"
+            printer_artifacts = ["/saved/ui", "/saved/component"]
+            api_key_env = "CUSTOM_VISUAL_TOKEN"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+
+            def fake_run(command, **_kwargs):
+                (output / "report.json").write_text(json.dumps({
+                    "status": "pass",
+                    "configuration": {"model": "vision-a"},
+                    "screenshots": [],
+                }), encoding="utf-8")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(
+                    BENCHMARK.subprocess, "run", side_effect=fake_run) as call:
+                BENCHMARK._regression_runner(
+                    Args(), {"CUSTOM_VISUAL_TOKEN": "secret"})({
+                        "key": "vision-a",
+                        "inference_model": "instance-a",
+                    }, output)
+
+        command = call.call_args.args[0]
+        self.assertEqual(
+            command[command.index("--api-key-env") + 1],
+            "CUSTOM_VISUAL_TOKEN")
+        self.assertNotIn("secret", command)
 
     def test_verdict_validator_rejects_extra_fields_and_wrong_severity(self):
         extra = verdict("pass")
@@ -686,6 +1105,13 @@ class HybridCompositionTest(unittest.TestCase):
             report.write_text(json.dumps({
                 "status": "review",
                 "configuration": {"model": "vision-a"},
+                "benchmark": {
+                    "load_time_seconds": 4.5,
+                    "load_wall_time_seconds": 4.8,
+                    "wall_time_seconds": 130.0,
+                    "model_size_bytes": 4_000_000_000,
+                    "estimated_memory_bytes": 5_000_000_000,
+                },
                 "screenshots": [
                     {"models": [{
                         "model": "vision-a",
@@ -710,6 +1136,11 @@ class HybridCompositionTest(unittest.TestCase):
         self.assertEqual(value["json_valid_rate"], 1.0)
         self.assertEqual(value["review_rate"], 0.5)
         self.assertEqual(value["mean_elapsed_seconds"], 2.0)
+        self.assertEqual(value["load_time_seconds"], 4.5)
+        self.assertEqual(value["load_wall_time_seconds"], 4.8)
+        self.assertEqual(value["wall_time_seconds"], 130.0)
+        self.assertEqual(value["model_size_bytes"], 4_000_000_000)
+        self.assertEqual(value["estimated_memory_bytes"], 5_000_000_000)
 
 
 class PrinterCollectorSafetyTest(unittest.TestCase):
@@ -850,6 +1281,12 @@ class RegressionOrchestratorTest(unittest.TestCase):
         self.assertIn("Real printer", page)
         self.assertIn(
             "dl{display:grid;grid-template-columns:", page)
+        self.assertIn(
+            ".shot-grid{display:grid;grid-template-columns:"
+            "repeat(auto-fill,minmax(480px,1fr))", page)
+        self.assertIn(
+            ".shot-grid.pair-grid{grid-template-columns:"
+            "repeat(auto-fill,minmax(720px,1fr))", page)
         self.assertNotIn("<menu>", page)
 
     def test_infrastructure_failure_always_writes_html_and_json(self):

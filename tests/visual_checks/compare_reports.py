@@ -19,7 +19,7 @@ def summarize(path):
     valid = 0
     total = 0
     elapsed = []
-    errors = 0
+    errors = 1 if isinstance(value.get("infrastructure_error"), dict) else 0
     for frame in value.get("screenshots", ()):
         for result in frame.get("models", ()):
             total += 1
@@ -33,6 +33,9 @@ def summarize(path):
                 errors += 1
     reviewed = sum(item in ("warn", "fail") for item in verdicts)
     configuration = value.get("configuration", {})
+    benchmark = value.get("benchmark", {})
+    if not isinstance(benchmark, dict):
+        benchmark = {}
     return {
         "path": str(path),
         "model": str(configuration.get("model") or "unknown"),
@@ -47,7 +50,16 @@ def summarize(path):
                         if verdicts else 0.0),
         "mean_elapsed_seconds": (
             statistics.mean(elapsed) if elapsed else None),
+        "load_time_seconds": benchmark.get("load_time_seconds"),
+        "load_wall_time_seconds": benchmark.get(
+            "load_wall_time_seconds"),
+        "wall_time_seconds": benchmark.get("wall_time_seconds"),
+        "model_size_bytes": benchmark.get("model_size_bytes"),
+        "estimated_memory_bytes": benchmark.get(
+            "estimated_memory_bytes"),
         "errors": errors,
+        "infrastructure_error": isinstance(
+            value.get("infrastructure_error"), dict),
     }
 
 
