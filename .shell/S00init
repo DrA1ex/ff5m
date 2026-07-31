@@ -80,16 +80,12 @@ initialize() {
 
     echo "// Update links..."
 
-    # Services
-    rm -f /etc/init.d/S99moon
-    rm -f /etc/init.d/K99moon
-
     ln -fs /opt/config/mod/.shell/S55boot /etc/init.d/
     ln -fs /opt/config/mod/.shell/S60dropbear /etc/init.d/
     ln -fs /opt/config/mod/.shell/S98camera /etc/init.d/
     ln -fs /opt/config/mod/.shell/S98zssh /etc/init.d/
     ln -fs /opt/config/mod/.shell/S99root /etc/init.d/
-    ln -fs /opt/config/mod/.shell/K99root /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S99root /etc/init.d/K99root
     
     # oh-my-zsh
     mkdir -p /root/.oh-my-zsh
