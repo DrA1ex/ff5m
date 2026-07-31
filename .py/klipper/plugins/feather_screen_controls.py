@@ -1734,6 +1734,13 @@ class FeatherControlsMixin:
         }
 
     def _start_action_prompt(self, title):
+        title = str(title).strip()
+        visible_prompt = (
+            getattr(self, "action_prompt_visible", False)
+            and self.page == Page.ACTION_PROMPT)
+        refresh_visible = (
+            visible_prompt and self.action_prompt is not None
+            and self.action_prompt.get("title") == title)
         if (getattr(self, "action_prompt_visible", False)
                 and self.page in (
                     Page.ACTION_PROMPT, Page.RECOVERY_PROMPT,
@@ -1744,14 +1751,14 @@ class FeatherControlsMixin:
         else:
             return_page = self.page
         self.action_prompt = {
-            "title": str(title).strip(),
+            "title": title,
             "text": [],
             "rows": [],
             "footer": [],
             "group": None,
             "buttons": {},
         }
-        self.action_prompt_visible = False
+        self.action_prompt_visible = refresh_visible
         self.action_prompt_return_page = return_page
         self.action_prompt_page = 0
 
@@ -1797,9 +1804,14 @@ class FeatherControlsMixin:
             page = Page.RECOVERY_PROMPT
         else:
             page = Page.ACTION_PROMPT
+        already_visible = (
+            self.action_prompt_visible and self.page == page)
         self.action_prompt_visible = True
         self.action_prompt_page = 0
-        self._show_page(page)
+        if already_visible and page == Page.ACTION_PROMPT:
+            self._render_action_prompt()
+        else:
+            self._show_page(page)
 
     def _end_action_prompt(self):
         current_page = self.page

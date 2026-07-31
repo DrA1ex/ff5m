@@ -28,6 +28,10 @@ class _RestartRequested(Exception):
     pass
 
 
+class _ReactorStopped(RuntimeError):
+    pass
+
+
 class RenderBatchQueue:
     """A small priority/coalescing queue safe for reactor submissions."""
 
@@ -307,7 +311,10 @@ class TyperRenderWorker:
             finally:
                 acknowledged.set()
 
-        self.schedule_async(deliver)
+        try:
+            self.schedule_async(deliver)
+        except (TypeError, OSError) as exc:
+            raise _ReactorStopped("reactor is stopped") from exc
         if not acknowledged.wait(HANDOFF_TIMEOUT):
             raise RuntimeError("reactor did not acknowledge touch FIFO handoff")
         if callback_error:
@@ -452,6 +459,8 @@ class TyperRenderWorker:
             self._set_state("backoff", exc)
         try:
             self._close_transport()
+        except _ReactorStopped:
+            raise
         except Exception as close_exc:
             self._set_state("backoff", close_exc)
         self._stop_owned_process()
@@ -495,6 +504,9 @@ class TyperRenderWorker:
                             self.queue.drop_render()
                             self._set_state("running", exc)
                     pending = None
+                except _ReactorStopped:
+                    self.queue.close()
+                    break
                 except _RestartRequested as exc:
                     self._recover(exc, failures)
                 except Exception as exc:
@@ -504,6 +516,8 @@ class TyperRenderWorker:
             self._set_state("stopping")
             try:
                 self._close_transport()
+            except _ReactorStopped:
+                pass
             except Exception:
                 logging.exception("[feather_screen] touch FIFO cleanup failed")
             self._stop_owned_process()

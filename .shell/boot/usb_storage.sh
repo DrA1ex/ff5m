@@ -162,6 +162,18 @@ usb_storage_candidates() {
 }
 
 
+usb_storage_has_enumerated_disk() {
+    local sys_device device_name
+
+    for sys_device in "$USB_STORAGE_SYS_BLOCK_ROOT"/*; do
+        [ -e "$sys_device" ] || continue
+        device_name=$(basename "$sys_device")
+        usb_storage_is_usb_disk "$device_name" && return 0
+    done
+    return 1
+}
+
+
 usb_storage_wait_for_candidates() {
     local timeout="${1:-10}"
     local elapsed=0

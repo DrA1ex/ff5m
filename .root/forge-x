@@ -60,15 +60,19 @@ case "$1" in
         
         if [ "${VERSION%.*}" != "${NEW_VERSION%.*}" ]; then
             message "This version cannot be updated via OTA." "!!"
-            message "Please update your firmware by downloading the latest image from the Releases page." "!!"
-            message "Visit: https://github.com/drA1ex/ff5m/releases" "!!"
+            message "Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the latest firmware image manually from the Releases page." "!!"
+            message "Visit: https://github.com/DrA1ex/ff5m/releases" "!!"
 
+            command "action:prompt_end"
             command "action:prompt_begin OTA Update"
             command "action:prompt_text This version cannot be updated via OTA."
-            command "action:prompt_text Please update your firmware by downloading the latest image from the Releases page."
-            command "action:prompt_text Visit: https://github.com/drA1ex/ff5m/releases"
-            command "action:prompt_end"
+            command "action:prompt_text Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the latest firmware image manually."
+            command "action:prompt_text https://github.com/DrA1ex/ff5m/releases"
+            command "action:prompt_footer_button Download to USB|DOWNLOAD_FIRMWARE_UPDATE|primary"
+            command "action:prompt_footer_button Close|RESPOND TYPE=command MSG=action:prompt_end|secondary"
             command "action:prompt_show"
+
+            exit 1
             
             exit 1
         fi

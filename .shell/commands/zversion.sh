@@ -2,7 +2,7 @@
 
 ## Mod's version compatibility checking script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -40,11 +40,17 @@ case $1 in
     verify)
         if ! test; then
             message "The current version is not compatible with the flashed core firmware." "!!"
-            message "Detected Core Version: $CORE_VERSION | Current Firmware Version: $OTA_VERSION" "!!"
-            message "Please update your firmware by downloading the latest image from the Releases page." "!!"
+            message "Detected Core Version: ${CORE_VERSION:-unknown} | Current Firmware Version: ${OTA_VERSION:-unknown}" "!!"
+            message "Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the latest firmware image manually from the Releases page." "!!"
             message "Visit: https://github.com/drA1ex/ff5m/releases" "!!"
 
-            echo "UPDATE_DELAYED_GCODE ID=verify_version DURATION=60" > /tmp/printer
+            command "action:prompt_end"
+            command "action:prompt_begin Firmware update required"
+            command "action:prompt_text The current firmware is not compatible with the flashed core."
+            command "action:prompt_text Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the firmware manually."
+            command "action:prompt_footer_button Download to USB|DOWNLOAD_FIRMWARE_UPDATE|primary"
+            command "action:prompt_footer_button Close|RESPOND TYPE=command MSG=action:prompt_end|secondary"
+            command "action:prompt_show"
         fi
     ;;
     *)

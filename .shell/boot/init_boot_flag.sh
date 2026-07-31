@@ -55,8 +55,12 @@ search_special_boot_flag_usb() {
     echo "Searching for boot flag in USB files..."
 
     wait_seconds="${BOOT_FLAG_USB_WAIT_SECONDS:-10}"
+    if ! usb_storage_has_enumerated_disk; then
+        echo "No USB storage found."
+        return 1
+    fi
     if ! usb_storage_wait_for_candidates "$wait_seconds"; then
-        echo "No USB storage appeared within ${wait_seconds}s."
+        echo "USB storage did not become ready within ${wait_seconds}s."
         return 1
     fi
 
