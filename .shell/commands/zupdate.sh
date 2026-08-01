@@ -92,9 +92,9 @@ mount --bind "$USB_STORAGE_MOUNT_POINT" "$CHROOT_BIND" \
 
 update_download_prompt() {
     local percent=$1 message=$2
-    local filled=$((percent / 10)) bar empty
+    local filled=$((percent / 5)) bar empty
     printf -v bar '%*s' "$filled" ''; bar=${bar// /#}
-    printf -v empty '%*s' "$((10 - filled))" ''; empty=${empty// /-}
+    printf -v empty '%*s' "$((20 - filled))" ''; empty=${empty// /-}
     echo "// action:prompt_begin Downloading firmware"
     echo "// action:prompt_text $message"
     echo "// action:prompt_text [$bar$empty] $percent%"
