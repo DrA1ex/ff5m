@@ -211,6 +211,39 @@ class RunnerContractTest(unittest.TestCase):
             dispatched, [UI_TEST.move_actions.Y_PLUS.wire_id])
         self.assertEqual(feature.motion_expected, 110.0)
 
+    def test_motion_step_waits_for_delayed_toolhead_update(self):
+        position = [110.006, 109.0, 220.0]
+        dispatched = []
+        toolhead = type("Toolhead", (), {
+            "get_status": lambda self, eventtime: {
+                "position": tuple(position), "homed_axes": "xyz",
+            },
+        })()
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 10.0,
+            })(),
+            "toolhead": toolhead,
+            "_feather_move_limits": lambda self, status: (
+                (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
+            "_dispatch_action": lambda self, action: dispatched.append(action),
+        })()
+        feature = UI_TEST.UITestFeature(host)
+        feature.motion_origin = tuple(position)
+
+        feature._motion_step("x", 1)
+
+        self.assertEqual(
+            dispatched, [UI_TEST.move_actions.X_MINUS.wire_id])
+        self.assertFalse(feature._motion_reached("x"))
+        position[0] = feature.motion_expected
+        self.assertTrue(feature._motion_reached("x"))
+        labels = [step["label"] for step in feature._build_steps("MOTION")]
+        self.assertLess(labels.index("motion-x-forward-dispatch"),
+                        labels.index("motion-x-forward-complete"))
+        self.assertLess(labels.index("motion-x-forward-complete"),
+                        labels.index("motion-x-forward"))
+
     def test_render_suite_is_nonphysical_and_waits_for_recovery(self):
         statuses = [
             {"worker_state": "running", "typer_restarts": 2},

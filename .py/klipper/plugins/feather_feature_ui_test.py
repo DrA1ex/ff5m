@@ -42,6 +42,8 @@ FRAME_SETTLE_TIMEOUT = 3.0
 MAX_RUNS = 10
 MAX_BYTES = 512 * 1024 * 1024
 TAP_OPERATION_TIMEOUT = 1900.0
+MOTION_STEP_TIMEOUT = 10.0
+MOTION_STEP_INTERVAL = 0.1
 PERSISTENT_ACTIONS = frozenset((
     "cal.mesh.save", "cal.tuning.save", "z.save", "live_z.save",
     "live_z.save.yes", "mod.apply", "mod.save", "error.restart",
@@ -947,11 +949,19 @@ class UITestFeature:
         self._add_call(steps, "motion-origin", self._save_motion_origin)
         self._add_capture(steps, "motion-homed")
         for axis in "xyz":
-            self._add_call(steps, "motion-%s-forward" % axis,
+            self._add_call(steps, "motion-%s-forward-dispatch" % axis,
                            lambda axis=axis: self._motion_step(axis, 1))
+            self._add_wait(
+                steps, "motion-%s-forward-complete" % axis,
+                lambda axis=axis: self._motion_reached(axis),
+                MOTION_STEP_TIMEOUT, MOTION_STEP_INTERVAL)
             self._add_capture(steps, "motion-%s-forward" % axis)
-            self._add_call(steps, "motion-%s-return" % axis,
+            self._add_call(steps, "motion-%s-return-dispatch" % axis,
                            lambda axis=axis: self._motion_step(axis, -1))
+            self._add_wait(
+                steps, "motion-%s-return-complete" % axis,
+                lambda axis=axis: self._motion_reached(axis),
+                MOTION_STEP_TIMEOUT, MOTION_STEP_INTERVAL)
             self._add_capture(steps, "motion-%s-return" % axis)
         self._add_call(steps, "motion-disable", lambda: self.host._run_script("M84"))
 
@@ -1425,12 +1435,13 @@ class UITestFeature:
             self.host._dispatch_action(action)
         finally:
             self.dispatching_test_action = False
+
+    def _motion_reached(self, axis):
+        index = "xyz".index(axis)
         actual = float(self.host.toolhead.get_status(
             self.reactor.monotonic())["position"][index])
-        if not math.isclose(actual, self.motion_expected, abs_tol=0.05):
-            raise RuntimeError(
-                "%s position %.3f, expected %.3f" %
-                (axis.upper(), actual, self.motion_expected))
+        return math.isclose(
+            actual, self.motion_expected, abs_tol=0.05)
 
     def _save_heat_initial(self):
         values = self._temperatures()
