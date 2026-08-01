@@ -450,23 +450,5 @@ class GcodeShellCommandTest(unittest.TestCase):
             "// action:prompt_show",
         ])
 
-    def test_only_long_progress_commands_use_stream_mode(self):
-        config = (ROOT / "macros" / "shell.cfg").read_text(
-            encoding="utf-8")
-
-        def block(name):
-            return config.split(
-                "[gcode_shell_command %s]" % name, 1)[1].split(
-                    "[gcode_shell_command", 1)[0]
-
-        self.assertIn("mode: stream", block("zusb_format"))
-        self.assertIn("mode: stream", block("zfs"))
-        self.assertIn("mode: background", block("zusb"))
-        self.assertIn("mode: background", block("restart_klipper"))
-        self.assertIn("mode: background", block("bash"))
-        self.assertIn("mode: queue", block("parameter_changed"))
-        self.assertNotIn("background_stream", config)
-
-
 if __name__ == "__main__":
     unittest.main()

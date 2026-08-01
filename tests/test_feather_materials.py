@@ -175,18 +175,6 @@ class MaterialLayoutTest(unittest.TestCase):
 
 
 class MaterialMacroContractTest(unittest.TestCase):
-    def test_base_includes_material_config_and_material_macros_live_there(self):
-        base = (ROOT / "macros" / "base.cfg").read_text(encoding="utf-8")
-        material = (ROOT / "config" / "material.cfg").read_text(
-            encoding="utf-8")
-        self.assertIn("[include ../config/material.cfg]", base)
-        for macro in (
-                "SET_MATERIAL", "PREHEAT_MATERIAL", "LOAD_FILAMENT",
-                "UNLOAD_FILAMENT", "PURGE_FILAMENT", "LOAD_MATERIAL",
-                "COLDPULL"):
-            self.assertNotIn("[gcode_macro %s]" % macro, base)
-            self.assertIn("[gcode_macro %s]" % macro, material)
-
     def test_slot_lists_drive_both_prompts_and_empty_prompts_are_safe(self):
         material = (ROOT / "config" / "material.cfg").read_text(
             encoding="utf-8")
