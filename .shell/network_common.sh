@@ -8,8 +8,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license
 
-PATH=/sbin:/usr/sbin:/bin:/usr/bin
-export PATH
+source /opt/config/mod/.shell/common.sh
 
 : "${NETWORK_RESOLV_CONF:=/etc/resolv.conf}"
 
