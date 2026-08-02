@@ -51,9 +51,12 @@ CHECKLIST = (
     {
         "id": "spacing_and_clearance",
         "description": (
-            "Text and controls have deliberate clearance from headers, "
-            "borders, neighbors, and related regions, with consistent "
-            "internal padding and vertical rhythm."),
+            "Perform a local boundary audit: the first and last body lines "
+            "have deliberate clearance from header and footer separators; "
+            "each independent text block has visible clearance from borders, "
+            "neighboring sections, and controls; controls have consistent "
+            "internal padding and vertical rhythm. One locally cramped gap "
+            "fails even when the rest of the screen has ample whitespace."),
     },
     {
         "id": "alignment_and_balance",
@@ -340,6 +343,75 @@ def _response_json_schema(allow_design_mismatch=False):
     }
 
 
+def _spacing_audit_payload(model, image_bytes, mime_type, role):
+    return {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 300,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ff5m_ui_spacing_audit",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "defect", "subject", "gap_relation", "reason"],
+                    "properties": {
+                        "defect": {"type": "boolean"},
+                        "subject": {
+                            "type": "string", "maxLength": 160},
+                        "gap_relation": {
+                            "type": "string",
+                            "enum": ["smaller", "at_least", "uncertain"],
+                        },
+                        "reason": {
+                            "type": "string",
+                            "maxLength": MAX_REASON_LENGTH,
+                        },
+                    },
+                },
+            },
+        },
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Return exactly one JSON object and no markdown. Focus "
+                    "only on the local vertical gap between the horizontal "
+                    "separator below the header and the nearest glyph or edge "
+                    "of the first visible body text or control. Identify that "
+                    "subject. Compare the gap with one and a half visible "
+                    "text-glyph heights. Do not round a smaller gap up. If it "
+                    "is smaller, borderline, or visually uncertain, defect "
+                    "must be true; only a gap confidently at least that large "
+                    "may use defect false and gap_relation at_least. Ignore "
+                    "empty space elsewhere on the screen."),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Audit header-to-body spacing in this %s. Is the "
+                            "local gap aesthetically cramped?" % role),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:%s;base64,%s" % (
+                                mime_type,
+                                base64.b64encode(image_bytes).decode("ascii")),
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+
+
 def _completion_payload(model, image_bytes, mime_type, context,
                         corrective_retry=False):
     comparison = context.get("_comparison_image")
@@ -349,7 +421,10 @@ def _completion_payload(model, image_bytes, mime_type, context,
         "page": _safe_text(context.get("page"), 120),
     }
     task = {
-        "task": "Evaluate only the supplied UI screenshot.",
+        "task": (
+            "First make a focused spacing-gate decision for the gap below "
+            "the header separator, then evaluate the rest of the supplied UI "
+            "screenshot."),
         "screenshot": screenshot,
         "checklist": CHECKLIST,
         "evaluation_order": ["standalone_quality_each_image"],
@@ -369,6 +444,37 @@ def _completion_payload(model, image_bytes, mime_type, context,
                     "alignment, sizes, proportions, borders, visual "
                     "hierarchy, and balanced whitespace"),
             ],
+            "mandatory_boundary_audit": [
+                (
+                    "Identify the exact first visible body text or control "
+                    "below the header separator, then compare its nearest "
+                    "glyph or edge gap with the boundary_gap_rule threshold."),
+                (
+                    "Inspect the gap from the last visible body glyphs to the "
+                    "footer separator or screen boundary."),
+                (
+                    "For every independent text block, inspect its nearest "
+                    "border, unrelated text block, and control above and "
+                    "below."),
+                (
+                    "Inspect labels and instructions immediately above or "
+                    "inside buttons, panels, dialogs, and selection areas."),
+            ],
+            "boundary_gap_rule": (
+                "At a major boundary such as a header separator, panel edge, "
+                "or unrelated control, require clearly intentional whitespace "
+                "of at least one and a half visible text-glyph heights. Do not "
+                "round a smaller gap up to the threshold: when the gap looks "
+                "borderline or cannot be confidently shown to meet it, fail. "
+                "Fail when glyphs appear attached to, nearly touching, or "
+                "visually crowded against that boundary. Compact spacing "
+                "between lines inside one clearly related paragraph is allowed "
+                "only when it is consistent and still legible."),
+            "local_defect_rule": (
+                "Evaluate every boundary separately. Large empty areas "
+                "elsewhere on the screen never compensate for one cramped "
+                "header edge, footer edge, panel edge, text-to-control gap, or "
+                "missing internal padding."),
             "defect_rule": (
                 "Readable content with no literal overlap can still be "
                 "defective. Treat visibly cramped, nearly touching, unevenly "
@@ -466,7 +572,6 @@ def _completion_payload(model, image_bytes, mime_type, context,
                 "url": "data:%s;base64,%s" % (
                     mime_type,
                     base64.b64encode(image_bytes).decode("ascii")),
-                "detail": "high",
             },
         },
     ]
@@ -478,16 +583,30 @@ def _completion_payload(model, image_bytes, mime_type, context,
                 "url": "data:%s;base64,%s" % (
                     comparison_mime,
                     base64.b64encode(comparison_bytes).decode("ascii")),
-                "detail": "high",
             },
         })
     system_instruction = (
         "Return exactly one JSON object and no markdown. "
+        "TOP-PRIORITY SPACING GATE: before any overall judgment, identify the "
+        "first visible body text or control below the header separator and "
+        "decide whether their local vertical gap is confidently at least one "
+        "and a half visible text-glyph heights. A smaller, borderline, or "
+        "uncertain gap makes spacing_and_clearance fail with "
+        "aesthetic_defect. The spacing_and_clearance reason must identify "
+        "that first body text or control and explicitly say whether the gap "
+        "is smaller or larger than the threshold, even when the check passes; "
+        "a generic claim such as 'spacing is sufficient' is not an audit. "
         "Use only the supplied checklist. Do not infer printer "
         "safety, functionality, or behavior from the image. "
         "Use every checklist id exactly once and add no fields. "
         "Follow evaluation_order. First independently inspect each image for "
         "standalone visual quality, even when there is no Designer reference. "
+        "For spacing_and_clearance, perform mandatory_boundary_audit before "
+        "judging the overall composition. Inspect the first body line below "
+        "the header separator, the last body line above the footer, and each "
+        "independent text-to-border, text-to-section, and text-to-control gap. "
+        "Apply boundary_gap_rule locally; whitespace elsewhere cannot cancel "
+        "a cramped edge. "
         "Readable, non-overlapping content is not automatically acceptable: "
         "inspect clearance, padding, spacing, vertical rhythm, alignment, "
         "proportions, hierarchy, and balance. Classify each check's evidence "
@@ -565,6 +684,63 @@ def _completion_content(response):
         return json.loads(content)
     except ValueError:
         raise ValueError("completion content is not valid JSON")
+
+
+def validate_spacing_audit(value):
+    if not isinstance(value, dict) or set(value) != {
+            "defect", "subject", "gap_relation", "reason"}:
+        raise ValueError(
+            "spacing audit must contain only defect, subject, gap_relation, "
+            "and reason")
+    defect = value["defect"]
+    subject = value["subject"]
+    relation = value["gap_relation"]
+    reason = value["reason"]
+    if not isinstance(defect, bool):
+        raise ValueError("spacing audit defect must be boolean")
+    if (not isinstance(subject, str) or not subject.strip()
+            or len(subject) > 160):
+        raise ValueError("spacing audit subject must be a short string")
+    if relation not in ("smaller", "at_least", "uncertain"):
+        raise ValueError("invalid spacing audit gap relation")
+    if (not isinstance(reason, str) or not reason.strip()
+            or len(reason) > MAX_REASON_LENGTH):
+        raise ValueError("spacing audit reason must be a short string")
+    if defect != (relation != "at_least"):
+        raise ValueError(
+            "spacing audit defect must match the gap relation")
+    return {
+        "defect": defect,
+        "subject": subject.strip(),
+        "gap_relation": relation,
+        "reason": reason.strip(),
+    }
+
+
+def _apply_spacing_audits(verdict, audits):
+    defects = [item for item in audits if item["audit"]["defect"]]
+    if not defects:
+        return verdict
+    checks = [dict(item) for item in verdict["checks"]]
+    spacing = checks[_CHECK_IDS.index("spacing_and_clearance")]
+    evidence = []
+    for item in defects:
+        audit = item["audit"]
+        evidence.append(
+            "%s: %s — %s" % (
+                item["role"], audit["subject"], audit["reason"]))
+    spacing.update({
+        "status": "fail",
+        "evidence_class": "aesthetic_defect",
+        "reason": _safe_text("; ".join(evidence), MAX_REASON_LENGTH),
+    })
+    return {
+        "verdict": "fail",
+        "checks": checks,
+        "summary": (
+            "Dedicated local spacing audit found a cramped header-to-body "
+            "boundary; the overall verdict is fail."),
+    }
 
 
 def validate_verdict(value, allow_design_mismatch=False):
@@ -747,6 +923,32 @@ class VisualCheckEvaluator:
 
     def _evaluate_model(self, model, image_bytes, mime_type, context):
         started = self.clock()
+        audit_inputs = [
+            ("supplied screenshot", image_bytes, mime_type),
+        ]
+        comparison = context.get("_comparison_image")
+        if comparison is not None:
+            audit_inputs = [
+                ("Designer reference", image_bytes, mime_type),
+                ("printer screenshot", comparison[0], comparison[1]),
+            ]
+        audits = []
+        for role, audit_bytes, audit_mime in audit_inputs:
+            try:
+                response = self.transport.request_json(
+                    "POST", "/chat/completions", _spacing_audit_payload(
+                        model, audit_bytes, audit_mime, role))
+                audit = validate_spacing_audit(
+                    _completion_content(response))
+            except TransportFailure as exc:
+                return _error_result(
+                    model, exc.category, exc.message,
+                    self.clock() - started)
+            except ValueError as exc:
+                return _error_result(
+                    model, "invalid_response", str(exc),
+                    self.clock() - started, json_status="invalid")
+            audits.append({"role": role, "audit": audit})
         last_validation_error = None
         for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
             try:
@@ -771,6 +973,7 @@ class VisualCheckEvaluator:
                 model, "invalid_response", last_validation_error,
                 self.clock() - started, json_status="invalid",
                 attempts=MAX_VALIDATION_ATTEMPTS)
+        verdict = _apply_spacing_audits(verdict, audits)
         reasons = [
             {
                 "check_id": item["id"], "status": item["status"],

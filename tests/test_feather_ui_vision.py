@@ -75,9 +75,10 @@ class FakeHTTPResponse(io.BytesIO):
 class FakeOpenAIEndpoint:
     """In-memory OpenAI-compatible endpoint; it never opens a socket."""
 
-    def __init__(self, models, model_responses):
+    def __init__(self, models, model_responses, spacing_responses=None):
         self.models = tuple(models)
         self.model_responses = dict(model_responses)
+        self.spacing_responses = dict(spacing_responses or {})
         self.requests = []
 
     @property
@@ -103,7 +104,17 @@ class FakeOpenAIEndpoint:
                 "data": [{"id": name} for name in self.models],
             }).encode("utf-8"))
         if request.method == "POST" and path == "/v1/chat/completions":
-            response = self.model_responses[payload["model"]]
+            schema_name = payload.get("response_format", {}).get(
+                "json_schema", {}).get("name")
+            if schema_name == "ff5m_ui_spacing_audit":
+                response = self.spacing_responses.get(payload["model"], {
+                    "defect": False,
+                    "subject": "first body element",
+                    "gap_relation": "at_least",
+                    "reason": "The local gap meets the threshold.",
+                })
+            else:
+                response = self.model_responses[payload["model"]]
             if isinstance(response, list):
                 response = response.pop(0)
             if isinstance(response, tuple):
@@ -196,7 +207,9 @@ class VisualEvaluatorTest(unittest.TestCase):
                 VISION.CHECKLIST[0]["id"])
 
             posts = [
-                item for item in server.requests if item[0] == "POST"]
+                item for item in server.requests
+                if item[0] == "POST" and item[2]["response_format"][
+                    "json_schema"]["name"] == "ff5m_ui_visual_verdict"]
             self.assertEqual(
                 [item[2]["model"] for item in posts],
                 ["vision-a"])
@@ -233,6 +246,7 @@ class VisualEvaluatorTest(unittest.TestCase):
                 "properties"]["checks"]["items"]["properties"][
                     "evidence_class"]["enum"]
             self.assertNotIn("design_mismatch", evidence_enum)
+
             verdict_enum = response_format["json_schema"]["schema"][
                 "properties"]["verdict"]["enum"]
             check_status_enum = response_format["json_schema"]["schema"][
@@ -259,6 +273,30 @@ class VisualEvaluatorTest(unittest.TestCase):
             self.assertTrue(second["preflight"]["cached"])
             self.assertEqual(
                 sum(1 for item in server.requests if item[0] == "GET"), 1)
+
+    def test_focused_spacing_audit_overrides_generic_pass(self):
+        spacing = {
+            "defect": True,
+            "subject": "first instruction line",
+            "gap_relation": "smaller",
+            "reason": "The header gap is below the required threshold.",
+        }
+        with FakeOpenAIEndpoint(
+                ("vision-a",), {"vision-a": verdict("pass")},
+                {"vision-a": spacing}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"image", "image/png", {})
+
+        model = result["models"][0]
+        self.assertEqual(model["verdict"], "fail")
+        self.assertEqual(
+            model["reasons"][0]["check_id"], "spacing_and_clearance")
+        self.assertEqual(
+            model["reasons"][0]["evidence_class"], "aesthetic_defect")
+        self.assertIn("first instruction line", model["reasons"][0][
+            "reason"])
 
     def test_more_than_one_model_is_rejected(self):
         with self.assertRaisesRegex(
@@ -350,7 +388,10 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertEqual(model_result["status"], "completed")
         self.assertEqual(model_result["verdict"], "warn")
         self.assertEqual(model_result["attempts"], 2)
-        posts = [item for item in server.requests if item[0] == "POST"]
+        posts = [
+            item for item in server.requests
+            if item[0] == "POST" and item[2]["response_format"][
+                "json_schema"]["name"] == "ff5m_ui_visual_verdict"]
         self.assertEqual(len(posts), 2)
         self.assertIn(
             "previous response violated this contract",
@@ -522,7 +563,9 @@ class VisualEvaluatorTest(unittest.TestCase):
                     "_comparison_image": (b"printer", "image/png"),
                 })
             post = next(
-                item for item in server.requests if item[0] == "POST")
+                item for item in server.requests
+                if item[0] == "POST" and item[2]["response_format"][
+                    "json_schema"]["name"] == "ff5m_ui_visual_verdict")
 
         content = post[2]["messages"][1]["content"]
         self.assertEqual(
@@ -594,7 +637,10 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertTrue(all(
             item["models"][0]["verdict"] == "fail" for item in results))
         self.assertEqual(
-            sum(1 for item in server.requests if item[0] == "POST"),
+            sum(
+                1 for item in server.requests
+                if item[0] == "POST" and item[2]["response_format"][
+                    "json_schema"]["name"] == "ff5m_ui_visual_verdict"),
             len(names))
 
 
@@ -1048,7 +1094,9 @@ class HostPipelineTest(unittest.TestCase):
             self.assertEqual(
                 screenshot_record["submitted_mime_type"], "image/png")
             post = next(
-                item for item in server.requests if item[0] == "POST")
+                item for item in server.requests
+                if item[0] == "POST" and item[2]["response_format"][
+                    "json_schema"]["name"] == "ff5m_ui_visual_verdict")
             image_url = post[2]["messages"][1]["content"][1][
                 "image_url"]["url"]
             self.assertTrue(image_url.startswith("data:image/png;base64,"))
