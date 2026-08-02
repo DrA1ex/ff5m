@@ -337,7 +337,7 @@
     {
       "key": "display",
       "type": "DisplayEnum",
-      "default": "STOCK",
+      "default": "FEATHER",
       "label": "Display",
       "description": "Choose the active local screen.",
       "restart": "klipper",
