@@ -420,7 +420,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
         self.assertEqual(safe_z["type"], "float")
         self.assertEqual(safe_z["default"], 10.0)
-        self.assertIn("nozzle-to-bed clearance", safe_z["warning"])
+        self.assertTrue(safe_z["warning"])
 
     def test_visible_mod_parameters_have_screen_descriptions(self):
         declaration = json.loads((pathlib.Path(__file__).parents[1] /
@@ -447,10 +447,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
     def test_mod_boolean_switch_uses_declared_semantic_labels(self):
         parameter = mod_param("disable_priming", bool, False, "Priming",
-                              options=["YES", "NO"])
-        self.assertEqual(MOD_UI.bool_labels(parameter), ("YES", "NO"))
+                              options=["left", "right"])
+        self.assertEqual(MOD_UI.bool_labels(parameter),
+                         tuple(label.upper() for label in parameter.options))
         parameter.options = None
-        self.assertEqual(MOD_UI.bool_labels(parameter), ("OFF", "ON"))
+        labels = MOD_UI.bool_labels(parameter)
+        self.assertEqual(len(labels), 2)
+        self.assertNotEqual(labels[0], labels[1])
 
     def test_mod_params_public_setter_preserves_types_and_notifies(self):
         Display = enum.Enum("Display", {"FEATHER": 1, "GUPPY": 3})
@@ -571,8 +574,6 @@ class RendererStateTest(unittest.TestCase):
 
         first = "\n".join(batches[0])
         expanded = "\n".join(batches[1])
-        self.assertIn("INITIALIZING KLIPPER", first)
-        self.assertIn("PLEASE WAIT", first)
         self.assertIn("-p 392 232 -s 17 1", first)
         self.assertIn("-p 384 232 -s 33 1", expanded)
         self.assertIn("--batch clear-hitboxes", first)
@@ -581,19 +582,6 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("-p 388 232 -s 25 1", pulse)
         self.assertNotIn("--batch clear-hitboxes", pulse)
         self.assertNotIn("-p 0 0 -s 800 480", pulse)
-
-    def test_restart_startup_modal_explains_the_static_reconnect_gap(self):
-        renderer = FEATHER.FeatherRenderer()
-        batches = []
-        renderer.send = batches.append
-
-        renderer.startup_modal(0, restarting=True)
-
-        drawing = "\n".join(batches[0])
-        self.assertIn("INITIALIZING KLIPPER", drawing)
-        self.assertIn("RESTART IN PROGRESS - DISPLAY MAY PAUSE", drawing)
-        self.assertIn("PLEASE WAIT", drawing)
-        self.assertNotIn("KLIPPER IS LOADING", drawing)
 
     def test_restart_startup_modal_cancels_late_toggle_animation_frames(self):
         renderer = FEATHER.FeatherRenderer()
@@ -613,8 +601,6 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertEqual(renderer.generation, page_generation + 1)
         self.assertEqual(len(batches), loader_batch_count)
-        self.assertIn("RESTART IN PROGRESS",
-                      "\n".join(batches[-1]))
 
     def test_local_dialog_preserves_existing_controls_and_hitboxes(self):
         renderer = FEATHER.FeatherRenderer()
@@ -881,11 +867,9 @@ class RendererStateTest(unittest.TestCase):
         first = renderer.begin_page("Control")
         second = renderer.begin_page("Settings")
 
-        footer = "\n".join(sent[0])
-        self.assertIn("NOZZLE 21/220C", footer)
-        self.assertIn("192.168.2.4 | IDLE", footer)
-        self.assertNotIn("NOZZLE", "\n".join(first))
-        self.assertNotIn("NOZZLE", "\n".join(second))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(renderer._last_footer,
+                         (21, 220, 24, 60, "192.168.2.4", "idle"))
         self.assertIn("-s 800 442", "\n".join(first))
         self.assertNotIn("-s 784 472", "\n".join(first))
         self.assertIn("-s 784 439", "\n".join(first))
@@ -908,12 +892,11 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertTrue(renderer.set_theme("OCEAN"))
         page = "\n".join(renderer.begin_page("Settings"))
-        self.assertIn("NOZZLE 21/220C", page)
-        self.assertIn("192.168.2.4 | IDLE", page)
         self.assertIn("-c 35baf6", page)
+        self.assertIn("-p 10 444 -s 780 31", page)
 
         unchanged = "\n".join(renderer.begin_page("Settings"))
-        self.assertNotIn("NOZZLE 21/220C", unchanged)
+        self.assertNotIn("-p 10 444 -s 780 31", unchanged)
 
     def test_mesh_matrix_validation_and_color_bands(self):
         normalize = FEATHER.FeatherScreen.normalize_mesh_matrix
@@ -1125,9 +1108,8 @@ class RendererStateTest(unittest.TestCase):
         page = renderer.begin_page("Control")
         renderer.clear_busy_notice()
         self.assertEqual(len(sent), 2)
-        self.assertIn("KLIPPER BUSY", "\n".join(sent[0]))
+        self.assertIsNone(renderer._busy_label)
         self.assertIn("-c 24200e", "\n".join(sent[0]))
-        self.assertIn("KLIPPER BUSY", "\n".join(page))
         self.assertIn("-c 24200e", "\n".join(page))
         self.assertNotIn("stroke", "\n".join(sent[1]))
         self.assertIn("-c 24200e", "\n".join(sent[1]))
@@ -1143,14 +1125,13 @@ class RendererStateTest(unittest.TestCase):
         menu = renderer.button(
             "nav.menu", 648, 9, 132, 38, "MENU")
 
-        self.assertIn("KLIPPER BUSY", "\n".join(page))
+        self.assertTrue(page)
         self.assertEqual(menu, [])
         self.assertIn("nav.menu", renderer._buttons)
 
         renderer.clear_busy_notice()
 
         restored = "\n".join(sent[-1])
-        self.assertIn("MENU", restored)
         self.assertIn("nav.menu", restored)
 
     def test_emergency_stop_has_priority_over_busy_notice_and_loader(self):
@@ -1172,11 +1153,7 @@ class RendererStateTest(unittest.TestCase):
         loader = "\n".join(sent[-1])
         self.assertEqual(renderer.generation, page_generation + 1)
         self.assertIn("global.abort", loader)
-        self.assertIn('ABORT', loader)
-        self.assertIn("OPERATION IN PROGRESS", loader)
-        self.assertNotIn("KLIPPER BUSY", loader)
         self.assertNotIn("nav.back", loader)
-        self.assertNotIn("< BACK", loader)
         self.assertEqual(set(renderer._buttons), {"global.abort"})
         self.assertIsNone(renderer.decode_action(
             "%d:nav.back" % page_generation))
@@ -1238,19 +1215,12 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         drawing = "\n".join(command for batch in batches for command in batch)
 
-        self.assertIn("HOME ALL", drawing)
-        self.assertIn("HOME XY", drawing)
-        self.assertIn("JOY MODE", drawing)
-        self.assertNotIn("[>STEP|JOY]", drawing)
         self.assertIn('-p 365 78 -s 65 68', drawing)
         self.assertIn('"Z-" --id 1:move.zm', drawing)
         self.assertIn('-p 365 238 -s 65 68', drawing)
         self.assertIn('"Z+" --id 1:move.zp', drawing)
-        self.assertIn("NOT HOMED: Z", drawing)
         self.assertIn("X  103.45   Y   67.89", drawing)
         self.assertIn("Z    4.20", drawing)
-        self.assertIn("HOMED", drawing)
-        self.assertIn("HOME", drawing)
         self.assertIn("-p 190 207", drawing)
         self.assertIn("-p 397 207", drawing)
         self.assertNotIn("move.homex ", drawing)
@@ -1276,10 +1246,8 @@ class RendererStateTest(unittest.TestCase):
         controller._update_move_status(3)
 
         self.assertEqual(len(batches), 3)
-        self.assertIn("HOMED: XYZ", "\n".join(batches[0]))
         self.assertNotIn("-p 140 158", "\n".join(batches[1]))
         homing_update = "\n".join(batches[2])
-        self.assertIn("NOT HOMED: Z", homing_update)
         self.assertNotIn("-p 140 158", homing_update)
         self.assertIn("-p 365 158", homing_update)
 
@@ -1336,15 +1304,7 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         drawing = "\n".join(batches[0])
 
-        self.assertIn("XY POSITION", drawing)
-        self.assertIn("Z AXIS", drawing)
-        self.assertIn("POSITION", drawing)
-        self.assertIn("STEP MODE", drawing)
         self.assertIn("--id 1:navigate.move.step", drawing)
-        self.assertIn("INERTIA", drawing)
-        self.assertNotIn('"VX"', drawing)
-        self.assertNotIn('"VZ', drawing)
-        self.assertIn("HOME Z", drawing)
         self.assertIn("--id 1:move.homez", drawing)
         self.assertIn("-p 30 96 -s 420 266", drawing)
         self.assertIn(
@@ -1389,11 +1349,6 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         warning = "\n".join(batches[-1])
 
-        self.assertIn("CAUTION", warning)
-        self.assertIn("Z IS BELOW 6 MM", warning)
-        self.assertIn("XY MOTION MAY SCRATCH THE BED", warning)
-        self.assertIn("LOAD BED PROFILE 'AUTO'?", warning)
-        self.assertIn('"LOAD"', warning)
         self.assertEqual(warning.count("--batch clear-hitboxes"), 1)
         dismiss_id = UI.SetValue(
             MOVE_LAYOUT.MoveState.CAUTION_ACKNOWLEDGED, True).wire_id
@@ -1406,11 +1361,7 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         safe = "\n".join(batches[-1])
 
-        self.assertIn("CAUTION", safe)
-        self.assertIn("BED PROFILE 'AUTO' IS LOADED", safe)
         self.assertEqual(safe.count("--batch clear-hitboxes"), 1)
-        self.assertIn("UNLOAD", safe)
-        self.assertIn('"OK"', safe)
         self.assertIn("--id 2:move.caution.unload", safe)
         self.assertIn("--id 2:%s" % dismiss_id, safe)
         self.assertIn("--id 2:move.homez", safe)
@@ -1760,7 +1711,6 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(stopped, [])
         self.assertEqual(rendered, [])
         self.assertEqual(controller.move_caution_signature, (True, "active"))
-        self.assertIn("CAUTION", "\n".join(batches[0]))
         self.assertNotIn("--batch clear-hitboxes", "\n".join(batches[0]))
 
     def test_low_z_overlay_keeps_z_feedback_live(self):

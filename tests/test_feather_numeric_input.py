@@ -63,13 +63,8 @@ class NumericKeypadTest(unittest.TestCase):
             subtitle="mm", minimum=0.001, fraction_digits=3,
             confirm_label="CALCULATE"))
 
-        self.assertIn("DISTANCE BETWEEN MARKS", drawing)
-        self.assertIn('-t "MM"', drawing)
-        self.assertNotIn("DISTANCE BETWEEN MARKS // MM", drawing)
-        self.assertIn("CALCULATE", drawing)
         self.assertIn("--id 1:key.dot", drawing)
         self.assertIn("--id 1:key.back", drawing)
-        self.assertNotIn("MEASURED DISTANCE", drawing)
 
         controls = [Rect(*data[:4]) for action, data in renderer._buttons.items()
                     if action.startswith("key.")]

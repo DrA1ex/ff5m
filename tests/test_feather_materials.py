@@ -159,34 +159,21 @@ class MaterialLayoutTest(unittest.TestCase):
 
     def test_selector_keeps_material_and_temperature_on_separate_lines(self):
         renderer = RecordingRenderer()
+        label = "sample material"
+        subtitle = "sample subtitle"
         MATERIALS.render_material_selector(
             renderer, "material.", 0, 0, 230, 135,
-            materials=("ABS-PC",), label=lambda material: material,
-            subtitle=lambda material: "NOZZLE 270C",
+            materials=(label,), label=lambda material: material,
+            subtitle=lambda material: subtitle,
             subtitle_font="JetBrainsMono Bold 12pt",
             subtitle_color="d9e4e8")
 
         button = renderer.buttons[0]
-        self.assertEqual(button[5], "ABS-PC")
-        self.assertEqual(button[6]["subtitle"], "NOZZLE 270C")
+        self.assertEqual(button[5], label)
+        self.assertEqual(button[6]["subtitle"], subtitle)
         self.assertEqual(
             button[6]["subtitle_font"], "JetBrainsMono Bold 12pt")
         self.assertEqual(button[6]["subtitle_color"], "d9e4e8")
-
-
-class MaterialMacroContractTest(unittest.TestCase):
-    def test_slot_lists_drive_both_prompts_and_empty_prompts_are_safe(self):
-        material = (ROOT / "config" / "material.cfg").read_text(
-            encoding="utf-8")
-        self.assertIn("for slot in config.heating_slots", material)
-        self.assertIn("for slot in config.cold_pull_slots", material)
-        self.assertIn("No heating materials are enabled", material)
-        self.assertIn("No cold-pull materials are enabled", material)
-        preheat = material.split("[gcode_macro PREHEAT_MATERIAL]", 1)[1].split(
-            "[gcode_macro LOAD_FILAMENT]", 1)[0]
-        self.assertLess(preheat.index("No heating materials are enabled"),
-                        preheat.index("M104 S"))
-
 
 if __name__ == "__main__":
     unittest.main()

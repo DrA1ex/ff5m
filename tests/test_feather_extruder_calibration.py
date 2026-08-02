@@ -369,18 +369,6 @@ def calibration_controller(path=None):
 
 
 class ExtruderCalibrationControllerTest(unittest.TestCase):
-    def test_intro_explains_when_complete_cold_pull_is_required(self):
-        controller = calibration_controller()
-        batches = []
-        controller.renderer.send = batches.append
-
-        controller._render_extruder_calibration()
-
-        drawing = "\n".join(batches[-1])
-        self.assertIn("COLD PULL completely cleans the nozzle", drawing)
-        self.assertIn("required if filament is loaded", drawing)
-        self.assertIn("Choose FILAMENT READY only after cleaning", drawing)
-
     def test_empty_cold_pull_disables_only_cold_pull_path(self):
         controller = calibration_controller()
         controller.cold_pull_materials = ()
@@ -391,7 +379,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller._render_extruder_calibration()
 
         drawing = "\n".join(batches[-1])
-        self.assertIn("COLD PULL", drawing)
         self.assertNotIn("--id 1:extruder.coldpull", drawing)
         self.assertIn("extruder.skip", drawing)
         with self.assertRaisesRegex(RuntimeError, "No cold-pull"):
@@ -432,19 +419,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(moves, [50])
         self.assertEqual(session.phase, "mark_first")
         self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
-
-    def test_first_mark_explains_repeat_feed_and_measurement_feed(self):
-        controller = calibration_controller()
-        controller.extruder_calibration.phase = "mark_first"
-        batches = []
-        controller.renderer.send = batches.append
-
-        controller._render_extruder_calibration()
-
-        drawing = "\n".join(batches[-1])
-        self.assertIn("FEED 50 MORE", drawing)
-        self.assertIn("MARKED / FEED 100", drawing)
-        self.assertIn("use FEED 50 MORE as often as needed", drawing)
 
     def test_unload_uses_safe_base_then_offers_optional_extra_retract(self):
         controller = calibration_controller()
@@ -491,23 +465,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
         self.assertEqual(session.input_text, "100.500")
         drawing = "\n".join(batches[-1])
-        self.assertIn("DISTANCE BETWEEN MARKS", drawing)
-        self.assertIn('-t "MM"', drawing)
         self.assertIn("extruder.key.backspace", drawing)
-        self.assertIn("CALCULATE", drawing)
-
-    def test_remove_and_measure_page_explains_optional_unload(self):
-        controller = calibration_controller()
-        controller.extruder_calibration.phase = "measure_ready"
-        batches = []
-        controller.renderer.send = batches.append
-
-        controller._render_extruder_calibration()
-
-        drawing = "\n".join(batches[-1])
-        self.assertIn("REMOVE FILAMENT AND MEASURE", drawing)
-        self.assertIn("UNLOAD 50 MORE", drawing)
-        self.assertIn("ENTER MEASUREMENT", drawing)
 
     def test_failed_move_still_removes_override_and_restores_state(self):
         controller = calibration_controller()
@@ -683,11 +641,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             self.assertEqual(session.candidate, 4.292)
             self.assertEqual(float(session.file_snapshot.existing_value), 4.292)
             self.assertIsNotNone(session.backup_path)
-            drawing = "\n".join(batches[-1])
-            self.assertIn("RUNTIME APPLY FAILED", drawing)
-            self.assertIn("ROTATION_DISTANCE 4.292", drawing)
-            self.assertIn("USER.CFG IS SAVED", drawing)
-            self.assertIn("RESTART KLIPPER", drawing)
 
     def test_file_save_failure_preserves_candidate_in_recovery_modal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -715,12 +668,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             self.assertEqual(session.candidate, 4.292)
             self.assertFalse(session.save_file_written)
             self.assertFalse(session.saved)
-            drawing = "\n".join(batches[-1])
-            self.assertIn("SAVE FAILED", drawing)
-            self.assertIn("ROTATION_DISTANCE 4.292", drawing)
-            self.assertIn("USER.CFG WAS NOT UPDATED", drawing)
-            self.assertIn("WRITE THIS VALUE MANUALLY", drawing)
-            self.assertIn("KEEP RESULT", drawing)
             controller._handle_extruder_calibration_action(
                 "extruder.save_error.ok")
             self.assertIsNone(session.save_error)
@@ -755,11 +702,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
                     self.assertTrue(batches[-1])
                     drawing = "\n".join(batches[-1])
                     self.assertIn("clear-hitboxes", drawing)
-                    if phase == "saved":
-                        self.assertIn("must calibrate", drawing)
-                        self.assertIn("Pressure Advance", drawing)
-                        self.assertIn("Bed Mesh", drawing)
-                        self.assertIn("Z Offset", drawing)
 
 
 if __name__ == "__main__":

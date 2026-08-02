@@ -54,7 +54,7 @@ def _instruction_top(ready, cooling):
 
 
 def _instruction_bottom(ready, cooling):
-    return "SELECT AN ACTION" if ready else "ACTIONS UNLOCK WHEN READY"
+    return "SELECT AN ACTION" if ready else "PLEASE WAIT..."
 
 
 def _status_card():

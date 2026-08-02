@@ -254,16 +254,33 @@ normal theme-color differences. Footer-only live status (temperatures, network
 address, preview/standby label) may still differ; page titles, controls,
 dialogs, selections, and typed-state values must remain equivalent.
 
-The semantic reviewer classifies evidence as `dynamic_runtime`,
-`rendering_only`, or `product_semantic`. Live and mock values are compared by
-their role, plausible format, readability, and location rather than by their
-literal value. Exact or approximate numeric equality is required only when the
-case expectation explicitly constrains that value. A model response cannot
-use `dynamic_runtime` or `rendering_only` evidence for a warning or failure;
-such a response receives the same single corrective retry used for malformed
-JSON. Structural, content, dialog, selection, typed-state, clipping, overlap,
-missing-content, and explicitly constrained-value defects remain
-`product_semantic` findings and are never suppressed.
+The reviewer first performs a standalone quality audit of every supplied
+image, including ordinary Designer-only and printer-only screenshots. It
+checks clearance from headers, borders, controls, and neighboring text;
+internal padding; spacing and vertical rhythm; alignment; proportions;
+hierarchy; and balanced whitespace. Readable text with no literal overlap can
+still fail when the layout is visibly cramped, uneven, awkwardly aligned, or
+unbalanced. Those findings use `aesthetic_defect` evidence and always produce
+`fail`. Structural, content, dialog, selection, typed-state, clipping, overlap,
+missing-content, and explicitly constrained-value defects use
+`product_semantic` evidence and also produce `fail`.
+
+For a parity pair, the reviewer performs both standalone audits before it
+compares visible geometry and presentation from header to footer. A visible
+Designer/printer difference that does not reduce the quality of either frame
+uses `design_mismatch` evidence and produces `warn`; if it also creates an
+aesthetic or product defect, `fail` takes precedence. Live and mock values are
+classified as `dynamic_runtime` and compared by their role, plausible format,
+readability, and location rather than by their literal value. Exact or
+approximate numeric equality is required only when the case expectation
+explicitly constrains that value. Permitted anti-aliasing and rasterization
+differences use `rendering_only`. Neither `dynamic_runtime` nor
+`rendering_only` can produce a warning or failure.
+
+The JSON validator enforces the evidence/severity relationship. A mismatched
+combination receives the same single corrective retry used for malformed JSON.
+Advisory mode records `warn` and `fail` results for review without failing the
+runner process; strict mode preserves them as the explicit regression gate.
 
 Use the compact toolbar to filter by outcome or source. `report.json` remains
 the machine-readable source of truth, while `report.md` is a short

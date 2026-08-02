@@ -35,15 +35,23 @@ from tests.visual_checks import html_report as HTML_REPORT  # noqa: E402
 from tests.visual_checks import lmstudio_benchmark as BENCHMARK  # noqa: E402
 
 
-def verdict(status="pass", evidence_class=None, reason=None):
+def verdict(status="pass", evidence_class=None, reason=None, check_id=None):
+    finding_check_id = check_id or (
+        "source_parity" if status == "warn" else VISION.CHECKLIST[0]["id"])
     checks = []
-    for index, item in enumerate(VISION.CHECKLIST):
-        item_status = status if index == 0 else "pass"
+    for item in VISION.CHECKLIST:
+        item_status = (
+            status if status != "pass" and item["id"] == finding_check_id
+            else "pass")
+        default_evidence = {
+            "warn": "design_mismatch",
+            "fail": "aesthetic_defect",
+        }.get(item_status, "none")
         checks.append({
             "id": item["id"],
             "status": item_status,
             "evidence_class": (
-                evidence_class or "product_semantic"
+                evidence_class or default_evidence
                 if item_status != "pass" else "none"),
             "reason": (
                 reason or "Visible overlap near the header."
@@ -152,7 +160,7 @@ class VisualEvaluatorTest(unittest.TestCase):
     def test_one_model_gets_image_expectation_and_comparable_result(self):
         with FakeOpenAIEndpoint(
                 ("vision-a",),
-                {"vision-a": verdict("warn")}) as server:
+                {"vision-a": verdict("fail")}) as server:
             settings = VISION.VisualCheckSettings(
                 enabled=True, base_url=server.base_url,
                 model="vision-a", api_key="local-secret",
@@ -176,7 +184,7 @@ class VisualEvaluatorTest(unittest.TestCase):
                 ["vision-a"])
             self.assertEqual(
                 [item["verdict"] for item in result["models"]],
-                ["warn"])
+                ["fail"])
             self.assertTrue(all(
                 item["json_validation"]["status"] == "valid"
                 for item in result["models"]))
@@ -201,9 +209,40 @@ class VisualEvaluatorTest(unittest.TestCase):
                 posts[0][2]["messages"][1]["content"][0]["text"])
             self.assertEqual(
                 prompt["textual_expectation"]["required"], ["menu choices"])
+            self.assertEqual(
+                prompt["evaluation_order"],
+                ["standalone_quality_each_image"])
+            self.assertEqual(
+                prompt["standalone_quality_policy"][
+                    "aesthetic_defect_verdict"],
+                "fail")
+            checklist_ids = [
+                item["id"] for item in prompt["checklist"]]
+            self.assertIn("spacing_and_clearance", checklist_ids)
+            self.assertIn("alignment_and_balance", checklist_ids)
+            self.assertNotIn("designer_parity_policy", prompt)
+            self.assertNotIn("design_mismatch", prompt["evidence_policy"])
+            evidence_hint = prompt["response_schema"]["checks"][0][
+                "evidence_class"]
+            self.assertIn("aesthetic_defect", evidence_hint)
+            self.assertNotIn("design_mismatch", evidence_hint)
             response_format = posts[0][2]["response_format"]
             self.assertEqual(response_format["type"], "json_schema")
             self.assertTrue(response_format["json_schema"]["strict"])
+            evidence_enum = response_format["json_schema"]["schema"][
+                "properties"]["checks"]["items"]["properties"][
+                    "evidence_class"]["enum"]
+            self.assertNotIn("design_mismatch", evidence_enum)
+            verdict_enum = response_format["json_schema"]["schema"][
+                "properties"]["verdict"]["enum"]
+            check_status_enum = response_format["json_schema"]["schema"][
+                "properties"]["checks"]["items"]["properties"][
+                    "status"]["enum"]
+            self.assertNotIn("warn", verdict_enum)
+            self.assertNotIn("warn", check_status_enum)
+            self.assertIn(
+                "source_parity must pass with none evidence",
+                posts[0][2]["messages"][0]["content"])
             self.assertEqual(
                 posts[0][3]["Authorization"], "Bearer local-secret")
 
@@ -303,7 +342,9 @@ class VisualEvaluatorTest(unittest.TestCase):
             settings = VISION.VisualCheckSettings(
                 True, server.base_url, "vision-a", "", 5, "advisory")
             result = server.evaluator(settings).evaluate(
-                b"image", "image/bmp", {})
+                b"image", "image/bmp", {
+                    "_comparison_image": (b"comparison", "image/png"),
+                })
 
         model_result = result["models"][0]
         self.assertEqual(model_result["status"], "completed")
@@ -333,10 +374,10 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertEqual(model["verdict"], "pass")
         self.assertEqual(model["attempts"], 2)
 
-    def test_product_semantic_difference_remains_a_valid_warning(self):
+    def test_design_mismatch_remains_a_valid_warning(self):
         response = verdict(
-            "warn", evidence_class="product_semantic",
-            reason="The selected movement step differs.")
+            "warn", evidence_class="design_mismatch",
+            reason="The printer cards use different dimensions.")
         with FakeOpenAIEndpoint(
                 ("vision-a",), {"vision-a": response}) as server:
             settings = VISION.VisualCheckSettings(
@@ -350,9 +391,11 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertEqual(model["verdict"], "warn")
         self.assertEqual(model["attempts"], 1)
         self.assertEqual(
-            model["reasons"][0]["evidence_class"], "product_semantic")
+            model["reasons"][0]["evidence_class"], "design_mismatch")
+        self.assertEqual(
+            model["reasons"][0]["check_id"], "source_parity")
 
-    def test_non_pass_without_product_semantic_evidence_is_retried(self):
+    def test_non_pass_without_defect_evidence_is_retried(self):
         first = verdict(
             "warn", evidence_class="none",
             reason="No product defect was identified.")
@@ -368,6 +411,82 @@ class VisualEvaluatorTest(unittest.TestCase):
         self.assertEqual(model["verdict"], "pass")
         self.assertEqual(model["attempts"], 2)
 
+    def test_aesthetic_warning_is_retried_as_failure(self):
+        invalid = verdict(
+            "warn", evidence_class="aesthetic_defect",
+            reason="Warning text is cramped against the header.")
+        corrected = verdict(
+            "fail", evidence_class="aesthetic_defect",
+            reason="Warning text is cramped against the header.")
+        with FakeOpenAIEndpoint(
+                ("vision-a",),
+                {"vision-a": [invalid, corrected]}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"image", "image/png", {})
+
+        model = result["models"][0]
+        self.assertEqual(model["verdict"], "fail")
+        self.assertEqual(model["attempts"], 2)
+        self.assertEqual(
+            model["reasons"][0]["evidence_class"], "aesthetic_defect")
+
+    def test_validator_enforces_evidence_specific_severity(self):
+        accepted = (
+            ("warn", "design_mismatch", True),
+            ("fail", "aesthetic_defect", False),
+            ("fail", "product_semantic", False),
+        )
+        for status, evidence_class, allow_design_mismatch in accepted:
+            with self.subTest(
+                    status=status, evidence_class=evidence_class,
+                    allow_design_mismatch=allow_design_mismatch):
+                normalized = VISION.validate_verdict(verdict(
+                    status, evidence_class=evidence_class,
+                    reason="Visible visual regression."),
+                    allow_design_mismatch=allow_design_mismatch)
+                self.assertEqual(normalized["verdict"], status)
+
+        rejected = (
+            ("warn", "design_mismatch", False),
+            ("pass", "design_mismatch", True),
+            ("fail", "design_mismatch", True),
+            ("pass", "aesthetic_defect", False),
+            ("warn", "aesthetic_defect", False),
+            ("warn", "product_semantic", False),
+            ("warn", "dynamic_runtime", False),
+        )
+        for status, evidence_class, allow_design_mismatch in rejected:
+            with self.subTest(
+                    status=status, evidence_class=evidence_class,
+                    allow_design_mismatch=allow_design_mismatch):
+                candidate = verdict(
+                    status, evidence_class=evidence_class,
+                    reason="Visible visual regression.")
+                if status == "pass":
+                    candidate["checks"][0][
+                        "evidence_class"] = evidence_class
+                with self.assertRaisesRegex(ValueError, "evidence"):
+                    VISION.validate_verdict(
+                        candidate,
+                        allow_design_mismatch=allow_design_mismatch)
+
+        misplaced_mismatch = verdict(
+            "warn", evidence_class="design_mismatch",
+            reason="The printer cards use different dimensions.",
+            check_id="frame_integrity")
+        with self.assertRaisesRegex(ValueError, "source_parity"):
+            VISION.validate_verdict(
+                misplaced_mismatch, allow_design_mismatch=True)
+
+        standalone_parity_failure = verdict(
+            "fail", evidence_class="aesthetic_defect",
+            reason="The comparison layout is cramped.",
+            check_id="source_parity")
+        with self.assertRaisesRegex(ValueError, "source_parity"):
+            VISION.validate_verdict(standalone_parity_failure)
+
     def test_strict_is_explicit_and_turns_any_non_pass_into_failure(self):
         with FakeOpenAIEndpoint(
                 ("vision-a",),
@@ -379,9 +498,13 @@ class VisualEvaluatorTest(unittest.TestCase):
                 True, server.base_url, ("vision-a",), "", 5,
                 "strict")
             advisory = server.evaluator(advisory_settings).evaluate(
-                b"image", "image/bmp", {})
+                b"image", "image/bmp", {
+                    "_comparison_image": (b"comparison", "image/png"),
+                })
             strict = server.evaluator(strict_settings).evaluate(
-                b"image", "image/bmp", {})
+                b"image", "image/bmp", {
+                    "_comparison_image": (b"comparison", "image/png"),
+                })
 
         self.assertEqual(advisory["status"], "warning")
         self.assertFalse(advisory["strict_failure"])
@@ -412,14 +535,41 @@ class VisualEvaluatorTest(unittest.TestCase):
                 "Designer-generated reference frame",
                 "real printer Typer/framebuffer frame",
             ])
+        self.assertEqual(
+            task["evaluation_order"], [
+                "standalone_quality_each_image",
+                "designer_parity_if_comparison",
+            ])
+        parity_policy = task["designer_parity_policy"]
+        self.assertIn("design_mismatch", task["evidence_policy"])
+        self.assertEqual(
+            parity_policy["clean_mismatch_verdict"], "warn")
+        self.assertEqual(
+            parity_policy["quality_defect_verdict"], "fail")
         self.assertIn(
-            "live footer-only status",
-            task["source_parity_allowances"][1])
+            "live footer-only status", parity_policy["allowances"][1])
+        evidence_hint = task["response_schema"]["checks"][0][
+            "evidence_class"]
+        self.assertIn("design_mismatch", evidence_hint)
+        evidence_enum = post[2]["response_format"]["json_schema"][
+            "schema"]["properties"]["checks"]["items"]["properties"][
+                "evidence_class"]["enum"]
+        self.assertIn("design_mismatch", evidence_enum)
+        verdict_enum = post[2]["response_format"]["json_schema"][
+            "schema"]["properties"]["verdict"]["enum"]
+        check_status_enum = post[2]["response_format"]["json_schema"][
+            "schema"]["properties"]["checks"]["items"]["properties"][
+                "status"]["enum"]
+        self.assertIn("warn", verdict_enum)
+        self.assertIn("warn", check_status_enum)
         self.assertIn(
-            "first image is generated by Designer",
+            "independently inspect each image",
             post[2]["messages"][0]["content"])
         self.assertIn(
-            "must pass, not warn",
+            "visual presentation",
+            post[2]["messages"][0]["content"])
+        self.assertIn(
+            "design_mismatch evidence is limited to source_parity",
             post[2]["messages"][0]["content"])
         self.assertEqual(
             base64.b64decode(
@@ -848,7 +998,8 @@ class LMStudioBenchmarkTest(unittest.TestCase):
         mismatch = verdict("warn")
         mismatch["verdict"] = "pass"
         with self.assertRaisesRegex(ValueError, "most severe"):
-            VISION.validate_verdict(mismatch)
+            VISION.validate_verdict(
+                mismatch, allow_design_mismatch=True)
 
 
 class HostPipelineTest(unittest.TestCase):

@@ -27,8 +27,13 @@ MAX_SUMMARY_LENGTH = 600
 MAX_VALIDATION_ATTEMPTS = 2
 VALID_MODES = frozenset(("advisory", "strict"))
 VALID_VERDICTS = frozenset(("pass", "warn", "fail"))
+STANDALONE_VERDICTS = VALID_VERDICTS - frozenset(("warn",))
 EVIDENCE_CLASSES = frozenset((
-    "none", "dynamic_runtime", "rendering_only", "product_semantic",
+    "none", "dynamic_runtime", "rendering_only", "design_mismatch",
+    "aesthetic_defect", "product_semantic",
+))
+STANDALONE_EVIDENCE_CLASSES = EVIDENCE_CLASSES - frozenset((
+    "design_mismatch",
 ))
 CHECKLIST = (
     {
@@ -42,6 +47,19 @@ CHECKLIST = (
     {
         "id": "layout_overlap",
         "description": "Controls and text do not overlap unexpectedly.",
+    },
+    {
+        "id": "spacing_and_clearance",
+        "description": (
+            "Text and controls have deliberate clearance from headers, "
+            "borders, neighbors, and related regions, with consistent "
+            "internal padding and vertical rhythm."),
+    },
+    {
+        "id": "alignment_and_balance",
+        "description": (
+            "Alignment, proportions, hierarchy, and whitespace form a "
+            "coherent and balanced composition."),
     },
     {
         "id": "screen_bounds",
@@ -60,12 +78,21 @@ CHECKLIST = (
     {
         "id": "source_parity",
         "description": (
-            "When two frames are supplied, their UI structure and state are "
-            "semantically equivalent despite rendering differences."),
+            "When two frames are supplied, compare their visible geometry, "
+            "presentation, structure, and state after independently checking "
+            "the visual quality of each frame."),
     },
 )
 _CHECK_IDS = tuple(item["id"] for item in CHECKLIST)
 _SEVERITY = {"pass": 0, "warn": 1, "fail": 2}
+_EVIDENCE_STATUSES = {
+    "none": frozenset(("pass",)),
+    "dynamic_runtime": frozenset(("pass",)),
+    "rendering_only": frozenset(("pass",)),
+    "design_mismatch": frozenset(("warn",)),
+    "aesthetic_defect": frozenset(("fail",)),
+    "product_semantic": frozenset(("pass", "fail")),
+}
 _VISION_TERMS = re.compile(
     r"(vision|image(?:_url)?|multimodal|modality|visual input|"
     r"does not support (?:images|image input)|unsupported (?:image|content))",
@@ -247,13 +274,18 @@ class OpenAICompatibleHTTP:
         return "request_failed"
 
 
-def _response_schema():
+def _response_schema(allow_design_mismatch=False):
+    evidence_classes = (
+        EVIDENCE_CLASSES if allow_design_mismatch
+        else STANDALONE_EVIDENCE_CLASSES)
+    verdicts = (
+        VALID_VERDICTS if allow_design_mismatch
+        else STANDALONE_VERDICTS)
     return {
-        "verdict": "pass|warn|fail",
+        "verdict": "|".join(sorted(verdicts)),
         "checks": [
-            {"id": item["id"], "status": "pass|warn|fail",
-             "evidence_class": (
-                 "none|dynamic_runtime|rendering_only|product_semantic"),
+            {"id": item["id"], "status": "|".join(sorted(verdicts)),
+             "evidence_class": "|".join(sorted(evidence_classes)),
              "reason": "short factual reason"}
             for item in CHECKLIST
         ],
@@ -261,13 +293,19 @@ def _response_schema():
     }
 
 
-def _response_json_schema():
+def _response_json_schema(allow_design_mismatch=False):
+    evidence_classes = (
+        EVIDENCE_CLASSES if allow_design_mismatch
+        else STANDALONE_EVIDENCE_CLASSES)
+    verdicts = (
+        VALID_VERDICTS if allow_design_mismatch
+        else STANDALONE_VERDICTS)
     return {
         "type": "object",
         "additionalProperties": False,
         "required": ["verdict", "checks", "summary"],
         "properties": {
-            "verdict": {"type": "string", "enum": sorted(VALID_VERDICTS)},
+            "verdict": {"type": "string", "enum": sorted(verdicts)},
             "checks": {
                 "type": "array",
                 "minItems": len(CHECKLIST),
@@ -281,11 +319,11 @@ def _response_json_schema():
                         "id": {"type": "string", "enum": list(_CHECK_IDS)},
                         "status": {
                             "type": "string",
-                            "enum": sorted(VALID_VERDICTS),
+                            "enum": sorted(verdicts),
                         },
                         "evidence_class": {
                             "type": "string",
-                            "enum": sorted(EVIDENCE_CLASSES),
+                            "enum": sorted(evidence_classes),
                         },
                         "reason": {
                             "type": "string",
@@ -304,6 +342,8 @@ def _response_json_schema():
 
 def _completion_payload(model, image_bytes, mime_type, context,
                         corrective_retry=False):
+    comparison = context.get("_comparison_image")
+    allow_design_mismatch = comparison is not None
     screenshot = {
         "label": _safe_text(context.get("label"), 120),
         "page": _safe_text(context.get("page"), 120),
@@ -312,7 +352,32 @@ def _completion_payload(model, image_bytes, mime_type, context,
         "task": "Evaluate only the supplied UI screenshot.",
         "screenshot": screenshot,
         "checklist": CHECKLIST,
-        "semantic_difference_policy": {
+        "evaluation_order": ["standalone_quality_each_image"],
+        "standalone_quality_policy": {
+            "scope": (
+                "Independently inspect every supplied image, including an "
+                "ordinary screenshot with no Designer reference."),
+            "criteria": [
+                "text readability, clipping, and overlap",
+                (
+                    "clearance between text and headers, borders, controls, "
+                    "and adjacent text"),
+                (
+                    "internal padding, spacing between regions, and "
+                    "consistent vertical rhythm"),
+                (
+                    "alignment, sizes, proportions, borders, visual "
+                    "hierarchy, and balanced whitespace"),
+            ],
+            "defect_rule": (
+                "Readable content with no literal overlap can still be "
+                "defective. Treat visibly cramped, nearly touching, unevenly "
+                "spaced, awkwardly aligned, or unbalanced content as an "
+                "aesthetic defect."),
+            "aesthetic_defect_verdict": "fail",
+            "product_semantic_defect_verdict": "fail",
+        },
+        "evidence_policy": {
             "dynamic_runtime": (
                 "Live or synthetic values such as temperatures, network "
                 "addresses, clocks, progress, filenames, and runtime status. "
@@ -324,17 +389,23 @@ def _completion_payload(model, image_bytes, mime_type, context,
                 "Permitted rasterization, anti-aliasing, or other renderer "
                 "variation explicitly allowed by the textual expectation."
             ),
+            "aesthetic_defect": (
+                "A standalone defect in spacing, clearance, alignment, "
+                "balance, proportions, borders, hierarchy, or other visible "
+                "presentation quality. This evidence requires fail."
+            ),
             "product_semantic": (
                 "Structure, controls, dialogs, selection, typed component "
                 "state, missing content, clipping, overlap, or a value "
-                "explicitly constrained by the textual expectation."
-            ),
-            "verdict_rule": (
-                "dynamic_runtime and rendering_only differences must pass. "
-                "Only a product_semantic defect may warn or fail."
+                "explicitly constrained by the textual expectation. A defect "
+                "with this evidence requires fail."
             ),
         },
-        "response_schema": _response_schema(),
+        "severity_policy": {
+            "allowed_variation": "pass",
+            "aesthetic_or_product_defect": "fail",
+        },
+        "response_schema": _response_schema(allow_design_mismatch),
     }
     expectation = context.get("expectation")
     if isinstance(expectation, dict):
@@ -344,22 +415,45 @@ def _completion_payload(model, image_bytes, mime_type, context,
             raise VisualCheckConfigurationError(
                 "textual expectation exceeds the size limit")
         task["textual_expectation"] = expectation
-    comparison = context.get("_comparison_image")
     if comparison is not None:
+        task["evaluation_order"].append(
+            "designer_parity_if_comparison")
         task["image_roles"] = [
             "Designer-generated reference frame",
             "real printer Typer/framebuffer frame",
         ]
-        task["source_parity_allowances"] = [
-            "theme colors and font rasterization",
-            (
-                "live footer-only status outside component state, such as "
-                "temperatures, network address, and preview/standby labels"
-            ),
-        ]
+        task["evidence_policy"]["design_mismatch"] = (
+            "A visible Designer/printer geometry or presentation difference "
+            "that is not itself a visual-quality or product defect. This "
+            "evidence requires warn.")
+        task["severity_policy"]["clean_designer_mismatch"] = "warn"
+        task["designer_parity_policy"] = {
+            "comparison": (
+                "After both standalone audits, compare visible presentation "
+                "region by region from header through content and controls "
+                "to footer."),
+            "criteria": [
+                (
+                    "relative positions, sizes, proportions, alignment, "
+                    "borders, padding, gaps, and whitespace"),
+                "line breaks and typography hierarchy",
+                "visible UI structure, content, selection, and typed state",
+            ],
+            "allowances": [
+                "theme colors and font rasterization",
+                (
+                    "live footer-only status outside component state, such "
+                    "as temperatures, network address, and preview/standby "
+                    "labels"),
+            ],
+            "clean_mismatch_evidence_class": "design_mismatch",
+            "clean_mismatch_verdict": "warn",
+            "quality_defect_evidence_class": "aesthetic_defect",
+            "quality_defect_verdict": "fail",
+        }
         task["task"] = (
-            "Evaluate the two supplied UI screenshots and compare their "
-            "visible structure and state.")
+            "Independently evaluate the visual quality of both supplied UI "
+            "screenshots, then compare their visible presentation and state.")
     content = [
         {
             "type": "text",
@@ -392,35 +486,48 @@ def _completion_payload(model, image_bytes, mime_type, context,
         "Use only the supplied checklist. Do not infer printer "
         "safety, functionality, or behavior from the image. "
         "Use every checklist id exactly once and add no fields. "
-        "Classify each check's evidence as none, dynamic_runtime, "
-        "rendering_only, or product_semantic. Dynamic runtime values are "
+        "Follow evaluation_order. First independently inspect each image for "
+        "standalone visual quality, even when there is no Designer reference. "
+        "Readable, non-overlapping content is not automatically acceptable: "
+        "inspect clearance, padding, spacing, vertical rhythm, alignment, "
+        "proportions, hierarchy, and balance. Classify each check's evidence "
+        "using only the classes allowed by response_schema. Dynamic runtime "
+        "values are "
         "semantic slots rather than literals: compare their role, plausible "
         "format, readability, and location. Require exact or approximate "
         "numeric equality only when the textual expectation explicitly "
         "constrains that value. A permitted dynamic_runtime or rendering_only "
         "difference must pass and must not be reported as a defect. "
-        "Use product_semantic for structural, content, dialog, selection, "
-        "typed-state, clipping, overlap, missing-content, or explicitly "
-        "constrained-value defects. "
+        "A standalone visual-quality defect uses aesthetic_defect and must "
+        "fail. A structural, content, dialog, "
+        "selection, typed-state, clipping, overlap, missing-content, or "
+        "explicitly constrained-value defect uses product_semantic and must "
+        "fail. A satisfied product-semantic check may pass. "
+        "When no comparison image is supplied, source_parity must pass with "
+        "none evidence. "
         "The top-level verdict must equal the most severe checklist "
         "status: pass only if every check passes, warn if the worst "
         "check warns, and fail if any check fails.")
     if corrective_retry:
         system_instruction += (
             " A previous response violated this contract. Re-evaluate the "
-            "same frame, correct any allowed-variation misclassification, "
-            "and obey the verdict rule exactly.")
+            "same image or images in standalone-first order, correct any "
+            "evidence or allowed-variation misclassification, and obey the "
+            "severity mapping exactly.")
     if comparison is not None:
         system_instruction += (
             " The first image is generated by Designer. The second image is "
-            "captured from the real printer Typer/framebuffer. Evaluate each "
-            "against the textual expectation and use source_parity to report "
-            "whether their visible UI structure and state are semantically "
-            "equivalent. Apply source_parity_allowances only to theme, "
+            "captured from the real printer Typer/framebuffer. Independently "
+            "inspect each image before comparing them. Then use source_parity "
+            "to compare visual presentation and UI state region by region, "
+            "from header to footer; semantic equivalence alone is not enough. "
+            "Apply designer_parity_policy allowances only to theme, "
             "rasterization, and footer-only live status. Do not use them for "
-            "page titles, controls, dialogs, selections, or typed-state "
-            "values. If every observed difference is covered by "
-            "source_parity_allowances, source_parity must pass, not warn.")
+            "geometry, layout, page titles, controls, dialogs, selections, or "
+            "typed-state values. An allowed difference passes. A clean visible "
+            "Designer mismatch uses design_mismatch and warns. A mismatch that "
+            "also creates a standalone aesthetic or product defect fails. "
+            "design_mismatch evidence is limited to source_parity.")
     return {
         "model": model,
         "temperature": 0,
@@ -429,7 +536,7 @@ def _completion_payload(model, image_bytes, mime_type, context,
             "json_schema": {
                 "name": "ff5m_ui_visual_verdict",
                 "strict": True,
-                "schema": _response_json_schema(),
+                "schema": _response_json_schema(allow_design_mismatch),
             },
         },
         "messages": [
@@ -460,7 +567,7 @@ def _completion_content(response):
         raise ValueError("completion content is not valid JSON")
 
 
-def validate_verdict(value):
+def validate_verdict(value, allow_design_mismatch=False):
     if not isinstance(value, dict):
         raise ValueError("verdict must be a JSON object")
     if set(value) != {"verdict", "checks", "summary"}:
@@ -492,9 +599,22 @@ def validate_verdict(value):
         if evidence_class not in EVIDENCE_CLASSES:
             raise ValueError(
                 "invalid evidence class for %s" % expected_id)
-        if status != "pass" and evidence_class != "product_semantic":
+        if (expected_id == "source_parity" and not allow_design_mismatch
+                and (status != "pass" or evidence_class != "none")):
             raise ValueError(
-                "non-pass verdict requires product_semantic evidence")
+                "standalone source_parity must pass with none evidence")
+        if (evidence_class == "design_mismatch"
+                and expected_id != "source_parity"):
+            raise ValueError(
+                "design_mismatch evidence is limited to source_parity")
+        if (evidence_class == "design_mismatch"
+                and not allow_design_mismatch):
+            raise ValueError(
+                "design_mismatch evidence requires a comparison image")
+        if status not in _EVIDENCE_STATUSES[evidence_class]:
+            raise ValueError(
+                "evidence class %s does not permit %s status" %
+                (evidence_class, status))
         if (not isinstance(reason, str)
                 or len(reason) > MAX_REASON_LENGTH
                 or status != "pass" and not reason.strip()):
@@ -639,7 +759,10 @@ class VisualCheckEvaluator:
                     model, exc.category, exc.message,
                     self.clock() - started, attempts=attempt)
             try:
-                verdict = validate_verdict(_completion_content(response))
+                verdict = validate_verdict(
+                    _completion_content(response),
+                    allow_design_mismatch=(
+                        context.get("_comparison_image") is not None))
                 break
             except ValueError as exc:
                 last_validation_error = str(exc)

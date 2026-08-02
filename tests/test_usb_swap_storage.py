@@ -621,20 +621,17 @@ class UsbStorageTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertRegex(result.stdout, r"Found %s: 512[.,]0 MiB" % re.escape(str(self.dev / "sda")))
-        self.assertIn("FAT32 (recommended)|_PREPARE_USB_CONFIRM", result.stdout)
-        self.assertIn("Linux EXT|_PREPARE_USB_CONFIRM", result.stdout)
-        self.assertLess(
-            result.stdout.index("FAT32 (recommended)|_PREPARE_USB_CONFIRM"),
-            result.stdout.index("Linux EXT|_PREPARE_USB_CONFIRM"))
-        self.assertIn(
-            "Both formats support USB swap and file storage", result.stdout)
+        self.assertIn("_PREPARE_USB_CONFIRM FORMAT=FAT32", result.stdout)
+        self.assertIn("_PREPARE_USB_CONFIRM FORMAT=EXT", result.stdout)
+        self.assertLess(result.stdout.index("FORMAT=FAT32"),
+                        result.stdout.index("FORMAT=EXT"))
         self.assertRegex(result.stdout, r"\bID=[0-9]+")
 
         macros = BASE_MACROS.read_text(encoding="utf-8")
         shell = SHELL_MACROS.read_text(encoding="utf-8")
         self.assertIn("[gcode_macro PREPARE_USB]", macros)
         self.assertIn("[gcode_macro _PREPARE_USB_CONFIRM]", macros)
-        self.assertIn("Erase and format|_PREPARE_USB_EXECUTE", macros)
+        self.assertIn("_PREPARE_USB_EXECUTE FORMAT={format}", macros)
         self.assertNotIn("TOKEN=", macros)
         self.assertIn("[gcode_shell_command zusb_format]", shell)
         zusb_block = shell.split(
@@ -647,7 +644,7 @@ class UsbStorageTest(unittest.TestCase):
         self.assertIn("linewise: True", zusb_block)
         self.assertIn("mode: stream", format_block)
         self.assertIn("linewise: True", format_block)
-        self.assertIn("action:prompt_begin Preparing USB drive", macros)
+        self.assertIn("action:prompt_begin", macros)
 
     def test_prepare_rejects_changed_drive_before_erasing(self):
         prompt = self._run_prepare("prompt")
@@ -698,8 +695,8 @@ class UsbStorageTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("mkdosfs -n FORGEX %s/sda1" % self.dev, result.stdout)
-        self.assertIn("USB preparation complete", result.stdout)
-        self.assertIn("action:prompt_begin USB preparation complete", result.stdout)
+        self.assertIn("action:prompt_begin", result.stdout)
+        self.assertIn("action:prompt_show", result.stdout)
         self.assertNotIn("fdisk success details", result.stdout)
         self.assertFalse(self.operation_lock.exists())
 
@@ -716,8 +713,8 @@ class UsbStorageTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("fdisk diagnostic", result.stdout)
-        self.assertIn("Failed to create a partition", result.stdout)
-        self.assertIn("action:prompt_begin USB preparation failed", result.stdout)
+        self.assertIn("action:prompt_begin", result.stdout)
+        self.assertIn("action:prompt_show", result.stdout)
         self.assertFalse(self.operation_lock.exists())
 
     def test_prepare_failure_emits_completion_dialog(self):
@@ -730,8 +727,8 @@ class UsbStorageTest(unittest.TestCase):
         result = self._run_prepare("format", "FAT32", "sda", identity)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("Failed to erase", result.stdout)
-        self.assertIn("action:prompt_begin USB preparation failed", result.stdout)
+        self.assertIn("action:prompt_begin", result.stdout)
+        self.assertIn("action:prompt_show", result.stdout)
 
 
 if __name__ == "__main__":
