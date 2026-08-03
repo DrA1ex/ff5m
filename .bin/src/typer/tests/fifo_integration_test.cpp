@@ -44,12 +44,12 @@ constexpr uint16_t BTN_TOUCH = 0x14a;
 namespace {
 
 void write_all(int fd, const void *data, size_t size) {
-    auto bytes = static_cast<const char *>(data);
+    auto bytes = (const char *) data;
     while (size) {
         auto written = write(fd, bytes, size);
         TYPER_CHECK(written > 0);
         bytes += written;
-        size -= static_cast<size_t>(written);
+        size -= (size_t) written;
     }
 }
 
@@ -143,7 +143,7 @@ void fragmented_frames_and_touch_dispatch() {
         if (poll(&fd, 1, 5) > 0 && (fd.revents & POLLIN)) {
             char buffer[128];
             auto count = read(event_reader, buffer, sizeof(buffer));
-            if (count > 0) event.assign(buffer, static_cast<size_t>(count));
+            if (count > 0) event.assign(buffer, (size_t) count);
         }
     }
     TYPER_CHECK(event == "tap 42:dialog.confirm\n");
@@ -166,7 +166,7 @@ void fragmented_frames_and_touch_dispatch() {
         if (poll(&fd, 1, 5) > 0 && (fd.revents & POLLIN)) {
             char buffer[256];
             auto count = read(event_reader, buffer, sizeof(buffer));
-            if (count > 0) event.append(buffer, static_cast<size_t>(count));
+            if (count > 0) event.append(buffer, (size_t) count);
         }
         if (event.find("touch 42:move.joy.xy end 390 280\n")
                 != std::string::npos) break;

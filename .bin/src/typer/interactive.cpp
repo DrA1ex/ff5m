@@ -110,7 +110,7 @@ void process_touch_events(int touch_fd, int event_fd, TouchTracker &tracker,
         }
         if (count == 0) return;
 
-        auto event_count = count / static_cast<ssize_t>(sizeof(input_event));
+        auto event_count = count / (ssize_t) sizeof(input_event);
         for (ssize_t i = 0; i < event_count; ++i) {
             const auto &event = events[i];
             auto report = tracker.process_report(event.type, event.code, event.value);
@@ -159,13 +159,11 @@ std::optional<TouchReport> TouchTracker::process_report(
     if (type == EV_ABS && code == ABS_X) {
         x_ = value;
         if (down_ && !starting_)
-            max_distance_ = std::max(max_distance_,
-                                     std::abs(x_ - start_x_) + std::abs(y_ - start_y_));
+            max_distance_ = std::max(max_distance_, std::abs(x_ - start_x_) + std::abs(y_ - start_y_));
     } else if (type == EV_ABS && code == ABS_Y) {
         y_ = value;
         if (down_ && !starting_)
-            max_distance_ = std::max(max_distance_,
-                                     std::abs(x_ - start_x_) + std::abs(y_ - start_y_));
+            max_distance_ = std::max(max_distance_, std::abs(x_ - start_x_) + std::abs(y_ - start_y_));
     } else if (type == EV_KEY && code == BTN_TOUCH) {
         if (value) {
             down_ = true;
@@ -278,6 +276,7 @@ void run(const std::string &draw_pipe, const std::string &touch_device,
     std::string draw_buffer;
     TouchTracker touch_tracker;
     TouchDispatchState touch_dispatch;
+
     while (!signal_terminated && !stop_requested.load(std::memory_order_relaxed)) {
         if (touch_fd < 0 && !touch_device.empty() && !event_pipe.empty()) {
             auto new_event_fd = open(event_pipe.c_str(), O_WRONLY | O_NONBLOCK);
@@ -287,19 +286,20 @@ void run(const std::string &draw_pipe, const std::string &touch_device,
                 touch_fd = new_touch_fd;
                 touch_tracker = {};
                 touch_dispatch = {};
+
                 if (debug) std::cerr << "Touch input connected" << std::endl;
             } else {
                 if (new_event_fd >= 0) close(new_event_fd);
                 if (new_touch_fd >= 0) close(new_touch_fd);
             }
         }
+
         pollfd fds[2] = {
             {.fd = draw_fd, .events = POLLIN, .revents = 0},
             {.fd = touch_fd, .events = POLLIN, .revents = 0},
         };
-        auto ready = poll(fds, touch_fd >= 0 ? 2 : 1,
-                          touch_dispatch.active()
-                          ? CONTINUOUS_HEARTBEAT_MS : 1000);
+
+        auto ready = poll(fds, touch_fd >= 0 ? 2 : 1, touch_dispatch.active() ? CONTINUOUS_HEARTBEAT_MS : 1000);
         if (ready < 0) {
             if (errno == EINTR) continue;
             std::cerr << "Poll failed: " << strerror(errno) << std::endl;
@@ -328,11 +328,13 @@ void run(const std::string &draw_pipe, const std::string &touch_device,
                 }
                 draw_buffer.erase(0, pos + delimiter.size());
             }
+
             if (draw_buffer.size() > MAX_DRAW_FRAME) {
                 if (debug) std::cerr << "Discarding oversized draw frame" << std::endl;
                 std::string{}.swap(draw_buffer);
             }
         }
+
         if (touch_fd >= 0 && (fds[1].revents & POLLIN)) {
             process_touch_events(touch_fd, event_fd, touch_tracker, touch_dispatch);
         } else if (ready == 0 && touch_dispatch.active()) {
@@ -341,6 +343,7 @@ void run(const std::string &draw_pipe, const std::string &touch_device,
             // a lost release event and fail safe if typer disappears.
             touch_dispatch.dispatch(event_fd, "move");
         }
+        
         if (touch_fd >= 0 && (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL))) {
             touch_dispatch.dispatch(event_fd, "end");
             touch_dispatch.clear();

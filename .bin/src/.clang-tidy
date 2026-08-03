@@ -154,16 +154,16 @@ CheckOptions:
   readability-identifier-naming.ClassConstantCase: UPPER_CASE
   readability-identifier-naming.ClassCase: CamelCase
   readability-identifier-naming.TemplateParameterCase: CamelCase
-  readability-identifier-naming.VariableCase: lower_case
-  readability-identifier-naming.FunctionCase: lower_case
-  readability-identifier-naming.StaticVariableCase: lower_case
-  readability-identifier-naming.ParameterCase: lower_case
-  readability-identifier-naming.ClassMethodCase: lower_case
-  readability-identifier-naming.MethodCase: lower_case
-  readability-identifier-naming.PublicMethodCase: lower_case
-  readability-identifier-naming.PublicMemberCase: lower_case
-  readability-identifier-naming.ProtectedMemberCase: lower_case
-  readability-identifier-naming.PrivateMemberCase: lower_case
-  readability-identifier-naming.ClassMemberPrefix:
-  readability-identifier-naming.PrivateMemberPrefix: _
-  readability-identifier-naming.PrivateMethodPrefix: _
+  readability-identifier-naming.VariableCase: camelCase
+  readability-identifier-naming.FunctionCase: camelCase
+  readability-identifier-naming.StaticVariableCase: camelCase
+  readability-identifier-naming.ParameterCase: camelCase
+  readability-identifier-naming.ClassMethodCase: camelCase
+  readability-identifier-naming.MethodCase: camelCase
+  readability-identifier-naming.PublicMethodCase: camelCase
+  readability-identifier-naming.PublicMemberCase: camelCase
+  readability-identifier-naming.ProtectedMemberCase: camelCase
+  readability-identifier-naming.PrivateMemberCase: camelCase
+  readability-identifier-naming.ClassMemberPrefix: ""
+  readability-identifier-naming.PrivateMemberPrefix: "_"
+  readability-identifier-naming.PrivateMethodPrefix: "_"

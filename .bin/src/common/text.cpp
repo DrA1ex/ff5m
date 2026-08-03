@@ -151,8 +151,7 @@ void TextDrawer::print(const char *text) {
 
 void TextDrawer::printWrapped(const char *text, int32_t maxWidth,
                               int32_t maxHeight, bool truncateOverflow) {
-    const auto lines = wrapText(
-        text, maxWidth, maxHeight, truncateOverflow);
+    const auto lines = wrapText(text, maxWidth, maxHeight, truncateOverflow);
     std::string wrapped;
     for (std::size_t index = 0; index < lines.size(); ++index) {
         if (index > 0) wrapped += '\n';
@@ -230,8 +229,8 @@ void TextDrawer::_drawGlyphPixel(int32_t x, int32_t y, uint8_t coverage) {
         if (_blending) {
             const auto colorAlpha = (_color >> 24) & 0xff;
             const auto effectiveAlpha = colorAlpha == 0xff
-                ? static_cast<uint32_t>(coverage)
-                : static_cast<uint32_t>((colorAlpha * coverage + 127u) / 255u);
+                ? (uint32_t) coverage
+                : (uint32_t)((colorAlpha * coverage + 127u) / 255u);
 
             color = (_color & 0x00ffffffu) | (effectiveAlpha << 24);
         } else {
@@ -255,7 +254,7 @@ const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
         const auto &primary = font.ranges[0];
         if (symbol >= primary.codeFrom && symbol <= primary.codeTo) {
             const uint32_t index = primary.glyphOffset
-                + static_cast<uint32_t>(symbol - primary.codeFrom);
+                + (uint32_t)(symbol - primary.codeFrom);
             if (font.glyphCount == 0 || index < font.glyphCount) {
                 return &font.glyphs[index];
             }
@@ -273,7 +272,7 @@ const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
                 left = middle + 1;
             } else {
                 const uint32_t index = range.glyphOffset
-                    + static_cast<uint32_t>(symbol - range.codeFrom);
+                    + (uint32_t)(symbol - range.codeFrom);
                 if (font.glyphCount > 0 && index >= font.glyphCount) {
                     return nullptr;
                 }
@@ -290,7 +289,7 @@ const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
 }
 
 void TextDrawer::setPixel(int32_t x, int32_t y, uint32_t color) {
-    const auto alpha = static_cast<uint8_t>(color >> 24);
+    const auto alpha = (uint8_t)(color >> 24);
     if (alpha == 0 || x < 0 || x >= _width || y < 0 || y >= _height) {
         return;
     }
@@ -317,13 +316,13 @@ void TextDrawer::fillRect(const Rect &b, uint32_t color) {
 }
 
 void TextDrawer::fillRect(int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t color) {
-    const auto alpha = static_cast<uint8_t>(color >> 24);
+    const auto alpha = (uint8_t)(color >> 24);
     if (alpha == 0) return; // Skip fully transparent colors
 
     const auto fromX = std::max(0, x);
-    const auto toX = std::min(x + static_cast<int32_t>(width), static_cast<int32_t>(_width));
+    const auto toX = std::min(x + (int32_t) width, (int32_t) _width);
     const auto fromY = std::max(0, y);
-    const auto toY = std::min(y + static_cast<int32_t>(height), static_cast<int32_t>(_height));
+    const auto toY = std::min(y + (int32_t) height, (int32_t) _height);
 
     if (fromX >= toX || fromY >= toY) return;
 
@@ -515,21 +514,19 @@ std::string TextDrawer::truncateText(const std::string_view &text,
         if (value.empty()) return;
         auto offset = value.size() - 1;
         while (offset > 0
-               && (static_cast<unsigned char>(value[offset]) & 0xc0) == 0x80) {
+               && ((uint8_t) value[offset] & 0xc0) == 0x80) {
             --offset;
         }
         value.erase(offset);
     };
 
     std::string ellipsis = "...";
-    while (!ellipsis.empty()
-           && calcTextAdvance(ellipsis) > maxWidth) {
+    while (!ellipsis.empty() && calcTextAdvance(ellipsis) > maxWidth) {
         ellipsis.pop_back();
     }
 
     auto result = std::string(text);
-    while (!result.empty()
-           && calcTextAdvance(result + ellipsis) > maxWidth) {
+    while (!result.empty() && calcTextAdvance(result + ellipsis) > maxWidth) {
         removeLastCodepoint(result);
     }
     return result + ellipsis;
@@ -543,7 +540,7 @@ std::vector<std::string> TextDrawer::wrapText(
     const auto fits = [this, maxWidth](const std::string_view &line) {
         return calcTextAdvance(line) <= maxWidth;
     };
-    const auto utf8Length = [](unsigned char firstByte) -> std::size_t {
+    const auto utf8Length = [](uint8_t firstByte) -> std::size_t {
         if (firstByte < 0x80) return 1;
         if ((firstByte & 0xe0) == 0xc0) return 2;
         if ((firstByte & 0xf0) == 0xe0) return 3;
@@ -577,8 +574,7 @@ std::vector<std::string> TextDrawer::wrapText(
             auto next = offset;
             std::string chunk;
             while (next < word.size()) {
-                const auto length = utf8Length(
-                    static_cast<unsigned char>(word[next]));
+                const auto length = utf8Length((uint8_t) word[next]);
                 if (next + length > word.size()) {
                     throw std::invalid_argument("Invalid UTF-8 sequence");
                 }
@@ -589,8 +585,7 @@ std::vector<std::string> TextDrawer::wrapText(
                 if (!fits(chunk)) break;
             }
             if (next == offset) {
-                const auto length = utf8Length(
-                    static_cast<unsigned char>(word[offset]));
+                const auto length = utf8Length((uint8_t) word[offset]);
                 chunk = word.substr(offset, length);
                 next = offset + length;
             }
@@ -643,8 +638,7 @@ std::vector<std::string> TextDrawer::wrapText(
     int32_t blockBottom = std::numeric_limits<int32_t>::min();
     const auto lineAdvance = font()->advanceY * _scaleY;
     for (std::size_t index = 0; index < lines.size(); ++index) {
-        const auto boundary = calcTextBoundaries(
-            lines[index], 0, static_cast<int32_t>(index) * lineAdvance);
+        const auto boundary = calcTextBoundaries(lines[index], 0, (int32_t) index * lineAdvance);
         if (boundary.left >= boundary.right && boundary.top >= boundary.bottom) {
             ++visible;
             continue;
@@ -717,26 +711,26 @@ uint32_t TextDrawer::_lerpColor(uint32_t a, uint32_t b, uint8_t factor) {
 }
 
 uint32_t TextDrawer::_sourceOverOpaque(uint32_t destination, uint32_t source) {
-    const auto alpha = static_cast<uint8_t>(source >> 24);
+    const auto alpha = (uint8_t)(source >> 24);
     if (alpha == 0) return destination;
     if (alpha == 0xff) return source;
 
     // Typer renders into an opaque framebuffer. Treat source alpha as pixel
     // coverage and blend only the three visible channels. Avoiding redundant
     // alpha-channel composition keeps the hot anti-aliasing path smaller.
-    const auto inverse = static_cast<uint8_t>(0xff - alpha);
+    const auto inverse = (uint8_t)(0xff - alpha);
     const auto mix = [alpha, inverse](uint8_t dst, uint8_t src) {
-        return static_cast<uint8_t>(
-            (static_cast<uint16_t>(dst) * inverse
-             + static_cast<uint16_t>(src) * alpha) / 255u);
+        return (uint8_t)(
+            ((uint16_t) dst * inverse + (uint16_t) src * alpha) / 255u
+        );
     };
 
-    const auto red = mix(static_cast<uint8_t>(destination >> 16), static_cast<uint8_t>(source >> 16));
-    const auto green = mix(static_cast<uint8_t>(destination >> 8), static_cast<uint8_t>(source >> 8));
-    const auto blue = mix(static_cast<uint8_t>(destination), static_cast<uint8_t>(source));
+    const auto red = mix((uint8_t)(destination >> 16), (uint8_t)(source >> 16));
+    const auto green = mix((uint8_t)(destination >> 8), (uint8_t)(source >> 8));
+    const auto blue = mix((uint8_t) destination, (uint8_t) source);
 
     return 0xff000000u
-        | (static_cast<uint32_t>(red) << 16)
-        | (static_cast<uint32_t>(green) << 8)
+        | ((uint32_t) red << 16)
+        | ((uint32_t) green << 8)
         | blue;
 }

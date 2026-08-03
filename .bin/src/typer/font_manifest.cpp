@@ -14,7 +14,7 @@ namespace {
 std::size_t glyph_count(const Font &font) {
     return font.glyphCount != 0
         ? font.glyphCount
-        : static_cast<std::size_t>(font.codeTo - font.codeFrom) + 1;
+        : (std::size_t)(font.codeTo - font.codeFrom) + 1;
 }
 
 void quoted(std::ostringstream &output, std::string_view value) {
@@ -29,11 +29,11 @@ void quoted(std::ostringstream &output, std::string_view value) {
             case '\r': output << "\\r"; break;
             case '\t': output << "\\t"; break;
             default:
-                if (static_cast<unsigned char>(ch) < 0x20) {
+                if ((uint8_t) ch < 0x20) {
                     constexpr char hex[] = "0123456789abcdef";
                     output << "\\u00"
-                           << hex[(static_cast<unsigned char>(ch) >> 4) & 0xf]
-                           << hex[static_cast<unsigned char>(ch) & 0xf];
+                           << hex[((uint8_t) ch >> 4) & 0xf]
+                           << hex[(uint8_t) ch & 0xf];
                 } else {
                     output << ch;
                 }
@@ -75,9 +75,8 @@ std::string build(const std::map<std::string, const Font *> &fonts) {
         bool monospaced = true;
         for (std::size_t index = 0; index < count; ++index) {
             const auto &glyph = font.glyphs[index];
-            top = std::min(top, static_cast<int32_t>(glyph.offsetY));
-            bottom = std::max(
-                bottom, static_cast<int32_t>(glyph.offsetY) + glyph.height);
+            top = std::min(top, (int32_t) glyph.offsetY);
+            bottom = std::max(bottom, (int32_t) glyph.offsetY + glyph.height);
             monospaced = monospaced && glyph.advanceX == first_advance;
         }
 

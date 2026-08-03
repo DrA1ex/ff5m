@@ -29,8 +29,8 @@ const GlyphRange compactRanges[] = {
 };
 const Font compactFont = {
     "Compact test", 1,
-    const_cast<uint8_t *>(compactBitmaps),
-    const_cast<Glyph *>(compactGlyphs),
+    (uint8_t *) compactBitmaps,
+    (Glyph *) compactGlyphs,
     0x0041, 0x0401, 2,
     compactRanges, 2, 2,
 };
@@ -38,7 +38,7 @@ const Font compactFont = {
 std::vector<uint32_t> pixels() {
     std::vector<uint32_t> result(WIDTH * HEIGHT);
     for (std::size_t index = 0; index < result.size(); ++index) {
-        result[index] = 0xff000000u | static_cast<uint32_t>(index);
+        result[index] = 0xff000000u | (uint32_t) index;
     }
     return result;
 }
@@ -244,8 +244,7 @@ void transparent_text_blends_with_existing_pixels() {
     std::vector<uint32_t> explicit_background(width * height, background);
     std::vector<uint32_t> transparent_background(width * height, background);
 
-    TextDrawer explicit_drawer(
-        explicit_background.data(), width, height);
+    TextDrawer explicit_drawer(explicit_background.data(), width, height);
     explicit_drawer.setBlending(true);
     explicit_drawer.setFont(&JetBrainsMono12ptb2);
     explicit_drawer.setPosition(8, 35);
@@ -253,8 +252,7 @@ void transparent_text_blends_with_existing_pixels() {
     explicit_drawer.setBackgroundColor(background);
     explicit_drawer.print("NETWORK 28 / 0 C");
 
-    TextDrawer transparent_drawer(
-        transparent_background.data(), width, height);
+    TextDrawer transparent_drawer(transparent_background.data(), width, height);
     transparent_drawer.setBlending(true);
     transparent_drawer.setFont(&JetBrainsMono12ptb2);
     transparent_drawer.setPosition(8, 35);
@@ -330,13 +328,10 @@ void text_wrap_limits_by_rendered_height_and_adds_ellipsis() {
     drawer.setFont(&JetBrainsMono12ptb2);
     const auto width = drawer.calcTextAdvance("ONE TWO");
     const auto first = drawer.calcTextBoundaries("ONE TWO", 0, 0);
-    const auto second = drawer.calcTextBoundaries(
-        "THREE", 0, JetBrainsMono12ptb2.advanceY);
-    const auto twoLineHeight = std::max(first.bottom, second.bottom)
-        - std::min(first.top, second.top);
+    const auto second = drawer.calcTextBoundaries("THREE", 0, JetBrainsMono12ptb2.advanceY);
+    const auto twoLineHeight = std::max(first.bottom, second.bottom) - std::min(first.top, second.top);
 
-    const auto lines = drawer.wrapText(
-        "ONE TWO THREE FOUR", width, twoLineHeight, true);
+    const auto lines = drawer.wrapText("ONE TWO THREE FOUR", width, twoLineHeight, true);
 
     TYPER_CHECK(lines.size() == 2);
     TYPER_CHECK(lines[0] == "ONE TWO");
@@ -351,8 +346,7 @@ void text_wrap_without_truncate_has_no_ellipsis() {
     const auto width = drawer.calcTextAdvance("ONE TWO");
     const auto oneLineHeight = drawer.calcTextBoundaries("ONE TWO").size().second;
 
-    const auto lines = drawer.wrapText(
-        "ONE TWO THREE FOUR", width, oneLineHeight);
+    const auto lines = drawer.wrapText("ONE TWO THREE FOUR", width, oneLineHeight);
 
     TYPER_CHECK(lines.size() == 1);
     TYPER_CHECK(lines[0] == "ONE TWO");

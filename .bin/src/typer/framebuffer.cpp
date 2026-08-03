@@ -50,7 +50,7 @@ BufferPlan select_buffers(const Geometry &geometry,
     }
 
     const auto legacy_frame_length =
-        static_cast<std::size_t>(width) * height * sizeof(uint32_t);
+        (std::size_t) width * height * sizeof(uint32_t);
     plan.mapping_length = legacy_frame_length;
 
     if (geometry.width != width || geometry.height != height ||
@@ -77,7 +77,7 @@ BufferPlan select_buffers(const Geometry &geometry,
     }
 
     const auto frame_length =
-        static_cast<std::size_t>(geometry.line_length) * height;
+        (std::size_t) geometry.line_length * height;
     if (geometry.memory_length < frame_length * 2) {
         plan.fallback_reason = geometry_error("framebuffer memory is too small");
         return plan;
@@ -93,7 +93,7 @@ BufferPlan select_buffers(const Geometry &geometry,
 Device::Device(const char *path, uint32_t width, uint32_t height,
                bool request_backbuffer) {
     const auto legacy_length =
-        static_cast<std::size_t>(width) * height * sizeof(uint32_t);
+        (std::size_t) width * height * sizeof(uint32_t);
 
     _fd = open(path, O_RDWR);
     if (_fd == -1) {
@@ -107,15 +107,13 @@ Device::Device(const char *path, uint32_t width, uint32_t height,
 #ifdef __linux__
     if (request_backbuffer) {
         if (flock(_fd, LOCK_EX | LOCK_NB) == -1) {
-            _warning = system_error("framebuffer backbuffer is busy") +
-                       "; using heap backbuffer";
+            _warning = system_error("framebuffer backbuffer is busy") + "; using heap backbuffer";
         } else {
             fb_fix_screeninfo fixed{};
             fb_var_screeninfo variable{};
             if (ioctl(_fd, FBIOGET_FSCREENINFO, &fixed) == -1 ||
                 ioctl(_fd, FBIOGET_VSCREENINFO, &variable) == -1) {
-                _warning = system_error("unable to inspect framebuffer") +
-                           "; using heap backbuffer";
+                _warning = system_error("unable to inspect framebuffer") + "; using heap backbuffer";
             } else {
                 Geometry geometry{
                     .width = variable.xres,
@@ -146,20 +144,17 @@ Device::Device(const char *path, uint32_t width, uint32_t height,
 #endif
 
     _mapping_length = plan.mapping_length;
-    _mapping = static_cast<uint8_t *>(mmap(
-        nullptr, _mapping_length, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0));
+    _mapping = (uint8_t *) mmap(nullptr, _mapping_length, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
 
     if (_mapping == MAP_FAILED && plan.use_framebuffer_backbuffer) {
 #ifdef __linux__
         flock(_fd, LOCK_UN);
 #endif
-        _mapping = static_cast<uint8_t *>(mmap(
-            nullptr, legacy_length, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0));
+        _mapping = (uint8_t *) mmap(nullptr, legacy_length, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
         _mapping_length = legacy_length;
         plan = {};
         plan.mapping_length = legacy_length;
-        _warning = system_error("unable to map both framebuffer pages") +
-                   "; using heap backbuffer";
+        _warning = system_error("unable to map both framebuffer pages") + "; using heap backbuffer";
     }
 
     if (_mapping == MAP_FAILED) {
@@ -171,9 +166,9 @@ Device::Device(const char *path, uint32_t width, uint32_t height,
         return;
     }
 
-    _front = reinterpret_cast<uint32_t *>(_mapping + plan.front_offset);
+    _front = (uint32_t *) (_mapping + plan.front_offset);
     if (request_backbuffer && plan.use_framebuffer_backbuffer) {
-        _back = reinterpret_cast<uint32_t *>(_mapping + plan.back_offset);
+        _back = (uint32_t *) (_mapping + plan.back_offset);
     }
 }
 

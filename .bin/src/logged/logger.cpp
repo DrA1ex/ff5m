@@ -114,15 +114,13 @@ void Logger::_process_screen_message(
     FileLock lock(_config.screen_lock_file);
 
     if (_config.screen_followup) {
-        _screen_queue->reset(
-            load_array_from_file(_config.screen_follow_up_file));
+        _screen_queue->reset(load_array_from_file(_config.screen_follow_up_file));
     }
 
     _screen_queue->push({level, message});
     if (_config.screen_followup) {
         const auto &rows = _screen_queue->rows();
-        save_array_to_file(
-            {rows.begin(), rows.end()}, _config.screen_follow_up_file);
+        save_array_to_file({rows.begin(), rows.end()}, _config.screen_follow_up_file);
     }
 
     _send_to_screen();
@@ -130,20 +128,17 @@ void Logger::_process_screen_message(
 
 void Logger::_send_to_screen() {
     constexpr int bottom_offset = 460;
-    const auto line_height = static_cast<int>(_drawer->font()->advanceY);
+    const auto line_height = (int32_t) _drawer->font()->advanceY;
     const auto &messages = _screen_queue->rows();
 
-    const int y_clear = std::max(
-        0, bottom_offset
-           - static_cast<int>(_screen_queue->max_rows()) * line_height);
-    _drawer->fillRect(
-        0, y_clear, WIDTH, HEIGHT - y_clear, 0xff000000);
+    const int y_clear = std::max(0, bottom_offset - (int32_t) _screen_queue->max_rows() * line_height);
+    _drawer->fillRect(0, y_clear, WIDTH, HEIGHT - y_clear, 0xff000000);
 
     _drawer->setHorizontalAlignment(HorizontalAlign::LEFT);
     _drawer->setVerticalAlignment(VerticalAlignment::MIDDLE);
 
     const int height =
-        (static_cast<int>(messages.size()) - 1) * line_height;
+        ((int32_t) messages.size() - 1) * line_height;
     int y_offset = bottom_offset - height;
     for (const auto &message: messages) {
         _drawer->setColor(message.color());
@@ -169,8 +164,7 @@ void Logger::_send_to_screen() {
 
 
 void Logger::_init_drawer() {
-    if (_config.screen_queue_max == 0
-        || _config.screen_queue_max > MAX_SCREEN_QUEUE_ROWS) {
+    if (_config.screen_queue_max == 0 || _config.screen_queue_max > MAX_SCREEN_QUEUE_ROWS) {
         throw std::invalid_argument("Invalid screen queue size");
     }
 
@@ -179,9 +173,7 @@ void Logger::_init_drawer() {
         throw std::runtime_error("Error: cannot open framebuffer device.");
     }
 
-    auto *fbp = (uint32_t *) mmap(
-        nullptr, WIDTH * HEIGHT * 4, PROT_READ | PROT_WRITE,
-        MAP_SHARED, fbfd, 0);
+    auto *fbp = (uint32_t *) mmap(nullptr, WIDTH * HEIGHT * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
     if (fbp == MAP_FAILED) {
         close(fbfd);
         throw std::runtime_error("Error: failed to map framebuffer device to memory.");
@@ -191,9 +183,7 @@ void Logger::_init_drawer() {
         auto drawer = std::make_unique<TextDrawer>(fbp, WIDTH, HEIGHT);
         drawer->setDoubleBuffered(true);
         drawer->setFont(&JetBrainsMono8ptb4);
-        auto screen_queue = std::make_unique<ScreenQueue>(
-            *drawer, _config.screen_queue_max,
-            WIDTH - 20, 650);
+        auto screen_queue = std::make_unique<ScreenQueue>(*drawer, _config.screen_queue_max, WIDTH - 20, 650);
 
         _fb_descriptor = fbfd;
         _fbp = fbp;

@@ -23,8 +23,7 @@ ScreenQueue::ScreenQueue(TextDrawer &drawer, std::size_t max_rows,
         throw std::invalid_argument("screen row widths must be positive");
     }
     if (_bottom_line_width > _line_width) {
-        throw std::invalid_argument(
-            "bottom screen row cannot be wider than other rows");
+        throw std::invalid_argument("bottom screen row cannot be wider than other rows");
     }
 }
 

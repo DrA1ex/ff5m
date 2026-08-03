@@ -15,7 +15,7 @@ namespace {
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 480;
 constexpr std::size_t FRAME_BYTES =
-    static_cast<std::size_t>(WIDTH) * HEIGHT * sizeof(uint32_t);
+    (std::size_t) WIDTH * HEIGHT * sizeof(uint32_t);
 
 typer::framebuffer::Geometry valid_geometry() {
     return {

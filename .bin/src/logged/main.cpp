@@ -46,15 +46,13 @@ int read_int(const std::string &param, int &index, int argc, char *argv[]) {
     }
 }
 
-LogLevel read_level(
-    const std::string &param, int &index, int argc, char *argv[]) {
+LogLevel read_level(const std::string &param, int &index, int argc, char *argv[]) {
     const auto value = read_int(param, index, argc, argv);
-    if (value < static_cast<int>(LogLevel::DEBUG)
-        || value > static_cast<int>(LogLevel::ERROR)) {
-        throw std::invalid_argument(
-            param + " must be between 0 and 3");
+    if (value < (int32_t) LogLevel::DEBUG || value > (int32_t) LogLevel::ERROR) {
+        throw std::invalid_argument(param + " must be between 0 and 3");
     }
-    return static_cast<LogLevel>(value);
+
+    return (LogLevel)(value);
 }
 
 int parse_args(int argc, char *argv[], LoggerParams &config) {
@@ -78,13 +76,11 @@ int parse_args(int argc, char *argv[], LoggerParams &config) {
             config.screen_level = read_level(param, i, argc, argv);
         } else if (param == "--screen-queue") {
             const auto count = read_int(param, i, argc, argv);
-            if (count <= 0
-                || count > static_cast<int>(MAX_SCREEN_QUEUE_ROWS)) {
-                throw std::invalid_argument(
-                    "--screen-queue must be between 1 and "
-                    + std::to_string(MAX_SCREEN_QUEUE_ROWS));
+            if (count <= 0 || count > (int32_t) MAX_SCREEN_QUEUE_ROWS) {
+                throw std::invalid_argument("--screen-queue must be between 1 and " + std::to_string(MAX_SCREEN_QUEUE_ROWS));
             }
-            config.screen_queue_max = static_cast<std::size_t>(count);
+
+            config.screen_queue_max = (std::size_t) count;
         } else if (param == "--screen-no-followup") {
             config.screen_followup = false;
         } else if (param == "--benchmark") {
