@@ -632,42 +632,47 @@ class RendererStateTest(unittest.TestCase):
     def test_bundled_themes_include_stable_baseline_and_recolor_roles(self):
         renderer = FEATHER.FeatherRenderer()
         self.assertTrue(
-            {"DEFAULT", "DARK", "DESERT", "AURORA"}.issubset(
+            {"DEFAULT", "DARK", "DESERT", "AMBER"}.issubset(
                 renderer.theme_names()))
-        renderer.set_theme("OCEAN")
-        ocean_data = json.loads(
-            pathlib.Path(UI.THEME_DIRECTORY, "ocean.json").read_text(
+        renderer.set_theme("SYNTH")
+        synth_data = json.loads(
+            pathlib.Path(UI.THEME_DIRECTORY, "synth.json").read_text(
                 encoding="utf-8"))
-        _name, _description, ocean_colors = UI.validate_theme_data(ocean_data)
+        _name, _description, synth_colors = UI.validate_theme_data(synth_data)
         for source, role in UI.COLOR_ROLES.items():
-            self.assertEqual(renderer.color(source), ocean_colors[role])
+            self.assertEqual(renderer.color(source), synth_colors[role])
         page = "\n".join(renderer.begin_page("Themes"))
-        self.assertIn("-c 02080d", page)
-        self.assertIn("-c 35baf6", page)
-        self.assertNotIn("-c 35d9e6", page)
+        self.assertIn("-c %s" % synth_colors["background"], page)
+        self.assertIn("-c %s" % synth_colors["primary"], page)
+        self.assertNotIn("-c %s" % UI.FALLBACK_THEME["primary"], page)
 
-        renderer.set_theme("PIP_BOY_2000")
-        self.assertEqual(renderer.color(UI.COLOR_CYAN), "69d540")
-        self.assertEqual(renderer.color(UI.COLOR_VIOLET), "a8cf45")
-        self.assertEqual(renderer.color("button_background"), "28230f")
-        self.assertEqual(renderer.color("header_text"), "b88d2e")
+        self.assertEqual(
+            renderer.color(UI.COLOR_CYAN), synth_colors["primary"])
+        self.assertEqual(
+            renderer.color(UI.COLOR_VIOLET), synth_colors["secondary"])
+        self.assertEqual(
+            renderer.color("button_background"), synth_colors["panel"])
+        self.assertEqual(
+            renderer.color("header_text"), synth_colors["primary"])
         button = "\n".join(renderer.button(
             "test", 10, 70, 180, 44, "BUTTON"))
-        self.assertIn("--background 28230f", button)
-        self.assertIn("--border 6d5c2b", button)
-        self.assertIn("--text-color b58c2f", button)
+        self.assertIn(
+            "--background %s" % synth_colors["panel"], button)
+        self.assertIn(
+            "--border %s" % synth_colors["primary"], button)
+        self.assertIn(
+            "--text-color %s" % synth_colors["primary"], button)
         selected = "\n".join(renderer.button(
             "selected", 200, 70, 180, 44, "SELECTED",
             state="selected"))
-        self.assertIn("--background 102306", selected)
-        self.assertIn("--border 69d540", selected)
-        header = "\n".join(renderer.begin_page("Pip-Boy"))
-        self.assertIn("-c 24200e", header)
-        self.assertIn("-c b88d2e", header)
-        self.assertIn("-c 5b4c24", header)
-        renderer.set_theme("PIP_BOY_3000")
-        self.assertEqual(renderer.color(UI.COLOR_CYAN), "15eb18")
-        self.assertEqual(renderer.color(UI.COLOR_TEXT), "8df58a")
+        self.assertIn(
+            "--background %s" % synth_colors["panel"], selected)
+        self.assertIn(
+            "--border %s" % synth_colors["secondary"], selected)
+        header = "\n".join(renderer.begin_page("Synth"))
+        self.assertIn("-c %s" % synth_colors["panel"], header)
+        self.assertIn("-c %s" % synth_colors["primary"], header)
+        self.assertIn("-c %s" % synth_colors["border"], header)
 
     def test_user_theme_directory_can_add_and_override_themes(self):
         with tempfile.TemporaryDirectory() as user_directory:
@@ -679,7 +684,7 @@ class RendererStateTest(unittest.TestCase):
             }
             override = {
                 "schema_version": 1,
-                "name": "OCEAN",
+                "name": "SYNTH",
                 "description": "User override",
                 "colors": dict(UI.FALLBACK_THEME, primary="abcdef"),
             }
@@ -697,9 +702,9 @@ class RendererStateTest(unittest.TestCase):
             self.assertIn("invalid theme", "\n".join(logs.output))
             renderer.set_theme("CUSTOM_BLUE")
             self.assertEqual(renderer.color("35d9e6"), "123abc")
-            renderer.set_theme("OCEAN")
+            renderer.set_theme("SYNTH")
             self.assertEqual(renderer.color("35d9e6"), "abcdef")
-            self.assertEqual(renderer.theme_description("OCEAN"),
+            self.assertEqual(renderer.theme_description("SYNTH"),
                              "User override")
 
     def test_python_renderer_matches_cpp_protocol_fixture(self):
@@ -868,9 +873,10 @@ class RendererStateTest(unittest.TestCase):
         renderer.send = lambda _commands: None
         renderer.footer(21, 220, 24, 60, "192.168.2.4", "idle")
 
-        self.assertTrue(renderer.set_theme("OCEAN"))
+        self.assertTrue(renderer.set_theme("SYNTH"))
+        expected_primary = renderer.color(UI.COLOR_CYAN)
         page = "\n".join(renderer.begin_page("Settings"))
-        self.assertIn("-c 35baf6", page)
+        self.assertIn("-c %s" % expected_primary, page)
         self.assertIn("-p 10 444 -s 780 31", page)
 
         unchanged = "\n".join(renderer.begin_page("Settings"))
@@ -1078,7 +1084,9 @@ class RendererStateTest(unittest.TestCase):
 
     def test_busy_notice_is_persistent_and_deduplicated(self):
         renderer = FEATHER.FeatherRenderer()
-        renderer.set_theme("PIP_BOY_2000")
+        self.assertTrue(renderer.set_theme("SYNTH"))
+        header_background = renderer.color("header_background")
+        warning = renderer.color("warning")
         sent = []
         renderer.send = sent.append
         renderer.busy_notice("Klipper busy")
@@ -1087,11 +1095,15 @@ class RendererStateTest(unittest.TestCase):
         renderer.clear_busy_notice()
         self.assertEqual(len(sent), 2)
         self.assertIsNone(renderer._busy_label)
-        self.assertIn("-c 24200e", "\n".join(sent[0]))
-        self.assertIn("-c 24200e", "\n".join(page))
-        self.assertNotIn("stroke", "\n".join(sent[1]))
-        self.assertIn("-c 24200e", "\n".join(sent[1]))
-        self.assertNotIn("-c 071305", "\n".join(sent[1]))
+        notice = "\n".join(sent[0])
+        page_drawing = "\n".join(page)
+        cleared = "\n".join(sent[1])
+        self.assertIn("-c %s" % header_background, notice)
+        self.assertIn("-c %s" % warning, notice)
+        self.assertIn("-c %s" % header_background, page_drawing)
+        self.assertIn("-c %s" % warning, page_drawing)
+        self.assertNotIn("stroke", cleared)
+        self.assertIn("-c %s" % header_background, cleared)
 
     def test_busy_notice_replaces_menu_until_command_finishes(self):
         renderer = FEATHER.FeatherRenderer()

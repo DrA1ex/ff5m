@@ -1608,16 +1608,16 @@ class RegressionOrchestratorTest(unittest.TestCase):
         self.assertIn("designer/001-alpha.png", page)
 
     def test_printer_theme_is_automatic_and_mismatches_are_rejected(self):
-        runs = [{"theme": "OCEAN"}, {"theme": "OCEAN"}]
+        runs = [{"theme": "SYNTH"}, {"theme": "SYNTH"}]
         self.assertEqual(
-            REGRESSION._designer_theme(None, runs), "OCEAN")
+            REGRESSION._designer_theme(None, runs), "SYNTH")
         self.assertEqual(
             REGRESSION._designer_theme("DEFAULT", runs), "DEFAULT")
         with self.assertRaisesRegex(
                 HYBRID.RegressionConfigurationError,
                 "different UI themes"):
             REGRESSION._designer_theme(
-                None, [{"theme": "OCEAN"}, {"theme": "DEFAULT"}])
+                None, [{"theme": "SYNTH"}, {"theme": "DEFAULT"}])
 
     def test_designer_scene_rejects_silently_ignored_requested_state(self):
         case = {

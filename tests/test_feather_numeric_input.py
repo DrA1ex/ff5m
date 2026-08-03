@@ -106,7 +106,7 @@ class NumericKeypadTest(unittest.TestCase):
 
     def test_theme_roles_create_readable_visual_hierarchy(self):
         renderer = FeatherRenderer()
-        renderer.set_theme("CYBERPUNK_YELLOW")
+        self.assertTrue(renderer.set_theme("SYNTH"))
         actions = dict((digit, "key.%s" % digit)
                        for digit in "0123456789")
         actions.update({"sign": "key.sign", "backspace": "key.back",
@@ -116,13 +116,15 @@ class NumericKeypadTest(unittest.TestCase):
             "Cooldown temperature for CLEAR_NOZZLE, C", "150", actions,
             subtitle="clear_cooldown_temp", mode="integer"))
 
-        self.assertIn("-c fff8cc", drawing)  # title/text
-        self.assertIn("-c 8a8150", drawing)  # subtitle
-        self.assertIn("-c ff9f1c", drawing)  # input/auxiliary accent
-        self.assertGreaterEqual(
-            drawing.count(
-                "--background 514900 --border ffe600 --text-color fffde8"),
-            11)
+        self.assertIn("-c %s" % renderer.color("text"), drawing)
+        self.assertIn("-c %s" % renderer.color("dim"), drawing)
+        self.assertIn("-c %s" % renderer.color("secondary"), drawing)
+        keypad_style = (
+            "--background %s --border %s --text-color %s" % (
+                renderer.color("primary_dark"),
+                renderer.color("primary"),
+                renderer.color("bright")))
+        self.assertGreaterEqual(drawing.count(keypad_style), 11)
 
 
 if __name__ == "__main__":

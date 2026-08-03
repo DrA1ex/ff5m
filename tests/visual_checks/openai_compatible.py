@@ -55,8 +55,9 @@ CHECKLIST = (
             "have deliberate clearance from header and footer separators; "
             "each independent text block has visible clearance from borders, "
             "neighboring sections, and controls; controls have consistent "
-            "internal padding and vertical rhythm. One locally cramped gap "
-            "fails even when the rest of the screen has ample whitespace."),
+            "internal padding and vertical rhythm. One obvious local boundary "
+            "defect fails even when the rest of the screen has ample "
+            "whitespace."),
     },
     {
         "id": "alignment_and_balance",
@@ -364,7 +365,11 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                             "type": "string", "maxLength": 160},
                         "gap_relation": {
                             "type": "string",
-                            "enum": ["smaller", "at_least", "uncertain"],
+                            "enum": [
+                                "clear", "touching", "near_touching",
+                                "clipped", "outside", "overlapping",
+                                "uncertain",
+                            ],
                         },
                         "reason": {
                             "type": "string",
@@ -379,15 +384,25 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                 "role": "system",
                 "content": (
                     "Return exactly one JSON object and no markdown. Focus "
-                    "only on the local vertical gap between the horizontal "
-                    "separator below the header and the nearest glyph or edge "
-                    "of the first visible body text or control. Identify that "
-                    "subject. Compare the gap with one and a half visible "
-                    "text-glyph heights. Do not round a smaller gap up. If it "
-                    "is smaller, borderline, or visually uncertain, defect "
-                    "must be true; only a gap confidently at least that large "
-                    "may use defect false and gap_relation at_least. Ignore "
-                    "empty space elsewhere on the screen."),
+                    "on obvious boundary defects involving visible text or "
+                    "controls, prioritizing the boundary below the header. "
+                    "Identify the most suspicious subject and classify its "
+                    "condition. Set defect true only when the screenshot "
+                    "plainly shows glyphs or controls touching or almost "
+                    "touching an unrelated separator, border, or element with "
+                    "effectively no visible breathing room; text clipped or "
+                    "cut off by a boundary; content extending outside its "
+                    "container or the screen; or elements overlapping. A "
+                    "hairline sliver that does not visually read as padding "
+                    "counts as near_touching, even if a tiny background line "
+                    "can technically be seen. A compact layout with a small "
+                    "but clearly intentional gap is clear and must not fail. "
+                    "Control and panel borders may sit close to "
+                    "a header when they remain visually distinct. Do not use "
+                    "a pixel count or glyph-height ratio. If the defect is not "
+                    "plainly visible or you are uncertain, set defect false "
+                    "and gap_relation uncertain. Ignore empty space elsewhere "
+                    "on the screen."),
             },
             {
                 "role": "user",
@@ -395,8 +410,8 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                     {
                         "type": "text",
                         "text": (
-                            "Audit header-to-body spacing in this %s. Is the "
-                            "local gap aesthetically cramped?" % role),
+                            "Audit this %s for an obvious boundary, clipping, "
+                            "outside-bounds, or overlap defect." % role),
                     },
                     {
                         "type": "image_url",
@@ -422,9 +437,8 @@ def _completion_payload(model, image_bytes, mime_type, context,
     }
     task = {
         "task": (
-            "First make a focused spacing-gate decision for the gap below "
-            "the header separator, then evaluate the rest of the supplied UI "
-            "screenshot."),
+            "First make a focused obvious-boundary-defect decision, then "
+            "evaluate the rest of the supplied UI screenshot."),
         "screenshot": screenshot,
         "checklist": CHECKLIST,
         "evaluation_order": ["standalone_quality_each_image"],
@@ -447,8 +461,8 @@ def _completion_payload(model, image_bytes, mime_type, context,
             "mandatory_boundary_audit": [
                 (
                     "Identify the exact first visible body text or control "
-                    "below the header separator, then compare its nearest "
-                    "glyph or edge gap with the boundary_gap_rule threshold."),
+                    "below the header separator, then inspect its nearest "
+                    "glyph or edge gap using boundary_gap_rule."),
                 (
                     "Inspect the gap from the last visible body glyphs to the "
                     "footer separator or screen boundary."),
@@ -461,25 +475,30 @@ def _completion_payload(model, image_bytes, mime_type, context,
                     "inside buttons, panels, dialogs, and selection areas."),
             ],
             "boundary_gap_rule": (
-                "At a major boundary such as a header separator, panel edge, "
-                "or unrelated control, require clearly intentional whitespace "
-                "of at least one and a half visible text-glyph heights. Do not "
-                "round a smaller gap up to the threshold: when the gap looks "
-                "borderline or cannot be confidently shown to meet it, fail. "
-                "Fail when glyphs appear attached to, nearly touching, or "
-                "visually crowded against that boundary. Compact spacing "
-                "between lines inside one clearly related paragraph is allowed "
-                "only when it is consistent and still legible."),
+                "Fail only for a plainly visible boundary defect: glyphs or "
+                "controls touch or almost touch an unrelated separator, "
+                "border, or element with effectively no visible breathing "
+                "room; text is clipped or cut off; content crosses or extends "
+                "outside its container or the screen; or elements overlap. "
+                "A hairline-only sliver between a separator and glyphs does "
+                "not count as padding and is near-touching. "
+                "Do not apply a numeric pixel or glyph-height threshold. A "
+                "small gap that still reads as an intentional background band "
+                "is acceptable, including in compact control panels. A "
+                "control or panel border may be "
+                "closer to a header than nearby text while remaining visually "
+                "distinct. Uncertain or merely less-than-ideal spacing passes."),
             "local_defect_rule": (
                 "Evaluate every boundary separately. Large empty areas "
-                "elsewhere on the screen never compensate for one cramped "
-                "header edge, footer edge, panel edge, text-to-control gap, or "
-                "missing internal padding."),
+                "elsewhere on the screen never compensate for clear touching, "
+                "near-touching, clipping, outside-bounds content, or overlap "
+                "at a header, footer, panel, or text-to-control boundary."),
             "defect_rule": (
-                "Readable content with no literal overlap can still be "
-                "defective. Treat visibly cramped, nearly touching, unevenly "
-                "spaced, awkwardly aligned, or unbalanced content as an "
-                "aesthetic defect."),
+                "Report only clear visual defects, not every possible polish "
+                "improvement. Touching, near-touching with effectively no gap, "
+                "clipping, outside-bounds content, and overlap are defects. "
+                "Compact, slightly uneven, or merely less-than-ideal spacing "
+                "passes when content remains visibly separated and legible."),
             "aesthetic_defect_verdict": "fail",
             "product_semantic_defect_verdict": "fail",
         },
@@ -587,15 +606,19 @@ def _completion_payload(model, image_bytes, mime_type, context,
         })
     system_instruction = (
         "Return exactly one JSON object and no markdown. "
-        "TOP-PRIORITY SPACING GATE: before any overall judgment, identify the "
-        "first visible body text or control below the header separator and "
-        "decide whether their local vertical gap is confidently at least one "
-        "and a half visible text-glyph heights. A smaller, borderline, or "
-        "uncertain gap makes spacing_and_clearance fail with "
-        "aesthetic_defect. The spacing_and_clearance reason must identify "
-        "that first body text or control and explicitly say whether the gap "
-        "is smaller or larger than the threshold, even when the check passes; "
-        "a generic claim such as 'spacing is sufficient' is not an audit. "
+        "TOP-PRIORITY OBVIOUS-DEFECT GATE: before any overall judgment, "
+        "inspect the first visible body text or control below the header "
+        "separator and other major boundaries. Fail spacing_and_clearance "
+        "only for plainly visible touching or near-touching with effectively "
+        "no gap, clipping or cutoff, content outside its container or the "
+        "screen, or overlap. Do not use a numeric pixel or glyph-height "
+        "threshold. A hairline-only sliver that does not visually read as "
+        "padding is near-touching and fails; a small but clearly intentional "
+        "background band passes. "
+        "Border edges of controls and panels may be close to the header if "
+        "they remain distinct. Borderline, uncertain, or merely imperfect "
+        "spacing passes. The spacing_and_clearance reason must identify the "
+        "inspected subject and the visible condition. "
         "Use only the supplied checklist. Do not infer printer "
         "safety, functionality, or behavior from the image. "
         "Use every checklist id exactly once and add no fields. "
@@ -606,10 +629,10 @@ def _completion_payload(model, image_bytes, mime_type, context,
         "the header separator, the last body line above the footer, and each "
         "independent text-to-border, text-to-section, and text-to-control gap. "
         "Apply boundary_gap_rule locally; whitespace elsewhere cannot cancel "
-        "a cramped edge. "
-        "Readable, non-overlapping content is not automatically acceptable: "
-        "inspect clearance, padding, spacing, vertical rhythm, alignment, "
-        "proportions, hierarchy, and balance. Classify each check's evidence "
+        "an obvious boundary defect. "
+        "Inspect clearance, padding, spacing, vertical rhythm, alignment, "
+        "proportions, hierarchy, and balance, but report only obvious defects "
+        "rather than optional polish. Classify each check's evidence "
         "using only the classes allowed by response_schema. Dynamic runtime "
         "values are "
         "semantic slots rather than literals: compare their role, plausible "
@@ -701,12 +724,14 @@ def validate_spacing_audit(value):
     if (not isinstance(subject, str) or not subject.strip()
             or len(subject) > 160):
         raise ValueError("spacing audit subject must be a short string")
-    if relation not in ("smaller", "at_least", "uncertain"):
+    defect_relations = frozenset((
+        "touching", "near_touching", "clipped", "outside", "overlapping"))
+    if relation not in defect_relations | frozenset(("clear", "uncertain")):
         raise ValueError("invalid spacing audit gap relation")
     if (not isinstance(reason, str) or not reason.strip()
             or len(reason) > MAX_REASON_LENGTH):
         raise ValueError("spacing audit reason must be a short string")
-    if defect != (relation != "at_least"):
+    if defect != (relation in defect_relations):
         raise ValueError(
             "spacing audit defect must match the gap relation")
     return {
@@ -738,8 +763,8 @@ def _apply_spacing_audits(verdict, audits):
         "verdict": "fail",
         "checks": checks,
         "summary": (
-            "Dedicated local spacing audit found a cramped header-to-body "
-            "boundary; the overall verdict is fail."),
+            "Dedicated boundary audit found an obvious visual defect; the "
+            "overall verdict is fail."),
     }
 
 

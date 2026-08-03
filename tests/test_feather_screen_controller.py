@@ -770,7 +770,9 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_weight_gauge_turns_red_only_above_four_hundred(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.set_theme("CYBERPUNK_RED")
+        self.assertTrue(controller.renderer.set_theme("SYNTH"))
+        primary = controller.renderer.color("primary")
+        danger_color = controller.renderer.color("danger")
         controller.reactor = Reactor()
         controller.weight_sensor = StatusObject({
             "temperature": 400.0,
@@ -780,15 +782,18 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.z_weight_gauge = None
 
         normal = controller._z_weight_gauge_commands(0)
-        self.assertTrue(any("-c ff304f" in line for line in normal))
-        self.assertFalse(any("-c ff0033" in line for line in normal))
+        self.assertTrue(
+            any("-c %s" % primary in line for line in normal))
+        self.assertFalse(
+            any("-c %s" % danger_color in line for line in normal))
 
         controller.weight_sensor.status.update({
             "temperature": 401.0,
             "measured_max_temp": 401.0,
         })
         danger = controller._z_weight_gauge_commands(1)
-        self.assertTrue(any("-c ff0033" in line for line in danger))
+        self.assertTrue(
+            any("-c %s" % danger_color in line for line in danger))
 
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1350,19 +1355,20 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertIn("1/%d" % page_count, first)
             self.assertEqual(refresh.call_count, 1)
 
-            ocean_index = options.index("OCEAN")
-            for _ in range(ocean_index // 4):
+            synth_index = options.index("SYNTH")
+            for _ in range(synth_index // 4):
                 controller._handle_mod_action("mod.options.next")
-            controller._handle_mod_action("mod.option.%d" % ocean_index)
+            controller._handle_mod_action("mod.option.%d" % synth_index)
             self.assertEqual(refresh.call_count, 1)
             self.assertEqual(tuple(controller.parameter_options), options)
             controller._handle_mod_action("mod.apply")
 
         self.assertEqual(controller.params.updated,
-                         [("feather_theme", "OCEAN")])
-        self.assertEqual(controller.renderer.theme_name, "OCEAN")
+                         [("feather_theme", "SYNTH")])
+        self.assertEqual(controller.renderer.theme_name, "SYNTH")
+        expected_background = controller.renderer.color("background")
         drawing = "\n".join(controller.draw_batches[-1])
-        self.assertIn("-c 02080d", drawing)
+        self.assertIn("-c %s" % expected_background, drawing)
 
     def test_theme_picker_discovers_user_file_added_after_start(self):
         theme = mod_param("feather_theme", str, "DEFAULT",
