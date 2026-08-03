@@ -194,7 +194,7 @@ class FeatherPagesMixin:
             commands += [
                 self.renderer.fill(18, 7, 142, 46, "header_background"),
                 self.renderer.text(28, 29, values[10], "d9e4e8",
-                                   "Roboto Thin 16pt", "left", "middle",
+                                   "Roboto 16pt", "left", "middle",
                                    proportional=True)]
         self.renderer.send(commands)
 

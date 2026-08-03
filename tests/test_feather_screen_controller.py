@@ -444,7 +444,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("--max-width 220 --truncate", material)
         self.assertIn("--max-width 210 --truncate", network)
         self.assertIn("--max-width 350 --truncate", progress)
-        self.assertIn('-f "Roboto Thin 16pt"', clock)
+        self.assertIn('-f "Roboto 16pt"', clock)
         self.assertLessEqual(
             controller.renderer.text_width(
                 "299 / 300 C", "JetBrainsMono 12pt"),

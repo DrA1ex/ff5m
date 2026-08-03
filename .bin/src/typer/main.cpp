@@ -36,11 +36,6 @@
 #include "../common/fonts/JetBrainsMonoBold20ptb2.h"
 #include "../common/fonts/JetBrainsMonoBold28ptb2.h"
 #include "../common/fonts/JetBrainsMonoBold8ptb4.h"
-#include "../common/fonts/JetBrainsMonoThin12ptb4.h"
-#include "../common/fonts/JetBrainsMonoThin16ptb2.h"
-#include "../common/fonts/JetBrainsMonoThin20ptb2.h"
-#include "../common/fonts/JetBrainsMonoThin28ptb2.h"
-#include "../common/fonts/JetBrainsMonoThin8ptb4.h"
 #include "../common/fonts/Roboto12pt.h"
 #include "../common/fonts/Roboto16pt.h"
 #include "../common/fonts/Roboto20pt.h"
@@ -51,11 +46,6 @@
 #include "../common/fonts/RobotoBold20pt.h"
 #include "../common/fonts/RobotoBold28pt.h"
 #include "../common/fonts/RobotoBold8ptb4.h"
-#include "../common/fonts/RobotoThin12ptb4.h"
-#include "../common/fonts/RobotoThin16ptb2.h"
-#include "../common/fonts/RobotoThin20ptb2.h"
-#include "../common/fonts/RobotoThin28ptb2.h"
-#include "../common/fonts/RobotoThin8ptb4.h"
 #define WIDTH 800
 #define HEIGHT 480
 
@@ -72,11 +62,6 @@ std::map<std::string, const Font *> fonts{
     {RobotoBold16pt.name, &RobotoBold16pt},
     {RobotoBold20pt.name, &RobotoBold20pt},
     {RobotoBold28pt.name, &RobotoBold28pt},
-    {RobotoThin8ptb4.name, &RobotoThin8ptb4},
-    {RobotoThin12ptb4.name, &RobotoThin12ptb4},
-    {RobotoThin16ptb2.name, &RobotoThin16ptb2},
-    {RobotoThin20ptb2.name, &RobotoThin20ptb2},
-    {RobotoThin28ptb2.name, &RobotoThin28ptb2},
 
     {JetBrainsMono8ptb4.name, &JetBrainsMono8ptb4},
     {JetBrainsMono12ptb2.name, &JetBrainsMono12ptb2},
@@ -88,11 +73,6 @@ std::map<std::string, const Font *> fonts{
     {JetBrainsMonoBold16ptb2.name, &JetBrainsMonoBold16ptb2},
     {JetBrainsMonoBold20ptb2.name, &JetBrainsMonoBold20ptb2},
     {JetBrainsMonoBold28ptb2.name, &JetBrainsMonoBold28ptb2},
-    {JetBrainsMonoThin8ptb4.name, &JetBrainsMonoThin8ptb4},
-    {JetBrainsMonoThin12ptb4.name, &JetBrainsMonoThin12ptb4},
-    {JetBrainsMonoThin16ptb2.name, &JetBrainsMonoThin16ptb2},
-    {JetBrainsMonoThin20ptb2.name, &JetBrainsMonoThin20ptb2},
-    {JetBrainsMonoThin28ptb2.name, &JetBrainsMonoThin28ptb2},
 };
 
 void drawText(const argparse::ArgumentParser &opts, TextDrawer &drawer) {
