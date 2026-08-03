@@ -58,9 +58,18 @@ network_clear_dns() {
     [ -f "$NETWORK_RESOLV_CONF" ] || return 0
 
     temporary=/tmp/feather-resolv.$$
-    grep -v "# $interface\$" "$NETWORK_RESOLV_CONF" > "$temporary" || true
+    grep -v "# $interface\$" "$NETWORK_RESOLV_CONF" > "$temporary"
+    status=$?
+
+    if [ "$status" -gt 1 ]; then
+        rm -f "$temporary"
+        return 1
+    fi
+
     cat "$temporary" > "$NETWORK_RESOLV_CONF"
+    status=$?
     rm -f "$temporary"
+    return "$status"
 }
 
 network_clear_interface() {

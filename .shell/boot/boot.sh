@@ -8,7 +8,6 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-MOD_CUSTOM_BOOT=0
 source /opt/config/mod/.shell/common.sh
 source /opt/config/mod/.shell/network_common.sh
 
@@ -20,8 +19,9 @@ if [ ! -f /etc/init.d/S00init ]; then
     /etc/init.d/S00init start
 fi
 
+DISPLAY_MODE="$("$CMDS"/zdisplay.sh test)"
 DISPLAY_OFF=0
-[ "$("$CMDS"/zdisplay.sh test)" != "STOCK" ] && DISPLAY_OFF=1
+[ "$DISPLAY_MODE" != "STOCK" ] && DISPLAY_OFF=1
 
 # The stock QT app (firmwareExe) pops a "Please upgrade the slicer software to
 # version V1.7.3 or later." modal on every boot of the stock screen, even at
@@ -41,53 +41,64 @@ suppress_slicer_nag() {
 }
 
 wifi_init() {
-    if [ -f "/etc/wpa_supplicant.conf" ]; then
-        echo "Configuration found"
-        
-        if ! ip link show | grep -q "wlan0"; then
-            echo "Load kernel module."
-            insmod /lib/modules/8821cu.ko
-            modprobe 8821cu
+    local send_to_screen=${1:-0}
+    local ret
+
+    [ -f /etc/wpa_supplicant.conf ] || {
+        echo "@@ Wi-Fi configuration is missing." >&2
+        return 1
+    }
+
+    echo "Configuration found"
+
+    if ! ip link show wlan0 >/dev/null 2>&1; then
+        echo "Load kernel module."
+        insmod /lib/modules/8821cu.ko 2>/dev/null \
+            || modprobe 8821cu \
+            || { echo "@@ Failed to load Wi-Fi driver." >&2; return 1; }
+    fi
+
+    echo "// Try to connect..."
+
+    for _ in $(seq 5); do
+        if [ "$send_to_screen" -eq 1 ]; then
+            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 \
+                | logged --no-print --send-to-screen /data/logFiles/wifi.log
+        else
+            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 \
+                | logged --no-print /data/logFiles/wifi.log
         fi
-        
-        echo "// Try to connect..."
+        ret=${PIPESTATUS[0]}
 
-        for _ in $(seq 5); do
-            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 | logged /data/logFiles/wifi.log --no-print --send-to-screen
-            ret="${PIPESTATUS[0]}"
+        if [ "$ret" -eq 0 ]; then
+            # Retire Ethernet only after Wi-Fi has an address. Until this
+            # point it remains a working rollback path.
+            network_deactivate_interface eth0
+            rm -f "$ETHERNET_CONNECTED_F"
 
-            if [ "$ret" -eq 0 ]; then
-                # Retire Ethernet only after Wi-Fi has an address.  Until this
-                # point it remains a working rollback path.
-                network_deactivate_interface eth0
-                rm -f "$ETHERNET_CONNECTED_F"
-                MOD_CUSTOM_BOOT=1
-                echo "// Connected!"
-                break
-            fi
+            touch "$WIFI_CONNECTED_F"
+            sync
 
-            echo "@@ WPA start failed. Retry..."
-            sleep 1
-        done
-        
-        #TODO: Create AP if no active network configuration
-    fi
+            echo "Start wifi reconnect daemon."
+            killall wpa_cli 2>/dev/null || true
+            wpa_cli -B -a "$SCRIPTS/boot/wifi_reconnect.sh" -i wlan0 \
+                || echo "@@ Failed to start Wi-Fi reconnect daemon." >&2
 
-    if [ "$MOD_CUSTOM_BOOT" -eq 1 ]; then
-        touch "$WIFI_CONNECTED_F"
-        sync
+            echo "// Connected!"
+            return 0
+        fi
 
-        echo "Start wifi reconnect daemon."
+        echo "@@ WPA start failed. Retry..."
+        sleep 1
+    done
 
-        killall "wpa_cli" 2> /dev/null
-        wpa_cli -B -a "$SCRIPTS/boot/wifi_reconnect.sh" -i wlan0
-    fi
+    return 1
 }
 
 ethernet_init() {
     echo "// Initializing Ethernet connection..."
 
-    # Keep Wi-Fi alive until Ethernet has actually obtained a lease.  This
+    # Keep Wi-Fi alive until Ethernet has actually obtained a lease. This
     # makes switching modes transactional instead of dropping both links.
     network_activate_dhcp eth0 25 \
         || { echo "@@ Failed to initialize connection!"; return 1; }
@@ -100,47 +111,84 @@ ethernet_init() {
     touch "$ETHERNET_CONNECTED_F"
     sync
 
-    MOD_CUSTOM_BOOT=1
     echo "// Ethernet connection initialized with DHCP"
 }
 
 save_network_ip() {
+    local ip
+
     rm -f "$NET_IP_F"
-    IP="$(network_ipv4 "$1")"
-    [ -n "$IP" ] && echo "$IP" > "$NET_IP_F"
+    ip="$(network_ipv4 "$1")"
+    [ -n "$ip" ] && echo "$ip" > "$NET_IP_F"
+}
+
+network_init() {
+    local send_wifi_to_screen=${1:-0}
+    local config_file network_mode ethernet_status
+
+    config_file=$(ls /opt/config/Adventurer5M*.json 2>/dev/null | head -n 1)
+
+    network_mode=""
+    [ -f /opt/config/mod_data/network_mode ] \
+        && network_mode=$(head -n 1 /opt/config/mod_data/network_mode)
+
+    case "$network_mode" in
+        WIFI|ETHERNET) ;;
+        *) network_mode="" ;;
+    esac
+
+    if [ -z "$network_mode" ]; then
+        [ -f "$config_file" ] || {
+            echo "@@ Config file not found" >&2
+            return 1
+        }
+
+        ethernet_status=$(grep "ethernetStatus" < "$config_file" \
+            | sed 's/.*"ethernetStatus"[ ]*:[ ]*\([^,]*\).*/\1/')
+
+        if [ "$ethernet_status" = "true" ]; then
+            network_mode="ETHERNET"
+        else
+            network_mode="WIFI"
+        fi
+    fi
+
+    case "$network_mode" in
+        ETHERNET)
+            ethernet_init && save_network_ip eth0
+        ;;
+        WIFI)
+            wifi_init "$send_wifi_to_screen" && save_network_ip wlan0
+        ;;
+    esac
 }
 
 if [ "$DISPLAY_OFF" -eq 1 ]; then
-    # Init Network
-    
     echo "// Network initialization..."
-    CONFIG_FILE=$(ls /opt/config/Adventurer5M*.json 2>/dev/null | head -n 1)
-    
-    NETWORK_MODE=""
-    [ -f /opt/config/mod_data/network_mode ] && NETWORK_MODE=$(head -n 1 /opt/config/mod_data/network_mode)
-    case "$NETWORK_MODE" in
-        WIFI|ETHERNET) ;;
-        *) NETWORK_MODE="" ;;
-    esac
+    rm -f "$NET_IP_F"
 
-    if [ "$NETWORK_MODE" = "ETHERNET" ]; then
-        (ethernet_init && save_network_ip eth0) >> /data/logFiles/wifi.log 2>&1 &
-    elif [ "$NETWORK_MODE" = "WIFI" ]; then
-        (wifi_init && save_network_ip wlan0) >> /data/logFiles/wifi.log 2>&1 &
-    elif [ -f "$CONFIG_FILE" ]; then
-        ETHERNET_STATUS=$(grep "ethernetStatus" < "$CONFIG_FILE" | sed 's/.*"ethernetStatus"[ ]*:[ ]*\([^,]*\).*/\1/')
-        if [ "$ETHERNET_STATUS" = "true" ]; then
-            (ethernet_init && save_network_ip eth0) >> /data/logFiles/wifi.log 2>&1 &
-        else
-            (wifi_init && save_network_ip wlan0) >> /data/logFiles/wifi.log 2>&1 &
-        fi
-    else
-        echo "@@ Config file not found"
+    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
+        # Run independently from the boot pipeline. Feather does not wait for
+        # network initialization and reports the resulting state itself.
+        # Also run it fully detached to avoid leaving a shell process running.
+        network_init 0 </dev/null >/dev/null 2>&1 &
+    elif ! network_init 1; then
+        echo "?? Switch config to enabled screen..."
+        "$CMDS"/zdisplay.sh stock --skip-reboot
+
+        echo "@@ Failed to initialize mod. Booting into stock firmware..."
+        DISPLAY_MODE="STOCK"
+        DISPLAY_OFF=0
+        sleep 1
     fi
 fi
 
 if [ "$DISPLAY_OFF" -eq 1 ]; then
-    echo "// Starting alternative display; network initialization continues in background."
+    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
+        echo "// Starting Feather; network initialization continues in background."
+    else
+        echo "// Network initialized. Starting alternative display."
+    fi
 
     touch "$CUSTOM_BOOT_F"
     sync
@@ -150,7 +198,7 @@ if [ "$DISPLAY_OFF" -eq 1 ]; then
     mount -t configfs none /sys/kernel/config -o rw,relatime
     mount -t debugfs none /sys/kernel/debug -o rw,relatime
 
-    if [ "$("$CMDS"/zdisplay.sh test)" = "FEATHER" ]; then
+    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
         echo "// Starting calibrated Feather touch input..."
         chroot "$MOD" /opt/config/mod/.root/S35tslib start
     fi

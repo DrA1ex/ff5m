@@ -19,7 +19,7 @@ WPA_SUPPLICANT_CONF="${1:-/etc/wpa_supplicant.conf}"
 
 echo "Killing processes..."
 killall wpa_cli >/dev/null 2>&1 || true
-killall wpa_supplicant
+killall wpa_supplicant >/dev/null 2>&1 || true
 network_stop_udhcpc "$INTERFACE"
 
 rm -f "/var/run/wpa_supplicant/$INTERFACE"
@@ -37,32 +37,41 @@ fi
 
 echo "Initialize network..."
 
-wpa_cli -i $INTERFACE enable_network all
+if ! wpa_cli -i "$INTERFACE" enable_network all >/dev/null; then
+    echo "@@ Failed to enable configured Wi-Fi networks." >&2
+    exit 1
+fi
 
-echo "// Initialize Wi-Fi connection..."
+echo "Initialize Wi-Fi connection..."
 for _ in $(seq 22); do
-    STATUS=$(wpa_cli -i "$INTERFACE" status | grep wpa_state | awk -F= '{print $2}')
-    
-    if [[ "$STATUS" == "COMPLETED" ]]; then
-        echo "// Successfully connected!"
-        echo "// Requesting DHCP..."
+    STATUS=$(wpa_cli -i "$INTERFACE" status 2>/dev/null \
+        | awk -F= '$1 == "wpa_state" {print $2; exit}')
 
-        if network_activate_dhcp "$INTERFACE" 12; then
-            exit 0
-        fi
+    case "$STATUS" in
+        COMPLETED)
+            echo "// Successfully connected!"
+            echo "// Requesting DHCP..."
 
-        echo "@@ Wi-Fi connected, but DHCP failed." >&2
-        exit 1
-    elif [[ "$STATUS" == "SCANNING" ]]; then
-        echo "Connecting..."
-    else
-        echo "@@ Failed to connect. Current status: $STATUS"
-        
-        echo "?? Try to reconfigure..."
-        wpa_cli -i "$INTERFACE" reconfigure
-    fi
-    
+            if network_activate_dhcp "$INTERFACE" 12; then
+                exit 0
+            fi
+
+            echo "@@ Wi-Fi connected, but DHCP failed." >&2
+            exit 1
+        ;;
+        SCANNING)
+            echo "Connecting..."
+        ;;
+        AUTHENTICATING|ASSOCIATING|ASSOCIATED|4WAY_HANDSHAKE|GROUP_HANDSHAKE)
+            echo "?? Still connecting... Current status: $STATUS"
+        ;;
+        *)
+            echo "@@ Waiting for Wi-Fi. Current status: ${STATUS:-UNKNOWN}"
+        ;;
+    esac
+
     sleep 1
 done
 
+echo "@@ Timed out while connecting to Wi-Fi." >&2
 exit 1

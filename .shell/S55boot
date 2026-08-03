@@ -37,13 +37,9 @@ skip_mod() {
     fi
 }
 
-start() {    
+start() {
     /opt/config/mod/.shell/boot/boot.sh
-    
-    IP="$(ip addr show wlan0 2> /dev/null | awk '/inet / {print $2}' | cut -d'/' -f1)"
-    [ -z "$IP" ] && IP="$(ip addr show eth0 2> /dev/null | awk '/inet / {print $2}' | cut -d'/' -f1)"
-    [ -n "$IP" ] && echo "$IP" > "$NET_IP_F"
-    
+
     fstrim -v /root
     fstrim -v /data
 }
