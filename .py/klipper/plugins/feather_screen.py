@@ -385,6 +385,30 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _deferred_start_pre_ready_ui(self, eventtime):
         self._start_pre_ready_ui()
 
+    def _lookup_mod_params_before_ready(self):
+        """Return already-loaded settings without waiting for klippy:ready."""
+        params = getattr(self, "params", None)
+        if params is not None:
+            return params
+        params = self.printer.lookup_object("mod_params", None)
+        if params is not None:
+            # Config objects are fully constructed before reactor callbacks run,
+            # even though Klipper has not emitted klippy:ready yet. Keep the
+            # same object for the regular ready path and all later restarts.
+            self.params = params
+        return params
+
+    def _apply_configured_theme(self, refresh_catalog=False):
+        """Select the persisted theme before any framebuffer output."""
+        if refresh_catalog:
+            self.renderer.ensure_user_theme_directory()
+            self.renderer.reload_themes()
+        params = self._lookup_mod_params_before_ready()
+        variables = (getattr(params, "variables", {})
+                     if params is not None else {})
+        return self.renderer.set_theme(
+            variables.get("feather_theme", "DEFAULT"))
+
     def _renderer_event_fd_changed(self, old_fd, new_fd):
         if self.event_handle is not None:
             try:
@@ -426,6 +450,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if restarting is not None:
             self.startup_restarting = bool(restarting)
         try:
+            # The worker's first full-screen clear and the startup modal must
+            # use the persisted theme. Applying it after renderer.start() leaves
+            # the pre-ready UI on the fallback palette until klippy:ready.
+            self._apply_configured_theme()
             self._enable_backlight()
             self._ensure_renderer_started()
             self.renderer.startup_modal(
@@ -491,9 +519,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.cold_pull_profiles = catalog.cold_pull_profiles
         self._enable_backlight()
         self._set_backlight(self._setting("backlight", 100))
-        self.renderer.ensure_user_theme_directory()
-        self.renderer.reload_themes()
-        self.renderer.set_theme(self._setting("feather_theme", "DEFAULT"))
+        # Refresh user files at ready, but keep theme selection centralized so
+        # pre-ready loading, firmware restart, and the normal UI share exactly
+        # the same persisted setting contract.
+        self._apply_configured_theme(refresh_catalog=True)
         self.filament_material = self._current_material()
         self.toolhead = self.printer.lookup_object("toolhead")
         self.input_shaper = self.printer.lookup_object("input_shaper", None)

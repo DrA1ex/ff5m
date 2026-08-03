@@ -2486,6 +2486,109 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(len(labels), 5)
 
+    def test_persisted_theme_is_selected_before_first_renderer_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            theme_directory = pathlib.Path(directory)
+            schema = pathlib.Path(UI.THEME_SCHEMA_PATH).read_text(
+                encoding="utf-8")
+            (theme_directory / "theme.schema.json").write_text(
+                schema, encoding="utf-8")
+            colors = dict(UI.FALLBACK_THEME)
+            colors.update({
+                "overlay": "102030",
+                "panel": "203040",
+                "primary": "304050",
+                "secondary": "405060",
+                "text": "506070",
+                "dim": "607080",
+            })
+            (theme_directory / "early.json").write_text(json.dumps({
+                "schema_version": 2,
+                "name": "EARLY",
+                "description": "Early startup behavioral theme",
+                "colors": colors,
+            }), encoding="utf-8")
+
+            renderer = FEATHER.FeatherRenderer(
+                theme_directories=(str(theme_directory),))
+            events = []
+            renderer.start = lambda: events.append((
+                "start", renderer.theme_name,
+                renderer.color(UI.ThemeColor.OVERLAY)))
+            renderer.send = lambda commands, **kwargs: events.append((
+                "draw", renderer.theme_name, "\n".join(commands)))
+            params = type("Params", (), {
+                "variables": {"feather_theme": "EARLY"},
+            })()
+
+            class Printer:
+                def lookup_object(self, name, default=None):
+                    return params if name == "mod_params" else default
+
+            class TimerReactor:
+                NOW = 0.0
+
+                def register_timer(self, callback, when):
+                    return (callback, when)
+
+            controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+            controller.renderer = renderer
+            controller.printer = Printer()
+            controller.reactor = TimerReactor()
+            controller._enable_backlight = lambda: None
+            controller.startup_phase = 0
+            controller.startup_restarting = False
+            controller.startup_timer = None
+
+            controller._start_pre_ready_ui()
+
+            self.assertIs(controller.params, params)
+            self.assertEqual(events[0], ("start", "EARLY", "102030"))
+            self.assertEqual(events[1][0:2], ("draw", "EARLY"))
+            self.assertIn(
+                "-p 0 0 -s %d %d -c 102030" %
+                (UI.SCREEN_WIDTH, UI.SCREEN_HEIGHT),
+                events[1][2])
+
+    def test_firmware_restart_reapplies_persisted_theme_before_modal(self):
+        events = []
+
+        class Renderer:
+            active = True
+            _worker = object()
+
+            def set_theme(self, name):
+                events.append(("theme", name))
+                return True
+
+            def startup_modal(self, phase, restarting=False):
+                events.append(("modal", phase, restarting))
+
+        class TimerReactor:
+            NOW = 0.0
+
+            def register_timer(self, callback, when):
+                return (callback, when)
+
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = Renderer()
+        controller.params = type("Params", (), {
+            "variables": {"feather_theme": "USER_THEME"},
+        })()
+        controller.printer = object()
+        controller.reactor = TimerReactor()
+        controller._enable_backlight = lambda: None
+        controller.startup_phase = 2
+        controller.startup_restarting = False
+        controller.startup_timer = None
+
+        controller._start_pre_ready_ui(restarting=True)
+
+        self.assertEqual(events, [
+            ("theme", "USER_THEME"),
+            ("modal", 2, True),
+        ])
+
     def test_startup_tick_advances_pulse_until_klipper_is_ready(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         pulses = []
