@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+import stat
+from collections import namedtuple
 
 
 DEFAULT_THEME = "DEFAULT"
@@ -24,6 +26,15 @@ THEME_DIRECTORY = os.path.normpath(os.path.join(
 USER_THEME_DIRECTORY = "/opt/config/mod_data/themes"
 THEME_SCHEMA_PATH = os.path.join(THEME_DIRECTORY, "theme.schema.json")
 FALLBACK_THEME_DESCRIPTION = "cyan Forge-X palette"
+
+# The largest bundled theme is currently under 1 KiB. Five times that
+# size is still below 5 KiB, so round up to the next power of two.
+# This provides comfortable headroom for future expansion while
+# keeping the maximum file size strictly bounded.
+MAX_THEME_FILE_BYTES = 8 * 1024
+
+ThemeFileIssue = namedtuple(
+    "ThemeFileIssue", ("name", "description", "filename"))
 
 # This palette is the final safety net when the bundled catalog cannot be read.
 # Keep it independent from default.json so Feather can still draw an interface
@@ -55,6 +66,10 @@ OPTIONAL_THEME_ROLE_FALLBACKS = {
 
 class ThemeSchemaError(ValueError):
     """Raised when a theme document does not satisfy theme.schema.json."""
+
+
+class ThemeFileTooLarge(ValueError):
+    """Raised before parsing a theme that exceeds the hard size limit."""
 
 
 _SCHEMA_CACHE = {}
@@ -190,6 +205,44 @@ def normalize_theme_name(name):
     return THEME_NAME_ALIASES.get(normalized, normalized)
 
 
+def _read_theme_document(path):
+    metadata = os.stat(path)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("theme path is not a regular file")
+    if metadata.st_size > MAX_THEME_FILE_BYTES:
+        raise ThemeFileTooLarge(
+            "file exceeds %d-byte limit" % MAX_THEME_FILE_BYTES)
+    with open(path, "rb") as stream:
+        payload = stream.read(MAX_THEME_FILE_BYTES + 1)
+    if len(payload) > MAX_THEME_FILE_BYTES:
+        raise ThemeFileTooLarge(
+            "file exceeds %d-byte limit" % MAX_THEME_FILE_BYTES)
+    return json.loads(payload.decode("utf-8"))
+
+
+def _theme_issue_name(filename, data=None):
+    candidate = data.get("name") if isinstance(data, dict) else None
+    if not isinstance(candidate, str) or not candidate.strip():
+        candidate = os.path.splitext(filename)[0]
+    # Keep the diagnostic row single-line even when an invalid file contains
+    # control characters in its attempted name.
+    return " ".join(str(candidate).split()) or "UNNAMED"
+
+
+def _theme_issue_description(exc):
+    if isinstance(exc, ThemeFileTooLarge):
+        return "FILE TOO LARGE"
+    if isinstance(exc, UnicodeDecodeError):
+        return "INVALID FILE"
+    if isinstance(exc, json.JSONDecodeError):
+        return "INVALID JSON"
+    if isinstance(exc, ThemeSchemaError):
+        return "SCHEMA MISMATCH"
+    if isinstance(exc, OSError):
+        return "READ ERROR"
+    return "INVALID FILE"
+
+
 class ThemeCatalog:
     """Load bundled themes once and refresh user themes independently."""
 
@@ -204,6 +257,7 @@ class ThemeCatalog:
         self._bundled_descriptions = {}
         self._user_themes = {}
         self._user_descriptions = {}
+        self._user_issues = ()
         self._themes = {}
         self._descriptions = {}
         self._reset_to_fallback()
@@ -226,6 +280,10 @@ class ThemeCatalog:
     def descriptions(self):
         return dict(self._descriptions)
 
+    @property
+    def user_issues(self):
+        return tuple(self._user_issues)
+
     def names(self):
         return tuple(self._themes)
 
@@ -242,7 +300,8 @@ class ThemeCatalog:
         self._bundled_themes = {DEFAULT_THEME: fallback}
         self._bundled_descriptions = {
             DEFAULT_THEME: FALLBACK_THEME_DESCRIPTION}
-        themes, descriptions = self._load_directory(self.bundled_directory)
+        themes, descriptions, _issues = self._load_directory(
+            self.bundled_directory)
         self._bundled_themes.update(themes)
         self._bundled_descriptions.update(descriptions)
         self._reload_user_sources()
@@ -273,6 +332,7 @@ class ThemeCatalog:
             DEFAULT_THEME: FALLBACK_THEME_DESCRIPTION}
         self._user_themes = {}
         self._user_descriptions = {}
+        self._user_issues = ()
         self._compose()
 
     def _load_active_schema(self):
@@ -287,10 +347,14 @@ class ThemeCatalog:
     def _reload_user_sources(self):
         self._user_themes = {}
         self._user_descriptions = {}
+        issues = []
         for directory in self.user_directories:
-            themes, descriptions = self._load_directory(directory)
+            themes, descriptions, directory_issues = self._load_directory(
+                directory, collect_issues=True)
             self._user_themes.update(themes)
             self._user_descriptions.update(descriptions)
+            issues.extend(directory_issues)
+        self._user_issues = tuple(issues)
 
     def _compose(self):
         self._themes = dict(self._bundled_themes)
@@ -298,20 +362,21 @@ class ThemeCatalog:
         self._themes.update(self._user_themes)
         self._descriptions.update(self._user_descriptions)
 
-    def _load_directory(self, directory):
+    def _load_directory(self, directory, collect_issues=False):
         themes = {}
         descriptions = {}
+        issues = []
         if self._schema is None or not os.path.isdir(directory):
-            return themes, descriptions
+            return themes, descriptions, issues
         for filename in sorted(os.listdir(directory)):
             lowered = filename.lower()
             if (not lowered.endswith(".json")
                     or lowered.endswith(".schema.json")):
                 continue
             path = os.path.join(directory, filename)
+            data = None
             try:
-                with open(path, "r", encoding="utf-8") as stream:
-                    data = json.load(stream)
+                data = _read_theme_document(path)
                 name, description, colors = validate_theme_data(
                     data, schema=self._schema)
                 themes[name] = colors
@@ -319,4 +384,8 @@ class ThemeCatalog:
             except Exception as exc:
                 logging.warning(
                     "[feather_screen] invalid theme %s: %s", path, exc)
-        return themes, descriptions
+                if collect_issues:
+                    issues.append(ThemeFileIssue(
+                        _theme_issue_name(filename, data),
+                        _theme_issue_description(exc), filename))
+        return themes, descriptions, issues

@@ -77,6 +77,72 @@ class ThemeCatalogTest(unittest.TestCase):
         with self.assertRaises(ui.ThemeSchemaError):
             ui.validate_theme_data(unknown_role)
 
+    def test_theme_file_limit_has_headroom_for_bundled_catalog(self):
+        theme_files = [
+            path for path in pathlib.Path(ui.THEME_DIRECTORY).glob("*.json")
+            if not path.name.endswith(".schema.json")]
+        largest = max(path.stat().st_size for path in theme_files)
+
+        self.assertEqual(ui.MAX_THEME_FILE_BYTES, 8 * 1024)
+        self.assertLessEqual(largest, ui.MAX_THEME_FILE_BYTES)
+
+    def test_invalid_user_files_are_bounded_logged_and_reported(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            user = root / "user"
+            user.mkdir()
+
+            valid = {
+                "schema_version": 1,
+                "name": "VALID_USER",
+                "description": "Valid user theme",
+                "colors": dict(ui.FALLBACK_THEME),
+            }
+            (user / "valid.json").write_text(
+                json.dumps(valid), encoding="utf-8")
+
+            schema_mismatch = dict(valid, name="Broken Theme")
+            (user / "schema.json").write_text(
+                json.dumps(schema_mismatch), encoding="utf-8")
+            (user / "syntax.json").write_text("{broken", encoding="utf-8")
+            (user / "binary.json").write_bytes(b"\x00\xff\x10")
+            (user / "large.json").write_bytes(
+                b" " * (ui.MAX_THEME_FILE_BYTES + 1))
+
+            catalog = ui.ThemeCatalog(
+                bundled_directory=ui.THEME_DIRECTORY,
+                user_directories=(str(user),),
+                schema_path=ui.THEME_SCHEMA_PATH)
+            with self.assertLogs(level="WARNING") as logs:
+                names = catalog.reload_all()
+
+            self.assertIn("VALID_USER", names)
+            issues = dict(
+                (issue.filename, (issue.name, issue.description))
+                for issue in catalog.user_issues)
+            self.assertEqual(issues["schema.json"],
+                             ("Broken Theme", "SCHEMA MISMATCH"))
+            self.assertEqual(issues["syntax.json"],
+                             ("syntax", "INVALID JSON"))
+            self.assertEqual(issues["binary.json"],
+                             ("binary", "INVALID FILE"))
+            self.assertEqual(issues["large.json"],
+                             ("large", "FILE TOO LARGE"))
+            self.assertEqual(len(catalog.user_issues), 4)
+            output = "\n".join(logs.output)
+            for filename in issues:
+                self.assertIn(filename, output)
+
+            schema_mismatch["name"] = "BROKEN_THEME"
+            (user / "schema.json").write_text(
+                json.dumps(schema_mismatch), encoding="utf-8")
+            with self.assertLogs(level="WARNING"):
+                catalog.reload_user_themes()
+            self.assertIn("BROKEN_THEME", catalog.names())
+            self.assertNotIn(
+                "schema.json",
+                [issue.filename for issue in catalog.user_issues])
+
     def test_missing_schema_keeps_fallback_theme_available(self):
         with tempfile.TemporaryDirectory() as directory:
             missing_schema = pathlib.Path(directory, "missing.schema.json")

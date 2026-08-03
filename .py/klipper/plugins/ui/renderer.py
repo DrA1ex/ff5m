@@ -164,6 +164,7 @@ class FeatherRenderer:
             self._theme_directories)
         self._themes = {}
         self._theme_descriptions = {}
+        self._user_theme_issues = ()
         self._theme_name = DEFAULT_THEME
         self._palette = with_optional_theme_roles(FALLBACK_THEME)
         self.reload_themes()
@@ -376,6 +377,7 @@ class FeatherRenderer:
         previous_palette = self._palette
         self._themes = self._theme_catalog.themes
         self._theme_descriptions = self._theme_catalog.descriptions
+        self._user_theme_issues = self._theme_catalog.user_issues
         if self._theme_name not in self._themes:
             self._theme_name = DEFAULT_THEME
         self._palette = self._themes[self._theme_name]
@@ -407,6 +409,9 @@ class FeatherRenderer:
 
     def theme_description(self, name):
         return self._theme_catalog.description(name)
+
+    def user_theme_issues(self):
+        return tuple(self._user_theme_issues)
 
     def set_theme(self, name):
         normalized = normalize_theme_name(name)

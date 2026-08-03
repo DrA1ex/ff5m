@@ -963,9 +963,18 @@ class FeatherPagesMixin:
                 # for paging and selection. Bundled themes remain cached.
                 self.renderer.reload_user_themes()
                 options = self.renderer.theme_names()
+                descriptions = dict(
+                    (name, self.renderer.theme_description(name))
+                    for name in options)
+                disabled = self.renderer.user_theme_issues()
             else:
                 options = mod_ui.enum_names(param)
-            self._set_parameter_options(options, self.mod_edit_value)
+                descriptions = dict(
+                    (name, mod_ui.option_description(param, name))
+                    for name in options)
+                disabled = ()
+            self._set_parameter_options(
+                options, self.mod_edit_value, descriptions, disabled)
             self._show_page(Page.PARAMETER_OPTIONS)
         else:
             self.selected_parameter_option = None
@@ -1087,11 +1096,14 @@ class FeatherPagesMixin:
             raise RuntimeError("No parameter selected")
         kind = mod_ui.parameter_kind(param)
         if action.startswith("mod.option."):
-            options = self.parameter_options
+            entries = self.parameter_option_entries
             index = int(action.rsplit(".", 1)[1])
-            if index < 0 or index >= len(options):
+            if index < 0 or index >= len(entries):
                 raise RuntimeError("Unknown option")
-            self.selected_parameter_option = options[index]
+            option = entries[index]
+            if not option.enabled:
+                return
+            self.selected_parameter_option = option.value
             self._render_parameter_options()
             return
         if action == "mod.options.prev":
@@ -1172,25 +1184,26 @@ class FeatherPagesMixin:
         if (param.key == "feather_theme"
                 and self.selected_parameter_option not in options):
             self.selected_parameter_option = "DEFAULT"
+        entries = self.parameter_option_entries
         pagination = Pagination(
-            options, getattr(self, "parameter_options_page_index", 0), 4)
+            entries, getattr(self, "parameter_options_page_index", 0), 4)
         self.parameter_options_page_index = pagination.page
         start = pagination.start
-        for row, name in enumerate(pagination.visible):
+        for row, option in enumerate(pagination.visible):
             index = start + row
-            selected = name == self.selected_parameter_option
-            detail = (self.renderer.theme_description(name).upper()
-                      if param.key == "feather_theme"
-                      else mod_ui.option_description(param, name).upper())
-            label = name.upper()
+            selected = (option.enabled
+                        and option.value == self.selected_parameter_option)
+            detail = str(option.description or "").upper()
+            label = str(option.label).upper()
             if detail:
                 label += " // " + detail
             if selected:
                 label += "  [SELECTED]"
+            state = ("disabled" if not option.enabled else
+                     "selected" if selected else "enabled")
             commands += self.renderer.button(
                 "mod.option.%d" % index, 25, 120 + row * 66, 750, 58,
-                label, state="selected" if selected else "enabled",
-                font="JetBrainsMono 8pt")
+                label, state=state, font="JetBrainsMono 8pt")
         if pagination.page_count > 1:
             commands += self.renderer.button(
                 "mod.options.prev", 25, 390, 120, 47, "<",

@@ -210,6 +210,25 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 
 Startup and error pages clear the normal page hitboxes. The only actionable shutdown control is the generation-tagged `FIRMWARE_RESTART` button that Feather exposes after classifying an MCU recovery condition; it still routes through Klipper's normal G-code command path.
 
+## Theme catalog lifecycle
+
+`ui/theme_catalog.py` is the single owner of theme discovery, the fallback
+palette, JSON Schema validation, optional-role inheritance, descriptions, and
+user-over-bundled override rules. `FeatherRenderer` consumes the normalized
+catalog and only applies colors.
+
+The complete bundled and user catalog is loaded when the renderer is created
+and reloaded on `klippy:ready`, which covers Klipper restarts. Opening the color
+theme picker refreshes only `/opt/config/mod_data/themes` once and stores a
+stable option snapshot. Paging, selecting, and applying use that snapshot and
+do not rescan either directory. Bundled files are treated as immutable during a
+Klipper process lifetime.
+
+Every theme file is validated against `ui/themes/theme.schema.json`. Invalid
+files are logged and skipped; if the schema or bundled files cannot be read, the
+in-code `FALLBACK_THEME` remains available so Feather can still render a usable
+interface.
+
 ## Component boundaries
 
 | Component | Owns | Does not own |
@@ -218,6 +237,7 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 | `feather_safety.py` | Bounded activity providers, operation leases, armed-page composition, safety diagnostics | Page rendering, feature loading, or printer commands |
 | `feather_feature_manager.py` | Lazy feature ownership, single-instance construction, loaded-only lifecycle and safety hooks | Importing cold features during update/shutdown |
 | `feather_screen_pages.py` | Dashboard, files, USB browser presentation, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, USB mount ownership, motion planning, and direct display access |
+| `ui/theme_catalog.py` | Theme schema, fallback palette, bundled/user catalogs, validation, override order, and refresh policy | Drawing commands, page state, or Klipper lifecycle events |
 | `feather_files.py` | Compact file entries, print recency history, bounded USB discovery/helper lifecycle | Page rendering, destructive formatting, or direct block-device mounting |
 | `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
 | `feather_feature_ui_test.py` | Opt-in on-printer page/action sequencing, hardware-test safety gates, stale-run cleanup, framebuffer artifact worker, and bounded `/data` retention | Normal Feather startup, Headless, persistent calibration saves, or renderer ownership |

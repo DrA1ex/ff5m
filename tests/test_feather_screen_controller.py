@@ -1393,6 +1393,47 @@ class ControllerSafetyTest(unittest.TestCase):
                 [("feather_theme", "RUNTIME_ADDED")])
             self.assertEqual(controller.renderer.theme_name, "RUNTIME_ADDED")
 
+    def test_theme_picker_shows_invalid_user_file_as_disabled_row(self):
+        theme = mod_param("feather_theme", str, "DEFAULT",
+                          "Feather color theme")
+        controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
+        with tempfile.TemporaryDirectory() as user_directory:
+            controller.renderer = FEATHER.FeatherRenderer(
+                theme_directories=(UI.THEME_DIRECTORY, user_directory))
+            controller.draw_batches = []
+            controller.renderer.send = controller.draw_batches.append
+            invalid = {
+                "schema_version": 1,
+                "name": "BROKEN_USER",
+                "description": "Invalid user theme",
+                "colors": dict(UI.FALLBACK_THEME, primary="not-a-color"),
+            }
+            pathlib.Path(user_directory, "broken.json").write_text(
+                json.dumps(invalid), encoding="utf-8")
+
+            with self.assertLogs(level="WARNING"):
+                controller._handle_mod_action("mod.item.0")
+
+            entries = controller.parameter_option_entries
+            issue_index = next(
+                index for index, option in enumerate(entries)
+                if not option.enabled and option.label == "BROKEN_USER")
+            target_page = issue_index // 4
+            while controller.parameter_options_page_index < target_page:
+                controller._handle_mod_action("mod.options.next")
+
+            drawing = "\n".join(controller.draw_batches[-1])
+            issue_command = next(
+                line for line in drawing.splitlines()
+                if "BROKEN_USER // SCHEMA MISMATCH" in line)
+            self.assertNotIn("--id ", issue_command)
+
+            selected = controller.selected_parameter_option
+            batch_count = len(controller.draw_batches)
+            controller._handle_mod_action("mod.option.%d" % issue_index)
+            self.assertEqual(controller.selected_parameter_option, selected)
+            self.assertEqual(len(controller.draw_batches), batch_count)
+
     def test_settings_opens_theme_picker_and_returns_to_settings(self):
         theme = mod_param("feather_theme", str, "DEFAULT",
                           "Feather color theme")

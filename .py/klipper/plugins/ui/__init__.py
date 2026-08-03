@@ -27,9 +27,11 @@ def framework_manifest():
 
 _EXPORT_GROUPS = (
     ("theme_catalog", (
-        "DEFAULT_THEME", "FALLBACK_THEME", "OPTIONAL_THEME_ROLE_FALLBACKS",
+        "DEFAULT_THEME", "FALLBACK_THEME", "MAX_THEME_FILE_BYTES",
+        "OPTIONAL_THEME_ROLE_FALLBACKS",
         "THEME_DIRECTORY", "THEME_SCHEMA_PATH", "USER_THEME_DIRECTORY",
-        "ThemeCatalog", "ThemeSchemaError", "normalize_theme_name",
+        "ThemeCatalog", "ThemeFileIssue", "ThemeFileTooLarge",
+        "ThemeSchemaError", "normalize_theme_name",
         "validate_theme_data", "with_optional_theme_roles",
     )),
     ("renderer", (
@@ -104,9 +106,11 @@ def __dir__():
 __all__ = (
     "__version__", "FRAMEWORK_API_VERSION", "REFLECTION_SCHEMA_VERSION",
     "FRAMEWORK_CAPABILITIES", "framework_manifest",
-    "DEFAULT_THEME", "FALLBACK_THEME", "OPTIONAL_THEME_ROLE_FALLBACKS",
+    "DEFAULT_THEME", "FALLBACK_THEME", "MAX_THEME_FILE_BYTES",
+    "OPTIONAL_THEME_ROLE_FALLBACKS",
     "THEME_DIRECTORY", "THEME_SCHEMA_PATH", "USER_THEME_DIRECTORY",
-    "ThemeCatalog", "ThemeSchemaError", "normalize_theme_name",
+    "ThemeCatalog", "ThemeFileIssue", "ThemeFileTooLarge",
+    "ThemeSchemaError", "normalize_theme_name",
     "validate_theme_data", "with_optional_theme_roles",
     "COLOR_CYAN", "COLOR_ROLES", "COLOR_TEXT", "COLOR_VIOLET",
     "CONTENT_BOTTOM", "FOOTER_HEIGHT", "FOOTER_Y",

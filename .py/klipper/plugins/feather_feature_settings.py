@@ -1,5 +1,12 @@
 ## Settings and Mod Settings feature for Feather.
 
+from collections import namedtuple
+
+
+ParameterOption = namedtuple(
+    "ParameterOption", ("value", "label", "description", "enabled"))
+
+
 try:
     from .ui import Page
     from .feather_feature_manager import FeatureHostProxy
@@ -33,11 +40,25 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
 
     @property
     def parameter_options(self):
+        return tuple(
+            option.value for option in self._parameter_options_snapshot
+            if option.enabled)
+
+    @property
+    def parameter_option_entries(self):
         return self._parameter_options_snapshot
 
-    def _set_parameter_options(self, options, selection):
-        """Replace the immutable options snapshot for the current parameter."""
-        self._parameter_options_snapshot = tuple(options)
+    def _set_parameter_options(self, options, selection,
+                               descriptions=None, disabled=()):
+        """Replace the immutable row snapshot for this picker."""
+        descriptions = descriptions or {}
+        entries = [ParameterOption(
+            value, value, descriptions.get(value, ""), True)
+                   for value in options]
+        entries.extend(ParameterOption(
+            None, issue.name, issue.description, False)
+                       for issue in disabled)
+        self._parameter_options_snapshot = tuple(entries)
         self.selected_parameter_option = selection
         self.parameter_options_page_index = 0
 
