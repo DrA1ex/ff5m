@@ -32,9 +32,6 @@
     "button_selected_text": "bright",
     "header_background": "primary",
     "header_text": "bright",
-    "header_border": "border",
-    "temperature_nozzle": "secondary",
-    "temperature_bed": "warning",
-    "temperature_fan": "primary"
+    "header_border": "border"
   }
 }

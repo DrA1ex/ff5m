@@ -30,6 +30,8 @@ from tests.test_feather_screen import (
 )
 from ff5m_ui.move import runtime as MOVE_UI
 from ff5m_ui.filament import actions as FILAMENT_ACTIONS
+from ff5m_ui.home import state as HOME_STATE
+from ui.font_metrics import get_font_metrics
 from feather_feature_filament import FilamentFeature
 
 
@@ -428,9 +430,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._read_text = lambda path: ""
         controller._refresh_local_timezone = lambda: None
 
-        with mock.patch("feather_screen_pages.time.strftime",
-                        return_value="18:09"):
-            controller._render_home()
+        controller._render_home()
 
         drawing = "\n".join("\n".join(batch) for batch in batches)
         material = next(line for line in drawing.splitlines()
@@ -439,16 +439,64 @@ class ControllerSafetyTest(unittest.TestCase):
                        if "VERY-LONG-WIRELESS-NETWORK-NAME" in line)
         progress = next(line for line in drawing.splitlines()
                         if "100% //" in line)
-        clock = next(line for line in drawing.splitlines()
-                     if '-t "18:09"' in line)
         self.assertIn("--max-width 220 --truncate", material)
         self.assertIn("--max-width 210 --truncate", network)
         self.assertIn("--max-width 350 --truncate", progress)
-        self.assertIn('-f "Roboto 16pt"', clock)
         self.assertLessEqual(
             controller.renderer.text_width(
                 "299 / 300 C", "JetBrainsMono 12pt"),
             209)
+
+    def test_dashboard_clock_uses_header_contrast_and_stable_width_font(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.page = FEATHER.Page.IDLE_HOME
+        controller.renderer = FEATHER.FeatherRenderer()
+        colors = dict(UI.FALLBACK_THEME)
+        colors["text"] = "101010"
+        controller.renderer._palette = UI.resolve_theme(
+            colors, {"header_text": "fefefe"})
+        controller.reactor = Reactor()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.extruder = StatusObject(
+            {"temperature": 20.0, "target": 0.0})
+        controller.heater_bed = StatusObject(
+            {"temperature": 21.0, "target": 0.0})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.network_status = {
+            "mode": "ETHERNET", "ssid": "", "ip": "192.168.2.124"}
+        controller.last_job_name = "NONE"
+        controller._current_material = lambda: "PLA"
+        controller._read_text = lambda _path: ""
+        controller._last_dashboard = None
+
+        controller._render_home()
+
+        drawing = "\n".join("\n".join(batch) for batch in batches)
+        clock = next(
+            line for line in drawing.splitlines()
+            if re.search(r'-t "[0-2][0-9]:[0-5][0-9]"$', line))
+        title = next(
+            line for line in drawing.splitlines()
+            if '-t "FORGE-X // FEATHER"' in line)
+        clock_value = re.search(r'-t "([0-9]{2}:[0-9]{2})"$', clock).group(1)
+        font = re.search(r'-f "([^"]+)"', clock).group(1)
+        x = int(re.search(r'-p ([0-9]+) [0-9]+', clock).group(1))
+        title_x = int(re.search(r'-p ([0-9]+) [0-9]+', title).group(1))
+        title_width = int(re.search(r'--max-width ([0-9]+)', title).group(1))
+        title_left = title_x - title_width // 2
+
+        self.assertIn(
+            "-c %s" % controller.renderer.color(UI.ThemeRole.HEADER_TEXT),
+            clock)
+        self.assertNotIn(
+            "-c %s" % controller.renderer.color(UI.ThemeColor.TEXT), clock)
+        self.assertTrue(get_font_metrics().fonts[font].monospaced)
+        self.assertLessEqual(
+            x + controller.renderer.text_width(clock_value, font),
+            title_left)
+        self.assertIsInstance(controller._last_dashboard,
+                              HOME_STATE.DashboardState)
 
     def test_calibration_menu_paginates_available_workflows(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

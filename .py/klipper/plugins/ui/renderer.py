@@ -1139,6 +1139,13 @@ class FeatherRenderer:
         left = "NOZZLE %.0f/%.0fC | BED %.0f/%.0fC" % values[:4]
         right = "%s | %s" % (values[4], str(values[5]).upper())
         return [
+            # The footer is a persistent framebuffer region. Clear its full
+            # extent before drawing the inner panel so startup overlays and
+            # previous themes cannot survive in the outer gutters or bottom
+            # rows. Space outside the framed panel follows the page background.
+            self.fill(
+                0, FOOTER_Y - 2, SCREEN_WIDTH,
+                SCREEN_HEIGHT - (FOOTER_Y - 2), ThemeColor.BACKGROUND),
             self.fill(10, FOOTER_Y, 780, FOOTER_HEIGHT - 1, ThemeColor.PANEL),
             self.stroke(FRAME_X, FOOTER_Y - 2, FRAME_WIDTH,
                         SCREEN_HEIGHT - (FOOTER_Y - 2) - 4, ThemeColor.BORDER, 1),

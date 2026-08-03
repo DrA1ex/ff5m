@@ -873,10 +873,61 @@ class RendererStateTest(unittest.TestCase):
         expected_primary = renderer.color(UI.ThemeColor.PRIMARY)
         page = "\n".join(renderer.begin_page("Settings"))
         self.assertIn("-c %s" % expected_primary, page)
-        self.assertIn("-p 10 444 -s 780 31", page)
+        footer_clear = renderer.fill(
+            0, UI.FOOTER_Y - 2, UI.SCREEN_WIDTH,
+            UI.SCREEN_HEIGHT - (UI.FOOTER_Y - 2),
+            UI.ThemeColor.BACKGROUND)
+        self.assertIn(footer_clear, page)
 
         unchanged = "\n".join(renderer.begin_page("Settings"))
-        self.assertNotIn("-p 10 444 -s 780 31", unchanged)
+        self.assertNotIn(footer_clear, unchanged)
+
+    def test_footer_repaint_removes_previous_fullscreen_overlay_pixels(self):
+        renderer = FEATHER.FeatherRenderer()
+        sent = []
+        renderer.send = sent.append
+        overlay = renderer.color(UI.ThemeColor.OVERLAY)
+        renderer.startup_modal()
+
+        colors = dict(UI.FALLBACK_THEME)
+        colors["background"] = (
+            "abcdef" if overlay != "abcdef" else "fedcba")
+        renderer._palette = UI.resolve_theme(colors)
+        background = renderer.color(UI.ThemeColor.BACKGROUND)
+        renderer._footer_values = (
+            21.0, 220.0, 24.0, 60.0, "192.168.2.4", "idle")
+        renderer._footer_drawn = False
+        page = renderer.begin_page("Settings")
+
+        fill_pattern = re.compile(
+            r"^--batch fill -p (\d+) (\d+) -s (\d+) (\d+) "
+            r"-c ([0-9a-f]{6})$")
+        top = UI.FOOTER_Y - 2
+        pixels = [
+            [None for _x in range(UI.SCREEN_WIDTH)]
+            for _y in range(UI.SCREEN_HEIGHT - top)
+        ]
+        for command in list(sent[0]) + list(page):
+            match = fill_pattern.match(command)
+            if match is None:
+                continue
+            x, y, width, height = map(int, match.groups()[:4])
+            color = match.group(5)
+            left = max(0, x)
+            right = min(UI.SCREEN_WIDTH, x + width)
+            start_y = max(top, y)
+            end_y = min(UI.SCREEN_HEIGHT, y + height)
+            for screen_y in range(start_y, end_y):
+                row = pixels[screen_y - top]
+                row[left:right] = [color] * max(0, right - left)
+
+        self.assertTrue(all(
+            color is not None and color != overlay
+            for row in pixels for color in row))
+        for x, y in ((0, top), (UI.SCREEN_WIDTH - 1, top),
+                     (0, UI.SCREEN_HEIGHT - 1),
+                     (UI.SCREEN_WIDTH - 1, UI.SCREEN_HEIGHT - 1)):
+            self.assertEqual(pixels[y - top][x], background)
 
     def test_mesh_matrix_validation_and_color_bands(self):
         normalize = FEATHER.FeatherScreen.normalize_mesh_matrix

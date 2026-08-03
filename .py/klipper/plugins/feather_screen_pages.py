@@ -24,6 +24,30 @@ except (ImportError, ValueError):
     from feather_pagination import Pagination, pagination_footer
 
 
+class _LazyModule:
+    """Import a UI module only when its screen is first used."""
+
+    __slots__ = ("_suffix", "_module")
+
+    def __init__(self, suffix):
+        self._suffix = suffix
+        self._module = None
+
+    def _load(self):
+        if self._module is None:
+            name = ("%s.%s" % (__package__, self._suffix)
+                    if __package__ else self._suffix)
+            self._module = importlib.import_module(name)
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+home_page = _LazyModule("ff5m_ui.home.page")
+home_state = _LazyModule("ff5m_ui.home.state")
+
+
 class _LazyModUI:
     """Do not import Mod Settings helpers before Settings is opened."""
 
@@ -57,40 +81,7 @@ NETWORK_ROWS = 5
 
 class FeatherPagesMixin:
     def _render_home(self):
-        commands = self.renderer.begin_page("FORGE-X // FEATHER")
-        commands += self.renderer.button("nav.menu", 648, 9, 132, 38, "MENU",
-                                         font="JetBrainsMono Bold 8pt")
-        panels = ((25, 72, 235, 132, "NOZZLE", ThemeRole.TEMPERATURE_NOZZLE),
-                  (282, 72, 235, 132, "BED", ThemeRole.TEMPERATURE_BED),
-                  (539, 72, 236, 132, "NETWORK", ThemeColor.PRIMARY))
-        for x, y, width, height, label, color in panels:
-            commands += [self.renderer.fill(x, y, width, height, ThemeColor.PANEL),
-                         self.renderer.stroke(x, y, width, height, color, 2),
-                         self.renderer.text(x + width // 2, y + 28, label, color,
-                                            "JetBrainsMono 8pt", "center", "middle")]
-        commands += [
-            self.renderer.fill(25, 220, 750, 112, ThemeColor.PANEL),
-            self.renderer.stroke(25, 220, 750, 112, ThemeColor.BORDER, 2),
-            self.renderer.text(44, 240, "JOB STATUS", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(25, 345, 750, 1, ThemeColor.BORDER),
-            self.renderer.text(28, 365, "LAST JOB", ThemeColor.DIM,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(300, 365, "MATERIAL", ThemeColor.DIM,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(570, 365, "TOOLHEAD", ThemeColor.DIM,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(282, 353, 1, 74, ThemeColor.BORDER),
-            self.renderer.fill(542, 353, 1, 74, ThemeColor.BORDER),
-            self.renderer.action_hitbox("nav.heat", 25, 72, 492, 132),
-            self.renderer.action_hitbox("nav.network", 539, 72, 236, 132),
-            self.renderer.action_hitbox("nav.job", 25, 220, 750, 112),
-            self.renderer.action_hitbox("nav.filament", 283, 345, 259, 97),
-            self.renderer.action_hitbox("nav.move", 543, 345, 232, 97),
-        ]
-        self.renderer.send(commands)
-        self._last_dashboard = None
-        self._update_dashboard(self.reactor.monotonic())
+        return home_page.render(self)
 
     def _render_main_menu(self):
         commands = self.renderer.begin_page("MAIN MENU", back=True)
@@ -104,134 +95,10 @@ class FeatherPagesMixin:
         self.renderer.send(commands)
 
     def _update_dashboard(self, eventtime):
-        if self.page != Page.IDLE_HOME:
-            return
-        self._refresh_local_timezone()
-        self.filament_material = self._current_material()
-        extruder = self.extruder.get_status(eventtime)
-        bed = self.heater_bed.get_status(eventtime)
-        toolhead = self.toolhead.get_status(eventtime)
-        homed = str(toolhead.get("homed_axes", "")).upper()
-        mode = self.network_status.get("mode") or "OFFLINE"
-        ssid = self.network_status.get("ssid") or ""
-        ip = self.network_status.get("ip") or self._read_text("/tmp/net_ip") or "NO LINK"
-        net_name = "%s%s" % (mode.upper(), " / " + ssid if ssid else "")
-        job = self._dashboard_job(eventtime)
-        values = (round(extruder["temperature"]), round(extruder["target"]),
-                  round(bed["temperature"]), round(bed["target"]),
-                  net_name, ip, self.last_job_name, self.filament_material,
-                  homed or "NOT HOMED", job, time.strftime("%H:%M"))
-        if values == self._last_dashboard:
-            return
-        previous = self._last_dashboard
-        self._last_dashboard = values
-        commands = []
-        if previous is None or values[:2] != previous[:2]:
-            commands += [
-                self.renderer.fill(28, 112, 229, 87, ThemeColor.PANEL),
-                self.renderer.text(142, 139, "%d / %d C" % values[:2], ThemeColor.TEXT,
-                                   "JetBrainsMono 12pt", "center", "middle"),
-                self.renderer.text(142, 181,
-                                   "HEATING" if values[1] > 0 else "OFF",
-                                   ThemeRole.TEMPERATURE_NOZZLE if values[1] > 0 else ThemeColor.DIM,
-                                   "JetBrainsMono 8pt", "center", "middle")]
-        if previous is None or values[2:4] != previous[2:4]:
-            commands += [
-                self.renderer.fill(285, 112, 229, 87, ThemeColor.PANEL),
-                self.renderer.text(399, 139, "%d / %d C" % values[2:4], ThemeColor.TEXT,
-                                   "JetBrainsMono 12pt", "center", "middle"),
-                self.renderer.text(399, 181,
-                                   "HEATING" if values[3] > 0 else "OFF",
-                                   ThemeRole.TEMPERATURE_BED if values[3] > 0 else ThemeColor.DIM,
-                                   "JetBrainsMono 8pt", "center", "middle")]
-        if previous is None or values[4:6] != previous[4:6]:
-            commands += [
-                self.renderer.fill(542, 112, 230, 87, ThemeColor.PANEL),
-                self.renderer.text(657, 139,
-                                   values[4], ThemeColor.TEXT, "JetBrainsMono 8pt",
-                                   "center", "middle", max_width=210,
-                                   truncate=True),
-                self.renderer.text(657, 181,
-                                   values[5], ThemeColor.PRIMARY, "JetBrainsMono 8pt",
-                                   "center", "middle", max_width=210,
-                                   truncate=True)]
-        if previous is None or values[9] != previous[9]:
-            active, state, filename, progress, elapsed, remaining, detail = values[9]
-            commands += [
-                self.renderer.fill(29, 252, 742, 76, ThemeColor.PANEL),
-                self.renderer.text(
-                    44, 270, filename if active else "NO ACTIVE JOB",
-                    ThemeColor.TEXT if active else ThemeColor.PRIMARY,
-                    "JetBrainsMono Bold 8pt", "left", "middle",
-                    max_width=560, truncate=True),
-                self.renderer.text(
-                    756, 270, state if active else "READY",
-                    ThemeColor.WARNING if state == "PAUSED" else ThemeColor.PRIMARY,
-                    "JetBrainsMono 8pt", "right", "middle")]
-            if active:
-                commands += [
-                    self.renderer.text(
-                        44, 307, detail, ThemeColor.DIM, "JetBrainsMono 8pt",
-                        "left", "middle", max_width=330, truncate=True),
-                    self.renderer.text(
-                        756, 307, "%d%% // %s / %s" % (
-                            progress, elapsed, remaining),
-                        ThemeColor.TEXT, "JetBrainsMono 8pt", "right", "middle",
-                        max_width=350, truncate=True)]
-        if previous is None or values[6:9] != previous[6:9]:
-            commands += [
-                self.renderer.fill(25, 393, 750, 34, ThemeColor.BACKGROUND),
-                self.renderer.text(28, 410, values[6], ThemeColor.TEXT,
-                                   "JetBrainsMono 8pt", "left", "middle",
-                                   max_width=240, truncate=True),
-                self.renderer.text(300, 410, values[7], ThemeColor.TEXT,
-                                   "JetBrainsMono 8pt", "left", "middle",
-                                   max_width=220, truncate=True),
-                self.renderer.text(570, 410, values[8],
-                                   ThemeColor.PRIMARY if values[8] == "XYZ" else ThemeColor.WARNING,
-                                   "JetBrainsMono 8pt", "left", "middle")]
-        if previous is None or values[10] != previous[10]:
-            commands += [
-                self.renderer.fill(18, 7, 142, 46, ThemeRole.HEADER_BACKGROUND),
-                self.renderer.text(28, 29, values[10], ThemeColor.TEXT,
-                                   "Roboto 16pt", "left", "middle",
-                                   proportional=True)]
-        self.renderer.send(commands)
+        return home_page.update(self, eventtime)
 
     def _dashboard_job(self, eventtime):
-        stats_object = getattr(self, "print_stats", None)
-        virtual_sdcard = getattr(self, "virtual_sdcard", None)
-        stats = (stats_object.get_status(eventtime)
-                 if stats_object is not None else {})
-        state = str(stats.get("state", "")).lower()
-        active = (state in ("printing", "paused")
-                  or bool(virtual_sdcard is not None
-                          and virtual_sdcard.is_active()))
-        if not active:
-            return (False, "READY", self.last_job_name, 0,
-                    "--:--:--", "--:--:--", "")
-
-        if getattr(self, "print_state", None) == PrintState.PREPARING:
-            label = "PREPARING"
-        else:
-            label = "PAUSED" if state == "paused" else "PRINTING"
-        path = (virtual_sdcard.file_path()
-                if virtual_sdcard is not None
-                and hasattr(virtual_sdcard, "file_path") else "")
-        filename = os.path.basename(path or self.last_job_name or "UNKNOWN")
-        try:
-            progress_value = self._print_progress(eventtime, stats)
-            elapsed, remaining = self._print_time_values(
-                eventtime, stats, progress_value)
-        except (AttributeError, TypeError, ValueError):
-            progress_value = 0.0
-            elapsed = stats.get("print_duration")
-            remaining = None
-        detail = getattr(self, "print_status_text", "") or label
-        return (
-            True, label, filename, int(progress_value * 100),
-            self._clock_duration(elapsed),
-            self._clock_duration(remaining), detail)
+        return home_state.dashboard_job(self, eventtime)
 
     def _refresh_local_timezone(self):
         """Reload libc timezone data after SET_TIMEZONE replaces localtime."""
