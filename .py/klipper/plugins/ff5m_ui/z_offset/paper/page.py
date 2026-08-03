@@ -8,9 +8,8 @@ from ui.components import Button, Dialog, Panel, Text, VerticalGauge
 from ui.layout import Column, Equal, Flex, Grid, Overlay, PageTree as Page, Spacer, When
 from ...keys import AppPage
 from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_SAFE_HALF, PROBE, RESET
-from ..common import (
-    CONTENT, FONT, PAPER_STEPS, Z_WEIGHT_DANGER, compact,
-)
+from ..common import CONTENT, FONT, compact
+from ..constants import PAPER_STEPS, Z_WEIGHT_DANGER
 from .state import PaperState
 
 
@@ -42,11 +41,6 @@ class PaperRef(Enum):
     PROBE = "paper.probe"
     MOVE_SAFE_HALF = "paper.move_safe_half"
     STEPS = "paper.steps"
-    STEP_005 = "paper.step.005"
-    STEP_010 = "paper.step.010"
-    STEP_025 = "paper.step.025"
-    STEP_050 = "paper.step.050"
-    STEP_100 = "paper.step.100"
     ADJUST = "paper.adjust"
     CLOSER = "paper.closer"
     FARTHER = "paper.farther"
@@ -59,10 +53,8 @@ class PaperRef(Enum):
     PRESSURE_DIALOG = "paper.pressure.dialog"
 
 
-_STEP_REFS = dict(zip(PAPER_STEPS, (
-    PaperRef.STEP_005, PaperRef.STEP_010,
-    PaperRef.STEP_025, PaperRef.STEP_050, PaperRef.STEP_100,
-)))
+def _step_ref(step):
+    return "paper.step.%03d" % round(float(step) * 1000.0)
 
 
 def _value_card(label, value_binding, refs):
@@ -144,9 +136,9 @@ def _steps():
                     lambda current, expected=step:
                     "selected" if current == expected else "enabled",
                     bind(PaperState.STEP)),
-            ).ref(_STEP_REFS[step])
+            ).ref(_step_ref(step))
             for step in PAPER_STEPS),),
-        columns=Equal(5), rows=Equal(1), gap=(8, 0),
+        columns=Equal(len(PAPER_STEPS)), rows=Equal(1), gap=(8, 0),
     )).padding(right=8).ref(PaperRef.STEPS)
 
 

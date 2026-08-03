@@ -20,6 +20,10 @@ SPEC.loader.exec_module(ZCAL)
 
 
 class ZCalibrationStateTest(unittest.TestCase):
+    def test_session_uses_the_canonical_default_paper_step(self):
+        self.assertEqual(
+            ZCAL.ZCalibrationSession().step, ZCAL.PAPER_DEFAULT_STEP)
+
     def test_safe_z_candidate_uses_clean_trigger_plus_five(self):
         session = ZCAL.ZCalibrationSession()
         session.begin(0.0, None, "", -0.25, False, safe_z=10.0)

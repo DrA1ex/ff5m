@@ -2,6 +2,7 @@
 
 from ui.bindings import state
 from ui.identity import StateKey
+from ..constants import PAPER_DEFAULT_STEP, PAPER_STEPS
 
 
 class PaperState(StateKey):
@@ -16,8 +17,8 @@ class PaperState(StateKey):
     PROBING = state(bool, default=False, mutable=False, category="z_offset")
     MOVING_TO_START = state(bool, default=False, mutable=False,
                             category="z_offset")
-    STEP = state(float, default=0.010,
-                 choices=(0.005, 0.010, 0.025, 0.050, 0.100), unit="mm",
+    STEP = state(float, default=PAPER_DEFAULT_STEP,
+                 choices=PAPER_STEPS, unit="mm",
                  category="z_offset")
     MANUAL_START = state(float, default=5.0, minimum=0.0, unit="mm",
                          mutable=False, category="z_offset")

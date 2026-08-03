@@ -16,6 +16,7 @@ from .summary.state import SummaryState
 _LAZY_EXPORTS = {
     "CONTENT": ("common", "CONTENT"),
     "FONT": ("common", "FONT"),
+    "PAPER_DEFAULT_STEP": ("constants", "PAPER_DEFAULT_STEP"),
     "PAPER_STEPS": ("constants", "PAPER_STEPS"),
     "Z_WEIGHT_DANGER": ("constants", "Z_WEIGHT_DANGER"),
     "SAFE_BRIEFING_PAGE": ("safe_briefing.page", "PAGE"),

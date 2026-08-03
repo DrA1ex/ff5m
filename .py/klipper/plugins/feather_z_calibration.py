@@ -11,11 +11,11 @@ import logging
 try:
     from .ui import Page, PrintState
     from .ff5m_ui.z_offset import runtime as z_offset_ui
-    from .ff5m_ui.z_offset.constants import PAPER_STEPS
+    from .ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
 except (ImportError, ValueError):
     from ui import Page, PrintState
     from ff5m_ui.z_offset import runtime as z_offset_ui
-    from ff5m_ui.z_offset.constants import PAPER_STEPS
+    from ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
 
 
 ZONE_POINTS = (
@@ -97,7 +97,7 @@ class ZCalibrationSession:
         self.reference_z = None
         self.reference_base_z = 0.0
         self.local_z = None
-        self.step = PAPER_STEPS[1]
+        self.step = PAPER_DEFAULT_STEP
         self.start_mode = None
         self.probing = False
         self.moving_to_start = False

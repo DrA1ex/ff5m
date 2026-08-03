@@ -16,6 +16,7 @@ PAGE_ID = AppPage.Z_OFFSET_PAPER_BRIEFING
 
 class PaperBriefingRef(Enum):
     ROOT = "paper_briefing.root"
+    SPACER_BEFORE_TEXT = "paper_briefing.spacer.before_text"
     TEXT = "paper_briefing.text"
     LINE_1 = "paper_briefing.line.1"
     LINE_2 = "paper_briefing.line.2"
@@ -70,6 +71,7 @@ def _content():
         columns=Equal(1), rows=Equal(1),
     ).height(24).padding(left=10, right=10).ref(PaperBriefingRef.ZONE_LAYOUT)
     return Column(
+        Spacer().ref(PaperBriefingRef.SPACER_BEFORE_TEXT),
         text,
         Spacer().height(21).ref(PaperBriefingRef.SPACER_AFTER_TEXT),
         zone,

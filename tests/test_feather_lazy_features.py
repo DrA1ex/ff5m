@@ -36,11 +36,14 @@ blocked = (
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',
-    'feather_mod_settings', 'ff5m_ui.z_offset',
+    'feather_mod_settings',
 )
 assert not [name for name in blocked if name in sys.modules]
-assert not [name for name in sys.modules
-            if name.startswith('ff5m_ui.z_offset')]
+z_offset_modules = set(
+    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
+assert z_offset_modules == {
+    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
+}, z_offset_modules
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
@@ -104,9 +107,14 @@ blocked = (
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
     'feather_z_calibration', 'feather_extruder_calibration',
-    'feather_mod_settings', 'ff5m_ui.z_offset',
+    'feather_mod_settings',
 )
 assert not [name for name in blocked if name in sys.modules]
+z_offset_modules = set(
+    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
+assert z_offset_modules == {
+    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
+}, z_offset_modules
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
@@ -154,6 +162,34 @@ manager.get('extruder')
 assert 'feather_extruder_calibration' in sys.modules
 manager.get('settings')
 assert 'feather_mod_settings' in sys.modules
+""")
+
+    def test_z_offset_constants_do_not_load_actions_or_pages(self):
+        self.run_clean("""
+import sys
+from ff5m_ui.z_offset.constants import (
+    PAPER_DEFAULT_STEP, PAPER_STEPS, Z_WEIGHT_DANGER,
+)
+
+assert PAPER_DEFAULT_STEP in PAPER_STEPS
+assert Z_WEIGHT_DANGER > 0
+loaded = set(
+    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
+assert loaded == {
+    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
+}, loaded
+""")
+
+    def test_z_offset_public_actions_remain_lazy_exports(self):
+        self.run_clean("""
+import sys
+import ff5m_ui.z_offset as z_offset
+
+assert 'ff5m_ui.z_offset.actions' not in sys.modules
+assert z_offset.Adjustment.CLOSER.value == 'closer'
+assert 'ff5m_ui.z_offset.actions' in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
 """)
 
     def test_klipper_package_feature_uses_the_core_page_enum(self):

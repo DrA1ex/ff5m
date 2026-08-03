@@ -110,8 +110,8 @@ class FakeOpenAIEndpoint:
                 response = self.spacing_responses.get(payload["model"], {
                     "defect": False,
                     "subject": "first body element",
-                    "gap_relation": "at_least",
-                    "reason": "The local gap meets the threshold.",
+                    "gap_relation": "clear",
+                    "reason": "The elements have a visible gap.",
                 })
             else:
                 response = self.model_responses[payload["model"]]
@@ -278,8 +278,8 @@ class VisualEvaluatorTest(unittest.TestCase):
         spacing = {
             "defect": True,
             "subject": "first instruction line",
-            "gap_relation": "smaller",
-            "reason": "The header gap is below the required threshold.",
+            "gap_relation": "near_touching",
+            "reason": "The text almost touches the header separator.",
         }
         with FakeOpenAIEndpoint(
                 ("vision-a",), {"vision-a": verdict("pass")},
@@ -297,6 +297,24 @@ class VisualEvaluatorTest(unittest.TestCase):
             model["reasons"][0]["evidence_class"], "aesthetic_defect")
         self.assertIn("first instruction line", model["reasons"][0][
             "reason"])
+
+    def test_uncertain_spacing_audit_does_not_create_a_defect(self):
+        spacing = {
+            "defect": False,
+            "subject": "first instruction line",
+            "gap_relation": "uncertain",
+            "reason": "No obvious touching or clipping is visible.",
+        }
+        with FakeOpenAIEndpoint(
+                ("vision-a",), {"vision-a": verdict("pass")},
+                {"vision-a": spacing}) as server:
+            settings = VISION.VisualCheckSettings(
+                True, server.base_url, "vision-a", "", 5, "advisory")
+            result = server.evaluator(settings).evaluate(
+                b"image", "image/png", {})
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["models"][0]["verdict"], "pass")
 
     def test_more_than_one_model_is_rejected(self):
         with self.assertRaisesRegex(

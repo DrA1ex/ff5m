@@ -14,9 +14,12 @@ sys.path.insert(0, str(PLUGINS))
 
 from ff5m_ui.move import runtime as move_ui  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset_ui  # noqa: E402
+from ff5m_ui.z_offset.constants import (  # noqa: E402
+    PAPER_DEFAULT_STEP, PAPER_STEPS,
+)
 from ui import (  # noqa: E402
-    FeatherRenderer, PageKey, PageTree, Rect, StateKey, StateStore, Text,
-    bind, derived, reflect_page, state, state_spec,
+    Button, FeatherRenderer, PageKey, PageTree, Rect, SetValue, StateKey,
+    StateStore, Text, bind, derived, reflect_page, state, state_spec,
 )
 
 
@@ -35,6 +38,26 @@ class BindingState(StateKey):
 
 
 class StateDeclarationTest(unittest.TestCase):
+    def test_paper_step_contract_uses_canonical_constants(self):
+        spec = state_spec(z_offset_ui.PaperState.STEP)
+        self.assertEqual(spec.choices, PAPER_STEPS)
+        self.assertEqual(spec.default_value(), PAPER_DEFAULT_STEP)
+
+        buttons = tuple(
+            node for node in z_offset_ui.PAPER_PAGE.root.walk()
+            if (isinstance(node, Button)
+                and isinstance(node.action, SetValue)
+                and node.action.key == z_offset_ui.PaperState.STEP)
+        )
+        self.assertEqual(
+            tuple(button.action.value for button in buttons), PAPER_STEPS)
+        self.assertEqual(
+            tuple(button.key for button in buttons),
+            tuple("paper.step.%03d" % round(step * 1000.0)
+                  for step in PAPER_STEPS))
+        self.assertEqual(len(set(button.key for button in buttons)),
+                         len(PAPER_STEPS))
+
     def test_state_store_uses_enum_keys_and_validates_metadata(self):
         store = StateStore(BindingState)
 

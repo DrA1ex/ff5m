@@ -22,6 +22,7 @@ try:
     )
     from .ff5m_ui.move import runtime as move_ui
     from .ff5m_ui.heat import runtime as heat_ui
+    from .ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
     from . import feather_joystick as joystick_ui
     from . import feather_motion as joystick_motion
     from .feather_pagination import Pagination, pagination_footer
@@ -40,6 +41,7 @@ except (ImportError, ValueError):
     )
     from ff5m_ui.move import runtime as move_ui
     from ff5m_ui.heat import runtime as heat_ui
+    from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
     import feather_joystick as joystick_ui
     import feather_motion as joystick_motion
     from feather_pagination import Pagination, pagination_footer
@@ -65,8 +67,6 @@ class _LazyZOffsetUI:
 
 
 z_offset_ui = _LazyZOffsetUI()
-PAPER_STEPS = (0.005, 0.010, 0.025, 0.050, 0.100)
-Z_WEIGHT_DANGER = 400.0
 SAFE_Z_ADJUST_STEP = 1.0
 
 
