@@ -14,12 +14,12 @@ import time
 
 try:
     from .ui import Page, PrintState, ThemeColor, ThemeRole
-    from .feather_keyboard import keyboard_rows
+    from .feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
     from .feather_files import FileEntry, scan_gcode_files
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
     from ui import Page, PrintState, ThemeColor, ThemeRole
-    from feather_keyboard import keyboard_rows
+    from feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
     from feather_files import FileEntry, scan_gcode_files
     from feather_pagination import Pagination, pagination_footer
 
@@ -1017,20 +1017,12 @@ class FeatherPagesMixin:
                 token = action[len("mod.key."):]
             self.mod_edit_value = mod_ui.numeric_input_spec(param).apply(
                 self.mod_edit_value, token)
-        elif action == "mod.backspace":
-            self.mod_edit_value = self.mod_edit_value[:-1]
-        elif action == "mod.shift" and kind == "str":
-            self.mod_keyboard_shift = not self.mod_keyboard_shift
-        elif action == "mod.symbols" and kind == "str":
-            self.mod_keyboard_symbols = not self.mod_keyboard_symbols
-        elif action == "mod.space" and kind == "str":
-            if len(self.mod_edit_value) < mod_ui.MAX_VALUE_LENGTH:
-                self.mod_edit_value += " "
-        elif action.startswith("mod.key."):
-            token = action[len("mod.key."):]
-            character = mod_ui.key_character(token, self.mod_keyboard_shift)
-            if character is not None and len(self.mod_edit_value) < mod_ui.MAX_VALUE_LENGTH:
-                self.mod_edit_value += character
+        elif kind == "str" and is_keyboard_action(action):
+            (self.mod_edit_value, self.mod_keyboard_shift,
+             self.mod_keyboard_symbols) = TEXT_KEYBOARD.apply(
+                self.mod_edit_value, action,
+                self.mod_keyboard_shift, self.mod_keyboard_symbols,
+                max_length=mod_ui.MAX_VALUE_LENGTH)
         self._render_mod_value()
 
     def _render_parameter_options(self):
@@ -1145,37 +1137,15 @@ class FeatherPagesMixin:
             subtitle=param.label, mode=spec, confirm_label="SAVE")
 
     def _render_mod_text_keys(self):
-        commands = []
-        rows = keyboard_rows(
-            self.mod_keyboard_symbols, self.mod_keyboard_shift)
-        for row, keys in enumerate(rows):
-            key_width = 68
-            total_width = len(keys) * key_width + max(0, len(keys) - 1) * 7
-            x = (800 - total_width) // 2
-            for token, label in keys:
-                commands += self.renderer.button(
-                    "mod.key.%s" % token, x, 181 + row * 49, key_width, 42,
-                    label, font="JetBrainsMono 8pt")
-                x += key_width + 7
-        controls_y = 328
+        commands = TEXT_KEYBOARD.render(
+            self.renderer, self.mod_keyboard_symbols,
+            self.mod_keyboard_shift)
         commands += self.renderer.button(
-            "mod.shift", 25, controls_y, 120, 43, "SHIFT",
-            state="selected" if self.mod_keyboard_shift else "enabled",
-            font="JetBrainsMono 8pt")
+            "mod.cancel", 25, 383, 360, 54, "CANCEL", state="danger",
+            font="JetBrainsMono Bold 8pt")
         commands += self.renderer.button(
-            "mod.symbols", 155, controls_y, 100, 43,
-            "ABC" if self.mod_keyboard_symbols else "123",
-            state="selected" if self.mod_keyboard_symbols else "enabled",
-            font="JetBrainsMono 8pt")
-        commands += self.renderer.button("mod.space", 265, controls_y, 300, 43,
-                                         "SPACE", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("mod.backspace", 575, controls_y, 200, 43,
-                                         "BACKSPACE", font="JetBrainsMono 8pt")
-        commands += self.renderer.button("mod.cancel", 25, 383, 360, 54,
-                                         "CANCEL", state="danger",
-                                         font="JetBrainsMono Bold 8pt")
-        commands += self.renderer.button("mod.save", 415, 383, 360, 54,
-                                         "SAVE", font="JetBrainsMono Bold 8pt")
+            "mod.save", 415, 383, 360, 54, "SAVE",
+            font="JetBrainsMono Bold 8pt")
         return commands
 
     def _render_network_home(self):
@@ -1225,30 +1195,12 @@ class FeatherPagesMixin:
         elif action == "net.password.toggle":
             self.password_visible = not self.password_visible
             self._render_keyboard()
-        elif action == "key.backspace":
-            self.password = self.password[:-1]
+        elif is_keyboard_action(action):
+            (self.password, self.keyboard_shift,
+             self.keyboard_symbols) = TEXT_KEYBOARD.apply(
+                self.password, action, self.keyboard_shift,
+                self.keyboard_symbols, max_length=64)
             self._render_keyboard()
-        elif action == "key.space":
-            self._append_password(" ")
-        elif action == "key.shift":
-            self.keyboard_shift = not self.keyboard_shift
-            self._render_keyboard()
-        elif action == "key.symbols":
-            self.keyboard_symbols = not self.keyboard_symbols
-            self._render_keyboard()
-        elif action.startswith("key.char."):
-            token = action[len("key.char."):]
-            chars = {
-                "dot": ".", "comma": ",", "minus": "-", "under": "_",
-                "plus": "+", "at": "@", "hash": "#", "dollar": "$",
-                "percent": "%", "amp": "&", "star": "*", "bang": "!",
-                "question": "?", "slash": "/", "colon": ":", "semi": ";",
-                "lparen": "(", "rparen": ")", "quote": '"', "bslash": "\\",
-            }
-            value = chars.get(token, token)
-            if self.keyboard_shift and len(value) == 1:
-                value = value.upper()
-            self._append_password(value)
 
     def _start_network_process(self, operation, args, return_page):
         if self.network_process is not None:
@@ -1446,41 +1398,33 @@ class FeatherPagesMixin:
     def _render_keyboard(self):
         ssid = self.selected_network["ssid"]
         commands = self.renderer.begin_page(ssid, back=True)
-        masked = self.password if self.password_visible else "*" * len(self.password)
-        commands.append(self.renderer.stroke(55, 62, 690, 42, ThemeColor.SECONDARY_DARK, 3))
-        commands.append(self.renderer.text(
-            70, 83, masked, ThemeColor.BRIGHT, "JetBrainsMono 12pt", "left", "middle",
-            max_width=660, truncate=True))
-
-        rows = keyboard_rows(self.keyboard_symbols, self.keyboard_shift)
-        for row_index, row in enumerate(rows):
-            key_width = 66
-            gap = 5
-            total = len(row) * key_width + (len(row) - 1) * gap
-            x = (800 - total) // 2
-            y = 112 + row_index * 68
-            for token, label in row:
-                commands += self.renderer.button("key.char.%s" % token, x, y,
-                                                 key_width, 58, label,
-                                                 font="Roboto Bold 12pt")
-                x += key_width + gap
-        commands += self.renderer.button("key.shift", 20, 317, 105, 52, "SHIFT")
-        commands += self.renderer.button("key.symbols", 135, 317, 105, 52,
-                                         "ABC" if self.keyboard_symbols else "123")
-        commands += self.renderer.button("key.space", 250, 317, 210, 52, "SPACE")
-        commands += self.renderer.button("key.backspace", 470, 317, 165, 52, "BACKSPACE")
-        commands += self.renderer.button("net.password.toggle", 645, 317, 135, 52,
-                                         "HIDE" if self.password_visible else "SHOW")
+        masked = (self.password if self.password_visible
+                  else "*" * len(self.password))
+        commands += [
+            self.renderer.text(
+                25, 73, "WI-FI PASSWORD", ThemeColor.PRIMARY,
+                "JetBrainsMono Bold 12pt"),
+            self.renderer.text(
+                280, 98, "8-63 ASCII CHARACTERS OR 64 HEX DIGITS",
+                ThemeColor.TEXT, "JetBrainsMono 8pt", max_width=490,
+                truncate=True),
+            self.renderer.fill(25, 120, 750, 53, ThemeColor.PANEL),
+            self.renderer.stroke(25, 120, 750, 53, ThemeColor.PRIMARY, 2),
+            self.renderer.text(
+                42, 147, masked or "_", ThemeColor.PRIMARY,
+                "JetBrainsMono 12pt", max_width=575, truncate=True),
+        ]
+        commands += self.renderer.button(
+            "net.password.toggle", 645, 128, 120, 37,
+            "HIDE" if self.password_visible else "SHOW",
+            font="JetBrainsMono 8pt")
+        commands += TEXT_KEYBOARD.render(
+            self.renderer, self.keyboard_symbols, self.keyboard_shift)
         valid = self._valid_password(self.password)
-        commands += self.renderer.button("net.connect", 235, 382, 330, 58,
-                                         "CONNECT", active=valid,
-                                         font="Roboto Bold 16pt")
+        commands += self.renderer.button(
+            "net.connect", 25, 383, 750, 54, "CONNECT", active=valid,
+            font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
-
-    def _append_password(self, value):
-        if len(self.password) + len(value) <= 64:
-            self.password += value
-        self._render_keyboard()
 
     @staticmethod
     def _valid_password(password):

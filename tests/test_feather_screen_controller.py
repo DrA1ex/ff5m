@@ -1676,22 +1676,53 @@ class ControllerSafetyTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most 10"):
             controller._handle_mod_action("mod.save")
 
-    def test_mod_string_editor_supports_shift_symbols_space_and_backspace(self):
+    def test_mod_string_editor_uses_shared_text_keyboard(self):
         param = mod_param("midi_on", str, "", "Startup MIDI")
         controller = mod_controller([param], {"midi_on": ""})
         controller._handle_mod_action("mod.item.0")
-        controller._handle_mod_action("mod.shift")
-        controller._handle_mod_action("mod.key.a")
-        controller._handle_mod_action("mod.space")
-        controller._handle_mod_action("mod.symbols")
-        self.assertIn("mod.key.1", dict(controller.renderer._buttons))
-        self.assertIn("mod.key.0", dict(controller.renderer._buttons))
-        controller._handle_mod_action("mod.key.hash")
-        controller._handle_mod_action("mod.backspace")
-        controller._handle_mod_action("mod.key.dot")
+        for action in (
+                "keyboard.shift", "keyboard.key.a", "keyboard.space",
+                "keyboard.symbols"):
+            self.assertTrue(controller.handle_action(
+                FEATHER.Page.MOD_VALUE, action))
+        self.assertIn("keyboard.key.1", dict(controller.renderer._buttons))
+        self.assertIn("keyboard.key.0", dict(controller.renderer._buttons))
+        controller._handle_mod_action("keyboard.key.hash")
+        controller._handle_mod_action("keyboard.backspace")
+        controller._handle_mod_action("keyboard.key.dot")
         controller._handle_mod_action("mod.save")
 
         self.assertEqual(controller.params.updated, [("midi_on", "A .")])
+
+    def test_wifi_and_mod_settings_use_identical_text_keyboard_geometry(self):
+        param = mod_param("midi_on", str, "", "Startup MIDI")
+        mod = mod_controller([param], {"midi_on": ""})
+        mod._handle_mod_action("mod.item.0")
+        mod_buttons = dict(mod.renderer._buttons)
+
+        wifi = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        wifi.renderer = FEATHER.FeatherRenderer()
+        wifi.renderer.send = lambda commands: None
+        wifi.selected_network = {"ssid": "Workshop"}
+        wifi.password = "secret123"
+        wifi.password_visible = False
+        wifi.keyboard_symbols = False
+        wifi.keyboard_shift = False
+        wifi._render_keyboard()
+        wifi_buttons = dict(wifi.renderer._buttons)
+
+        shared_actions = sorted(
+            action for action in mod_buttons
+            if action.startswith("keyboard."))
+        self.assertTrue(shared_actions)
+        self.assertEqual(
+            shared_actions,
+            sorted(action for action in wifi_buttons
+                   if action.startswith("keyboard.")))
+        for action in shared_actions:
+            self.assertEqual(mod_buttons[action], wifi_buttons[action], action)
+        self.assertIn("net.password.toggle", wifi_buttons)
+        self.assertIn("net.connect", wifi_buttons)
 
     def test_mod_page_hitboxes_stay_above_persistent_footer(self):
         params = [mod_param("flag%d" % index, bool, False,

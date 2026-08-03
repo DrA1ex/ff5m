@@ -10,10 +10,8 @@
 import enum
 
 try:
-    from .feather_keyboard import SYMBOL_KEYS, key_character
     from .ui import NumericInputSpec
 except (ImportError, ValueError):
-    from feather_keyboard import SYMBOL_KEYS, key_character
     from ui import NumericInputSpec
 
 

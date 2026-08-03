@@ -11,11 +11,13 @@ try:
     from .ui import Page
     from .feather_feature_manager import FeatureHostProxy
     from .feather_screen_pages import FeatherPagesMixin
+    from .feather_keyboard import is_keyboard_action
     from . import feather_mod_settings as _mod_ui  # load with the feature
 except (ImportError, ValueError):
     from ui import Page
     from feather_feature_manager import FeatureHostProxy
     from feather_screen_pages import FeatherPagesMixin
+    from feather_keyboard import is_keyboard_action
     import feather_mod_settings as _mod_ui  # noqa: F401
 
 
@@ -83,8 +85,7 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
                 "mod.options.next"),
             Page.MOD_VALUE: (
                 "nav.back", "mod.cancel", "mod.save", "mod.backspace",
-                "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
-                "mod.space"),
+                "mod.sign", "mod.dot"),
         }
         return (action in exact.get(page, ()) or
                 (page == Page.MOD_SETTINGS and
@@ -92,13 +93,15 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
                 (page == Page.PARAMETER_OPTIONS and
                  action.startswith("mod.option.")) or
                 (page == Page.MOD_VALUE and
-                 action.startswith("mod.key.")))
+                 (action.startswith("mod.key.") or
+                  is_keyboard_action(action))))
 
     def handle_action(self, page, action):
         if action.startswith("settings."):
             self._handle_settings_action(action)
             return True
-        if action.startswith("mod."):
+        if action.startswith("mod.") or (
+                page == Page.MOD_VALUE and is_keyboard_action(action)):
             self._handle_mod_action(action)
             return True
         return False

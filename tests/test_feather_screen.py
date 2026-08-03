@@ -271,6 +271,46 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertIn(("hash", "#"), rows[1])
         self.assertIn(("dot", "."), rows[2])
 
+    def test_shared_text_keyboard_covers_printable_ascii(self):
+        characters = {" "}
+        for symbols, shift in (
+                (False, False), (False, True),
+                (True, False), (True, True)):
+            characters.update(
+                label for row in KEYBOARD.keyboard_rows(symbols, shift)
+                for _token, label in row)
+
+        self.assertEqual(
+            characters, set(chr(value) for value in range(32, 127)))
+        shifted_symbols = KEYBOARD.keyboard_rows(symbols=True, shift=True)
+        self.assertIn(("apostrophe", "'"), shifted_symbols[0])
+        self.assertIn(("pipe", "|"), shifted_symbols[2])
+
+    def test_shared_text_keyboard_applies_layout_filter_and_length(self):
+        keyboard = KEYBOARD.TEXT_KEYBOARD
+        value, shift, symbols = keyboard.apply(
+            "", "keyboard.shift", False, False)
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.key.a", shift, symbols)
+        self.assertEqual((value, shift, symbols), ("A", True, False))
+
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.symbols", shift, symbols)
+        self.assertEqual((shift, symbols), (False, True))
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.shift", shift, symbols)
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.key.pipe", shift, symbols)
+        self.assertEqual(value, "A|")
+
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.key.tilde", shift, symbols,
+            allowed_characters=lambda character: character.isalnum())
+        self.assertEqual(value, "A|")
+        value, shift, symbols = keyboard.apply(
+            value, "keyboard.space", shift, symbols, max_length=2)
+        self.assertEqual(value, "A|")
+
     def test_chamber_light_macros_update_state_without_toolhead_sync(self):
         macros = (pathlib.Path(__file__).parents[1] / "macros" /
                   "base.cfg").read_text(encoding="utf-8")
@@ -388,7 +428,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
         self.assertFalse(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.item.12"))
         self.assertTrue(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.option.2"))
-        self.assertTrue(allowed(FEATHER.Page.MOD_VALUE, "mod.key.hash"))
+        self.assertTrue(allowed(FEATHER.Page.MOD_VALUE, "mod.key.7"))
+        self.assertTrue(allowed(
+            FEATHER.Page.MOD_VALUE, "keyboard.key.hash"))
+        self.assertTrue(allowed(
+            FEATHER.Page.WIFI_PASSWORD, "keyboard.backspace"))
+        self.assertFalse(allowed(
+            FEATHER.Page.MOD_SETTINGS, "keyboard.key.hash"))
         self.assertFalse(allowed(FEATHER.Page.MOD_SETTINGS, "mod.save"))
 
     def test_network_status_parser_is_bounded_to_public_fields(self):
@@ -1223,7 +1269,7 @@ class RendererStateTest(unittest.TestCase):
             (35, 255, 350, 150), (415, 255, 350, 150),
             (20, 315, 175, 100), (215, 315, 175, 100),
             (410, 315, 175, 100), (605, 315, 175, 100),
-            (235, 382, 330, 58),
+            (25, 383, 750, 54),
         ]
         self.assertTrue(all(not UI.rectangles_overlap(rect, footer)
                             for rect in rectangles))

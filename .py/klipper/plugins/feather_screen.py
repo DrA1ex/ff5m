@@ -30,6 +30,7 @@ try:
     from .feather_feature_manager import (
         FeatureLoadError, FeatureSpec, LazyFeatureManager)
     from .feather_safety import SafetyRegistry
+    from .feather_keyboard import is_keyboard_action
 except (ImportError, ValueError):
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -49,6 +50,7 @@ except (ImportError, ValueError):
     from feather_feature_manager import (
         FeatureLoadError, FeatureSpec, LazyFeatureManager)
     from feather_safety import SafetyRegistry
+    from feather_keyboard import is_keyboard_action
 
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
@@ -109,8 +111,7 @@ EXACT_ACTIONS = {
     Page.PARAMETER_OPTIONS: ("nav.back", "mod.cancel", "mod.apply",
                     "mod.options.prev", "mod.options.next"),
     Page.MOD_VALUE: ("nav.back", "mod.cancel", "mod.save", "mod.backspace",
-                     "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
-                     "mod.space"),
+                     "mod.sign", "mod.dot"),
     Page.NETWORK_HOME: ("nav.back", "net.scan", "net.ethernet", "net.retry"),
     Page.WIFI_SCAN: ("nav.back", "net.prev", "net.next", "net.rescan"),
     Page.WIFI_PASSWORD: ("nav.back", "net.connect", "net.password.toggle"),
@@ -1052,7 +1053,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._handle_action_prompt_action(action)
             elif action.startswith("error."):
                 self._handle_error_action(action)
-            elif action.startswith("net.") or action.startswith("key."):
+            elif (action.startswith("net.")
+                  or (self.page == Page.WIFI_PASSWORD
+                      and is_keyboard_action(action))):
                 self._handle_network_action(action)
             elif action == "message.ok":
                 self._show_page(self.message_return)
@@ -1072,9 +1075,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     action.rsplit(".", 1)[1] in self.heating_materials)
                 or (page == Page.MOD_SETTINGS and action.startswith("mod.item."))
                 or (page == Page.PARAMETER_OPTIONS and action.startswith("mod.option."))
-                or (page == Page.MOD_VALUE and action.startswith("mod.key."))
+                or (page == Page.MOD_VALUE and
+                    (action.startswith("mod.key.") or
+                     is_keyboard_action(action)))
                 or (page == Page.WIFI_SCAN and action.startswith("net.item"))
-                or (page == Page.WIFI_PASSWORD and action.startswith("key."))
+                or (page == Page.WIFI_PASSWORD and is_keyboard_action(action))
                 or (page == Page.ACTION_PROMPT
                     and action.startswith("prompt.button."))
                 or (page == Page.EXTRUDER_CALIBRATION
