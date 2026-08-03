@@ -84,11 +84,14 @@ class Printer:
         pass
 
 class Config:
-    def __init__(self):
+    def __init__(self, blending=None):
         self.printer = Printer()
+        self.blending = blending
     def get_printer(self):
         return self.printer
     def getboolean(self, name, default=False):
+        if name == 'blending' and self.blending is not None:
+            return self.blending
         return default
     def getfloat(self, name, default=None, minval=None):
         return default
@@ -101,6 +104,11 @@ feather_screen.FeatherScreen._start_pre_ready_ui = lambda self: None
 controller = feather_screen.FeatherScreen(Config())
 assert controller.feature_manager.loaded() == ()
 assert controller.gcode.immediate == {'FEATHER_ABORT'}
+assert controller.blending is True
+assert controller.renderer.blending is True
+disabled = feather_screen.FeatherScreen(Config(False))
+assert disabled.blending is False
+assert disabled.renderer.blending is False
 blocked = (
     'feather_feature_ui_test',
     'feather_feature_filament', 'ff5m_ui.filament',

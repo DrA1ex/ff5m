@@ -140,6 +140,12 @@ if(BUILD_TESTING)
             repeated_enable_preserves_pending_frame
             switching_buffers_flushes_and_resynchronizes
             two_bpp_font_blends_edges
+            global_blending_composes_translucent_primitives
+            disabled_blending_preserves_direct_write_behavior
+            blending_uses_latest_back_buffer_pixel
+            fill_rect_clips_negative_coordinates
+            dirty_area_uses_exclusive_bounds
+            transparent_text_blends_with_existing_pixels
             compact_font_maps_disjoint_unicode_ranges
             bundled_compact_font_renders_cyrillic
             text_wrap_uses_font_metrics_and_word_boundaries

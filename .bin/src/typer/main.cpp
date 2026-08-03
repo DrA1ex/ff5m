@@ -285,6 +285,9 @@ std::unique_ptr<ProgramParser> build_parser(argparse::default_arguments def = ar
 
     result->program.add_argument("--debug").flag();
     result->program.add_argument("--double-buffered", "-db").flag();
+    result->program.add_argument("--blending")
+        .help("Blend source alpha with the current framebuffer contents.")
+        .flag();
     result->program.add_argument("--list-fonts").help("List loaded fonts and exit.").flag();
     result->program.add_argument("--font-manifest")
         .help("Print the font-metrics/v1 JSON manifest and exit.").flag();
@@ -607,6 +610,7 @@ int main(int argc, char *argv[]) {
 
     TextDrawer drawer(framebuffer.front(), WIDTH, HEIGHT);
     drawer.setDoubleBuffered(double_buffered, framebuffer.back());
+    drawer.setBlending(main->program.get<bool>("--blending"));
 
     DEBUG = main->program.get<bool>("--debug");
     drawer.setDebug(DEBUG);

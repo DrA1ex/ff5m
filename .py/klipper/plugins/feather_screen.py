@@ -231,6 +231,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.reactor = self.printer.get_reactor()
         self.gcode = self.printer.lookup_object("gcode")
         self.debug = config.getboolean("debug", False)
+        self.blending = config.getboolean("blending", True)
         self.dim_timeout = config.getfloat("dim_timeout", 60.0, minval=10.0)
         self.z_offset_limit = config.getfloat("z_offset_limit", 2.0, minval=0.1)
         # Parse the retired option so existing user configs keep loading. The
@@ -255,7 +256,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.heating_profiles = {}
         self.cold_pull_materials = ()
         self.cold_pull_profiles = {}
-        self.renderer = FeatherRenderer(self.debug)
+        self.renderer = FeatherRenderer(
+            self.debug, blending=self.blending)
         register_async = getattr(
             self.reactor, "register_async_callback", None)
         if register_async is None:

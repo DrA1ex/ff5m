@@ -128,8 +128,9 @@ class FeatherRenderer:
     BUTTON_TEXT_PADDING = 16
     HINT_TEXT_PADDING = 20
     DIALOG_TEXT_PADDING = 28
-    def __init__(self, debug=False, theme_directories=None):
+    def __init__(self, debug=False, theme_directories=None, blending=True):
         self.debug = debug
+        self.blending = bool(blending)
         self._theme_directories = tuple(
             theme_directories or (THEME_DIRECTORY, USER_THEME_DIRECTORY))
         self._theme_catalog = ThemeCatalog.from_directories(
@@ -213,7 +214,7 @@ class FeatherRenderer:
             self._batch_queue, self._encode_frames, self.debug,
             (TYPER_BINARY, DRAW_PIPE, EVENT_PIPE, TOUCH_DEVICE),
             self._async_scheduler, self._worker_event_fd_changed,
-            self._worker_restarted, load_fonts)
+            self._worker_restarted, load_fonts, blending=self.blending)
         started = self._worker.start()
         self._busy_label = None
         self._last_footer = None

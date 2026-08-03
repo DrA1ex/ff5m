@@ -89,6 +89,7 @@ class TextDrawer {
     uint8_t _bpp = 0;
     uint8_t _pixelMask = 0;
 
+    bool _blending = false;
     bool _debug = false;
 
 public:
@@ -115,6 +116,7 @@ public:
     void setStrokeDirection(StrokeDirection value);
 
     void setDoubleBuffered(bool enable, uint32_t *externalBuffer = nullptr);
+    void setBlending(bool enable);
     void setDebug(bool enable);
 
     void print(const char *text);
@@ -151,7 +153,11 @@ private:
 
     [[nodiscard]] const Glyph *_glyphByCode(uint16_t symbol) const;
     int32_t _drawChar(uint16_t symbol, int32_t cursorX, int32_t cursorY);
+    void _drawGlyphPixel(int32_t x, int32_t y, uint8_t coverage);
+    void _markAffected(int32_t left, int32_t top,
+                       int32_t right, int32_t bottom);
     [[nodiscard]] Point _getAlignmentOffset(const TextBoundary &boundary) const;
 
-    static uint32_t _mixColor(uint32_t a, uint32_t b, uint8_t factor);
+    static uint32_t _sourceOverOpaque(uint32_t destination, uint32_t source);
+    static uint32_t _lerpColor(uint32_t a, uint32_t b, uint8_t factor);
 };

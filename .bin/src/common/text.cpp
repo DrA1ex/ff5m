@@ -90,6 +90,10 @@ void TextDrawer::setDoubleBuffered(bool enable, uint32_t *externalBuffer) {
     std::copy(_screen, _screen + _width * _height, _backBuffer);
 }
 
+void TextDrawer::setBlending(bool enable) {
+    _blending = enable;
+}
+
 void TextDrawer::setPosition(int32_t x, int32_t y) {
     _cursorX = _lineBeginningX = x;
     _cursorY = y;
@@ -211,19 +215,35 @@ int32_t TextDrawer::_drawChar(uint16_t symbol, int32_t cursorX, int32_t cursorY)
 
             if (pixel == 0) continue;
 
-            uint8_t factor = pixel * 255u / _pixelMask;
-            auto color = _mixColor(_backgroundColor, _color, factor);
-
-            if (_scaleX == 1 && _scaleY == 1) {
-                setPixel(offsetX + gx, offsetY + gy, color);
-            } else {
-                fillRect(offsetX + gx * _scaleX, offsetY + gy * _scaleY, _scaleX, _scaleY, color);
-            }
+            const auto coverage = (uint8_t)(pixel * 255u / _pixelMask);
+            _drawGlyphPixel(offsetX + gx * _scaleX, offsetY + gy * _scaleY, coverage);
         }
     }
 
     // Advance the cursor
     return glyph.advanceX * _scaleX;
+}
+
+void TextDrawer::_drawGlyphPixel(int32_t x, int32_t y, uint8_t coverage) {
+    uint32_t color = _color;
+    if (coverage != 0xff) {
+        if (_blending) {
+            const auto colorAlpha = (_color >> 24) & 0xff;
+            const auto effectiveAlpha = colorAlpha == 0xff
+                ? static_cast<uint32_t>(coverage)
+                : static_cast<uint32_t>((colorAlpha * coverage + 127u) / 255u);
+
+            color = (_color & 0x00ffffffu) | (effectiveAlpha << 24);
+        } else {
+            color = _lerpColor(_backgroundColor, _color, coverage);
+        }
+    }
+
+    if (_scaleX == 1 && _scaleY == 1) {
+        setPixel(x, y, color);
+    } else {
+        fillRect(x, y, _scaleX, _scaleY, color);
+    }
 }
 
 const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
@@ -270,19 +290,21 @@ const Glyph *TextDrawer::_glyphByCode(uint16_t symbol) const {
 }
 
 void TextDrawer::setPixel(int32_t x, int32_t y, uint32_t color) {
-    if ((color & 0xff000000) == 0) return; // Skip fully transparent colors
-    if (x < 0 || x >= _width || y < 0 || y >= _height) return;
-
-    if (_backBuffer) {
-        _backBuffer[y * _width + x] = color;
-
-        if (_affectedArea.left > x) _affectedArea.left = x;
-        if (_affectedArea.right <= x) _affectedArea.right = x + 1;
-        if (_affectedArea.top > y) _affectedArea.top = y;
-        if (_affectedArea.bottom <= y) _affectedArea.bottom = y + 1;
-    } else {
-        _screen[y * _width + x] = color;
+    const auto alpha = static_cast<uint8_t>(color >> 24);
+    if (alpha == 0 || x < 0 || x >= _width || y < 0 || y >= _height) {
+        return;
     }
+
+    auto *buffer = _backBuffer ? _backBuffer : _screen;
+    auto &destination = buffer[y * _width + x];
+    
+    // Most drawing commands are opaque. Keep that common path as a direct
+    // write even when blending is enabled globally for the renderer.
+    destination = (alpha == 0xff || !_blending)
+        ? color
+        : _sourceOverOpaque(destination, color);
+
+    _markAffected(x, y, x + 1, y + 1);
 }
 
 void TextDrawer::fillRect(const Rect &b, uint32_t color) {
@@ -295,28 +317,45 @@ void TextDrawer::fillRect(const Rect &b, uint32_t color) {
 }
 
 void TextDrawer::fillRect(int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t color) {
-    if ((color & 0xff000000) == 0) return; // Skip fully transparent colors
+    const auto alpha = static_cast<uint8_t>(color >> 24);
+    if (alpha == 0) return; // Skip fully transparent colors
 
-    auto fromX = std::max(0, x);
-    auto toX = std::min(x + (int32_t) width, (int32_t) _width);
+    const auto fromX = std::max(0, x);
+    const auto toX = std::min(x + static_cast<int32_t>(width), static_cast<int32_t>(_width));
+    const auto fromY = std::max(0, y);
+    const auto toY = std::min(y + static_cast<int32_t>(height), static_cast<int32_t>(_height));
 
-    if (fromX >= toX) return;
+    if (fromX >= toX || fromY >= toY) return;
 
-    auto fromY = std::max(0, y);
-    auto toY = std::min(fromY + (int32_t) height, (int32_t) _height);
-
-    auto buffer = _backBuffer ? _backBuffer : _screen;
-    for (int32_t j = fromY; j < toY; ++j) {
-        auto *pRow = buffer + j * _width;
-        std::fill(pRow + fromX, pRow + toX, color);
+    auto *buffer = _backBuffer ? _backBuffer : _screen;
+    if (alpha == 0xff || !_blending) {
+        for (int32_t row = fromY; row < toY; ++row) {
+            auto *begin = buffer + row * _width + fromX;
+            std::fill(begin, begin + (toX - fromX), color);
+        }
+    } else {
+        for (int32_t row = fromY; row < toY; ++row) {
+            auto *pixel = buffer + row * _width + fromX;
+            auto *const end = pixel + (toX - fromX);
+            while (pixel != end) {
+                *pixel = _sourceOverOpaque(*pixel, color);
+                ++pixel;
+            }
+        }
     }
 
-    if (_backBuffer) {
-        if (_affectedArea.left > fromX) _affectedArea.left = fromX;
-        if (_affectedArea.right <= toX) _affectedArea.right = toX + 1;
-        if (_affectedArea.top > fromY) _affectedArea.top = fromY;
-        if (_affectedArea.bottom <= toY) _affectedArea.bottom = toY + 1;
-    }
+    _markAffected(fromX, fromY, toX, toY);
+}
+
+void TextDrawer::_markAffected(
+    int32_t left, int32_t top, int32_t right, int32_t bottom
+) {
+    if (!_backBuffer || left >= right || top >= bottom) return;
+
+    _affectedArea.left = std::min(_affectedArea.left, left);
+    _affectedArea.top = std::min(_affectedArea.top, top);
+    _affectedArea.right = std::max(_affectedArea.right, right);
+    _affectedArea.bottom = std::max(_affectedArea.bottom, bottom);
 }
 
 void TextDrawer::strokeRect(int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t color, uint8_t lineWidth) {
@@ -651,7 +690,7 @@ TextDrawer::Point TextDrawer::_getAlignmentOffset(const TextBoundary &boundary) 
     return {offsetX, offsetY};
 }
 
-uint32_t TextDrawer::_mixColor(uint32_t a, uint32_t b, uint8_t factor) {
+uint32_t TextDrawer::_lerpColor(uint32_t a, uint32_t b, uint8_t factor) {
     if (factor == 0) return a;
     if (factor == 0xFF) return b;
 
@@ -675,4 +714,29 @@ uint32_t TextDrawer::_mixColor(uint32_t a, uint32_t b, uint8_t factor) {
     uint8_t mixedB = ((uint16_t) aB * invFactor + (uint16_t) bB * factor) / 255;
 
     return (mixedA << 24) | (mixedR << 16) | (mixedG << 8) | mixedB;
+}
+
+uint32_t TextDrawer::_sourceOverOpaque(uint32_t destination, uint32_t source) {
+    const auto alpha = static_cast<uint8_t>(source >> 24);
+    if (alpha == 0) return destination;
+    if (alpha == 0xff) return source;
+
+    // Typer renders into an opaque framebuffer. Treat source alpha as pixel
+    // coverage and blend only the three visible channels. Avoiding redundant
+    // alpha-channel composition keeps the hot anti-aliasing path smaller.
+    const auto inverse = static_cast<uint8_t>(0xff - alpha);
+    const auto mix = [alpha, inverse](uint8_t dst, uint8_t src) {
+        return static_cast<uint8_t>(
+            (static_cast<uint16_t>(dst) * inverse
+             + static_cast<uint16_t>(src) * alpha) / 255u);
+    };
+
+    const auto red = mix(static_cast<uint8_t>(destination >> 16), static_cast<uint8_t>(source >> 16));
+    const auto green = mix(static_cast<uint8_t>(destination >> 8), static_cast<uint8_t>(source >> 8));
+    const auto blue = mix(static_cast<uint8_t>(destination), static_cast<uint8_t>(source));
+
+    return 0xff000000u
+        | (static_cast<uint32_t>(red) << 16)
+        | (static_cast<uint32_t>(green) << 8)
+        | blue;
 }

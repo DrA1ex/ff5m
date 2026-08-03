@@ -205,7 +205,7 @@ class TyperRenderWorker:
 
     def __init__(self, batch_queue, encode_frames, debug, paths,
                  schedule_async, event_fd_changed, restarted=None,
-                 font_loader=None):
+                 font_loader=None, blending=False):
         self.queue = batch_queue
         self.encode_frames = encode_frames
         self.debug = bool(debug)
@@ -215,6 +215,7 @@ class TyperRenderWorker:
         self.event_fd_changed = event_fd_changed
         self.restarted = restarted
         self.font_loader = font_loader
+        self.blending = bool(blending)
         self.thread = None
         self.process = None
         self.draw_fd = None
@@ -386,6 +387,8 @@ class TyperRenderWorker:
         args = [self.typer_binary]
         if self.debug:
             args.append("--debug")
+        if self.blending:
+            args.append("--blending")
         args += ["--double-buffered", "--touch-device", self.touch_device,
                  "--event-pipe", self.event_pipe, "batch", "--pipe",
                  self.draw_pipe]

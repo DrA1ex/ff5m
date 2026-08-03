@@ -157,6 +157,114 @@ void two_bpp_font_blends_edges() {
     TYPER_CHECK(blended != screen.end());
 }
 
+void global_blending_composes_translucent_primitives() {
+    std::vector<uint32_t> screen{
+        0xff000000, 0xffffffff, 0xffffffff, 0xff010203,
+    };
+    TextDrawer drawer(screen.data(), 4, 1);
+    drawer.setBlending(true);
+
+    drawer.setPixel(0, 0, 0x80ffffff);
+    drawer.fillRect(1, 0, 2, 1, 0x80000000);
+    drawer.setPixel(3, 0, 0xff123456);
+
+    TYPER_CHECK(screen[0] == 0xff808080);
+    TYPER_CHECK(screen[1] == 0xff7f7f7f);
+    TYPER_CHECK(screen[2] == 0xff7f7f7f);
+    TYPER_CHECK(screen[3] == 0xff123456);
+}
+
+void disabled_blending_preserves_direct_write_behavior() {
+    std::vector<uint32_t> screen(1, 0xff000000);
+    TextDrawer drawer(screen.data(), 1, 1);
+    drawer.setBlending(false);
+
+    drawer.setPixel(0, 0, 0x80ffffff);
+
+    TYPER_CHECK(screen[0] == 0x80ffffff);
+}
+
+void blending_uses_latest_back_buffer_pixel() {
+    std::vector<uint32_t> screen(1, 0xff000000);
+    std::vector<uint32_t> back(1, 0);
+    TextDrawer drawer(screen.data(), 1, 1);
+    drawer.setDoubleBuffered(true, back.data());
+    drawer.setBlending(true);
+
+    drawer.setPixel(0, 0, 0xffffffff);
+    drawer.setPixel(0, 0, 0x80000000);
+
+    TYPER_CHECK(screen[0] == 0xff000000);
+    TYPER_CHECK(back[0] == 0xff7f7f7f);
+    drawer.flush();
+    TYPER_CHECK(screen[0] == 0xff7f7f7f);
+}
+
+void fill_rect_clips_negative_coordinates() {
+    constexpr uint32_t base = 0xff010203;
+    constexpr uint32_t fill = 0xffaabbcc;
+    std::vector<uint32_t> screen(4 * 4, base);
+    std::vector<uint32_t> back(screen.size(), 0);
+    TextDrawer drawer(screen.data(), 4, 4);
+    drawer.setDoubleBuffered(true, back.data());
+
+    drawer.fillRect(-1, -1, 2, 2, fill);
+
+    TYPER_CHECK(back[0] == fill);
+    TYPER_CHECK(back[1] == base);
+    TYPER_CHECK(back[4] == base);
+}
+
+void dirty_area_uses_exclusive_bounds() {
+    constexpr uint32_t base = 0xff010203;
+    constexpr uint32_t fill = 0xffaabbcc;
+    constexpr uint32_t sentinel = 0xff556677;
+    std::vector<uint32_t> screen(4 * 4, base);
+    std::vector<uint32_t> back(screen.size(), 0);
+    TextDrawer drawer(screen.data(), 4, 4);
+    drawer.setDoubleBuffered(true, back.data());
+
+    drawer.fillRect(1, 1, 1, 1, fill);
+    back[1 * 4 + 2] = sentinel;
+    back[2 * 4 + 1] = sentinel;
+    back[2 * 4 + 2] = sentinel;
+    drawer.flush();
+
+    TYPER_CHECK(screen[1 * 4 + 1] == fill);
+    TYPER_CHECK(screen[1 * 4 + 2] == base);
+    TYPER_CHECK(screen[2 * 4 + 1] == base);
+    TYPER_CHECK(screen[2 * 4 + 2] == base);
+}
+
+void transparent_text_blends_with_existing_pixels() {
+    constexpr uint32_t width = 220;
+    constexpr uint32_t height = 50;
+    constexpr uint32_t background = 0xffd4d0c8;
+    constexpr uint32_t foreground = 0xff000080;
+    std::vector<uint32_t> explicit_background(width * height, background);
+    std::vector<uint32_t> transparent_background(width * height, background);
+
+    TextDrawer explicit_drawer(
+        explicit_background.data(), width, height);
+    explicit_drawer.setBlending(true);
+    explicit_drawer.setFont(&JetBrainsMono12ptb2);
+    explicit_drawer.setPosition(8, 35);
+    explicit_drawer.setColor(foreground);
+    explicit_drawer.setBackgroundColor(background);
+    explicit_drawer.print("NETWORK 28 / 0 C");
+
+    TextDrawer transparent_drawer(
+        transparent_background.data(), width, height);
+    transparent_drawer.setBlending(true);
+    transparent_drawer.setFont(&JetBrainsMono12ptb2);
+    transparent_drawer.setPosition(8, 35);
+    transparent_drawer.setColor(foreground);
+    transparent_drawer.setBackgroundColor(0);
+    transparent_drawer.print("NETWORK 28 / 0 C");
+
+    TYPER_CHECK(transparent_background == explicit_background);
+}
+
 void compact_font_maps_disjoint_unicode_ranges() {
     std::vector<uint32_t> screen(4, 0xff000000);
     TextDrawer drawer(screen.data(), 4, 1);
@@ -285,6 +393,12 @@ int main(int argc, char **argv) {
         {"repeated_enable_preserves_pending_frame", repeated_enable_preserves_pending_frame},
         {"switching_buffers_flushes_and_resynchronizes", switching_buffers_flushes_and_resynchronizes},
         {"two_bpp_font_blends_edges", two_bpp_font_blends_edges},
+        {"global_blending_composes_translucent_primitives", global_blending_composes_translucent_primitives},
+        {"disabled_blending_preserves_direct_write_behavior", disabled_blending_preserves_direct_write_behavior},
+        {"blending_uses_latest_back_buffer_pixel", blending_uses_latest_back_buffer_pixel},
+        {"fill_rect_clips_negative_coordinates", fill_rect_clips_negative_coordinates},
+        {"dirty_area_uses_exclusive_bounds", dirty_area_uses_exclusive_bounds},
+        {"transparent_text_blends_with_existing_pixels", transparent_text_blends_with_existing_pixels},
         {"compact_font_maps_disjoint_unicode_ranges", compact_font_maps_disjoint_unicode_ranges},
         {"bundled_compact_font_renders_cyrillic", bundled_compact_font_renders_cyrillic},
         {"text_wrap_uses_font_metrics_and_word_boundaries", text_wrap_uses_font_metrics_and_word_boundaries},

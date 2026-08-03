@@ -115,6 +115,13 @@ On the printer's two-page 800×480 framebuffer this removes the persistent
 1,536,000-byte anonymous allocation; RSS still includes reclaimable executable
 and shared-library pages.
 
+`typer --blending` enables source-alpha blending against the current target
+buffer. Opaque fills, strokes, lines, and fully covered glyph pixels keep the
+existing direct-write fast path; only partially covered anti-aliased glyph
+pixels perform per-pixel composition. Feather starts its resident Typer process
+with blending enabled by default. Set `blending: False` in `[feather_screen]`
+to temporarily restore the legacy renderer for diagnostics or comparisons.
+
 To rebuild after source changes:
 
 ```shell

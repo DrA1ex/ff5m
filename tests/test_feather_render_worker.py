@@ -100,12 +100,32 @@ class RenderQueueTest(unittest.TestCase):
 
 class RenderWorkerTest(unittest.TestCase):
     @staticmethod
-    def worker(queue=None):
+    def worker(queue=None, blending=False):
         renderer = FeatherRenderer()
         return TyperRenderWorker(
             queue or RenderBatchQueue(), renderer._encode_frames, False,
             ("typer", "/tmp/draw", "/tmp/event", "/dev/input/touch"),
+            lambda callback: callback(0.0), lambda old, new: None,
+            blending=blending)
+
+    def test_renderer_enables_blending_for_typer_by_default(self):
+        renderer = FeatherRenderer()
+        renderer.configure_worker(
             lambda callback: callback(0.0), lambda old, new: None)
+
+        with mock.patch.object(
+                TyperRenderWorker, "start", return_value=True):
+            renderer.start()
+
+        self.assertTrue(renderer._worker.blending)
+
+        disabled = FeatherRenderer(blending=False)
+        disabled.configure_worker(
+            lambda callback: callback(0.0), lambda old, new: None)
+        with mock.patch.object(
+                TyperRenderWorker, "start", return_value=True):
+            disabled.start()
+        self.assertFalse(disabled._worker.blending)
 
     def test_pollout_backpressure_stays_in_worker_and_frames_are_atomic(self):
         worker = self.worker()
@@ -231,13 +251,32 @@ class RenderWorkerTest(unittest.TestCase):
                 side_effect=lambda args, **kwargs: events.append(tuple(args))), \
                 mock.patch("ui.render_worker.os.open", side_effect=(10, 11)), \
                 mock.patch("ui.render_worker.subprocess.Popen",
-                           return_value=process):
+                           return_value=process) as popen:
             worker._launch()
 
         self.assertEqual(events[:5], [
             ("killall", "typer"), ("wait", 1.0),
             ("killall", "-9", "typer"), ("wait", 0.5), "fifos"])
         self.assertEqual(events[-1], ("handoff", None, 10))
+        self.assertNotIn("--blending", popen.call_args.args[0])
+
+    def test_configured_blending_is_forwarded_to_typer(self):
+        worker = self.worker(blending=True)
+        process = mock.Mock()
+        process.poll.return_value = None
+        worker._wait_for_orphan = lambda timeout: True
+        worker._prepare_fifos = lambda: None
+        worker._schedule_and_wait = lambda old, new: None
+
+        with mock.patch("ui.render_worker.subprocess.call"), \
+                mock.patch("ui.render_worker.os.open", side_effect=(10, 11)), \
+                mock.patch("ui.render_worker.subprocess.Popen",
+                           return_value=process) as popen:
+            worker._launch()
+
+        args = popen.call_args.args[0]
+        self.assertIn("--blending", args)
+        self.assertLess(args.index("--blending"), args.index("batch"))
 
 
 if __name__ == "__main__":
