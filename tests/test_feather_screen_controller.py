@@ -157,7 +157,7 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.Page.CALIBRATION_RESULT: "_render_calibration_result",
             FEATHER.Page.SETTINGS: "_render_settings",
             FEATHER.Page.MOD_SETTINGS: "_render_mod_settings",
-            FEATHER.Page.MOD_ENUM: "_render_mod_enum",
+            FEATHER.Page.PARAMETER_OPTIONS: "_render_parameter_options",
             FEATHER.Page.MOD_VALUE: "_render_mod_value",
             FEATHER.Page.NETWORK_HOME: "_render_network_home",
             FEATHER.Page.WIFI_SCAN: "_render_wifi_scan",
@@ -1334,32 +1334,64 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn('[ OFF |', drawing)
         self.assertNotIn('[ >OFF< |', drawing)
 
-    def test_theme_parameter_uses_dynamic_paginated_picker(self):
+    def test_theme_parameter_refreshes_users_once_and_uses_stable_snapshot(self):
         theme = mod_param("feather_theme", str, "DEFAULT",
                           "Feather color theme")
         controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
 
-        controller._handle_mod_action("mod.item.0")
-        first = "\n".join(controller.draw_batches[-1])
-        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
-        self.assertIn("1/3", first)
-        self.assertIn("CYBERPUNK_RED", first)
-        self.assertIn("--id 1:mod.enum.next", first)
+        with mock.patch.object(
+                controller.renderer, "reload_user_themes",
+                wraps=controller.renderer.reload_user_themes) as refresh:
+            controller._handle_mod_action("mod.item.0")
+            options = tuple(controller.parameter_options)
+            page_count = (len(options) + 3) // 4
+            first = "\n".join(controller.draw_batches[-1])
+            self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
+            self.assertIn("1/%d" % page_count, first)
+            self.assertEqual(refresh.call_count, 1)
 
-        controller._handle_mod_action("mod.enum.next")
-        second = "\n".join(controller.draw_batches[-1])
-        self.assertIn("2/3", second)
-        options = list(controller.renderer.theme_names())
-        ocean_index = options.index("OCEAN")
-        self.assertGreaterEqual(ocean_index, 4)
-        controller._handle_mod_action("mod.option.%d" % ocean_index)
-        controller._handle_mod_action("mod.apply")
+            ocean_index = options.index("OCEAN")
+            for _ in range(ocean_index // 4):
+                controller._handle_mod_action("mod.options.next")
+            controller._handle_mod_action("mod.option.%d" % ocean_index)
+            self.assertEqual(refresh.call_count, 1)
+            self.assertEqual(tuple(controller.parameter_options), options)
+            controller._handle_mod_action("mod.apply")
 
         self.assertEqual(controller.params.updated,
                          [("feather_theme", "OCEAN")])
         self.assertEqual(controller.renderer.theme_name, "OCEAN")
         drawing = "\n".join(controller.draw_batches[-1])
         self.assertIn("-c 02080d", drawing)
+
+    def test_theme_picker_discovers_user_file_added_after_start(self):
+        theme = mod_param("feather_theme", str, "DEFAULT",
+                          "Feather color theme")
+        controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
+        with tempfile.TemporaryDirectory() as user_directory:
+            controller.renderer = FEATHER.FeatherRenderer(
+                theme_directories=(UI.THEME_DIRECTORY, user_directory))
+            controller.draw_batches = []
+            controller.renderer.send = controller.draw_batches.append
+            runtime_theme = {
+                "schema_version": 1,
+                "name": "RUNTIME_ADDED",
+                "description": "Added without restarting Klipper",
+                "colors": dict(UI.FALLBACK_THEME, primary="123abc"),
+            }
+            pathlib.Path(user_directory, "runtime.json").write_text(
+                json.dumps(runtime_theme), encoding="utf-8")
+
+            controller._handle_mod_action("mod.item.0")
+
+            self.assertIn("RUNTIME_ADDED", controller.parameter_options)
+            index = controller.parameter_options.index("RUNTIME_ADDED")
+            controller._handle_mod_action("mod.option.%d" % index)
+            controller._handle_mod_action("mod.apply")
+            self.assertEqual(
+                controller.params.updated,
+                [("feather_theme", "RUNTIME_ADDED")])
+            self.assertEqual(controller.renderer.theme_name, "RUNTIME_ADDED")
 
     def test_settings_opens_theme_picker_and_returns_to_settings(self):
         theme = mod_param("feather_theme", str, "DEFAULT",
@@ -1369,9 +1401,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._handle_settings_action("settings.theme")
 
-        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
+        self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
         self.assertEqual(controller.mod_return_page, FEATHER.Page.SETTINGS)
-        controller._handle_mod_action("mod.option.3")
+        options = tuple(controller.parameter_options)
+        dark_index = options.index("DARK")
+        controller._handle_mod_action("mod.option.%d" % dark_index)
         controller._handle_mod_action("mod.apply")
         self.assertEqual(controller.page, FEATHER.Page.SETTINGS)
 
@@ -1497,7 +1531,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(effects["tune_klipper"], "printer")
         self.assertIsNone(effects["camera"])
 
-    def test_mod_enum_selection_is_staged_until_apply(self):
+    def test_selected_parameter_option_is_staged_until_apply(self):
         Display = enum.Enum("Display", {"STOCK": 0, "FEATHER": 1,
                                          "HEADLESS": 2, "GUPPY": 3})
         param = mod_param("display", Display, 1, "Display",
@@ -1507,7 +1541,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = mod_controller([param], {"display": 1})
 
         controller._handle_mod_action("mod.item.0")
-        self.assertEqual(controller.page, FEATHER.Page.MOD_ENUM)
+        self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
         self.assertEqual(controller.params.updated, [])
         controller._handle_mod_action("mod.option.3")
         controller._handle_mod_action("mod.apply")

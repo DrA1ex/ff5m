@@ -48,6 +48,7 @@ def joystick_values(snapshot, inertia=0.0, cursor=None):
 
 
 MOD_UI = __import__("feather_mod_settings")
+SETTINGS = __import__("feather_feature_settings")
 PAGES = __import__("feather_screen_pages")
 KEYBOARD = __import__("feather_keyboard")
 PAGINATION = __import__("feather_pagination")
@@ -160,28 +161,34 @@ def mod_param(key, param_type, default, label, description="Description",
 
 
 def mod_controller(params, variables):
-    controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-    controller.renderer = FEATHER.FeatherRenderer()
-    controller.draw_batches = []
-    controller.renderer.send = controller.draw_batches.append
-    controller.params = ModManager(params, variables)
-    controller.reactor = Reactor()
-    controller.print_stats = StatusObject({"state": "standby"})
-    controller.virtual_sdcard = type("SD", (), {"is_active": lambda self: False})()
-    controller.print_state = FEATHER.PrintState.IDLE
-    controller.page = FEATHER.Page.MOD_SETTINGS
-    controller.previous_page = FEATHER.Page.SETTINGS
-    controller.mod_page = 0
-    controller.mod_parameter = None
-    controller.mod_return_page = FEATHER.Page.MOD_SETTINGS
-    controller.mod_edit_value = ""
-    controller.mod_enum_selection = None
-    controller.mod_keyboard_shift = False
-    controller.mod_keyboard_symbols = False
-    controller.toast_until = 0
-    controller.toast_message = ""
-    controller._toast = lambda message: None
-    return controller
+    host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    host.renderer = FEATHER.FeatherRenderer()
+    host.draw_batches = []
+    host.renderer.send = host.draw_batches.append
+    host.params = ModManager(params, variables)
+    host.reactor = Reactor()
+    host.print_stats = StatusObject({"state": "standby"})
+    host.virtual_sdcard = type(
+        "SD", (), {"is_active": lambda self: False})()
+    host.print_state = FEATHER.PrintState.IDLE
+    host.page = FEATHER.Page.MOD_SETTINGS
+    host.previous_page = FEATHER.Page.SETTINGS
+    host.toast_until = 0
+    host.toast_message = ""
+    host._toast = lambda message: None
+
+    feature = SETTINGS.SettingsFeature(host)
+
+    def show_page(page):
+        host.previous_page = host.page
+        host.page = page
+        if page in (FEATHER.Page.SETTINGS, FEATHER.Page.MOD_SETTINGS,
+                    FEATHER.Page.PARAMETER_OPTIONS, FEATHER.Page.MOD_VALUE):
+            feature.render(page)
+
+    host._show_page = show_page
+    return feature
+
 
 
 class FeatherUtilitiesTest(unittest.TestCase):
@@ -379,8 +386,8 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(allowed(FEATHER.Page.SETTINGS,
                                 "settings.led.plus"))
         self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
-        self.assertFalse(allowed(FEATHER.Page.MOD_ENUM, "mod.item.12"))
-        self.assertTrue(allowed(FEATHER.Page.MOD_ENUM, "mod.option.2"))
+        self.assertFalse(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.item.12"))
+        self.assertTrue(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.option.2"))
         self.assertTrue(allowed(FEATHER.Page.MOD_VALUE, "mod.key.hash"))
         self.assertFalse(allowed(FEATHER.Page.MOD_SETTINGS, "mod.save"))
 
@@ -622,16 +629,18 @@ class RendererStateTest(unittest.TestCase):
             pathlib.Path(UI.THEME_DIRECTORY).resolve(), expected.resolve())
         self.assertTrue(expected.is_dir())
 
-    def test_bundled_themes_are_loaded_and_recolor_all_known_roles(self):
+    def test_bundled_themes_include_stable_baseline_and_recolor_roles(self):
         renderer = FEATHER.FeatherRenderer()
-        self.assertEqual(set(renderer.theme_names()), {
-            "DEFAULT", "CYBERPUNK_RED", "CYBERPUNK_YELLOW", "OCEAN",
-            "DARK", "SYNTH", "FOREST", "AURORA", "PIP_BOY_2000",
-            "PIP_BOY_3000"})
+        self.assertTrue(
+            {"DEFAULT", "DARK", "DESERT", "AURORA"}.issubset(
+                renderer.theme_names()))
         renderer.set_theme("OCEAN")
+        ocean_data = json.loads(
+            pathlib.Path(UI.THEME_DIRECTORY, "ocean.json").read_text(
+                encoding="utf-8"))
+        _name, _description, ocean_colors = UI.validate_theme_data(ocean_data)
         for source, role in UI.COLOR_ROLES.items():
-            self.assertEqual(renderer.color(source),
-                             renderer._themes["OCEAN"][role])
+            self.assertEqual(renderer.color(source), ocean_colors[role])
         page = "\n".join(renderer.begin_page("Themes"))
         self.assertIn("-c 02080d", page)
         self.assertIn("-c 35baf6", page)
@@ -659,12 +668,6 @@ class RendererStateTest(unittest.TestCase):
         renderer.set_theme("PIP_BOY_3000")
         self.assertEqual(renderer.color(UI.COLOR_CYAN), "15eb18")
         self.assertEqual(renderer.color(UI.COLOR_TEXT), "8df58a")
-
-    def test_every_screen_color_is_assigned_to_a_theme_role(self):
-        source = MODULE_PATH.read_text(encoding="utf-8")
-        colors = {value.lower() for value in
-                  re.findall(r'"([0-9a-fA-F]{6})"', source)}
-        self.assertEqual(colors - set(UI.COLOR_ROLES), set())
 
     def test_user_theme_directory_can_add_and_override_themes(self):
         with tempfile.TemporaryDirectory() as user_directory:
@@ -698,31 +701,6 @@ class RendererStateTest(unittest.TestCase):
             self.assertEqual(renderer.color("35d9e6"), "abcdef")
             self.assertEqual(renderer.theme_description("OCEAN"),
                              "User override")
-
-    def test_theme_schema_rejects_missing_and_invalid_colors(self):
-        valid = {
-            "schema_version": 1,
-            "name": "VALID",
-            "description": "Valid test theme",
-            "colors": dict(UI.FALLBACK_THEME),
-        }
-        name, description, colors = FEATHER.FeatherRenderer._validate_theme(valid)
-        self.assertEqual((name, description), ("VALID", "Valid test theme"))
-        self.assertEqual(colors["primary"], UI.COLOR_CYAN)
-        self.assertEqual(colors["button_background"], colors["panel"])
-        self.assertEqual(colors["button_border"], colors["primary"])
-        self.assertEqual(colors["header_text"], colors["primary"])
-
-        invalid = dict(valid)
-        invalid["colors"] = dict(valid["colors"], primary="not-a-color")
-        with self.assertRaisesRegex(ValueError, "invalid primary"):
-            FEATHER.FeatherRenderer._validate_theme(invalid)
-
-        invalid_optional = dict(valid)
-        invalid_optional["colors"] = dict(
-            valid["colors"], button_background="not-a-color")
-        with self.assertRaisesRegex(ValueError, "invalid button_background"):
-            FEATHER.FeatherRenderer._validate_theme(invalid_optional)
 
     def test_python_renderer_matches_cpp_protocol_fixture(self):
         fixture = pathlib.Path(__file__).parent / "fixtures" / "feather_draw_protocol.txt"

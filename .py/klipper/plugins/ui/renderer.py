@@ -8,17 +8,19 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import enum
-import json
 import logging
 import math
-import os
-import re
 
 from .actions import Action, action_wire_id
 from .font_metrics import (
     get_font_metrics, load_runtime_metrics, set_font_metrics,
 )
 from .numeric_input import NumericInputSpec
+from .theme_catalog import (
+    DEFAULT_THEME, FALLBACK_THEME, OPTIONAL_THEME_ROLE_FALLBACKS,
+    THEME_DIRECTORY, THEME_NAME_ALIASES, USER_THEME_DIRECTORY, ThemeCatalog,
+    normalize_theme_name, with_optional_theme_roles,
+)
 from .render_worker import (
     MAX_BATCH_CHARS, MAX_BATCHES, RenderBatch, RenderBatchQueue,
     TyperRenderWorker,
@@ -52,16 +54,6 @@ COLOR_AMBER = "f2c94c"
 COLOR_RED = "ff4d5a"
 COLOR_TEXT = "d9e4e8"
 COLOR_DIM = "56656c"
-
-DEFAULT_THEME = "DEFAULT"
-THEME_NAME_ALIASES = {
-    "CYBERPANK_RED": "CYBERPUNK_RED",
-    "CYBERPANK_YELLOW": "CYBERPUNK_YELLOW",
-}
-THEME_DIRECTORY = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.realpath(__file__)), "themes"))
-USER_THEME_DIRECTORY = "/opt/config/mod_data/themes"
-THEME_SCHEMA_VERSION = 1
 COLOR_ROLES = {
     "030607": "background",
     "050c0f": "panel",
@@ -87,30 +79,9 @@ COLOR_ROLES = {
     "010203": "overlay",
     "ff00ff": "secondary",
 }
-FALLBACK_THEME = {
-    "background": "030607", "panel": "050c0f", "primary": "35d9e6",
-    "primary_dark": "244c66", "secondary": "b47aff",
-    "secondary_dark": "872187", "warning": "f2c94c", "danger": "ff4d5a",
-    "danger_background": "120708", "text": "d9e4e8", "bright": "ffffff",
-    "dim": "56656c", "border": "295c66", "muted": "263238",
-    "success": "56c596", "pressed_background": "103238",
-    "overlay": "010203",
-}
-# Component colors are optional additions to the version 1 theme format.
-# Resolving them through existing palette roles keeps every older user theme
-# valid while allowing themes with a distinct physical "shell" to style
-# controls independently from their display surfaces.
-OPTIONAL_THEME_ROLE_FALLBACKS = {
-    "button_background": "panel",
-    "button_border": "primary",
-    "button_text": "primary",
-    "button_selected_background": "panel",
-    "button_selected_border": "secondary",
-    "button_selected_text": "secondary",
-    "header_background": "panel",
-    "header_text": "primary",
-    "header_border": "border",
-}
+
+# Theme constants remain importable from this module for compatibility. Their
+# source of truth and lifecycle now live in ui.theme_catalog.
 
 
 class Page(enum.Enum):
@@ -140,7 +111,7 @@ class Page(enum.Enum):
     RECOVERY_CONFIRM = 23
     MESSAGE = 24
     MOD_SETTINGS = 26
-    MOD_ENUM = 27
+    PARAMETER_OPTIONS = 27
     MOD_VALUE = 28
     ERROR = 29
     LIVE_Z_OFFSET = 30
@@ -189,10 +160,12 @@ class FeatherRenderer:
         self.debug = debug
         self._theme_directories = tuple(
             theme_directories or (THEME_DIRECTORY, USER_THEME_DIRECTORY))
+        self._theme_catalog = ThemeCatalog.from_directories(
+            self._theme_directories)
         self._themes = {}
         self._theme_descriptions = {}
         self._theme_name = DEFAULT_THEME
-        self._palette = self._with_optional_theme_roles(FALLBACK_THEME)
+        self._palette = with_optional_theme_roles(FALLBACK_THEME)
         self.reload_themes()
         self.event_fd = None
         self._last_footer = None
@@ -398,98 +371,45 @@ class FeatherRenderer:
     def theme_name(self):
         return self._theme_name
 
-    def reload_themes(self):
-        themes = {
-            DEFAULT_THEME: self._with_optional_theme_roles(FALLBACK_THEME)}
-        descriptions = {DEFAULT_THEME: "cyan Forge-X palette"}
-        for directory in self._theme_directories:
-            if not os.path.isdir(directory):
-                continue
-            for filename in sorted(os.listdir(directory)):
-                lowered = filename.lower()
-                if (not lowered.endswith(".json")
-                        or lowered.endswith(".schema.json")):
-                    continue
-                path = os.path.join(directory, filename)
-                try:
-                    with open(path, "r", encoding="utf-8") as stream:
-                        data = json.load(stream)
-                    name, description, colors = self._validate_theme(data)
-                    themes[name] = colors
-                    descriptions[name] = description
-                except Exception as exc:
-                    logging.warning("[feather_screen] invalid theme %s: %s",
-                                    path, exc)
-        self._themes = themes
-        self._theme_descriptions = descriptions
-        if self._theme_name not in themes:
+    def _sync_theme_catalog(self):
+        previous_name = self._theme_name
+        previous_palette = self._palette
+        self._themes = self._theme_catalog.themes
+        self._theme_descriptions = self._theme_catalog.descriptions
+        if self._theme_name not in self._themes:
             self._theme_name = DEFAULT_THEME
-        self._palette = themes[self._theme_name]
-        return tuple(themes)
+        self._palette = self._themes[self._theme_name]
+        if (self._theme_name != previous_name
+                or self._palette != previous_palette):
+            self._last_footer = None
+            self._footer_drawn = False
+        return tuple(self._themes)
+
+    def reload_themes(self):
+        """Reload the complete catalog at construction and klippy:ready."""
+        self._theme_catalog.reload_all()
+        return self._sync_theme_catalog()
+
+    def reload_user_themes(self):
+        """Refresh writable user themes without rescanning bundled files."""
+        self._theme_catalog.reload_user_themes()
+        return self._sync_theme_catalog()
 
     def ensure_user_theme_directory(self):
-        if USER_THEME_DIRECTORY not in self._theme_directories:
-            return
-        try:
-            os.makedirs(USER_THEME_DIRECTORY, exist_ok=True)
-        except OSError as exc:
-            logging.warning("[feather_screen] unable to create theme directory: %s",
-                            exc)
-
-    @staticmethod
-    def _with_optional_theme_roles(colors):
-        expanded = dict(colors)
-        for role, fallback_role in OPTIONAL_THEME_ROLE_FALLBACKS.items():
-            expanded.setdefault(role, expanded[fallback_role])
-        return expanded
-
-    @classmethod
-    def _validate_theme(cls, data):
-        if not isinstance(data, dict):
-            raise ValueError("root must be an object")
-        if data.get("schema_version") != THEME_SCHEMA_VERSION:
-            raise ValueError("unsupported schema_version")
-        name = str(data.get("name", "")).strip().upper()
-        if re.match(r"^[A-Z][A-Z0-9_]{0,31}$", name) is None:
-            raise ValueError("invalid theme name")
-        description = str(data.get("description", "")).strip()
-        if not description or len(description) > 80:
-            raise ValueError("description must contain 1-80 characters")
-        colors = data.get("colors")
-        if not isinstance(colors, dict):
-            raise ValueError("colors must be an object")
-        missing = sorted(set(FALLBACK_THEME) - set(colors))
-        if missing:
-            raise ValueError("missing colors: %s" % ", ".join(missing))
-        normalized = {}
-        for role in FALLBACK_THEME:
-            value = str(colors[role]).strip().lower()
-            if re.match(r"^[0-9a-f]{6}$", value) is None:
-                raise ValueError("invalid %s color" % role)
-            normalized[role] = value
-        for role in OPTIONAL_THEME_ROLE_FALLBACKS:
-            if role not in colors:
-                continue
-            value = str(colors[role]).strip().lower()
-            if re.match(r"^[0-9a-f]{6}$", value) is None:
-                raise ValueError("invalid %s color" % role)
-            normalized[role] = value
-        return name, description, cls._with_optional_theme_roles(normalized)
+        self._theme_catalog.ensure_user_directories()
 
     def theme_names(self, reload=False):
+        # ``reload=True`` is retained for callers outside this package. A UI
+        # refresh must never rescan immutable bundled themes.
         if reload:
-            self.reload_themes()
+            self.reload_user_themes()
         return tuple(self._themes)
 
     def theme_description(self, name):
-        return self._theme_descriptions.get(str(name).upper(), "")
+        return self._theme_catalog.description(name)
 
     def set_theme(self, name):
-        normalized = str(name or DEFAULT_THEME).strip().upper()
-        normalized = normalized.replace("-", "_").replace(" ", "_")
-        normalized = THEME_NAME_ALIASES.get(normalized, normalized)
-        if normalized not in self._themes:
-            self.reload_themes()
+        normalized = normalize_theme_name(name)
         if normalized not in self._themes:
             logging.warning("[feather_screen] unknown theme %r; using DEFAULT",
                             name)

@@ -957,11 +957,18 @@ class FeatherPagesMixin:
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
         if kind == "enum" or param.key == "feather_theme":
-            self.mod_enum_selection = self.mod_edit_value
-            self.mod_enum_page = 0
-            self._show_page(Page.MOD_ENUM)
+            if param.key == "feather_theme":
+                # User files are writable at runtime. Refresh them exactly once
+                # when entering the picker, then keep a stable option snapshot
+                # for paging and selection. Bundled themes remain cached.
+                self.renderer.reload_user_themes()
+                options = self.renderer.theme_names()
+            else:
+                options = mod_ui.enum_names(param)
+            self._set_parameter_options(options, self.mod_edit_value)
+            self._show_page(Page.PARAMETER_OPTIONS)
         else:
-            self.mod_enum_selection = None
+            self.selected_parameter_option = None
             self._show_page(Page.MOD_VALUE)
 
     def _set_mod_value(self, param, value, complete=None,
@@ -1080,25 +1087,24 @@ class FeatherPagesMixin:
             raise RuntimeError("No parameter selected")
         kind = mod_ui.parameter_kind(param)
         if action.startswith("mod.option."):
-            options = (list(self.renderer.theme_names(reload=True))
-                       if param.key == "feather_theme"
-                       else mod_ui.enum_names(param))
+            options = self.parameter_options
             index = int(action.rsplit(".", 1)[1])
             if index < 0 or index >= len(options):
                 raise RuntimeError("Unknown option")
-            self.mod_enum_selection = options[index]
-            self._render_mod_enum()
+            self.selected_parameter_option = options[index]
+            self._render_parameter_options()
             return
-        if action == "mod.enum.prev":
-            self.mod_enum_page = max(0, self.mod_enum_page - 1)
-            self._render_mod_enum()
+        if action == "mod.options.prev":
+            self.parameter_options_page_index = max(
+                0, self.parameter_options_page_index - 1)
+            self._render_parameter_options()
             return
-        if action == "mod.enum.next":
-            self.mod_enum_page += 1
-            self._render_mod_enum()
+        if action == "mod.options.next":
+            self.parameter_options_page_index += 1
+            self._render_parameter_options()
             return
         if action == "mod.apply":
-            value = mod_ui.validate_value(param, self.mod_enum_selection)
+            value = mod_ui.validate_value(param, self.selected_parameter_option)
 
             def complete():
                 if param.key == "feather_theme":
@@ -1148,7 +1154,7 @@ class FeatherPagesMixin:
                 self.mod_edit_value += character
         self._render_mod_value()
 
-    def _render_mod_enum(self):
+    def _render_parameter_options(self):
         param = self.mod_parameter
         if param is None:
             self._show_page(Page.MOD_SETTINGS)
@@ -1162,19 +1168,17 @@ class FeatherPagesMixin:
             commands.append(self.renderer.text(
                 25, 108, "APPLYING THIS VALUE RESTARTS KLIPPER.", "f2c94c",
                 "JetBrainsMono 8pt"))
-        if param.key == "feather_theme":
-            options = list(self.renderer.theme_names(reload=True))
-            if self.mod_enum_selection not in options:
-                self.mod_enum_selection = "DEFAULT"
-        else:
-            options = mod_ui.enum_names(param)
+        options = self.parameter_options
+        if (param.key == "feather_theme"
+                and self.selected_parameter_option not in options):
+            self.selected_parameter_option = "DEFAULT"
         pagination = Pagination(
-            options, getattr(self, "mod_enum_page", 0), 4)
-        self.mod_enum_page = pagination.page
+            options, getattr(self, "parameter_options_page_index", 0), 4)
+        self.parameter_options_page_index = pagination.page
         start = pagination.start
         for row, name in enumerate(pagination.visible):
             index = start + row
-            selected = name == self.mod_enum_selection
+            selected = name == self.selected_parameter_option
             detail = (self.renderer.theme_description(name).upper()
                       if param.key == "feather_theme"
                       else mod_ui.option_description(param, name).upper())
@@ -1189,7 +1193,7 @@ class FeatherPagesMixin:
                 font="JetBrainsMono 8pt")
         if pagination.page_count > 1:
             commands += self.renderer.button(
-                "mod.enum.prev", 25, 390, 120, 47, "<",
+                "mod.options.prev", 25, 390, 120, 47, "<",
                 state=("enabled" if pagination.has_previous
                        else "disabled"),
                 font="JetBrainsMono Bold 8pt")
@@ -1200,7 +1204,7 @@ class FeatherPagesMixin:
                 "mod.apply", 425, 390, 220, 47, "APPLY",
                 font="JetBrainsMono Bold 8pt")
             commands += self.renderer.button(
-                "mod.enum.next", 655, 390, 120, 47, ">",
+                "mod.options.next", 655, 390, 120, 47, ">",
                 state=("enabled" if pagination.has_next else "disabled"),
                 font="JetBrainsMono Bold 8pt")
             commands.append(self.renderer.text(

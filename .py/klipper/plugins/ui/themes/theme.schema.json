@@ -21,7 +21,8 @@
     "description": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 80
+      "maxLength": 80,
+      "pattern": "\\S"
     },
     "copyright": {
       "type": "string"

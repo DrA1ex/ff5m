@@ -106,8 +106,8 @@ EXACT_ACTIONS = {
                     "settings.led.plus", "settings.sound", "settings.theme",
                     "settings.mod"),
     Page.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next"),
-    Page.MOD_ENUM: ("nav.back", "mod.cancel", "mod.apply",
-                    "mod.enum.prev", "mod.enum.next"),
+    Page.PARAMETER_OPTIONS: ("nav.back", "mod.cancel", "mod.apply",
+                    "mod.options.prev", "mod.options.next"),
     Page.MOD_VALUE: ("nav.back", "mod.cancel", "mod.save", "mod.backspace",
                      "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
                      "mod.space"),
@@ -164,7 +164,7 @@ FEATURE_SPECS = (
                     Page.EXTRUDER_CALIBRATION,)),
     FeatureSpec("settings", _feature_module("feather_feature_settings"),
                 "SettingsFeature", (
-        Page.SETTINGS, Page.MOD_SETTINGS, Page.MOD_ENUM, Page.MOD_VALUE)),
+        Page.SETTINGS, Page.MOD_SETTINGS, Page.PARAMETER_OPTIONS, Page.MOD_VALUE)),
 )
 
 
@@ -1042,7 +1042,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     action.startswith("cal.material.") and
                     action.rsplit(".", 1)[1] in self.heating_materials)
                 or (page == Page.MOD_SETTINGS and action.startswith("mod.item."))
-                or (page == Page.MOD_ENUM and action.startswith("mod.option."))
+                or (page == Page.PARAMETER_OPTIONS and action.startswith("mod.option."))
                 or (page == Page.MOD_VALUE and action.startswith("mod.key."))
                 or (page == Page.WIFI_SCAN and action.startswith("net.item"))
                 or (page == Page.WIFI_PASSWORD and action.startswith("key."))
@@ -1123,8 +1123,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._render_settings()
         elif page == Page.MOD_SETTINGS:
             self._render_mod_settings()
-        elif page == Page.MOD_ENUM:
-            self._render_mod_enum()
+        elif page == Page.PARAMETER_OPTIONS:
+            self._render_parameter_options()
         elif page == Page.MOD_VALUE:
             self._render_mod_value()
         elif page == Page.NETWORK_HOME:
@@ -1187,8 +1187,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._cancel_extruder_calibration()
         elif self.page == Page.MOD_SETTINGS:
             self._show_page(Page.SETTINGS)
-        elif self.page in (Page.MOD_ENUM, Page.MOD_VALUE):
-            self.mod_parameter = None
+        elif self.page in (Page.PARAMETER_OPTIONS, Page.MOD_VALUE):
             self._show_page(getattr(
                 self, "mod_return_page", Page.MOD_SETTINGS))
         elif self.page == Page.FILAMENT_ACTION:

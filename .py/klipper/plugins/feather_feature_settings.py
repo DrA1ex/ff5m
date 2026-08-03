@@ -21,8 +21,9 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
         self.mod_parameter = None
         self.mod_return_page = Page.MOD_SETTINGS
         self.mod_edit_value = ""
-        self.mod_enum_selection = None
-        self.mod_enum_page = 0
+        self.selected_parameter_option = None
+        self._parameter_options_snapshot = ()
+        self.parameter_options_page_index = 0
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
         self.mod_update_pending = False
@@ -30,11 +31,21 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
         self.mod_update_modal_visible = False
         self.mod_update_complete = None
 
+    @property
+    def parameter_options(self):
+        return self._parameter_options_snapshot
+
+    def _set_parameter_options(self, options, selection):
+        """Replace the immutable options snapshot for the current parameter."""
+        self._parameter_options_snapshot = tuple(options)
+        self.selected_parameter_option = selection
+        self.parameter_options_page_index = 0
+
     def render(self, page):
         {
             Page.SETTINGS: self._render_settings,
             Page.MOD_SETTINGS: self._render_mod_settings,
-            Page.MOD_ENUM: self._render_mod_enum,
+            Page.PARAMETER_OPTIONS: self._render_parameter_options,
             Page.MOD_VALUE: self._render_mod_value,
         }[page]()
 
@@ -46,18 +57,21 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
                 "settings.led.plus", "settings.sound", "settings.theme",
                 "settings.mod"),
             Page.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next"),
-            Page.MOD_ENUM: (
-                "nav.back", "mod.cancel", "mod.apply", "mod.enum.prev",
-                "mod.enum.next"),
+            Page.PARAMETER_OPTIONS: (
+                "nav.back", "mod.cancel", "mod.apply", "mod.options.prev",
+                "mod.options.next"),
             Page.MOD_VALUE: (
                 "nav.back", "mod.cancel", "mod.save", "mod.backspace",
                 "mod.sign", "mod.dot", "mod.shift", "mod.symbols",
                 "mod.space"),
         }
         return (action in exact.get(page, ()) or
-                (page == Page.MOD_SETTINGS and action.startswith("mod.item.")) or
-                (page == Page.MOD_ENUM and action.startswith("mod.option.")) or
-                (page == Page.MOD_VALUE and action.startswith("mod.key.")))
+                (page == Page.MOD_SETTINGS and
+                 action.startswith("mod.item.")) or
+                (page == Page.PARAMETER_OPTIONS and
+                 action.startswith("mod.option.")) or
+                (page == Page.MOD_VALUE and
+                 action.startswith("mod.key.")))
 
     def handle_action(self, page, action):
         if action.startswith("settings."):
@@ -73,7 +87,7 @@ class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
             self._show_page(Page.CONTROL_HOME)
         elif page == Page.MOD_SETTINGS:
             self._show_page(Page.SETTINGS)
-        elif page in (Page.MOD_ENUM, Page.MOD_VALUE):
+        elif page in (Page.PARAMETER_OPTIONS, Page.MOD_VALUE):
             self.mod_parameter = None
             self._show_page(self.mod_return_page)
         else:
