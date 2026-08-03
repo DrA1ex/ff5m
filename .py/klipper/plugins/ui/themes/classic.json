@@ -15,7 +15,7 @@
     "danger": "a80000",
     "danger_background": "f3d6d6",
     "text": "111111",
-    "bright": "ffffff",
+    "bright": "1084d0",
     "dim": "666666",
     "border": "7f7f7f",
     "muted": "a9a9a9",
@@ -27,11 +27,11 @@
     "button_background": "panel",
     "button_border": "border",
     "button_text": "text",
-    "button_selected_background": "primary",
+    "button_selected_background": "panel",
     "button_selected_border": "bright",
     "button_selected_text": "bright",
     "header_background": "primary",
-    "header_text": "bright",
-    "header_border": "border"
+    "header_text": "ffffff",
+    "header_border": "primary_dark"
   }
 }

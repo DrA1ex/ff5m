@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "AUBERGINE",
+  "description": "Aubergine, warm gray and Ubuntu orange",
+  "colors": {
+    "background": "dedbd8",
+    "panel": "f4f2f0",
+    "primary": "e95420",
+    "primary_dark": "772953",
+    "secondary": "5e2750",
+    "secondary_dark": "2c001e",
+    "warning": "f5a300",
+    "danger": "c7162b",
+    "danger_background": "f6dce1",
+    "text": "2c2c2c",
+    "bright": "5e2750",
+    "dim": "67615f",
+    "border": "9f9894",
+    "muted": "aaa39f",
+    "success": "0e8420",
+    "pressed_background": "cec8c4",
+    "overlay": "5e2750"
+  },
+  "roles": {
+    "button_background": "panel",
+    "button_border": "border",
+    "button_text": "text",
+    "button_selected_background": "f6dfd5",
+    "button_selected_border": "primary",
+    "button_selected_text": "primary_dark",
+    "header_background": "primary_dark",
+    "header_text": "ffffff",
+    "header_border": "secondary_dark",
+    "temperature_nozzle": "primary",
+    "temperature_bed": "warning",
+    "temperature_fan": "secondary"
+  }
+}
