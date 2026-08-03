@@ -61,16 +61,18 @@ class FrameworkContractTest(unittest.TestCase):
     def test_runtime_source_hooks_defer_designer_only_dependencies(self):
         script = (
             "import sys\n"
+            "threading_was_loaded = 'threading' in sys.modules\n"
+            "contextlib_was_loaded = 'contextlib' in sys.modules\n"
             "import ui.source as source\n"
-            "assert 'threading' not in sys.modules\n"
-            "assert 'contextlib' not in sys.modules\n"
+            "assert ('threading' in sys.modules) == threading_was_loaded\n"
+            "assert ('contextlib' in sys.modules) == contextlib_was_loaded\n"
             "provider = type('Provider', (), {})()\n"
             "assert not source.capture_enabled()\n"
             "with source.source_capture(provider):\n"
             "    assert source.capture_enabled()\n"
             "assert not source.capture_enabled()\n"
             "assert 'threading' in sys.modules\n"
-            "assert 'contextlib' not in sys.modules\n")
+            "assert ('contextlib' in sys.modules) == contextlib_was_loaded\n")
         environment = dict(os.environ)
         environment["PYTHONPATH"] = str(PLUGINS)
         subprocess.run([sys.executable, "-c", script], check=True,

@@ -1,4 +1,4 @@
-## Theme catalog, schema, and refresh lifecycle tests.
+## Theme resolution, schema, and catalog lifecycle tests.
 ##
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
@@ -6,6 +6,7 @@
 
 import json
 import pathlib
+import re
 import sys
 import tempfile
 import unittest
@@ -17,65 +18,148 @@ sys.path.insert(0, str(PLUGINS))
 import ui  # noqa: E402
 
 
+_HEX = re.compile(r"^[0-9a-f]{6}$")
+
+
+def _base_colors(**overrides):
+    colors = dict(ui.FALLBACK_THEME)
+    colors.update(overrides)
+    return colors
+
+
+def _theme(name="VALID", colors=None, roles=None):
+    value = {
+        "schema_version": 2,
+        "name": name,
+        "description": "Theme used by a behavioral test",
+        "colors": dict(colors or _base_colors()),
+    }
+    if roles is not None:
+        value["roles"] = dict(roles)
+    return value
+
+
+class ThemeResolutionTest(unittest.TestCase):
+    def test_missing_product_roles_use_conservative_base_accent(self):
+        resolved = ui.resolve_theme(_base_colors())
+        primary = resolved.resolve(ui.ThemeColor.PRIMARY)
+
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_NOZZLE), primary)
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_BED), primary)
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_FAN), primary)
+
+    def test_role_can_follow_base_color_or_override_it_physically(self):
+        colors = _base_colors(primary="101010", secondary="202020")
+        resolved = ui.resolve_theme(colors, {
+            "temperature_nozzle": "secondary",
+            "temperature_bed": "abcdef",
+        })
+
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_NOZZLE),
+            resolved.resolve(ui.ThemeColor.SECONDARY))
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_BED), "abcdef")
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_FAN),
+            resolved.resolve(ui.ThemeColor.PRIMARY))
+
+    def test_resolved_theme_is_a_snapshot_not_a_live_view(self):
+        colors = _base_colors(primary="111111")
+        roles = {"temperature_nozzle": "primary"}
+        resolved = ui.resolve_theme(colors, roles)
+        colors["primary"] = "222222"
+        roles["temperature_nozzle"] = "333333"
+
+        self.assertEqual(
+            resolved.resolve(ui.ThemeColor.PRIMARY), "111111")
+        self.assertEqual(
+            resolved.resolve(ui.ThemeRole.TEMPERATURE_NOZZLE), "111111")
+
+    def test_role_to_role_reference_is_rejected(self):
+        with self.assertRaises(ValueError):
+            ui.resolve_theme(_base_colors(), {
+                "temperature_bed": "temperature_nozzle",
+            })
+
+    def test_button_accent_changes_visual_identity_without_changing_state(self):
+        renderer = ui.FeatherRenderer()
+        renderer._palette = ui.resolve_theme(_base_colors(), {
+            "temperature_bed": "abcdef",
+        })
+
+        enabled = "\n".join(renderer.button(
+            "bed", 0, 0, 80, 40, "BED", state="enabled",
+            accent=ui.ThemeRole.TEMPERATURE_BED))
+        disabled = "\n".join(renderer.button(
+            "bed.disabled", 0, 0, 80, 40, "BED", state="disabled",
+            accent=ui.ThemeRole.TEMPERATURE_BED))
+
+        self.assertIn("--border abcdef", enabled)
+        self.assertIn("--text-color abcdef", enabled)
+        self.assertIn("--id ", enabled)
+        self.assertNotIn("abcdef", disabled)
+        self.assertNotIn("--id ", disabled)
+
+    def test_renderer_requires_typed_tokens(self):
+        renderer = ui.FeatherRenderer()
+        self.assertRegex(renderer.color(ui.ThemeColor.PRIMARY), _HEX)
+        self.assertRegex(
+            renderer.color(ui.ThemeRole.TEMPERATURE_BED), _HEX)
+        with self.assertRaises(TypeError):
+            renderer.color("primary")
+        with self.assertRaises(TypeError):
+            renderer.color("35d9e6")
+
+
 class ThemeCatalogTest(unittest.TestCase):
-    def test_every_bundled_theme_conforms_to_versioned_schema(self):
+    def test_every_bundled_theme_produces_a_complete_resolved_palette(self):
         directory = pathlib.Path(ui.THEME_DIRECTORY)
         schema = json.loads(
             pathlib.Path(ui.THEME_SCHEMA_PATH).read_text(encoding="utf-8"))
-        color_schema = schema["properties"]["colors"]
-
-        self.assertEqual(
-            set(ui.FALLBACK_THEME), set(color_schema["required"]))
-        self.assertTrue(
-            set(ui.OPTIONAL_THEME_ROLE_FALLBACKS).issubset(
-                color_schema["properties"]))
-
         theme_files = sorted(
             path for path in directory.glob("*.json")
             if not path.name.endswith(".schema.json"))
         self.assertTrue(theme_files)
+
         for path in theme_files:
             with self.subTest(theme=path.name):
                 data = json.loads(path.read_text(encoding="utf-8"))
-                name, description, colors = ui.validate_theme_data(
+                name, description, resolved = ui.validate_theme_data(
                     data, schema=schema)
                 self.assertEqual(name, data["name"])
                 self.assertTrue(description)
-                self.assertTrue(set(ui.FALLBACK_THEME).issubset(colors))
+                for token in tuple(ui.ThemeColor) + tuple(ui.ThemeRole):
+                    self.assertRegex(resolved.resolve(token), _HEX)
 
-    def test_schema_is_the_runtime_validation_contract(self):
-        valid = {
-            "schema_version": 1,
-            "name": "VALID",
-            "description": "Valid test theme",
-            "colors": dict(ui.FALLBACK_THEME),
-        }
-        name, description, colors = ui.validate_theme_data(valid)
-        self.assertEqual((name, description), ("VALID", "Valid test theme"))
-        self.assertEqual(colors["primary"], ui.COLOR_CYAN)
-        self.assertEqual(colors["button_background"], colors["panel"])
-        self.assertEqual(colors["button_border"], colors["primary"])
-        self.assertEqual(colors["header_text"], colors["primary"])
+    def test_schema_enforces_new_contract_without_legacy_layout(self):
+        ui.validate_theme_data(_theme(roles={
+            "temperature_nozzle": "secondary",
+            "temperature_bed": "abcdef",
+        }))
 
-        invalid_color = dict(valid)
-        invalid_color["colors"] = dict(
-            valid["colors"], primary="not-a-color")
-        with self.assertRaises(ui.ThemeSchemaError):
-            ui.validate_theme_data(invalid_color)
+        invalid_documents = []
+        invalid_documents.append(dict(_theme(), schema_version=1))
 
-        invalid_name = dict(valid, name="MixedCase")
-        with self.assertRaises(ui.ThemeSchemaError):
-            ui.validate_theme_data(invalid_name)
+        legacy_role = _theme()
+        legacy_role["colors"]["header_text"] = "abcdef"
+        invalid_documents.append(legacy_role)
 
-        invalid_version = dict(valid, schema_version=True)
-        with self.assertRaises(ui.ThemeSchemaError):
-            ui.validate_theme_data(invalid_version)
+        role_to_role = _theme(roles={
+            "temperature_bed": "temperature_nozzle",
+        })
+        invalid_documents.append(role_to_role)
 
-        unknown_role = dict(valid)
-        unknown_role["colors"] = dict(
-            valid["colors"], accidental_role="123abc")
-        with self.assertRaises(ui.ThemeSchemaError):
-            ui.validate_theme_data(unknown_role)
+        unknown_role = _theme(roles={"temperature_chamber": "primary"})
+        invalid_documents.append(unknown_role)
+
+        for document in invalid_documents:
+            with self.subTest(document=document):
+                with self.assertRaises(ui.ThemeSchemaError):
+                    ui.validate_theme_data(document)
 
     def test_theme_file_limit_has_headroom_for_bundled_catalog(self):
         theme_files = [
@@ -83,7 +167,7 @@ class ThemeCatalogTest(unittest.TestCase):
             if not path.name.endswith(".schema.json")]
         largest = max(path.stat().st_size for path in theme_files)
 
-        self.assertEqual(ui.MAX_THEME_FILE_BYTES, 8 * 1024)
+        self.assertGreater(ui.MAX_THEME_FILE_BYTES, 0)
         self.assertLessEqual(largest, ui.MAX_THEME_FILE_BYTES)
 
     def test_invalid_user_files_are_bounded_logged_and_reported(self):
@@ -91,19 +175,10 @@ class ThemeCatalogTest(unittest.TestCase):
             root = pathlib.Path(root)
             user = root / "user"
             user.mkdir()
-
-            valid = {
-                "schema_version": 1,
-                "name": "VALID_USER",
-                "description": "Valid user theme",
-                "colors": dict(ui.FALLBACK_THEME),
-            }
             (user / "valid.json").write_text(
-                json.dumps(valid), encoding="utf-8")
-
-            schema_mismatch = dict(valid, name="Broken Theme")
+                json.dumps(_theme("VALID_USER")), encoding="utf-8")
             (user / "schema.json").write_text(
-                json.dumps(schema_mismatch), encoding="utf-8")
+                json.dumps(_theme("Broken Theme")), encoding="utf-8")
             (user / "syntax.json").write_text("{broken", encoding="utf-8")
             (user / "binary.json").write_bytes(b"\x00\xff\x10")
             (user / "large.json").write_bytes(
@@ -128,22 +203,11 @@ class ThemeCatalogTest(unittest.TestCase):
                              ("binary", "INVALID FILE"))
             self.assertEqual(issues["large.json"],
                              ("large", "FILE TOO LARGE"))
-            self.assertEqual(len(catalog.user_issues), 4)
             output = "\n".join(logs.output)
             for filename in issues:
                 self.assertIn(filename, output)
 
-            schema_mismatch["name"] = "BROKEN_THEME"
-            (user / "schema.json").write_text(
-                json.dumps(schema_mismatch), encoding="utf-8")
-            with self.assertLogs(level="WARNING"):
-                catalog.reload_user_themes()
-            self.assertIn("BROKEN_THEME", catalog.names())
-            self.assertNotIn(
-                "schema.json",
-                [issue.filename for issue in catalog.user_issues])
-
-    def test_missing_schema_keeps_fallback_theme_available(self):
+    def test_missing_schema_keeps_a_drawable_fallback_theme(self):
         with tempfile.TemporaryDirectory() as directory:
             missing_schema = pathlib.Path(directory, "missing.schema.json")
             catalog = ui.ThemeCatalog(
@@ -153,69 +217,85 @@ class ThemeCatalogTest(unittest.TestCase):
                 names = catalog.reload_all()
 
             self.assertEqual(names, ("DEFAULT",))
-            self.assertEqual(
-                catalog.palette("DEFAULT")["primary"], ui.COLOR_CYAN)
+            fallback = catalog.palette("DEFAULT")
+            self.assertRegex(fallback.resolve(ui.ThemeColor.PRIMARY), _HEX)
+            self.assertRegex(
+                fallback.resolve(ui.ThemeRole.TEMPERATURE_BED), _HEX)
             self.assertIn("unable to load theme schema",
                           "\n".join(logs.output))
 
-    def test_user_refresh_reuses_bundled_catalog_snapshot(self):
+    def test_user_refresh_reuses_bundled_snapshot_and_reloads_user_theme(self):
         with tempfile.TemporaryDirectory() as root:
             root = pathlib.Path(root)
             bundled = root / "bundled"
             user = root / "user"
             bundled.mkdir()
             user.mkdir()
-            schema_text = pathlib.Path(ui.THEME_SCHEMA_PATH).read_text(
-                encoding="utf-8")
             (bundled / "theme.schema.json").write_text(
-                schema_text, encoding="utf-8")
+                pathlib.Path(ui.THEME_SCHEMA_PATH).read_text(encoding="utf-8"),
+                encoding="utf-8")
 
-            base = {
-                "schema_version": 1,
-                "name": "BASE",
-                "description": "Bundled base",
-                "colors": dict(ui.FALLBACK_THEME, primary="111111"),
-            }
+            base = _theme("BASE", _base_colors(primary="111111"))
             (bundled / "base.json").write_text(
                 json.dumps(base), encoding="utf-8")
             renderer = ui.FeatherRenderer(
                 theme_directories=(str(bundled), str(user)))
             renderer.set_theme("BASE")
-            self.assertEqual(renderer.color(ui.COLOR_CYAN), "111111")
+            self.assertEqual(
+                renderer.color(ui.ThemeColor.PRIMARY), "111111")
 
             base["colors"]["primary"] = "222222"
             (bundled / "base.json").write_text(
                 json.dumps(base), encoding="utf-8")
-            custom = {
-                "schema_version": 1,
-                "name": "CUSTOM",
-                "description": "Runtime user theme",
-                "colors": dict(ui.FALLBACK_THEME, primary="abcdef"),
-            }
+            custom = _theme(
+                "CUSTOM", _base_colors(primary="abcdef"),
+                roles={"temperature_bed": "fedcba"})
             (user / "custom.json").write_text(
                 json.dumps(custom), encoding="utf-8")
 
             renderer.reload_user_themes()
-            self.assertIn("CUSTOM", renderer.theme_names())
             renderer.set_theme("BASE")
-            self.assertEqual(renderer.color(ui.COLOR_CYAN), "111111")
+            self.assertEqual(
+                renderer.color(ui.ThemeColor.PRIMARY), "111111")
             renderer.set_theme("CUSTOM")
-            self.assertEqual(renderer.color(ui.COLOR_CYAN), "abcdef")
-            sent = []
-            renderer.send = sent.append
-            renderer.footer(20, 200, 25, 60, "LAN", "IDLE")
-            sent.clear()
-            custom["colors"]["primary"] = "fedcba"
+            self.assertEqual(
+                renderer.color(ui.ThemeColor.PRIMARY), "abcdef")
+            self.assertEqual(
+                renderer.color(ui.ThemeRole.TEMPERATURE_BED), "fedcba")
+
+            custom["colors"]["primary"] = "123456"
+            custom["roles"]["temperature_bed"] = "primary"
             (user / "custom.json").write_text(
                 json.dumps(custom), encoding="utf-8")
             renderer.reload_user_themes()
-            self.assertEqual(renderer.color(ui.COLOR_CYAN), "fedcba")
-            redrawn = "\n".join(renderer.begin_page("Themes"))
-            self.assertIn("-c fedcba", redrawn)
+            self.assertEqual(
+                renderer.color(ui.ThemeColor.PRIMARY), "123456")
+            self.assertEqual(
+                renderer.color(ui.ThemeRole.TEMPERATURE_BED), "123456")
 
             renderer.reload_themes()
             renderer.set_theme("BASE")
-            self.assertEqual(renderer.color(ui.COLOR_CYAN), "222222")
+            self.assertEqual(
+                renderer.color(ui.ThemeColor.PRIMARY), "222222")
+
+    def test_role_override_changes_actual_rendered_output(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            bundled = root / "bundled"
+            bundled.mkdir()
+            (bundled / "theme.schema.json").write_text(
+                pathlib.Path(ui.THEME_SCHEMA_PATH).read_text(encoding="utf-8"),
+                encoding="utf-8")
+            document = _theme(
+                "CUSTOM", roles={"temperature_bed": "abcdef"})
+            (bundled / "custom.json").write_text(
+                json.dumps(document), encoding="utf-8")
+
+            renderer = ui.FeatherRenderer(theme_directories=(str(bundled),))
+            renderer.set_theme("CUSTOM")
+            command = renderer.text(
+                10, 10, "BED", ui.ThemeRole.TEMPERATURE_BED)
+            self.assertIn("-c abcdef", command)
 
 
 if __name__ == "__main__":

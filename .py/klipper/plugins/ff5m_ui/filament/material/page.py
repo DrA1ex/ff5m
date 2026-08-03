@@ -6,6 +6,7 @@ from ui.components import Button, Text
 from ui.layout import Column, PageTree, Rect, Row
 from ...keys import AppPage
 from ..actions import select
+from ui import ThemeColor, ThemeRole
 
 
 CONTENT = Rect(12, 64, 776, 364)
@@ -21,7 +22,7 @@ def _button(material, target, index, width, height):
         select(material), material, subtitle="%.0fC" % target,
         font="Roboto Bold 16pt",
         subtitle_font="JetBrainsMono Bold 12pt",
-        subtitle_color="d9e4e8",
+        subtitle_color=ThemeColor.TEXT,
     ).size(width, height).ref("filament.material.%d" % index)
 
 
@@ -29,7 +30,7 @@ def create_page(profiles=()):
     profiles = tuple(profiles)
     if not profiles:
         root = Text(
-            "NO MATERIALS ENABLED", color="56656c",
+            "NO MATERIALS ENABLED", color=ThemeColor.DIM,
             font="JetBrainsMono Bold 12pt",
         ).ref(MaterialRef.EMPTY)
         return PageTree(root, CONTENT, page_id=AppPage.FILAMENT_MATERIAL)

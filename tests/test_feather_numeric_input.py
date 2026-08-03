@@ -11,7 +11,7 @@ sys.path.insert(0, str(PLUGINS))
 
 from ui import (  # noqa: E402
     Back, CONTENT_BOTTOM, HEADER_BOTTOM, FeatherRenderer, NumericInputSpec,
-    NumericKeypad, Rect, rectangles_overlap,
+    NumericKeypad, Rect, ThemeColor, rectangles_overlap,
 )
 
 
@@ -116,14 +116,14 @@ class NumericKeypadTest(unittest.TestCase):
             "Cooldown temperature for CLEAR_NOZZLE, C", "150", actions,
             subtitle="clear_cooldown_temp", mode="integer"))
 
-        self.assertIn("-c %s" % renderer.color("text"), drawing)
-        self.assertIn("-c %s" % renderer.color("dim"), drawing)
-        self.assertIn("-c %s" % renderer.color("secondary"), drawing)
+        self.assertIn("-c %s" % renderer.color(ThemeColor.TEXT), drawing)
+        self.assertIn("-c %s" % renderer.color(ThemeColor.DIM), drawing)
+        self.assertIn("-c %s" % renderer.color(ThemeColor.SECONDARY), drawing)
         keypad_style = (
             "--background %s --border %s --text-color %s" % (
-                renderer.color("primary_dark"),
-                renderer.color("primary"),
-                renderer.color("bright")))
+                renderer.color(ThemeColor.PRIMARY_DARK),
+                renderer.color(ThemeColor.PRIMARY),
+                renderer.color(ThemeColor.BRIGHT)))
         self.assertGreaterEqual(drawing.count(keypad_style), 11)
 
 

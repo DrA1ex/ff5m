@@ -9,6 +9,7 @@ from ...keys import AppPage
 from ..actions import SAFE_CALIBRATE, SAFE_SKIP
 from ..common import CONTENT, FONT
 from .state import SafeBriefingState
+from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.SAFE_Z_BRIEFING
@@ -27,16 +28,16 @@ def _content():
     text = Column(
         Text(
             "SAFE Z DEFINES HOW HIGH THE TOOLHEAD MOVES BEFORE PARKING OR MAKING XY MOVES.",
-            color="35d9e6", font=FONT, wrap=True, auto_height=True),
+            color=ThemeColor.PRIMARY, font=FONT, wrap=True, auto_height=True),
         Text(
             "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",
-            color="d9e4e8", font=FONT, wrap=True, auto_height=True),
+            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
         Text(
             "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF CLEARANCE.",
-            color="d9e4e8", font=FONT, wrap=True, auto_height=True),
+            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
         Text(
             "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
-            color="d9e4e8", font=FONT, wrap=True, auto_height=True),
+            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
         gap=20,
     ).ref(SafeBriefingRef.TEXT)
     current = Text(
@@ -45,7 +46,7 @@ def _content():
                 (current, start),
                 bind(SafeBriefingState.CURRENT),
                 bind(SafeBriefingState.START)),
-        color="b47aff", font="JetBrainsMono Bold 10pt",
+        color=ThemeColor.SECONDARY, font="JetBrainsMono Bold 10pt",
     ).height(28).align(horizontal="center").ref(SafeBriefingRef.CURRENT)
     actions = Grid(
         matrix=((

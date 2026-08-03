@@ -15,11 +15,11 @@ import tempfile
 import time
 
 try:
-    from .ui import NumericInputSpec, Page
+    from .ui import NumericInputSpec, Page, ThemeColor
     from .feather_materials import (
         adaptive_grid_columns, render_material_selector)
 except (ImportError, ValueError):
-    from ui import NumericInputSpec, Page
+    from ui import NumericInputSpec, Page, ThemeColor
     from feather_materials import adaptive_grid_columns, render_material_selector
 
 
@@ -433,22 +433,22 @@ class FeatherExtruderCalibrationMixin:
         self._show_page(Page.EXTRUDER_CALIBRATION)
 
     def _extruder_simple_page(self, title, heading, body, buttons,
-                              tone="35d9e6", note=None):
+                              tone=ThemeColor.PRIMARY, note=None):
         commands = self.renderer.begin_page(title, back=True)
         commands += self.renderer.panel(
-            24, 72, 752, 276, border=tone, background="050c0f")
+            24, 72, 752, 276, border=tone, background=ThemeColor.PANEL)
         commands += [
             self.renderer.text(
                 400, 108, heading, tone, "JetBrainsMono Bold 12pt",
                 "center", "middle", max_width=690, truncate=True),
             self.renderer.text(
-                400, 196, body, "d9e4e8", "JetBrainsMono 8pt",
+                400, 196, body, ThemeColor.TEXT, "JetBrainsMono 8pt",
                 "center", "middle", max_width=680, max_height=144,
                 wrap=True, truncate=True),
         ]
         if note:
             commands.append(self.renderer.text(
-                400, 322, note, "f2c94c", "JetBrainsMono 8pt",
+                400, 322, note, ThemeColor.WARNING, "JetBrainsMono 8pt",
                 "center", "middle", max_width=690, truncate=True))
         count = len(buttons)
         gap = 14
@@ -479,7 +479,7 @@ class FeatherExtruderCalibrationMixin:
             commands = self.renderer.begin_page("Cold pull material", back=True)
             commands.append(self.renderer.text(
                 400, 90, "SELECT THE FILAMENT CURRENTLY LOADED",
-                "d9e4e8", "JetBrainsMono 8pt", "center", "middle"))
+                ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle"))
             materials = self.cold_pull_materials
             if materials:
                 columns = adaptive_grid_columns(len(materials))
@@ -492,7 +492,7 @@ class FeatherExtruderCalibrationMixin:
                     font="JetBrainsMono Bold 12pt")
             else:
                 commands.append(self.renderer.text(
-                    400, 230, "NO COLD PULL MATERIALS ENABLED", "56656c",
+                    400, 230, "NO COLD PULL MATERIALS ENABLED", ThemeColor.DIM,
                     "JetBrainsMono Bold 10pt", "center", "middle"))
             self.renderer.send(commands)
         elif phase == "cut":
@@ -509,7 +509,7 @@ class FeatherExtruderCalibrationMixin:
                 "The heater target is zero and the head fan is at 100%. "
                 "Wait until the temperature is below 50 C. Feather will "
                 "stop the fan and beep when it is safe.",
-                (), tone="f2c94c", note=(session.cooling_message or
+                (), tone=ThemeColor.WARNING, note=(session.cooling_message or
                                            "DO NOT REMOVE THE NOZZLE YET"))
         elif phase == "remove":
             self._extruder_simple_page(
@@ -517,7 +517,7 @@ class FeatherExtruderCalibrationMixin:
                 "Release both nozzle levers and carefully pull the nozzle "
                 "module downward. Feather cannot detect whether it is removed.",
                 (("extruder.nozzle_removed", "NOZZLE REMOVED", "warning"),),
-                tone="f2c94c")
+                tone=ThemeColor.WARNING)
         elif phase == "load":
             self._extruder_simple_page(
                 "Seat filament", "INSERT FILAMENT DIRECTLY",
@@ -556,7 +556,7 @@ class FeatherExtruderCalibrationMixin:
                 "marks and your input. You may continue if the value is real.",
                 (("extruder.edit", "EDIT", "enabled"),
                  ("extruder.warning_accept", "USE ANYWAY", "warning")),
-                tone="f2c94c")
+                tone=ThemeColor.WARNING)
         elif phase == "result":
             self._render_extruder_result()
         elif phase == "exit_warning":
@@ -565,7 +565,7 @@ class FeatherExtruderCalibrationMixin:
                 "If it is still removed, push the nozzle module fully into "
                 "place until both levers click. Unsaved calibration is discarded.",
                 (("extruder.stay", "STAY", "enabled"),
-                 ("extruder.exit", "EXIT", "danger")), tone="ff4d5a")
+                 ("extruder.exit", "EXIT", "danger")), tone=ThemeColor.DANGER)
         elif phase == "saved":
             self._extruder_simple_page(
                 "Calibration saved", "ROTATION DISTANCE %.3f" %
@@ -574,7 +574,7 @@ class FeatherExtruderCalibrationMixin:
                 "Flow / Flow Ratio, then Pressure Advance. Bed Mesh and Z "
                 "Offset do not need recalibration.",
                 (("extruder.done", "DONE", "enabled"),),
-                tone="56c596", note="NO KLIPPER RESTART WAS PERFORMED")
+                tone=ThemeColor.SUCCESS, note="NO KLIPPER RESTART WAS PERFORMED")
 
     def _render_extruder_measurement_input(self):
         session = self.extruder_calibration
@@ -612,7 +612,7 @@ class FeatherExtruderCalibrationMixin:
         direction = "MORE" if change > 0 else "LESS" if change < 0 else "THE SAME"
         commands = self.renderer.begin_page("Calibration result", back=True)
         commands += self.renderer.panel(
-            24, 68, 752, 282, border="295c66", background="050c0f")
+            24, 68, 752, 282, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
         rows = (
             ("MEASURED", "%.3f MM" % session.measured),
             (("TESTED" if session.verifying else "CURRENT"),
@@ -631,14 +631,14 @@ class FeatherExtruderCalibrationMixin:
         file_text = ("NOT SET" if existing is None else "%.3f" % existing)
         if file_differs:
             file_text += " // DIFFERS FROM RUNTIME %.3f" % session.original_rotation
-        color = "f2c94c" if file_differs else "56656c"
+        color = ThemeColor.WARNING if file_differs else ThemeColor.DIM
         commands.append(self.renderer.text(
             55, 278, "USER.CFG NOW: %s" % file_text, color,
             "JetBrainsMono 8pt", "left", "middle"))
         note = (session.save_error or
                 "AFTER SAVING: CALIBRATE FLOW, THEN PRESSURE ADVANCE")
         commands.append(self.renderer.text(
-            400, 322, note, "ff4d5a" if session.save_error else "f2c94c",
+            400, 322, note, ThemeColor.DANGER if session.save_error else ThemeColor.WARNING,
             "JetBrainsMono 8pt", "center", "middle",
             max_width=690, truncate=True))
         save_state = "disabled" if session.file_snapshot is None else "enabled"

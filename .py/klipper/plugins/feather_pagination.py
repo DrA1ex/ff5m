@@ -4,6 +4,11 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+try:
+    from .ui import ThemeColor
+except (ImportError, ValueError):
+    from ui import ThemeColor
+
 
 class Pagination:
     """A clamped page view over an indexable collection."""
@@ -51,7 +56,7 @@ def pagination_footer(renderer, pagination, previous_action, next_action,
     commands.append(renderer.text(
         center_x, center_y,
         "%d / %d" % (pagination.page + 1, pagination.page_count),
-        "ffffff", "Roboto 8pt", "center", "middle"))
+        ThemeColor.BRIGHT, "Roboto 8pt", "center", "middle"))
     commands += renderer.button(
         next_action, next_x, y, button_width, button_height,
         next_label, active=pagination.has_next)

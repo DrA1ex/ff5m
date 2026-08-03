@@ -10,6 +10,7 @@ from ...keys import AppPage
 from ..actions import DISCARD_CONFIRM, SAVE, SELECTION_NEXT, ZONE_ACTIONS
 from ..common import CONTENT, FONT, compact
 from .state import SummaryState
+from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.Z_OFFSET_SUMMARY
@@ -68,7 +69,7 @@ def _status(spread, positional_warning, results):
 
 
 def _status_color(spread, positional_warning):
-    return "f2c94c" if spread > positional_warning else "56656c"
+    return ThemeColor.WARNING if spread > positional_warning else ThemeColor.DIM
 
 
 def _selection_label(selected, average, labels, results):

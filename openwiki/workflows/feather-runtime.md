@@ -212,10 +212,12 @@ Startup and error pages clear the normal page hitboxes. The only actionable shut
 
 ## Theme catalog lifecycle
 
-`ui/theme_catalog.py` is the single owner of theme discovery, the fallback
-palette, JSON Schema validation, optional-role inheritance, descriptions, and
-user-over-bundled override rules. `FeatherRenderer` consumes the normalized
-catalog and only applies colors.
+`ui/theme_catalog.py` owns theme discovery, JSON Schema validation,
+descriptions, and user-over-bundled override rules. `ui/theme.py` defines the
+typed base colors and contextual roles, applies conservative role defaults, and
+resolves each theme into one immutable physical palette. `FeatherRenderer`
+consumes that resolved palette and never infers semantic meaning from a HEX
+value.
 
 The complete bundled and user catalog is loaded when the renderer is created
 and reloaded on `klippy:ready`, which covers Klipper restarts. Opening the color
@@ -224,10 +226,13 @@ stable option snapshot. Paging, selecting, and applying use that snapshot and
 do not rescan either directory. Bundled files are treated as immutable during a
 Klipper process lifetime.
 
-Every theme file is validated against `ui/themes/theme.schema.json`. Invalid
-files are logged and skipped; if the schema or bundled files cannot be read, the
-in-code `FALLBACK_THEME` remains available so Feather can still render a usable
-interface.
+Every theme file is validated against `ui/themes/theme.schema.json`. Version 2
+keeps required physical values under `colors` and optional contextual overrides
+under `roles`. A role may reference a base color by name or provide its own HEX
+value; role-to-role references are rejected. Invalid files are logged and
+skipped. If the schema or bundled files cannot be read, the in-code
+`FALLBACK_THEME` is resolved with conservative role defaults so Feather can
+still render a usable interface.
 
 ## Component boundaries
 

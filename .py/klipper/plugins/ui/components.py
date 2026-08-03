@@ -6,6 +6,8 @@
 
 from enum import Enum
 
+from .theme import ThemeColor, ThemeRole
+
 from .actions import Action, action_wire_id
 from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
@@ -52,9 +54,10 @@ def _number(name, default=0, integer=True, **kwargs):
         kind="number", **kwargs)
 
 
-def _color(name, default="primary", **kwargs):
+def _color(name, default=ThemeColor.PRIMARY, **kwargs):
     return _property(
-        name, str, default, kind="theme_color", catalog="colors", **kwargs)
+        name, (ThemeColor, ThemeRole), default, kind="theme_color",
+        catalog="theme_tokens", **kwargs)
 
 
 def _select(name, choices, default, **kwargs):
@@ -96,7 +99,7 @@ class Component(Node):
 
 class Fill(Component):
     covers_bounds = True
-    property_schema = property_schema(_color("color", "background"))
+    property_schema = property_schema(_color("color", ThemeColor.BACKGROUND))
 
     def __init__(self, color, key=None):
         super().__init__(key=key)
@@ -125,10 +128,10 @@ class Stroke(Component):
 class Panel(Component):
     covers_bounds = True
     property_schema = property_schema(
-        _color("border"), _color("background", "panel"),
+        _color("border"), _color("background", ThemeColor.PANEL),
         _number("line_width", 2, minimum=0, maximum=12))
 
-    def __init__(self, border="35d9e6", background="050c0f",
+    def __init__(self, border=ThemeColor.PRIMARY, background=ThemeColor.PANEL,
                  line_width=2, key=None):
         super().__init__(key=key)
         self.border = border
@@ -146,9 +149,9 @@ class Section(Component):
     covers_bounds = True
     property_schema = property_schema(
         _text("title", group="Content", live=True),
-        _color("border", "border", group="Appearance"))
+        _color("border", ThemeColor.BORDER, group="Appearance"))
 
-    def __init__(self, title, border="295c66", key=None):
+    def __init__(self, title, border=ThemeColor.BORDER, key=None):
         super().__init__(key=key)
         self.title = title
         self.border = border
@@ -176,6 +179,9 @@ class Button(Component):
         _select(
             "state", ("enabled", "disabled", "selected", "warning",
                       "danger", "busy"), "enabled", group="Behavior"),
+        _color(
+            "accent", None, group="Appearance", storage="kwargs",
+            nullable=True),
         _select(
             "button_layout", ("center", "row"), "center",
             group="Behavior", source="layout", storage="kwargs",
@@ -269,7 +275,7 @@ class Text(Component):
             "auto_height", bool, False, kind="checkbox", group="Text layout",
             invalidation=Invalidation.LAYOUT))
 
-    def __init__(self, value, color="35d9e6", font=None,
+    def __init__(self, value, color=ThemeColor.PRIMARY, font=None,
                  horizontal="center", vertical="center", key=None,
                  auto_height=False, **kwargs):
         super().__init__(key=key)
@@ -347,9 +353,9 @@ class Metric(Component):
         _text("value", group="Content", live=True),
         _text("unit", group="Content", live=True),
         _color(
-            "label_color", "primary", group="Appearance", storage="kwargs"),
+            "label_color", ThemeColor.PRIMARY, group="Appearance", storage="kwargs"),
         _color(
-            "value_color", "text", group="Appearance", storage="kwargs"))
+            "value_color", ThemeColor.TEXT, group="Appearance", storage="kwargs"))
 
     def __init__(self, label, value, unit="", key=None, **kwargs):
         super().__init__(key=key)
@@ -386,19 +392,20 @@ class NumericKeypad(Component):
         _number("fraction_digits", None, minimum=0, maximum=12,
                 nullable=True, group="Validation"),
         _text("confirm_label", "CONFIRM", group="Content", live=True),
-        _color("border", "border", group="Appearance"),
-        _color("background", "panel", group="Appearance"),
-        _color("title_color", "text", group="Appearance"),
-        _color("subtitle_color", "dim", group="Appearance"),
-        _color("input_border", "secondary", group="Appearance"),
-        _color("value_color", "bright", group="Appearance"))
+        _color("border", ThemeColor.BORDER, group="Appearance"),
+        _color("background", ThemeColor.PANEL, group="Appearance"),
+        _color("title_color", ThemeColor.TEXT, group="Appearance"),
+        _color("subtitle_color", ThemeColor.DIM, group="Appearance"),
+        _color("input_border", ThemeColor.SECONDARY, group="Appearance"),
+        _color("value_color", ThemeColor.BRIGHT, group="Appearance"))
 
     def __init__(self, title, value, actions, subtitle="", mode="decimal",
                  minimum=None, maximum=None, max_length=10,
                  fraction_digits=None, confirm_label="CONFIRM",
-                 border="border", background="panel", title_color="text",
-                 subtitle_color="dim", input_border="secondary",
-                 value_color="bright", key=None):
+                 border=ThemeColor.BORDER, background=ThemeColor.PANEL,
+                 title_color=ThemeColor.TEXT, subtitle_color=ThemeColor.DIM,
+                 input_border=ThemeColor.SECONDARY,
+                 value_color=ThemeColor.BRIGHT, key=None):
         super().__init__(key=key)
         if not isinstance(actions, dict):
             raise TypeError("NumericKeypad actions must be a dictionary")
@@ -449,9 +456,9 @@ class DotGrid(Component):
     property_schema = property_schema(
         _number("columns", 11, minimum=1, maximum=100, group="Grid"),
         _number("rows", 7, minimum=1, maximum=100, group="Grid"),
-        _color("color", "dim", group="Appearance"))
+        _color("color", ThemeColor.DIM, group="Appearance"))
 
-    def __init__(self, columns=11, rows=7, color="263238", key=None):
+    def __init__(self, columns=11, rows=7, color=ThemeColor.MUTED, key=None):
         super().__init__(key=key)
         self.columns = columns
         self.rows = rows
@@ -469,7 +476,7 @@ class CornerMarks(Component):
         _number("length", 12, minimum=1, maximum=1000),
         _color("color"))
 
-    def __init__(self, length=12, color="35d9e6", key=None):
+    def __init__(self, length=12, color=ThemeColor.PRIMARY, key=None):
         super().__init__(key=key)
         self.length = length
         self.color = color
@@ -485,7 +492,7 @@ class Crosshair(Component):
 
     """One-pixel cross centered in the arranged bounds."""
 
-    def __init__(self, color="35d9e6", key=None):
+    def __init__(self, color=ThemeColor.PRIMARY, key=None):
         super().__init__(key=key)
         self.color = color
 
@@ -508,7 +515,7 @@ class JoystickKnob(Component):
         _number(
             "dirty_margin", 2, minimum=0, maximum=100, group="Knob"),
         _color("color", group="Appearance"),
-        _color("background", "panel", group="Appearance"))
+        _color("background", ThemeColor.PANEL, group="Appearance"))
 
     """State-bound joystick indicator with local damage restoration.
 
@@ -520,8 +527,8 @@ class JoystickKnob(Component):
     """
 
     def __init__(self, axis="xy", position=None, active_action=None,
-                 surface_ref=None, edge_padding=0, size=25, color="35d9e6",
-                 background="050c0f", dirty_margin=2, key=None):
+                 surface_ref=None, edge_padding=0, size=25, color=ThemeColor.PRIMARY,
+                 background=ThemeColor.PANEL, dirty_margin=2, key=None):
         super().__init__(key=key)
         if axis not in ("xy", "z"):
             raise ValueError("Unknown joystick axis: %s" % axis)
@@ -627,7 +634,7 @@ class JoystickKnob(Component):
             patch.x, patch.y, patch.width, patch.height, background)]
         if axis == "xy":
             grid = self._movement_bounds(layout, bounds)
-            columns, rows, grid_color = 11, 7, "263238"
+            columns, rows, grid_color = 11, 7, ThemeColor.MUTED
             if self.surface_ref is not None:
                 try:
                     surface = layout.node(self.surface_ref)
@@ -702,13 +709,13 @@ class VerticalScale(Component):
             "tick_width_large", 12, minimum=1, maximum=100, group="Scale",
             source="tick_widths", source_index=2,
             runtime_name="tick_widths", runtime_index=2),
-        _color("tick_color", "dim", group="Appearance"),
+        _color("tick_color", ThemeColor.DIM, group="Appearance"),
         _color("center_color", group="Appearance"))
 
     """Binary-subdivision ticks derived from the arranged track bounds."""
 
     def __init__(self, tick_gap=20, tick_widths=(5, 8, 12), depth=3,
-                 tick_color="56656c", center_color="35d9e6", key=None):
+                 tick_color=ThemeColor.DIM, center_color=ThemeColor.PRIMARY, key=None):
         super().__init__(key=key)
         self.tick_gap = tick_gap
         self.tick_widths = tuple(tick_widths)
@@ -766,24 +773,25 @@ class VerticalGauge(Component):
         gauge = resolve_deep(self.gauge, state)
         if gauge is None:
             commands = renderer.panel(
-                *bounds, border="295c66", background="050c0f",
+                *bounds, border=ThemeColor.BORDER, background=ThemeColor.PANEL,
                 line_width=1)
             commands += [
                 renderer.text(
                     bounds.center_x, bounds.y + 24,
-                    resolve(self.unavailable_title, state), "35d9e6",
+                    resolve(self.unavailable_title, state), ThemeColor.PRIMARY,
                     "JetBrainsMono 8pt", "center", "middle"),
                 renderer.text(
                     bounds.center_x, bounds.center_y,
-                    resolve(self.unavailable_value, state), "56656c",
+                    resolve(self.unavailable_value, state), ThemeColor.DIM,
                     "JetBrainsMono 6pt", "center", "middle"),
             ]
             return commands
         value = float(gauge["value"])
         danger_above = resolve(self.danger_above, state)
         value_color = (
-            "danger" if danger_above is not None and value > danger_above
-            else "primary")
+            ThemeColor.DANGER
+            if danger_above is not None and value > danger_above
+            else ThemeColor.PRIMARY)
         return renderer.vertical_gauge(
             *bounds, resolve(self.title, state), value,
             gauge["minimum"], gauge["maximum"], gauge.get("initial"),

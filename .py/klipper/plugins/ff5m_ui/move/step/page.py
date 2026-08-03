@@ -6,6 +6,8 @@
 
 from enum import Enum
 
+from ui import ThemeColor, ThemeRole
+
 from ui.actions import Increment, Navigate, SetValue
 from ui.bindings import bind, derived
 from ui.components import Button, Fill, Stroke, Text
@@ -94,7 +96,7 @@ def _status_label(homed_x, homed_y, homed_z):
 
 
 def _homed_color(*values):
-    return "35d9e6" if all(values) else "f2c94c"
+    return ThemeColor.PRIMARY if all(values) else ThemeColor.WARNING
 
 
 def _homed_label(*values):
@@ -105,7 +107,7 @@ def _axis_status(label, homed_bindings, refs):
     color = derived(_homed_color, *homed_bindings)
     state_label = derived(_homed_label, *homed_bindings)
     return Overlay(
-        Fill("050c0f").ref(refs[0]),
+        Fill(ThemeColor.PANEL).ref(refs[0]),
         Stroke(color, 2).ref(refs[1]),
         Text(label, color=color).height(44).align(vertical="top").ref(refs[2]),
         Text(state_label, color=color)
@@ -120,24 +122,24 @@ def _status_card():
         bind(ToolheadState.HOMED_Z),
     )
     return Overlay(
-        Fill("030607").ref(StepRef.STATUS_BACKGROUND),
+        Fill(ThemeColor.BACKGROUND).ref(StepRef.STATUS_BACKGROUND),
         Text(
             derived(_status_label, *homed),
             color=derived(
-                lambda x, y, z: "35d9e6" if _all_homed(x, y, z)
-                else "f2c94c",
+                lambda x, y, z: ThemeColor.PRIMARY if _all_homed(x, y, z)
+                else ThemeColor.WARNING,
                 *homed),
         ).height(34).align(vertical="top").ref(StepRef.STATUS_STATE),
         Text(
             derived(
                 lambda x, y: "X %7.2f   Y %7.2f" % (x, y),
                 bind(ToolheadState.X), bind(ToolheadState.Y)),
-            color="d9e4e8",
+            color=ThemeColor.TEXT,
         ).height(46).margin(top=34).align(vertical="top") \
          .ref(StepRef.STATUS_XY),
         Text(
             derived(lambda z: "Z %7.2f" % z, bind(ToolheadState.Z)),
-            color="d9e4e8",
+            color=ThemeColor.TEXT,
         ).height(26).margin(top=70).align(vertical="top").allow_overflow() \
          .ref(StepRef.STATUS_Z),
     ).ref(StepRef.STATUS_CARD).repaint_boundary()
@@ -204,7 +206,7 @@ def _control_layout():
             Text(
                 derived(lambda value: "%g MM" % value,
                         bind(MoveState.JOG_STEP)),
-                color="d9e4e8",
+                color=ThemeColor.TEXT,
             ).ref(StepRef.STEP_VALUE),
             Button(Increment(MoveState.JOG_STEP, 1), "+").ref(StepRef.STEP_PLUS),
         ),),
@@ -240,7 +242,7 @@ def _control_layout():
         matrix=(
             (home_layout,),
             (EMPTY,),
-            (Fill("295c66").ref(StepRef.DIVIDER),),
+            (Fill(ThemeColor.BORDER).ref(StepRef.DIVIDER),),
             (EMPTY,),
             (step_layout,),
         ),
@@ -259,7 +261,7 @@ def _content():
         .allow_overflow()
     axis = Overlay(axis_content, warning).ref(StepRef.AXIS)
     separator = Grid(
-        matrix=((EMPTY, Fill("295c66").ref(StepRef.SEPARATOR), EMPTY),),
+        matrix=((EMPTY, Fill(ThemeColor.BORDER).ref(StepRef.SEPARATOR), EMPTY),),
         columns=(15, 1, 19), rows=Equal(1),
     ).ref(StepRef.SEPARATOR_LAYOUT)
     return Grid(

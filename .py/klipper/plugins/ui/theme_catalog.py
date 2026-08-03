@@ -15,6 +15,8 @@ import re
 import stat
 from collections import namedtuple
 
+from .theme import resolve_theme
+
 
 DEFAULT_THEME = "DEFAULT"
 THEME_NAME_ALIASES = {
@@ -47,20 +49,6 @@ FALLBACK_THEME = {
     "dim": "56656c", "border": "295c66", "muted": "263238",
     "success": "56c596", "pressed_background": "103238",
     "overlay": "010203",
-}
-
-# Version 1 themes may omit component-specific roles. They inherit from the
-# stable base roles here, so older user themes remain compatible.
-OPTIONAL_THEME_ROLE_FALLBACKS = {
-    "button_background": "panel",
-    "button_border": "primary",
-    "button_text": "primary",
-    "button_selected_background": "panel",
-    "button_selected_border": "secondary",
-    "button_selected_text": "secondary",
-    "header_background": "panel",
-    "header_text": "primary",
-    "header_border": "border",
 }
 
 
@@ -139,6 +127,23 @@ def _validate_json_schema(value, schema, root, path="$"):
         target = _resolve_ref(root, schema["$ref"])
         return _validate_json_schema(value, target, root, path)
 
+    if "oneOf" in schema:
+        matches = 0
+        for candidate in schema["oneOf"]:
+            try:
+                _validate_json_schema(value, candidate, root, path)
+            except ThemeSchemaError:
+                continue
+            matches += 1
+        if matches != 1:
+            raise ThemeSchemaError(
+                "%s must match exactly one allowed schema" % path)
+
+    if "enum" in schema and not any(
+            _json_equal(value, item) for item in schema["enum"]):
+        raise ThemeSchemaError(
+            "%s must be one of %r" % (path, schema["enum"]))
+
     if "const" in schema and not _json_equal(value, schema["const"]):
         raise ThemeSchemaError(
             "%s must equal %r" % (path, schema["const"]))
@@ -180,23 +185,20 @@ def _validate_json_schema(value, schema, root, path="$"):
                 "%s does not match pattern %s" % (path, pattern))
 
 
-def with_optional_theme_roles(colors):
-    expanded = dict(colors)
-    for role, fallback_role in OPTIONAL_THEME_ROLE_FALLBACKS.items():
-        expanded.setdefault(role, expanded[fallback_role])
-    return expanded
-
 
 def validate_theme_data(data, schema=None, schema_path=THEME_SCHEMA_PATH):
-    """Return a normalized ``(name, description, colors)`` theme tuple."""
+    """Return a normalized ``(name, description, resolved_theme)`` tuple."""
     active_schema = schema if schema is not None else _load_schema(schema_path)
     _validate_json_schema(data, active_schema, active_schema)
     name = data["name"]
     description = data["description"].strip()
     colors = dict(
-        (role, value.strip().lower())
-        for role, value in data["colors"].items())
-    return name, description, with_optional_theme_roles(colors)
+        (name, value.strip().lower())
+        for name, value in data["colors"].items())
+    roles = dict(
+        (name, value.strip().lower())
+        for name, value in data.get("roles", {}).items())
+    return name, description, resolve_theme(colors, roles)
 
 
 def normalize_theme_name(name):
@@ -296,7 +298,7 @@ class ThemeCatalog:
     def reload_all(self):
         """Reload bundled and user themes, used at construction and ready."""
         self._load_active_schema()
-        fallback = with_optional_theme_roles(FALLBACK_THEME)
+        fallback = resolve_theme(FALLBACK_THEME)
         self._bundled_themes = {DEFAULT_THEME: fallback}
         self._bundled_descriptions = {
             DEFAULT_THEME: FALLBACK_THEME_DESCRIPTION}
@@ -326,7 +328,7 @@ class ThemeCatalog:
                     directory, exc)
 
     def _reset_to_fallback(self):
-        fallback = with_optional_theme_roles(FALLBACK_THEME)
+        fallback = resolve_theme(FALLBACK_THEME)
         self._bundled_themes = {DEFAULT_THEME: fallback}
         self._bundled_descriptions = {
             DEFAULT_THEME: FALLBACK_THEME_DESCRIPTION}
@@ -377,9 +379,9 @@ class ThemeCatalog:
             data = None
             try:
                 data = _read_theme_document(path)
-                name, description, colors = validate_theme_data(
+                name, description, theme = validate_theme_data(
                     data, schema=self._schema)
-                themes[name] = colors
+                themes[name] = theme
                 descriptions[name] = description
             except Exception as exc:
                 logging.warning(

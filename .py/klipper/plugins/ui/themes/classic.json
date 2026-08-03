@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
   "license": "GNU GPLv3",
   "name": "CLASSIC",
@@ -21,15 +21,20 @@
     "muted": "a9a9a9",
     "success": "008a3b",
     "pressed_background": "9a9a9a",
-    "overlay": "6f6f6f",
-    "button_background": "d4d0c8",
-    "button_border": "7f7f7f",
-    "button_text": "111111",
-    "button_selected_background": "000080",
-    "button_selected_border": "ffffff",
-    "button_selected_text": "ffffff",
-    "header_background": "000080",
-    "header_text": "ffffff",
-    "header_border": "7f7f7f"
+    "overlay": "6f6f6f"
+  },
+  "roles": {
+    "button_background": "panel",
+    "button_border": "border",
+    "button_text": "text",
+    "button_selected_background": "primary",
+    "button_selected_border": "bright",
+    "button_selected_text": "bright",
+    "header_background": "primary",
+    "header_text": "bright",
+    "header_border": "border",
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

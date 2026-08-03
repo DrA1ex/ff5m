@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "YELLOW",
   "description": "Hazard yellow on black",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -22,5 +22,10 @@
     "success": "7cff6b",
     "pressed_background": "514900",
     "overlay": "030300"
+  },
+  "roles": {
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

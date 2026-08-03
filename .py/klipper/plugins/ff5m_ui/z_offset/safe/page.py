@@ -9,6 +9,7 @@ from ...keys import AppPage
 from ..actions import SAFE_HIGHER, SAFE_LOWER, SAFE_PROBE, SAFE_SAVE
 from ..common import CONTENT, FONT
 from .state import SafeState
+from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.SAFE_Z_CALIBRATION
@@ -34,10 +35,10 @@ def _format(value):
 
 def _card(label, value, ref):
     return Overlay(
-        Panel(border="295c66", background="050c0f", line_width=2),
-        Text(label, color="35d9e6", font=FONT)
+        Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL, line_width=2),
+        Text(label, color=ThemeColor.PRIMARY, font=FONT)
         .height(20).margin(top=10).align(vertical="top"),
-        Text(derived(_format, value), color="ffffff",
+        Text(derived(_format, value), color=ThemeColor.BRIGHT,
              font="JetBrainsMono Bold 12pt")
         .height(20).margin(top=43).align(vertical="top"),
     ).ref(ref).repaint_boundary()
@@ -46,7 +47,7 @@ def _card(label, value, ref):
 def _content():
     help_text = Text(
         "PROBE FINDS THE CLEAN BED TRIGGER AT CENTER. THE INITIAL SAFE Z IS TRIGGER + 5 MM.",
-        color="d9e4e8", font=FONT, wrap=True, auto_height=True,
+        color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True,
     ).ref(SafeRef.HELP)
     cards = Grid(
         matrix=((

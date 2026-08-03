@@ -771,8 +771,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         self.assertTrue(controller.renderer.set_theme("SYNTH"))
-        primary = controller.renderer.color("primary")
-        danger_color = controller.renderer.color("danger")
+        primary = controller.renderer.color(UI.ThemeColor.PRIMARY)
+        danger_color = controller.renderer.color(UI.ThemeColor.DANGER)
         controller.reactor = Reactor()
         controller.weight_sensor = StatusObject({
             "temperature": 400.0,
@@ -1366,7 +1366,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.params.updated,
                          [("feather_theme", "SYNTH")])
         self.assertEqual(controller.renderer.theme_name, "SYNTH")
-        expected_background = controller.renderer.color("background")
+        expected_background = controller.renderer.color(UI.ThemeColor.BACKGROUND)
         drawing = "\n".join(controller.draw_batches[-1])
         self.assertIn("-c %s" % expected_background, drawing)
 
@@ -1380,7 +1380,7 @@ class ControllerSafetyTest(unittest.TestCase):
             controller.draw_batches = []
             controller.renderer.send = controller.draw_batches.append
             runtime_theme = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "name": "RUNTIME_ADDED",
                 "description": "Added without restarting Klipper",
                 "colors": dict(UI.FALLBACK_THEME, primary="123abc"),
@@ -1409,7 +1409,7 @@ class ControllerSafetyTest(unittest.TestCase):
             controller.draw_batches = []
             controller.renderer.send = controller.draw_batches.append
             invalid = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "name": "BROKEN_USER",
                 "description": "Invalid user theme",
                 "colors": dict(UI.FALLBACK_THEME, primary="not-a-color"),

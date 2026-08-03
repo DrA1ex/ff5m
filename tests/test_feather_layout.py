@@ -16,8 +16,9 @@ sys.path.insert(0, str(PLUGINS))
 
 from ui import (  # noqa: E402
     EMPTY, FLEX, Button, ButtonStyle, Column, Command, CommandKey, Equal,
-    FeatherRenderer, Fill, Flex, Grid, Overlay, Override, PageKey, PageTree,
-    Rect, Spacer, StateKey, Text, Tree,
+    FALLBACK_THEME, FeatherRenderer, Fill, Flex, Grid, Overlay, Override,
+    PageKey, PageTree, Rect, Spacer, StateKey, Text, ThemeColor, ThemeRole,
+    Tree, resolve_theme,
     WrapPanel, bind, state, subdivision_positions,
 )
 from ff5m_ui.move import runtime as move  # noqa: E402
@@ -71,9 +72,9 @@ class RectLayoutTest(unittest.TestCase):
 class DeclarativeContainerTest(unittest.TestCase):
     def test_column_auto_gap_distributes_all_free_space_between_fixed_children(self):
         tree = Tree(Column(
-            Fill("111111").height(10).ref("first"),
-            Fill("222222").height(10).ref("second"),
-            Fill("333333").height(10).ref("third"),
+            Fill(ThemeColor.PRIMARY).height(10).ref("first"),
+            Fill(ThemeColor.SECONDARY).height(10).ref("second"),
+            Fill(ThemeColor.WARNING).height(10).ref("third"),
             gap=None,
         ), Rect(0, 0, 40, 100))
 
@@ -83,9 +84,9 @@ class DeclarativeContainerTest(unittest.TestCase):
 
     def test_auto_gap_remains_zero_when_flexible_children_consume_space(self):
         tree = Tree(Column(
-            Fill("111111").height(10).ref("first"),
+            Fill(ThemeColor.PRIMARY).height(10).ref("first"),
             Spacer().ref("flex"),
-            Fill("333333").height(10).ref("last"),
+            Fill(ThemeColor.WARNING).height(10).ref("last"),
             gap=None,
         ), Rect(0, 0, 40, 100))
 
@@ -112,8 +113,8 @@ class DeclarativeContainerTest(unittest.TestCase):
     def test_grid_arranges_a_typed_visual_matrix(self):
         tree = Tree(Grid(
             matrix=(
-                (Fill("111111").ref("fixed"), EMPTY),
-                (EMPTY, Fill("222222").ref("fill")),
+                (Fill(ThemeColor.PRIMARY).ref("fixed"), EMPTY),
+                (EMPTY, Fill(ThemeColor.SECONDARY).ref("fill")),
             ),
             columns=(20, FLEX), rows=(10, FLEX), gap=(3, 4),
         ), Rect(5, 7, 100, 50))
@@ -124,7 +125,7 @@ class DeclarativeContainerTest(unittest.TestCase):
     def test_wrapped_auto_height_text_expands_and_moves_following_content(self):
         short = Tree(Column(
             Text("Short", wrap=True, auto_height=True).ref("text"),
-            Fill("222222").height(10).ref("after"),
+            Fill(ThemeColor.SECONDARY).height(10).ref("after"),
             gap=2,
         ), Rect(0, 0, 120, 320))
         long = Tree(Column(
@@ -133,7 +134,7 @@ class DeclarativeContainerTest(unittest.TestCase):
                 "and therefore needs an intrinsic vertical extent.",
                 wrap=True, auto_height=True,
             ).ref("text"),
-            Fill("222222").height(10).ref("after"),
+            Fill(ThemeColor.SECONDARY).height(10).ref("after"),
             gap=2,
         ), Rect(0, 0, 120, 320))
 
@@ -151,9 +152,9 @@ class DeclarativeContainerTest(unittest.TestCase):
 
     def test_column_uses_element_sizes_instead_of_numeric_tuples(self):
         tree = Tree(Column(
-            Fill("111111").height(12).ref("top"),
+            Fill(ThemeColor.PRIMARY).height(12).ref("top"),
             Spacer(),
-            Fill("222222").height(8).ref("bottom"),
+            Fill(ThemeColor.SECONDARY).height(8).ref("bottom"),
             gap=2,
         ), Rect(10, 20, 50, 40))
 
@@ -162,23 +163,23 @@ class DeclarativeContainerTest(unittest.TestCase):
 
     def test_overlay_child_offset_is_safe_and_layout_managed_children_reject_overflow(self):
         tree = Tree(Overlay(
-            Fill("111111").size(20, 10).align(
+            Fill(ThemeColor.PRIMARY).size(20, 10).align(
                 horizontal="left", vertical="top").offset(4, 6).ref("leaf"),
         ), Rect(10, 20, 50, 40))
 
         self.assertEqual(tree.rect("leaf").as_tuple(), (14, 26, 20, 10))
         with self.assertRaisesRegex(ValueError, "moves it outside slot"):
             Tree(Overlay(
-                Fill("111111").size(20, 10).align(
+                Fill(ThemeColor.PRIMARY).size(20, 10).align(
                     horizontal="left", vertical="top").offset(-1, 0),
             ), Rect(10, 20, 50, 40))
 
     def test_shared_margin_padding_size_and_alignment_are_inherited(self):
         tree = Tree(Overlay(
-            Fill("111111").size(20, 10).margin(right=3, bottom=4)
+            Fill(ThemeColor.PRIMARY).size(20, 10).margin(right=3, bottom=4)
             .align(horizontal="right", vertical="bottom").ref("leaf"),
             Column(
-                Fill("222222").height(5).ref("content"),
+                Fill(ThemeColor.SECONDARY).height(5).ref("content"),
             ).padding(2).ref("container"),
         ), Rect(10, 20, 50, 40))
 
@@ -213,7 +214,7 @@ class DeclarativeContainerTest(unittest.TestCase):
 
     def test_explicit_overflow_is_opt_in(self):
         tree = Tree(Overlay(
-            Fill("111111").height(11).allow_overflow().ref("overflow"),
+            Fill(ThemeColor.PRIMARY).height(11).allow_overflow().ref("overflow"),
         ), Rect(0, 0, 20, 10))
 
         self.assertEqual(tree.rect("overflow").as_tuple(), (0, 0, 20, 11))
@@ -238,11 +239,11 @@ class DirtyRenderingTest(unittest.TestCase):
     def test_page_redraws_only_the_dirty_repaint_boundary(self):
         page = PageTree(Overlay(
             Overlay(
-                Fill("111111"),
+                Fill(ThemeColor.PRIMARY),
                 Text(bind(TestState.LEFT)),
             ).ref("left").repaint_boundary(),
             Overlay(
-                Fill("222222"),
+                Fill(ThemeColor.SECONDARY),
                 Text(bind(TestState.RIGHT)),
             ).width(40).align(horizontal="right")
             .ref("right").repaint_boundary(),
@@ -253,14 +254,17 @@ class DirtyRenderingTest(unittest.TestCase):
         self.assertEqual(page.update(renderer, {TestState.LEFT: "A"}), [])
         drawing = "\n".join(page.update(renderer, {TestState.LEFT: "C"}))
 
-        self.assertIn("-p 0 0 -s 100 20 -c 111111", drawing)
+        self.assertIn(
+            "-p 0 0 -s 100 20 -c %s" %
+            renderer.color(ThemeColor.PRIMARY), drawing)
         self.assertIn('-t "C"', drawing)
-        self.assertNotIn("222222", drawing)
+        self.assertNotIn(
+            renderer.color(ThemeColor.SECONDARY), drawing)
         self.assertNotIn('-t "B"', drawing)
 
     def test_component_can_be_invalidated_without_a_partial_tree(self):
         page = PageTree(Overlay(
-            Fill("111111").ref("surface"),
+            Fill(ThemeColor.PRIMARY).ref("surface"),
         ), Rect(0, 0, 20, 10), page_id=TestPage.LAYOUT)
         renderer = FeatherRenderer()
         page.draw(renderer)
@@ -343,6 +347,29 @@ class HeatLayoutTest(unittest.TestCase):
             [action.payload for action in preheats], list(self.MATERIALS))
         self.assertTrue(all(action.key.__class__ is heat.HeatCommand
                             for action in self.page.actions.values()))
+
+    def test_heat_page_uses_context_roles_for_product_accents(self):
+        renderer = FeatherRenderer()
+        role_colors = {
+            ThemeRole.TEMPERATURE_NOZZLE.value: "a1b2c3",
+            ThemeRole.TEMPERATURE_BED.value: "b2c3d4",
+            ThemeRole.TEMPERATURE_FAN.value: "c3d4e5",
+        }
+        renderer._palette = resolve_theme(FALLBACK_THEME, role_colors)
+
+        drawing = "\n".join(self.page.draw(renderer))
+
+        expected = {
+            "NOZZLE": renderer.color(ThemeRole.TEMPERATURE_NOZZLE),
+            "BED": renderer.color(ThemeRole.TEMPERATURE_BED),
+            "PART FAN": renderer.color(ThemeRole.TEMPERATURE_FAN),
+        }
+        for label, color in expected.items():
+            with self.subTest(label=label):
+                line = next(
+                    command for command in drawing.splitlines()
+                    if '-t "%s"' % label in command)
+                self.assertIn("-c %s" % color, line)
 
     def test_telemetry_update_redraws_only_changed_value_boundary(self):
         renderer = FeatherRenderer()

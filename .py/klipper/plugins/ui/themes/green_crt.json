@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "GREEN_CRT",
   "description": "Bright green CRT",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -22,5 +22,10 @@
     "success": "42ff3f",
     "pressed_background": "09520d",
     "overlay": "000301"
+  },
+  "roles": {
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

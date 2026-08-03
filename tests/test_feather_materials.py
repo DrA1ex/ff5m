@@ -161,19 +161,20 @@ class MaterialLayoutTest(unittest.TestCase):
         renderer = RecordingRenderer()
         label = "sample material"
         subtitle = "sample subtitle"
+        subtitle_color = object()
         MATERIALS.render_material_selector(
             renderer, "material.", 0, 0, 230, 135,
             materials=(label,), label=lambda material: material,
             subtitle=lambda material: subtitle,
             subtitle_font="JetBrainsMono Bold 12pt",
-            subtitle_color="d9e4e8")
+            subtitle_color=subtitle_color)
 
         button = renderer.buttons[0]
         self.assertEqual(button[5], label)
         self.assertEqual(button[6]["subtitle"], subtitle)
         self.assertEqual(
             button[6]["subtitle_font"], "JetBrainsMono Bold 12pt")
-        self.assertEqual(button[6]["subtitle_color"], "d9e4e8")
+        self.assertIs(button[6]["subtitle_color"], subtitle_color)
 
 if __name__ == "__main__":
     unittest.main()

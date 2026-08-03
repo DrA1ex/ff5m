@@ -9,6 +9,7 @@ from ...keys import AppPage
 from ..actions import ENTER_ZONE
 from ..common import CONTENT, FONT
 from .state import PaperBriefingState
+from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.Z_OFFSET_PAPER_BRIEFING
@@ -35,30 +36,30 @@ def _content():
     text = Column(
         Text(
             "PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.",
-            color="35d9e6", font=FONT,
+            color=ThemeColor.PRIMARY, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_1),
         Text(
             "PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.",
-            color="d9e4e8", font=FONT,
+            color=ThemeColor.TEXT, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_2),
         Text(
             derived(lambda height:
                     "MOVE TO %.3f MM USES HALF OF SAFE Z AS REFERENCE, SO YOU" %
                     height,
                     bind(PaperBriefingState.MANUAL_START)),
-            color="d9e4e8", font=FONT,
+            color=ThemeColor.TEXT, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_3),
         Text(
             "CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.",
-            color="d9e4e8", font=FONT,
+            color=ThemeColor.TEXT, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_4),
         Text(
             "SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.",
-            color="d9e4e8", font=FONT,
+            color=ThemeColor.TEXT, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_5),
         Text(
             "WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.",
-            color="d9e4e8", font=FONT,
+            color=ThemeColor.TEXT, font=FONT,
         ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_6),
         gap=20,
     ).height(196).ref(PaperBriefingRef.TEXT)
@@ -66,7 +67,7 @@ def _content():
         matrix=((Text(
             derived(lambda zone: "SELECTED ZONE: %s" % zone,
                     bind(PaperBriefingState.ZONE_LABEL)),
-            color="b47aff", font="JetBrainsMono Bold 12pt",
+            color=ThemeColor.SECONDARY, font="JetBrainsMono Bold 12pt",
         ).ref(PaperBriefingRef.ZONE),),),
         columns=Equal(1), rows=Equal(1),
     ).height(24).padding(left=10, right=10).ref(PaperBriefingRef.ZONE_LAYOUT)

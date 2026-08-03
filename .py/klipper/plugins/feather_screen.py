@@ -14,7 +14,7 @@ import struct
 import time
 
 try:
-    from .ui import Command, FeatherRenderer, Page, PrintState
+    from .ui import Command, FeatherRenderer, Page, PrintState, ThemeColor
     from .ff5m_ui.move import runtime as move_ui
     from .feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS,
@@ -33,7 +33,7 @@ try:
 except (ImportError, ValueError):
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
-    from ui import Command, FeatherRenderer, Page, PrintState
+    from ui import Command, FeatherRenderer, Page, PrintState, ThemeColor
     from ff5m_ui.move import runtime as move_ui
     from feather_screen_pages import (
         FeatherPagesMixin, FILE_ROWS,
@@ -1559,7 +1559,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             (("message.ok", "OK", "enabled"),),
             x=90, y=95, width=620, height=300, tone="info")
         commands.append(self.renderer.text(
-            400, 173, self.message, "d9e4e8", "JetBrainsMono 8pt", "center",
+            400, 173, self.message, ThemeColor.TEXT, "JetBrainsMono 8pt", "center",
             "middle", max_width=584, max_height=88, wrap=True,
             truncate=True))
         self.renderer.send(commands)
@@ -1618,11 +1618,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             x=80, y=85, width=640, height=325, tone="danger")
         commands += [
             self.renderer.text(
-                400, 163, self.error_message, "d9e4e8", "JetBrainsMono 8pt",
+                400, 163, self.error_message, ThemeColor.TEXT, "JetBrainsMono 8pt",
                 "center", "middle", max_width=584, max_height=66, wrap=True,
                 truncate=True),
             self.renderer.text(
-                400, 235, advice, "d9e4e8", "JetBrainsMono 8pt", "center",
+                400, 235, advice, ThemeColor.TEXT, "JetBrainsMono 8pt", "center",
                 "middle", max_width=584, truncate=True),
         ]
         self.renderer.prioritize_next_batch("critical", "error-screen")

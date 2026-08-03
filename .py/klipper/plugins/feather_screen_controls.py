@@ -13,7 +13,7 @@ import time
 try:
     from .ui import (
         Back, Command, Increment, Navigate, Page, PrintState, Replace,
-        SetValue, Toggle, state_spec,
+        SetValue, ThemeColor, Toggle, state_spec,
     )
     from .ff5m_ui.keys import AppPage
     from .ff5m_ui.move.geometry import (
@@ -32,7 +32,7 @@ try:
 except (ImportError, ValueError):
     from ui import (
         Back, Command, Increment, Navigate, Page, PrintState, Replace,
-        SetValue, Toggle, state_spec,
+        SetValue, ThemeColor, Toggle, state_spec,
     )
     from ff5m_ui.keys import AppPage
     from ff5m_ui.move.geometry import (
@@ -958,15 +958,15 @@ class FeatherControlsMixin:
             steps = ("OPEN CALIBRATION.MD IN FLUIDD FOR INSTRUCTIONS.",)
         commands = self.renderer.begin_page(title, back=True)
         commands += self.renderer.panel(
-            30, 72, 740, 300, border="295c66", background="050c0f")
+            30, 72, 740, 300, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
         for index, step in enumerate(steps):
             commands.append(self.renderer.text(
-                60, 112 + index * 62, step, "d9e4e8",
+                60, 112 + index * 62, step, ThemeColor.TEXT,
                 "JetBrainsMono 8pt", "left", "middle",
                 max_width=680, max_height=48, wrap=True, truncate=True))
         commands.append(self.renderer.text(
             400, 410, "MEASUREMENT AND USER.CFG EDITING REQUIRED",
-            "f2c94c", "JetBrainsMono Bold 8pt", "center", "middle"))
+            ThemeColor.WARNING, "JetBrainsMono Bold 8pt", "center", "middle"))
         self.renderer.send(commands)
 
     def _render_live_z_offset(self):
@@ -977,27 +977,27 @@ class FeatherControlsMixin:
         unsaved = current - saved
         outside_warning = (
             abs(unsaved) > self.z_adjust_warning_threshold + 0.0001)
-        value_color = "ff4d5a" if outside_warning else "ffffff"
+        value_color = ThemeColor.DANGER if outside_warning else ThemeColor.BRIGHT
         commands = self.renderer.begin_page(
             "Live Z offset", back=True)
 
         cards = (
-            ("SAVED", saved, 20, "35d9e6"),
+            ("SAVED", saved, 20, ThemeColor.PRIMARY),
             ("CURRENT", current, 245, value_color),
             ("UNSAVED", unsaved, 470, value_color),
         )
         for label, value, x, color in cards:
             commands += self.renderer.panel(
-                x, 82, 215, 112, border="295c66", background="050c0f")
+                x, 82, 215, 112, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
             commands.append(self.renderer.text(
-                x + 107, 108, label, "35d9e6",
+                x + 107, 108, label, ThemeColor.PRIMARY,
                 "JetBrainsMono 8pt", "center", "middle"))
             commands.append(self.renderer.text(
                 x + 107, 151, "%+.3f mm" % value, color,
                 "JetBrainsMono Bold 16pt", "center", "middle"))
 
         commands.append(self.renderer.text(
-            355, 218, "ADJUSTMENT STEP", "56656c",
+            355, 218, "ADJUSTMENT STEP", ThemeColor.DIM,
             "JetBrainsMono 8pt", "center", "middle"))
         steps = (
             ("live_z.step.0005", 0.005),
@@ -1229,22 +1229,23 @@ class FeatherControlsMixin:
         x, y, width, height = Z_WEIGHT_GAUGE
         if gauge is None:
             commands = self.renderer.panel(
-                x, y, width, height, border="295c66",
-                background="050c0f", line_width=1)
+                x, y, width, height, border=ThemeColor.BORDER,
+                background=ThemeColor.PANEL, line_width=1)
             commands += [
                 self.renderer.text(
-                    x + width // 2, y + 24, "FORCE", "35d9e6",
+                    x + width // 2, y + 24, "FORCE", ThemeColor.PRIMARY,
                     "JetBrainsMono 8pt", "center", "middle"),
                 self.renderer.text(
                     x + width // 2, y + height // 2, "N/A",
-                    "56656c", "JetBrainsMono 6pt", "center", "middle"),
+                    ThemeColor.DIM, "JetBrainsMono 6pt", "center", "middle"),
             ]
             return commands
         return self.renderer.vertical_gauge(
             x, y, width, height, "LOAD", gauge["value"],
             gauge["minimum"], gauge["maximum"], gauge["initial"],
-            value_color=("danger" if gauge["value"] > Z_WEIGHT_DANGER
-                         else "primary"))
+            value_color=(ThemeColor.DANGER
+                         if gauge["value"] > Z_WEIGHT_DANGER
+                         else ThemeColor.PRIMARY))
 
     def _update_z_weight_status(self, eventtime):
         gauge = self._update_z_weight_gauge(eventtime)
@@ -1344,7 +1345,7 @@ class FeatherControlsMixin:
         else:
             text = "Printer will heat, clean, home and replace mesh profile 'auto'."
         commands.append(self.renderer.text(
-            400, 85, text, "ffffff", "Roboto 10pt", "center", "middle",
+            400, 85, text, ThemeColor.BRIGHT, "Roboto 10pt", "center", "middle",
             max_width=572, max_height=70, wrap=True, truncate=True))
         materials = (self.heating_materials
                      if kind in ("screws", "mesh", "z",
@@ -1361,7 +1362,7 @@ class FeatherControlsMixin:
                 area_width=750)
         elif kind in ("screws", "mesh", "z", "pid_bed", "pid_extruder"):
             commands.append(self.renderer.text(
-                400, 173, "NO MATERIALS ENABLED", "56656c",
+                400, 173, "NO MATERIALS ENABLED", ThemeColor.DIM,
                 "JetBrainsMono Bold 10pt", "center", "middle"))
         if kind in ("screws", "z"):
             commands += self.renderer.button(
@@ -1378,7 +1379,7 @@ class FeatherControlsMixin:
                     "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
             commands.append(self.renderer.text(
                 400, 290, mode_hint,
-                "56656c", "JetBrainsMono 8pt", "center"))
+                ThemeColor.DIM, "JetBrainsMono 8pt", "center"))
         elif kind in ("pid_bed", "pid_extruder") and materials:
             nozzle, bed = self._limited_preheat(
                 self.calibration_material)
@@ -1386,11 +1387,11 @@ class FeatherControlsMixin:
             commands.append(self.renderer.text(
                 400, 255, "TARGET %.0f C // %s" % (
                     target, self.calibration_material),
-                "f2c94c", "JetBrainsMono Bold 10pt", "center"))
+                ThemeColor.WARNING, "JetBrainsMono Bold 10pt", "center"))
         elif kind == "shaper":
             commands.append(self.renderer.text(
                 400, 255, "STRONG MACHINE VIBRATION IS EXPECTED",
-                "f2c94c", "JetBrainsMono Bold 10pt", "center"))
+                ThemeColor.WARNING, "JetBrainsMono Bold 10pt", "center"))
         material_required = kind in ("mesh", "pid_bed", "pid_extruder")
         cleaning_required = (kind in ("screws", "z") and getattr(
             self, "calibration_clean_nozzle", True))
@@ -1407,7 +1408,7 @@ class FeatherControlsMixin:
         title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
         commands = self.renderer.begin_page(title)
         commands.append(self.renderer.text(
-            400, 142, label, "b47aff", "JetBrainsMono Bold 12pt", "center",
+            400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt", "center",
             max_width=704, truncate=True))
         commands += self._calibration_stage_commands(label)
         cancel_visible = self._calibration_heat_cancel_visible()
@@ -1443,9 +1444,9 @@ class FeatherControlsMixin:
             self._render_calibration_progress()
             return
         self._last_calibration_label = label
-        commands = [self.renderer.fill(40, 105, 720, 205, "030607"),
+        commands = [self.renderer.fill(40, 105, 720, 205, ThemeColor.BACKGROUND),
                     self.renderer.text(
-                        400, 142, label, "b47aff", "JetBrainsMono Bold 12pt",
+                        400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt",
                         "center", max_width=704, truncate=True)]
         commands += self._calibration_stage_commands(label)
         self.renderer.send(commands)
@@ -1559,12 +1560,12 @@ class FeatherControlsMixin:
         for position, stage in enumerate(stages):
             x = left + position * (width + gap)
             if position == current:
-                color = "b47aff"
+                color = ThemeColor.SECONDARY
             elif position < current:
-                color = "35d9e6"
+                color = ThemeColor.PRIMARY
             else:
-                color = "263238"
-            commands += [self.renderer.fill(x, 225, width, 38, "050c0f"),
+                color = ThemeColor.MUTED
+            commands += [self.renderer.fill(x, 225, width, 38, ThemeColor.PANEL),
                          self.renderer.stroke(x, 225, width, 38, color, 2),
                          self.renderer.text(x + width // 2, 244, stage, color,
                                             "JetBrainsMono 8pt", "center", "middle")]
@@ -1683,9 +1684,9 @@ class FeatherControlsMixin:
     @staticmethod
     def _mesh_color(value, minimum, maximum):
         if maximum <= minimum:
-            return "35d9e6"
+            return ThemeColor.PRIMARY
         ratio = (value - minimum) / (maximum - minimum)
-        colors = ("244c66", "35d9e6", "56c596", "f2c94c", "ff4d5a")
+        colors = (ThemeColor.PRIMARY_DARK, ThemeColor.PRIMARY, ThemeColor.SUCCESS, ThemeColor.WARNING, ThemeColor.DANGER)
         return colors[min(len(colors) - 1, int(ratio * len(colors)))]
 
     SCREW_RESULT = re.compile(r"^([^:]+).*adjust\s+(CW|CCW)\s+([0-9]+:[0-9]+)", re.I)
@@ -1884,16 +1885,16 @@ class FeatherControlsMixin:
         commands = self.renderer.begin_page("Calibration result")
         if self.calibration_error:
             commands.append(self.renderer.text(
-                400, 120, self.calibration_error, "ff3030", "Roboto 10pt",
+                400, 120, self.calibration_error, ThemeColor.DANGER, "Roboto 10pt",
                 "center", max_width=740, truncate=True))
         elif getattr(self, "calibration_cancelled", False):
             commands += [
                 self.renderer.text(
-                    400, 145, "HEATING CANCELLED", "f2c94c",
+                    400, 145, "HEATING CANCELLED", ThemeColor.WARNING,
                     "JetBrainsMono Bold 16pt", "center", "middle"),
                 self.renderer.text(
                     400, 195, "Calibration was stopped before probing",
-                    "d9e4e8", "JetBrainsMono 8pt", "center", "middle"),
+                    ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle"),
             ]
         elif self.calibration_kind == "mesh" and self.calibration_mesh:
             matrix = self.calibration_mesh
@@ -1912,32 +1913,32 @@ class FeatherControlsMixin:
                                                     cell_height - 3, color),
                                  self.renderer.text(x + (cell_width - 3) // 2,
                                                     y + (cell_height - 3) // 2,
-                                                    "%+.2f" % value, "030607",
+                                                    "%+.2f" % value, ThemeColor.BACKGROUND,
                                                     "JetBrainsMono Bold 8pt",
                                                     "center", "middle")]
             commands += [
-                self.renderer.text(640, 92, "PROFILE AUTO", "35d9e6",
+                self.renderer.text(640, 92, "PROFILE AUTO", ThemeColor.PRIMARY,
                                    "JetBrainsMono 8pt", "left", "middle"),
-                self.renderer.text(640, 145, "MIN %+.3f" % minimum, "d9e4e8",
+                self.renderer.text(640, 145, "MIN %+.3f" % minimum, ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", "left", "middle"),
-                self.renderer.text(640, 185, "MAX %+.3f" % maximum, "d9e4e8",
+                self.renderer.text(640, 185, "MAX %+.3f" % maximum, ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", "left", "middle"),
                 self.renderer.text(640, 225, "RANGE %.3f" % (maximum - minimum),
-                                   "f2c94c", "JetBrainsMono 8pt", "left", "middle"),
+                                   ThemeColor.WARNING, "JetBrainsMono 8pt", "left", "middle"),
                 self.renderer.text(640, 285, "%d X %d POINTS" % (columns, rows),
-                                   "56656c", "JetBrainsMono 8pt", "left", "middle"),
+                                   ThemeColor.DIM, "JetBrainsMono 8pt", "left", "middle"),
             ]
         elif self.calibration_kind == "screws" and self.calibration_results:
             for index, result in enumerate(self.calibration_results[:5]):
                 commands.append(self.renderer.text(
-                    100, 75 + index * 48, result["name"], "ffffff", "Roboto 10pt"))
+                    100, 75 + index * 48, result["name"], ThemeColor.BRIGHT, "Roboto 10pt"))
                 commands.append(self.renderer.text(
                     700, 75 + index * 48, "%s %s" %
-                    (result["direction"], result["turns"]), "00f0f0", "Roboto 10pt",
+                    (result["direction"], result["turns"]), ThemeColor.PRIMARY, "Roboto 10pt",
                     "right"))
         else:
             commands.append(self.renderer.text(400, 150, "Calibration completed",
-                                               "00f0f0", "Roboto Bold 14pt", "center"))
+                                               ThemeColor.PRIMARY, "Roboto Bold 14pt", "center"))
         if getattr(self, "calibration_cancelled", False):
             commands += self.renderer.button(
                 "cal.done", 270, 355, 260, 70, "DONE")

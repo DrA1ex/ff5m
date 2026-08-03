@@ -6,6 +6,8 @@
 
 from enum import Enum
 
+from ui import ThemeColor, ThemeRole
+
 from ui.actions import Navigate
 from ui.bindings import bind, derived
 from ui.components import (
@@ -74,7 +76,7 @@ class JoystickRef(Enum):
 
 
 def _position_border(homed_x, homed_y, homed_z):
-    return "35d9e6" if homed_x and homed_y and homed_z else "f2c94c"
+    return ThemeColor.PRIMARY if homed_x and homed_y and homed_z else ThemeColor.WARNING
 
 
 def _position_card():
@@ -110,7 +112,7 @@ def _position_card():
 
 def _inertia_card():
     return Overlay(
-        Panel(border="295c66", line_width=1).ref(JoystickRef.INERTIA_PANEL),
+        Panel(border=ThemeColor.BORDER, line_width=1).ref(JoystickRef.INERTIA_PANEL),
         Metric(
             "INERTIA",
             derived(lambda value: "%5.1f" % value, bind(MoveState.INERTIA)),
@@ -120,7 +122,7 @@ def _inertia_card():
 
 def _xy_pad():
     return Overlay(
-        Panel(border="35d9e6", line_width=1).ref(JoystickRef.XY_PAD_PANEL),
+        Panel(border=ThemeColor.PRIMARY, line_width=1).ref(JoystickRef.XY_PAD_PANEL),
         DotGrid(columns=11, rows=7)
         .margin(left=40, top=24, right=40, bottom=24)
         .ref(JoystickRef.XY_GRID),
@@ -155,7 +157,7 @@ def _xy_pad():
 
 def _z_track():
     return Overlay(
-        Panel(border="35d9e6", line_width=1).ref(JoystickRef.Z_TRACK_PANEL),
+        Panel(border=ThemeColor.PRIMARY, line_width=1).ref(JoystickRef.Z_TRACK_PANEL),
         VerticalScale(depth=3).ref(JoystickRef.Z_SCALE),
         JoystickKnob(
             "z", position=bind(MoveState.CURSOR),

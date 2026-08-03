@@ -11,6 +11,7 @@ from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_SAFE_HALF, PROBE, RESET
 from ..common import CONTENT, FONT, compact
 from ..constants import PAPER_STEPS, Z_WEIGHT_DANGER
 from .state import PaperState
+from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.Z_OFFSET_PAPER
@@ -59,13 +60,13 @@ def _step_ref(step):
 
 def _value_card(label, value_binding, refs):
     return Overlay(
-        Panel(border="295c66", background="050c0f", line_width=2)
+        Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL, line_width=2)
         .ref(refs[1]),
-        Text(label, color="35d9e6", font=FONT)
+        Text(label, color=ThemeColor.PRIMARY, font=FONT)
         .height(20).margin(top=8).align(vertical="top").ref(refs[2]),
         Text(
             derived(lambda value: "%s MM" % value, value_binding),
-            color="ffffff", font="JetBrainsMono Bold 12pt",
+            color=ThemeColor.BRIGHT, font="JetBrainsMono Bold 12pt",
         ).height(20).margin(top=39).align(vertical="top").ref(refs[3]),
     ).ref(refs[0]).repaint_boundary()
 

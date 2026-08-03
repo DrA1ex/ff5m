@@ -12,7 +12,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "name": {
       "type": "string",
@@ -69,24 +69,61 @@
         "muted": { "$ref": "#/$defs/color" },
         "success": { "$ref": "#/$defs/color" },
         "pressed_background": { "$ref": "#/$defs/color" },
-        "overlay": { "$ref": "#/$defs/color" },
-        "button_background": { "$ref": "#/$defs/color" },
-        "button_border": { "$ref": "#/$defs/color" },
-        "button_text": { "$ref": "#/$defs/color" },
-        "button_selected_background": { "$ref": "#/$defs/color" },
-        "button_selected_border": { "$ref": "#/$defs/color" },
-        "button_selected_text": { "$ref": "#/$defs/color" },
-        "header_background": { "$ref": "#/$defs/color" },
-        "header_text": { "$ref": "#/$defs/color" },
-        "header_border": { "$ref": "#/$defs/color" }
+        "overlay": { "$ref": "#/$defs/color" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "button_background": { "$ref": "#/$defs/roleValue" },
+        "button_border": { "$ref": "#/$defs/roleValue" },
+        "button_text": { "$ref": "#/$defs/roleValue" },
+        "button_selected_background": { "$ref": "#/$defs/roleValue" },
+        "button_selected_border": { "$ref": "#/$defs/roleValue" },
+        "button_selected_text": { "$ref": "#/$defs/roleValue" },
+        "header_background": { "$ref": "#/$defs/roleValue" },
+        "header_text": { "$ref": "#/$defs/roleValue" },
+        "header_border": { "$ref": "#/$defs/roleValue" },
+        "temperature_nozzle": { "$ref": "#/$defs/roleValue" },
+        "temperature_bed": { "$ref": "#/$defs/roleValue" },
+        "temperature_fan": { "$ref": "#/$defs/roleValue" }
       }
     }
   },
-  "additionalProperties": true,
+  "additionalProperties": false,
   "$defs": {
     "color": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{6}$"
+    },
+    "colorReference": {
+      "type": "string",
+      "enum": [
+        "background",
+        "panel",
+        "primary",
+        "primary_dark",
+        "secondary",
+        "secondary_dark",
+        "warning",
+        "danger",
+        "danger_background",
+        "text",
+        "bright",
+        "dim",
+        "border",
+        "muted",
+        "success",
+        "pressed_background",
+        "overlay"
+      ]
+    },
+    "roleValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/color" },
+        { "$ref": "#/$defs/colorReference" }
+      ]
     }
   }
 }

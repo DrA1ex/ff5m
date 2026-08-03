@@ -629,7 +629,7 @@ class RendererStateTest(unittest.TestCase):
             pathlib.Path(UI.THEME_DIRECTORY).resolve(), expected.resolve())
         self.assertTrue(expected.is_dir())
 
-    def test_bundled_themes_include_stable_baseline_and_recolor_roles(self):
+    def test_bundled_themes_apply_base_colors_and_context_roles(self):
         renderer = FEATHER.FeatherRenderer()
         self.assertTrue(
             {"DEFAULT", "DARK", "DESERT", "AMBER"}.issubset(
@@ -638,52 +638,45 @@ class RendererStateTest(unittest.TestCase):
         synth_data = json.loads(
             pathlib.Path(UI.THEME_DIRECTORY, "synth.json").read_text(
                 encoding="utf-8"))
-        _name, _description, synth_colors = UI.validate_theme_data(synth_data)
-        for source, role in UI.COLOR_ROLES.items():
-            self.assertEqual(renderer.color(source), synth_colors[role])
-        page = "\n".join(renderer.begin_page("Themes"))
-        self.assertIn("-c %s" % synth_colors["background"], page)
-        self.assertIn("-c %s" % synth_colors["primary"], page)
-        self.assertNotIn("-c %s" % UI.FALLBACK_THEME["primary"], page)
+        _name, _description, synth = UI.validate_theme_data(synth_data)
 
-        self.assertEqual(
-            renderer.color(UI.COLOR_CYAN), synth_colors["primary"])
-        self.assertEqual(
-            renderer.color(UI.COLOR_VIOLET), synth_colors["secondary"])
-        self.assertEqual(
-            renderer.color("button_background"), synth_colors["panel"])
-        self.assertEqual(
-            renderer.color("header_text"), synth_colors["primary"])
+        page = "\n".join(renderer.begin_page("Themes"))
+        self.assertIn(
+            "-c %s" % synth.resolve(UI.ThemeColor.BACKGROUND), page)
+        self.assertIn(
+            "-c %s" % synth.resolve(UI.ThemeColor.PRIMARY), page)
+
         button = "\n".join(renderer.button(
             "test", 10, 70, 180, 44, "BUTTON"))
         self.assertIn(
-            "--background %s" % synth_colors["panel"], button)
+            "--background %s" %
+            synth.resolve(UI.ThemeRole.BUTTON_BACKGROUND), button)
         self.assertIn(
-            "--border %s" % synth_colors["primary"], button)
-        self.assertIn(
-            "--text-color %s" % synth_colors["primary"], button)
+            "--border %s" % synth.resolve(UI.ThemeRole.BUTTON_BORDER),
+            button)
         selected = "\n".join(renderer.button(
             "selected", 200, 70, 180, 44, "SELECTED",
             state="selected"))
         self.assertIn(
-            "--background %s" % synth_colors["panel"], selected)
+            "--border %s" %
+            synth.resolve(UI.ThemeRole.BUTTON_SELECTED_BORDER), selected)
+
+        bed = renderer.text(
+            10, 10, "BED", UI.ThemeRole.TEMPERATURE_BED)
         self.assertIn(
-            "--border %s" % synth_colors["secondary"], selected)
-        header = "\n".join(renderer.begin_page("Synth"))
-        self.assertIn("-c %s" % synth_colors["panel"], header)
-        self.assertIn("-c %s" % synth_colors["primary"], header)
-        self.assertIn("-c %s" % synth_colors["border"], header)
+            "-c %s" % synth.resolve(UI.ThemeRole.TEMPERATURE_BED), bed)
+
 
     def test_user_theme_directory_can_add_and_override_themes(self):
         with tempfile.TemporaryDirectory() as user_directory:
             custom = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "name": "CUSTOM_BLUE",
                 "description": "User supplied blue",
                 "colors": dict(UI.FALLBACK_THEME, primary="123abc"),
             }
             override = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "name": "SYNTH",
                 "description": "User override",
                 "colors": dict(UI.FALLBACK_THEME, primary="abcdef"),
@@ -693,7 +686,7 @@ class RendererStateTest(unittest.TestCase):
             pathlib.Path(user_directory, "override.json").write_text(
                 json.dumps(override), encoding="utf-8")
             pathlib.Path(user_directory, "invalid.json").write_text(
-                '{"schema_version": 1, "name": "BROKEN"}', encoding="utf-8")
+                '{"schema_version": 2, "name": "BROKEN"}', encoding="utf-8")
 
             with self.assertLogs(level="WARNING") as logs:
                 renderer = FEATHER.FeatherRenderer(
@@ -701,22 +694,25 @@ class RendererStateTest(unittest.TestCase):
             self.assertIn("CUSTOM_BLUE", renderer.theme_names())
             self.assertIn("invalid theme", "\n".join(logs.output))
             renderer.set_theme("CUSTOM_BLUE")
-            self.assertEqual(renderer.color("35d9e6"), "123abc")
+            self.assertEqual(renderer.color(UI.ThemeColor.PRIMARY), "123abc")
             renderer.set_theme("SYNTH")
-            self.assertEqual(renderer.color("35d9e6"), "abcdef")
+            self.assertEqual(renderer.color(UI.ThemeColor.PRIMARY), "abcdef")
             self.assertEqual(renderer.theme_description("SYNTH"),
                              "User override")
 
     def test_python_renderer_matches_cpp_protocol_fixture(self):
         fixture = pathlib.Path(__file__).parent / "fixtures" / "feather_draw_protocol.txt"
         renderer = FEATHER.FeatherRenderer()
+        colors = dict(UI.FALLBACK_THEME)
+        colors[UI.ThemeColor.BACKGROUND.value] = "a0b1c2"
+        renderer._palette = UI.resolve_theme(colors)
         commands = [
             "--batch clear-hitboxes",
             "--batch clear -c 000000",
-            renderer.fill(10, 20, 30, 40, "a0b1c2"),
-            renderer.stroke(11, 21, 31, 41, "872187", 3),
+            renderer.fill(10, 20, 30, 40, UI.ThemeColor.BACKGROUND),
+            renderer.stroke(11, 21, 31, 41, UI.ThemeColor.SECONDARY_DARK, 3),
             renderer.text(
-                100, 120, 'file "one" \\ Привет', "ffffff", "Roboto 12pt",
+                100, 120, 'file "one" \\ Привет', UI.ThemeColor.BRIGHT, "Roboto 12pt",
                 "center", "middle"),
             FEATHER.FeatherRenderer.hitbox("print.pause", 20, 315, 175, 100),
             "--batch flush",
@@ -794,7 +790,7 @@ class RendererStateTest(unittest.TestCase):
             "material", 0, 0, 230, 135, "ABS-PC",
             subtitle="NOZZLE 270C",
             subtitle_font="JetBrainsMono Bold 12pt",
-            subtitle_color="d9e4e8")
+            subtitle_color=UI.ThemeColor.TEXT)
         rendered = "\n".join(commands)
 
         self.assertIn('"NOZZLE 270C"', rendered)
@@ -874,7 +870,7 @@ class RendererStateTest(unittest.TestCase):
         renderer.footer(21, 220, 24, 60, "192.168.2.4", "idle")
 
         self.assertTrue(renderer.set_theme("SYNTH"))
-        expected_primary = renderer.color(UI.COLOR_CYAN)
+        expected_primary = renderer.color(UI.ThemeColor.PRIMARY)
         page = "\n".join(renderer.begin_page("Settings"))
         self.assertIn("-c %s" % expected_primary, page)
         self.assertIn("-p 10 444 -s 780 31", page)
@@ -889,8 +885,8 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(normalize([[0], [1, 2]]), [])
         self.assertEqual(normalize([0, 1]), [])
         color = FEATHER.FeatherScreen._mesh_color
-        self.assertEqual(color(-0.2, -0.2, 0.3), "244c66")
-        self.assertEqual(color(0.3, -0.2, 0.3), "ff4d5a")
+        self.assertEqual(color(-0.2, -0.2, 0.3), UI.ThemeColor.PRIMARY_DARK)
+        self.assertEqual(color(0.3, -0.2, 0.3), UI.ThemeColor.DANGER)
 
     def test_row_subtitle_has_space_after_long_calibration_label(self):
         commands = FEATHER.FeatherRenderer()._button_commands(
@@ -1011,8 +1007,8 @@ class RendererStateTest(unittest.TestCase):
         down = renderer.arrow_button(
             "mod.next", 728, 365, 52, 48, "down", state="disabled")
         self.assertFalse(any(" -t " in command for command in up + down))
-        self.assertIn(renderer.fill(751, 111, 7, 12, "button_text"), up)
-        self.assertIn(renderer.fill(745, 390, 19, 2, "56656c"), down)
+        self.assertIn(renderer.fill(751, 111, 7, 12, UI.ThemeRole.BUTTON_TEXT), up)
+        self.assertIn(renderer.fill(745, 390, 19, 2, UI.ThemeColor.DIM), down)
         self.assertTrue(any("--id 0:mod.prev" in command for command in up))
         self.assertFalse(any("--id " in command for command in down))
 
@@ -1085,8 +1081,8 @@ class RendererStateTest(unittest.TestCase):
     def test_busy_notice_is_persistent_and_deduplicated(self):
         renderer = FEATHER.FeatherRenderer()
         self.assertTrue(renderer.set_theme("SYNTH"))
-        header_background = renderer.color("header_background")
-        warning = renderer.color("warning")
+        header_background = renderer.color(UI.ThemeRole.HEADER_BACKGROUND)
+        warning = renderer.color(UI.ThemeColor.WARNING)
         sent = []
         renderer.send = sent.append
         renderer.busy_notice("Klipper busy")

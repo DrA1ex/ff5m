@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "RED",
   "description": "Neon red on black",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -22,5 +22,10 @@
     "success": "44ff99",
     "pressed_background": "45101a",
     "overlay": "030102"
+  },
+  "roles": {
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

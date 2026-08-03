@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "DEFAULT",
   "description": "Cyan Forge-X palette",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -22,5 +22,10 @@
     "success": "56c596",
     "pressed_background": "103238",
     "overlay": "010203"
+  },
+  "roles": {
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

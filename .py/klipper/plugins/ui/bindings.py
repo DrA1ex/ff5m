@@ -4,6 +4,7 @@ import copy
 from enum import Enum
 
 from .identity import StateKey, serialize_key
+from .theme import ThemeColor, ThemeRole
 
 
 _UNAVAILABLE = object()
@@ -353,6 +354,8 @@ def resolve(value, store):
     elif callable(value):
         raise TypeError(
             "State callables must use derived(function, bind(...), ...) instead")
+    if isinstance(value, (ThemeColor, ThemeRole)):
+        return value
     if isinstance(value, Enum):
         return value.value
     return value

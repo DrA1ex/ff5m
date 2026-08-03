@@ -8,6 +8,7 @@ from ui.layout import Column, Overlay, PageTree, Rect, Row, Spacer
 from ...keys import AppPage
 from ..actions import DONE, LOAD, PURGE, RESUME, UNLOAD
 from ..state import FilamentState
+from ui import ThemeColor, ThemeRole
 
 
 CONTENT = Rect(12, 64, 776, 364)
@@ -33,8 +34,8 @@ def _temperature(current, target):
 
 def _status_color(ready, cooling):
     if ready:
-        return "00f0f0"
-    return "35d9e6" if cooling else "ffb000"
+        return ThemeColor.PRIMARY
+    return ThemeColor.PRIMARY if cooling else ThemeColor.WARNING
 
 
 def _button_state(ready):
@@ -62,7 +63,7 @@ def _status_card():
     cooling = bind(FilamentState.COOLING)
     color = derived(_status_color, ready, cooling)
     content = Column(
-        Text("NOZZLE", color="56656c", font=FONT,
+        Text("NOZZLE", color=ThemeColor.DIM, font=FONT,
              horizontal="left").height(22),
         Text(
             derived(
@@ -73,9 +74,9 @@ def _status_card():
         ).height(66).ref(ActionRef.TEMPERATURE),
         Metric(
             "MATERIAL", bind(FilamentState.MATERIAL),
-            label_color="56656c", value_color="d9e4e8",
+            label_color=ThemeColor.DIM, value_color=ThemeColor.TEXT,
         ).height(34).ref(ActionRef.MATERIAL),
-        Fill("295c66").height(1),
+        Fill(ThemeColor.BORDER).height(1),
         Spacer().grow(2),
         Text(
             derived(_status_label, ready, cooling), color=color,
@@ -84,16 +85,16 @@ def _status_card():
         Spacer(),
         Column(
             Text(derived(_instruction_top, ready, cooling),
-                 color="56656c", font=FONT,
+                 color=ThemeColor.DIM, font=FONT,
                  horizontal="left"),
             Text(derived(_instruction_bottom, ready, cooling),
-                 color="56656c", font=FONT,
+                 color=ThemeColor.DIM, font=FONT,
                  horizontal="left"),
             gap=4,
         ).height(54),
     ).padding(left=20, top=18, right=20, bottom=18)
     return Overlay(
-        Panel(border=color, background="050c0f", line_width=2),
+        Panel(border=color, background=ThemeColor.PANEL, line_width=2),
         content,
     ).ref(ActionRef.STATUS).repaint_boundary()
 

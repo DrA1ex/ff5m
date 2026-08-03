@@ -16,10 +16,10 @@ from .font_metrics import (
     get_font_metrics, load_runtime_metrics, set_font_metrics,
 )
 from .numeric_input import NumericInputSpec
+from .theme import ThemeColor, ThemeRole, resolve_theme
 from .theme_catalog import (
-    DEFAULT_THEME, FALLBACK_THEME, OPTIONAL_THEME_ROLE_FALLBACKS,
-    THEME_DIRECTORY, THEME_NAME_ALIASES, USER_THEME_DIRECTORY, ThemeCatalog,
-    normalize_theme_name, with_optional_theme_roles,
+    DEFAULT_THEME, FALLBACK_THEME, THEME_DIRECTORY, USER_THEME_DIRECTORY,
+    ThemeCatalog, normalize_theme_name,
 )
 from .render_worker import (
     MAX_BATCH_CHARS, MAX_BATCHES, RenderBatch, RenderBatchQueue,
@@ -46,42 +46,7 @@ MAX_PENDING_DRAW = MAX_BATCH_CHARS
 # accepted or retried, so a page cannot remain half-rendered until a later UI
 # update happens to drain the tail.
 MAX_ATOMIC_DRAW = 3584
-COLOR_BG = "030607"
-COLOR_PANEL = "050c0f"
-COLOR_CYAN = "35d9e6"
-COLOR_VIOLET = "b47aff"
-COLOR_AMBER = "f2c94c"
-COLOR_RED = "ff4d5a"
-COLOR_TEXT = "d9e4e8"
-COLOR_DIM = "56656c"
-COLOR_ROLES = {
-    "030607": "background",
-    "050c0f": "panel",
-    "35d9e6": "primary",
-    "00f0f0": "primary",
-    "b47aff": "secondary",
-    "872187": "secondary_dark",
-    "f2c94c": "warning",
-    "ffb000": "warning",
-    "ff9000": "warning",
-    "ff4d5a": "danger",
-    "ff3030": "danger",
-    "d9e4e8": "text",
-    "ffffff": "bright",
-    "56656c": "dim",
-    "606060": "dim",
-    "295c66": "border",
-    "263238": "muted",
-    "56c596": "success",
-    "244c66": "primary_dark",
-    "120708": "danger_background",
-    "103238": "pressed_background",
-    "010203": "overlay",
-    "ff00ff": "secondary",
-}
 
-# Theme constants remain importable from this module for compatibility. Their
-# source of truth and lifecycle now live in ui.theme_catalog.
 
 
 class Page(enum.Enum):
@@ -139,19 +104,26 @@ class FeatherRenderer:
     """Translate small UI primitives into typer display-list commands."""
 
     BUTTON_COLORS = {
-        "enabled": ("button_background", "button_border", "button_text"),
-        "disabled": ("button_background", "263238", COLOR_DIM),
+        "enabled": (ThemeRole.BUTTON_BACKGROUND, ThemeRole.BUTTON_BORDER,
+                    ThemeRole.BUTTON_TEXT),
+        "disabled": (ThemeRole.BUTTON_BACKGROUND, ThemeColor.MUTED,
+                     ThemeColor.DIM),
         "selected": (
-            "button_selected_background",
-            "button_selected_border",
-            "button_selected_text"),
-        "warning": ("button_background", COLOR_AMBER, COLOR_AMBER),
-        "danger": ("120708", COLOR_RED, COLOR_RED),
-        "busy": ("button_background", COLOR_AMBER, COLOR_AMBER),
-        "pressed": ("103238", "ffffff", "ffffff"),
-        "keypad": ("primary_dark", "primary", "bright"),
-        "keypad_aux": ("panel", "secondary", "secondary"),
-        "keypad_confirm": ("primary_dark", "primary", "bright"),
+            ThemeRole.BUTTON_SELECTED_BACKGROUND,
+            ThemeRole.BUTTON_SELECTED_BORDER,
+            ThemeRole.BUTTON_SELECTED_TEXT),
+        "warning": (ThemeRole.BUTTON_BACKGROUND, ThemeColor.WARNING,
+                    ThemeColor.WARNING),
+        "danger": (ThemeColor.DANGER_BACKGROUND, ThemeColor.DANGER, ThemeColor.DANGER),
+        "busy": (ThemeRole.BUTTON_BACKGROUND, ThemeColor.WARNING,
+                 ThemeColor.WARNING),
+        "pressed": (ThemeColor.PRESSED_BACKGROUND, ThemeColor.BRIGHT, ThemeColor.BRIGHT),
+        "keypad": (ThemeColor.PRIMARY_DARK, ThemeColor.PRIMARY,
+                   ThemeColor.BRIGHT),
+        "keypad_aux": (ThemeColor.PANEL, ThemeColor.SECONDARY,
+                       ThemeColor.SECONDARY),
+        "keypad_confirm": (ThemeColor.PRIMARY_DARK, ThemeColor.PRIMARY,
+                           ThemeColor.BRIGHT),
     }
     BUTTON_TEXT_PADDING = 16
     HINT_TEXT_PADDING = 20
@@ -166,7 +138,7 @@ class FeatherRenderer:
         self._theme_descriptions = {}
         self._user_theme_issues = ()
         self._theme_name = DEFAULT_THEME
-        self._palette = with_optional_theme_roles(FALLBACK_THEME)
+        self._palette = resolve_theme(FALLBACK_THEME)
         self.reload_themes()
         self.event_fd = None
         self._last_footer = None
@@ -252,7 +224,7 @@ class FeatherRenderer:
         # expose pixels from the previous screen owner.
         self.send([
             "--batch clear-hitboxes",
-            "--batch clear -c %s" % self.color(COLOR_BG),
+            "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
         ], kind="critical", key="worker-clear")
         return started
 
@@ -431,21 +403,18 @@ class FeatherRenderer:
         return changed
 
     def color(self, value):
-        normalized = str(value).lower()
-        role = (normalized if normalized in self._palette
-                else COLOR_ROLES.get(normalized))
-        return self._palette.get(role, normalized) if role else normalized
+        return self._palette.resolve(value)
 
-    def fill(self, x, y, width, height, color=COLOR_BG):
+    def fill(self, x, y, width, height, color=ThemeColor.BACKGROUND):
         return "--batch fill -p %d %d -s %d %d -c %s" % (
             x, y, width, height, self.color(color))
 
-    def stroke(self, x, y, width, height, color=COLOR_CYAN, line_width=2):
+    def stroke(self, x, y, width, height, color=ThemeColor.PRIMARY, line_width=2):
         return "--batch stroke -p %d %d -s %d %d -c %s -lw %d -sd inner" % (
             x, y, width, height, self.color(color), line_width)
 
-    def panel(self, x, y, width, height, border=COLOR_CYAN,
-              background=COLOR_PANEL, line_width=2):
+    def panel(self, x, y, width, height, border=ThemeColor.PRIMARY,
+              background=ThemeColor.PANEL, line_width=2):
         """Draw a reusable filled panel with an optional inner border."""
         commands = [self.fill(x, y, width, height, background)]
         if border is not None and line_width > 0:
@@ -453,7 +422,7 @@ class FeatherRenderer:
                 self.stroke(x, y, width, height, border, line_width))
         return commands
 
-    def filled_circle(self, center_x, center_y, radius, color=COLOR_CYAN):
+    def filled_circle(self, center_x, center_y, radius, color=ThemeColor.PRIMARY):
         """Draw a compact filled circle using horizontal one-pixel spans."""
         radius = max(1, int(radius))
         commands = []
@@ -466,8 +435,8 @@ class FeatherRenderer:
         return commands
 
     def hint_box(self, message, center_x, y, max_width=740, min_width=180,
-                 height=44, border=COLOR_VIOLET,
-                 background=COLOR_BG, font="JetBrainsMono 8pt"):
+                 height=44, border=ThemeColor.SECONDARY,
+                 background=ThemeColor.BACKGROUND, font="JetBrainsMono 8pt"):
         """Draw a centered one-line hint with guaranteed inner padding."""
         font = self.normalize_font(font)
         available = max(1, int(max_width) - 2 * self.HINT_TEXT_PADDING)
@@ -481,27 +450,29 @@ class FeatherRenderer:
             x, int(y), width, int(height), border=border,
             background=background, line_width=2)
         commands.append(self.text(
-            int(center_x), int(y) + int(height) // 2, label, COLOR_TEXT,
+            int(center_x), int(y) + int(height) // 2, label, ThemeColor.TEXT,
             font, "center", "middle", max_width=available, truncate=True))
         return commands
 
-    def section_panel(self, title, x, y, width, height, border="295c66"):
+    def section_panel(self, title, x, y, width, height, border=ThemeColor.BORDER):
         """Draw a titled content panel with consistent Feather spacing."""
         commands = self.panel(
-            x, y, width, height, border=border, background=COLOR_PANEL,
+            x, y, width, height, border=border, background=ThemeColor.PANEL,
             line_width=1)
         commands.append(self.text(
-            x + 18, y + 21, str(title).upper(), COLOR_CYAN,
+            x + 18, y + 21, str(title).upper(), ThemeColor.PRIMARY,
             "JetBrainsMono 8pt", "left", "middle"))
         return commands
 
     def numeric_keypad(self, x, y, width, height, title, value, actions,
                        subtitle="", mode="decimal", minimum=None,
                        maximum=None, max_length=10, fraction_digits=None,
-                       confirm_label="CONFIRM", border="border",
-                       background="panel", title_color="text",
-                       subtitle_color="dim", input_border="secondary",
-                       value_color="bright"):
+                       confirm_label="CONFIRM", border=ThemeColor.BORDER,
+                       background=ThemeColor.PANEL,
+                       title_color=ThemeColor.TEXT,
+                       subtitle_color=ThemeColor.DIM,
+                       input_border=ThemeColor.SECONDARY,
+                       value_color=ThemeColor.BRIGHT):
         """Draw a self-contained numeric entry window inside page chrome."""
         spec = (mode if isinstance(mode, NumericInputSpec) else
                 NumericInputSpec(mode, minimum, maximum, max_length,
@@ -590,7 +561,7 @@ class FeatherRenderer:
         return commands
 
     def dot_grid(self, x, y, width, height, columns=11, rows=7,
-                 color="263238", clip=None):
+                 color=ThemeColor.MUTED, clip=None):
         """Draw a sparse point grid, optionally limited to a redraw region."""
         commands = []
         if columns < 2 or rows < 2:
@@ -609,7 +580,7 @@ class FeatherRenderer:
                     commands.append(self.fill(point_x, point_y, 1, 1, color))
         return commands
 
-    def corner_marks(self, x, y, width, height, length=12, color=COLOR_CYAN):
+    def corner_marks(self, x, y, width, height, length=12, color=ThemeColor.PRIMARY):
         """Draw four open targeting corners around a control surface."""
         right = x + width - 1
         bottom = y + height - 1
@@ -623,7 +594,7 @@ class FeatherRenderer:
         return commands
 
     def metric_row(self, x, y, width, label, value, unit="",
-                   label_color=COLOR_CYAN, value_color=COLOR_TEXT):
+                   label_color=ThemeColor.PRIMARY, value_color=ThemeColor.TEXT):
         """Draw a compact label/value/unit row for status cards."""
         commands = [
             self.text(x, y, label, label_color, "JetBrainsMono 8pt",
@@ -639,7 +610,7 @@ class FeatherRenderer:
 
     def vertical_gauge(self, x, y, width, height, title, value,
                        minimum, maximum, initial=None,
-                       value_color=COLOR_CYAN):
+                       value_color=ThemeColor.PRIMARY):
         """Draw an auto-scaled vertical gauge with a movable start marker."""
         value = float(value)
         minimum = float(minimum)
@@ -667,20 +638,20 @@ class FeatherRenderer:
 
         value_y = gauge_y(value)
         commands = self.panel(
-            x, y, width, height, border="295c66",
-            background=COLOR_PANEL, line_width=1)
+            x, y, width, height, border=ThemeColor.BORDER,
+            background=ThemeColor.PANEL, line_width=1)
         commands += [
             self.text(x + width // 2, y + 20, str(title).upper(),
-                      COLOR_CYAN, "JetBrainsMono 8pt", "center", "middle"),
+                      ThemeColor.PRIMARY, "JetBrainsMono 8pt", "center", "middle"),
             self.text(x + width // 2, y + 48, number(value),
-                      COLOR_TEXT, "JetBrainsMono Bold 10pt",
+                      ThemeColor.TEXT, "JetBrainsMono Bold 10pt",
                       "center", "middle"),
         ]
         commands += [
             self.fill(track_x, track_top, track_width, track_height,
-                      "263238"),
+                      ThemeColor.MUTED),
             self.stroke(track_x, track_top, track_width, track_height,
-                        "295c66", 1),
+                        ThemeColor.BORDER, 1),
             self.fill(track_x + 2, value_y,
                       max(1, track_width - 4),
                       max(1, track_bottom - value_y), value_color),
@@ -689,12 +660,12 @@ class FeatherRenderer:
             marker_y = gauge_y(initial)
             commands += [
                 self.fill(x + 6, marker_y, max(1, width - 12), 2,
-                          COLOR_VIOLET),
-                self.fill(x + 3, marker_y - 2, 4, 6, COLOR_VIOLET),
+                          ThemeColor.SECONDARY),
+                self.fill(x + 3, marker_y - 2, 4, 6, ThemeColor.SECONDARY),
             ]
         return commands
 
-    def joystick_knob(self, x, y, axis="xy", size=25, color=COLOR_CYAN):
+    def joystick_knob(self, x, y, axis="xy", size=25, color=ThemeColor.PRIMARY):
         """Draw a centered square joystick knob without font alignment drift."""
         size = max(9, int(size))
         if size % 2 == 0:
@@ -702,7 +673,7 @@ class FeatherRenderer:
         left = int(x) - size // 2
         top = int(y) - size // 2
         commands = self.panel(
-            left, top, size, size, border=color, background=COLOR_PANEL,
+            left, top, size, size, border=color, background=ThemeColor.PANEL,
             line_width=2)
         center_x = int(x)
         center_y = int(y)
@@ -718,7 +689,7 @@ class FeatherRenderer:
             ]
         return commands
 
-    def text(self, x, y, value, color=COLOR_CYAN,
+    def text(self, x, y, value, color=ThemeColor.PRIMARY,
              font="JetBrainsMono 12pt", h_align="left", v_align="middle",
              max_width=None, max_height=None, wrap=False, truncate=False,
              proportional=False):
@@ -787,12 +758,12 @@ class FeatherRenderer:
                            continuous)
 
     def _toggle_commands(self, x, y, width, height, thumb_x, enabled):
-        border = COLOR_CYAN if enabled else "263238"
-        thumb_color = COLOR_CYAN if enabled else COLOR_DIM
+        border = ThemeColor.PRIMARY if enabled else ThemeColor.MUTED
+        thumb_color = ThemeColor.PRIMARY if enabled else ThemeColor.DIM
         inset = 5
         thumb_size = max(1, height - 2 * inset)
         return [
-            self.fill(x, y, width, height, COLOR_PANEL),
+            self.fill(x, y, width, height, ThemeColor.PANEL),
             self.stroke(x, y, width, height, border, 2),
             self.fill(thumb_x, y + inset, thumb_size, thumb_size, thumb_color),
         ]
@@ -858,12 +829,18 @@ class FeatherRenderer:
         return self.action_hitbox(
             "global.wake", 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
 
-    def _button_colors(self, state):
-        return tuple(self.color(color) for color in self.BUTTON_COLORS[state])
+    def _button_colors(self, state, accent=None):
+        colors = list(self.BUTTON_COLORS[state])
+        if accent is not None and state not in (
+                "disabled", "danger", "busy", "pressed"):
+            colors[1] = accent
+            colors[2] = accent
+        return tuple(colors)
 
     def composite_button(self, action, x, y, width, height, label, state, font,
-                         include_hitbox=True):
-        background, border, text_color = self._button_colors(state)
+                         include_hitbox=True, accent=None):
+        background, border, text_color = (
+            self.color(color) for color in self._button_colors(state, accent))
         display_label = str(label)
         if display_label.startswith("-"):
             display_label = " " + display_label
@@ -881,7 +858,7 @@ class FeatherRenderer:
     def _button_commands(self, action, x, y, width, height, label, state,
                          font, subtitle=None, include_hitbox=True,
                          layout="center", subtitle_font="JetBrainsMono 8pt",
-                         subtitle_color=COLOR_DIM):
+                         subtitle_color=ThemeColor.DIM, accent=None):
         if isinstance(subtitle, (tuple, list)):
             subtitle_lines = tuple(
                 str(line) for line in subtitle if str(line).strip())[:2]
@@ -890,10 +867,11 @@ class FeatherRenderer:
         else:
             subtitle_lines = (str(subtitle),)
         subtitle = subtitle_lines or None
-        background, border, text_color = self._button_colors(state)
+        background, border, text_color = self._button_colors(state, accent)
         if layout == "center" and subtitle is None:
-            return self.composite_button(action, x, y, width, height, label,
-                                         state, font, include_hitbox)
+            return self.composite_button(
+                action, x, y, width, height, label, state, font,
+                include_hitbox, accent)
         commands = [
             self.fill(x, y, width, height, background),
             self.stroke(x, y, width, height, border, 2),
@@ -963,7 +941,7 @@ class FeatherRenderer:
     def button(self, action, x, y, width, height, label, active=None,
                state="enabled", font="JetBrainsMono 12pt", subtitle=None,
                layout="center", subtitle_font="JetBrainsMono 8pt",
-               subtitle_color=COLOR_DIM):
+               subtitle_color=ThemeColor.DIM, accent=None):
         logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
         # active is retained for compatibility with the first Feather release.
         if active is not None:
@@ -975,7 +953,7 @@ class FeatherRenderer:
         if state not in ("disabled", "busy"):
             self._buttons[logical_action] = (
                 x, y, width, height, label, state, font, subtitle, layout,
-                subtitle_font, subtitle_color)
+                subtitle_font, subtitle_color, accent)
         if (logical_action == "nav.menu"
                 and (self._busy_label is not None
                      or self._emergency_stop_visible)):
@@ -986,7 +964,7 @@ class FeatherRenderer:
         return self._button_commands(self._wire_action(action), x, y, width,
                                      height, label, state, font, subtitle,
                                      True, layout, subtitle_font,
-                                     subtitle_color)
+                                     subtitle_color, accent)
 
     def arrow_button(self, action, x, y, width, height, direction,
                      active=None, state="enabled"):
@@ -1003,7 +981,7 @@ class FeatherRenderer:
         if state not in ("disabled", "busy"):
             self._buttons[logical_action] = (
                 x, y, width, height, direction, state, None, None,
-                "arrow-" + direction, None, None)
+                "arrow-" + direction, None, None, None)
         return self._arrow_button_commands(
             self._wire_action(action), x, y, width, height, direction, state)
 
@@ -1018,11 +996,11 @@ class FeatherRenderer:
         controls that remain available.
         """
         tones = {
-            "warning": COLOR_AMBER,
-            "danger": COLOR_RED,
-            "info": COLOR_CYAN,
+            "warning": ThemeColor.WARNING,
+            "danger": ThemeColor.DANGER,
+            "info": ThemeColor.PRIMARY,
         }
-        border = tones.get(tone, COLOR_CYAN)
+        border = tones.get(tone, ThemeColor.PRIMARY)
         commands = []
         preserve_emergency = self._emergency_stop_visible
         if modal:
@@ -1031,14 +1009,14 @@ class FeatherRenderer:
             self._hitboxes = {}
             commands += ["--batch clear-hitboxes", self._wake_hitbox()]
         commands += self.panel(
-            x, y, width, height, border=border, background=COLOR_PANEL)
+            x, y, width, height, border=border, background=ThemeColor.PANEL)
         commands.append(self.text(
             x + width // 2, y + 34, str(title).upper(), border,
             "JetBrainsMono Bold 16pt", "center", "middle",
             max_width=width - 2 * self.DIALOG_TEXT_PADDING, truncate=True))
         for index, line in enumerate(tuple(lines)[:4]):
             commands.append(self.text(
-                x + width // 2, y + 78 + index * 24, str(line), COLOR_TEXT,
+                x + width // 2, y + 78 + index * 24, str(line), ThemeColor.TEXT,
                 "JetBrainsMono 8pt", "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING,
                 truncate=True))
@@ -1064,7 +1042,7 @@ class FeatherRenderer:
         if spec is None:
             return False
         (x, y, width, height, label, _state, font, subtitle, layout,
-         subtitle_font, subtitle_color) = spec
+         subtitle_font, subtitle_color, accent) = spec
         self.prioritize_next_batch("animation", "button:%s" % action)
         if layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
@@ -1072,7 +1050,8 @@ class FeatherRenderer:
         else:
             self.send(self._button_commands(
                 action, x, y, width, height, label, "pressed", font,
-                subtitle, False, layout, subtitle_font, subtitle_color))
+                subtitle, False, layout, subtitle_font, subtitle_color,
+                accent))
         return True
 
     def restore_button(self, action):
@@ -1080,7 +1059,7 @@ class FeatherRenderer:
         if spec is None:
             return False
         (x, y, width, height, label, state, font, subtitle, layout,
-         subtitle_font, subtitle_color) = spec
+         subtitle_font, subtitle_color, accent) = spec
         self.prioritize_next_batch("state", "button:%s" % action)
         if layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
@@ -1088,7 +1067,7 @@ class FeatherRenderer:
         else:
             self.send(self._button_commands(
                 action, x, y, width, height, label, state, font, subtitle,
-                False, layout, subtitle_font, subtitle_color))
+                False, layout, subtitle_font, subtitle_color, accent))
         return True
 
     def set_emergency_stop_visible(self, visible):
@@ -1119,32 +1098,32 @@ class FeatherRenderer:
             self._wake_hitbox(),
             # Preserve the footer framebuffer. It is a persistent status area
             # and is updated independently only when one of its values changes.
-            self.fill(0, 0, SCREEN_WIDTH, FOOTER_Y - 2, COLOR_BG),
+            self.fill(0, 0, SCREEN_WIDTH, FOOTER_Y - 2, ThemeColor.BACKGROUND),
             # Keep the dirty rectangle above the persistent footer. A full
             # height outer stroke would make TextDrawer.flush() copy the whole
             # footer even though none of its pixels changed.
             self.stroke(FRAME_X, FRAME_Y, FRAME_WIDTH,
                         FOOTER_Y - FRAME_Y - 1,
-                        "header_border", 1),
-            self.fill(10, 6, 780, HEADER_BOTTOM - 6, "header_background"),
+                        ThemeRole.HEADER_BORDER, 1),
+            self.fill(10, 6, 780, HEADER_BOTTOM - 6, ThemeRole.HEADER_BACKGROUND),
         ]
         if back:
             commands += self.button("nav.back", 14, 7, 146, 46, "< BACK",
                                     font="JetBrainsMono Bold 8pt")
         title = str(title).upper()
         commands += [
-            self.text(400, 29, title, "header_text",
+            self.text(400, 29, title, ThemeRole.HEADER_TEXT,
                       "JetBrainsMono 12pt",
                       "center", "middle", max_width=440, truncate=True),
-            self.fill(18, HEADER_BOTTOM, 764, 1, "header_border"),
-            self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
+            self.fill(18, HEADER_BOTTOM, 764, 1, ThemeRole.HEADER_BORDER),
+            self.fill(18, FOOTER_Y - 2, 764, 1, ThemeColor.BORDER),
         ]
         if self._busy_label is not None and not show_abort:
             busy_label = self._busy_label
             commands += [
-                self.fill(622, 9, 160, 38, "header_background"),
-                self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
-                self.text(702, 28, busy_label, COLOR_AMBER,
+                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
+                self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
+                self.text(702, 28, busy_label, ThemeColor.WARNING,
                           "JetBrainsMono Bold 8pt", "center", "middle",
                           max_width=132, truncate=True),
             ]
@@ -1160,12 +1139,12 @@ class FeatherRenderer:
         left = "NOZZLE %.0f/%.0fC | BED %.0f/%.0fC" % values[:4]
         right = "%s | %s" % (values[4], str(values[5]).upper())
         return [
-            self.fill(10, FOOTER_Y, 780, FOOTER_HEIGHT - 1, COLOR_PANEL),
+            self.fill(10, FOOTER_Y, 780, FOOTER_HEIGHT - 1, ThemeColor.PANEL),
             self.stroke(FRAME_X, FOOTER_Y - 2, FRAME_WIDTH,
-                        SCREEN_HEIGHT - (FOOTER_Y - 2) - 4, "295c66", 1),
-            self.text(20, FOOTER_Y + 16, left, COLOR_CYAN,
+                        SCREEN_HEIGHT - (FOOTER_Y - 2) - 4, ThemeColor.BORDER, 1),
+            self.text(20, FOOTER_Y + 16, left, ThemeColor.PRIMARY,
                       "JetBrainsMono 8pt", max_width=380, truncate=True),
-            self.text(780, FOOTER_Y + 16, right, COLOR_CYAN,
+            self.text(780, FOOTER_Y + 16, right, ThemeColor.PRIMARY,
                       "JetBrainsMono 8pt", "right", max_width=340,
                       truncate=True),
         ]
@@ -1184,7 +1163,7 @@ class FeatherRenderer:
     def toast(self, message):
         self.send(self.hint_box(
             message, 400, 397, max_width=740, min_width=180, height=44,
-            border=COLOR_VIOLET, background=COLOR_BG,
+            border=ThemeColor.SECONDARY, background=ThemeColor.BACKGROUND,
             font="JetBrainsMono 8pt"))
 
     def busy_notice(self, label="KLIPPER BUSY"):
@@ -1195,9 +1174,9 @@ class FeatherRenderer:
         if self._emergency_stop_visible:
             return
         self.send([
-            self.fill(622, 9, 160, 38, "header_background"),
-            self.stroke(622, 9, 160, 38, COLOR_AMBER, 2),
-            self.text(702, 28, label, COLOR_AMBER,
+            self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
+            self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
+            self.text(702, 28, label, ThemeColor.WARNING,
                       "JetBrainsMono Bold 8pt", "center", "middle",
                       max_width=132, truncate=True),
         ])
@@ -1211,15 +1190,15 @@ class FeatherRenderer:
         menu = self._buttons.get("nav.menu")
         if menu is not None:
             (x, y, width, height, label, state, font, subtitle, layout,
-             subtitle_font, subtitle_color) = menu
+             subtitle_font, subtitle_color, accent) = menu
             self.send(self._button_commands(
                 "nav.menu", x, y, width, height, label, state, font,
                 subtitle, self._menu_suppressed, layout, subtitle_font,
-                subtitle_color))
+                subtitle_color, accent))
             self._menu_suppressed = False
         else:
             self.send([
-                self.fill(622, 9, 160, 38, "header_background")])
+                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND)])
 
     def loader(self, message, phase=0):
         """Replace the page with a non-interactive yielding-operation view."""
@@ -1239,22 +1218,22 @@ class FeatherRenderer:
             self._wake_hitbox(),
             # Clear the header too: leaving the old Back button painted made
             # it look usable even though its hitbox had been removed.
-            self.fill(0, 0, SCREEN_WIDTH, CONTENT_BOTTOM, COLOR_BG),
+            self.fill(0, 0, SCREEN_WIDTH, CONTENT_BOTTOM, ThemeColor.BACKGROUND),
             self.stroke(FRAME_X, FRAME_Y, FRAME_WIDTH,
-                        FOOTER_Y - FRAME_Y - 1, "header_border", 1),
-            self.fill(10, 6, 780, HEADER_BOTTOM - 6, "header_background"),
-            self.text(400, 29, "OPERATION IN PROGRESS", "header_text",
+                        FOOTER_Y - FRAME_Y - 1, ThemeRole.HEADER_BORDER, 1),
+            self.fill(10, 6, 780, HEADER_BOTTOM - 6, ThemeRole.HEADER_BACKGROUND),
+            self.text(400, 29, "OPERATION IN PROGRESS", ThemeRole.HEADER_TEXT,
                       "JetBrainsMono 12pt", "center", "middle",
                       max_width=440, truncate=True),
-            self.fill(18, HEADER_BOTTOM, 764, 1, "header_border"),
-            self.fill(18, FOOTER_Y - 2, 764, 1, "295c66"),
-            self.text(400, 190, message, COLOR_TEXT, "JetBrainsMono Bold 16pt",
+            self.fill(18, HEADER_BOTTOM, 764, 1, ThemeRole.HEADER_BORDER),
+            self.fill(18, FOOTER_Y - 2, 764, 1, ThemeColor.BORDER),
+            self.text(400, 190, message, ThemeColor.TEXT, "JetBrainsMono Bold 16pt",
                       "center", "middle"),
-            self.text(400, 235, "PLEASE WAIT", COLOR_DIM, "JetBrainsMono 12pt",
+            self.text(400, 235, "PLEASE WAIT", ThemeColor.DIM, "JetBrainsMono 12pt",
                       "center", "middle"),
         ]
         for index in range(5):
-            color = COLOR_CYAN if index == phase % 5 else "263238"
+            color = ThemeColor.PRIMARY if index == phase % 5 else ThemeColor.MUTED
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
         if preserve_emergency:
             commands += self._emergency_stop_commands()
@@ -1277,20 +1256,20 @@ class FeatherRenderer:
         commands = [
             "--batch clear-hitboxes",
             self._wake_hitbox(),
-            self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, "010203"),
+            self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, ThemeColor.OVERLAY),
         ]
         commands += self.panel(
-            150, 120, 500, 250, border=COLOR_CYAN,
-            background=COLOR_PANEL, line_width=2)
+            150, 120, 500, 250, border=ThemeColor.PRIMARY,
+            background=ThemeColor.PANEL, line_width=2)
         commands += [
-            self.text(400, 170, "INITIALIZING KLIPPER", COLOR_CYAN,
+            self.text(400, 170, "INITIALIZING KLIPPER", ThemeColor.PRIMARY,
                       "JetBrainsMono Bold 16pt", "center", "middle"),
         ]
         commands += self.startup_pulse(phase)
         commands += [
-            self.text(400, 300, "PLEASE WAIT", COLOR_TEXT,
+            self.text(400, 300, "PLEASE WAIT", ThemeColor.TEXT,
                       "JetBrainsMono 12pt", "center", "middle"),
-            self.text(400, 335, detail, COLOR_DIM,
+            self.text(400, 335, detail, ThemeColor.DIM,
                       "JetBrainsMono 8pt", "center", "middle"),
         ]
         self.prioritize_next_batch(
@@ -1300,8 +1279,8 @@ class FeatherRenderer:
     def startup_pulse(self, phase=0):
         """Redraw only the animated startup indicator's small dirty area."""
         pulse = (8, 12, 16, 12)[int(phase) % 4]
-        commands = [self.fill(374, 206, 53, 53, COLOR_PANEL)]
-        commands += self.filled_circle(400, 232, pulse, COLOR_VIOLET)
+        commands = [self.fill(374, 206, 53, 53, ThemeColor.PANEL)]
+        commands += self.filled_circle(400, 232, pulse, ThemeColor.SECONDARY)
         return commands
 
     def applying_modal(self, message="APPLYING CHANGES"):
@@ -1315,15 +1294,15 @@ class FeatherRenderer:
             "--batch clear-hitboxes",
             self._wake_hitbox(),
             self.fill(0, HEADER_BOTTOM + 1, SCREEN_WIDTH,
-                      CONTENT_BOTTOM - HEADER_BOTTOM - 1, "010203"),
+                      CONTENT_BOTTOM - HEADER_BOTTOM - 1, ThemeColor.OVERLAY),
         ]
         commands += self.panel(160, 145, 480, 180)
         commands += [
-            self.text(400, 205, str(message).upper(), COLOR_TEXT,
+            self.text(400, 205, str(message).upper(), ThemeColor.TEXT,
                       "JetBrainsMono Bold 16pt", "center", "middle"),
-            self.text(400, 260, "PLEASE WAIT", COLOR_DIM,
+            self.text(400, 260, "PLEASE WAIT", ThemeColor.DIM,
                       "JetBrainsMono 12pt", "center", "middle"),
-            self.fill(310, 292, 180, 8, COLOR_CYAN),
+            self.fill(310, 292, 180, 8, ThemeColor.PRIMARY),
         ]
         self.prioritize_next_batch("surface", "applying-modal")
         self.send(commands)

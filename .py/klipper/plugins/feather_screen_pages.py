@@ -13,12 +13,12 @@ import subprocess
 import time
 
 try:
-    from .ui import Page, PrintState
+    from .ui import Page, PrintState, ThemeColor, ThemeRole
     from .feather_keyboard import keyboard_rows
     from .feather_files import FileEntry, scan_gcode_files
     from .feather_pagination import Pagination, pagination_footer
 except (ImportError, ValueError):
-    from ui import Page, PrintState
+    from ui import Page, PrintState, ThemeColor, ThemeRole
     from feather_keyboard import keyboard_rows
     from feather_files import FileEntry, scan_gcode_files
     from feather_pagination import Pagination, pagination_footer
@@ -60,28 +60,28 @@ class FeatherPagesMixin:
         commands = self.renderer.begin_page("FORGE-X // FEATHER")
         commands += self.renderer.button("nav.menu", 648, 9, 132, 38, "MENU",
                                          font="JetBrainsMono Bold 8pt")
-        panels = ((25, 72, 235, 132, "NOZZLE", "b47aff"),
-                  (282, 72, 235, 132, "BED", "f2c94c"),
-                  (539, 72, 236, 132, "NETWORK", "35d9e6"))
+        panels = ((25, 72, 235, 132, "NOZZLE", ThemeRole.TEMPERATURE_NOZZLE),
+                  (282, 72, 235, 132, "BED", ThemeRole.TEMPERATURE_BED),
+                  (539, 72, 236, 132, "NETWORK", ThemeColor.PRIMARY))
         for x, y, width, height, label, color in panels:
-            commands += [self.renderer.fill(x, y, width, height, "050c0f"),
+            commands += [self.renderer.fill(x, y, width, height, ThemeColor.PANEL),
                          self.renderer.stroke(x, y, width, height, color, 2),
                          self.renderer.text(x + width // 2, y + 28, label, color,
                                             "JetBrainsMono 8pt", "center", "middle")]
         commands += [
-            self.renderer.fill(25, 220, 750, 112, "050c0f"),
-            self.renderer.stroke(25, 220, 750, 112, "295c66", 2),
-            self.renderer.text(44, 240, "JOB STATUS", "35d9e6",
+            self.renderer.fill(25, 220, 750, 112, ThemeColor.PANEL),
+            self.renderer.stroke(25, 220, 750, 112, ThemeColor.BORDER, 2),
+            self.renderer.text(44, 240, "JOB STATUS", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(25, 345, 750, 1, "295c66"),
-            self.renderer.text(28, 365, "LAST JOB", "56656c",
+            self.renderer.fill(25, 345, 750, 1, ThemeColor.BORDER),
+            self.renderer.text(28, 365, "LAST JOB", ThemeColor.DIM,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(300, 365, "MATERIAL", "56656c",
+            self.renderer.text(300, 365, "MATERIAL", ThemeColor.DIM,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(570, 365, "TOOLHEAD", "56656c",
+            self.renderer.text(570, 365, "TOOLHEAD", ThemeColor.DIM,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(282, 353, 1, 74, "295c66"),
-            self.renderer.fill(542, 353, 1, 74, "295c66"),
+            self.renderer.fill(282, 353, 1, 74, ThemeColor.BORDER),
+            self.renderer.fill(542, 353, 1, 74, ThemeColor.BORDER),
             self.renderer.action_hitbox("nav.heat", 25, 72, 492, 132),
             self.renderer.action_hitbox("nav.network", 539, 72, 236, 132),
             self.renderer.action_hitbox("nav.job", 25, 220, 750, 112),
@@ -128,72 +128,72 @@ class FeatherPagesMixin:
         commands = []
         if previous is None or values[:2] != previous[:2]:
             commands += [
-                self.renderer.fill(28, 112, 229, 87, "050c0f"),
-                self.renderer.text(142, 139, "%d / %d C" % values[:2], "d9e4e8",
+                self.renderer.fill(28, 112, 229, 87, ThemeColor.PANEL),
+                self.renderer.text(142, 139, "%d / %d C" % values[:2], ThemeColor.TEXT,
                                    "JetBrainsMono 12pt", "center", "middle"),
                 self.renderer.text(142, 181,
                                    "HEATING" if values[1] > 0 else "OFF",
-                                   "b47aff" if values[1] > 0 else "56656c",
+                                   ThemeRole.TEMPERATURE_NOZZLE if values[1] > 0 else ThemeColor.DIM,
                                    "JetBrainsMono 8pt", "center", "middle")]
         if previous is None or values[2:4] != previous[2:4]:
             commands += [
-                self.renderer.fill(285, 112, 229, 87, "050c0f"),
-                self.renderer.text(399, 139, "%d / %d C" % values[2:4], "d9e4e8",
+                self.renderer.fill(285, 112, 229, 87, ThemeColor.PANEL),
+                self.renderer.text(399, 139, "%d / %d C" % values[2:4], ThemeColor.TEXT,
                                    "JetBrainsMono 12pt", "center", "middle"),
                 self.renderer.text(399, 181,
                                    "HEATING" if values[3] > 0 else "OFF",
-                                   "f2c94c" if values[3] > 0 else "56656c",
+                                   ThemeRole.TEMPERATURE_BED if values[3] > 0 else ThemeColor.DIM,
                                    "JetBrainsMono 8pt", "center", "middle")]
         if previous is None or values[4:6] != previous[4:6]:
             commands += [
-                self.renderer.fill(542, 112, 230, 87, "050c0f"),
+                self.renderer.fill(542, 112, 230, 87, ThemeColor.PANEL),
                 self.renderer.text(657, 139,
-                                   values[4], "d9e4e8", "JetBrainsMono 8pt",
+                                   values[4], ThemeColor.TEXT, "JetBrainsMono 8pt",
                                    "center", "middle", max_width=210,
                                    truncate=True),
                 self.renderer.text(657, 181,
-                                   values[5], "35d9e6", "JetBrainsMono 8pt",
+                                   values[5], ThemeColor.PRIMARY, "JetBrainsMono 8pt",
                                    "center", "middle", max_width=210,
                                    truncate=True)]
         if previous is None or values[9] != previous[9]:
             active, state, filename, progress, elapsed, remaining, detail = values[9]
             commands += [
-                self.renderer.fill(29, 252, 742, 76, "050c0f"),
+                self.renderer.fill(29, 252, 742, 76, ThemeColor.PANEL),
                 self.renderer.text(
                     44, 270, filename if active else "NO ACTIVE JOB",
-                    "d9e4e8" if active else "35d9e6",
+                    ThemeColor.TEXT if active else ThemeColor.PRIMARY,
                     "JetBrainsMono Bold 8pt", "left", "middle",
                     max_width=560, truncate=True),
                 self.renderer.text(
                     756, 270, state if active else "READY",
-                    "f2c94c" if state == "PAUSED" else "35d9e6",
+                    ThemeColor.WARNING if state == "PAUSED" else ThemeColor.PRIMARY,
                     "JetBrainsMono 8pt", "right", "middle")]
             if active:
                 commands += [
                     self.renderer.text(
-                        44, 307, detail, "56656c", "JetBrainsMono 8pt",
+                        44, 307, detail, ThemeColor.DIM, "JetBrainsMono 8pt",
                         "left", "middle", max_width=330, truncate=True),
                     self.renderer.text(
                         756, 307, "%d%% // %s / %s" % (
                             progress, elapsed, remaining),
-                        "d9e4e8", "JetBrainsMono 8pt", "right", "middle",
+                        ThemeColor.TEXT, "JetBrainsMono 8pt", "right", "middle",
                         max_width=350, truncate=True)]
         if previous is None or values[6:9] != previous[6:9]:
             commands += [
-                self.renderer.fill(25, 393, 750, 34, "030607"),
-                self.renderer.text(28, 410, values[6], "d9e4e8",
+                self.renderer.fill(25, 393, 750, 34, ThemeColor.BACKGROUND),
+                self.renderer.text(28, 410, values[6], ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", "left", "middle",
                                    max_width=240, truncate=True),
-                self.renderer.text(300, 410, values[7], "d9e4e8",
+                self.renderer.text(300, 410, values[7], ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", "left", "middle",
                                    max_width=220, truncate=True),
                 self.renderer.text(570, 410, values[8],
-                                   "35d9e6" if values[8] == "XYZ" else "f2c94c",
+                                   ThemeColor.PRIMARY if values[8] == "XYZ" else ThemeColor.WARNING,
                                    "JetBrainsMono 8pt", "left", "middle")]
         if previous is None or values[10] != previous[10]:
             commands += [
-                self.renderer.fill(18, 7, 142, 46, "header_background"),
-                self.renderer.text(28, 29, values[10], "d9e4e8",
+                self.renderer.fill(18, 7, 142, 46, ThemeRole.HEADER_BACKGROUND),
+                self.renderer.text(28, 29, values[10], ThemeColor.TEXT,
                                    "Roboto 16pt", "left", "middle",
                                    proportional=True)]
         self.renderer.send(commands)
@@ -327,7 +327,7 @@ class FeatherPagesMixin:
         commands += pagination_footer(
             self.renderer, pagination, "file.prev", "file.next")
         if not rows:
-            commands.append(self.renderer.text(400, 230, "No G-code files", "606060",
+            commands.append(self.renderer.text(400, 230, "No G-code files", ThemeColor.DIM,
                                                "Roboto 16pt", "center", "middle"))
         self.renderer.send(commands)
 
@@ -364,10 +364,10 @@ class FeatherPagesMixin:
         entry = self.selected_file
         commands = self.renderer.begin_page("Start print?", back=True)
         commands.append(self.renderer.text(
-            400, 150, entry["name"], "ffffff", "Roboto Bold 16pt", "center",
+            400, 150, entry["name"], ThemeColor.BRIGHT, "Roboto Bold 16pt", "center",
             "middle", max_width=720, truncate=True))
         commands.append(self.renderer.text(400, 220, self._format_size(entry["size"]),
-                                           "00f0f0", "Roboto 12pt", "center", "middle"))
+                                           ThemeColor.PRIMARY, "Roboto 12pt", "center", "middle"))
         commands += self.renderer.button("file.start", 220, 310, 360, 100,
                                          "START PRINT", font="Roboto Bold 16pt")
         self.renderer.send(commands)
@@ -397,26 +397,26 @@ class FeatherPagesMixin:
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
         commands.append(self.renderer.text(25, 78, filename,
-                                           "35d9e6", "JetBrainsMono Bold 12pt",
+                                           ThemeColor.PRIMARY, "JetBrainsMono Bold 12pt",
                                            "left", "middle", max_width=750,
                                            truncate=True))
         commands.append(self.renderer.text(
-            25, 110, self.print_status_text, "d9e4e8", "JetBrainsMono 8pt",
+            25, 110, self.print_status_text, ThemeColor.TEXT, "JetBrainsMono 8pt",
             "left", "middle", max_width=750, truncate=True))
         commands += [
-            self.renderer.text(25, 142, "PROGRESS", "35d9e6",
+            self.renderer.text(25, 142, "PROGRESS", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.stroke(25, 162, 750, 34, "295c66", 2),
-            self.renderer.fill(25, 208, 750, 1, "295c66"),
-            self.renderer.text(25, 226, "ELAPSED", "35d9e6",
+            self.renderer.stroke(25, 162, 750, 34, ThemeColor.BORDER, 2),
+            self.renderer.fill(25, 208, 750, 1, ThemeColor.BORDER),
+            self.renderer.text(25, 226, "ELAPSED", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(410, 226, "REMAINING", "35d9e6",
+            self.renderer.text(410, 226, "REMAINING", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(395, 216, 1, 48, "295c66"),
-            self.renderer.fill(25, 273, 750, 1, "295c66"),
-            self.renderer.text(25, 291, "LAYER", "35d9e6",
+            self.renderer.fill(395, 216, 1, 48, ThemeColor.BORDER),
+            self.renderer.fill(25, 273, 750, 1, ThemeColor.BORDER),
+            self.renderer.text(25, 291, "LAYER", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(410, 291, "HEIGHT", "35d9e6",
+            self.renderer.text(410, 291, "HEIGHT", ThemeColor.PRIMARY,
                                "JetBrainsMono 8pt", "left", "middle"),
         ]
         commands += self.renderer.button("print.resume" if paused else "print.pause",
@@ -483,20 +483,20 @@ class FeatherPagesMixin:
         commands = [
             self.renderer.fill(650, 130, 125, 29),
             self.renderer.text(775, 142, "%d%%" % progress,
-                               "35d9e6", "JetBrainsMono 12pt", "right", "middle"),
+                               ThemeColor.PRIMARY, "JetBrainsMono 12pt", "right", "middle"),
             self.renderer.fill(31, 168, 738, 22),
-            self.renderer.fill(31, 168, width, 22, "35d9e6"),
+            self.renderer.fill(31, 168, width, 22, ThemeColor.PRIMARY),
             self.renderer.fill(25, 238, 350, 28),
-            self.renderer.text(25, 252, values[0], "d9e4e8",
+            self.renderer.text(25, 252, values[0], ThemeColor.TEXT,
                                "JetBrainsMono 12pt", "left", "middle"),
             self.renderer.fill(410, 238, 350, 28),
-            self.renderer.text(410, 252, values[1], "d9e4e8",
+            self.renderer.text(410, 252, values[1], ThemeColor.TEXT,
                                "JetBrainsMono 12pt", "left", "middle"),
             self.renderer.fill(25, 303, 350, 30),
-            self.renderer.text(25, 318, values[2], "d9e4e8",
+            self.renderer.text(25, 318, values[2], ThemeColor.TEXT,
                                "JetBrainsMono 12pt", "left", "middle"),
             self.renderer.fill(410, 303, 350, 30),
-            self.renderer.text(410, 318, "%.2f MM" % values[3], "d9e4e8",
+            self.renderer.text(410, 318, "%.2f MM" % values[3], ThemeColor.TEXT,
                                "JetBrainsMono 12pt", "left", "middle"),
         ]
         self.renderer.send(commands)
@@ -572,7 +572,7 @@ class FeatherPagesMixin:
     def _draw_print_status(self, status):
         self.renderer.send([
             self.renderer.fill(20, 94, 760, 34),
-            self.renderer.text(25, 110, status, "d9e4e8",
+            self.renderer.text(25, 110, status, ThemeColor.TEXT,
                                "JetBrainsMono 8pt", "left", "middle",
                                max_width=750, truncate=True)])
 
@@ -679,25 +679,25 @@ class FeatherPagesMixin:
             commands = self.renderer.begin_page(
                 "STOPPING PRINT")
             commands.append(self.renderer.text(
-                400, 170, label, "f2c94c",
+                400, 170, label, ThemeColor.WARNING,
                 "JetBrainsMono Bold 16pt", "center", "middle"))
             commands.append(self.renderer.text(
-                400, 225, "CANCEL REQUEST ACCEPTED", "35d9e6",
+                400, 225, "CANCEL REQUEST ACCEPTED", ThemeColor.PRIMARY,
                 "JetBrainsMono 12pt", "center", "middle"))
             commands.append(self.renderer.text(
-                400, 275, "REQUEST ACCEPTED // CONTROLS LOCKED", "56656c",
+                400, 275, "REQUEST ACCEPTED // CONTROLS LOCKED", ThemeColor.DIM,
                 "JetBrainsMono 8pt", "center", "middle"))
             for index in range(5):
                 commands.append(self.renderer.fill(
                     290 + index * 48, 325, 32, 12,
-                    "35d9e6" if index == self.busy_phase % 5 else "263238"))
+                    ThemeColor.PRIMARY if index == self.busy_phase % 5 else ThemeColor.MUTED))
             self.renderer.send(commands)
             self._last_cancel_label = label
             return
         commands = self.renderer.begin_page(
             "Cancel print?", back=True)
         commands.append(self.renderer.text(400, 170, "The current print will stop",
-                                           "ff9000", "Roboto 16pt", "center", "middle"))
+                                           ThemeColor.WARNING, "Roboto 16pt", "center", "middle"))
         commands += self.renderer.button("print.cancel.back", 100, 285, 260, 100,
                                          "GO BACK", font="Roboto Bold 16pt")
         commands += self.renderer.button("print.cancel.confirm", 440, 285, 260, 100,
@@ -737,14 +737,14 @@ class FeatherPagesMixin:
             commands = []
         else:
             self._last_cancel_label = label
-            commands = [self.renderer.fill(100, 140, 600, 65, "030607"),
-                        self.renderer.text(400, 170, label, "f2c94c",
+            commands = [self.renderer.fill(100, 140, 600, 65, ThemeColor.BACKGROUND),
+                        self.renderer.text(400, 170, label, ThemeColor.WARNING,
                                            "JetBrainsMono Bold 16pt", "center",
                                            "middle")]
         for index in range(5):
             commands.append(self.renderer.fill(
                 290 + index * 48, 325, 32, 12,
-                "35d9e6" if index == self.busy_phase % 5 else "263238"))
+                ThemeColor.PRIMARY if index == self.busy_phase % 5 else ThemeColor.MUTED))
         self.renderer.send(commands)
 
 
@@ -762,13 +762,13 @@ class FeatherPagesMixin:
         )
         for label, value, prefix, y, enabled in rows:
             commands += [
-                self.renderer.fill(25, y, 750, 70, "050c0f"),
-                self.renderer.stroke(25, y, 750, 70, "295c66", 1),
-                self.renderer.text(44, y + 22, label, "35d9e6",
+                self.renderer.fill(25, y, 750, 70, ThemeColor.PANEL),
+                self.renderer.stroke(25, y, 750, 70, ThemeColor.BORDER, 1),
+                self.renderer.text(44, y + 22, label, ThemeColor.PRIMARY,
                                    "JetBrainsMono Bold 8pt"),
                 self.renderer.text(425, y + 36,
                                    "%d%%" % value if enabled else "--",
-                                   "d9e4e8" if enabled else "56656c",
+                                   ThemeColor.TEXT if enabled else ThemeColor.DIM,
                                    "JetBrainsMono 12pt", "center"),
             ]
             commands += self.renderer.button(prefix + ".minus", 525, y + 12,
@@ -780,9 +780,9 @@ class FeatherPagesMixin:
                                              state=("enabled" if enabled
                                                     else "disabled"))
         commands += [
-            self.renderer.fill(25, 235, 750, 66, "050c0f"),
-            self.renderer.stroke(25, 235, 750, 66, "295c66", 1),
-            self.renderer.text(44, 268, "SOUND FEEDBACK", "35d9e6",
+            self.renderer.fill(25, 235, 750, 66, ThemeColor.PANEL),
+            self.renderer.stroke(25, 235, 750, 66, ThemeColor.BORDER, 1),
+            self.renderer.text(44, 268, "SOUND FEEDBACK", ThemeColor.PRIMARY,
                                "JetBrainsMono Bold 8pt"),
         ]
         commands += self.renderer.toggle("settings.sound", 679, 249, 76, 38,
@@ -874,7 +874,7 @@ class FeatherPagesMixin:
         last = min(total, start + len(visible))
         commands.append(self.renderer.text(
             25, 72, "MOD PARAMETERS // %02d-%02d / %02d" % (first, last, total),
-            "35d9e6", "JetBrainsMono 8pt"))
+            ThemeColor.PRIMARY, "JetBrainsMono 8pt"))
 
         row_x, row_width, row_height = 25, 690, 64
         for row, param in enumerate(visible):
@@ -884,15 +884,15 @@ class FeatherPagesMixin:
             title = str(param.label).upper()
             detail = mod_ui.description(param)
             commands += [
-                self.renderer.fill(row_x, y, row_width, row_height, "050c0f"),
+                self.renderer.fill(row_x, y, row_width, row_height, ThemeColor.PANEL),
                 self.renderer.stroke(row_x, y, row_width, row_height,
-                                     "295c66", 1),
-                self.renderer.text(40, y + 14, title, "35d9e6",
+                                     ThemeColor.BORDER, 1),
+                self.renderer.text(40, y + 14, title, ThemeColor.PRIMARY,
                                    "JetBrainsMono Bold 8pt", max_width=430,
                                    truncate=True),
-                self.renderer.text(40, y + 32, param.key, "56656c",
+                self.renderer.text(40, y + 32, param.key, ThemeColor.DIM,
                                    "JetBrainsMono 8pt"),
-                self.renderer.text(40, y + 50, detail, "d9e4e8",
+                self.renderer.text(40, y + 50, detail, ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", max_width=430,
                                    truncate=True),
             ]
@@ -918,13 +918,13 @@ class FeatherPagesMixin:
             "mod.next", 728, 365, 52, 48, "down", state=next_state)
         track_y, track_height = 146, 209
         commands += [self.renderer.stroke(749, track_y, 10, track_height,
-                                          "295c66", 1)]
+                                          ThemeColor.BORDER, 1)]
         thumb_height = max(18, track_height // pagination.page_count)
         thumb_y = (track_y if pagination.page_count == 1 else
                    track_y + (track_height - thumb_height) * self.mod_page
                    // (pagination.page_count - 1))
         commands.append(self.renderer.fill(751, thumb_y + 2, 6,
-                                           max(4, thumb_height - 4), "35d9e6"))
+                                           max(4, thumb_height - 4), ThemeColor.PRIMARY))
         self.renderer.send(commands)
 
     def _open_mod_parameter(self, index, return_page=Page.MOD_SETTINGS):
@@ -1173,12 +1173,12 @@ class FeatherPagesMixin:
             return
         commands = self.renderer.begin_page(str(param.label), back=True)
         commands.append(self.renderer.text(
-            25, 76, mod_ui.description(param), "d9e4e8",
+            25, 76, mod_ui.description(param), ThemeColor.TEXT,
             "JetBrainsMono 8pt", max_width=650, max_height=44, wrap=True,
             truncate=True))
         if mod_ui.restart_effect(param) is not None:
             commands.append(self.renderer.text(
-                25, 108, "APPLYING THIS VALUE RESTARTS KLIPPER.", "f2c94c",
+                25, 108, "APPLYING THIS VALUE RESTARTS KLIPPER.", ThemeColor.WARNING,
                 "JetBrainsMono 8pt"))
         options = self.parameter_options
         if (param.key == "feather_theme"
@@ -1223,7 +1223,7 @@ class FeatherPagesMixin:
             commands.append(self.renderer.text(
                 750, 80, "%d/%d" % (
                     pagination.page + 1, pagination.page_count),
-                "56656c", "JetBrainsMono 8pt", "right", "middle"))
+                ThemeColor.DIM, "JetBrainsMono 8pt", "right", "middle"))
         else:
             commands += self.renderer.button(
                 "mod.cancel", 25, 390, 360, 47, "CANCEL", state="danger",
@@ -1245,16 +1245,16 @@ class FeatherPagesMixin:
             self.renderer.send(commands)
             return
         commands += [
-            self.renderer.text(25, 73, str(param.label).upper(), "35d9e6",
+            self.renderer.text(25, 73, str(param.label).upper(), ThemeColor.PRIMARY,
                                "JetBrainsMono Bold 12pt"),
-            self.renderer.text(25, 98, param.key, "56656c",
+            self.renderer.text(25, 98, param.key, ThemeColor.DIM,
                                "JetBrainsMono 8pt"),
-            self.renderer.text(280, 98, mod_ui.description(param), "d9e4e8",
+            self.renderer.text(280, 98, mod_ui.description(param), ThemeColor.TEXT,
                                "JetBrainsMono 8pt", max_width=490,
                                truncate=True),
-            self.renderer.fill(25, 120, 750, 53, "050c0f"),
-            self.renderer.stroke(25, 120, 750, 53, "35d9e6", 2),
-            self.renderer.text(42, 147, self.mod_edit_value or "_", "35d9e6",
+            self.renderer.fill(25, 120, 750, 53, ThemeColor.PANEL),
+            self.renderer.stroke(25, 120, 750, 53, ThemeColor.PRIMARY, 2),
+            self.renderer.text(42, 147, self.mod_edit_value or "_", ThemeColor.PRIMARY,
                                "JetBrainsMono 12pt", max_width=710,
                                truncate=True),
         ]
@@ -1320,7 +1320,7 @@ class FeatherPagesMixin:
         lines.append("IP: %s" % (self.network_status.get("ip") or "Offline"))
         for index, line in enumerate(lines):
             commands.append(self.renderer.text(
-                400, 75 + index * 35, line, "ffffff", "Roboto 10pt", "center",
+                400, 75 + index * 35, line, ThemeColor.BRIGHT, "Roboto 10pt", "center",
                 max_width=660, truncate=True))
         commands += self.renderer.button("net.scan", 55, 190, 320, 150,
                                          "WI-FI", font="JetBrainsMono 12pt")
@@ -1549,7 +1549,7 @@ class FeatherPagesMixin:
     def _render_network_progress(self):
         commands = self.renderer.begin_page("Network")
         label = "Scanning Wi-Fi..." if self.network_operation == "scan" else "Connecting..."
-        commands.append(self.renderer.text(400, 230, label, "00f0f0", "Roboto Bold 16pt",
+        commands.append(self.renderer.text(400, 230, label, ThemeColor.PRIMARY, "Roboto Bold 16pt",
                                            "center", "middle"))
         commands += self.renderer.button("net.cancel", 270, 340, 260, 70, "CANCEL",
                                          state="danger")
@@ -1573,16 +1573,16 @@ class FeatherPagesMixin:
                                          active=pagination.has_next)
         if not rows:
             commands.append(self.renderer.text(400, 230, "No supported networks",
-                                               "606060", "Roboto 16pt", "center", "middle"))
+                                               ThemeColor.DIM, "Roboto 16pt", "center", "middle"))
         self.renderer.send(commands)
 
     def _render_keyboard(self):
         ssid = self.selected_network["ssid"]
         commands = self.renderer.begin_page(ssid, back=True)
         masked = self.password if self.password_visible else "*" * len(self.password)
-        commands.append(self.renderer.stroke(55, 62, 690, 42, "872187", 3))
+        commands.append(self.renderer.stroke(55, 62, 690, 42, ThemeColor.SECONDARY_DARK, 3))
         commands.append(self.renderer.text(
-            70, 83, masked, "ffffff", "JetBrainsMono 12pt", "left", "middle",
+            70, 83, masked, ThemeColor.BRIGHT, "JetBrainsMono 12pt", "left", "middle",
             max_width=660, truncate=True))
 
         rows = keyboard_rows(self.keyboard_symbols, self.keyboard_shift)
@@ -1662,15 +1662,15 @@ class FeatherPagesMixin:
         status = self.recovery_status or {}
         commands = self.renderer.begin_page("Power loss recovery")
         commands.append(self.renderer.text(
-            400, 90, status.get("filename", "Unknown"), "ffffff",
+            400, 90, status.get("filename", "Unknown"), ThemeColor.BRIGHT,
             "Roboto Bold 14pt", "center", max_width=720, truncate=True))
         commands.append(self.renderer.text(400, 140, "Saved progress: %.1f%%" %
                                            (float(status.get("progress", 0.0)) * 100),
-                                           "00f0f0", "Roboto 12pt", "center"))
+                                           ThemeColor.PRIMARY, "Roboto 12pt", "center"))
         commands.append(self.renderer.text(
             400, 185, "Nozzle %.0fC   Bed %.0fC   Mesh %s" %
             (status.get("extruder_target", 0), status.get("bed_target", 0),
-             status.get("mesh", "?")), "ffffff", "Roboto 10pt", "center"))
+             status.get("mesh", "?")), ThemeColor.BRIGHT, "Roboto 10pt", "center"))
         commands += self.renderer.button("recovery.restore", 35, 285, 220, 100,
                                          "RESTORE", font="Roboto Bold 14pt")
         commands += self.renderer.button("recovery.later", 290, 285, 220, 100,
@@ -1687,7 +1687,7 @@ class FeatherPagesMixin:
                 if cleanup else
                 "Restore will heat, home and continue the interrupted print.")
         commands.append(self.renderer.text(
-            400, 150, text, "ffffff", "JetBrainsMono 12pt", "center",
+            400, 150, text, ThemeColor.BRIGHT, "JetBrainsMono 12pt", "center",
             "middle", max_width=640, max_height=100, wrap=True,
             truncate=True))
         commands += self.renderer.button("recovery.confirm", 220, 300, 360, 100,
@@ -1708,15 +1708,15 @@ class FeatherPagesMixin:
 
         commands = self.renderer.begin_page("KLIPPER PROMPT")
         commands += self.renderer.panel(
-            30, 67, 740, 365, border="295c66", background="050c0f")
+            30, 67, 740, 365, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
         commands.append(self.renderer.text(
-            400, 102, prompt["title"], "35d9e6",
+            400, 102, prompt["title"], ThemeColor.PRIMARY,
             "JetBrainsMono Bold 16pt", "center", "middle",
             max_width=680, truncate=True))
         text = "\n".join(prompt["text"])
         if text:
             commands.append(self.renderer.text(
-                400, 158, text, "d9e4e8", "JetBrainsMono 8pt",
+                400, 158, text, ThemeColor.TEXT, "JetBrainsMono 8pt",
                 "center", "middle", max_width=680, max_height=76,
                 wrap=True, truncate=True))
 

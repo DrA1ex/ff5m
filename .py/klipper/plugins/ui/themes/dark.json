@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "DARK",
   "description": "Neutral monochrome",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -22,5 +22,10 @@
     "success": "7dbb8a",
     "pressed_background": "33383c",
     "overlay": "020202"
+  },
+  "roles": {
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
   "license": "GNU GPLv3",
   "name": "COMMAND",
@@ -21,15 +21,20 @@
     "muted": "262c1d",
     "success": "84c96d",
     "pressed_background": "394227",
-    "overlay": "040503",
+    "overlay": "040503"
+  },
+  "roles": {
     "button_background": "1b1f14",
     "button_border": "67794a",
     "button_text": "d5deb8",
     "button_selected_background": "3e3213",
-    "button_selected_border": "d8a63f",
+    "button_selected_border": "secondary",
     "button_selected_text": "ffe6b4",
     "header_background": "191d12",
-    "header_text": "d8a63f",
-    "header_border": "57643b"
+    "header_text": "secondary",
+    "header_border": "border",
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

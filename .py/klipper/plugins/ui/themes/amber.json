@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "AMBER",
   "description": "Amber-green phosphor",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -21,15 +21,20 @@
     "muted": "183419",
     "success": "8fe35d",
     "pressed_background": "245b20",
-    "overlay": "010301",
+    "overlay": "010301"
+  },
+  "roles": {
     "button_background": "28230f",
     "button_border": "6d5c2b",
     "button_text": "b58c2f",
     "button_selected_background": "102306",
-    "button_selected_border": "69d540",
+    "button_selected_border": "primary",
     "button_selected_text": "8bea5d",
     "header_background": "24200e",
     "header_text": "b88d2e",
-    "header_border": "5b4c24"
+    "header_border": "5b4c24",
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
   "license": "GNU GPLv3",
   "name": "INDUSTRIAL",
@@ -21,15 +21,20 @@
     "muted": "252620",
     "success": "6dbd8a",
     "pressed_background": "302715",
-    "overlay": "040504",
+    "overlay": "040504"
+  },
+  "roles": {
     "button_background": "1b1c19",
     "button_border": "69644e",
     "button_text": "e2d5b2",
     "button_selected_background": "2f321f",
-    "button_selected_border": "93a27a",
+    "button_selected_border": "secondary",
     "button_selected_text": "dbe8c6",
     "header_background": "171713",
-    "header_text": "d5a444",
-    "header_border": "5d5a4a"
+    "header_text": "primary",
+    "header_border": "border",
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }

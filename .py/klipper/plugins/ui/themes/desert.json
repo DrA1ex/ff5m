@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "DESERT",
   "description": "Sand and gold",
   "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
@@ -21,7 +21,9 @@
     "muted": "342518",
     "success": "78a459",
     "pressed_background": "4a3113",
-    "overlay": "030201",
+    "overlay": "030201"
+  },
+  "roles": {
     "button_background": "2a1a0b",
     "button_border": "9c7430",
     "button_text": "dec27c",
@@ -30,6 +32,9 @@
     "button_selected_text": "fff0bf",
     "header_background": "3a1d0a",
     "header_text": "e5b354",
-    "header_border": "985d22"
+    "header_border": "985d22",
+    "temperature_nozzle": "secondary",
+    "temperature_bed": "warning",
+    "temperature_fan": "primary"
   }
 }
