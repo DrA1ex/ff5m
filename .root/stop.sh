@@ -3,6 +3,7 @@
 # Stop display-specific services
 /opt/config/mod/.root/S35tslib stop
 /opt/config/mod/.root/S80guppyscreen stop
+/opt/config/mod/.root/S90helixscreen stop 2>/dev/null
 
 /opt/config/mod/.root/S65moonraker stop
 /opt/config/mod/.root/S70httpd stop

@@ -1,0 +1,44 @@
+#!/bin/bash
+
+## Helix Screen service management
+##
+## Copyright (C) 2025, HelixScreen <https://github.com/HelixScreen>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+case "$1" in
+    start)
+        echo "Starting HelixScreen services..."
+        /opt/config/mod/.root/S35tslib start
+        /opt/config/mod/.root/S90helixscreen start
+        echo "HelixScreen services started"
+    ;;
+
+    stop)
+        echo "Stopping HelixScreen services..."
+        /opt/config/mod/.root/S90helixscreen stop
+        /opt/config/mod/.root/S35tslib stop
+        echo "HelixScreen services stopped"
+    ;;
+
+    restart)
+        echo "Restarting HelixScreen services..."
+        /opt/config/mod/.root/S90helixscreen stop
+        /opt/config/mod/.root/S35tslib stop
+        /opt/config/mod/.root/S35tslib start
+        /opt/config/mod/.root/S90helixscreen start
+        echo "HelixScreen services restarted"
+    ;;
+
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        echo ""
+        echo "Commands:"
+        echo "  start   - Start both tslib and HelixScreen services"
+        echo "  stop    - Stop both HelixScreen and tslib services"
+        echo "  restart - Restart both services"
+        exit 1
+    ;;
+esac
+
+exit $?

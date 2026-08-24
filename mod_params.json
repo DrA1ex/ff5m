@@ -48,7 +48,8 @@
         "STOCK": 0,
         "FEATHER": 1,
         "HEADLESS": 2,
-        "GUPPY": 3
+        "GUPPY": 3,
+        "HELIX": 4
       }
     }
   },
@@ -280,7 +281,8 @@
         "STOCK": "Use Stock Screen",
         "FEATHER": "Use Feather Screen",
         "HEADLESS": "Use Headless",
-        "GUPPY": "Use Guppy Screen"
+        "GUPPY": "Use Guppy Screen",
+        "HELIX": "Use Helix Screen"
       },
       "deprecated": {
         "key": "display_off",

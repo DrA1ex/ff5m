@@ -41,6 +41,14 @@ display_guppy() {
         --params /opt/config/mod/.cfg/init.display.guppy.cfg
 }
 
+display_helix() {
+    chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
+        --mode restore --avoid_writes \
+        --config /opt/config/printer.cfg \
+        --no_data \
+        --params /opt/config/mod/.cfg/init.display.helix.cfg
+}
+
 test() {
     local display_off=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display_off" "MISSING")
 
@@ -137,6 +145,9 @@ apply_display_off() {
     
     # Stop Guppy services if they are running
     chroot "$MOD" /opt/config/mod/.root/guppyscreen stop
+
+    # Stop HelixScreen services if they are running
+    chroot "$MOD" /opt/config/mod/.root/helixscreen stop 2>/dev/null
     
     if ip addr show wlan0 | grep -q "inet "; then
         killall "wpa_cli" &> /dev/null
@@ -196,6 +207,14 @@ case "$1" in
         chroot "$MOD" /opt/config/mod/.root/guppyscreen start
     ;;
     
+    helix)
+        display_helix
+        apply_display_off
+
+        # Start HelixScreen services
+        chroot "$MOD" /opt/config/mod/.root/helixscreen start
+    ;;
+    
     apply)
         if [ "$(test)" != "STOCK" ]; then
             echo "Turning off Stock screen..."
@@ -211,7 +230,7 @@ case "$1" in
     ;;
     
     *)
-        echo "Usage: $0 stock|feather|headless|guppy|test"; exit 1;
+        echo "Usage: $0 stock|feather|headless|guppy|helix|test"; exit 1;
     ;;
 esac
 
