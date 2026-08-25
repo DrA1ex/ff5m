@@ -84,7 +84,7 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 
 The beta is already considered stable enough for regular use, but it is still a beta: some bugs, rough edges, or cosmetic issues may remain.
 
-If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the **Releases** page for the latest `1.4.2` beta.
+If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the [**Releases**](https://github.com/DrA1ex/ff5m/releases) page for the latest `1.4.2` beta.
 
 Full details, installation notes, and beta-specific warnings are included in the release notes.
 
