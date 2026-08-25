@@ -1,5 +1,5 @@
 <p align="center">
-   <img width="600" src="https://github.com/user-attachments/assets/1e1e0b03-a424-4da3-8285-d62dd74470de" />
+   <img width="600" src="https://github.com/user-attachments/assets/4e443f9c-02a7-483a-a9da-9afa6db6be2a" />
 </p>
 
 # Flashforge Adventurer 5M (Pro) Firmware Mod
@@ -77,6 +77,17 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
 17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
 18. **Optional**: Enable [Power Loss Recovery](docs/PRINTING.md#power-loss-recovery-resurrection).   
+
+## Public Beta of Upcoming 1.4.2 Release
+
+**Forge-X 1.4.2 is now available as a public beta.** This is a major update with a fully interactive **Feather** touchscreen and a heavily reworked Forge-X experience — much closer to what I originally wanted Forge-X to be from the beginning.
+
+The beta is already considered stable enough for regular use, but it is still a beta: some bugs, rough edges, or cosmetic issues may remain.
+
+If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the **Releases** page for the latest `1.4.2` beta.
+
+Full details, installation notes, and beta-specific warnings are included in the release notes.
+
 
 ## Get Started
 
