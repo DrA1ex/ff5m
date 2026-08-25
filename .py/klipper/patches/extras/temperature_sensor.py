@@ -2,6 +2,13 @@
 #
 # Changes:
 # - Added gcode code to execute if value out of range
+# - Added optional min_exceed_count debounce: require N consecutive
+#   over-threshold samples before running exceed_gcode. Without this a
+#   single noisy/transient reading (e.g. a print blob briefly loading the
+#   AD5M's bed load cell) is enough to trip the immediate M112 shutdown
+#   path below, with no way to tell that apart from a genuine, sustained
+#   nozzle collision. Defaults to 1 (fires on the first sample, identical
+#   to prior behavior) so existing configs are unaffected.
 #
 # Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
 #
@@ -32,6 +39,7 @@ class PrinterSensorGeneric:
         self.gcode_throttle = config.getfloat("throttle", 1., minval=0)
         self.gcode_reschedule = config.getboolean("reschedule", False)
         self.gcode_reschedule_cooldown = config.getfloat("reschedule_cooldown", 1., minval=0)
+        self.min_exceed_count = config.getint("min_exceed_count", 1, minval=1)
         gcode_macro = self.printer.load_object(config, "gcode_macro")
         self.exceed_gcode_present = config.get("exceed_gcode", None) is not None
         if self.exceed_gcode_present:
@@ -46,6 +54,7 @@ class PrinterSensorGeneric:
         self._throttle_max_value = float("-inf")
         self._callback_scheduled = False
         self._last_exceed = 0
+        self._consecutive_exceed = 0
 
     m112_r = re.compile(r"^(?:[nN][0-9]+)?\s*[mM]112(?:\s|$)", re.MULTILINE)
 
@@ -55,8 +64,13 @@ class PrinterSensorGeneric:
             self.measured_min = min(self.measured_min, temp)
             self.measured_max = max(self.measured_max, temp)
 
-            if self.exceed_gcode_present and (temp >= self.trigger_value):
-                self._handle_exceed(temp)
+            if self.exceed_gcode_present:
+                if temp >= self.trigger_value:
+                    self._consecutive_exceed += 1
+                    if self._consecutive_exceed >= self.min_exceed_count:
+                        self._handle_exceed(temp)
+                else:
+                    self._consecutive_exceed = 0
 
     def _template(self, value):
         context = self.exceed_template.create_template_context()
