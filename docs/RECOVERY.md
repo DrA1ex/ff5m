@@ -28,7 +28,23 @@ If you’ve modified internal system files and something went wrong—your print
 
 ### Diagnostics
 
-To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Using a 5V adapter can **damage** the motherboard, so be careful. Do not use an Arduino directly, as it operates at 5V and could **fry the CPU**.
+To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Alternatively, you can use an ESP8266/ESP32. Do not use a regular Arduino directly, as it normally uses 5V logic levels.
+
+> [!WARNING]
+> **Incorrect UART wiring can permanently damage the printer motherboard or the adapter.**
+>
+> * The printer UART uses **3.3V logic**. Do **not** connect a 5V UART signal to it.
+> * Do **not** connect the power/VCC line between the printer and the UART adapter or ESP board.
+> * Always make or change UART connections while **both devices are completely unpowered**.
+>
+> Recommended connection order:
+>
+> 1. Unplug the printer **from the wall outlet**.
+> 2. Disconnect the UART adapter/ESP board from USB.
+> 3. Connect TX/RX/GND and double-check the wiring.
+> 4. Connect the UART adapter/ESP board to the computer via USB.
+> 5. Only then plug the printer back into the wall outlet and power it on.
+
 
 If you have an ESP8266 development board with an onboard USB-UART adapter (for example, NodeMCU or Wemos D1 Mini), you can use the USB-UART adapter directly without flashing any firmware. Connect **EN to GND** to disable the ESP8266, then connect:
 - **TX** on the ESP board to **TX** on the motherboard.
