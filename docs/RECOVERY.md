@@ -24,7 +24,7 @@ In most cases, this should restore your printer's functionality.
 
 ## Recovery using UART
 
-If you’ve modified internal system files and something went wrong—your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen—don’t worry. This is fixable, and it doesn’t require advanced skills. Let’s start by diagnosing the issue.
+If you’ve modified internal system files and something went wrong — your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen - don’t worry. This is fixable, and it doesn’t require advanced skills. Let’s start by diagnosing the issue.
 
 ### Diagnostics
 
