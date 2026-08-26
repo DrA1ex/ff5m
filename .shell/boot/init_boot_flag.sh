@@ -2,15 +2,12 @@
 
 ## Handling special boot flag
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-COMMON_SCRIPT="${COMMON_SCRIPT:-/opt/config/mod/.shell/common.sh}"
-BOOT_FLAG_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
-source "$COMMON_SCRIPT"
-source "$BOOT_FLAG_SCRIPT_DIR/usb_storage.sh"
+source /opt/config/mod/.shell/common.sh
+source /opt/config/mod/.shell/boot/usb_storage.sh
 
 FLAGS=("SKIP_MOD" "SKIP_MOD_SOFT" "REMOVE_MOD" "REMOVE_MOD_SOFT" "klipper_mod_skip" "klipper_mod_remove")
 
@@ -18,7 +15,7 @@ check_special_boot_flag() {
     local path=$1
 
     # Check firmware image first
-    if ls "$path"/Adventurer5M*.tgz &> /dev/null; then
+    if /opt/config/mod/.shell/boot/install-image.sh test "$path" > /dev/null; then
         echo "FIRMWARE_IMAGE"
         return 0
     fi
@@ -49,7 +46,7 @@ check_special_boot_flag() {
 
 search_special_boot_flag_usb() {
     local callback=$1
-    local wait_seconds candidates size_kib partition_path filesystem
+    local wait_seconds candidates size_kib size_mb partition_path filesystem
     local mount_point found
 
     echo "Searching for boot flag in USB files..."
@@ -68,7 +65,8 @@ search_special_boot_flag_usb() {
     while read -r size_kib partition_path; do
         [ -n "$partition_path" ] || continue
         filesystem=$(usb_storage_filesystem "$partition_path")
-        echo "// Found USB storage: $partition_path (${size_kib} KiB, ${filesystem:-unknown})"
+        size_mb=$((size_kib / 1024))
+        echo "// USB $partition_path: ${size_mb} MB, ${filesystem:-unknown}"
 
         if ! usb_storage_supports_mount "$filesystem" \
                 && [ -n "$filesystem" ]; then
@@ -83,13 +81,16 @@ search_special_boot_flag_usb() {
 
         mount_point="$USB_STORAGE_MOUNT_POINT"
         found=$(check_special_boot_flag "$mount_point")
-        usb_storage_release_mount
 
         if [ -n "$found" ]; then
-            echo "// Boot flag found: $found"
-            eval "$callback" "$found"
+            echo "// Boot flag: $found"
+
+            [ "$found" = "FIRMWARE_IMAGE" ] || usb_storage_release_mount
+            eval "$callback" "$found" "$mount_point"
             return 0
         fi
+
+        usb_storage_release_mount
     done <<< "$candidates"
 
     return 1
@@ -101,8 +102,8 @@ search_special_boot_flag_root() {
 
     found=$(check_special_boot_flag "/opt/config/mod/")
     if [ -n "$found" ]; then
-        echo "// Boot flag found: $found"
-        eval "$callback" "$found"
+        echo "// Boot flag: $found"
+        eval "$callback" "$found" "/opt/config/mod/"
         return 0
     fi
     
@@ -115,7 +116,7 @@ search_for_klipper_mod() {
 
     if [ -f "/etc/init.d/S00klipper_mod" ]; then
         echo "// Klipper mod found."
-        eval "$callback" "KLIPPER_MOD"
+        eval "$callback" "KLIPPER_MOD" ""
         return 0
     fi
     
@@ -124,6 +125,7 @@ search_for_klipper_mod() {
 
 handle_special_boot_flag() {
     local name="$1"
+    local mount=${2:-}
     
     case "$name" in
         SKIP_MOD)
@@ -176,11 +178,22 @@ handle_special_boot_flag() {
 
             exit 1
         ;;
-        FIRMWARE_IMAGE | FIRMWARE_SCRIPT)
+        FIRMWARE_IMAGE)
             echo "!! Installation image found. Skipping the mod..."
             touch /tmp/SKIP_MOD_HARD
 
-            echo "// Firmware image will be loaded soon..."
+            echo "// Starting firmware installer..."
+            /opt/config/mod/.shell/boot/install-image.sh "$mount"
+
+            # The installer owns the boot once an image was accepted. Its
+            # errors are terminal screens, not permission to resume boot.
+            exit 0
+        ;;
+        FIRMWARE_SCRIPT)
+            echo "!! Installation script found. Skipping the mod..."
+            touch /tmp/SKIP_MOD_HARD
+
+            echo "// Firmware script will be loaded soon..."
 
             exit 0
         ;;
@@ -201,6 +214,7 @@ handle_special_boot_flag() {
 print_special_boot_flag() {
     local name="$1"
 
+    usb_storage_release_mount
     echo "Flag: $name"
     exit 0
 }
@@ -217,10 +231,6 @@ search() {
 
     return $ret
 }
-
-if [ "${INIT_BOOT_FLAG_LIBRARY_ONLY:-0}" -eq 1 ]; then
-    return 0 2>/dev/null || exit 0
-fi
 
 case "$1" in
     test)

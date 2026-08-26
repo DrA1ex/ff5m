@@ -10,12 +10,16 @@ source /opt/config/mod/.shell/common.sh
 source /opt/config/mod/.shell/klipper_overlay.sh
 
 handle_special_boot_mode() {
+    export FIRMWARE_INSTALL_PARENT_PID="$PPID"
+
     if /opt/config/mod/.shell/boot/init_boot_flag.sh apply; then
         rm -f "$BOOT_FAILURE_F"
 
         "$SCRIPTS/screen.sh" splash_stop
         exit 0
     fi
+
+    unset FIRMWARE_INSTALL_PARENT_PID
 }
 
 handle_boot_options() {
@@ -67,6 +71,9 @@ initialize() {
 
     echo "// Mounting partition..."
     mount_data_partition
+
+    # Remove staging left by a previous firmware hand-off.
+    "$SCRIPTS/boot/install-image.sh" cleanup
 
     rotate_logs "/data/logFiles/boot.log"
     rotate_logs "/data/logFiles/ssh.log"

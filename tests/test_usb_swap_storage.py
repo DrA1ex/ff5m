@@ -3,15 +3,19 @@
 import os
 import pathlib
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
 
 
 ROOT = pathlib.Path(__file__).parents[1]
+S00_INIT = ROOT / ".shell" / "S00init"
 HELPER = ROOT / ".shell" / "boot" / "usb_storage.sh"
 INIT_SWAP = ROOT / ".shell" / "boot" / "init_swap.sh"
 INIT_BOOT_FLAG = ROOT / ".shell" / "boot" / "init_boot_flag.sh"
+INSTALL_IMAGE = ROOT / ".shell" / "boot" / "install-image.sh"
+INSTALL_IMAGE_RUNNER = ROOT / ".shell" / "boot" / "install-image-runner.sh"
 PREPARE_USB = ROOT / ".shell" / "commands" / "zusb.sh"
 MOUNT_USB = ROOT / ".shell" / "commands" / "zusb_mount.sh"
 
@@ -70,6 +74,64 @@ class UsbStorageTest(unittest.TestCase):
             "  *) echo ;;\n"
             "esac\n")
         self.no_udevadm = self.root / "missing-udevadm"
+        version_file = self.root / "version"
+        software_dir = self.root / "software"
+        launcher = software_dir / "3.1.5" / "auto_run.sh"
+        version_file.write_text("3.1.5\n", encoding="utf-8")
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text(
+            "#!/bin/sh\nMACHINE=Adventurer5M\nPID=0023\n",
+            encoding="utf-8")
+        self.install_image = self.root / "install-image.sh"
+        install_image = INSTALL_IMAGE.read_text(encoding="utf-8")
+        install_image = install_image.replace(
+            "/root/version", str(version_file))
+        install_image = install_image.replace(
+            "/opt/PROGRAM/software", str(software_dir))
+        install_image = install_image.replace(
+            "/opt/config/mod/.shell/boot/install-image-runner.sh",
+            str(INSTALL_IMAGE_RUNNER))
+        self.install_image.write_text(install_image, encoding="utf-8")
+        self.install_image.chmod(0o755)
+
+        self.init_boot_flag = self.root / "init_boot_flag.sh"
+        init_boot_flag = INIT_BOOT_FLAG.read_text(encoding="utf-8")
+        init_boot_flag = init_boot_flag.replace(
+            "source /opt/config/mod/.shell/common.sh",
+            "source /dev/null")
+        init_boot_flag = init_boot_flag.replace(
+            "source /opt/config/mod/.shell/boot/usb_storage.sh",
+            "source %s" % shlex.quote(str(HELPER)))
+        init_boot_flag = init_boot_flag.replace(
+            "/opt/config/mod/.shell/boot/install-image.sh",
+            shlex.quote(str(self.install_image)))
+        init_boot_flag = init_boot_flag.split('\ncase "$1" in\n', 1)[0]
+        self.init_boot_flag.write_text(
+            init_boot_flag + "\n", encoding="utf-8")
+
+        self.special_boot_success = self.root / "special-boot-success.sh"
+        self.special_boot_success.write_text(
+            "#!/bin/sh\n"
+            "if [ -n \"${SPECIAL_BOOT_PID_LOG:-}\" ]; then\n"
+            "    printf '%s\\n' \"$FIRMWARE_INSTALL_PARENT_PID\" "
+            "> \"$SPECIAL_BOOT_PID_LOG\"\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8")
+        self.special_boot_success.chmod(0o755)
+        self.s00_init = self.root / "S00init"
+        s00_init = S00_INIT.read_text(encoding="utf-8")
+        s00_init = s00_init.replace(
+            "source /opt/config/mod/.shell/common.sh", "source /dev/null")
+        s00_init = s00_init.replace(
+            "source /opt/config/mod/.shell/klipper_overlay.sh",
+            "source /dev/null")
+        s00_init = s00_init.replace(
+            "/opt/config/mod/.shell/boot/init_boot_flag.sh",
+            shlex.quote(str(self.special_boot_success)))
+        s00_init = s00_init.split('\ncase "$1" in\n', 1)[0]
+        self.s00_init.write_text(s00_init + "\n", encoding="utf-8")
+
         self.environment = dict(os.environ)
         self.environment.update({
             "USB_STORAGE_SYS_BLOCK_ROOT": str(self.sys_block),
@@ -92,7 +154,6 @@ class UsbStorageTest(unittest.TestCase):
             "SWAP_SIZE": "64M",
             "COMMON_SCRIPT": "/dev/null",
             "INIT_SWAP_LIBRARY_ONLY": "1",
-            "INIT_BOOT_FLAG_LIBRARY_ONLY": "1",
         })
 
     def tearDown(self):
@@ -105,6 +166,8 @@ class UsbStorageTest(unittest.TestCase):
         return path
 
     def _run(self, source, body):
+        if source == INIT_BOOT_FLAG:
+            source = self.init_boot_flag
         return subprocess.run(
             ["bash", "-c", 'source "$1"\n' + body,
              "usb-storage-test", str(source)],
@@ -605,14 +668,110 @@ class UsbStorageTest(unittest.TestCase):
                 touch "${@: -1}/Adventurer5M-test.tgz"
                 return 0
             }
-            umount() { return 0; }
-            record_flag() { echo "callback=$1"; }
+            umount() { echo "unmounted=$1"; return 0; }
+            record_flag() {
+                echo "callback=$1"
+                echo "mount=$2"
+                usb_storage_release_mount
+                exit 0
+            }
             search_special_boot_flag_usb record_flag
         ''')
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("Found USB storage: %s" % (self.dev / "sdc"), result.stdout)
+        self.assertIn("USB %s:" % (self.dev / "sdc"), result.stdout)
         self.assertIn("callback=FIRMWARE_IMAGE", result.stdout)
+        self.assertIn(
+            "mount=%s/forge-x-boot-flag-sdc" % self.mount_root,
+            result.stdout)
+        self.assertIn(
+            "unmounted=%s/forge-x-boot-flag-sdc" % self.mount_root,
+            result.stdout)
+
+    def test_print_firmware_flag_releases_temporary_mount(self):
+        result = self._run(INIT_BOOT_FLAG, r'''
+            mount() {
+                touch "${@: -1}/Adventurer5M-test.tgz"
+                return 0
+            }
+            umount() { echo "unmounted=$1"; return 0; }
+            search_special_boot_flag_usb print_special_boot_flag
+        ''')
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Flag: FIRMWARE_IMAGE", result.stdout)
+        self.assertIn(
+            "unmounted=%s/forge-x-boot-flag-sda2" % self.mount_root,
+            result.stdout)
+
+    def test_missing_boot_flag_releases_temporary_mount_and_continues(self):
+        result = self._run(INIT_BOOT_FLAG, r'''
+            mount() { return 0; }
+            umount() { echo "unmounted=$1"; return 0; }
+            record_flag() { echo unexpected-callback; }
+            search_special_boot_flag_usb record_flag
+            echo "continued=$?"
+        ''')
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("unexpected-callback", result.stdout)
+        self.assertIn(
+            "unmounted=%s/forge-x-boot-flag-sda2" % self.mount_root,
+            result.stdout)
+        self.assertIn("continued=1", result.stdout)
+
+    def test_firmware_installer_failure_does_not_resume_normal_boot(self):
+        self.environment.update({
+            "FIRMWARE_INSTALL_KILL_PARENT": "0",
+            "FIRMWARE_INSTALL_SCREEN_SCRIPT": "/bin/true",
+            "FIRMWARE_INSTALL_TYPER": "/usr/bin/true",
+        })
+
+        result = self._run(INIT_BOOT_FLAG, r'''
+            handle_special_boot_flag FIRMWARE_IMAGE \
+                /mock/missing-firmware-directory
+        ''')
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Firmware image not found", result.stdout)
+
+    def test_special_boot_success_stops_normal_initialize_pipeline(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        screen = scripts / "screen.sh"
+        screen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        screen.chmod(0o755)
+        parent_pid_log = self.root / "special-boot-parent-pid"
+
+        result = subprocess.run(
+            ["bash", "-c", r'''
+                expected_parent_pid=$PPID
+                VERSION_PATCH_F="$2/version-patch"
+                BOOT_FAILURE_F="$2/boot-failure"
+                SCRIPTS="$2/scripts"
+                export SPECIAL_BOOT_PID_LOG="$2/special-boot-parent-pid"
+                source "$1"
+                logged() { cat; }
+                date() { echo normal-initialize-continued; }
+                mount_data_partition() { echo normal-mount-continued; }
+                initialize 2>&1 | logged
+                if [ "$(cat "$SPECIAL_BOOT_PID_LOG")" = "$expected_parent_pid" ]; then
+                    echo stock-parent-pid-forwarded
+                fi
+                echo s00-wrapper-finished
+            ''', "s00-lifecycle-test", str(self.s00_init), str(self.root)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("s00-wrapper-finished", result.stdout)
+        self.assertIn("stock-parent-pid-forwarded", result.stdout)
+        self.assertTrue(parent_pid_log.exists())
+        self.assertNotIn("normal-initialize-continued", result.stdout)
+        self.assertNotIn("normal-mount-continued", result.stdout)
 
     def test_prepare_prompt_identifies_drive_and_has_two_stage_actions(self):
         result = self._run_prepare("prompt")
