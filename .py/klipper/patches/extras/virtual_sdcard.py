@@ -2,8 +2,9 @@
 #
 # Changes:
 # - Skip hidden files and directories
+# - Publish slicer print-time metadata
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Copyright (C) 2018  Kevin O'Connor <kevin@koconnor.net>
 #
@@ -243,7 +244,10 @@ class VirtualSD:
         file.seek(max(0, size - READ_SIZE), os.SEEK_SET)
         footer_data = file.read(READ_SIZE)
 
-        time_match = re.search(r';\sestimated\sprinting\stime.*', footer_data)
+        time_match = re.search(
+            r';\s*(?:OrcaSlicer\s+)?estimated\s+'
+            r'(?:printing|extrusion)\s+time[^\r\n]*',
+            footer_data, re.IGNORECASE)
 
         if not time_match:
             return None

@@ -105,7 +105,11 @@ Both Z workflows read `temperature_sensor weightValue` once per status tick. Ope
 The print page can return to the dashboard without interrupting the active job.
 On the dashboard, the job card reopens print details, the temperature cards open
 heat controls, and the network card opens network settings. The active job card
-uses the same monotonic progress and time estimates as the full print page.
+uses the same monotonic progress and time estimates as the full print page. A
+Resurrection start keeps the recovered virtual-SD position as its initial
+progress instead of rebasing it to zero. Its elapsed timer follows the ordinary
+Klipper `print_stats.print_duration` lifecycle: it begins with resumed extrusion
+and excludes pauses, just like the former non-interactive Feather display.
 
 The dashboard wall clock reads the printer's Linux system clock, which
 [`.root/S45ntpd`](../../.root/S45ntpd) keeps synchronized through

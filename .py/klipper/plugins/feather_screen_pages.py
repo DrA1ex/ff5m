@@ -501,6 +501,8 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
 
         if getattr(self, "_m73_active", False) and m73_progress is not None:
             progress, source = m73_progress, "M73"
+        elif self._restored_print_active(eventtime):
+            progress, source = sd_progress, "SD"
         elif estimate:
             progress, source = min(0.99, print_duration / estimate), "TIME"
         else:
@@ -517,8 +519,11 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
     def _print_time_values(self, eventtime, stats=None, progress=None):
         stats = stats or self.print_stats.get_status(eventtime)
         duration = float(stats.get("print_duration", 0.0) or 0.0)
+        restored = self._restored_print_active(eventtime)
         estimate = getattr(self.virtual_sdcard, "estimate_print_time", None)
         if not estimate:
+            if restored:
+                return duration, None
             info = stats.get("info", {})
             current = info.get("current_layer")
             total = info.get("total_layer")
@@ -528,6 +533,10 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
                 if progress is None:
                     progress = self._print_progress(eventtime)
                 estimate = duration / progress if progress > 0 else None
+        if restored and estimate is not None and progress is not None:
+            remaining = float(estimate) * max(
+                0.0, 1.0 - max(0.0, min(1.0, progress)))
+            return duration, remaining
         if estimate is not None:
             estimate = max(duration, float(estimate))
         remaining = None if estimate is None else max(0.0, estimate - duration)

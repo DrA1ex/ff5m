@@ -41,6 +41,10 @@ HEADER_BOTTOM = 55
 FOOTER_Y = 444
 FOOTER_HEIGHT = 32
 CONTENT_BOTTOM = FOOTER_Y - 2
+BUSY_NOTICE_X = 622
+BUSY_NOTICE_Y = 9
+BUSY_NOTICE_WIDTH = 160
+BUSY_NOTICE_HEIGHT = 38
 MAX_PENDING_DRAW = MAX_BATCH_BYTES
 # Historical public name retained for compatibility.  This is a bounded
 # logical transport-frame size, not a Linux FIFO atomic-write guarantee:
@@ -1188,9 +1192,15 @@ class FeatherRenderer:
         if self._busy_label is not None and not show_header_action:
             busy_label = self._busy_label
             commands += [
-                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
-                self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
-                self.text(702, 28, busy_label, ThemeColor.WARNING,
+                self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                          BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                          ThemeRole.HEADER_BACKGROUND),
+                self.stroke(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                            BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                            ThemeColor.WARNING, 2),
+                self.text(BUSY_NOTICE_X + BUSY_NOTICE_WIDTH // 2,
+                          BUSY_NOTICE_Y + BUSY_NOTICE_HEIGHT // 2,
+                          busy_label, ThemeColor.WARNING,
                           "JetBrainsMono Bold 8pt", "center", "middle",
                           max_width=132, truncate=True),
             ]
@@ -1265,9 +1275,15 @@ class FeatherRenderer:
         if self._header_action is not None:
             return
         self.send([
-            self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
-            self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
-            self.text(702, 28, label, ThemeColor.WARNING,
+            self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                      BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                      ThemeRole.HEADER_BACKGROUND),
+            self.stroke(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                        BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                        ThemeColor.WARNING, 2),
+            self.text(BUSY_NOTICE_X + BUSY_NOTICE_WIDTH // 2,
+                      BUSY_NOTICE_Y + BUSY_NOTICE_HEIGHT // 2,
+                      label, ThemeColor.WARNING,
                       "JetBrainsMono Bold 8pt", "center", "middle",
                       max_width=132, truncate=True),
         ])
@@ -1278,18 +1294,20 @@ class FeatherRenderer:
         self._busy_label = None
         if self._header_action is not None:
             return
+        commands = [
+            self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                      BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                      ThemeRole.HEADER_BACKGROUND)]
         menu = self._buttons.get("nav.menu")
         if menu is not None:
             (x, y, width, height, label, state, font, subtitle, layout,
              subtitle_font, subtitle_color, accent) = menu
-            self.send(self._button_commands(
+            commands += self._button_commands(
                 "nav.menu", x, y, width, height, label, state, font,
                 subtitle, self._menu_suppressed, layout, subtitle_font,
-                subtitle_color, accent))
+                subtitle_color, accent)
             self._menu_suppressed = False
-        else:
-            self.send([
-                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND)])
+        self.send(commands)
 
     def loader(self, message, phase=0):
         """Replace the page with a non-interactive yielding-operation view."""

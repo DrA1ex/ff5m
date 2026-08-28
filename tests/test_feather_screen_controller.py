@@ -2421,6 +2421,171 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.virtual_sdcard.status["progress"] = 0.76
         self.assertAlmostEqual(controller._print_progress(3.0), 0.5)
 
+    def test_resurrected_print_keeps_progress_and_print_duration(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.reactor = Reactor()
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.0
+        controller._progress_source = None
+        controller._progress_start = None
+        controller._m73_active = False
+        controller._m73_start_expiry = 0.0
+        controller.cancel_requested = False
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": True}})()
+        controller.print_stats = StatusObject({
+            "state": "printing", "print_duration": 0.0,
+            "total_duration": 105.0})
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.estimate_print_time = 200.0
+        controller.display_status = type("Display", (), {
+            "progress": None, "expire_progress": 0.0})()
+        controller._record_current_print = mock.Mock()
+        controller._notify_features = mock.Mock()
+        controller._show_page = mock.Mock()
+        controller.debug = False
+
+        controller._change_print_state(
+            FEATHER.PrintState.PRINTING, "printing")
+
+        self.assertEqual(controller._print_progress(1.0), 0.52)
+        controller.virtual_sdcard.status["progress"] = 0.50
+        self.assertEqual(controller._print_progress(2.0), 0.52)
+        controller.virtual_sdcard.status["progress"] = 0.60
+        self.assertEqual(controller._print_progress(3.0), 0.60)
+
+        elapsed, remaining = controller._print_time_values(
+            105.0, controller.print_stats.get_status(105.0), 0.60)
+        self.assertEqual(elapsed, 0.0)
+        self.assertEqual(remaining, 80.0)
+
+        controller.print_stats.status["print_duration"] = 5.0
+        elapsed, remaining = controller._print_time_values(
+            110.0, controller.print_stats.get_status(110.0), 0.60)
+        self.assertEqual(elapsed, 5.0)
+        self.assertEqual(remaining, 80.0)
+
+        controller.print_stats.status["state"] = "paused"
+        controller.print_stats.status["total_duration"] = 125.0
+        paused_elapsed, paused_remaining = controller._print_time_values(
+            125.0, controller.print_stats.get_status(125.0), 0.60)
+        self.assertEqual(paused_elapsed, 5.0)
+        self.assertEqual(paused_remaining, 80.0)
+
+    def test_update_cycle_enters_recovered_print_before_extrusion(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.reactor = Reactor()
+        controller.renderer = type("Renderer", (), {
+            "set_theme": lambda self, name: False,
+            "footer": lambda self, temperatures, status: None,
+        })()
+        controller._setting = lambda name, default=None: default
+        controller._service_network = mock.Mock()
+        controller._update_eco_backlight = mock.Mock()
+        controller.print_stats = StatusObject({
+            "state": "printing", "print_duration": 0.0,
+        })
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.is_active = lambda: True
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.91
+        controller._progress_source = "OLD"
+        controller._progress_start = (10.0, 0.8)
+        controller._m73_active = True
+        controller.cancel_requested = True
+        controller._record_current_print = mock.Mock()
+        controller._notify_features = mock.Mock()
+        controller.network_operation = None
+        controller.debug = False
+        controller._update_operation_context = mock.Mock()
+        controller._refresh_emergency_stop = mock.Mock()
+        controller.pending_action = None
+        controller.file_scan_loading = False
+        controller.busy_message = None
+        controller._update_print_progress = mock.Mock()
+        controller.filament_sensor = None
+        controller.extruder = StatusObject({
+            "temperature": 20.0, "target": 0.0})
+        controller.heater_bed = StatusObject({
+            "temperature": 21.0, "target": 0.0})
+        controller.network_status = {"ip": "Offline"}
+        controller.toast_until = 0.0
+
+        wake = controller._update_cycle(1.0)
+
+        self.assertEqual(controller.print_state, FEATHER.PrintState.PRINTING)
+        self.assertEqual(controller._progress_start, (0.0, 0.0))
+        self.assertEqual(controller._progress_floor, 0.0)
+        self.assertIsNone(controller._progress_source)
+        self.assertFalse(controller._m73_active)
+        self.assertFalse(controller.cancel_requested)
+        controller._update_print_progress.assert_called_once_with(1.0)
+        self.assertEqual(wake, 1.0 + FEATHER.REFRESH_TIME)
+
+    def test_first_observed_pause_starts_clean_progress(self):
+        for restored, expected_start in (
+                (False, None), (True, (0.0, 0.0))):
+            with self.subTest(restored=restored):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.print_state = FEATHER.PrintState.IDLE
+                controller.page = FEATHER.ScreenPage.PAUSED
+                controller.reactor = Reactor()
+                controller.resurrection = StatusObject({
+                    "restored": restored})
+                controller._progress_floor = 0.91
+                controller._progress_source = "OLD"
+                controller._progress_start = (10.0, 0.8)
+                controller._m73_active = True
+                controller.cancel_requested = True
+                controller._notify_features = mock.Mock()
+                controller.network_operation = None
+                controller.debug = False
+                controller._show_page = mock.Mock()
+
+                controller._change_print_state(
+                    FEATHER.PrintState.PAUSED, "paused")
+
+                self.assertEqual(
+                    controller._progress_start, expected_start)
+                self.assertEqual(controller._progress_floor, 0.0)
+                self.assertIsNone(controller._progress_source)
+                self.assertFalse(controller._m73_active)
+                self.assertFalse(controller.cancel_requested)
+
+    def test_recovered_progress_prefers_m73_and_never_moves_backwards(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.0
+        controller._progress_start = (0.0, 0.0)
+        controller._m73_start_expiry = 0.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": 0.55, "expire_progress": 10.0})()
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": True}})()
+        controller.print_stats = StatusObject({"print_duration": 5.0})
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.estimate_print_time = 200.0
+
+        self.assertEqual(controller._print_progress(1.0), 0.55)
+        self.assertEqual(controller._progress_source, "M73")
+        controller.display_status.progress = 0.50
+        controller.display_status.expire_progress = 11.0
+        self.assertEqual(controller._print_progress(2.0), 0.55)
+
+        controller._m73_active = False
+        controller._m73_start_expiry = 11.0
+        controller.display_status.progress = None
+        controller.virtual_sdcard.status["progress"] = 0.50
+        self.assertEqual(controller._print_progress(3.0), 0.55)
+        self.assertEqual(controller._progress_source, "SD")
+        controller.virtual_sdcard.status["progress"] = 0.60
+        self.assertEqual(controller._print_progress(4.0), 0.60)
+
     def test_filament_continue_is_next_to_action_buttons(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
@@ -3348,6 +3513,43 @@ class ControllerSafetyTest(unittest.TestCase):
 
 
 class ResurrectionStatusTest(unittest.TestCase):
+    def test_restored_status_follows_the_recovery_lifecycle(self):
+        resurrector = RESURRECTION.Resurrector.__new__(
+            RESURRECTION.Resurrector)
+        resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+        stats = {"state": "printing"}
+        resurrector._recovery_active = True
+        resurrector.print_stats = type("Stats", (), {
+            "get_status": lambda self, eventtime: stats,
+        })()
+        resurrector.file_path = "/missing"
+
+        self.assertTrue(resurrector.get_status(0)["restored"])
+        stats["state"] = "paused"
+        resurrector._change_state(RESURRECTION.ResurrectorState.PAUSED)
+        self.assertTrue(resurrector.get_status(1)["restored"])
+
+        resurrector._change_state(RESURRECTION.ResurrectorState.ERROR)
+        self.assertTrue(resurrector.get_status(2)["restored"])
+
+        stats["state"] = "complete"
+        self.assertFalse(resurrector.get_status(3)["restored"])
+
+        stats["state"] = "paused"
+        resurrector._handle_virtual_sd_reset()
+        self.assertFalse(resurrector.get_status(4)["restored"])
+
+        for terminal_state in (
+                RESURRECTION.ResurrectorState.IDLE,
+                RESURRECTION.ResurrectorState.RESURRECTION,
+                RESURRECTION.ResurrectorState.DESTROYED,
+        ):
+            with self.subTest(terminal_state=terminal_state):
+                resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+                resurrector._recovery_active = True
+                resurrector._change_state(terminal_state)
+                self.assertFalse(resurrector.get_status(5)["restored"])
+
     def test_status_hides_absolute_path_and_reports_progress(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=True) as stream:
             json.dump({"file_path": "/data/gcodes/part.gcode", "file_position": 25,
@@ -3356,6 +3558,8 @@ class ResurrectionStatusTest(unittest.TestCase):
             stream.flush()
             resurrector = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
             resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
+            resurrector._recovery_active = False
+            resurrector._checkpoint_cache_loaded = False
             resurrector.file_path = stream.name
             status = resurrector.get_status(0)
         self.assertTrue(status["available"])

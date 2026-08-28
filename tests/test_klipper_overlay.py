@@ -553,5 +553,32 @@ class ToolheadTuningTest(unittest.TestCase):
         self.assertEqual(toolhead.need_check_stall, toolhead.print_time)
 
 
+class VirtualSDMetadataTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "virtual_sdcard_metadata_under_test", VIRTUAL_SD)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.virtual_sd = module.VirtualSD.__new__(module.VirtualSD)
+
+    def parse(self, path):
+        with open(path, "r", encoding="utf-8", newline="") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            return self.virtual_sd.parse_estimated_time(stream, size)
+
+    def test_reads_orcaslicer_estimated_extrusion_time(self):
+        self.assertEqual(self.parse(ORCA_FIXTURE), 150)
+
+    def test_keeps_legacy_estimated_printing_time_compatibility(self):
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".gcode") as stream:
+            stream.write("G1 X1\n; estimated printing time = 1h 2m 3s\n")
+            stream.flush()
+
+            self.assertEqual(self.parse(stream.name), 3723)
+
+
 if __name__ == "__main__":
     unittest.main()

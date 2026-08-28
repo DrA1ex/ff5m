@@ -66,13 +66,16 @@ class CooperativeReactor:
 
 
 class VirtualSDRecorder:
-    def __init__(self, on_resume=None):
+    def __init__(self, on_resume=None, on_load=None):
         self.loaded = []
         self.resumed = False
         self.cancelled = False
         self.on_resume = on_resume
+        self.on_load = on_load
 
     def load_file(self, gcmd, filename):
+        if self.on_load is not None:
+            self.on_load()
         self.loaded.append(filename)
 
     def do_resume(self):
@@ -571,6 +574,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
         resurrector.gcode = GCodeRecorder()
         resurrector.reactor = CooperativeReactor()
+        resurrector.file_path = "/missing"
         toolhead = PhysicalToolheadModel()
 
         def continue_layer():
@@ -578,7 +582,12 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             toolhead.following_xy_move(-12., -24.)
             toolhead.following_xy_move(15., 15.)
 
-        resurrector.virtual_sdcard = VirtualSDRecorder(continue_layer)
+        resurrector.virtual_sdcard = VirtualSDRecorder(
+            continue_layer, resurrector._handle_virtual_sd_reset)
+        resurrector._recovery_active = False
+        resurrector.print_stats = type("Stats", (), {
+            "get_status": lambda self, eventtime: {"state": "printing"},
+        })()
         resurrector._worker = None
         resurrector._worker_cancel = None
         resurrector.toolhead = toolhead
@@ -617,7 +626,13 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         parsed.has_retraction_state = True
         parsed.fans[2] = 127.
         resurrector._load_resurrection_state = lambda gcmd: checkpoint
-        resurrector._load_state = lambda state: parsed
+        def load_state(state):
+            self.assertEqual(
+                resurrector.state, RESURRECTION.ResurrectorState.LOADING)
+            self.assertFalse(resurrector._recovery_active)
+            return parsed
+
+        resurrector._load_state = load_state
         command = Command()
 
         resurrector.cmd_RESURRECT(command)
@@ -626,6 +641,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             resurrector.virtual_sdcard.loaded,
             [os.path.join("nested", "part.gcode")])
         self.assertTrue(resurrector.virtual_sdcard.resumed)
+        self.assertTrue(resurrector.get_status(0.)["restored"])
         self.assertTrue(firmware_retraction.is_retracted)
         self.assertEqual(toolhead.moves, [
             ([-13.985956125424346, -24.423308017104159, None], 100.),
@@ -663,12 +679,28 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             lines.index("SET_RETRACTION RETRACT_LENGTH=0.8"),
             lines.index("M106 P2 S127"))
 
+        resurrector._change_state(
+            RESURRECTION.ResurrectorState.RESURRECTION)
+        resurrector.virtual_sdcard.do_resume = mock.Mock(
+            side_effect=RuntimeError("resume failed"))
+        failed = Command()
+
+        resurrector.cmd_RESURRECT(failed)
+
+        self.assertEqual(
+            resurrector.state, RESURRECTION.ResurrectorState.RESURRECTION)
+        self.assertFalse(resurrector.get_status(0.)["restored"])
+        self.assertTrue(any(
+            "resume failed" in response for response in failed.responses))
+
     def test_preparation_failure_rolls_back_without_losing_checkpoint(self):
         resurrector = RESURRECTION.Resurrector.__new__(
             RESURRECTION.Resurrector)
         resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
         resurrector.gcode = FailingPreparationGCode()
         resurrector.reactor = CooperativeReactor()
+        resurrector.file_path = "/missing"
+        resurrector._recovery_active = False
         resurrector.virtual_sdcard = VirtualSDRecorder()
         resurrector._worker = None
         resurrector._worker_cancel = None
@@ -711,6 +743,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
         self.assertTrue(any(
             "preparation failed" in response
             for response in command.responses))
+        self.assertFalse(resurrector.get_status(0.)["restored"])
 
     def test_cleanup_failure_resets_context_and_turns_off_heat_and_fan(self):
         class FailingCleanupGCode(GCodeRecorder):

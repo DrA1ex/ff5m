@@ -3619,6 +3619,8 @@ class RecoveryRobustnessTest(unittest.TestCase):
             stream.flush()
             resurrector = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
             resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
+            resurrector._recovery_active = False
+            resurrector._checkpoint_cache_loaded = False
             resurrector.file_path = stream.name
             with self.assertLogs(level="ERROR"):
                 status = resurrector.get_status(0)

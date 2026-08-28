@@ -1858,7 +1858,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         virtual_sd_active = self.virtual_sdcard.is_active()
         if state == "printing":
             new_state = (PrintState.PREPARING
-                         if stats["print_duration"] == 0
+                         if (stats["print_duration"] == 0
+                             and not self._restored_print_active(eventtime))
                          else PrintState.PRINTING)
         elif state == "paused":
             new_state = PrintState.PAUSED
@@ -1969,6 +1970,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if self.page == ScreenPage.FILE_BROWSER:
             self._render_file_browser()
 
+    def _restored_print_active(self, eventtime):
+        resurrection = getattr(self, "resurrection", None)
+        status = (resurrection.get_status(eventtime)
+                  if resurrection is not None else {})
+        return bool(status.get("restored"))
+
     def _change_print_state(self, new_state, stats_state):
         old_state = self.print_state
         self.print_state = new_state
@@ -1994,13 +2001,16 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._cancel_network_operation()
         if self.debug:
             logging.info("[feather_screen] %s -> %s", old_state.name, new_state.name)
+        if (old_state == PrintState.IDLE
+                and new_state in (PrintState.PREPARING, PrintState.PRINTING,
+                                  PrintState.PAUSED)):
+            self.cancel_requested = False
+            self._progress_floor = 0.0
+            self._progress_source = None
+            restored = self._restored_print_active(self.state_time)
+            self._progress_start = (0.0, 0.0) if restored else None
+            self._m73_active = False
         if new_state in (PrintState.PREPARING, PrintState.PRINTING):
-            if old_state == PrintState.IDLE:
-                self.cancel_requested = False
-                self._progress_floor = 0.0
-                self._progress_source = None
-                self._progress_start = None
-                self._m73_active = False
             if (self.page not in (
                     ScreenPage.PRINTING, ScreenPage.CANCEL_CONFIRM, ScreenPage.LIVE_Z_OFFSET)
                     and not (self.page == ScreenPage.IDLE_HOME

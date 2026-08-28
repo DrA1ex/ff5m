@@ -2020,7 +2020,7 @@ class RendererStateTest(unittest.TestCase):
 
         page = renderer.begin_page("Home")
         menu = renderer.button(
-            "nav.menu", 648, 9, 132, 38, "MENU")
+            "nav.menu", 650, 11, 132, 38, "MENU")
 
         self.assertTrue(page)
         self.assertEqual(menu, [])
@@ -2029,7 +2029,9 @@ class RendererStateTest(unittest.TestCase):
         renderer.clear_busy_notice()
 
         restored = "\n".join(sent[-1])
+        self.assertEqual(sent[-1][0], sent[0][0])
         self.assertIn("nav.menu", restored)
+        self.assertNotIn("KLIPPER BUSY", restored)
 
     def test_emergency_stop_has_priority_over_busy_notice_and_loader(self):
         renderer = FEATHER.FeatherRenderer()

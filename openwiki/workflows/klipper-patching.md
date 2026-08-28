@@ -45,7 +45,9 @@ A replacement must retain the exact stock module path expected by the target fir
 The replacement files carry short `Changes:` headers where applicable. Examples include:
 
 - [`patches/gcode.py`](../../.py/klipper/patches/gcode.py) normalizes the raw command used for `M117`/`M118`, and its history includes non-ASCII object-name fixes.
-- [`patches/extras/virtual_sdcard.py`](../../.py/klipper/patches/extras/virtual_sdcard.py) excludes hidden files/directories during G-code file enumeration.
+- [`patches/extras/virtual_sdcard.py`](../../.py/klipper/patches/extras/virtual_sdcard.py)
+  excludes hidden files/directories during G-code file enumeration and
+  publishes total print-time metadata from legacy and OrcaSlicer footers.
 - [`patches/extras/gcode_shell_command.py`](../../.py/klipper/patches/extras/gcode_shell_command.py) adds Forge-X background/exclusive execution parameters.
 - [`patches/extras/temperature_sensor.py`](../../.py/klipper/patches/extras/temperature_sensor.py) adds a G-code action for out-of-range sensor values.
 - [`patches/extras/shaper_calibrate.py`](../../.py/klipper/patches/extras/shaper_calibrate.py) drains a ready child-process result before waiting for the child to exit. Recent history documents why: a result larger than the OS pipe buffer could otherwise block `SHAPER_CALIBRATE` indefinitely.
