@@ -77,6 +77,16 @@ class OverlayTree:
         patch_cache.mkdir()
         (patch_cache / "mcu.cpython-314.pyc").write_bytes(b"cache")
 
+    def add_shared_object_patch(self):
+        source = self.patches / "chelper" / "c_helper.so"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"PATCHED ARM SHARED OBJECT")
+
+        target = self.target / "chelper" / "c_helper.so"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"STOCK ARM SHARED OBJECT")
+        return source, target
+
 
 class KlipperOverlayTest(unittest.TestCase):
     def test_scripts_have_valid_bash_syntax(self):
@@ -137,8 +147,10 @@ class KlipperOverlayTest(unittest.TestCase):
 
             source = ROOT / ".py" / "klipper"
             patch_files = [
-                path for path in (source / "patches").rglob("*.py")
-                if "__pycache__" not in path.parts
+                path for path in (source / "patches").rglob("*")
+                if (path.is_file()
+                    and path.suffix in (".py", ".so")
+                    and "__pycache__" not in path.parts)
             ]
             for path in patch_files:
                 relative = path.relative_to(source / "patches")
@@ -179,6 +191,44 @@ class KlipperOverlayTest(unittest.TestCase):
                 installed = extras / relative
                 self.assertTrue(installed.is_symlink(), relative)
                 self.assertEqual(installed.resolve(), path.resolve())
+
+    def test_shared_object_patch_has_the_same_backup_and_restore_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tree = OverlayTree(directory)
+            source, target = tree.add_shared_object_patch()
+
+            installed = tree.run()
+
+            self.assertEqual(installed.returncode, 0, installed.stdout)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(target.resolve(), source.resolve())
+            self.assertEqual(
+                (target.parent / "c_helper.so.bak").read_bytes(),
+                b"STOCK ARM SHARED OBJECT")
+
+            source.unlink()
+            restored = tree.run()
+
+            self.assertEqual(restored.returncode, 0, restored.stdout)
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(target.read_bytes(), b"STOCK ARM SHARED OBJECT")
+            self.assertFalse((target.parent / "c_helper.so.bak").exists())
+
+    def test_unsupported_patch_artifact_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tree = OverlayTree(directory)
+            unsupported = tree.patches / "chelper" / "notes.txt"
+            unsupported.parent.mkdir(parents=True)
+            unsupported.write_text("NOT A RUNTIME PATCH\n", encoding="utf-8")
+            target = tree.target / "chelper" / "notes.txt"
+            target.parent.mkdir(parents=True)
+            target.write_text("STOCK\n", encoding="utf-8")
+
+            result = tree.run()
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(target.read_text(encoding="utf-8"), "STOCK\n")
 
     def test_current_dev_directory_links_and_mcu_file_are_repaired(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -20,6 +20,14 @@ klipper_overlay_ignored() {
     return 1
 }
 
+klipper_overlay_patch_supported() {
+    case "$1" in
+        *.py|*.so) return 0 ;;
+    esac
+
+    return 1
+}
+
 klipper_overlay_restore_or_remove() {
     local target="$1"
     local backup
@@ -80,10 +88,7 @@ klipper_overlay_patch_link_is_current() {
 
     [ "$link" = "$expected" ] || return 1
     [ -f "$source" ] || return 1
-    case "$rel_file" in
-        *.py) ;;
-        *) return 1 ;;
-    esac
+    klipper_overlay_patch_supported "$rel_file" || return 1
     klipper_overlay_ignored "$rel_file" && return 1
 
     return 0
@@ -156,10 +161,7 @@ klipper_overlay_link_patches() {
         rel_file=${file#"$src_dir/patches/"}
         klipper_overlay_ignored "$rel_file" && continue
 
-        case "$rel_file" in
-            *.py) ;;
-            *) continue ;;
-        esac
+        klipper_overlay_patch_supported "$rel_file" || continue
 
         target="$target_dir/$rel_file"
         if [ -L "$target" ]; then

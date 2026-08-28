@@ -773,7 +773,7 @@ Recent Git history provides concrete regression themes:
 - **Klipper correctness:** `de8e6ab` fixes a shaper-calibration hang by draining a child result pipe. Patch changes require exercising the exact affected action, not merely booting.
 - **Scheduling:** `5426a14` adds optional `klipper_rt` (`SCHED_RR`) behavior through parameter and restart paths. Validate enable/disable and service recovery.
 
-An advanced pressure-advance patch was added and then reverted in nearby history. This reinforces the rule: do not retain a patch merely because it applies; prove it is safe and compatible in this target stack.
+An earlier Python-only adaptive-pressure-advance patch was added and then reverted because the installed native helper still exposed the old API. The replacement must deploy the matching Python modules and native helper as one unit. This reinforces the rule: do not retain a patch merely because it applies; prove it is safe and compatible in this target stack.
 
 ## Documentation expectations for future changes
 
