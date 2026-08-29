@@ -24,13 +24,39 @@ In most cases, this should restore your printer's functionality.
 
 ## Recovery using UART
 
-If you’ve modified internal system files and something went wrong—your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen—don’t worry. This is fixable, and it doesn’t require advanced skills. Let’s start by diagnosing the issue.
+If you’ve modified internal system files and something went wrong — your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen - don’t worry. This is fixable, and it doesn’t require advanced skills. Let’s start by diagnosing the issue.
 
 ### Diagnostics
 
-To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Using a 5V adapter can **damage** the motherboard, so be careful. Alternatively, you can use an ESP8266/ESP32 (do not use an Arduino, as it operates at 5V and could **fry the CPU**). Flash the ESP with the MultiSerial example from the Arduino IDE `(Examples -> Communications -> MultiSerial)`, but change the `Serial` and `Serial1` Baud to `115200`.
+To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Alternatively, you can use an ESP8266/ESP32. Do not use a regular Arduino directly, as it normally uses 5V logic levels.
 
-Next, connect the UART adapter to the motherboard near the processor (next to USB0).   
+> [!WARNING]
+> **Incorrect UART wiring can permanently damage the printer motherboard or the adapter.**
+>
+> * The printer UART uses **3.3V logic**. Do **not** connect a 5V UART signal to it.
+> * Do **not** connect the power/VCC line between the printer and the UART adapter or ESP board.
+> * Always make or change UART connections while **both devices are completely unpowered**.
+>
+> Recommended connection order:
+>
+> 1. Unplug the printer **from the wall outlet**.
+> 2. Disconnect the UART adapter/ESP board from USB.
+> 3. Connect TX/RX/GND and double-check the wiring.
+> 4. Connect the UART adapter/ESP board to the computer via USB.
+> 5. Only then plug the printer back into the wall outlet and power it on.
+
+
+If you have an ESP8266 development board with an onboard USB-UART adapter (for example, NodeMCU or Wemos D1 Mini), you can use the USB-UART adapter directly without flashing any firmware. Connect **EN to GND** to disable the ESP8266, then connect:
+- **TX** on the ESP board to **TX** on the motherboard.
+- **RX** on the ESP board to **RX** on the motherboard.
+- **GND** to **GND**.
+- Do **NOT** connect the power line.
+
+TX-to-TX and RX-to-RX are intentional here because the pins on the ESP board are labeled from the ESP8266 side of its onboard USB-UART connection.
+
+Alternatively, you can use an ESP8266/ESP32 as a UART bridge by flashing an appropriate serial bridge sketch. Prefer a hardware UART where possible, as software UART implementations may be unreliable at `115200`.
+
+For a regular UART-USB adapter, connect the UART adapter to the motherboard near the processor (next to USB0).   
 Connect the wires as follows:
 - **RX** on the adapter to **TX** on the motherboard.
 - **TX** on the adapter to **RX** on the motherboard.
@@ -45,7 +71,7 @@ Connect the wires as follows:
 
 Connect the adapter to your PC and open a terminal program (e.g., PuTTY, Arduino IDE, or PlatformIO). 
 
-At Mac/Linux you can use `screeen`:
+On Mac/Linux you can use `screen`:
 ```bash
 screen /dev/<device> 115200
 ```
