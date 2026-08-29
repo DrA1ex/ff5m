@@ -97,7 +97,10 @@ class UsbEventSocket:
     def recv(self, size):
         if not self.messages:
             raise BlockingIOError()
-        return self.messages.pop(0)
+        message = self.messages.pop(0)
+        if isinstance(message, BaseException):
+            raise message
+        return message
 
     def close(self):
         self.closed = True
@@ -790,6 +793,28 @@ class UsbStorageMonitorTest(unittest.TestCase):
         monitor.tick(3.0)
 
         self.assertEqual(len(calls), 1)
+
+    def test_event_overflow_keeps_subscription_and_reconciles_state(self):
+        mounted = [False]
+        monitor, calls, reactor, events = self._monitor(
+            [UsbProcess("NONE\n", returncode=2),
+             UsbProcess("NONE\n", returncode=2)], mounted)
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+        monitor.tick(1.0)
+        self.assertEqual(len(calls), 1)
+
+        events.messages.append(OSError(errno.ENOBUFS, "queue overflowed"))
+        with self.assertLogs(level="WARNING") as logs:
+            monitor._handle_events(2.0)
+
+        self.assertIn("reconciling current state", logs.output[-1])
+        self.assertIs(monitor.event_socket, events)
+        self.assertFalse(events.closed)
+        self.assertEqual(reactor.unregistered, [])
+
+        monitor.tick(2.0)
+        self.assertEqual(len(calls), 2)
 
     def test_pause_closes_events_and_resume_forces_reconciliation(self):
         mounted = [False]

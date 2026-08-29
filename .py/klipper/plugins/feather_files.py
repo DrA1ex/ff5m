@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import errno
 import json
 import logging
 import os
@@ -363,7 +364,14 @@ class UsbStorageMonitor:
                 message = self.event_socket.recv(4096)
             except (BlockingIOError, InterruptedError):
                 break
-            except OSError:
+            except OSError as exc:
+                if exc.errno == errno.ENOBUFS:
+                    logging.warning(
+                        "[feather_screen] USB event queue overflowed; "
+                        "reconciling current state")
+                    self.dirty = True
+                    self.next_attempt = eventtime
+                    return
                 logging.exception(
                     "[feather_screen] unable to read USB event")
                 self._close_events()
