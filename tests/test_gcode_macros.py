@@ -8,7 +8,7 @@ import pathlib
 import unittest
 
 from tests.gcode_macro_harness import (
-    MacroActionError, load_macro, render_macro)
+    MacroActionError, execute_macro_chain, load_macro, render_macro)
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -17,6 +17,14 @@ HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
 SMART_PARK = ROOT / "KAMP" / "Smart_Park.cfg"
+MOTION_MACROS = (
+    (BASE, "M600"),
+    (BASE, "MOVE_SAFE"),
+    (CLIENT, "PAUSE"),
+    (CLIENT, "CANCEL_PRINT"),
+    (CLIENT, "_TOOLHEAD_PARK_PAUSE_CANCEL"),
+    (HEADLESS, "END_PRINT"),
+)
 
 
 def assert_order(test, commands, expected):
@@ -421,6 +429,153 @@ class MaterialMacroTest(unittest.TestCase):
 
 
 class MotionAndIntegrationMacroTest(unittest.TestCase):
+    @staticmethod
+    def _motion_printer(current_z, *, origin=0, safe_z=10,
+                        pause_z_min=50, park_dz=50, homed="xyz"):
+        return {
+            "resurrection": {"supports_pause_markers": False},
+            "gcode_macro _CLIENT_VARIABLE": macro_status(
+                HEADLESS, "_CLIENT_VARIABLE"),
+            "gcode_macro RESUME": {"restore_idle_timeout": 0},
+            "gcode_macro MOVE_SAFE": macro_status(BASE, "MOVE_SAFE"),
+            "configfile": {"settings": {
+                "idle_timeout": {"timeout": 600},
+                "pause_resume": {"recover_velocity": 50},
+                "printer": {"kinematics": "cartesian"},
+            }},
+            "mod_params": {"variables": {
+                "safe_z": safe_z,
+                "pause_z_min": pause_z_min,
+                "park_dz": park_dz,
+                "midi_end": "",
+            }},
+            "pause_resume": {"is_paused": False},
+            "gcode_move": {
+                "homing_origin": {"z": origin},
+                "gcode_position": {"z": current_z},
+                "absolute_coordinates": True,
+            },
+            "toolhead": {
+                "axis_maximum": {"z": 230},
+                "cone_start_z": 230,
+                "homed_axes": homed,
+                "extruder": "",
+                "position": {"x": 0, "y": 0, "z": current_z},
+            },
+            "extruder": {"can_extrude": False},
+        }
+
+    @staticmethod
+    def _axis_targets(commands, axis):
+        targets = []
+        for command in commands:
+            tokens = command.split()
+            if not tokens or tokens[0] != "G1":
+                continue
+            targets.extend(float(token[1:]) for token in tokens[1:]
+                           if token.startswith(axis))
+        return targets
+
+    def test_pause_and_m600_execute_to_bounded_z_motion(self):
+        cases = (
+            (5, 0, 10, 50, 50),
+            (100, 0, 10, 50, 110),
+            (215, 0, 10, 50, 220),
+            (215, 2, 10, 50, 218),
+            (5, 0, 10, 500, 220),
+        )
+        for entry in ("PAUSE", "M600"):
+            for current, origin, safe_z, pause_z_min, expected in cases:
+                with self.subTest(
+                        entry=entry, current=current, origin=origin,
+                        safe_z=safe_z, pause_z_min=pause_z_min):
+                    commands = execute_macro_chain(
+                        MOTION_MACROS, entry, printer=self._motion_printer(
+                            current, origin=origin, safe_z=safe_z,
+                            pause_z_min=pause_z_min))
+
+                    self.assertEqual(
+                        self._axis_targets(commands, "Z"), [expected])
+
+    def test_cancel_executes_park_dz_to_bounded_z_motion(self):
+        cases = (
+            (0, 0, 10, 50, 50),
+            (100, 0, 10, 50, 150),
+            (215, 0, 10, 50, 220),
+            (215, 2, 10, 50, 218),
+            (100, 0, 10, 5, 110),
+            (100, 0, 10, -50, 150),
+            (100, 0, 10, 500, 220),
+        )
+        for paused in (False, True):
+            for current, origin, safe_z, park_dz, expected in cases:
+                with self.subTest(
+                        paused=paused, current=current, origin=origin,
+                        safe_z=safe_z, park_dz=park_dz):
+                    printer = self._motion_printer(
+                        current, origin=origin, safe_z=safe_z,
+                        park_dz=park_dz)
+                    printer["pause_resume"]["is_paused"] = paused
+                    commands = execute_macro_chain(
+                        MOTION_MACROS, "CANCEL_PRINT", printer=printer,
+                        params={"REASON": "USER"})
+
+                    self.assertEqual(
+                        self._axis_targets(commands, "Z"), [expected])
+
+    def test_end_print_executes_move_safe_to_bounded_z_motion(self):
+        cases = (
+            (0, 50, 50),
+            (100, 50, 150),
+            (215, 50, 220),
+            (100, 500, 220),
+            (100, -500, 0),
+        )
+        for current, park_dz, expected in cases:
+            with self.subTest(current=current, park_dz=park_dz):
+                commands = execute_macro_chain(
+                    MOTION_MACROS, "END_PRINT",
+                    printer=self._motion_printer(
+                        current, park_dz=park_dz))
+
+                self.assertEqual(
+                    self._axis_targets(commands, "Z"), [expected])
+
+    def test_terminal_motion_macros_clamp_requested_xy(self):
+        cases = (
+            ("PAUSE", {"X": 999, "Y": -999}),
+            ("M600", {"X": 999, "Y": -999}),
+            ("CANCEL_PRINT", {"REASON": "USER"}),
+            ("END_PRINT", None),
+        )
+        for entry, params in cases:
+            with self.subTest(entry=entry):
+                printer = self._motion_printer(100)
+                client = printer["gcode_macro _CLIENT_VARIABLE"]
+                client["park_at_cancel_x"] = 999
+                client["park_at_cancel_y"] = -999
+                client["custom_park_x"] = 999
+                client["custom_park_y"] = -999
+                commands = execute_macro_chain(
+                    MOTION_MACROS, entry, printer=printer, params=params)
+
+                self.assertEqual(
+                    self._axis_targets(commands, "X"), [110])
+                self.assertEqual(
+                    self._axis_targets(commands, "Y"), [-110])
+
+    def test_terminal_motion_macros_do_not_move_unhomed_axes(self):
+        for entry in ("PAUSE", "M600", "CANCEL_PRINT", "END_PRINT"):
+            with self.subTest(entry=entry):
+                commands = execute_macro_chain(
+                    MOTION_MACROS, entry,
+                    printer=self._motion_printer(100, homed=""),
+                    params={"REASON": "USER"}
+                    if entry == "CANCEL_PRINT" else None)
+
+                self.assertFalse(any(
+                    command.split()[0] == "G1" for command in commands))
+
     def test_pause_park_uses_minimum_lift_and_reachable_z_ceiling(self):
         limits = macro_status(BASE, "MOVE_SAFE")
         cases = (

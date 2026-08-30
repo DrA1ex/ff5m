@@ -11,7 +11,8 @@ import unittest
 import jinja2
 
 from tests.gcode_macro_harness import (
-    MacroActionError, MacroConfigError, load_macro, render_macro)
+    MacroActionError, MacroConfigError, execute_macro_chain, load_macro,
+    render_macro)
 
 
 class GCodeMacroHarnessTest(unittest.TestCase):
@@ -45,6 +46,34 @@ gcode:
 
         self.assertEqual(result.commands, ("G1 X7",))
         self.assertEqual(result.info, ("moving",))
+
+    def test_executes_registered_nested_macros_to_terminal_gcode(self):
+        self.path.write_text(
+            """[gcode_macro OUTER]
+gcode:
+  INNER TARGET={params.TARGET}
+  M400
+
+[gcode_macro INNER]
+gcode:
+  G1 X{params.TARGET}
+""", encoding="utf-8")
+
+        commands = execute_macro_chain(
+            ((self.path, "OUTER"), (self.path, "INNER")),
+            "OUTER", params={"TARGET": 7})
+
+        self.assertEqual(commands, ("G1 X7", "M400"))
+
+    def test_nested_macro_cycle_fails_explicitly(self):
+        self.path.write_text(
+            """[gcode_macro LOOP]
+gcode:
+  LOOP
+""", encoding="utf-8")
+
+        with self.assertRaisesRegex(MacroConfigError, "recursive macro call"):
+            execute_macro_chain(((self.path, "LOOP"),), "LOOP")
 
     def test_strips_comments_before_jinja_evaluation_like_klipper(self):
         self.path.write_text(
