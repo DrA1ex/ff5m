@@ -44,7 +44,7 @@ Recent low-memory work is architectural rather than cosmetic: `.root` service wr
 
 ## Klipper overlay and migrations
 
-[`.py/klipper/`](../.py/klipper/) is a patch/plugin overlay, not a complete local Klipper checkout. During boot `S00init` symlinks plugins into the stock `extras/` directory, replaces selected stock modules with symlinked overlay files while retaining `.bak` originals, then applies separately toggleable `tune_klipper` edits. Uninstall reverses those links/backups and tuning values. See [Built-in Klipper patching](workflows/klipper-patching.md) for the lifecycle, ownership rules, and change procedure.
+[`.py/klipper/`](../.py/klipper/) is a patch/plugin overlay, not a complete local Klipper checkout. During normal initialization `init-main.sh` symlinks plugins into the stock `extras/` directory and replaces selected stock modules with symlinked overlay files while retaining `.bak` originals. The patched `mcu.py` and `toolhead.py` select `tune_klipper` values at Klipper startup without modifying those links. Uninstall reverses the links and restores the backups. See [Built-in Klipper patching](workflows/klipper-patching.md) for the lifecycle, ownership rules, and change procedure.
 
 [`.shell/migrate_db.sh`](../.shell/migrate_db.sh) applies lexically ordered SQL migrations from [`sql/`](../sql/) to Moonraker’s SQLite state and advances its checkpoint only after success. Changes must cover a new install, normal upgrade, and failed/retried migration.
 

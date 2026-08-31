@@ -71,11 +71,8 @@ case "$key" in
     ;;
     
     tune_klipper)
-        if "$SCRIPTS"/commands/ztune_klipper.sh "$value"; then
-            message "Klipper was changed. Printer will reboot now"
-            sleep 5
-            reboot
-        fi
+        message "Klipper will be restarted to apply tuning."
+        "$SCRIPTS"/restart_klipper.sh --hard
     ;;
 
     klipper_rt)

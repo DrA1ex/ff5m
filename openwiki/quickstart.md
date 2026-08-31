@@ -31,8 +31,8 @@ Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 
 1. **Preserve safe fallback.** `SKIP_MOD` paths and stock-screen fallback are a recovery feature, not incidental plumbing.
 2. **Treat display choice as a workflow change.** Non-stock modes bring up networking and Klipper differently and alter the operator's calibration/printing path.
 3. **Keep parameter declaration, macro use, and shell reaction aligned.** A user-facing setting can span `mod_params.json`, `[mod_params]` in `macros/base.cfg`, and `.shell/commands/zchanges.sh`.
-4. **Treat the Klipper overlay as a reversible deployment, not a fork.** Replacement modules are symlinked into stock Klipper with `.bak` originals; plugins are linked into `extras/`, and `tune_klipper` is a separate in-place setting. Follow [Built-in Klipper patching](workflows/klipper-patching.md) before changing any of them.
-5. **Validate on the actual supported firmware/hardware combination.** The supported stock-firmware range and compatibility analysis are documented in [`docs/INSTALL.md`](../docs/INSTALL.md) and [`docs/FIRMWARE_5x_COMPAT.md`](../docs/FIRMWARE_5x_COMPAT.md).
+4. **Treat the Klipper overlay as a reversible deployment, not a fork.** Replacement modules are symlinked into stock Klipper with `.bak` originals, plugins are linked into `extras/`, and runtime tuning is selected by the replacement modules without rewriting them. Follow [Built-in Klipper patching](workflows/klipper-patching.md) before changing any of them.
+5. **Validate on the actual supported firmware/hardware combination.** The supported stock-firmware range is documented in [`docs/INSTALL.md`](../docs/INSTALL.md).
 6. **Do not store secrets in repository docs.** Mutable SSH and user override material belongs to the printer-side `mod_data` paths; this wiki deliberately does not inspect it.
 
 ## Current change context

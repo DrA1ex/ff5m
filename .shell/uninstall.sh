@@ -35,9 +35,6 @@ revert_klipper_patches() {
             echo "?? Restored \"$target\""
         fi
     done
-
-    # Klipper tunning
-    "$CMDS"/ztune_klipper.sh 0
 }
 
 fail() {

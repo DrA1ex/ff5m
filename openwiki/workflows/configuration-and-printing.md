@@ -22,7 +22,7 @@ Use [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) for the operator proc
 | Display ECO mode | `display_eco`; dependent `backlight_eco`; Feather's periodic update; Guppy/Headless `reset_screen` delayed G-code | ECO defaults on. Turning it off hides its brightness setting, cancels pending Guppy/Headless dimming, and restores normal brightness. Feather re-observes the parameter each update. Stock remains vendor-owned and ignores it. |
 | Swap (eMMC, USB, ZRAM, off) | `mod_params.json`; `zchanges.sh`; `.shell/boot/init_swap.sh` | Memory behavior is hardware-sensitive. ZRAM was added in recent history. |
 | Camera | `camera` parameter; `zchanges.sh`; `.shell/S98camera` | The hook checks port 8080 and warns if the stock camera is still active. |
-| Klipper tuning and real-time scheduling | `tune_klipper`, `klipper_rt`; `zchanges.sh` | Tuning may reboot; `klipper_rt` restarts Klipper. `SCHED_RR` is optional and recent. |
+| Klipper tuning and real-time scheduling | `tune_klipper`, `klipper_rt`; `zchanges.sh` | Both settings restart Klipper. `SCHED_RR` is optional and recent. |
 | Config tuning | `tune_config`; `zchanges.sh`; `.py/cfg_backup.py` | Rewrites/restores config through the managed mechanism and restarts Klipper; recalibration follows. |
 | Power-loss recovery | `power_loss_recovery`; `zchanges.sh` | Clears saved resurrection state and may restart Klipper outside stock mode. |
 | Safety and print defaults | `check_md5`, `cell_weight`, Z-offset, cleaning, KAMP, mesh options | Keep macro expectations synchronized with metadata defaults. |

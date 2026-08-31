@@ -152,6 +152,29 @@ klipper_overlay_link_plugins() {
     done < <(find "$src_dir/plugins" -type f)
 }
 
+klipper_overlay_normalize_legacy_toolhead_backup() {
+    local rel_file="$1"
+    local target="$2"
+    local backup="$target.bak"
+    local normalized="$backup.ff5m-normalized"
+
+    [ "$rel_file" = "toolhead.py" ] || return 0
+    [ -f "$backup" ] || return 0
+    grep -q '^LOOKAHEAD_FLUSH_TIME = 0\.150$' "$backup" || return 0
+
+    # TODO: Remove this migration after upgrades from releases with in-place
+    # toolhead tuning no longer need to be supported.
+    echo "// Normalize legacy toolhead backup: $backup"
+    cp -p "$backup" "$normalized" || return 1
+    if ! sed \
+            's/^LOOKAHEAD_FLUSH_TIME = 0\.150$/LOOKAHEAD_FLUSH_TIME = 0.5/' \
+            "$backup" > "$normalized"; then
+        rm -f "$normalized"
+        return 1
+    fi
+    mv -f "$normalized" "$backup"
+}
+
 klipper_overlay_link_patches() {
     local src_dir="$1"
     local target_dir="$2"
@@ -188,15 +211,17 @@ klipper_overlay_link_patches() {
             return 1
         fi
 
+        klipper_overlay_normalize_legacy_toolhead_backup \
+            "$rel_file" "$target" || return 1
+
         echo "// Link patched klipper file: $file"
         ln -s "$file" "$target" || return 1
     done < <(find "$src_dir/patches" -type f)
 }
 
 apply_klipper_patches() {
-    local src_dir="${KLIPPER_SRC_DIR:-/opt/config/mod/.py/klipper}"
-    local target_dir="${KLIPPER_TARGET_DIR:-/opt/klipper/klippy}"
-    local tune_cmd="${KLIPPER_TUNE_CMD:-$CMDS/ztune_klipper.sh}"
+    local src_dir=/opt/config/mod/.py/klipper
+    local target_dir=/opt/klipper/klippy
 
     klipper_overlay_clean_links "$src_dir" "$target_dir" || return 1
 
@@ -207,10 +232,6 @@ apply_klipper_patches() {
     sync
     echo "Apply patches..."
     klipper_overlay_link_patches "$src_dir" "$target_dir" || return 1
-
-    sync
-    echo "Apply fixes..."
-    "$tune_cmd" apply || return 1
 
     sync
 }
