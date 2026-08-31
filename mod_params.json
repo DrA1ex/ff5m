@@ -563,7 +563,7 @@
     {
       "key": "clear_cooldown_temp",
       "type": "int",
-      "default": 120,
+      "default": 150,
       "label": "CLEAR_NOZZLE temperature, Cº",
       "description": "Set the nozzle cooldown temperature.",
       "order": 20000
