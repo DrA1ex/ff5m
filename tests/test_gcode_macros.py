@@ -13,6 +13,7 @@ from tests.gcode_macro_harness import (
 
 ROOT = pathlib.Path(__file__).parents[1]
 BASE = ROOT / "macros" / "base.cfg"
+HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
 SMART_PARK = ROOT / "KAMP" / "Smart_Park.cfg"
@@ -86,6 +87,101 @@ class WorkflowMacroTest(unittest.TestCase):
             "_CONTEXT_STATE NAME=PRIMING",
             "_CONTEXT_STATE NAME=PRINTING",
         ))
+
+    def test_feather_start_options_override_leveling_for_one_print(self):
+        start = macro_status(
+            HEADLESS, "START_PRINT", feather_force_leveling=True,
+            feather_mesh_name=None)
+        temporary = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {"auto": {}}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                   "SKIP_LEVELING": 1, "MESH": "slicer"})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zforce_leveling VALUE=1", temporary.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zskip_leveling VALUE=0", temporary.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"\"'", temporary.commands)
+
+        start["feather_mesh_name"] = "auto"
+        persistent = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {"auto": {}}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"auto\"'", persistent.commands)
+
+    def test_headless_start_uses_slicer_values_without_feather_override(self):
+        start = macro_status(HEADLESS, "START_PRINT")
+        result = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                   "FORCE_LEVELING": 0, "SKIP_LEVELING": 1,
+                   "MESH": "slicer"})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zforce_leveling VALUE=0", result.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zskip_leveling VALUE=1", result.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"slicer\"'", result.commands)
+
+    def test_feather_rebuild_uses_full_mesh_even_when_kamp_is_enabled(self):
+        start = macro_status(
+            BASE, "_START_PRINT", zforce_leveling=True, zmesh="auto")
+        result = render_macro(BASE, "_START_PRINT", printer={
+            "gcode_macro _START_PRINT": start,
+            "gcode_macro START_PRINT": {"preparation_done": True},
+            "mod_params": {"variables": {
+                "safe_z": 10,
+                "chamber_light_mode": "MANUAL",
+                "display": 1,
+                "check_md5": 0,
+                "print_leveling": False,
+                "use_kamp": True,
+                "bed_mesh_validation": False,
+                "midi_start": "",
+                "weight_check": False,
+                "disable_priming": True,
+            }},
+            "extruder": {"temperature": 25, "can_extrude": False},
+            "bed_mesh": {"profile_name": "auto", "profiles": {"auto": {}}},
+        })
+
+        full_level = (
+            "_FULL_BED_LEVEL BED_TEMP=80.0 EXTRUDER_TEMP=245.0 "
+            "PROFILE=auto")
+        self.assertIn(full_level, result.commands)
+        self.assertNotIn(
+            "KAMP BED_TEMP=80.0 EXTRUDER_TEMP=245.0", result.commands)
+
+    def test_headless_end_clears_pending_feather_mesh_options(self):
+        result = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
+            "mod_params": {"variables": {"stop_motor": 0}},
+            "bed_mesh": {"profile_name": "auto"},
+        })
+
+        for variable, value in (
+                ("feather_force_leveling", "None"),
+                ("feather_mesh_name", "None")):
+            self.assertIn(
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=%s VALUE=%s" % (variable, value),
+                result.commands)
 
     def test_tuning_macros_emit_their_lifecycle_in_order(self):
         cases = (

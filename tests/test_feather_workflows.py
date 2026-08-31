@@ -4,10 +4,12 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import ast
 import errno
 import os
 import pathlib
 import queue
+import shlex
 import tempfile
 import threading
 import unittest
@@ -20,7 +22,7 @@ except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject)
 
-from ui import Increment
+from ui import CONTENT_BOTTOM, Increment
 from ff5m_ui.move import runtime as MOVE_UI
 from ff5m_ui.move.step import page as MOVE_STEP_PAGE
 from ff5m_ui.heat import runtime as HEAT_UI
@@ -558,6 +560,139 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertIn("PRINT AGAIN?", drawing)
         self.assertIn("PRINT AGAIN", drawing)
 
+    def test_file_confirmation_reveals_auto_profile_only_after_mesh_rebuild(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.file_confirm_rebuild_mesh = False
+        controller.file_confirm_auto_mesh = False
+        controller.renderer.send = lambda commands: None
+
+        controller._render_file_confirm()
+
+        self.assertIn("file.mesh.rebuild", controller.renderer._toggles)
+        self.assertNotIn("file.mesh.auto", controller.renderer._toggles)
+
+        controller._handle_file_action("file.mesh.rebuild")
+
+        self.assertTrue(controller.file_confirm_rebuild_mesh)
+        self.assertIn("file.mesh.auto", controller.renderer._toggles)
+
+        controller._handle_file_action("file.mesh.auto")
+        self.assertTrue(controller.file_confirm_auto_mesh)
+
+        controller._handle_file_action("file.mesh.rebuild")
+        self.assertFalse(controller.file_confirm_rebuild_mesh)
+        self.assertFalse(controller.file_confirm_auto_mesh)
+        self.assertNotIn("file.mesh.auto", controller.renderer._toggles)
+
+    def test_file_confirmation_explains_full_mesh_override_when_kamp_enabled(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.params = type("Params", (), {
+            "variables": {"use_kamp": True}})()
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_file_confirm()
+
+        self.assertIn(
+            "KAMP ENABLED - FULL MESH WILL RUN INSTEAD",
+            "\n".join(batches[-1]))
+
+    def test_file_confirmation_controls_stay_inside_content_area(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "a-very-long-print-file-name.gcode", "/data/part.gcode",
+            size=1024)
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        controller.renderer.send = lambda commands: None
+
+        controller._render_file_confirm()
+
+        toggles = []
+        for action in ("file.mesh.rebuild", "file.mesh.auto"):
+            x, y, width, height = controller.renderer._toggles[action][:4]
+            self.assertGreaterEqual(x, 0)
+            self.assertGreaterEqual(y, 54)
+            self.assertLessEqual(x + width, 800)
+            self.assertLessEqual(y + height, 430)
+            toggles.append((y, y + height))
+        start = controller.renderer._buttons["file.start"]
+        self.assertLess(toggles[0][1], toggles[1][0])
+        self.assertLess(toggles[1][1], start[1])
+        self.assertLessEqual(start[1] + start[3], 430)
+
+    def test_file_confirmation_uses_compact_unboxed_layout(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_file_confirm()
+
+        drawing = batches[-1]
+        filename = next(
+            command for command in drawing if '-t "part.gcode"' in command)
+        size = next(
+            command for command in drawing if '-t "1.0 KiB"' in command)
+
+        def text_y(command):
+            parts = command.split()
+            return int(parts[parts.index("-p") + 2])
+
+        filename_y = text_y(filename)
+        size_y = text_y(size)
+        first_toggle_y = controller.renderer._toggles[
+            "file.mesh.rebuild"][1]
+        start = controller.renderer._buttons["file.start"]
+        full_width_option_panels = []
+        for command in drawing:
+            if not command.startswith(("--batch fill", "--batch stroke")):
+                continue
+            parts = command.split()
+            if "-p" not in parts or "-s" not in parts:
+                continue
+            y = int(parts[parts.index("-p") + 2])
+            width = int(parts[parts.index("-s") + 1])
+            height = int(parts[parts.index("-s") + 2])
+            if size_y < y < start[1] and width >= 700 and height >= 20:
+                full_width_option_panels.append(command)
+
+        self.assertEqual(full_width_option_panels, [])
+        self.assertGreaterEqual(filename_y, 94)
+        self.assertGreaterEqual(size_y - filename_y, 40)
+        self.assertGreaterEqual(first_toggle_y - size_y, 30)
+        self.assertGreaterEqual(start[3], 72)
+        self.assertLessEqual(start[3], 96)
+        self.assertGreaterEqual(CONTENT_BOTTOM - start[1] - start[3], 24)
+        self.assertLessEqual(CONTENT_BOTTOM - start[1] - start[3], 36)
+
+    def test_back_from_file_confirmation_discards_mesh_options(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+        controller.selected_file = {"path": "/data/part.gcode"}
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        shown = []
+        controller._show_page = shown.append
+
+        controller._go_back()
+
+        self.assertFalse(controller.file_confirm_rebuild_mesh)
+        self.assertFalse(controller.file_confirm_auto_mesh)
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_BROWSER])
+
     def test_start_file_rechecks_path_and_escapes_filename(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'part "one".gcode')
@@ -567,12 +702,191 @@ class FileWorkflowTest(unittest.TestCase):
             controller.selected_file = {"path": path}
             controller._start_selected_file()
             self.assertEqual(
-                controller.gcode.commands,
-                ['SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"'])
+                controller.gcode.commands[0].splitlines(), [
+                    'SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"',
+                    "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                    "VARIABLE=feather_force_leveling VALUE=None",
+                    "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                    "VARIABLE=feather_mesh_name VALUE=None",
+                ])
             self.assertEqual(controller.last_job_path, 'part "one".gcode')
             os.unlink(path)
             with self.assertRaisesRegex(RuntimeError, "no longer available"):
                 controller._start_selected_file()
+
+    def test_start_file_passes_one_print_mesh_options_after_file_load(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = {"path": path}
+            controller.file_confirm_rebuild_mesh = True
+            controller.file_confirm_auto_mesh = True
+
+            controller._start_selected_file()
+
+            self.assertEqual(controller.gcode.commands[0].splitlines(), [
+                'SDCARD_PRINT_FILE FILENAME="part.gcode"',
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_force_leveling VALUE=True",
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_mesh_name VALUE='\"auto\"'",
+            ])
+            self.assertFalse(controller.file_confirm_rebuild_mesh)
+            self.assertFalse(controller.file_confirm_auto_mesh)
+
+    def test_start_file_string_option_survives_klipper_parameter_parsing(self):
+        class LiteralParsingGCode:
+            def __init__(self):
+                self.variables = {}
+
+            def run_script(self, script):
+                for command in script.splitlines():
+                    arguments = shlex.split(command)
+                    if arguments[0] != "SET_GCODE_VARIABLE":
+                        continue
+                    params = dict(
+                        argument.split("=", 1) for argument in arguments[1:])
+                    self.variables[params["VARIABLE"]] = ast.literal_eval(
+                        params["VALUE"])
+
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.gcode = LiteralParsingGCode()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = {"path": path}
+            controller.file_confirm_rebuild_mesh = True
+            controller.file_confirm_auto_mesh = True
+
+            controller._start_selected_file()
+
+            self.assertEqual(controller.gcode.variables, {
+                "feather_force_leveling": True,
+                "feather_mesh_name": "auto",
+            })
+
+    def test_completed_forced_auto_mesh_offers_save(self):
+        controller = base_controller("printing")
+        controller.start_print_macro.variables.update({
+            "zforce_leveling": True,
+            "zskip_leveling": False,
+            "zmesh": "auto",
+        })
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+        restarts = []
+        messages = []
+        controller._restart_klipper = restarts.append
+        controller._show_message = lambda message, page, actions=None: (
+            messages.append((message, page, actions)))
+
+        controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
+
+        self.assertEqual(restarts, [])
+        self.assertEqual(len(messages), 1)
+        self.assertIn("ACTIVE FOR THIS SESSION", messages[0][0])
+        self.assertEqual(messages[0][2], (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled")))
+
+    def test_mesh_save_prompt_buttons_fit_message_dialog(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.message = (
+            "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
+            "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART.")
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"))
+        batches = []
+        controller.renderer.send = batches.append
+
+        controller._render_message()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("SAVE BED MESH?", drawing)
+        save = controller.renderer._buttons["mesh.save"]
+        later = controller.renderer._buttons["message.ok"]
+        for button in (save, later):
+            x, y, width, height = button[:4]
+            self.assertGreaterEqual(x, 0)
+            self.assertGreaterEqual(y, 54)
+            self.assertLessEqual(x + width, 800)
+            self.assertLessEqual(y + height, 430)
+        self.assertLess(save[0] + save[2], later[0])
+
+    def test_incomplete_forced_auto_mesh_does_not_offer_save(self):
+        for stats_state in ("cancelled", "error"):
+            with self.subTest(stats_state=stats_state):
+                controller = base_controller("printing")
+                controller.start_print_macro.variables.update({
+                    "zforce_leveling": True,
+                    "zskip_leveling": False,
+                    "zmesh": "auto",
+                })
+                controller.bed_mesh = StatusObject({"profile_name": "auto"})
+                restarts = []
+                messages = []
+                controller._restart_klipper = restarts.append
+                controller._show_message = lambda message, page, actions=None: (
+                    messages.append((message, page, actions)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, stats_state)
+
+                self.assertEqual(restarts, [])
+                self.assertEqual(len(messages), 1)
+                self.assertIsNone(messages[0][2])
+
+    def test_completed_print_does_not_offer_save_without_active_forced_auto(self):
+        cases = (
+            ({"zforce_leveling": False, "zskip_leveling": False,
+              "zmesh": "auto"}, "auto"),
+            ({"zforce_leveling": True, "zskip_leveling": True,
+              "zmesh": "auto"}, "auto"),
+            ({"zforce_leveling": True, "zskip_leveling": False,
+              "zmesh": ""}, "default"),
+            ({"zforce_leveling": True, "zskip_leveling": False,
+              "zmesh": "auto"}, ""),
+        )
+        for variables, profile_name in cases:
+            with self.subTest(variables=variables, profile_name=profile_name):
+                controller = base_controller("printing")
+                controller.start_print_macro.variables.update(variables)
+                controller.bed_mesh = StatusObject({
+                    "profile_name": profile_name})
+                messages = []
+                controller._show_message = (
+                    lambda message, page, actions=None:
+                    messages.append((message, page, actions)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, "complete")
+
+                self.assertEqual(len(messages), 1)
+                self.assertIsNone(messages[0][2])
+
+    def test_mesh_save_action_requires_idle_and_runs_save_config(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.MESSAGE
+        controller.last_action_time = -1
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"))
+        checked = []
+        restarts = []
+        controller._require_idle = lambda: checked.append(True)
+        controller._restart_klipper = restarts.append
+        controller._blocking_operation_active = lambda: False
+        controller.feature_manager = None
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+
+        controller._dispatch_action("mesh.save")
+
+        self.assertEqual(checked, [True])
+        self.assertEqual(restarts, ["SAVE_CONFIG"])
 
     def test_usb_directory_is_first_and_keeps_internal_list_flat(self):
         with tempfile.TemporaryDirectory() as root:
@@ -623,8 +937,13 @@ class FileWorkflowTest(unittest.TestCase):
                 ["models/old.gcode", "new.gcode"])
             controller.selected_file = controller.file_entries[0]
             controller._start_selected_file()
-            self.assertEqual(controller.gcode.commands, [
-                'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"'])
+            self.assertEqual(controller.gcode.commands[0].splitlines(), [
+                'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"',
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_force_leveling VALUE=None",
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_mesh_name VALUE=None",
+            ])
 
     def test_usb_directory_navigation_and_removal_return_to_root(self):
         controller = base_controller()

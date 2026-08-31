@@ -275,6 +275,18 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
             self._invalidate_file_entries(
                 getattr(self, "file_source", "internal"))
             self._render_file_browser()
+        elif action == "file.mesh.rebuild":
+            self.file_confirm_rebuild_mesh = not bool(getattr(
+                self, "file_confirm_rebuild_mesh", False))
+            if not self.file_confirm_rebuild_mesh:
+                self.file_confirm_auto_mesh = False
+            self._render_file_confirm()
+        elif action == "file.mesh.auto":
+            if not getattr(self, "file_confirm_rebuild_mesh", False):
+                return
+            self.file_confirm_auto_mesh = not bool(getattr(
+                self, "file_confirm_auto_mesh", False))
+            self._render_file_confirm()
         elif action == "file.start":
             self._start_selected_file()
         elif action.startswith("file.item"):
@@ -295,6 +307,8 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
             self.selected_file = entry
             self.file_confirm_return_page = ScreenPage.FILE_BROWSER
             self.file_confirm_repeat = False
+            self.file_confirm_rebuild_mesh = False
+            self.file_confirm_auto_mesh = False
             self._show_page(ScreenPage.FILE_CONFIRM)
 
     def _open_last_job(self):
@@ -317,22 +331,50 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
             self.last_job_name, path, size=stat.st_size, mtime=stat.st_mtime)
         self.file_confirm_return_page = ScreenPage.IDLE_HOME
         self.file_confirm_repeat = True
+        self.file_confirm_rebuild_mesh = False
+        self.file_confirm_auto_mesh = False
         self._show_page(ScreenPage.FILE_CONFIRM)
 
     def _render_file_confirm(self):
         entry = self.selected_file
         repeat = getattr(self, "file_confirm_repeat", False)
+        rebuild_mesh = bool(getattr(
+            self, "file_confirm_rebuild_mesh", False))
+        auto_mesh = bool(getattr(self, "file_confirm_auto_mesh", False))
+        rebuild_hint = (
+            "KAMP ENABLED - FULL MESH WILL RUN INSTEAD"
+            if bool(self._setting("use_kamp", False))
+            else "FOR THIS PRINT ONLY")
         commands = self.renderer.begin_page(
             "Print again?" if repeat else "Start print?", back=True)
         commands.append(self.renderer.text(
-            400, 150, entry["name"], ThemeColor.BRIGHT, "Roboto Bold 16pt", "center",
-            "middle", max_width=720, truncate=True))
-        commands.append(self.renderer.text(400, 220, self._format_size(entry["size"]),
-                                           ThemeColor.PRIMARY, "Roboto 12pt", "center", "middle"))
-        commands += self.renderer.button("file.start", 220, 310, 360, 100,
+            400, 96, entry["name"], ThemeColor.BRIGHT, "Roboto Bold 16pt",
+            "center", "middle", max_width=720, truncate=True))
+        commands.append(self.renderer.text(
+            400, 140, self._format_size(entry["size"]), ThemeColor.PRIMARY,
+            "Roboto 12pt", "center", "middle"))
+        commands += self._file_confirm_option(
+            "file.mesh.rebuild", 170, "REBUILD BED MESH",
+            rebuild_hint, rebuild_mesh)
+        if rebuild_mesh:
+            commands += self._file_confirm_option(
+                "file.mesh.auto", 238, "SAVE MESH FOR FUTURE PRINTS",
+                "YOU'LL BE ASKED AFTER PRINT", auto_mesh)
+        commands += self.renderer.button("file.start", 220, 316, 360, 96,
                                          "PRINT AGAIN" if repeat else "START PRINT",
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
+
+    def _file_confirm_option(self, action, y, label, subtitle, active):
+        commands = [
+            self.renderer.text(44, y + 12, label, ThemeColor.PRIMARY,
+                               "JetBrainsMono Bold 8pt"),
+            self.renderer.text(44, y + 34, subtitle, ThemeColor.DIM,
+                               "JetBrainsMono 8pt"),
+        ]
+        commands += self.renderer.toggle(
+            action, 679, y + 5, 76, 38, active)
+        return commands
 
     def _start_selected_file(self):
         self._require_idle()
@@ -346,8 +388,26 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
         escaped = relpath.replace("\\", "\\\\").replace('"', '\\"')
         self.last_job_path = relpath.replace(os.sep, "/")
         self.last_job_name = os.path.basename(relpath)
-        self._run_script(
-            'SDCARD_PRINT_FILE FILENAME="%s"' % escaped)
+        rebuild_mesh = bool(getattr(
+            self, "file_confirm_rebuild_mesh", False))
+        auto_mesh = bool(getattr(
+            self, "file_confirm_auto_mesh", False) and rebuild_mesh)
+        # The virtual-SD timer cannot consume the file until this script
+        # yields. Staging after file acceptance avoids a stale one-print choice
+        # when SDCARD_PRINT_FILE rejects the path or an already-active job.
+        force_leveling = "True" if rebuild_mesh else "None"
+        # G-code parsing consumes the outer quotes; literal_eval() in
+        # SET_GCODE_VARIABLE must still receive the inner quoted string.
+        mesh_name = "'\"auto\"'" if auto_mesh else "None"
+        self._run_script("\n".join((
+            'SDCARD_PRINT_FILE FILENAME="%s"' % escaped,
+            "SET_GCODE_VARIABLE MACRO=START_PRINT "
+            "VARIABLE=feather_force_leveling VALUE=%s" % force_leveling,
+            "SET_GCODE_VARIABLE MACRO=START_PRINT "
+            "VARIABLE=feather_mesh_name VALUE=%s" % mesh_name,
+        )))
+        self.file_confirm_rebuild_mesh = False
+        self.file_confirm_auto_mesh = False
 
     def _render_print_page(self):
         paused = self.print_state == PrintState.PAUSED

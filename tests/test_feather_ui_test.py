@@ -823,6 +823,34 @@ class RunnerContractTest(unittest.TestCase):
                 "exit-warning", "saved")},
             {label for label in captures if label.startswith("ui-extruder-")})
 
+    def test_repeat_file_confirmation_snapshots_cover_both_option_states(self):
+        rendered = []
+        shown = []
+        host = type("Host", (), {
+            "page": FEATHER.ScreenPage.FILE_CONFIRM,
+            "selected_file": {"name": "part.gcode"},
+            "_render_file_confirm": lambda self: rendered.append((
+                self.file_confirm_repeat,
+                self.file_confirm_rebuild_mesh,
+                self.file_confirm_auto_mesh)),
+            "_show_page": lambda self, page: shown.append(page),
+        })()
+        run = type("Run", (), {"host": host})()
+        scenarios = SCENARIOS.ScenarioCatalog(run)
+
+        scenarios._render_repeat_file_confirm(False)
+        scenarios._render_repeat_file_confirm(True)
+        scenarios._return_from_file_confirm()
+
+        self.assertEqual(rendered, [
+            (True, False, False),
+            (True, True, True),
+        ])
+        self.assertFalse(host.file_confirm_repeat)
+        self.assertFalse(host.file_confirm_rebuild_mesh)
+        self.assertFalse(host.file_confirm_auto_mesh)
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_BROWSER])
+
     def test_every_ui_capture_has_a_visual_review_expectation(self):
         expectations = json.loads(
             (ROOT / "tests" / "visual_checks" / "expectations.json")

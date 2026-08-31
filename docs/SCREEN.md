@@ -40,6 +40,8 @@ The first touch after the panel dims only wakes the display; it does not activat
 
 Feather can browse G-code stored on the printer or on a connected USB drive. It supports folders, multi-page file lists, refresh, file information, print confirmation, and a recent-print list.
 
+Before starting a file, you can ask Feather to measure a fresh full-bed mesh for that print. If KAMP is enabled, the screen explains that the full mesh will run instead. You can also choose to save the new mesh for future prints. Feather waits until the print succeeds and then asks for confirmation. Confirming saves the mesh permanently and restarts Klipper; postponing leaves it available only for the current session.
+
 During a print, Feather shows progress, elapsed and remaining time, layer and height information. It provides pause, resume, filament change, live Z adjustment, and guarded cancellation. Preparation reports the separate context path and current state, for example `PRINT PREP -> MESH VALIDATION -> HEATING NOZZLE`, instead of relying on a caller-provided `CONTEXT`/`STAGE` string.
 
 Cancellation is also available while the printer is preparing a job. Normal **Cancel** accepts `interruptible` work and uses the nearest explicit `cancelable` cleanup domain when one exists; homing, probing, and motion remain atomic until the next context boundary. Managed temperature waits are interrupted immediately through `M108`. A pending request offers **Continue Operation** or immediate `M112`, while `non_interruptible` work offers only Continue or `M112`.

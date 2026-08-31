@@ -68,7 +68,8 @@ EXACT_ACTIONS = {
                         "nav.settings"),
     ScreenPage.FILE_BROWSER: (
         "nav.back", "file.prev", "file.next", "file.refresh"),
-    ScreenPage.FILE_CONFIRM: ("nav.back", "file.start"),
+    ScreenPage.FILE_CONFIRM: (
+        "nav.back", "file.start", "file.mesh.rebuild", "file.mesh.auto"),
     ScreenPage.PRINTING: ("nav.home", "print.pause", "print.filament",
                     "print.cancel", "print.z"),
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
@@ -248,6 +249,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.selected_file = None
         self.file_confirm_return_page = ScreenPage.FILE_BROWSER
         self.file_confirm_repeat = False
+        self.file_confirm_rebuild_mesh = False
+        self.file_confirm_auto_mesh = False
         self.file_source = "internal"
         self.usb_storage = None
         self.jog_step = 1.0
@@ -1143,6 +1146,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                   or (self.page == ScreenPage.WIFI_PASSWORD
                       and is_keyboard_action(action))):
                 self._handle_network_action(action)
+            elif action == "mesh.save":
+                self._require_idle()
+                mesh_status = (self.bed_mesh.get_status(now)
+                               if getattr(self, "bed_mesh", None) is not None
+                               else {})
+                if mesh_status.get("profile_name") != "auto":
+                    raise RuntimeError("The auto bed mesh is no longer active")
+                self._restart_klipper("SAVE_CONFIG")
             elif action == "message.ok":
                 self._show_page(self.message_return)
         except Exception as exc:
@@ -1150,7 +1161,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._show_message(str(exc), self.page)
 
     def _action_allowed(self, page, action):
-        if page == ScreenPage.MESSAGE and action == "net.reset.saved":
+        if page == ScreenPage.MESSAGE and action != "message.ok":
             return any(
                 item[0] == action
                 for item in getattr(self, "message_actions", ()))
@@ -1257,6 +1268,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self, "file_confirm_return_page", ScreenPage.FILE_BROWSER)
             self.selected_file = None
             self.file_confirm_repeat = False
+            self.file_confirm_rebuild_mesh = False
+            self.file_confirm_auto_mesh = False
             self._show_page(return_page)
         elif self.page == ScreenPage.CONTROL_HOME:
             self._show_page(ScreenPage.MAIN_MENU)
@@ -1697,9 +1710,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._show_page(ScreenPage.MESSAGE)
 
     def _render_message(self):
-        commands = self.renderer.begin_page("Message")
+        save_mesh = any(
+            action == "mesh.save"
+            for action, _label, _state in self.message_actions)
+        title = "Save bed mesh?" if save_mesh else "Message"
+        commands = self.renderer.begin_page(title)
         commands += self.renderer.dialog(
-            "Message", (),
+            title, (),
             self.message_actions,
             x=90, y=95, width=620, height=300, tone="info")
         commands.append(self.renderer.text(
@@ -1964,6 +1981,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self.file_source = "internal"
             self.file_page = 0
             self.selected_file = None
+            self.file_confirm_rebuild_mesh = False
+            self.file_confirm_auto_mesh = False
             if self.page == ScreenPage.FILE_CONFIRM:
                 self._show_message("USB drive removed", ScreenPage.FILE_BROWSER)
                 return
@@ -2041,7 +2060,27 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     getattr(self, "display_status", None),
                     "expire_progress", 0.0) or 0.0)
                 self._m73_active = False
-                self._show_message(label, ScreenPage.IDLE_HOME)
+                start = getattr(
+                    getattr(self, "start_print_macro", None),
+                    "variables", {})
+                mesh_status = (self.bed_mesh.get_status(self.state_time)
+                               if getattr(self, "bed_mesh", None) is not None
+                               else {})
+                offer_mesh_save = (
+                    stats_state == "complete"
+                    and bool(start.get("zforce_leveling", False))
+                    and not bool(start.get("zskip_leveling", False))
+                    and start.get("zmesh") == "auto"
+                    and mesh_status.get("profile_name") == "auto")
+                if offer_mesh_save:
+                    self._show_message(
+                        "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
+                        "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART.",
+                        ScreenPage.IDLE_HOME,
+                        actions=(("mesh.save", "SAVE & RESTART", "enabled"),
+                                 ("message.ok", "LATER", "enabled")))
+                else:
+                    self._show_message(label, ScreenPage.IDLE_HOME)
             elif old_state == PrintState.INACTIVE:
                 self._show_page(ScreenPage.IDLE_HOME)
 

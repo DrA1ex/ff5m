@@ -234,6 +234,20 @@ class ScenarioCatalog:
             steps, "ui-files-return", lambda: self._show(ScreenPage.FILE_BROWSER))
         self._add_call(steps, "ui-file-confirm", self._open_safe_file_confirm)
         self._add_capture(steps, "ui-file-confirm")
+        self._add_tap(
+            steps, "file.mesh.rebuild", ScreenPage.FILE_CONFIRM)
+        self._add_capture(steps, "ui-file-confirm-mesh")
+        self._add_tap(steps, "file.mesh.auto", ScreenPage.FILE_CONFIRM)
+        self._add_capture(steps, "ui-file-confirm-mesh-save")
+        self._add_tap(
+            steps, "file.mesh.rebuild", ScreenPage.FILE_CONFIRM)
+        for label, options_enabled in (
+                ("ui-file-repeat-off", False),
+                ("ui-file-repeat-both", True)):
+            self._add_render_capture(
+                steps, label,
+                lambda enabled=options_enabled:
+                self._render_repeat_file_confirm(enabled))
         self._add_call(steps, "ui-file-return", self._return_from_file_confirm)
         # The internal file browser belongs to the home screen, so its Back
         # action returns there rather than to the menu used to open it.
@@ -341,6 +355,8 @@ class ScenarioCatalog:
                 lambda value=kind: self._render_network_progress_snapshot(value))
         self._add_render_capture(
             steps, "ui-message-two-actions", self._render_two_action_message)
+        self._add_render_capture(
+            steps, "ui-message-mesh-save", self._render_mesh_save_message)
         self._add_call(
             steps, "ui-network-return",
             lambda: self._show(ScreenPage.NETWORK_HOME))
@@ -827,6 +843,19 @@ class ScenarioCatalog:
                 "message_actions": (
                     ("message.ok", "CANCEL", "enabled"),
                     ("net.reset.saved", "RESET PASSWORD", "warning"),
+                ),
+        }):
+            self._show(ScreenPage.MESSAGE)
+
+    def _render_mesh_save_message(self):
+        with _temporary_attributes(self.host, {
+                "message": (
+                    "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
+                    "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART."),
+                "message_return": ScreenPage.IDLE_HOME,
+                "message_actions": (
+                    ("mesh.save", "SAVE & RESTART", "enabled"),
+                    ("message.ok", "LATER", "enabled"),
                 ),
         }):
             self._show(ScreenPage.MESSAGE)
@@ -1435,8 +1464,20 @@ class ScenarioCatalog:
             self.run._tap(action)
             return
 
+    def _render_repeat_file_confirm(self, options_enabled):
+        if (self.host.page != ScreenPage.FILE_CONFIRM
+                or getattr(self.host, "selected_file", None) is None):
+            raise RuntimeError("File confirmation is not open")
+        self.host.file_confirm_repeat = True
+        self.host.file_confirm_rebuild_mesh = bool(options_enabled)
+        self.host.file_confirm_auto_mesh = bool(options_enabled)
+        self.host._render_file_confirm()
+
     def _return_from_file_confirm(self):
         if self.host.page == ScreenPage.FILE_CONFIRM:
+            self.host.file_confirm_repeat = False
+            self.host.file_confirm_rebuild_mesh = False
+            self.host.file_confirm_auto_mesh = False
             self.host._show_page(ScreenPage.FILE_BROWSER)
 
     def _pause_ui_timer(self):

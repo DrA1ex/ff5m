@@ -470,12 +470,19 @@ class FeatherUtilitiesTest(unittest.TestCase):
             FEATHER.ScreenPage.WIFI_SCAN, "net.reset.saved"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.MESSAGE, "mesh.save"))
         controller.message_actions = (
             ("message.ok", "CANCEL", "enabled"),
             ("net.reset.saved", "RESET PASSWORD", "warning"),
         )
         self.assertTrue(allowed(
             FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"),
+        )
+        self.assertTrue(allowed(FEATHER.ScreenPage.MESSAGE, "mesh.save"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.MOD_SETTINGS, "keyboard.key.hash"))
 

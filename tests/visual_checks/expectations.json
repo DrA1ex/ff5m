@@ -653,6 +653,124 @@
                 "theme colors"
             ]
         },
+        "printer:ui-file-confirm-mesh":
+        {
+            "description": "File confirmation with one-print bed mesh rebuild enabled.",
+            "required":
+            [
+                "selected file context",
+                "enabled bed mesh rebuild switch",
+                "profile auto switch",
+                "confirmation and cancellation actions"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "content outside screen",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "file name",
+                "theme colors"
+            ]
+        },
+        "printer:ui-file-confirm-mesh-save":
+        {
+            "description": "File confirmation with a session auto bed mesh selected.",
+            "required":
+            [
+                "selected file context",
+                "enabled bed mesh rebuild switch",
+                "enabled profile auto switch",
+                "save-after-print notice",
+                "confirmation and cancellation actions"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "content outside screen",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "file name",
+                "theme colors"
+            ]
+        },
+        "printer:ui-file-repeat-off":
+        {
+            "description": "Repeat-print confirmation with both optional mesh choices disabled.",
+            "required":
+            [
+                "selected file context",
+                "repeat-print title and action",
+                "bed mesh rebuild switch in its off state",
+                "confirmation and cancellation actions"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "content outside screen",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "file name",
+                "theme colors"
+            ]
+        },
+        "printer:ui-file-repeat-both":
+        {
+            "description": "Repeat-print confirmation with both optional mesh choices enabled.",
+            "required":
+            [
+                "selected file context",
+                "repeat-print title and action",
+                "enabled bed mesh rebuild switch",
+                "enabled profile auto switch",
+                "save-after-print notice",
+                "confirmation and cancellation actions"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "content outside screen",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "file name",
+                "theme colors"
+            ]
+        },
+        "printer:ui-message-mesh-save":
+        {
+            "description": "Prompt to persist the completed auto bed mesh.",
+            "required":
+            [
+                "new auto bed mesh session status",
+                "printer.cfg persistence explanation",
+                "Klipper restart warning",
+                "Save and restart action",
+                "Later action"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "content outside screen",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "theme colors"
+            ]
+        },
         "printer:ui-files":
         {
             "description": "Real-printer file browser.",
