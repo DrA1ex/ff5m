@@ -7,7 +7,7 @@ Forge-X supports four display modes:
 | Mode | Use it when |
 | --- | --- |
 | `STOCK` | You want the original FlashForge screen, upload path, and vendor workflow. |
-| `FEATHER` | You want Forge-X's lightweight local touchscreen controls. |
+| `FEATHER` (default) | You want Forge-X's lightweight local touchscreen controls. |
 | `GUPPY` | You prefer the separate Guppy touchscreen interface. |
 | `HEADLESS` | You control the printer remotely or provide your own display process. |
 

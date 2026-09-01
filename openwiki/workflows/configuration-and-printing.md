@@ -49,12 +49,12 @@ The first prompt is produced by a background shell command. Fluidd requires each
 
 The display root determines the starting Klipper configuration:
 
-- [`config/stock.cfg`](../../config/stock.cfg) — default stock-screen bridge.
-- [`config/feather.cfg`](../../config/feather.cfg) — Feather UI path.
+- [`config/feather.cfg`](../../config/feather.cfg) — default Feather UI path.
+- [`config/stock.cfg`](../../config/stock.cfg) — stock-screen bridge.
 - [`config/headless.cfg`](../../config/headless.cfg) — no stock UI.
 - [`config/guppy.cfg`](../../config/guppy.cfg) — Guppy UI path.
 
-All consume shared macro behavior. In non-stock modes, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) initializes network access and starts the MCU/Klipper path itself; if network initialization fails, it switches back to stock config. `zchanges.sh` warns explicitly that users must understand bed mesh, Z-offset, and `START_PRINT`/`END_PRINT` behavior before disabling the stock screen.
+All consume shared macro behavior. In non-stock modes, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) initializes network access and starts the MCU/Klipper path itself. Feather continues booting while networking establishes or remains offline; a failed bounded network wait in Guppy or Headless switches back to stock config. `zchanges.sh` warns explicitly that users must understand bed mesh, Z-offset, and `START_PRINT`/`END_PRINT` behavior before disabling the stock screen.
 
 ## Print lifecycle
 

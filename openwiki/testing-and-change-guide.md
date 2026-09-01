@@ -743,7 +743,7 @@ This is not a gap to hide: Forge-X changes early boot, services, printer motion,
 
 | Change area | Static review | On-device / integration validation |
 |---|---|---|
-| `.shell/S00init`, `.shell/init-main.sh`, `.shell/S55boot`, `.shell/S99root`, `.bin/exec/netd`, mounts | Trace normal, soft-skip, hard-failure, first-run, daemon-ready timeout, and Stock-inert branches; verify every referenced deployed path | Cold boot default stock mode; non-Stock Ethernet/Wi-Fi and offline Feather; a controlled skip/fallback; first-run DB/bootstrap where feasible; retain logs |
+| `.shell/S00init`, `.shell/init-main.sh`, `.shell/S55boot`, `.shell/S99root`, `.bin/exec/netd`, mounts | Trace normal, soft-skip, hard-failure, first-run, daemon-ready timeout, and Stock-inert branches; verify every referenced deployed path | Cold boot with empty variables selecting Feather; explicit Stock mode; non-Stock Ethernet/Wi-Fi and offline Feather; a controlled skip/fallback; first-run DB/bootstrap where feasible; retain logs |
 | `.root/*` service scripts / `moonraker.conf` | Confirm chroot mount/path ownership, start-stop symmetry, PID handling, port/path consistency, config include ownership, and updater semantics; see [Chroot environment and web runtime](workflows/chroot-and-web-runtime.md) | Moonraker readiness on 7125, static UI reachability on 80, browser-to-Moonraker connection, service disable switches, display gates, and reboot persistence |
 | `mod_params.json` / `zchanges.sh` | Confirm schema, defaults, migration/deprecation, macro declaration, and each keyed side effect | Toggle parameter, verify expected restart/reboot/service action and persistence; restore default |
 | `config/` and `macros/` | Trace includes, renamed macros, shell command arguments, safe motion preconditions | Controlled homing, calibration, pause/resume/cancel, start/end print path using safe test conditions; recalibrate before production prints |
@@ -758,7 +758,7 @@ Use the operator docs as test procedures where applicable—especially [`docs/PR
 
 1. **Do not test new motion behavior on an uncalibrated printer.** Installation/uninstallation and config tuning can invalidate bed mesh/Z offset.
 2. **Retain a recovery route before touching boot code.** Confirm the documented dual-boot/USB recovery route and preserve logs.
-3. **Exercise stock mode before alternate modes.** Stock is the default and fallback path.
+3. **Exercise default Feather and explicit Stock before other display modes.** Stock remains the fallback and recovery path.
 4. **Treat calibration/macro edits as hardware-risk changes.** Review the full macro chain; test with conservative conditions.
 5. **Avoid destructive broad tests.** Do not wipe Moonraker state, overwrite user-owned `mod_data`, or alter private SSH material simply to validate a source change.
 

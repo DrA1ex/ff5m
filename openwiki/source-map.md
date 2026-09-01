@@ -37,7 +37,7 @@ When code and a doc disagree, prefer current source for implemented behavior and
 
 - **`macros/shell.cfg` → `.shell/commands/*`:** privileged command execution from G-code. Inspect parameter handling and caller macros together.
 - **USB sysfs discovery → destructive preparation:** `PREPARE_USB` must accept only external direct-access USB disks and revalidate the device fingerprint immediately before erasure.
-- **Display config → boot path:** alternate display modes need network/bootstrap behavior not used by default stock mode.
+- **Display config → boot path:** non-stock display modes need their own network/bootstrap behavior; Feather is the default, while Stock remains an explicit choice and recovery fallback.
 - **`mod_params.json` → mutable `variables.cfg`:** schema/default change may affect existing printers, not merely fresh installs.
 - **`.py/klipper/patches` → stock `/opt/klipper`:** compatibility depends on the supported firmware range documented in `docs/INSTALL.md` and must be validated against each stock layout.
 - **`moonraker.conf` → network:** default listener is all interfaces and API-key auth is disabled; changes have deployment/security consequences.

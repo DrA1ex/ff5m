@@ -47,7 +47,7 @@ test() {
     if [ "$display_off" != "MISSING" ]; then
         [ "$display_off" = "0" ] && echo "STOCK" || echo "FEATHER"
     else
-        local display=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display" "STOCK")
+        local display=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display" "FEATHER")
         echo "$display"
     fi
 }

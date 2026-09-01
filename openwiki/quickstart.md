@@ -1,6 +1,6 @@
 # Forge-X repository quickstart
 
-Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 5M Pro printers. It runs an adapted Klipper/Moonraker stack with Fluidd and Mainsail while retaining the stock screen by default; Feather, Guppy, and headless modes are alternatives. The project exists to make the printer's constrained stock platform more stable and configurable and to add printing, calibration, monitoring, and recovery capabilities. See [`README.md`](../README.md) and the user-facing docs in [`docs/`](../docs/).
+Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 5M Pro printers. It runs an adapted Klipper/Moonraker stack with Fluidd and Mainsail and uses its built-in Feather screen by default; Stock, Guppy, and headless modes remain available as explicit choices. The project exists to make the printer's constrained stock platform more stable and configurable and to add printing, calibration, monitoring, and recovery capabilities. See [`README.md`](../README.md) and the user-facing docs in [`docs/`](../docs/).
 
 > **Safety boundary:** this repository changes boot-time behavior and motion/calibration logic on physical printers. Installation, uninstallation, display-mode changes, configuration tuning, and macro changes require checking printer settings and recalibrating bed mesh and Z offset before printing. The project explicitly warns that incorrect use can damage or brick a printer ([`README.md`](../README.md), [`docs/INSTALL.md`](../docs/INSTALL.md)).
 

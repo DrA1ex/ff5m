@@ -28,7 +28,7 @@ sed -i 's/\("project_owner":"\)mainsail-crew\("\)/\1DrA1ex\2/' /root/www/mainsai
 
 ######
 
-DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "STOCK")
+DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "FEATHER")
 if [ "$DISPLAY_MODE" = "FEATHER" ] || [ "$DISPLAY_MODE" = "GUPPY" ]; then
     /opt/config/mod/.root/S35tslib start
 fi

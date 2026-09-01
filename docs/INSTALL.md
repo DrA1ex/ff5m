@@ -41,7 +41,7 @@ The mod uses the same installation mechanism as the stock firmware:
 5. The printer will automatically install the update. After the installation is finished, you will see a message at the end of the screen.  
 6. Eject the USB drive and reboot the printer.  
 
-After installation, the printer will boot into the modified firmware by default.
+After a fresh installation, the printer will boot into the modified firmware with Feather as its default local screen. An update preserves an existing explicit display choice.
 
 From this point onward, you will receive OTA updates from this repository.
 

@@ -921,6 +921,9 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 manager._reload()
 
             self.assertEqual(logged.call_args_list, [])
+            display = manager.params_map["display"]
+            self.assertEqual(
+                manager.variables["display"], display.type["FEATHER"].value)
             self.assertEqual(
                 {param.key: manager._transform(
                     param, manager.variables[param.key]) for param in enums},

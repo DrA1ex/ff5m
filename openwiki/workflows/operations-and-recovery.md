@@ -241,7 +241,7 @@ These are hardware operations. This wiki records the routing, but the user-facin
 ## Runbook for changes to boot or operations
 
 - Review the stock-mode fallback and verify that a failure cannot strand the device before recovery access.
-- Exercise the default stock mode and each touched alternative-display path.
+- Exercise the default Feather mode, explicit Stock mode, and each touched alternative-display path.
 - If service order, update behavior, mounts, or persistent locations change, review `S00init`, `init-main.sh`, `S55boot`, `S99root`, `.root/start.sh`, and the relevant docs together.
 - Add/adjust recovery instructions whenever an operational change affects rollback, diagnostics, or required recalibration.
 - Apply the validation guidance in [Testing and change guide](../testing-and-change-guide.md).
