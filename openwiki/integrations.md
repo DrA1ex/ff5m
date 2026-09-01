@@ -61,9 +61,9 @@ Operational considerations:
 
 ## OTA and stock-cloud interaction
 
-Moonraker Update Manager provides Forge-X, Fluidd, Mainsail, and Guppy update entries. Operator instructions are in [`docs/INSTALL.md`](../docs/INSTALL.md); compatibility rationale for stock firmware is in [`docs/FIRMWARE_5x_COMPAT.md`](../docs/FIRMWARE_5x_COMPAT.md).
+Moonraker Update Manager provides Forge-X, Fluidd, Mainsail, and Guppy update entries. Operator instructions and the supported stock-firmware range are in [`docs/INSTALL.md`](../docs/INSTALL.md).
 
-`block_cloud` is an optional mod parameter processed in [`.shell/S00init`](../.shell/S00init). When enabled, it adds mod-marked loopback host entries for selected vendor cloud/MQTT/model-sharing/OTA/video hosts and removes only its own marked entries when disabled. It is not a firewall or complete air-gap solution, and it can break stock cloud features by design.
+`block_cloud` is an optional mod parameter processed in [`.shell/init-main.sh`](../.shell/init-main.sh). When enabled, it adds mod-marked loopback host entries for selected vendor cloud/MQTT/model-sharing/OTA/video hosts and removes only its own marked entries when disabled. It is not a firewall or complete air-gap solution, and it can break stock cloud features by design.
 
 ## Integration change checklist
 

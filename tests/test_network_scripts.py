@@ -34,6 +34,24 @@ def run(command, *, env=None):
     )
 
 
+def patched_ethernet_helper(directory, sys_class_net, interfaces):
+    source = ETHERNET_MAC_HELPER.read_text(encoding="utf-8")
+    replacements = {
+        "SYS_CLASS_NET=/sys/class/net": "SYS_CLASS_NET=%s" % sys_class_net,
+        "INTERFACES_FILE=/etc/network/interfaces":
+            "INTERFACES_FILE=%s" % interfaces,
+    }
+    for old, new in replacements.items():
+        if source.count(old) != 1:
+            raise AssertionError("expected one %r in zeth0_mac.sh" % old)
+        source = source.replace(old, new, 1)
+
+    script = pathlib.Path(directory) / "zeth0_mac.sh"
+    script.write_text(source, encoding="utf-8")
+    script.chmod(ETHERNET_MAC_HELPER.stat().st_mode & 0o777)
+    return script
+
+
 class NetworkScriptsTest(unittest.TestCase):
     def test_common_script_preserves_the_shell_command_builtin(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -67,12 +85,9 @@ class NetworkScriptsTest(unittest.TestCase):
             interfaces.write_text(
                 "auto lo\niface lo inet loopback\n", encoding="utf-8")
 
-            env = os.environ.copy()
-            env.update({
-                "SYS_CLASS_NET": str(sys_class_net),
-                "INTERFACES_FILE": str(interfaces),
-            })
-            result = run(["sh", str(ETHERNET_MAC_HELPER)], env=env)
+            helper = patched_ethernet_helper(
+                directory, sys_class_net, interfaces)
+            result = run(["sh", str(helper)])
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
@@ -101,13 +116,9 @@ class NetworkScriptsTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            env = os.environ.copy()
-            env.update({
-                "SYS_CLASS_NET": str(sys_class_net),
-                "INTERFACES_FILE": str(interfaces),
-            })
-            result = run(
-                ["sh", str(ETHERNET_MAC_HELPER), "eth0"], env=env)
+            helper = patched_ethernet_helper(
+                directory, sys_class_net, interfaces)
+            result = run(["sh", str(helper), "eth0"])
 
             self.assertEqual(result.returncode, 0, result.stderr)
             material = interfaces.read_text(encoding="utf-8")
@@ -133,12 +144,9 @@ class NetworkScriptsTest(unittest.TestCase):
             )
             interfaces.write_text(original, encoding="utf-8")
 
-            env = os.environ.copy()
-            env.update({
-                "SYS_CLASS_NET": str(sys_class_net),
-                "INTERFACES_FILE": str(interfaces),
-            })
-            result = run(["sh", str(ETHERNET_MAC_HELPER)], env=env)
+            helper = patched_ethernet_helper(
+                directory, sys_class_net, interfaces)
+            result = run(["sh", str(helper)])
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(interfaces.read_text(encoding="utf-8"), original)

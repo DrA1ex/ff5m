@@ -6,8 +6,11 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-source /opt/config/mod/.shell/common.sh
-source /opt/config/mod/.shell/boot/usb_storage.sh
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 1
+source /opt/config/mod/.shell/common.sh || exit 1
+source /opt/config/mod/.shell/boot/usb_storage.sh || exit 1
+
+INSTALL_IMAGE_SCRIPT=/opt/config/mod/.shell/boot/install-image.sh
 
 FLAGS=("SKIP_MOD" "SKIP_MOD_SOFT" "REMOVE_MOD" "REMOVE_MOD_SOFT" "klipper_mod_skip" "klipper_mod_remove")
 
@@ -15,7 +18,7 @@ check_special_boot_flag() {
     local path=$1
 
     # Check firmware image first
-    if /opt/config/mod/.shell/boot/install-image.sh test "$path" > /dev/null; then
+    if "$INSTALL_IMAGE_SCRIPT" test "$path" > /dev/null; then
         echo "FIRMWARE_IMAGE"
         return 0
     fi
@@ -40,7 +43,6 @@ check_special_boot_flag() {
         done
     done
 
-
     return 1
 }
 
@@ -51,11 +53,12 @@ search_special_boot_flag_usb() {
 
     echo "Searching for boot flag in USB files..."
 
-    wait_seconds="${BOOT_FLAG_USB_WAIT_SECONDS:-10}"
+    wait_seconds=10
     if ! usb_storage_has_enumerated_disk; then
         echo "No USB storage found."
         return 1
     fi
+
     if ! usb_storage_wait_for_candidates "$wait_seconds"; then
         echo "USB storage did not become ready within ${wait_seconds}s."
         return 1
@@ -98,6 +101,7 @@ search_special_boot_flag_usb() {
 
 search_special_boot_flag_root() {
     local callback=$1
+
     echo "Searching for boot flag in MMC files..."
 
     found=$(check_special_boot_flag "/opt/config/mod/")
@@ -106,12 +110,13 @@ search_special_boot_flag_root() {
         eval "$callback" "$found" "/opt/config/mod/"
         return 0
     fi
-    
+
     return 1
 }
 
 search_for_klipper_mod() {
     local callback=$1
+
     echo "Searching for klipper mod files..."
 
     if [ -f "/etc/init.d/S00klipper_mod" ]; then
@@ -119,28 +124,29 @@ search_for_klipper_mod() {
         eval "$callback" "KLIPPER_MOD" ""
         return 0
     fi
-    
+
     return 1
 }
 
 handle_special_boot_flag() {
     local name="$1"
     local mount=${2:-}
-    
+
     case "$name" in
         SKIP_MOD)
             echo "?? Skipping mod load..."
             rm -f /opt/config/mod/SKIP_MOD
-            touch /tmp/SKIP_MOD
+            forge_x_publish_stock_mode stock || exit 1
 
             echo "// Stock firmware will be loaded soon..."
-            
+
             exit 0
-            ;;
+        ;;
+
         SKIP_MOD_SOFT)
             echo "?? Skipping mod load in soft mode..."
             rm -f /opt/config/mod/SKIP_MOD_SOFT
-            touch /tmp/SKIP_MOD_SOFT
+            forge_x_publish_stock_mode stock-soft || exit 1
 
             # oh-my-zsh
             if [ -d /root/.oh-my-zsh ]; then
@@ -148,23 +154,25 @@ handle_special_boot_flag() {
             fi
 
             echo "// Stock firmware will be loaded soon..."
-            
+
             exit 0
-            ;;
+        ;;
+
         REMOVE_MOD)
             echo "@@ Removing mod..."
 
             rm -f /opt/config/mod/REMOVE_MOD
             mount_data_partition
-            
+
             cp -f /opt/config/mod/.shell/uninstall.sh /tmp/uninstall.sh
             /tmp/uninstall.sh
-            
+
             exit 0
-            ;;
+        ;;
+
         REMOVE_MOD_SOFT)
             echo "@@ Removing mod in soft mode..."
-        
+
             rm -f /opt/config/mod/REMOVE_MOD_SOFT
             mount_data_partition
 
@@ -172,39 +180,44 @@ handle_special_boot_flag() {
             /tmp/uninstall.sh --soft
 
             exit 0
-            ;;
+        ;;
+
         klipper_mod_skip)
             echo "!! Klipper mod skipped. Continuing boot..."
 
             exit 1
         ;;
+
         FIRMWARE_IMAGE)
             echo "!! Installation image found. Skipping the mod..."
-            touch /tmp/SKIP_MOD_HARD
+            forge_x_publish_stock_mode stock-hard || exit 1
 
             echo "// Starting firmware installer..."
-            /opt/config/mod/.shell/boot/install-image.sh "$mount"
+            "$INSTALL_IMAGE_SCRIPT" "$mount"
 
             # The installer owns the boot once an image was accepted. Its
             # errors are terminal screens, not permission to resume boot.
             exit 0
         ;;
+
         FIRMWARE_SCRIPT)
             echo "!! Installation script found. Skipping the mod..."
-            touch /tmp/SKIP_MOD_HARD
+            forge_x_publish_stock_mode stock-hard || exit 1
 
             echo "// Firmware script will be loaded soon..."
 
             exit 0
         ;;
+
         KLIPPER_MOD | klipper_mod_remove)
             echo "@@ Skipping mod because of Klipper Mod..."
-            touch /tmp/SKIP_MOD_HARD
+            forge_x_publish_stock_mode stock-hard || exit 1
 
             echo "// Klipper mod will be loaded soon..."
 
             exit 0
         ;;
+
         *)
             echo "@@ Unknown special boot flag \"$name\""
             exit 1
@@ -232,14 +245,19 @@ search() {
     return $ret
 }
 
-case "$1" in
-    test)
-        search "print_special_boot_flag"
-    ;;
-    apply)
-        search "handle_special_boot_flag"
-    ;;
-    *)
-        echo "Usage $0 (test|apply)"
-        exit 1
-esac
+init_boot_flag_main() {
+    case "$1" in
+        test) search "print_special_boot_flag" ;;
+        apply) search "handle_special_boot_flag" ;;
+
+        *)
+            echo "Usage $0 (test|apply)"
+            return 1
+        ;;
+    esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    init_boot_flag_main "$@"
+    exit $?
+fi

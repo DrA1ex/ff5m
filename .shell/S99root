@@ -8,12 +8,18 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_SOFT ] || [ -f /tmp/SKIP_MOD_HARD ]; then
-    echo "Buildroot services disabled due to SKIP_MOD mode"
-    touch "$NOT_FIRST_LAUNCH_F"
-    exit 0
-fi
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 0
+BOOT_MODE=$(forge_x_boot_mode)
 
+case "$BOOT_MODE" in
+    mod)
+    ;;
+
+    *)
+        echo "Buildroot services disabled in $BOOT_MODE mode"
+        exit 0
+    ;;
+esac
 
 source /opt/config/mod/.shell/common.sh
 
@@ -33,10 +39,11 @@ start() {
             echo "// Goodbye Flashforge :)"
             kill -9 "$PPID"
         } 2>&1
-        
+
         sound_enabled=$($CFG_SCRIPT "$VAR_PATH" --get "sound" "1")
         [ "$sound_enabled" -eq 1 ] && \
             midi_file=$($CFG_SCRIPT "$VAR_PATH" --get "midi_on" "BattleCity.mid")
+
         if [ -n "$midi_file" ]; then
             audio midi -m "/opt/config/mod_data/midi/$midi_file" &
         fi
@@ -46,23 +53,23 @@ start() {
 
     if [ ! -f /opt/config/mod_data/database/moonraker-sql.db ]; then
         echo "// Initializing database..."
- 
+
         rm -f /opt/config/mod/sql/version
         sync
 
-        chroot "$MOD" /opt/config/mod/.root/start.sh &> /dev/null
-        chroot "$MOD" /opt/config/mod/.root/stop.sh &> /dev/null
+        chroot "$MOD" /opt/config/mod/.root/start.sh &> /dev/null || return 1
+        chroot "$MOD" /opt/config/mod/.root/stop.sh &> /dev/null || return 1
 
         wait_stopped
         sync
 
-        /opt/config/mod/.shell/migrate_db.sh
-        chroot "$MOD" /opt/config/mod/.root/restore_ota.sh
+        /opt/config/mod/.shell/migrate_db.sh || return 1
+        chroot "$MOD" /opt/config/mod/.root/restore_ota.sh || return 1
         sync
     fi
-    
+
     echo "// Starting Buildroot env..."
-    chroot "$MOD" /opt/config/mod/.root/start.sh
+    chroot "$MOD" /opt/config/mod/.root/start.sh || return 1
 
     if [ ! -f "$NOT_FIRST_LAUNCH_F" ]; then
         echo "// Done. Loaded for $(awk '{print $1}' < /proc/uptime) sec."
@@ -88,11 +95,16 @@ stop() {
 }
 
 wait_stopped() {
-    [ -f "$MOD/run/moonraker.pid" ] && while kill -0 "$(cat "$MOD/run/moonraker.pid")" > /dev/null  2>&1; do sleep 1; done
-    [ -f "$MOD/run/httpd.pid" ] && while kill -0 "$(cat "$MOD/run/httpd.pid")" > /dev/null  2>&1; do sleep 1; done
-    [ -f "$MOD/run/ntpd.pid" ] && while kill -0 "$(cat "$MOD/run/ntpd.pid")" > /dev/null  2>&1; do sleep 1; done
-    [ -f "$MOD/run/guppyscreen.pid" ] && while kill -0 "$(cat "$MOD/run/guppyscreen.pid")" > /dev/null  2>&1; do sleep 1; done
-    [ -f "$MOD/var/run/ts_uinput.pid" ] && while kill -0 "$(cat "$MOD/var/run/ts_uinput.pid")" > /dev/null  2>&1; do sleep 1; done
+    [ -f "$MOD/run/moonraker.pid" ] \
+        && while kill -0 "$(cat "$MOD/run/moonraker.pid")" >/dev/null 2>&1; do sleep 1; done
+    [ -f "$MOD/run/httpd.pid" ] \
+        && while kill -0 "$(cat "$MOD/run/httpd.pid")" >/dev/null 2>&1; do sleep 1; done
+    [ -f "$MOD/run/ntpd.pid" ] \
+        && while kill -0 "$(cat "$MOD/run/ntpd.pid")" >/dev/null 2>&1; do sleep 1; done
+    [ -f "$MOD/run/guppyscreen.pid" ] \
+        && while kill -0 "$(cat "$MOD/run/guppyscreen.pid")" >/dev/null 2>&1; do sleep 1; done
+    [ -f "$MOD/var/run/ts_uinput.pid" ] \
+        && while kill -0 "$(cat "$MOD/var/run/ts_uinput.pid")" >/dev/null 2>&1; do sleep 1; done
 }
 
 switch() {
@@ -100,15 +112,18 @@ switch() {
         start)
             start
         ;;
+
         stop)
             stop
         ;;
+
         restart|reload)
             stop
             wait_stopped
-            
+
             start
         ;;
+
         *)
             echo "Usage: $0 {start|stop|restart}"
             exit 1
@@ -116,7 +131,7 @@ switch() {
 }
 
 switch "$@" 2>&1 | logged "/data/logFiles/boot.log" --send-to-screen --screen-no-followup
-status=$?
+status=${PIPESTATUS[0]}
 
 case "$1" in
     start|stop)

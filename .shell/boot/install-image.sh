@@ -6,18 +6,18 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-COMMON_SCRIPT="${COMMON_SCRIPT:-/opt/config/mod/.shell/common.sh}"
+source /opt/config/mod/.shell/boot/stock_identity.sh || exit 1
 
-FIRMWARE_INSTALL_STAGING_DIR="${FIRMWARE_INSTALL_STAGING_DIR:-/data/.firmware}"
-FIRMWARE_INSTALL_RESERVE_KB="${FIRMWARE_INSTALL_RESERVE_KB:-16384}"
-FIRMWARE_INSTALL_ERROR_DELAY_SECONDS="${FIRMWARE_INSTALL_ERROR_DELAY_SECONDS:-30}"
-FIRMWARE_INSTALL_SCREEN_SCRIPT="${FIRMWARE_INSTALL_SCREEN_SCRIPT:-/opt/config/mod/.shell/screen.sh}"
-FIRMWARE_INSTALL_TYPER="${FIRMWARE_INSTALL_TYPER:-/opt/config/mod/.bin/exec/typer}"
-FIRMWARE_INSTALL_BASH="${FIRMWARE_INSTALL_BASH:-/bin/bash}"
-FIRMWARE_INSTALL_TAR="${FIRMWARE_INSTALL_TAR:-tar}"
-FIRMWARE_INSTALL_XZ="${FIRMWARE_INSTALL_XZ:-xz}"
-FIRMWARE_INSTALL_DD="${FIRMWARE_INSTALL_DD:-dd}"
-FIRMWARE_INSTALL_DF="${FIRMWARE_INSTALL_DF:-df}"
+FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware
+FIRMWARE_INSTALL_RESERVE_KB=16384
+FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30
+FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh
+FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer
+FIRMWARE_INSTALL_BASH=/bin/bash
+FIRMWARE_INSTALL_TAR=tar
+FIRMWARE_INSTALL_XZ=xz
+FIRMWARE_INSTALL_DD=dd
+FIRMWARE_INSTALL_DF=df
 
 FIRMWARE_IMAGE=""
 FIRMWARE_SOURCE_MOUNT=""
@@ -41,17 +41,13 @@ firmware_screen() {
 
     echo "$level $title" >&2
     [ -z "$detail" ] || echo "$level $detail" >&2
-    if [ -n "${FIRMWARE_INSTALL_SCREEN_LOG:-}" ]; then
-        printf '%s|%s\n' "$title" "$detail" >> "$FIRMWARE_INSTALL_SCREEN_LOG"
-    fi
-
     [ -x "$FIRMWARE_INSTALL_TYPER" ] || return 0
     "$FIRMWARE_INSTALL_TYPER" -db --framebuffer-copy-only batch \
         --batch fill -p 0 0 -s 800 480 -c 0 \
         --batch text -p 400 205 -ha center -va middle -c 35d9e6 \
             -f "JetBrainsMono 20pt" --max-width 720 -t "$title" \
         --batch text -p 400 285 -ha center -va middle -c ffffff \
-            -f "JetBrainsMono 11pt" --max-width 720 -t "$detail" \
+            -f "JetBrainsMono 12pt" --max-width 720 -t "$detail" \
         >/dev/null 2>&1 || true
 }
 
@@ -60,9 +56,6 @@ firmware_progress() {
     local detail=$2
 
     echo "//% $title${detail:+: $detail}" >&2
-    if [ -n "${FIRMWARE_INSTALL_SCREEN_LOG:-}" ]; then
-        printf '%s|%s\n' "$title" "$detail" >> "$FIRMWARE_INSTALL_SCREEN_LOG"
-    fi
 }
 
 stop_splash() {
@@ -76,7 +69,6 @@ stop_splash() {
 stop_firmware_parent() {
     local parent_pid="${FIRMWARE_INSTALL_PARENT_PID:-$PPID}"
 
-    [ "${FIRMWARE_INSTALL_KILL_PARENT:-1}" = "1" ] || return 0
     [ "$FIRMWARE_PARENT_STOPPED" -eq 0 ] || return 0
     is_unsigned_integer "$parent_pid" || return 1
     [ "$parent_pid" -gt 1 ] || return 1
@@ -128,32 +120,6 @@ cleanup_firmware_staging() {
     [ -n "$FIRMWARE_INSTALL_STAGING_DIR" ] \
         && [ "$FIRMWARE_INSTALL_STAGING_DIR" != "/" ] || return 1
     rm -rf "$FIRMWARE_INSTALL_STAGING_DIR"
-}
-
-load_stock_printer_identity() {
-    local version launcher line machine="" product_id=""
-
-    version=$(cat /root/version 2>/dev/null) || return 1
-    case "$version" in
-        ''|*[!0-9A-Za-z._-]*) return 1 ;;
-    esac
-    launcher="/opt/PROGRAM/software/$version/auto_run.sh"
-    [ -r "$launcher" ] || return 1
-
-    while IFS= read -r line; do
-        case "$line" in
-            MACHINE=*) machine=${line#MACHINE=} ;;
-            PID=*) product_id=${line#PID=} ;;
-        esac
-    done < "$launcher"
-
-    case "$machine:$product_id" in
-        Adventurer5M:0023|Adventurer5MPro:0024) ;;
-        *) return 1 ;;
-    esac
-
-    FIRMWARE_MACHINE=$machine
-    FIRMWARE_PRODUCT_ID=$product_id
 }
 
 find_firmware_image() {
@@ -426,8 +392,8 @@ handoff_firmware_entrypoint() {
     local entrypoint_name=${FIRMWARE_ENTRYPOINT##*/}
 
     stop_splash
-    firmware_screen "Firmware installer running" \
-        "Do not power off the printer."
+    firmware_screen "Preparing firmware installer" \
+        "Waiting for recovery services to stop."
     stop_firmware_parent || return 1
     prepare_firmware_runner || return 1
 
@@ -462,9 +428,7 @@ install_firmware_image() {
 
     stop_firmware_parent \
         || fail_firmware_image "Cannot stop stock firmware."
-    if [ "${FIRMWARE_INSTALL_SKIP_MOUNT:-0}" != "1" ]; then
-        mount_data_partition
-    fi
+    mount_data_partition
 
     firmware_screen "Preparing firmware image" "Checking archive..."
     validate_firmware_archive "$FIRMWARE_IMAGE" \
@@ -491,10 +455,6 @@ install_firmware_image() {
         || fail_firmware_image "Cannot start firmware installer."
 }
 
-if [ "${FIRMWARE_INSTALL_LIBRARY_ONLY:-0}" -eq 1 ]; then
-    return 0 2>/dev/null || exit 0
-fi
-
 if [ "$#" -eq 1 ] && [ "$1" = "cleanup" ]; then
     cleanup_firmware_staging
     exit $?
@@ -512,7 +472,7 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 
-source "$COMMON_SCRIPT"
+source /opt/config/mod/.shell/common.sh
 
 trap release_firmware_source_mount EXIT
 install_firmware_image "$1"

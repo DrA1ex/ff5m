@@ -2,39 +2,97 @@
 
 ## Mod's boot script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-if [ -f /tmp/SKIP_MOD_HARD ]; then
-    echo "Skipping mod hard."
-    exit 0
-fi
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 0
+BOOT_MODE=$(forge_x_boot_mode)
+
+case "$BOOT_MODE" in
+    mod|stock|stock-soft|stock-hard)
+    ;;
+
+    *)
+        echo "Skipping mod boot in $BOOT_MODE mode."
+        exit 0
+    ;;
+esac
 
 source /opt/config/mod/.shell/common.sh
 
-skip_mod() {
-    echo "Boot disabled due to SKIP_MOD mode"
+SKIP_LOG=/opt/config/mod_data/log/skip.log
+STOCK_CONFIG_TMP=/opt/config/printer.cfg.tmp
+STOCK_RESTORE_TIMEOUT_SECONDS=15
 
-    if [ "$("$CMDS"/zdisplay.sh test)" != "STOCK" ]; then
-        echo "// Reverting configuration to be suitable with the enabled screen"
-        
-        mount_data_partition
+apply_stock_config() {
+    mount_data_partition
+    mount --bind /opt/config "$MOD/opt/config" || return 1
+    init_chroot || return $?
+    "$CMDS"/zdisplay.sh stock --skip-reboot
+}
 
-        # Need to mount config directory for chroot
-        mount --bind /opt/config "$MOD/opt/config"
-        init_chroot
-        
-        /opt/config/mod/.shell/commands/zdisplay.sh stock --skip-reboot
+run_stock_restore() {
+    local monitor_was_enabled=0
+    local restore_pid
+    local seconds=0
 
-        echo "// Cleaning up..."
-        
-        dispose_chroot
-        umount "$MOD/opt/config"
-        umount /data
-        
-        echo "// Done. Continue boot..."
+    case $- in *m*) monitor_was_enabled=1 ;; esac
+    set -m
+    apply_stock_config &
+    restore_pid=$!
+    [ "$monitor_was_enabled" -eq 1 ] || set +m
+
+    while kill -0 "$restore_pid" 2>/dev/null; do
+        if [ "$seconds" -ge "$STOCK_RESTORE_TIMEOUT_SECONDS" ]; then
+            echo "@@ Stock screen setup timed out."
+            echo "?? Limit: $STOCK_RESTORE_TIMEOUT_SECONDS seconds."
+            kill -TERM -- "-$restore_pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL -- "-$restore_pid" 2>/dev/null || true
+            wait "$restore_pid" 2>/dev/null || true
+            return 124
+        fi
+
+        sleep 1
+        seconds=$((seconds + 1))
+    done
+
+    wait "$restore_pid"
+}
+
+restore_stock_config() {
+    local data_was_mounted=0
+    local restore_status=0
+
+    echo "?? Forge-X is off for this boot."
+    [ -s "$BOOT_REASON_F" ] && cat "$BOOT_REASON_F"
+    echo "// Preparing the stock screen..."
+    echo "// This prevents display conflicts."
+
+    mount | grep -q '/dev/mmcblk0p7' && data_was_mounted=1
+    run_stock_restore || restore_status=$?
+
+    echo "// Cleaning up..."
+    dispose_chroot
+    umount "$MOD/opt/config"
+    [ "$data_was_mounted" -eq 1 ] || umount /data
+
+    if [ "$restore_status" -ne 0 ]; then
+        rm -f "$STOCK_CONFIG_TMP"
+        return "$restore_status"
     fi
+
+    echo "// Stock display configuration is ready."
+}
+
+report_stock_boot() {
+    [ -f "$SKIP_LOG" ] || return 0
+    cat "$SKIP_LOG"
+
+    # Screen reporting is optional and must not hold up the stock boot path.
+    logged --no-log --send-to-screen --screen-no-followup \
+        < "$SKIP_LOG" > /dev/null 2>&1 &
 }
 
 start() {
@@ -56,17 +114,31 @@ start() {
 
 case "$1" in
     start)
-        if [ -f "$NOT_FIRST_LAUNCH_F" ]; then echo "start() method meant to be only for fresh start!"; exit 0; fi
-
-        if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_SOFT ]; then
-            skip_mod 2>&1 | logged "/opt/config/mod_data/log/skip.log" --send-to-screen
-        
+        if [ -f "$NOT_FIRST_LAUNCH_F" ]; then
+            echo "start() method meant to be only for fresh start!"
             exit 0
         fi
-        
+
+        case "$BOOT_MODE" in
+            stock|stock-soft|stock-hard)
+                mkdir -p "${SKIP_LOG%/*}"
+                restore_stock_config > "$SKIP_LOG" 2>&1
+                restore_status=$?
+
+                if [ "$restore_status" -ne 0 ]; then
+                    echo "@@ Stock screen setup failed." >> "$SKIP_LOG"
+                    echo "?? Starting stock firmware anyway." >> "$SKIP_LOG"
+                fi
+
+                report_stock_boot
+                exit 0
+            ;;
+        esac
+
         start 2>&1 | logged "/data/logFiles/boot.log" --send-to-screen
         # wait_for_internet &
     ;;
+
     *)
         echo "Usage $0 start"
     ;;

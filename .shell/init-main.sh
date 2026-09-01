@@ -1,0 +1,500 @@
+#!/bin/bash
+
+## Mod's normal initialization and reload implementation
+##
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 1
+source /opt/config/mod/.shell/common.sh || exit 1
+source /opt/config/mod/.shell/klipper_overlay.sh || exit 1
+
+INIT_MAIN_SPECIAL_BOOT=10
+SPECIAL_BOOT_SCRIPT=/opt/config/mod/.shell/boot/init_boot_flag.sh
+
+handle_special_boot_mode() {
+    local status
+
+    "$SPECIAL_BOOT_SCRIPT" apply
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        "$SCRIPTS/screen.sh" splash_stop
+    fi
+
+    return "$status"
+}
+
+initialize() {
+    local special_boot_status
+
+    # Any unchecked failure aborts this child. The early guard will then keep
+    # late mod services disabled and continue with stock firmware.
+    set -e
+
+    rm -f "$VERSION_PATCH_F"
+    "$SCRIPTS/screen.sh" splash_start
+    
+    echo "// Initialization started"
+
+    echo "// Checking special boot mode..."
+    if handle_special_boot_mode; then
+        special_boot_status=0
+    else
+        special_boot_status=$?
+    fi
+    case "$special_boot_status" in
+        0) return "$INIT_MAIN_SPECIAL_BOOT" ;;
+        1) : ;;
+        *) return "$special_boot_status" ;;
+    esac
+    
+    # If we are here: mod loading not skipped
+
+    # Perform date fix before time was loaded
+    date 2025.01.01-00:00:00 > /dev/null
+
+    echo "// Mounting partition..."
+    mount_data_partition
+
+    # Remove staging left by a previous firmware hand-off.
+    "$SCRIPTS/boot/install-image.sh" cleanup
+
+    rotate_logs "/data/logFiles/boot.log"
+    rotate_logs "/data/logFiles/ssh.log"
+    rotate_logs "/data/logFiles/wifi.log"
+    rotate_logs "/data/logFiles/netd.log"
+
+    sync
+    
+    echo "// SWAP Initialization..."
+    /opt/config/mod/.shell/boot/init_swap.sh
+
+    echo "// Buildroot Initialization..."
+    init_buildroot
+
+    echo "// Update links..."
+
+    ln -fs /opt/config/mod/.shell/S55boot /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S60dropbear /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S98camera /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S98zssh /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S99root /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S99root /etc/init.d/K99root
+    
+    # oh-my-zsh
+    mkdir -p /root/.oh-my-zsh
+    mount --bind /opt/config/mod/.zsh/.oh-my-zsh /root/.oh-my-zsh
+    ln -fs /opt/config/mod/.zsh/.profile /root/
+    ln -fs /opt/config/mod/.zsh/.zshrc /root/
+
+    # Runtime
+    ln -fns /opt/config/mod/.bin/runtime/14.2.0 /opt/lib/
+
+    sync
+    echo "// Update version..."
+    
+    # version
+    GIT_BRANCH=$(chroot "$MOD" git --git-dir=/opt/config/mod/.git rev-parse --abbrev-ref HEAD)
+    GIT_COMMIT_ID=$(chroot "$MOD" git --git-dir=/opt/config/mod/.git rev-parse --short HEAD)
+    FIRMWARE_VERSION=$(cat "$FIRMWARE_VERSION_F")
+    MOD_VERSION=$(cat "$VERSION_F")
+    PATCH_VERSION="$GIT_COMMIT_ID"
+
+    rm -f "$VERSION_PATCH_F"
+    if [ -f /opt/config/mod/patch.txt ] || [ "$GIT_BRANCH" != "main" ]; then
+        echo "$GIT_COMMIT_ID" > "$VERSION_PATCH_F"
+    fi
+    
+    chroot "$MOD" /opt/config/mod/.root/version.sh "$FIRMWARE_VERSION" "$MOD_VERSION" "$PATCH_VERSION"
+    sync
+
+    # Add the mod version to the already running splash without restarting it.
+    "$SCRIPTS/screen.sh" splash_version "$MOD_VERSION"
+
+    # Check core version and ota version compatibility
+    if ! MSG=$("$CMDS"/zversion.sh test); then
+        echo "@@ Current version is not compatible with flashed core version."
+        echo "@@ Flash firmware via USB."
+        echo "@@ $MSG"
+
+        echo "// It's safe to power off the printer now."
+        echo "// Boot will continue in 30 seconds..."
+
+        "$PY"/tone.py 440:70 140 349:70 140 262:140
+
+        sleep 30
+    fi
+
+    echo "// Apply klipper patches..."
+    if ! apply_klipper_patches; then
+        echo "@@ Failed to apply klipper patches."
+        return 1
+    fi
+
+    echo "// Restore config..."
+    fix_config
+
+    echo "// Apply database migrations..."
+    
+    # database
+    if [ -f "/opt/config/mod_data/database/moonraker-sql.db" ]; then
+        /opt/config/mod/.shell/migrate_db.sh
+        sync
+    fi
+
+    echo "// Finishing initialization..."
+    
+    /opt/config/mod/.shell/motd.sh > /etc/motd
+    /opt/config/mod/.shell/commands/zshaper.sh --clear
+
+    ln -fns /opt/config/mod_data/log /data/logFiles/mod
+    
+    # (?) Restrict public unauthorized access to printer's camera (only SerialNnumber is needed)
+    grep -q qvs.qiniuapi.com /etc/hosts || sed -i '2 i\127.0.0.1 qvs.qiniuapi.com' /etc/hosts
+    sync
+
+    # Optional: block stock cloud/telemetry endpoints introduced by stock fw 5.0.x/5.1.x
+    # (Flash Studio / MQTT). Opt-in via the `block_cloud` mod parameter (default 0/off) —
+    # some users still rely on FlashForge cloud, video streaming and model sharing, so this
+    # is not applied unconditionally. Blocking is done purely at name-resolution level
+    # (/etc/hosts), the same layer as a Pi-hole setup; it does not touch routing/firewall and
+    # has no effect on DHCP / network init.
+    # When enabled it kills the MQTT bootstrap (broker config is fetched from api.fdmcloud),
+    # VoxelShare model sharing, stock OTA auto-update, and the NetEase IM (Yunxin) cloud layer
+    # — the new "Flash Studio" backbone shipped as libnim.so / libnim_chatroom.so
+    # (library/nim.tar). These NetEase / 127.net / 126.net hosts are SDK-internal defaults
+    # reached when the stock app inits IM.
+    # NOTE: model uploads also use AlibabaCloud OSS via dynamic signed URLs that cannot be
+    # blocked here — block those at the router/firewall if full air-gap is required. The stock app
+    # also probes www.baidu.com as a connectivity check; it is intentionally NOT blocked
+    # so the app does not misjudge "no internet". Adding it here would not leak data either way.
+    # Host list confirmed by string-analysis of stock 5.0.x / 5.1.x firmwareExe and nim.tar libs.
+    # Stock 5.1.4 reshuffled the FlashForge cloud hosts: OTA moved from update.flashforge.com to
+    # update.voxelshare.com, and the qvs/qiniu video hosts were replaced by liveplay/livepush.
+    # The old hosts are kept below for back-compat with 5.0.x–5.1.2 (harmless no-ops on 5.1.4).
+    # The toggle is symmetric: the host list is processed on every init, adding marked entries
+    # when block_cloud=1 and removing only entries previously added by us when it is not.
+    # This way turning block_cloud back off actually lifts the block (next init), without
+    # touching matching entries that may have been added manually by the user.
+
+    BLOCK_CLOUD=$("$CMDS"/zconf.sh "$VAR_PATH" --get "block_cloud" "0")
+    MARK="# block_cloud"
+    
+    if [ "$BLOCK_CLOUD" = "1" ]; then
+        for host in \
+            api.fdmcloud.flashforge.com \
+            fdmcloud.flashforge.com \
+            api.voxelshare.com \
+            voxelshare.com \
+            update.voxelshare.com \
+            update.flashforge.com \
+            cloud.flashforge.com \
+            liveplay.flashforge.com \
+            livepush.flashforge.com \
+            cloud.sz3dp.com \
+            hz.sz3dp.com \
+            update.sz3dp.com \
+            update.cn.sz3dp.com \
+            qvs-live.qnvideo.flashforge.com \
+            qvs-publish.qnvideo.flashforge.com \
+            polar3d.com \
+            printer2.polar3d.com \
+            app.netease.im \
+            apptest.netease.im \
+            lbs.netease.im \
+            link.netease.im \
+            nos.netease.com \
+            nos.netease.im \
+            nosdn.127.net \
+            nosup-hz1.127.net \
+            wanproxy.127.net \
+            statistic.live.126.net; do
+    
+            # Field comparison handles any number of spaces/tabs and treats the
+            # hostname as a literal string, so dots have no special meaning.
+            awk -v host="$host" '
+                $1 == "127.0.0.1" && $2 == host { found = 1 }
+                END { exit !found }
+            ' /etc/hosts || printf '127.0.0.1 %s %s\n' "$host" "$MARK" >> /etc/hosts
+        done
+        sync
+    else
+        # Remove only entries previously added by this block. If there are none,
+        # leave /etc/hosts untouched to avoid an unnecessary flash write.
+        if grep -Fq "$MARK" /etc/hosts; then
+            sed -i "\|${MARK}$|d" /etc/hosts
+            sync
+        fi
+    fi
+
+    echo "// Initialization step done!"
+}
+
+init_buildroot() {
+    init_chroot
+    
+    mkdir -p "$MOD"/dev/pts
+    mkdir -p "$MOD"/data
+    mkdir -p "$MOD"/opt/config
+    mkdir -p "$MOD"/opt/klipper
+    mkdir -p "$MOD"/root/printer_data
+    
+    mount --bind /data "$MOD"/data
+    mount --bind /opt/config "$MOD"/opt/config
+    mount --bind /opt/klipper "$MOD"/opt/klipper
+    
+    mkdir -p /root/printer_data
+    mkdir -p /root/printer_data/certs
+    mkdir -p /root/printer_data/comms
+    mkdir -p /root/printer_data/misc
+    mkdir -p /root/printer_data/tmp
+    
+    # Init /root/printer_data
+    ln -fns /data /root/printer_data/gcodes
+    ln -fns /data/logFiles /root/printer_data/logs
+    ln -fns /opt/config/ /root/printer_data/config
+    ln -fns /opt/config/mod_data/database /root/printer_data/database
+    ln -fns /opt/config/mod/.bin/exec /root/printer_data/bin
+    ln -fns /opt/config/mod/.py /root/printer_data/py
+    ln -fns /opt/config/mod/.shell /root/printer_data/scripts
+    
+    ln -fns /opt/config/mod/moonraker.conf /root/printer_data/config/moonraker.conf
+    ln -fns /opt/config/mod/.root/moonraker.asvc /root/printer_data/moonraker.asvc
+
+    sync
+    
+    mount --bind /root/printer_data "$MOD"/root/printer_data
+
+    echo "// Finishing buildroot initialization..."
+
+    # hwclock
+    ln -fs /opt/config/mod/.root/fake-hwclock "$MOD"/usr/sbin/
+
+    # load datetime
+    echo "// Loading last saved time..."
+    chroot "$MOD" fake-hwclock load
+    
+    # moon
+    ln -fns /opt/config/mod/.root/moonraker "$MOD"/root/moonraker-env/moonraker
+
+    # web
+    mkdir -p "$MOD"/root/www
+    [ -d "$MOD"/root/fluidd ] && mv "$MOD"/root/fluidd "$MOD"/root/www/
+    [ -d "$MOD"/root/mainsail ] && mv "$MOD"/root/mainsail "$MOD"/root/www/
+
+    ln -fs /opt/config/mod/.root/config.json "$MOD"/root/www/
+    
+    "$CMDS"/zhttp.sh apply
+    sync
+}
+
+fix_config() {
+    TMP_CFG_PATH=/tmp/printer.tmp.cfg
+    BATCH_FILE=/tmp/cfg_backup_batch.json
+
+    # 1. Create dump with parameters from printer.base.cfg
+    # Use defaults when the source config has no matching parameters.
+    if chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
+            --mode backup \
+            --config /opt/config/printer.base.cfg \
+            --data $TMP_CFG_PATH \
+            --params /opt/config/mod/.cfg/init.move.cfg; then
+        # TODO: Merge with defaults?
+        DATA_MOVE_CFG=$TMP_CFG_PATH
+    else
+        DATA_MOVE_CFG=/opt/config/mod/.cfg/data.init.move.cfg
+    fi
+
+    # Create the batch file
+    echo "[" > $BATCH_FILE
+
+    # 2. Move params from printer.base.cfg to printer.cfg
+    echo "
+    {
+        \"mode\": \"restore\",
+        \"config\": \"/opt/config/printer.cfg\",
+        \"data\": \"$DATA_MOVE_CFG\",
+        \"params\": \"/opt/config/mod/.cfg/init.move.cfg\",
+        \"avoid_writes\": true
+    }," >> $BATCH_FILE
+
+    # 3. Initialize display configuration
+    local screen
+    screen="$("$SCRIPTS"/commands/zdisplay.sh test)"
+    if [ "$screen" == "STOCK" ]; then
+        # Stock screen enabled
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/init.display.stock.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    elif [ "$screen" == "FEATHER" ]; then
+        # Feather screen enabled
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/init.display.feather.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    elif [ "$screen" == "HEADLESS" ]; then
+        # Headless mode enabled
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/init.display.headless.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    elif [ "$screen" == "GUPPY" ]; then
+        # Guppy mode enabled
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/init.display.guppy.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    else
+        echo @@ Invalid display parameter: "$screen"
+    fi
+
+    # 4. Init printer.cfg configuration
+    echo "
+    {
+        \"mode\": \"restore\",
+        \"config\": \"/opt/config/printer.cfg\",
+        \"params\": \"/opt/config/mod/.cfg/init.cfg\",
+        \"data\": \"/opt/config/mod/.cfg/data.init.cfg\",
+        \"avoid_writes\": true
+    }," >> $BATCH_FILE
+
+    # 5. Init printer.base.cfg configuration
+    echo "
+    {
+        \"mode\": \"restore\",
+        \"config\": \"/opt/config/printer.base.cfg\",
+        \"params\": \"/opt/config/mod/.cfg/init.base.cfg\",
+        \"data\": \"/opt/config/mod/.cfg/data.init.base.cfg\",
+        \"avoid_writes\": true
+    }," >> $BATCH_FILE
+
+    # 6. Apply tunning parameters
+    TUNING_ENABLED=$("$CMDS"/zconf.sh "$VAR_PATH" --get "tune_config" "0")
+    if [ "$TUNING_ENABLED" -eq 1 ]; then
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/tuning.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    else
+         echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.cfg\",
+            \"params\": \"/opt/config/mod/.cfg/tuning.off.cfg\",
+            \"no_data\": true,
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    fi
+
+    # 7. Restore printer.base.cfg if a backup exists
+    if [ -f /opt/config/printer.base.cfg.bak ]; then
+        echo "
+        {
+            \"mode\": \"restore\",
+            \"config\": \"/opt/config/printer.base.cfg\",
+            \"params\": \"/opt/config/mod_data/backup.params.cfg\",
+            \"data\": \"/opt/config/printer.base.cfg.bak\",
+            \"avoid_writes\": true
+        }," >> $BATCH_FILE
+    fi
+
+    # Finalize the batch file (remove last comma and close array)
+    sed -i '$s/,$//' $BATCH_FILE
+    echo "]" >> $BATCH_FILE
+
+    # Run the batch file
+    chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py --batch $BATCH_FILE
+    sync
+
+    # Clean up the temporary files
+    rm -f $BATCH_FILE $TMP_CFG_PATH
+}
+
+rotate_logs() {
+    path="$1"
+
+    echo "// Rotating logs: $path"
+    mv -f "$path.4" "$path.5" &> /dev/null || true
+    mv -f "$path.3" "$path.4" &> /dev/null || true
+    mv -f "$path.2" "$path.3" &> /dev/null || true
+    mv -f "$path.1" "$path.2" &> /dev/null || true
+    mv -f "$path" "$path.1" &> /dev/null || true
+
+    echo "// Created" | logged "$path" --no-print
+}
+
+init_main() {
+    case "$1" in
+        start)
+            mkdir -p /opt/config/mod_data/log/
+
+            rotate_logs "/opt/config/mod_data/log/init.log"
+            rotate_logs "/opt/config/mod_data/log/skip.log"
+            sync
+
+            initialize 2>&1 | logged "/opt/config/mod_data/log/init.log" --send-to-screen
+            return "${PIPESTATUS[0]}"
+        ;;
+
+        reload)
+            {
+                echo "// Apply klipper patches..."
+                if ! apply_klipper_patches; then
+                    echo "@@ Failed to apply klipper patches."
+                    exit 1
+                fi
+
+                echo "// Update configs..."
+                fix_config
+
+                echo "// Configuration updated"
+                echo "// Restart klipper process to apply changes"
+            }  2>&1 | logged --no-log --send-to-screen --screen-no-followup
+            return "${PIPESTATUS[0]}"
+        ;;
+
+        log)
+            cat /opt/config/mod_data/log/init.log
+        ;;
+
+        *)
+            echo "Usage: $0 (start|reload|log)"
+            return 1
+        ;;
+    esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    init_main "$@"
+    status=$?
+    if [ "$1" = "start" ] && [ "$status" -eq 0 ]; then
+        if ! forge_x_publish_mod_ready; then
+            status=1
+        else
+            sync
+        fi
+    fi
+    exit "$status"
+fi

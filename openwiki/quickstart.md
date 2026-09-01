@@ -8,11 +8,11 @@ Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 
 
 | If you need to… | Read | Then inspect |
 |---|---|---|
-| Understand boot, service, and persistence boundaries | [Source map](source-map.md) | `.shell/S00init`, `.shell/S99root`, `.root/start.sh` |
+| Understand boot, service, and persistence boundaries | [Source map](source-map.md) | `.shell/S00init`, `.shell/boot/boot_mode.sh`, `.shell/init-main.sh`, `.shell/S99root`, `.root/start.sh` |
 | Change the chroot runtime, services, Moonraker, Fluidd, Mainsail, or web/API exposure | [Chroot environment and web runtime](workflows/chroot-and-web-runtime.md) | `.shell/S99root`, `.root/start.sh`, `moonraker.conf` |
 | Change a parameter, display mode, slicer behavior, macros, or calibration flow | [Configuration and printing](workflows/configuration-and-printing.md) | `mod_params.json`, `config/*.cfg`, `macros/base.cfg` |
 | Select, diagnose, or develop a screen mode—especially Forge-X’s built-in Feather display | [Screen modes and Feather](workflows/screens-and-feather.md) | `config/*.cfg`, `.shell/commands/zdisplay.sh`, `.py/klipper/plugins/feather_screen.py` |
-| Change, diagnose, or safely remove built-in stock-Klipper replacements/plugins | [Built-in Klipper patching](workflows/klipper-patching.md) | `.shell/S00init`, `.shell/uninstall.sh`, `.py/klipper/` |
+| Change, diagnose, or safely remove built-in stock-Klipper replacements/plugins | [Built-in Klipper patching](workflows/klipper-patching.md) | `.shell/init-main.sh`, `.shell/uninstall.sh`, `.py/klipper/` |
 | Use or change Forge-X Klipper extensions (settings, tare, checksum, audio, recovery, Feather) | [Forge-X Klipper extensions](workflows/klipper-extensions.md) | `.py/klipper/plugins/`, `macros/base.cfg`, `macros/headless.cfg` |
 | Install, update, diagnose a boot, fall back to stock, or recover a device | [Operations and recovery](workflows/operations-and-recovery.md) | `docs/INSTALL.md`, `docs/DUAL_BOOT.md`, `docs/UNINSTALL.md`, `docs/RECOVERY.md` |
 | Change a UI, camera, Telegram, SSH, OTA, or cloud-related path | [Integrations](integrations.md) | `moonraker.conf`, `.shell/S98camera`, `.shell/S98zssh`, `telegram/` |

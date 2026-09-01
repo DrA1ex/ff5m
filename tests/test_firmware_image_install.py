@@ -18,6 +18,7 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 INSTALL_IMAGE = ROOT / ".shell" / "boot" / "install-image.sh"
 INSTALL_IMAGE_RUNNER = ROOT / ".shell" / "boot" / "install-image-runner.sh"
+STOCK_IDENTITY = ROOT / ".shell" / "boot" / "stock_identity.sh"
 
 
 class FirmwareImageInstallTest(unittest.TestCase):
@@ -26,7 +27,6 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.staging = self.root / ".firmware"
         self.result = self.root / "entrypoint-result"
-        self.screen_log = self.root / "screen.log"
         self.typer_log = self.root / "typer.log"
         self.typer = self.root / "typer"
         self.typer.write_text(
@@ -50,35 +50,62 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.software_dir = self.root / "software"
         self.version_file.write_text("3.1.5\n", encoding="utf-8")
         self._set_stock_identity("Adventurer5M", "0023")
-        self.install_image = self.root / "install-image.sh"
-        installer = INSTALL_IMAGE.read_text(encoding="utf-8")
-        installer = installer.replace("/root/version", str(self.version_file))
-        installer = installer.replace(
+        self.stock_identity = self.root / "stock_identity.sh"
+        stock_identity = STOCK_IDENTITY.read_text(encoding="utf-8")
+        stock_identity = stock_identity.replace(
+            "/root/version", str(self.version_file))
+        stock_identity = stock_identity.replace(
             "/opt/PROGRAM/software", str(self.software_dir))
-        installer = installer.replace(
-            "/opt/config/mod/.shell/boot/install-image-runner.sh",
-            str(INSTALL_IMAGE_RUNNER),
-        )
-        installer = installer.replace(
-            "/opt/config/mod/.bin/runtime/14.2.0",
-            str(self.runtime_source),
-        )
-        self.install_image.write_text(installer, encoding="utf-8")
-        self.install_image.chmod(0o755)
+        self.stock_identity.write_text(stock_identity, encoding="utf-8")
+        self.install_image = self._installer(
+            "install-image.sh", suppress_parent_kill=True)
+        self.install_image_library = self._installer(
+            "install-image-library.sh", library_only=True)
         self.environment = dict(os.environ)
         self.environment.update({
-            "COMMON_SCRIPT": "/dev/null",
-            "FIRMWARE_INSTALL_SKIP_MOUNT": "1",
-            "FIRMWARE_INSTALL_STAGING_DIR": str(self.staging),
-            "FIRMWARE_INSTALL_RESERVE_KB": "0",
-            "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS": "0",
-            "FIRMWARE_INSTALL_KILL_PARENT": "0",
-            "FIRMWARE_INSTALL_SCREEN_SCRIPT": "/usr/bin/true",
-            "FIRMWARE_INSTALL_TYPER": str(self.typer),
-            "FIRMWARE_INSTALL_SCREEN_LOG": str(self.screen_log),
             "RESULT_PATH": str(self.result),
             "TYPER_LOG": str(self.typer_log),
         })
+
+    def _installer(self, name, *, suppress_parent_kill=False,
+                   library_only=False, extra_replacements=None):
+        source = INSTALL_IMAGE.read_text(encoding="utf-8")
+        replacements = {
+            "/opt/config/mod/.shell/boot/stock_identity.sh":
+                str(self.stock_identity),
+            "/opt/config/mod/.shell/common.sh": "/dev/null",
+            "FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware":
+                "FIRMWARE_INSTALL_STAGING_DIR=%s" % self.staging,
+            "FIRMWARE_INSTALL_RESERVE_KB=16384":
+                "FIRMWARE_INSTALL_RESERVE_KB=0",
+            "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30":
+                "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=0",
+            "FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh":
+                "FIRMWARE_INSTALL_SCREEN_SCRIPT=/usr/bin/true",
+            "FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer":
+                "FIRMWARE_INSTALL_TYPER=%s" % self.typer,
+            "/opt/config/mod/.shell/boot/install-image-runner.sh":
+                str(INSTALL_IMAGE_RUNNER),
+            "/opt/config/mod/.bin/runtime/14.2.0": str(self.runtime_source),
+            "    mount_data_partition\n": "    :\n",
+        }
+        if suppress_parent_kill:
+            replacements["stop_firmware_parent() {\n"] = (
+                "stop_firmware_parent() {\n    return 0\n")
+        if library_only:
+            marker = 'if [ "$#" -eq 1 ] && [ "$1" = "cleanup" ]; then\n'
+            replacements[marker] = "return 0 2>/dev/null || exit 0\n\n" + marker
+        if extra_replacements:
+            replacements.update(extra_replacements)
+
+        for old, replacement in replacements.items():
+            self.assertEqual(source.count(old), 1, old)
+            source = source.replace(old, replacement, 1)
+
+        script = self.root / name
+        script.write_text(source, encoding="utf-8")
+        script.chmod(INSTALL_IMAGE.stat().st_mode & 0o777)
+        return script
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -103,9 +130,9 @@ class FirmwareImageInstallTest(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(payload))
         return path
 
-    def _run(self, image):
+    def _run(self, image, installer=None):
         return subprocess.run(
-            ["bash", str(self.install_image), str(image)],
+            ["bash", str(installer or self.install_image), str(image)],
             env=self.environment,
             text=True,
             stdout=subprocess.PIPE,
@@ -124,6 +151,7 @@ class FirmwareImageInstallTest(unittest.TestCase):
     def test_scripts_have_valid_bash_syntax_and_installer_is_executable(self):
         subprocess.run(["bash", "-n", str(INSTALL_IMAGE)], check=True)
         subprocess.run(["bash", "-n", str(INSTALL_IMAGE_RUNNER)], check=True)
+        subprocess.run(["bash", "-n", str(STOCK_IDENTITY)], check=True)
         self.assertTrue(os.access(INSTALL_IMAGE, os.X_OK))
         self.assertTrue(os.access(INSTALL_IMAGE_RUNNER, os.X_OK))
 
@@ -165,7 +193,8 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
         self.assertRegex(
             result.stdout, r"// Space: \d+ MB needed, \d+ MB free")
         self.assertIn(
-            "// Firmware installer running\n// Do not power off the printer.",
+            "// Preparing firmware installer\n"
+            "// Waiting for recovery services to stop.",
             result.stdout,
         )
         self.assertTrue((self.staging / "flashforge_init.sh").exists())
@@ -182,14 +211,14 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
             encoding="utf-8")
         fake_killall.chmod(0o755)
         stock_parent = subprocess.Popen(["sleep", "60"])
-        self.environment["FIRMWARE_INSTALL_KILL_PARENT"] = "1"
         self.environment["FIRMWARE_INSTALL_PARENT_PID"] = str(stock_parent.pid)
         self.environment["LAUNCHER_LOG"] = str(launcher_log)
         self.environment["PATH"] = (
             str(self.root) + os.pathsep + self.environment["PATH"])
 
+        installer = self._installer("install-image-parent-kill.sh")
         try:
-            result = self._run(image)
+            result = self._run(image, installer)
             stock_parent.wait(timeout=5)
         finally:
             if stock_parent.poll() is None:
@@ -205,9 +234,7 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
 
     def test_terminal_failure_retries_until_stock_parent_is_stopped(self):
         command = r'''
-export FIRMWARE_INSTALL_LIBRARY_ONLY=1
 source "$1"
-FIRMWARE_INSTALL_KILL_PARENT=1
 FIRMWARE_INSTALL_PARENT_PID=4242
 attempts=0
 kill() {
@@ -228,7 +255,8 @@ fail_firmware_image "test failure"
 '''
 
         result = subprocess.run(
-            ["bash", "-c", command, "firmware-test", str(INSTALL_IMAGE)],
+            ["bash", "-c", command, "firmware-test",
+             str(self.install_image_library)],
             env=self.environment,
             text=True,
             stdout=subprocess.PIPE,
@@ -400,12 +428,12 @@ echo unexpected > "$RESULT_PATH"
             "#!/bin/bash\nexit 0\n", encoding="utf-8")
 
         command = """
-export FIRMWARE_INSTALL_LIBRARY_ONLY=1
 source "$1"
 select_firmware_entrypoint
 """
         result = subprocess.run(
-            ["bash", "-c", command, "firmware-test", str(INSTALL_IMAGE)],
+            ["bash", "-c", command, "firmware-test",
+             str(self.install_image_library)],
             env=self.environment,
             text=True,
             stdout=subprocess.PIPE,
@@ -424,13 +452,13 @@ select_firmware_entrypoint
             "#!/bin/bash\nexit 0\n", encoding="utf-8")
 
         command = """
-export FIRMWARE_INSTALL_LIBRARY_ONLY=1
 source "$1"
 select_firmware_entrypoint || exit 10
 printf '%s|%s\\n' "${FIRMWARE_ENTRYPOINT##*/}" "$FIRMWARE_ENTRYPOINT_KIND"
 """
         result = subprocess.run(
-            ["bash", "-c", command, "firmware-test", str(INSTALL_IMAGE)],
+            ["bash", "-c", command, "firmware-test",
+             str(self.install_image_library)],
             env=self.environment,
             text=True,
             stdout=subprocess.PIPE,
@@ -557,6 +585,62 @@ echo detached > "$RESULT_PATH"
             self.staging,
         )
 
+    def test_runner_reports_when_previous_runtime_never_releases(self):
+        self.staging.mkdir()
+        runner = self.staging / ".forge-x-install-runner.sh"
+        runner_source = INSTALL_IMAGE_RUNNER.read_text(encoding="utf-8")
+        runner_source = runner_source.replace(
+            "FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=30",
+            "FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=2",
+        )
+        runner.write_text(runner_source, encoding="utf-8")
+        runner.chmod(0o755)
+        (self.staging / "forge-x-init.sh").write_text(
+            "#!/bin/bash\necho unexpected > \"$RESULT_PATH\"\n",
+            encoding="utf-8",
+        )
+        (self.staging / "forge-x-init.sh").chmod(0o755)
+        staged_typer = self.staging / ".forge-x-install-typer"
+        staged_typer.write_bytes(self.typer.read_bytes())
+        staged_typer.chmod(0o755)
+        runtime = self.staging / ".forge-x-install-runtime"
+        runtime.mkdir()
+        (runtime / "libstdc++.so.6").write_text(
+            "test-runtime", encoding="utf-8")
+
+        fake_bin = self.root / "blocked-bin"
+        fake_bin.mkdir()
+        (fake_bin / "mount").write_text(
+            "#!/bin/sh\necho '/dev/mock on /data/.mod/.forge-x type mock'\n",
+            encoding="utf-8",
+        )
+        (fake_bin / "sleep").write_text(
+            "#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "lsof").write_text(
+            "#!/bin/sh\nexit 0\n", encoding="utf-8")
+        for helper in fake_bin.iterdir():
+            helper.chmod(0o755)
+
+        environment = dict(self.environment)
+        environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
+        result = subprocess.run(
+            [str(runner), "forge-x-init.sh", "shell",
+             "Adventurer5M", "0023", "0"],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.result.exists())
+        self.assertIn("Previous Forge-X runtime did not stop", result.stdout)
+        screen = self.typer_log.read_text(encoding="utf-8")
+        self.assertIn("Firmware installer blocked", screen)
+        self.assertIn("Power off the printer", screen)
+
     def test_gzip_compressed_tgz_is_rejected(self):
         image = self._archive("Adventurer5M-test.tgz", [
             ("forge-x-init.sh", "#!/bin/bash\nexit 0\n", 0o755),
@@ -581,9 +665,14 @@ echo detached > "$RESULT_PATH"
             encoding="utf-8",
         )
         fake_df.chmod(0o755)
-        self.environment["FIRMWARE_INSTALL_DF"] = str(fake_df)
+        installer = self._installer(
+            "install-image-no-space.sh", suppress_parent_kill=True,
+            extra_replacements={
+                "FIRMWARE_INSTALL_DF=df":
+                    "FIRMWARE_INSTALL_DF=%s" % fake_df,
+            })
 
-        result = self._run(image)
+        result = self._run(image, installer)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("Not enough space on /data", result.stdout)
@@ -597,7 +686,7 @@ echo detached > "$RESULT_PATH"
         (self.staging / "left-by-installer").write_text("payload", encoding="utf-8")
 
         result = subprocess.run(
-            ["bash", str(INSTALL_IMAGE), "cleanup"],
+            ["bash", str(self.install_image), "cleanup"],
             env=self.environment,
             text=True,
             stdout=subprocess.PIPE,

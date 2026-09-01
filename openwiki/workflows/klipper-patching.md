@@ -2,13 +2,13 @@
 
 # Built-in Klipper patching
 
-Forge-X **keeps the printer’s stock host Klipper** at `/opt/klipper/klippy`; it does not build or install a complete upstream Klipper tree. Instead, each normal mod initialization overlays a small, version-sensitive set of replacement modules, compiled host helpers, and extra plugins onto that stock tree. This is the project’s mechanism for carrying printer-specific fixes while retaining the native MCU firmware and making uninstall reversible. See [`docs/MOD_COMPARISON.md`](../../docs/MOD_COMPARISON.md) for the product-level distinction from mods that replace host Klipper and reflash the MCU.
+Forge-X **keeps the printer’s stock host Klipper** at `/opt/klipper/klippy`; it does not build or install a complete upstream Klipper tree. Instead, each normal mod initialization overlays a small, version-sensitive set of replacement modules, compiled host helpers, and extra plugins onto that stock tree. This is the project’s mechanism for carrying printer-specific fixes while retaining the native MCU firmware and making uninstall reversible.
 
 > **Hardware-risk boundary:** a patch can apply mechanically yet be incorrect for a supported stock firmware layout or unsafe in a motion/calibration workflow. Do not edit deployed `/opt/klipper` files as a durable fix; update the overlay and validate on the relevant printer/firmware combination.
 
 ## Lifecycle and ownership
 
-The stock-side initializer, [`.shell/S00init`](../../.shell/S00init), binds the real `/opt/klipper` into the Buildroot environment during `init_buildroot`, then calls `apply_klipper_patches` before configuration repair and service startup. The target is therefore the stock-side `/opt/klipper/klippy`, not a copy inside the chroot.
+The normal initializer, [`.shell/init-main.sh`](../../.shell/init-main.sh), binds the real `/opt/klipper` into the Buildroot environment during `init_buildroot`, then calls `apply_klipper_patches` before configuration repair and service startup. The target is therefore the stock-side `/opt/klipper/klippy`, not a copy inside the chroot.
 
 ```text
 Repository overlay                    Stock host tree
@@ -78,7 +78,7 @@ That reversal relies on the backup convention created by the patcher. Never dele
 ## Change procedure
 
 1. **Classify the change.** Use `plugins/` for a new Forge-X extension and `patches/` only when replacing an existing native module. Record the target stock path and behavior being changed.
-2. **Check target compatibility.** Compare the replacement with the Klipper module/layout shipped by each supported stock firmware. The supported firmware evidence and limits are in [`docs/FIRMWARE_5x_COMPAT.md`](../../docs/FIRMWARE_5x_COMPAT.md); do not assume mainline Klipper is a compatible baseline.
+2. **Check target compatibility.** Compare the replacement with the Klipper module/layout shipped by each supported stock firmware. The supported firmware range is in [`docs/INSTALL.md`](../../docs/INSTALL.md); do not assume mainline Klipper is a compatible baseline.
 3. **Preserve deployment symmetry.** Confirm the nested relative path works, a stock target exists to back up for replacements, stale-overlay cleanup recognizes the entry, and uninstall can restore it. Consider how removal/renaming behaves on an already patched printer.
 4. **Keep settings coherent.** If a patch depends on a user setting, update the parameter schema, Klipper configuration/macro exposure, shell reaction, migration/deprecation behavior, and operator documentation together.
 5. **Validate the exact feature on hardware.** A successful boot establishes only that imports/startup worked. Exercise the affected G-code, calibration, print, screen, or recovery path; inspect Klipper logs; and test the supported firmware/device combination. For tuning, test both enable and disable and confirm the reboot/restart result.

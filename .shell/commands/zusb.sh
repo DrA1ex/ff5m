@@ -9,11 +9,11 @@
 USB_PREPARE_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$USB_PREPARE_SCRIPT_DIR/../boot/usb_storage.sh"
 
-USB_PREPARE_PROC_SWAPS="${USB_PREPARE_PROC_SWAPS:-/proc/swaps}"
-USB_PREPARE_FDISK="${USB_PREPARE_FDISK:-busybox fdisk}"
-USB_PREPARE_MKDOSFS="${USB_PREPARE_MKDOSFS:-busybox mkdosfs}"
-USB_PREPARE_MKE2FS="${USB_PREPARE_MKE2FS:-busybox mke2fs}"
-USB_PREPARE_DD="${USB_PREPARE_DD:-dd}"
+USB_PREPARE_PROC_SWAPS=/proc/swaps
+USB_PREPARE_FDISK="busybox fdisk"
+USB_PREPARE_MKDOSFS="busybox mkdosfs"
+USB_PREPARE_MKE2FS="busybox mke2fs"
+USB_PREPARE_DD=dd
 
 
 usb_prepare_error() {
@@ -104,7 +104,7 @@ usb_prepare_prompt() {
     local wait_seconds disks count size_kib disk device identity
     local description
 
-    wait_seconds="${USB_PREPARE_WAIT_SECONDS:-3}"
+    wait_seconds=3
     if ! usb_storage_wait_for_candidates "$wait_seconds"; then
         usb_prepare_error "No USB storage found. Insert one drive and run PREPARE_USB again."
         return 1

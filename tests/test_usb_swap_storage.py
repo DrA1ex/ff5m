@@ -3,19 +3,20 @@
 import os
 import pathlib
 import re
-import shlex
 import subprocess
 import tempfile
 import unittest
 
 
 ROOT = pathlib.Path(__file__).parents[1]
-S00_INIT = ROOT / ".shell" / "S00init"
+INIT_MAIN = ROOT / ".shell" / "init-main.sh"
 HELPER = ROOT / ".shell" / "boot" / "usb_storage.sh"
 INIT_SWAP = ROOT / ".shell" / "boot" / "init_swap.sh"
 INIT_BOOT_FLAG = ROOT / ".shell" / "boot" / "init_boot_flag.sh"
+BOOT_MODE = ROOT / ".shell" / "boot" / "boot_mode.sh"
 INSTALL_IMAGE = ROOT / ".shell" / "boot" / "install-image.sh"
 INSTALL_IMAGE_RUNNER = ROOT / ".shell" / "boot" / "install-image-runner.sh"
+STOCK_IDENTITY = ROOT / ".shell" / "boot" / "stock_identity.sh"
 PREPARE_USB = ROOT / ".shell" / "commands" / "zusb.sh"
 MOUNT_USB = ROOT / ".shell" / "commands" / "zusb_mount.sh"
 
@@ -82,32 +83,111 @@ class UsbStorageTest(unittest.TestCase):
         launcher.write_text(
             "#!/bin/sh\nMACHINE=Adventurer5M\nPID=0023\n",
             encoding="utf-8")
-        self.install_image = self.root / "install-image.sh"
-        install_image = INSTALL_IMAGE.read_text(encoding="utf-8")
-        install_image = install_image.replace(
-            "/root/version", str(version_file))
-        install_image = install_image.replace(
+        self.stock_identity = self.root / "stock_identity.sh"
+        stock_identity = STOCK_IDENTITY.read_text(encoding="utf-8")
+        stock_identity = stock_identity.replace("/root/version", str(version_file))
+        stock_identity = stock_identity.replace(
             "/opt/PROGRAM/software", str(software_dir))
-        install_image = install_image.replace(
-            "/opt/config/mod/.shell/boot/install-image-runner.sh",
-            str(INSTALL_IMAGE_RUNNER))
-        self.install_image.write_text(install_image, encoding="utf-8")
-        self.install_image.chmod(0o755)
+        self.stock_identity.write_text(stock_identity, encoding="utf-8")
+        self.helper_replacements = {
+            "USB_STORAGE_SYS_BLOCK_ROOT=/sys/block":
+                "USB_STORAGE_SYS_BLOCK_ROOT=%s" % self.sys_block,
+            "USB_STORAGE_DEV_ROOT=/dev":
+                "USB_STORAGE_DEV_ROOT=%s" % self.dev,
+            "USB_STORAGE_PROC_PARTITIONS=/proc/partitions":
+                "USB_STORAGE_PROC_PARTITIONS=%s" % self.proc_partitions,
+            "USB_STORAGE_PROC_MOUNTS=/proc/mounts":
+                "USB_STORAGE_PROC_MOUNTS=%s" % self.proc_mounts,
+            "USB_STORAGE_MOUNT_ROOT=/tmp":
+                "USB_STORAGE_MOUNT_ROOT=%s" % self.mount_root,
+            "USB_STORAGE_LSBLK=lsblk":
+                "USB_STORAGE_LSBLK=%s" % self.lsblk,
+            "USB_STORAGE_UDEVADM=udevadm":
+                "USB_STORAGE_UDEVADM=%s" % self.no_udevadm,
+            "USB_STORAGE_OPERATION_LOCK=/tmp/forge-x-usb-operation":
+                "USB_STORAGE_OPERATION_LOCK=%s" % self.operation_lock,
+            "USB_STORAGE_REQUIRE_BLOCK_DEVICES=1":
+                "USB_STORAGE_REQUIRE_BLOCK_DEVICES=0",
+        }
+        self.helper = self._patched_script(
+            HELPER, "usb_storage.sh", self.helper_replacements)
 
-        self.init_boot_flag = self.root / "init_boot_flag.sh"
-        init_boot_flag = INIT_BOOT_FLAG.read_text(encoding="utf-8")
-        init_boot_flag = init_boot_flag.replace(
-            "source /opt/config/mod/.shell/common.sh",
-            "source /dev/null")
-        init_boot_flag = init_boot_flag.replace(
-            "source /opt/config/mod/.shell/boot/usb_storage.sh",
-            "source %s" % shlex.quote(str(HELPER)))
-        init_boot_flag = init_boot_flag.replace(
-            "/opt/config/mod/.shell/boot/install-image.sh",
-            shlex.quote(str(self.install_image)))
-        init_boot_flag = init_boot_flag.split('\ncase "$1" in\n', 1)[0]
-        self.init_boot_flag.write_text(
-            init_boot_flag + "\n", encoding="utf-8")
+        self.init_swap = self._patched_script(
+            INIT_SWAP, "init_swap.sh", {
+                'source "$SWAP_SCRIPT_DIR/usb_storage.sh"':
+                    'source "%s"' % self.helper,
+                'SWAP_SIZE="${1-64M}"': "SWAP_SIZE=64M",
+                "    wait_seconds=10": "    wait_seconds=0",
+                'swap=$($CFG_SCRIPT  $CFG_PATH --get "use_swap" "MMC")':
+                    'return 0 2>/dev/null || exit 0\n\n'
+                    'swap=$($CFG_SCRIPT  $CFG_PATH --get "use_swap" "MMC")',
+            })
+
+        self.prepare_usb = self._patched_script(
+            PREPARE_USB, "zusb.sh", {
+                'source "$USB_PREPARE_SCRIPT_DIR/../boot/usb_storage.sh"':
+                    'source "%s"' % self.helper,
+                "USB_PREPARE_PROC_SWAPS=/proc/swaps":
+                    "USB_PREPARE_PROC_SWAPS=%s" % self.proc_swaps,
+                "    wait_seconds=3": "    wait_seconds=0",
+            })
+        self.mount_usb = self._patched_script(
+            MOUNT_USB, "zusb_mount.sh", {
+                'source "$USB_BROWSER_SCRIPT_DIR/../boot/usb_storage.sh"':
+                    'source "%s"' % self.helper,
+                "USB_BROWSER_PROC_SWAPS=/proc/swaps":
+                    "USB_BROWSER_PROC_SWAPS=%s" % self.proc_swaps,
+                "USB_BROWSER_WAIT_SECONDS=2": "USB_BROWSER_WAIT_SECONDS=0",
+                "USB_BROWSER_DATA_ROOT=/data":
+                    "USB_BROWSER_DATA_ROOT=%s" % (self.root / "data"),
+                "USB_BROWSER_CHROOT_ROOT=/data/.mod/.forge-x":
+                    "USB_BROWSER_CHROOT_ROOT=",
+            })
+
+        self.install_image = self._patched_script(
+            INSTALL_IMAGE, "install-image.sh", {
+                "/opt/config/mod/.shell/boot/stock_identity.sh":
+                    str(self.stock_identity),
+                "/opt/config/mod/.shell/common.sh": "/dev/null",
+                "/opt/config/mod/.shell/boot/install-image-runner.sh":
+                    str(INSTALL_IMAGE_RUNNER),
+                "FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware":
+                    "FIRMWARE_INSTALL_STAGING_DIR=%s" % (self.root / ".firmware"),
+                "FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh":
+                    "FIRMWARE_INSTALL_SCREEN_SCRIPT=/usr/bin/true",
+                "FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer":
+                    "FIRMWARE_INSTALL_TYPER=/usr/bin/true",
+                "stop_firmware_parent() {\n":
+                    "stop_firmware_parent() {\n    return 0\n",
+            })
+
+        self.boot_mode = self._patched_script(
+            BOOT_MODE, "boot_mode.sh", {
+                "/opt/config/mod/BOOT_FLAG_FAILURE": str(self.root / "boot-failure"),
+                "/opt/config/mod/BOOT_FLAG_SKIP": str(self.root / "boot-skip"),
+                "/opt/config/mod/BOOT_FLAG_RECOVERY_FAILURE": str(
+                    self.root / "recovery-failure"),
+                "/tmp/init_finished_f": str(self.root / "init-finished"),
+                "/tmp/SKIP_MOD_SOFT": str(self.root / "skip-mod-soft"),
+                "/tmp/SKIP_MOD_HARD": str(self.root / "skip-mod-hard"),
+                "/tmp/SKIP_MOD": str(self.root / "skip-mod"),
+            })
+        boot_mode_path = "/opt/config/mod/.shell/boot/boot_mode.sh"
+        self.init_boot_flag = self._patched_script(
+            INIT_BOOT_FLAG, "init_boot_flag.sh", {
+                boot_mode_path: str(self.boot_mode),
+                "/opt/config/mod/.shell/common.sh": "/dev/null",
+                "/opt/config/mod/.shell/boot/usb_storage.sh": str(self.helper),
+                "INSTALL_IMAGE_SCRIPT=/opt/config/mod/.shell/boot/install-image.sh":
+                    "INSTALL_IMAGE_SCRIPT=%s" % self.install_image,
+                "    wait_seconds=10": "    wait_seconds=0",
+            })
+        self.init_main = self._patched_script(
+            INIT_MAIN, "init-main.sh", {
+                boot_mode_path: str(self.boot_mode),
+                "/opt/config/mod/.shell/common.sh": "/dev/null",
+                "/opt/config/mod/.shell/klipper_overlay.sh": "/dev/null",
+            })
 
         self.special_boot_success = self.root / "special-boot-success.sh"
         self.special_boot_success.write_text(
@@ -119,45 +199,22 @@ class UsbStorageTest(unittest.TestCase):
             "exit 0\n",
             encoding="utf-8")
         self.special_boot_success.chmod(0o755)
-        self.s00_init = self.root / "S00init"
-        s00_init = S00_INIT.read_text(encoding="utf-8")
-        s00_init = s00_init.replace(
-            "source /opt/config/mod/.shell/common.sh", "source /dev/null")
-        s00_init = s00_init.replace(
-            "source /opt/config/mod/.shell/klipper_overlay.sh",
-            "source /dev/null")
-        s00_init = s00_init.replace(
-            "/opt/config/mod/.shell/boot/init_boot_flag.sh",
-            shlex.quote(str(self.special_boot_success)))
-        s00_init = s00_init.split('\ncase "$1" in\n', 1)[0]
-        self.s00_init.write_text(s00_init + "\n", encoding="utf-8")
 
         self.environment = dict(os.environ)
-        self.environment.update({
-            "USB_STORAGE_SYS_BLOCK_ROOT": str(self.sys_block),
-            "USB_STORAGE_DEV_ROOT": str(self.dev),
-            "USB_STORAGE_PROC_PARTITIONS": str(self.proc_partitions),
-            "USB_STORAGE_PROC_MOUNTS": str(self.proc_mounts),
-            "USB_STORAGE_MOUNT_ROOT": str(self.mount_root),
-            "USB_STORAGE_LSBLK": str(self.lsblk),
-            "USB_STORAGE_UDEVADM": str(self.no_udevadm),
-            "USB_SWAP_WAIT_SECONDS": "0",
-            "BOOT_FLAG_USB_WAIT_SECONDS": "0",
-            "USB_PREPARE_WAIT_SECONDS": "0",
-            "USB_PREPARE_PROC_SWAPS": str(self.proc_swaps),
-            "USB_BROWSER_PROC_SWAPS": str(self.proc_swaps),
-            "USB_BROWSER_WAIT_SECONDS": "0",
-            "USB_BROWSER_DATA_ROOT": str(self.root / "data"),
-            "USB_BROWSER_CHROOT_ROOT": "",
-            "USB_STORAGE_REQUIRE_BLOCK_DEVICES": "0",
-            "USB_STORAGE_OPERATION_LOCK": str(self.operation_lock),
-            "SWAP_SIZE": "64M",
-            "COMMON_SCRIPT": "/dev/null",
-            "INIT_SWAP_LIBRARY_ONLY": "1",
-        })
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def _patched_script(self, source, name, replacements):
+        text = source.read_text(encoding="utf-8")
+        for old, new in replacements.items():
+            self.assertEqual(text.count(old), 1, old)
+            text = text.replace(old, new, 1)
+
+        destination = self.root / name
+        destination.write_text(text, encoding="utf-8")
+        destination.chmod(source.stat().st_mode & 0o777)
+        return destination
 
     def _script(self, name, body):
         path = self.bin / name
@@ -166,23 +223,26 @@ class UsbStorageTest(unittest.TestCase):
         return path
 
     def _run(self, source, body):
-        if source == INIT_BOOT_FLAG:
-            source = self.init_boot_flag
+        source = {
+            HELPER: self.helper,
+            INIT_SWAP: self.init_swap,
+            INIT_BOOT_FLAG: self.init_boot_flag,
+        }.get(source, source)
         return subprocess.run(
             ["bash", "-c", 'source "$1"\n' + body,
              "usb-storage-test", str(source)],
             env=self.environment, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, check=False)
 
-    def _run_prepare(self, *args):
+    def _run_prepare(self, *args, script=None):
         return subprocess.run(
-            ["bash", str(PREPARE_USB), *args], env=self.environment,
+            ["bash", str(script or self.prepare_usb), *args], env=self.environment,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             check=False)
 
-    def _run_mount(self, *args):
+    def _run_mount(self, *args, script=None):
         return subprocess.run(
-            ["bash", str(MOUNT_USB), *args], env=self.environment,
+            ["bash", str(script or self.mount_usb), *args], env=self.environment,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             check=False)
 
@@ -253,10 +313,14 @@ class UsbStorageTest(unittest.TestCase):
         self.environment.update({
             "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
             "USB_TEST_MOUNT_LOG": str(mount_log),
-            "USB_BROWSER_CHROOT_ROOT": str(chroot_root),
         })
+        mount_script = self._patched_script(
+            self.mount_usb, "zusb_mount-chroot-attach.sh", {
+                "USB_BROWSER_CHROOT_ROOT=":
+                    "USB_BROWSER_CHROOT_ROOT=%s" % chroot_root,
+            })
 
-        result = self._run_mount("attach", str(target))
+        result = self._run_mount("attach", str(target), script=mount_script)
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(mount_log.read_text(encoding="utf-8").splitlines(), [
@@ -370,10 +434,14 @@ class UsbStorageTest(unittest.TestCase):
         self.environment.update({
             "PATH": "%s:%s" % (self.bin, self.environment["PATH"]),
             "USB_TEST_UMOUNT_LOG": str(umount_log),
-            "USB_BROWSER_CHROOT_ROOT": str(chroot_root),
         })
+        mount_script = self._patched_script(
+            self.mount_usb, "zusb_mount-chroot-detach.sh", {
+                "USB_BROWSER_CHROOT_ROOT=":
+                    "USB_BROWSER_CHROOT_ROOT=%s" % chroot_root,
+            })
 
-        result = self._run_mount("detach", str(target))
+        result = self._run_mount("detach", str(target), script=mount_script)
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(umount_log.read_text(encoding="utf-8").splitlines(), [
@@ -421,9 +489,14 @@ class UsbStorageTest(unittest.TestCase):
             ["131072 %s" % (self.dev / "sda1")])
 
     def test_regular_files_are_not_accepted_as_device_nodes_in_production(self):
-        self.environment["USB_STORAGE_REQUIRE_BLOCK_DEVICES"] = "1"
+        strict_helper = self._patched_script(
+            self.helper, "usb_storage-strict.sh", {
+                "USB_STORAGE_REQUIRE_BLOCK_DEVICES=0":
+                    "USB_STORAGE_REQUIRE_BLOCK_DEVICES=1",
+            })
 
-        result = self._run(HELPER, "usb_storage_disks; usb_storage_candidates\n")
+        result = self._run(
+            strict_helper, "usb_storage_disks; usb_storage_candidates\n")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout, "")
@@ -721,12 +794,6 @@ class UsbStorageTest(unittest.TestCase):
         self.assertIn("continued=1", result.stdout)
 
     def test_firmware_installer_failure_does_not_resume_normal_boot(self):
-        self.environment.update({
-            "FIRMWARE_INSTALL_KILL_PARENT": "0",
-            "FIRMWARE_INSTALL_SCREEN_SCRIPT": "/bin/true",
-            "FIRMWARE_INSTALL_TYPER": "/usr/bin/true",
-        })
-
         result = self._run(INIT_BOOT_FLAG, r'''
             handle_special_boot_flag FIRMWARE_IMAGE \
                 /mock/missing-firmware-directory
@@ -746,30 +813,65 @@ class UsbStorageTest(unittest.TestCase):
         result = subprocess.run(
             ["bash", "-c", r'''
                 expected_parent_pid=$PPID
+                export FIRMWARE_INSTALL_PARENT_PID="$expected_parent_pid"
                 VERSION_PATCH_F="$2/version-patch"
                 BOOT_FAILURE_F="$2/boot-failure"
                 SCRIPTS="$2/scripts"
                 export SPECIAL_BOOT_PID_LOG="$2/special-boot-parent-pid"
                 source "$1"
+                SPECIAL_BOOT_SCRIPT="$2/special-boot-success.sh"
                 logged() { cat; }
                 date() { echo normal-initialize-continued; }
                 mount_data_partition() { echo normal-mount-continued; }
                 initialize 2>&1 | logged
+                status=${PIPESTATUS[0]}
+                echo initialize-status=$status
                 if [ "$(cat "$SPECIAL_BOOT_PID_LOG")" = "$expected_parent_pid" ]; then
                     echo stock-parent-pid-forwarded
                 fi
                 echo s00-wrapper-finished
-            ''', "s00-lifecycle-test", str(self.s00_init), str(self.root)],
+            ''', "s00-lifecycle-test", str(self.init_main), str(self.root)],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
+            env=self.environment,
         )
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("s00-wrapper-finished", result.stdout)
         self.assertIn("stock-parent-pid-forwarded", result.stdout)
+        self.assertIn("initialize-status=10", result.stdout)
         self.assertTrue(parent_pid_log.exists())
+        self.assertNotIn("normal-initialize-continued", result.stdout)
+        self.assertNotIn("normal-mount-continued", result.stdout)
+
+    def test_broken_special_boot_handler_stops_normal_initialize_pipeline(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        screen = scripts / "screen.sh"
+        screen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        screen.chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", "-c", r'''
+                VERSION_PATCH_F="$2/version-patch"
+                SCRIPTS="$2/scripts"
+                source "$1"
+                SPECIAL_BOOT_SCRIPT="$2/missing-special-boot-handler"
+                date() { echo normal-initialize-continued; }
+                mount_data_partition() { echo normal-mount-continued; }
+                logged() { cat; }
+                initialize 2>&1 | logged
+                echo initialize-status=${PIPESTATUS[0]}
+            ''', "broken-special-boot-test", str(self.init_main), str(self.root)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False,
+            env=self.environment,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("initialize-status=127", result.stdout)
         self.assertNotIn("normal-initialize-continued", result.stdout)
         self.assertNotIn("normal-mount-continued", result.stdout)
 
@@ -793,9 +895,13 @@ class UsbStorageTest(unittest.TestCase):
             self.proc_partitions.read_text(encoding="utf-8").replace(
                 "524288 sda", "524289 sda"), encoding="utf-8")
         eraser = self._script("eraser", "echo ERASED\n")
-        self.environment["USB_PREPARE_DD"] = str(eraser)
+        prepare_script = self._patched_script(
+            self.prepare_usb, "zusb-changed-drive.sh", {
+                "USB_PREPARE_DD=dd": "USB_PREPARE_DD=%s" % eraser,
+            })
 
-        result = self._run_prepare("format", "EXT", device, identity)
+        result = self._run_prepare(
+            "format", "EXT", device, identity, script=prepare_script)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("changed or disappeared", result.stdout)
@@ -809,9 +915,13 @@ class UsbStorageTest(unittest.TestCase):
         serial = self.root / "devices" / "platform" / "usb1" / "1-1" / "serial"
         serial.write_text("TEST-USB-0002\n", encoding="utf-8")
         eraser = self._script("eraser", "echo ERASED\n")
-        self.environment["USB_PREPARE_DD"] = str(eraser)
+        prepare_script = self._patched_script(
+            self.prepare_usb, "zusb-replaced-drive.sh", {
+                "USB_PREPARE_DD=dd": "USB_PREPARE_DD=%s" % eraser,
+            })
 
-        result = self._run_prepare("format", "FAT32", device, identity)
+        result = self._run_prepare(
+            "format", "FAT32", device, identity, script=prepare_script)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("changed or disappeared", result.stdout)
@@ -822,14 +932,21 @@ class UsbStorageTest(unittest.TestCase):
         self.assertEqual(prompt.returncode, 0, prompt.stdout)
         identity = self._prepare_identity(prompt)
         device = "sda"
-        self.environment["USB_PREPARE_DD"] = str(
-            self._script("dd-mock", "exit 0\n"))
-        self.environment["USB_PREPARE_FDISK"] = str(self._script(
-            "fdisk-mock", 'echo "fdisk success details"\ntouch "$1"1\n'))
-        self.environment["USB_PREPARE_MKDOSFS"] = str(self._script(
-            "mkdosfs-mock", 'echo "mkdosfs $*"\n'))
+        dd = self._script("dd-mock", "exit 0\n")
+        fdisk = self._script(
+            "fdisk-mock", 'echo "fdisk success details"\ntouch "$1"1\n')
+        mkdosfs = self._script("mkdosfs-mock", 'echo "mkdosfs $*"\n')
+        prepare_script = self._patched_script(
+            self.prepare_usb, "zusb-fat32.sh", {
+                "USB_PREPARE_DD=dd": "USB_PREPARE_DD=%s" % dd,
+                'USB_PREPARE_FDISK="busybox fdisk"':
+                    "USB_PREPARE_FDISK=%s" % fdisk,
+                'USB_PREPARE_MKDOSFS="busybox mkdosfs"':
+                    "USB_PREPARE_MKDOSFS=%s" % mkdosfs,
+            })
 
-        result = self._run_prepare("format", "FAT32", device, identity)
+        result = self._run_prepare(
+            "format", "FAT32", device, identity, script=prepare_script)
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("mkdosfs -n FORGEX %s/sda1" % self.dev, result.stdout)
@@ -842,12 +959,18 @@ class UsbStorageTest(unittest.TestCase):
         prompt = self._run_prepare("prompt")
         self.assertEqual(prompt.returncode, 0, prompt.stdout)
         identity = self._prepare_identity(prompt)
-        self.environment["USB_PREPARE_DD"] = str(
-            self._script("dd-mock", "exit 0\n"))
-        self.environment["USB_PREPARE_FDISK"] = str(self._script(
-            "fdisk-failure", 'echo "fdisk diagnostic"\nexit 3\n'))
+        dd = self._script("dd-mock", "exit 0\n")
+        fdisk = self._script(
+            "fdisk-failure", 'echo "fdisk diagnostic"\nexit 3\n')
+        prepare_script = self._patched_script(
+            self.prepare_usb, "zusb-fdisk-failure.sh", {
+                "USB_PREPARE_DD=dd": "USB_PREPARE_DD=%s" % dd,
+                'USB_PREPARE_FDISK="busybox fdisk"':
+                    "USB_PREPARE_FDISK=%s" % fdisk,
+            })
 
-        result = self._run_prepare("format", "FAT32", "sda", identity)
+        result = self._run_prepare(
+            "format", "FAT32", "sda", identity, script=prepare_script)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("fdisk diagnostic", result.stdout)
@@ -859,10 +982,14 @@ class UsbStorageTest(unittest.TestCase):
         prompt = self._run_prepare("prompt")
         self.assertEqual(prompt.returncode, 0, prompt.stdout)
         identity = self._prepare_identity(prompt)
-        self.environment["USB_PREPARE_DD"] = str(
-            self._script("dd-failure", "exit 1\n"))
+        dd = self._script("dd-failure", "exit 1\n")
+        prepare_script = self._patched_script(
+            self.prepare_usb, "zusb-dd-failure.sh", {
+                "USB_PREPARE_DD=dd": "USB_PREPARE_DD=%s" % dd,
+            })
 
-        result = self._run_prepare("format", "FAT32", "sda", identity)
+        result = self._run_prepare(
+            "format", "FAT32", "sda", identity, script=prepare_script)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("action:prompt_begin", result.stdout)

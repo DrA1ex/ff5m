@@ -1,5 +1,29 @@
 # Firmware Recovery Guide
 
+## Forge-X Recovery Menu
+
+Early Forge-X Recovery groups the available operations by purpose:
+
+```text
+FORGE-X RECOVERY
+├── BOOT OPTIONS
+├── SYSTEM / DIAGNOSTICS
+├── FIRMWARE / RESTORE
+├── BACKUP / RESET
+├── NETWORK / SSH
+└── REBOOT
+```
+
+`SYSTEM / DIAGNOSTICS` can verify system files, show disk usage, check filesystems without changing them, remove a selected large recovery or log file, and create a diagnostics bundle.
+
+`BACKUP / RESET` can create a Forge-X settings backup, restore all Forge-X and printer settings to their defaults, or uninstall Forge-X. Reset automatically selects the correct defaults for Adventurer 5M or Adventurer 5M Pro. It does not delete print files.
+
+Before reset, Recovery warns that the current settings will be replaced and offers a `CREATE BACKUP` button. Download the backup to another device before selecting the red `RESET` button.
+
+Generated diagnostics and settings backups can be downloaded from the address shown on screen. Connect the printer to Ethernet or Wi-Fi first. Leaving the sharing screen or choosing `STOP SHARING` stops the download service.
+
+`NETWORK / SSH` refreshes its displayed state whenever the screen is entered; there is no separate refresh action. Firmware flashing keeps the existing two-stage confirmation flow.
+
 ## Recovery Using Flashing Image
 
 If you are still able to flash firmware using USB, you can try running a system file integrity check.  

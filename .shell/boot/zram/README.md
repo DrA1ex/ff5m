@@ -29,9 +29,8 @@ lower compression CPU cost).
 
 On boot, `init_swap.sh` loads the modules and activates `/dev/zram0` as the
 primary swap at priority 100. A 64 MB eMMC swap file remains available at a
-lower priority as overflow. The default zram logical size is **64 MB**. It can be
-overridden for development tests with `ZRAM_DISKSIZE`, but larger values are not
-recommended without workload-specific validation.
+lower priority as overflow. The default zram logical size is **64 MB**. Larger values are not recommended
+without workload-specific validation.
 
 > [!CAUTION]
 > Do not treat the eMMC swap file as a latency guarantee. When zram fills, or
@@ -116,11 +115,8 @@ physical RAM. That is too large to use as the project-wide default on systems
 with about 110 MB usable RAM.
 
 Systems with more physical RAM do not automatically benefit from a larger zram
-device. If their workload already fits in RAM, swap remains unused. Users with a
-validated workload containing more than 64 MB of cold, latency-insensitive
-anonymous memory may override `ZRAM_DISKSIZE` explicitly and test 96 MB or a
-larger value. Such sizes are workload-specific experiments, not recommended
-defaults.
+device. If their workload already fits in RAM, swap remains unused. Larger logical sizes remain workload-specific
+experiments rather than recommended project defaults.
 
 ## Recommendation
 

@@ -6,6 +6,9 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=30
+FORGE_X_RUNTIME_PATHS='/data/\.mod|/opt/config/mod|/root/printer_data'
+
 is_unsigned_integer() {
     case "$1" in
         ''|*[!0-9]*) return 1 ;;
@@ -29,21 +32,36 @@ firmware_screen() {
         --batch text -p 400 205 -ha center -va middle -c 35d9e6 \
             -f "JetBrainsMono 20pt" --max-width 720 -t "$title" \
         --batch text -p 400 285 -ha center -va middle -c ffffff \
-            -f "JetBrainsMono 11pt" --max-width 720 -t "$detail" \
+            -f "JetBrainsMono 12pt" --max-width 720 -t "$detail" \
         >/dev/null 2>&1 || true
 }
 
+mod_path_references() {
+    mount 2>&1 | grep -E "$FORGE_X_RUNTIME_PATHS" || true
+    lsof 2>&1 | grep -E "$FORGE_X_RUNTIME_PATHS" || true
+}
+
 mod_paths_busy() {
-    if mount | grep -Eq '/data/\.mod| /root/printer_data'; then
-        return 0
-    fi
+    mod_path_references | grep -q .
+}
 
-    if lsof 2>&1 \
-            | grep -Eq '/data/\.mod|/opt/config/mod|/root/printer_data'; then
-        return 0
-    fi
+wait_for_mod_paths() {
+    local elapsed=0
 
-    return 1
+    while mod_paths_busy; do
+        if [ "$elapsed" -ge "$FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS" ]; then
+            echo "@@ Previous Forge-X runtime did not stop."
+            mod_path_references >&2
+            return 1
+        fi
+
+        if [ "$((elapsed % 5))" -eq 0 ]; then
+            firmware_screen "Preparing firmware installer" \
+                "Waiting for recovery services: ${elapsed}s"
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
 }
 
 if [ "$#" -ne 5 ]; then
@@ -66,17 +84,22 @@ case "$FIRMWARE_MACHINE:$FIRMWARE_PRODUCT_ID" in
     *) exit 2 ;;
 esac
 is_unsigned_integer "$FIRMWARE_ERROR_DELAY_SECONDS" || exit 2
+is_unsigned_integer "$FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS" || exit 2
 
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
 
 cd "$FIRMWARE_RUNNER_DIR" || exit 1
-while mod_paths_busy; do
-    sleep 1
-done
+if ! wait_for_mod_paths; then
+    firmware_screen "Firmware installer blocked" \
+        "Power off the printer and retry recovery."
+    sync
+    exit 1
+fi
 
 rm -f /tmp/logged_message_queue
 export FORGE_X_FIRMWARE_DIR="$FIRMWARE_RUNNER_DIR"
+firmware_screen "Starting firmware installer" "Launching the selected image."
 
 if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
     "./$FIRMWARE_ENTRYPOINT_NAME" "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID"

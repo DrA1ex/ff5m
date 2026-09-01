@@ -82,7 +82,7 @@ same predicate so a stale touch event cannot bypass the visual lock.
 
 ## How the plugin is installed and loaded
 
-During initialization, [`.shell/S00init`](../../.shell/S00init) runs `apply_klipper_patches()`, linking all files from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into `/opt/klipper/klippy/extras/`. Feather is therefore a standard Klipper extra, not a copied module or a separate Python service.
+During initialization, [`.shell/init-main.sh`](../../.shell/init-main.sh) runs `apply_klipper_patches()`, linking all files from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into `/opt/klipper/klippy/extras/`. Feather is therefore a standard Klipper extra, not a copied module or a separate Python service.
 
 [`.shell/commands/zdisplay.sh`](../../.shell/commands/zdisplay.sh) activates [`.cfg/init.display.feather.cfg`](../../.cfg/init.display.feather.cfg), which adds `config/feather.cfg` to `/opt/config/printer.cfg` and removes competing display roots. `config/feather.cfg` declares `[feather_screen]`; Klipper calls `load_config(config)` in `feather_screen.py`.
 
@@ -156,7 +156,7 @@ and the two-second TERM/KILL escalation occur only in the worker.
 | `/tmp/typer` | FIFO | Klippy writes complete display-list frames; Typer reads them. Typer unlinks it on normal exit. |
 | `/tmp/feather-events` | FIFO | Typer writes logical touch events; Klipper's reactor reads them. Typer unlinks it on normal exit. |
 | `/run/netd.sock` | `netd` stream socket, mode `0660` | The only network control channel. Carries `GET`, `SUBSCRIBE`, `SCAN`, `CONNECT_WIFI`, `USE_ETHERNET`, and explicit `CANCEL` for Feather and the thin CLI. EOF only removes that client; it never cancels a daemon-owned operation. `.shell/common.sh` bind-mounts `/run`, so the path is the same inside and outside the chroot. |
-| `/data/logFiles/netd.log` | `netd` daemon log | Event-oriented startup, adoption/migration decision, process lifecycle, connection-state and user network-action log. It is opened directly by `netd` so BusyBox daemonization cannot discard it and rotated by `S00init` at boot. Lines use the same timestamp/level/PID/process/message format as `logged`. User actions include the selected transport and SSID, but never credentials or scan-result contents. `zbackup.sh --tar-debug` includes this file and its rotated copies. |
+| `/data/logFiles/netd.log` | `netd` daemon log | Event-oriented startup, adoption/migration decision, process lifecycle, connection-state and user network-action log. It is opened directly by `netd` so BusyBox daemonization cannot discard it and rotated by `init-main.sh` at boot. Lines use the same timestamp/level/PID/process/message format as `logged`. User actions include the selected transport and SSID, but never credentials or scan-result contents. `zbackup.sh --tar-debug` includes this file and its rotated copies. |
 | `/opt/config/mod_data/network.conf` | `netd` | Persistent desired transport and selected SSID. Vendor files are consulted only during one-shot bootstrap or `--migrate-existing`; `--adopt-existing` never changes this file. |
 | `/opt/config/mod_data/wpa_supplicant.conf` | `netd` | Mod-owned saved Wi-Fi definitions. New credentials are persisted only after association and DHCP succeed. |
 | `/tmp/net_ip` | `netd` | The published address. Written on a state transition only — never from a read, which is what made a 1 Hz `status` poll a mutation. |

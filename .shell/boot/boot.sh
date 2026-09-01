@@ -27,14 +27,6 @@ suppress_slicer_nag() {
     sed -i 's/\("CheckAppFrist"[ ]*:[ ]*\)true/\1false/' "$config_file"
 }
 
-if [ ! -f /etc/init.d/S00init ]; then
-    echo "@@ Missing initialization script. Initialize now."
-
-    rm -f /etc/init.d/S00fix
-    ln -s "$SCRIPTS/S00init" /etc/init.d/S00init
-    /etc/init.d/S00init start
-fi
-
 DISPLAY_MODE="$("$CMDS"/zdisplay.sh test)"
 DISPLAY_OFF=0
 [ "$DISPLAY_MODE" != "STOCK" ] && DISPLAY_OFF=1

@@ -2,7 +2,7 @@
 
 ## Mod's service management
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -31,9 +31,9 @@ restart() {
     mkdir -p /_root
     mount /dev/mmcblk0p6 /_root
     
-    # Make sure boot scripts at it's place
+    # Remove the obsolete predecessor, but leave the validated S00init copy
+    # owned by the early boot guard untouched.
     rm -f /_root/etc/init.d/S00fix
-    ln -s /opt/config/mod/.shell/S00init /_root/etc/init.d/S00init
     
     umount /_root
     

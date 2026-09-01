@@ -4,7 +4,6 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import os
 import pathlib
 import subprocess
 import tempfile
@@ -17,13 +16,21 @@ HELPER = ROOT / ".shell" / "commands" / "ztimezone.sh"
 
 class TimezoneHelperTest(unittest.TestCase):
     def _run(self, zone, zoneinfo, localtime):
-        env = dict(os.environ)
-        env.update({
-            "ZONEINFO_ROOT": str(zoneinfo),
-            "LOCALTIME_PATH": str(localtime),
-        })
+        script = zoneinfo.parent / "ztimezone.sh"
+        source = HELPER.read_text(encoding="utf-8")
+        self.assertIn("ZONEINFO_ROOT=/usr/share/zoneinfo", source)
+        self.assertIn("LOCALTIME_PATH=/etc/localtime", source)
+        source = source.replace(
+            "ZONEINFO_ROOT=/usr/share/zoneinfo",
+            "ZONEINFO_ROOT=%s" % zoneinfo,
+        ).replace(
+            "LOCALTIME_PATH=/etc/localtime",
+            "LOCALTIME_PATH=%s" % localtime,
+        )
+        script.write_text(source, encoding="utf-8")
+        script.chmod(HELPER.stat().st_mode & 0o777)
         return subprocess.run(
-            [str(HELPER), zone], env=env, text=True,
+            [str(script), zone], text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
 
     def test_valid_zone_is_installed_as_an_atomic_symlink(self):

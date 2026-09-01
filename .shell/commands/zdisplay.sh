@@ -94,7 +94,7 @@ apply_display_off() {
     "$SCRIPTS"/screen.sh draw_splash
     "$SCRIPTS"/screen.sh backlight 100
     
-    /etc/init.d/S00init reload
+    /opt/config/mod/.shell/init-main.sh reload
     echo "// Restarting Klipper..." | logged --no-log --send-to-screen
     
     "$SCRIPTS"/restart_klipper.sh --hard
