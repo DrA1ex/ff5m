@@ -47,8 +47,7 @@ start() {
         } 2>&1
 
         sound_enabled=$($CFG_SCRIPT "$VAR_PATH" --get "sound" "1")
-        [ "$sound_enabled" -eq 1 ] && \
-            midi_file=$($CFG_SCRIPT "$VAR_PATH" --get "midi_on" "BattleCity.mid")
+        [ "$sound_enabled" -eq 1 ] && midi_file=$($CFG_SCRIPT "$VAR_PATH" --get "midi_on")
 
         if [ -n "$midi_file" ]; then
             audio midi -m "/opt/config/mod_data/midi/$midi_file" &

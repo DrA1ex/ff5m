@@ -2,7 +2,7 @@
 
 ## Update configuration file
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>erg>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -14,6 +14,11 @@ read_param() {
     if [ -z "$key" ]; then
         echo "Error: Empty key in --get mode"
         exit 1
+    fi
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "$default"
+        return 0
     fi
     
     if grep -qE "^${key}\s*=\s*" "$CONFIG_FILE"; then
@@ -72,7 +77,7 @@ usage() {
 CONFIG_FILE="$1"
 shift
 
-if [ ! -f "$CONFIG_FILE" ]; then
+if [ ! -f "$CONFIG_FILE" ] && [ "$1" != "--get" ]; then
     echo "Error: File \"$CONFIG_FILE\" doesn't exists"
     usage
     exit 1
