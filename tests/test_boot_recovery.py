@@ -673,6 +673,22 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertFalse(
             (download_dir / (entry["name"] + ".part")).exists())
 
+    def test_flash_handoff_is_rendered_by_recovery_before_services_stop(self):
+        action = self.root / "action"
+        image = self.root / "Adventurer5M-test.tgz"
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(action), session=mock.Mock())
+        ui.view.confirm = mock.Mock(side_effect=(True, True))
+        ui.view.progress = mock.Mock()
+
+        with self.assertRaises(SystemExit):
+            ui.offer_flash(str(image))
+
+        ui.view.progress.assert_called_once_with(
+            "PREPARING FIRMWARE", "Stopping recovery services...")
+        self.assertEqual(action.read_text(encoding="utf-8"),
+                         "flash:{}\n".format(image))
+
     def test_download_selection_immediately_shows_preparation(self):
         ui = RECOVERY.RecoveryUI(
             "Adventurer5M", str(self.root / "action"), mock.Mock())
@@ -1345,6 +1361,7 @@ run_recovery_ui
         installer = run_root / "install-image.sh"
         installer.write_text(
             "#!/bin/sh\n"
+            "printf '%s\\n' \"$*\" > \"$RECOVERY_TEST_INSTALLER_ARGS\"\n"
             "echo '// Preparing firmware image'\n"
             "echo '//% Extracting firmware: 55%'\n"
             "exit 7\n",
@@ -1357,6 +1374,8 @@ source "$1"
 trap - EXIT HUP INT TERM
 RECOVERY_INSTALL_IMAGE="$2/install-image.sh"
 RECOVERY_LOG="$2/recovery.log"
+RECOVERY_TEST_INSTALLER_ARGS="$2/installer-args"
+export RECOVERY_TEST_INSTALLER_ARGS
 LOGGED_ARGS="$2/logged-args"
 LOGGED_INPUT="$2/logged-input"
 logged() {
@@ -1374,6 +1393,10 @@ printf 'result=%s\n' "$status"
             check=False)
 
         self.assertEqual(result.stdout, "result=7\n")
+        self.assertEqual(
+            (run_root / "installer-args").read_text(encoding="utf-8").strip(),
+            str(run_root / "Adventurer5M-test.tgz"),
+        )
         self.assertEqual(
             (run_root / "logged-args").read_text(encoding="utf-8").split(),
             [str(recovery_log), "--send-to-screen", "--screen-no-followup"])

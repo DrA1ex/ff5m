@@ -183,11 +183,15 @@ recovery-owned services and passes that exact file to the existing
 [`install-image.sh`](../../.shell/boot/install-image.sh). Archive validation,
 model enforcement, stock-parent termination, staging, entrypoint selection,
 detached hand-off, and terminal installer failure behavior therefore retain one
-canonical owner. Recovery connects that installer's output to the standard
-`logged --send-to-screen` path while retaining `recovery.log`, so its `//%`
-archive-extraction progress replaces the initial archive-check screen. The
-installer's status remains authoritative if the screen logger returns a
-different status.
+canonical owner. The installer and its detached runner are headless: they emit
+status and failure details only through their output streams and never own the
+framebuffer or splash lifecycle. Recovery renders its own hand-off page, then
+connects the installer's output to the standard `logged --send-to-screen` path
+while retaining `recovery.log`, so its `//%` archive-extraction progress remains
+visible. Normal USB-image boot routes the same output through the existing init
+logger and splash. The installer status remains authoritative if either screen
+logger returns a different status; late detached-runner output remains in
+`/data/.firmware-runner/runner.log`.
 
 The checksum command now returns non-zero when a listed file is missing or
 changed and prints live checked/failure counts plus a final result.

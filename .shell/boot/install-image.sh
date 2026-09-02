@@ -12,8 +12,6 @@ FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware
 FIRMWARE_INSTALL_RUNNER_DIR=/data/.firmware-runner
 FIRMWARE_INSTALL_RESERVE_KB=16384
 FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30
-FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh
-FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer
 FIRMWARE_INSTALL_BASH=/bin/bash
 FIRMWARE_INSTALL_TAR=tar
 FIRMWARE_INSTALL_XZ=xz
@@ -35,21 +33,13 @@ is_unsigned_integer() {
     esac
 }
 
-firmware_screen() {
+firmware_message() {
     local title=$1
     local detail=${2:-}
     local level=${3:-//}
 
     echo "$level $title" >&2
     [ -z "$detail" ] || echo "$level $detail" >&2
-    [ -x "$FIRMWARE_INSTALL_TYPER" ] || return 0
-    "$FIRMWARE_INSTALL_TYPER" -db --framebuffer-copy-only batch \
-        --batch fill -p 0 0 -s 800 480 -c 0 \
-        --batch text -p 400 205 -ha center -va middle -c 35d9e6 \
-            -f "JetBrainsMono 20pt" --max-width 720 -t "$title" \
-        --batch text -p 400 285 -ha center -va middle -c ffffff \
-            -f "JetBrainsMono 12pt" --max-width 720 -t "$detail" \
-        >/dev/null 2>&1 || true
 }
 
 firmware_progress() {
@@ -57,14 +47,6 @@ firmware_progress() {
     local detail=$2
 
     echo "//% $title${detail:+: $detail}" >&2
-}
-
-stop_splash() {
-    if [ -x "$FIRMWARE_INSTALL_SCREEN_SCRIPT" ]; then
-        "$FIRMWARE_INSTALL_SCREEN_SCRIPT" splash_stop >/dev/null 2>&1 || true
-    else
-        killall splash >/dev/null 2>&1 || true
-    fi
 }
 
 stop_firmware_parent() {
@@ -102,9 +84,8 @@ fail_firmware_image() {
     local parent_stopped=0
 
     release_firmware_source_mount
-    stop_splash
     stop_firmware_parent && parent_stopped=1
-    firmware_screen "$reason" "The printer can now be powered off." "@@"
+    firmware_message "$reason" "The printer can now be powered off." "@@"
     sync
 
     # An accepted image must never return control to a live stock parent.
@@ -375,24 +356,14 @@ select_firmware_entrypoint() {
 
 prepare_firmware_runner() {
     local runner_source=/opt/config/mod/.shell/boot/install-image-runner.sh
-    local runtime_source=/opt/config/mod/.bin/runtime/14.2.0
     local runner="$FIRMWARE_INSTALL_RUNNER_DIR/runner.sh"
-    local typer="$FIRMWARE_INSTALL_RUNNER_DIR/typer"
-    local runtime="$FIRMWARE_INSTALL_RUNNER_DIR/runtime"
-    local libstdcxx="$runtime/libstdc++.so.6"
 
     [ -f "$runner_source" ] && [ ! -L "$runner_source" ] || return 1
-    [ -x "$FIRMWARE_INSTALL_TYPER" ] || return 1
-    [ -f "$runtime_source/libstdc++.so.6.0.33" ] \
-        && [ ! -L "$runtime_source/libstdc++.so.6.0.33" ] || return 1
     [ ! -e "$FIRMWARE_INSTALL_RUNNER_DIR" ] \
         && [ ! -L "$FIRMWARE_INSTALL_RUNNER_DIR" ] || return 1
-    mkdir -p "$runtime" || return 1
+    mkdir -p "$FIRMWARE_INSTALL_RUNNER_DIR" || return 1
     cp -f "$runner_source" "$runner" || return 1
-    cp -f "$FIRMWARE_INSTALL_TYPER" "$typer" || return 1
-    cp -f "$runtime_source/libstdc++.so.6.0.33" "$libstdcxx" || return 1
-    chmod 755 "$runner" "$typer" || return 1
-    chmod 644 "$libstdcxx"
+    chmod 755 "$runner"
 }
 
 handoff_firmware_entrypoint() {
@@ -400,9 +371,8 @@ handoff_firmware_entrypoint() {
     local runner_log="$FIRMWARE_INSTALL_RUNNER_DIR/runner.log"
     local entrypoint_name=${FIRMWARE_ENTRYPOINT##*/}
 
-    stop_splash
-    firmware_screen "Preparing firmware installer" \
-        "Waiting for recovery services to stop."
+    firmware_message "Preparing firmware installer" \
+        "Waiting for Forge-X services to stop."
     stop_firmware_parent || return 1
     prepare_firmware_runner || return 1
 
@@ -439,7 +409,7 @@ install_firmware_image() {
         || fail_firmware_image "Cannot stop stock firmware."
     mount_data_partition
 
-    firmware_screen "Preparing firmware image" "Checking archive..."
+    firmware_message "Preparing firmware image" "Checking archive..."
     validate_firmware_archive "$FIRMWARE_IMAGE" \
         || fail_firmware_image "Archive is corrupt or unsafe."
     check_firmware_space "$FIRMWARE_IMAGE" \

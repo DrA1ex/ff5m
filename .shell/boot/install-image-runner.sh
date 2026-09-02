@@ -17,24 +17,12 @@ is_unsigned_integer() {
     esac
 }
 
-firmware_screen() {
+firmware_message() {
     local title=$1
     local detail=$2
-    local typer="$FIRMWARE_RUNNER_DIR/typer"
-    local runtime="$FIRMWARE_RUNNER_DIR/runtime"
-    local libstdcxx="$runtime/libstdc++.so.6"
 
     echo "// $title"
     [ -z "$detail" ] || echo "// $detail"
-    [ -x "$typer" ] && [ -r "$libstdcxx" ] || return 0
-    LD_LIBRARY_PATH="$runtime" LD_PRELOAD="$libstdcxx" \
-        "$typer" -db --framebuffer-copy-only batch \
-        --batch fill -p 0 0 -s 800 480 -c 0 \
-        --batch text -p 400 205 -ha center -va middle -c 35d9e6 \
-            -f "JetBrainsMono 20pt" --max-width 720 -t "$title" \
-        --batch text -p 400 285 -ha center -va middle -c ffffff \
-            -f "JetBrainsMono 12pt" --max-width 720 -t "$detail" \
-        >/dev/null 2>&1 || true
 }
 
 mod_path_references() {
@@ -57,8 +45,8 @@ wait_for_mod_paths() {
         fi
 
         if [ "$((elapsed % 5))" -eq 0 ]; then
-            firmware_screen "Preparing firmware installer" \
-                "Waiting for recovery services: ${elapsed}s"
+            firmware_message "Preparing firmware installer" \
+                "Waiting for Forge-X services: ${elapsed}s"
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -96,8 +84,8 @@ unset LD_LIBRARY_PATH
 
 cd "$FIRMWARE_RUNNER_DIR" || exit 1
 if ! wait_for_mod_paths; then
-    firmware_screen "Firmware installer blocked" \
-        "Power off the printer and retry recovery."
+    firmware_message "Firmware installer blocked" \
+        "Power off the printer and retry installation."
     sync
     exit 1
 fi
@@ -112,8 +100,8 @@ if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
     installer_pid=$!
     if [ -z "$installer_pid" ]; then
         echo "@@ Installer process could not be created."
-        firmware_screen "Firmware installer failed" \
-            "The installer could not start. Power off and retry recovery."
+        firmware_message "Firmware installer failed" \
+            "The installer could not start. Power off and retry."
         sync
         exit 0
     fi
@@ -142,8 +130,8 @@ if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
         102) echo "// Installer handled an interrupt (status 102)." ;;
         *)
             echo "@@ Installer exited unexpectedly during startup with status $status."
-            firmware_screen "Firmware installer failed" \
-                "The installer could not start. Power off and retry recovery."
+            firmware_message "Firmware installer failed" \
+                "The installer could not start. Power off and retry."
             sync
         ;;
     esac
@@ -151,7 +139,7 @@ if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
     exit 0
 fi
 
-firmware_screen "Starting firmware installer" "Launching the selected image."
+firmware_message "Starting firmware installer" "Launching the selected image."
 /bin/bash "./$FIRMWARE_ENTRYPOINT_NAME" \
     "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID"
 status=$?
@@ -159,7 +147,7 @@ status=$?
 if [ "$status" -ne 0 ]; then
     echo "@@ Installer exited with status $status."
     sleep "$FIRMWARE_ERROR_DELAY_SECONDS"
-    firmware_screen "Firmware installer failed" \
+    firmware_message "Firmware installer failed" \
         "Ensure writing stopped, then power off."
     sync
 fi

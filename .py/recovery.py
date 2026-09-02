@@ -1681,6 +1681,8 @@ class RecoveryUI:
                 "FLASH NOW"):
             return
 
+        self.view.progress(
+            "PREPARING FIRMWARE", "Stopping recovery services...")
         self.write_action("flash:" + path)
         raise SystemExit(0)
 

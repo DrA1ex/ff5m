@@ -153,10 +153,6 @@ class UsbStorageTest(unittest.TestCase):
                     str(INSTALL_IMAGE_RUNNER),
                 "FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware":
                     "FIRMWARE_INSTALL_STAGING_DIR=%s" % (self.root / ".firmware"),
-                "FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh":
-                    "FIRMWARE_INSTALL_SCREEN_SCRIPT=/usr/bin/true",
-                "FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer":
-                    "FIRMWARE_INSTALL_TYPER=/usr/bin/true",
                 "stop_firmware_parent() {\n":
                     "stop_firmware_parent() {\n    return 0\n",
             })

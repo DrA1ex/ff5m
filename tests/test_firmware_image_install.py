@@ -32,21 +32,10 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.typer = self.root / "typer"
         self.typer.write_text(
             "#!/bin/sh\n"
-            "runtime_status=missing\n"
-            "if [ -r \"${LD_PRELOAD:-}\" ] "
-            "&& [ \"$(cat \"$LD_PRELOAD\")\" = test-runtime ]; then\n"
-            "    runtime_status=ready\n"
-            "fi\n"
-            "printf '%s|%s|%s|%s\\n' \"$runtime_status\" "
-            "\"${LD_LIBRARY_PATH:-}\" \"${LD_PRELOAD:-}\" \"$*\" "
-            ">> \"$TYPER_LOG\"\n",
+            "printf '%s\\n' \"$*\" >> \"$TYPER_LOG\"\n",
             encoding="utf-8",
         )
         self.typer.chmod(0o755)
-        self.runtime_source = self.root / "runtime" / "14.2.0"
-        self.runtime_source.mkdir(parents=True)
-        (self.runtime_source / "libstdc++.so.6.0.33").write_text(
-            "test-runtime", encoding="utf-8")
         self.version_file = self.root / "version"
         self.software_dir = self.root / "software"
         self.version_file.write_text("3.1.5\n", encoding="utf-8")
@@ -66,6 +55,7 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.environment.update({
             "RESULT_PATH": str(self.result),
             "TYPER_LOG": str(self.typer_log),
+            "PATH": str(self.root) + os.pathsep + self.environment["PATH"],
         })
 
     def _installer(self, name, *, suppress_parent_kill=False,
@@ -83,13 +73,8 @@ class FirmwareImageInstallTest(unittest.TestCase):
                 "FIRMWARE_INSTALL_RESERVE_KB=0",
             "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30":
                 "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=0",
-            "FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh":
-                "FIRMWARE_INSTALL_SCREEN_SCRIPT=/usr/bin/true",
-            "FIRMWARE_INSTALL_TYPER=/opt/config/mod/.bin/exec/typer":
-                "FIRMWARE_INSTALL_TYPER=%s" % self.typer,
             "/opt/config/mod/.shell/boot/install-image-runner.sh":
                 str(INSTALL_IMAGE_RUNNER),
-            "/opt/config/mod/.bin/runtime/14.2.0": str(self.runtime_source),
             "    mount_data_partition\n": "    :\n",
         }
         if suppress_parent_kill:
@@ -204,16 +189,18 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
         self.assertRegex(
             result.stdout, r"// Space: \d+ MB needed, \d+ MB free")
         self.assertIn(
-            "// Preparing firmware installer\n"
-            "// Waiting for recovery services to stop.",
+            "// Preparing firmware image\n// Checking archive...",
             result.stdout,
         )
+        self.assertIn(
+            "// Preparing firmware installer\n"
+            "// Waiting for Forge-X services to stop.",
+            result.stdout,
+        )
+        self.assertFalse(self.typer_log.exists())
         self.assertTrue((self.staging / "flashforge_init.sh").exists())
         self.assertFalse(list(self.staging.glob(".forge-x-install-*")))
         self.assertTrue((self.runner_staging / "runner.sh").exists())
-        self.assertTrue((self.runner_staging / "typer").exists())
-        self.assertTrue(
-            (self.runner_staging / "runtime" / "libstdc++.so.6").exists())
 
     def test_accepted_image_stops_supplied_stock_parent(self):
         image = self._archive("Adventurer5M-test.tgz", [
@@ -264,8 +251,7 @@ kill() {
 }
 sleep() { :; }
 sync() { :; }
-stop_splash() { :; }
-firmware_screen() { :; }
+firmware_message() { :; }
 release_firmware_source_mount() { :; }
 fail_firmware_image "test failure"
 '''
@@ -415,7 +401,7 @@ echo unexpected > "$RESULT_PATH"
         self.assertFalse(self.result.exists())
         self.assertIn("No valid installer in image", result.stdout)
 
-    def test_nonzero_entrypoint_shows_delayed_completion_error(self):
+    def test_nonzero_entrypoint_records_delayed_completion_error(self):
         image = self._archive("Adventurer5M-test.tgz", [
             ("forge-x-init.sh", "#!/bin/bash\nexit 7\n", 0o755),
         ])
@@ -430,20 +416,10 @@ echo unexpected > "$RESULT_PATH"
             in runner_log.read_text(encoding="utf-8"),
             "runner did not record the entrypoint failure",
         )
-        self._wait_for(
-            lambda: self.typer_log.exists()
-            and "Firmware installer failed"
-            in self.typer_log.read_text(encoding="utf-8"),
-            "runner did not render the completion error",
-        )
-        screen = self.typer_log.read_text(encoding="utf-8")
-        self.assertIn("Firmware installer failed", screen)
-        self.assertIn("Ensure writing stopped, then power off.", screen)
-        runtime = self.runner_staging / "runtime"
-        self.assertIn(
-            "ready|%s|%s|" % (runtime, runtime / "libstdc++.so.6"),
-            screen,
-        )
+        runner_output = runner_log.read_text(encoding="utf-8")
+        self.assertIn("Firmware installer failed", runner_output)
+        self.assertIn("Ensure writing stopped, then power off.", runner_output)
+        self.assertFalse(self.typer_log.exists())
 
     def test_archive_member_cannot_escape_staging_directory(self):
         image = self._archive("Adventurer5M-test.tgz", [
@@ -690,19 +666,12 @@ echo detached > "$RESULT_PATH"
         self.assertIn("handled failure (status 100)", result.stdout)
         self.assertFalse(self.typer_log.exists())
 
-    def test_binary_runner_renders_early_unexpected_failure(self):
+    def test_binary_runner_records_early_unexpected_failure(self):
         self.staging.mkdir()
         runner = self._write_runner()
         entrypoint = self.staging / "forge-x-init"
         entrypoint.write_text("#!/bin/bash\nexit 127\n", encoding="utf-8")
         entrypoint.chmod(0o755)
-        staged_typer = self.runner_staging / "typer"
-        staged_typer.write_bytes(self.typer.read_bytes())
-        staged_typer.chmod(0o755)
-        runtime = self.runner_staging / "runtime"
-        runtime.mkdir()
-        (runtime / "libstdc++.so.6").write_text("test-runtime", encoding="utf-8")
-
         result = subprocess.run(
             [str(runner), str(self.staging), "forge-x-init", "binary",
              "Adventurer5M", "0023", "0"],
@@ -716,9 +685,9 @@ echo detached > "$RESULT_PATH"
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("unexpectedly during startup with status 127", result.stdout)
-        screen = self.typer_log.read_text(encoding="utf-8")
-        self.assertIn("Firmware installer failed", screen)
-        self.assertIn("installer could not start", screen)
+        self.assertIn("Firmware installer failed", result.stdout)
+        self.assertIn("installer could not start", result.stdout)
+        self.assertFalse(self.typer_log.exists())
 
     def test_runner_reports_when_previous_runtime_never_releases(self):
         self.staging.mkdir()
@@ -736,14 +705,6 @@ echo detached > "$RESULT_PATH"
             encoding="utf-8",
         )
         (self.staging / "forge-x-init.sh").chmod(0o755)
-        staged_typer = self.runner_staging / "typer"
-        staged_typer.write_bytes(self.typer.read_bytes())
-        staged_typer.chmod(0o755)
-        runtime = self.runner_staging / "runtime"
-        runtime.mkdir()
-        (runtime / "libstdc++.so.6").write_text(
-            "test-runtime", encoding="utf-8")
-
         fake_bin = self.root / "blocked-bin"
         fake_bin.mkdir()
         (fake_bin / "mount").write_text(
@@ -773,9 +734,9 @@ echo detached > "$RESULT_PATH"
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertFalse(self.result.exists())
         self.assertIn("Previous Forge-X runtime did not stop", result.stdout)
-        screen = self.typer_log.read_text(encoding="utf-8")
-        self.assertIn("Firmware installer blocked", screen)
-        self.assertIn("Power off the printer", screen)
+        self.assertIn("Firmware installer blocked", result.stdout)
+        self.assertIn("Power off the printer", result.stdout)
+        self.assertFalse(self.typer_log.exists())
 
     def test_gzip_compressed_tgz_is_rejected(self):
         image = self._archive("Adventurer5M-test.tgz", [
