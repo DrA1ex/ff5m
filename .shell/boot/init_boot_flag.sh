@@ -165,6 +165,7 @@ handle_special_boot_flag() {
             mount_data_partition
 
             cp -f /opt/config/mod/.shell/uninstall.sh /tmp/uninstall.sh
+            "$SCRIPTS/screen.sh" splash_stop
             /tmp/uninstall.sh
 
             exit 0
@@ -177,6 +178,7 @@ handle_special_boot_flag() {
             mount_data_partition
 
             cp -f /opt/config/mod/.shell/uninstall.sh /tmp/uninstall.sh
+            "$SCRIPTS/screen.sh" splash_stop
             /tmp/uninstall.sh --soft
 
             exit 0

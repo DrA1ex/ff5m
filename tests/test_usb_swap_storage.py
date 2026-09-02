@@ -798,6 +798,52 @@ class UsbStorageTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("Firmware image not found", result.stdout)
 
+    def test_remove_flags_stop_splash_before_starting_uninstaller(self):
+        scripts = self.root / "uninstall-scripts"
+        scripts.mkdir()
+        screen = scripts / "screen.sh"
+        screen.write_text(
+            "#!/bin/sh\n"
+            "printf 'screen:%s\\n' \"$1\" >> \"$TEST_EVENTS\"\n",
+            encoding="utf-8")
+        screen.chmod(0o755)
+
+        cases = (("REMOVE_MOD", ""), ("REMOVE_MOD_SOFT", "--soft"))
+        for flag, expected_argument in cases:
+            with self.subTest(flag=flag):
+                events = self.root / ("events-" + flag.lower())
+                uninstaller = self.root / ("uninstall-" + flag.lower())
+                uninstaller.write_text(
+                    "#!/bin/sh\n"
+                    "printf 'uninstall:%s\\n' \"$*\" >> \"$TEST_EVENTS\"\n",
+                    encoding="utf-8")
+                uninstaller.chmod(0o755)
+
+                source = self.init_boot_flag.read_text(encoding="utf-8")
+                self.assertEqual(source.count("/tmp/uninstall.sh"), 4)
+                source = source.replace("/tmp/uninstall.sh", str(uninstaller))
+                init_boot_flag = self.root / (
+                    "init-boot-flag-" + flag.lower() + ".sh")
+                init_boot_flag.write_text(source, encoding="utf-8")
+                init_boot_flag.chmod(0o755)
+                self.environment.update({
+                    "TEST_EVENTS": str(events),
+                    "TEST_FLAG": flag,
+                    "TEST_SCRIPTS": str(scripts),
+                })
+                result = self._run(init_boot_flag, r'''
+                    SCRIPTS="$TEST_SCRIPTS"
+                    rm() { :; }
+                    cp() { :; }
+                    mount_data_partition() { :; }
+                    handle_special_boot_flag "$TEST_FLAG"
+                ''')
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(
+                    events.read_text(encoding="utf-8").splitlines(),
+                    ["screen:splash_stop", "uninstall:" + expected_argument])
+
     def test_special_boot_success_stops_normal_initialize_pipeline(self):
         scripts = self.root / "scripts"
         scripts.mkdir()
