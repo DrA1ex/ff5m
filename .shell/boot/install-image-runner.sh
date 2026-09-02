@@ -7,6 +7,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=30
+FIRMWARE_BINARY_STARTUP_GRACE_SECONDS=10
 FORGE_X_RUNTIME_PATHS='/data/\.mod|/opt/config/mod|/root/printer_data'
 
 is_unsigned_integer() {
@@ -19,8 +20,8 @@ is_unsigned_integer() {
 firmware_screen() {
     local title=$1
     local detail=$2
-    local typer="$FIRMWARE_RUNNER_DIR/.forge-x-install-typer"
-    local runtime="$FIRMWARE_RUNNER_DIR/.forge-x-install-runtime"
+    local typer="$FIRMWARE_RUNNER_DIR/typer"
+    local runtime="$FIRMWARE_RUNNER_DIR/runtime"
     local libstdcxx="$runtime/libstdc++.so.6"
 
     echo "// $title"
@@ -64,17 +65,20 @@ wait_for_mod_paths() {
     done
 }
 
-if [ "$#" -ne 5 ]; then
+if [ "$#" -ne 6 ]; then
     exit 2
 fi
 
-FIRMWARE_ENTRYPOINT_NAME=$1
-FIRMWARE_ENTRYPOINT_KIND=$2
-FIRMWARE_MACHINE=$3
-FIRMWARE_PRODUCT_ID=$4
-FIRMWARE_ERROR_DELAY_SECONDS=$5
+FIRMWARE_PACKAGE_DIR=$1
+FIRMWARE_ENTRYPOINT_NAME=$2
+FIRMWARE_ENTRYPOINT_KIND=$3
+FIRMWARE_MACHINE=$4
+FIRMWARE_PRODUCT_ID=$5
+FIRMWARE_ERROR_DELAY_SECONDS=$6
 FIRMWARE_RUNNER_DIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 
+[ -n "$FIRMWARE_PACKAGE_DIR" ] && [ "$FIRMWARE_PACKAGE_DIR" != "/" ] \
+    && [ -d "$FIRMWARE_PACKAGE_DIR" ] || exit 2
 case "$FIRMWARE_ENTRYPOINT_KIND:$FIRMWARE_ENTRYPOINT_NAME" in
     binary:forge-x-init|shell:forge-x-init.sh|shell:flashforge_init.sh) ;;
     *) exit 2 ;;
@@ -85,6 +89,7 @@ case "$FIRMWARE_MACHINE:$FIRMWARE_PRODUCT_ID" in
 esac
 is_unsigned_integer "$FIRMWARE_ERROR_DELAY_SECONDS" || exit 2
 is_unsigned_integer "$FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS" || exit 2
+is_unsigned_integer "$FIRMWARE_BINARY_STARTUP_GRACE_SECONDS" || exit 2
 
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
@@ -98,15 +103,57 @@ if ! wait_for_mod_paths; then
 fi
 
 rm -f /tmp/logged_message_queue
-export FORGE_X_FIRMWARE_DIR="$FIRMWARE_RUNNER_DIR"
-firmware_screen "Starting firmware installer" "Launching the selected image."
+export FORGE_X_FIRMWARE_DIR="$FIRMWARE_PACKAGE_DIR"
+cd "$FIRMWARE_PACKAGE_DIR" || exit 1
 
 if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
-    "./$FIRMWARE_ENTRYPOINT_NAME" "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID"
-else
-    /bin/bash "./$FIRMWARE_ENTRYPOINT_NAME" \
-        "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID"
+    nohup "./$FIRMWARE_ENTRYPOINT_NAME" \
+        "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID" </dev/null &
+    installer_pid=$!
+    if [ -z "$installer_pid" ]; then
+        echo "@@ Installer process could not be created."
+        firmware_screen "Firmware installer failed" \
+            "The installer could not start. Power off and retry recovery."
+        sync
+        exit 0
+    fi
+
+    elapsed=0
+
+    while [ "$elapsed" -lt "$FIRMWARE_BINARY_STARTUP_GRACE_SECONDS" ]; do
+        kill -0 "$installer_pid" 2>/dev/null || break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if kill -0 "$installer_pid" 2>/dev/null; then
+        echo "// Installer remained active through the ${FIRMWARE_BINARY_STARTUP_GRACE_SECONDS}s startup window."
+        disown "$installer_pid" 2>/dev/null || disown 2>/dev/null || true
+        exit 0
+    fi
+
+    wait "$installer_pid"
+    status=$?
+
+    case "$status" in
+        0) ;;
+        100) echo "// Installer reported a handled failure (status 100)." ;;
+        101) echo "// Installer was canceled normally (status 101)." ;;
+        102) echo "// Installer handled an interrupt (status 102)." ;;
+        *)
+            echo "@@ Installer exited unexpectedly during startup with status $status."
+            firmware_screen "Firmware installer failed" \
+                "The installer could not start. Power off and retry recovery."
+            sync
+        ;;
+    esac
+
+    exit 0
 fi
+
+firmware_screen "Starting firmware installer" "Launching the selected image."
+/bin/bash "./$FIRMWARE_ENTRYPOINT_NAME" \
+    "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID"
 status=$?
 
 if [ "$status" -ne 0 ]; then

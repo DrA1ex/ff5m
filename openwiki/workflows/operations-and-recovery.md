@@ -33,11 +33,13 @@ image is accepted, it stops
 boot. A terminal failure does not return while a live stock parent cannot be
 stopped. The installer does not start networking. It validates tar member
 names, checks free space against the uncompressed tar size plus a 16 MiB
-reserve, replaces `/data/.firmware`, and streams extraction through one screen
-row updated by percentage. A `.tgz` is deliberately treated as an uncompressed
-tar; a `.tar.xz` is streamed through `xz -dc` and then tar. The next ordinary
-boot removes `/data/.firmware` through the same script's `cleanup` operation
-after `/data` is mounted.
+reserve, replaces `/data/.firmware` and `/data/.firmware-runner`, and streams
+extraction through one screen row updated by percentage. A `.tgz` is
+deliberately treated as an uncompressed tar; a `.tar.xz` is streamed through
+`xz -dc` and then tar. The next ordinary boot removes both staging directories
+through the same script's `cleanup` operation after `/data` is mounted. The
+package directory is always removed and recreated before extraction, so files
+from an earlier package cannot enter the selected installer.
 
 The staged entrypoint policy is fixed and fail closed:
 
@@ -45,7 +47,25 @@ The staged entrypoint policy is fixed and fail closed:
 2. Otherwise, if `forge-x-init.sh` exists, it must be a non-symlink regular file accepted by `bash -n` and is selected.
 3. Only when neither Forge-X entrypoint exists may a non-symlink `flashforge_init.sh` accepted by `bash -n` be selected.
 
-The selected entrypoint runs from `/data/.firmware` with the same stock machine and product arguments (`Adventurer5M 0023` or `Adventurer5MPro 0024`). Immediately before hand-off, the splash stops and Typer reports that the installer is being prepared; it does not claim that the image is already running. The installer copies a small runner, Typer, and Typer's required `libstdc++` runtime into the staging directory, starts the runner with detached standard streams, and returns so the `S00init` and `logged` processes can finish. The runner reports its wait while old mod mounts or open files remain. It records those references and shows a terminal blocked screen if they remain for 30 seconds, rather than waiting invisibly forever. Once released, it clears the persisted boot-screen queue, reports the actual entrypoint launch, and starts the selected entrypoint. A non-zero result is recorded in the staging log; after 30 seconds the staged Typer uses only its staged runtime to report that the firmware file failed and the printer may be powered off. A zero result ends the runner because control belongs to the image.
+The selected entrypoint runs from `/data/.firmware` with the same stock machine
+and product arguments (`Adventurer5M 0023` or `Adventurer5MPro 0024`).
+Immediately before hand-off, the splash stops and Typer reports that the
+installer is being prepared; it does not claim that the image is already
+running. The immutable package tree remains untouched. A small runner, Typer,
+Typer's required `libstdc++` runtime, and the detached log live in the sibling
+`/data/.firmware-runner` directory. The hand-off starts that runner with
+detached streams and returns so the `S00init` and `logged` processes can finish.
+The runner reports its wait while old mod mounts or open files remain. It
+records those references and shows a terminal blocked screen if they remain
+for 30 seconds, rather than waiting invisibly forever. Once released, it clears
+the persisted boot-screen queue and starts the selected entrypoint from the
+package directory. A binary installer that remains alive for ten seconds owns
+the framebuffer and all subsequent recovery through its own watchdog; the
+runner stops observing it. A binary that returns `0`, `100`, `101`, or `102`
+during that startup window has also completed through its own contract and
+does not trigger another screen. Only an early loader, crash, or
+unexpected-status failure receives the runner's emergency screen. Legacy shell
+entrypoints retain their synchronous delayed fallback.
 
 This path intentionally depends on kernel block metadata rather than partition-table parsing. Changes must retain coverage for multiple and logical partitions, digit-suffixed block names, whole-disk filesystems, existing read-only mounts, FAT/ext filesystems, firmware images, and normal boot flags. Unsupported filesystems are skipped so root/eMMC flag checks and the remaining recovery path still run.
 

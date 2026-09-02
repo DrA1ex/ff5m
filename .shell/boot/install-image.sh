@@ -9,6 +9,7 @@
 source /opt/config/mod/.shell/boot/stock_identity.sh || exit 1
 
 FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware
+FIRMWARE_INSTALL_RUNNER_DIR=/data/.firmware-runner
 FIRMWARE_INSTALL_RESERVE_KB=16384
 FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30
 FIRMWARE_INSTALL_SCREEN_SCRIPT=/opt/config/mod/.shell/screen.sh
@@ -119,7 +120,13 @@ fail_firmware_image() {
 cleanup_firmware_staging() {
     [ -n "$FIRMWARE_INSTALL_STAGING_DIR" ] \
         && [ "$FIRMWARE_INSTALL_STAGING_DIR" != "/" ] || return 1
-    rm -rf "$FIRMWARE_INSTALL_STAGING_DIR"
+    [ -n "$FIRMWARE_INSTALL_RUNNER_DIR" ] \
+        && [ "$FIRMWARE_INSTALL_RUNNER_DIR" != "/" ] || return 1
+    [ "$FIRMWARE_INSTALL_STAGING_DIR" != "$FIRMWARE_INSTALL_RUNNER_DIR" ] \
+        || return 1
+
+    rm -rf "$FIRMWARE_INSTALL_STAGING_DIR" || return 1
+    rm -rf "$FIRMWARE_INSTALL_RUNNER_DIR"
 }
 
 find_firmware_image() {
@@ -369,15 +376,17 @@ select_firmware_entrypoint() {
 prepare_firmware_runner() {
     local runner_source=/opt/config/mod/.shell/boot/install-image-runner.sh
     local runtime_source=/opt/config/mod/.bin/runtime/14.2.0
-    local runner="$FIRMWARE_INSTALL_STAGING_DIR/.forge-x-install-runner.sh"
-    local typer="$FIRMWARE_INSTALL_STAGING_DIR/.forge-x-install-typer"
-    local runtime="$FIRMWARE_INSTALL_STAGING_DIR/.forge-x-install-runtime"
+    local runner="$FIRMWARE_INSTALL_RUNNER_DIR/runner.sh"
+    local typer="$FIRMWARE_INSTALL_RUNNER_DIR/typer"
+    local runtime="$FIRMWARE_INSTALL_RUNNER_DIR/runtime"
     local libstdcxx="$runtime/libstdc++.so.6"
 
     [ -f "$runner_source" ] && [ ! -L "$runner_source" ] || return 1
     [ -x "$FIRMWARE_INSTALL_TYPER" ] || return 1
     [ -f "$runtime_source/libstdc++.so.6.0.33" ] \
         && [ ! -L "$runtime_source/libstdc++.so.6.0.33" ] || return 1
+    [ ! -e "$FIRMWARE_INSTALL_RUNNER_DIR" ] \
+        && [ ! -L "$FIRMWARE_INSTALL_RUNNER_DIR" ] || return 1
     mkdir -p "$runtime" || return 1
     cp -f "$runner_source" "$runner" || return 1
     cp -f "$FIRMWARE_INSTALL_TYPER" "$typer" || return 1
@@ -387,8 +396,8 @@ prepare_firmware_runner() {
 }
 
 handoff_firmware_entrypoint() {
-    local runner="$FIRMWARE_INSTALL_STAGING_DIR/.forge-x-install-runner.sh"
-    local runner_log="$FIRMWARE_INSTALL_STAGING_DIR/.forge-x-install-runner.log"
+    local runner="$FIRMWARE_INSTALL_RUNNER_DIR/runner.sh"
+    local runner_log="$FIRMWARE_INSTALL_RUNNER_DIR/runner.log"
     local entrypoint_name=${FIRMWARE_ENTRYPOINT##*/}
 
     stop_splash
@@ -398,8 +407,8 @@ handoff_firmware_entrypoint() {
     prepare_firmware_runner || return 1
 
     export FORGE_X_FIRMWARE_IMAGE="$FIRMWARE_IMAGE"
-    export FORGE_X_FIRMWARE_DIR="$FIRMWARE_INSTALL_STAGING_DIR"
-    nohup "$runner" "$entrypoint_name" "$FIRMWARE_ENTRYPOINT_KIND" \
+    nohup "$runner" "$FIRMWARE_INSTALL_STAGING_DIR" \
+        "$entrypoint_name" "$FIRMWARE_ENTRYPOINT_KIND" \
         "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID" \
         "$FIRMWARE_INSTALL_ERROR_DELAY_SECONDS" \
         </dev/null > "$runner_log" 2>&1 &

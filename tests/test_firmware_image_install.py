@@ -26,6 +26,7 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
         self.staging = self.root / ".firmware"
+        self.runner_staging = self.root / ".firmware-runner"
         self.result = self.root / "entrypoint-result"
         self.typer_log = self.root / "typer.log"
         self.typer = self.root / "typer"
@@ -76,6 +77,8 @@ class FirmwareImageInstallTest(unittest.TestCase):
             "/opt/config/mod/.shell/common.sh": "/dev/null",
             "FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware":
                 "FIRMWARE_INSTALL_STAGING_DIR=%s" % self.staging,
+            "FIRMWARE_INSTALL_RUNNER_DIR=/data/.firmware-runner":
+                "FIRMWARE_INSTALL_RUNNER_DIR=%s" % self.runner_staging,
             "FIRMWARE_INSTALL_RESERVE_KB=16384":
                 "FIRMWARE_INSTALL_RESERVE_KB=0",
             "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30":
@@ -123,7 +126,7 @@ class FirmwareImageInstallTest(unittest.TestCase):
         mode = mode or ("w:xz" if name.endswith(".tar.xz") else "w")
         with tarfile.open(path, mode=mode, format=tarfile.PAX_FORMAT) as archive:
             for member_name, content, member_mode in files:
-                payload = content.encode("utf-8")
+                payload = content if isinstance(content, bytes) else content.encode("utf-8")
                 member = tarfile.TarInfo(member_name)
                 member.size = len(payload)
                 member.mode = member_mode
@@ -147,6 +150,14 @@ class FirmwareImageInstallTest(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail(message)
+
+    def _write_runner(self):
+        self.runner_staging.mkdir(exist_ok=True)
+        source = INSTALL_IMAGE_RUNNER.read_text(encoding="utf-8")
+        runner = self.runner_staging / "runner.sh"
+        runner.write_text(source, encoding="utf-8")
+        runner.chmod(0o755)
+        return runner
 
     def test_scripts_have_valid_bash_syntax_and_installer_is_executable(self):
         subprocess.run(["bash", "-n", str(INSTALL_IMAGE)], check=True)
@@ -198,6 +209,11 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
             result.stdout,
         )
         self.assertTrue((self.staging / "flashforge_init.sh").exists())
+        self.assertFalse(list(self.staging.glob(".forge-x-install-*")))
+        self.assertTrue((self.runner_staging / "runner.sh").exists())
+        self.assertTrue((self.runner_staging / "typer").exists())
+        self.assertTrue(
+            (self.runner_staging / "runtime" / "libstdc++.so.6").exists())
 
     def test_accepted_image_stops_supplied_stock_parent(self):
         image = self._archive("Adventurer5M-test.tgz", [
@@ -319,6 +335,28 @@ fail_firmware_image "test failure"
         self.assertEqual(
             self.result.read_text(encoding="utf-8").strip(), "directory")
 
+    def test_successful_preflight_removes_both_previous_staging_trees(self):
+        self.staging.mkdir()
+        stale_package_file = self.staging / "left-by-old-package"
+        stale_package_file.write_text("stale", encoding="utf-8")
+        self.runner_staging.mkdir()
+        stale_runner_file = self.runner_staging / "left-by-old-runner"
+        stale_runner_file.write_text("stale", encoding="utf-8")
+        image = self._archive("Adventurer5M-test.tgz", [
+            ("forge-x-init.sh", """#!/bin/bash
+[ ! -e "left-by-old-package" ] || exit 9
+echo clean > "$RESULT_PATH"
+""", 0o755),
+        ])
+
+        result = self._run(image)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self._wait_for(self.result.exists, "firmware entrypoint did not run")
+        self.assertEqual(self.result.read_text(encoding="utf-8").strip(), "clean")
+        self.assertFalse(stale_package_file.exists())
+        self.assertFalse(stale_runner_file.exists())
+
     def test_temporary_source_mount_is_released_after_staging(self):
         umount_log = self.root / "umount.log"
         fake_umount = self.root / "umount"
@@ -385,7 +423,7 @@ echo unexpected > "$RESULT_PATH"
         result = self._run(image)
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        runner_log = self.staging / ".forge-x-install-runner.log"
+        runner_log = self.runner_staging / "runner.log"
         self._wait_for(
             lambda: runner_log.exists()
             and "Installer exited with status 7"
@@ -401,7 +439,7 @@ echo unexpected > "$RESULT_PATH"
         screen = self.typer_log.read_text(encoding="utf-8")
         self.assertIn("Firmware installer failed", screen)
         self.assertIn("Ensure writing stopped, then power off.", screen)
-        runtime = self.staging / ".forge-x-install-runtime"
+        runtime = self.runner_staging / "runtime"
         self.assertIn(
             "ready|%s|%s|" % (runtime, runtime / "libstdc++.so.6"),
             screen,
@@ -520,7 +558,8 @@ echo detached > "$RESULT_PATH"
 
     def test_runner_waits_for_old_mod_then_clears_screen_history(self):
         self.staging.mkdir()
-        runner = self.staging / ".forge-x-install-runner.sh"
+        self.runner_staging.mkdir()
+        runner = self.runner_staging / "runner.sh"
         screen_history = self.root / "logged-message-queue"
         screen_history.write_text("old boot message\n", encoding="utf-8")
         runner_source = INSTALL_IMAGE_RUNNER.read_text(encoding="utf-8")
@@ -567,7 +606,8 @@ echo detached > "$RESULT_PATH"
         old_mod_cwd = self.root / "opt" / "config" / "mod"
         old_mod_cwd.mkdir(parents=True)
         result = subprocess.run(
-            [str(runner), "forge-x-init.sh", "shell", "Adventurer5M", "0023", "0"],
+            [str(runner), str(self.staging), "forge-x-init.sh", "shell",
+             "Adventurer5M", "0023", "0"],
             env=environment,
             cwd=old_mod_cwd,
             text=True,
@@ -582,12 +622,108 @@ echo detached > "$RESULT_PATH"
         self.assertFalse(history_order_error.exists())
         self.assertEqual(
             pathlib.Path(lsof_cwd.read_text(encoding="utf-8").strip()),
-            self.staging,
+            self.runner_staging,
         )
+
+    def test_binary_runner_stops_observing_after_startup_window(self):
+        self.staging.mkdir()
+        runner = self._write_runner()
+        release = self.root / "release-binary"
+        entrypoint = self.staging / "forge-x-init"
+        entrypoint.write_text(
+            "#!/bin/bash\n"
+            "while [ ! -e \"$RELEASE_PATH\" ]; do sleep 0.05; done\n"
+            "echo detached > \"$RESULT_PATH\"\n",
+            encoding="utf-8",
+        )
+        entrypoint.chmod(0o755)
+        environment = dict(self.environment)
+        environment["RELEASE_PATH"] = str(release)
+        runner_output = self.root / "binary-runner.log"
+
+        try:
+            try:
+                with runner_output.open("w", encoding="utf-8") as output:
+                    result = subprocess.run(
+                        [str(runner), str(self.staging), "forge-x-init", "binary",
+                         "Adventurer5M", "0023", "0"],
+                        env=environment,
+                        text=True,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        timeout=15,
+                        check=False,
+                    )
+            except subprocess.TimeoutExpired:
+                self.fail(
+                    "runner did not detach:\n"
+                    + runner_output.read_text(encoding="utf-8"))
+
+            output = runner_output.read_text(encoding="utf-8")
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn("remained active through the 10s startup window", output)
+            self.assertFalse(self.result.exists())
+        finally:
+            release.touch()
+
+        self._wait_for(self.result.exists, "detached binary did not continue")
+
+    def test_binary_runner_trusts_early_handled_failure(self):
+        self.staging.mkdir()
+        runner = self._write_runner()
+        entrypoint = self.staging / "forge-x-init"
+        entrypoint.write_text("#!/bin/bash\nexit 100\n", encoding="utf-8")
+        entrypoint.chmod(0o755)
+
+        result = subprocess.run(
+            [str(runner), str(self.staging), "forge-x-init", "binary",
+             "Adventurer5M", "0023", "0"],
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=4,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("handled failure (status 100)", result.stdout)
+        self.assertFalse(self.typer_log.exists())
+
+    def test_binary_runner_renders_early_unexpected_failure(self):
+        self.staging.mkdir()
+        runner = self._write_runner()
+        entrypoint = self.staging / "forge-x-init"
+        entrypoint.write_text("#!/bin/bash\nexit 127\n", encoding="utf-8")
+        entrypoint.chmod(0o755)
+        staged_typer = self.runner_staging / "typer"
+        staged_typer.write_bytes(self.typer.read_bytes())
+        staged_typer.chmod(0o755)
+        runtime = self.runner_staging / "runtime"
+        runtime.mkdir()
+        (runtime / "libstdc++.so.6").write_text("test-runtime", encoding="utf-8")
+
+        result = subprocess.run(
+            [str(runner), str(self.staging), "forge-x-init", "binary",
+             "Adventurer5M", "0023", "0"],
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=4,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("unexpectedly during startup with status 127", result.stdout)
+        screen = self.typer_log.read_text(encoding="utf-8")
+        self.assertIn("Firmware installer failed", screen)
+        self.assertIn("installer could not start", screen)
 
     def test_runner_reports_when_previous_runtime_never_releases(self):
         self.staging.mkdir()
-        runner = self.staging / ".forge-x-install-runner.sh"
+        self.runner_staging.mkdir()
+        runner = self.runner_staging / "runner.sh"
         runner_source = INSTALL_IMAGE_RUNNER.read_text(encoding="utf-8")
         runner_source = runner_source.replace(
             "FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=30",
@@ -600,10 +736,10 @@ echo detached > "$RESULT_PATH"
             encoding="utf-8",
         )
         (self.staging / "forge-x-init.sh").chmod(0o755)
-        staged_typer = self.staging / ".forge-x-install-typer"
+        staged_typer = self.runner_staging / "typer"
         staged_typer.write_bytes(self.typer.read_bytes())
         staged_typer.chmod(0o755)
-        runtime = self.staging / ".forge-x-install-runtime"
+        runtime = self.runner_staging / "runtime"
         runtime.mkdir()
         (runtime / "libstdc++.so.6").write_text(
             "test-runtime", encoding="utf-8")
@@ -624,7 +760,7 @@ echo detached > "$RESULT_PATH"
         environment = dict(self.environment)
         environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
         result = subprocess.run(
-            [str(runner), "forge-x-init.sh", "shell",
+            [str(runner), str(self.staging), "forge-x-init.sh", "shell",
              "Adventurer5M", "0023", "0"],
             env=environment,
             text=True,
@@ -684,6 +820,8 @@ echo detached > "$RESULT_PATH"
     def test_cleanup_removes_staging_after_ordinary_boot(self):
         self.staging.mkdir()
         (self.staging / "left-by-installer").write_text("payload", encoding="utf-8")
+        self.runner_staging.mkdir()
+        (self.runner_staging / "left-by-runner").write_text("payload", encoding="utf-8")
 
         result = subprocess.run(
             ["bash", str(self.install_image), "cleanup"],
@@ -696,6 +834,7 @@ echo detached > "$RESULT_PATH"
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse(self.staging.exists())
+        self.assertFalse(self.runner_staging.exists())
 
 
 if __name__ == "__main__":
