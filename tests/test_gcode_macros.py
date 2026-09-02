@@ -523,6 +523,37 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                     self.assertEqual(
                         self._axis_targets(commands, "Z"), [expected])
 
+    def test_cancel_publishes_current_reason_before_base_cancel(self):
+        printer = self._motion_printer(100)
+        for params, reason in ((None, ""),
+                               ({"REASON": "FILAMENT RUNOUT"},
+                                "FILAMENT RUNOUT")):
+            with self.subTest(reason=reason):
+                result = render_macro(
+                    CLIENT, "CANCEL_PRINT", printer=printer, params=params)
+                publish = (
+                    "SET_GCODE_VARIABLE MACRO=CANCEL_PRINT "
+                    "VARIABLE=cancel_reason VALUE='\"%s\"'" % reason)
+
+                self.assertIn(publish, result.commands)
+                assert_order(self, result.commands, (
+                    publish,
+                    "CANCEL_PRINT_BASE",
+                ))
+
+    def test_print_failure_forwards_message_as_cancel_reason(self):
+        result = render_macro(
+            BASE, "_RAISE_WITH_PRINT_CANCEL",
+            printer={"gcode_macro _START_PRINT": {"print_active": True}},
+            params={"MSG": "Temperature waiting timed out."})
+
+        self.assertEqual(result.commands, (
+            'CANCEL_PRINT REASON="Temperature waiting timed out."',
+            "M400",
+            'RESPOND PREFIX="!!" MSG="Temperature waiting timed out."',
+            "_RAISE_ERROR",
+        ))
+
     def test_end_print_executes_move_safe_to_bounded_z_motion(self):
         cases = (
             (0, 50, 50),

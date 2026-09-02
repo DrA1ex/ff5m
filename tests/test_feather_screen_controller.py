@@ -2649,18 +2649,30 @@ class ControllerSafetyTest(unittest.TestCase):
                        FILAMENT_ACTIONS.PURGE):
             self.assertNotIn("--id 3:%s" % action.wire_id, drawing)
 
-    def test_terminal_print_state_becomes_idle_and_reports_result(self):
-        controller = ScenarioController.__new__(ScenarioController)
-        controller.print_state = FEATHER.PrintState.PAUSED
-        controller.pending_action = "print.cancel.confirm"
-        controller.reactor = Reactor()
-        controller.debug = False
-        messages = []
-        controller._show_message = lambda message, page: messages.append((message, page))
-        controller._change_print_state(FEATHER.PrintState.IDLE, "cancelled")
-        self.assertEqual(controller.print_state, FEATHER.PrintState.IDLE)
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.ScreenPage.IDLE_HOME)
+    def test_terminal_cancel_reports_current_reason_or_generic_result(self):
+        for reason, expected in (
+                ("", "Print cancelled"),
+                ("FILAMENT RUNOUT", "Print cancelled\nReason: FILAMENT RUNOUT")):
+            with self.subTest(reason=reason):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.print_state = FEATHER.PrintState.PAUSED
+                controller.pending_action = "print.cancel.confirm"
+                controller.cancel_print_macro = type(
+                    "CancelMacro", (), {
+                        "variables": {"cancel_reason": reason}})()
+                controller.reactor = Reactor()
+                controller.debug = False
+                messages = []
+                controller._show_message = (
+                    lambda message, page: messages.append((message, page)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, "cancelled")
+
+                self.assertEqual(
+                    controller.print_state, FEATHER.PrintState.IDLE)
+                self.assertEqual(messages, [
+                    (expected, FEATHER.ScreenPage.IDLE_HOME)])
 
     def test_preheat_presets_respect_real_heater_limits(self):
         controller = ScenarioController.__new__(ScenarioController)

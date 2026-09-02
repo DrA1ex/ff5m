@@ -536,6 +536,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._last_operation_revision = -1
         self.start_print_macro = self.printer.lookup_object(
             "gcode_macro _START_PRINT", None)
+        self.cancel_print_macro = self.printer.lookup_object(
+            "gcode_macro CANCEL_PRINT", None)
         self.bed_mesh = self.printer.lookup_object("bed_mesh", None)
         self.probe = self.printer.lookup_object("probe")
         self.weight_sensor = self.printer.lookup_object(
@@ -2074,11 +2076,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self, "_filament_request_token", 0) + 1
             if old_state in (PrintState.PREPARING, PrintState.PRINTING,
                              PrintState.PAUSED, PrintState.FINISHED):
-                label = ("Print cancelled" if
-                         getattr(self, "cancel_requested", False) else
-                         {"complete": "Print finished",
-                          "cancelled": "Print cancelled",
-                          "error": "Print failed"}.get(stats_state, "Print stopped"))
+                cancelled = (getattr(self, "cancel_requested", False)
+                             or stats_state == "cancelled")
+                if cancelled:
+                    macro = getattr(self, "cancel_print_macro", None)
+                    variables = getattr(macro, "variables", {})
+                    reason = str(
+                        variables.get("cancel_reason") or ""
+                    ).replace("\n", " ").strip()
+                    label = ("Print cancelled\nReason: %s" % reason
+                             if reason else "Print cancelled")
+                else:
+                    label = {
+                        "complete": "Print finished",
+                        "error": "Print failed",
+                    }.get(stats_state, "Print stopped")
                 self.cancel_requested = False
                 self.cancel_waiting_for_heat = False
                 self.home_during_print = False
