@@ -242,13 +242,19 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 
 During a normal operating-system reboot or poweroff, init invokes [`.shell/S99root`](../../.shell/S99root) through its `K99root` link. That kill path publishes the neutral `action:forge_x_shutting_down` lifecycle marker before stopping Buildroot services; the manual `STOP_MOD` path invokes `S99root` and does not publish it. Feather observes the marker and freezes its existing critical startup surface with a shutdown message. The shared service stop sequence removes `/dev/input/guppy` last, after display and network services have stopped, so the marker is handled before touch teardown without teaching the touch transport about system lifecycle. Forced reboot, kernel panic, and power loss bypass this graceful lifecycle.
 
-After `S99root start` or a manual `S99root stop` finishes writing service
-progress to the framebuffer, it publishes `action:forge_x_redraw`. Feather
-then renders the current page again after invalidating its persistent footer
-cache, because the external progress renderer may have overwritten that
-region. The signal is skipped when the Klipper command FIFO is unavailable.
-`K99root` does not publish it, so the frozen shutdown surface remains
-unchanged.
+Before starting Klipper in Feather mode, the boot script creates the common
+Forge-X screen marker `/tmp/forge_x_screen_busy`. Feather still initializes its
+renderer and runtime, but its renderer output gate discards frames while that
+file exists, leaving the splash and first-boot service logger as the sole
+framebuffer owner. After `S99root start` has closed its `logged` pipeline, it
+removes the file and publishes `action:forge_x_redraw`. Feather releases the
+output gate, clears the complete panel, and renders the current page. If the
+redraw signal is unavailable, the existing startup-animation callback before
+`klippy:ready`, or the normal one-second UI update afterward, observes the
+removed marker and performs the same release without a separate boot timer.
+Later `S99root` calls continue logging without framebuffer output and retain
+the redraw notification. `K99root` does not publish it, so the frozen shutdown
+surface remains unchanged.
 
 Startup and error pages clear the normal page hitboxes. The only actionable shutdown control is the generation-tagged `FIRMWARE_RESTART` button that Feather exposes after classifying an MCU recovery condition; it still routes through Klipper's normal G-code command path.
 

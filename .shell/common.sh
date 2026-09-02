@@ -21,6 +21,7 @@ CAMERA_F="/tmp/camera_f"
 NET_IP_F="/tmp/net_ip"
 
 SCREEN_FOLLOW_UP_LOG="/tmp/logged_message_queue"
+FORGE_X_SCREEN_BUSY_F="/tmp/forge_x_screen_busy"
 
 CFG_SCRIPT="$CMDS/zconf.sh"
 VAR_PATH="$MOD_DATA/variables.cfg"

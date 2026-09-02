@@ -44,6 +44,11 @@ class ScenarioController(FeatherZCalibrationMixin,
                          FEATHER.FeatherScreen):
     """Test harness for scenario implementations no longer on the host."""
 
+    boot_screen_held = False
+    touch_available = None
+    touch_warning_visible = False
+    system_shutdown_active = False
+
 
 class BedMeshState(StatusObject):
     def __init__(self, mesh_object, profile_name):
@@ -3177,6 +3182,123 @@ class ControllerSafetyTest(unittest.TestCase):
             UI.ThemeColor.BACKGROUND)
         self.assertIn(footer_clear, drawing)
         self.assertIn("192.168.2.4 | IDLE", drawing)
+
+    def test_root_service_redraw_releases_boot_screen_without_waiting(self):
+        events = []
+
+        class Renderer:
+            output_frozen = False
+
+            def release_output(self):
+                events.append("release")
+
+            def clear_display(self, key):
+                events.append(("clear-display", key))
+
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = Renderer()
+        controller.boot_screen_held = True
+        controller.startup_timer = None
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.error_message = ""
+        controller.page = FEATHER.ScreenPage.CONTROL_HEAT
+        controller._ensure_renderer_started = (
+            lambda: events.append("ensure-renderer"))
+        controller._show_page = lambda page: events.append(("show", page))
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=False):
+            controller._handle_gcode_output("// action:forge_x_redraw")
+
+        self.assertFalse(controller.boot_screen_held)
+        self.assertEqual(events, [
+            "release", "ensure-renderer", ("clear-display", "boot-handoff"),
+            ("show", FEATHER.ScreenPage.CONTROL_HEAT),
+        ])
+
+    def test_touch_warning_waits_for_boot_screen_release(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.hold_output()
+        controller.boot_screen_held = True
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.error_message = ""
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.touch_available = False
+        controller.touch_warning_visible = False
+        controller.system_shutdown_active = False
+        controller._ensure_renderer_started = lambda: False
+        controller.renderer.touch_unavailable_modal = mock.Mock(
+            wraps=controller.renderer.touch_unavailable_modal)
+
+        commands = controller.renderer.begin_page("Ready")
+        commands += controller.renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        controller.renderer.send(commands)
+
+        self.assertFalse(controller._show_touch_unavailable())
+        self.assertFalse(controller.touch_warning_visible)
+        self.assertFalse(controller.renderer.output_frozen)
+        self.assertEqual(
+            controller.renderer.get_status()["submitted_batches"], 0)
+        self.assertEqual(
+            controller.renderer.touch_unavailable_modal.call_count, 0)
+
+        def show_page(page):
+            self.assertEqual(page, FEATHER.ScreenPage.IDLE_HOME)
+            page_commands = controller.renderer.begin_page("Ready")
+            page_commands += controller.renderer.button(
+                "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+            controller.renderer.send(page_commands)
+            controller._show_touch_unavailable()
+
+        controller._show_page = show_page
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=False):
+            self.assertTrue(controller._release_boot_screen())
+
+        self.assertFalse(controller.boot_screen_held)
+        self.assertTrue(controller.touch_warning_visible)
+        self.assertTrue(controller.renderer.output_frozen)
+        self.assertGreater(
+            controller.renderer.get_status()["submitted_batches"], 0)
+        self.assertEqual(
+            controller.renderer.touch_unavailable_modal.call_count, 1)
+
+    def test_boot_screen_release_waits_while_marker_exists(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.boot_screen_held = True
+        controller.renderer = mock.Mock()
+        controller._ensure_renderer_started = mock.Mock()
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=True):
+            released = controller._release_boot_screen()
+
+        self.assertFalse(released)
+        self.assertTrue(controller.boot_screen_held)
+        controller.renderer.release_output.assert_not_called()
+        controller._ensure_renderer_started.assert_not_called()
+
+    def test_startup_timer_rechecks_busy_screen_without_drawing(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.boot_screen_held = True
+        controller._release_boot_screen = mock.Mock(return_value=False)
+
+        wake = controller._startup_tick(100.0)
+
+        self.assertEqual(wake, 100.0 + FEATHER.STARTUP_ANIMATION_PERIOD)
+        controller._release_boot_screen.assert_called_once_with()
+
+    def test_periodic_update_rechecks_boot_screen_after_ready(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller._release_boot_screen = mock.Mock(return_value=False)
+        controller._update_cycle = mock.Mock(return_value=123.0)
+
+        wake = controller._update(100.0)
+
+        self.assertEqual(wake, 123.0)
+        controller._release_boot_screen.assert_called_once_with()
+        controller._update_cycle.assert_called_once_with(100.0)
 
     def test_touch_device_protocol_dispatches_availability_transitions(self):
         controller = ScenarioController.__new__(ScenarioController)

@@ -2143,8 +2143,9 @@ commit_boot_guard
             "SCRIPTS={scripts}\n"
             "SCREEN_FOLLOW_UP_LOG={root}/screen-log\n"
             "BOOT_FAILURE_F={root}/boot-failure\n"
-            "FEATHER_SCREEN_BUSY_F={root}/feather-busy\n"
-            "logged() {{ cat; }}\n".format(root=self.root, scripts=scripts),
+            "FORGE_X_SCREEN_BUSY_F={root}/screen-busy\n"
+            "logged() {{ printf '%s\\n' \"$*\" > {root}/logged-args; cat; }}\n".format(
+                root=self.root, scripts=scripts),
             encoding="utf-8")
         s99 = self._patched_script(
             self.boot_scripts["S99root"], "S99root-late-test", {
@@ -2176,6 +2177,18 @@ commit_boot_guard
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
         self.assertEqual(succeeded.returncode, 0, succeeded.stdout)
         self.assertFalse(boot_failure.exists())
+        logged_args = self.root / "logged-args"
+        self.assertEqual(
+            logged_args.read_text(encoding="utf-8").strip(),
+            "/data/logFiles/boot.log --send-to-screen --screen-no-followup")
+
+        repeated = subprocess.run(
+            ["bash", str(s99), "start"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(repeated.returncode, 0, repeated.stdout)
+        self.assertEqual(
+            logged_args.read_text(encoding="utf-8").strip(),
+            "/data/logFiles/boot.log --screen-no-followup")
 
     def test_dropbear_dispatch_is_explicit_for_mod_soft_and_recovery(self):
         fake_bin = self.root / "dropbear-bin"

@@ -87,6 +87,7 @@ if [ "$DISPLAY_OFF" -eq 1 ]; then
     /opt/config/mod/.bin/exec/boot_mcu 2>&1
     
     echo "// Start klipper."
+    [ "$DISPLAY_MODE" = "FEATHER" ] && touch "$FORGE_X_SCREEN_BUSY_F"
     /opt/config/mod/.shell/commands/zstart_klipper.sh &> /dev/null
     
     echo "// Boot sequence done!"

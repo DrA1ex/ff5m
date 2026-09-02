@@ -131,6 +131,25 @@ class RenderWorkerTest(unittest.TestCase):
             disabled.start()
         self.assertFalse(disabled._worker.blending)
 
+    def test_renderer_starts_without_publishing_frames_while_output_is_held(self):
+        renderer = FeatherRenderer()
+        renderer.configure_worker(
+            lambda callback: callback(0.0), lambda old, new: None)
+        renderer.hold_output()
+
+        with mock.patch.object(
+                TyperRenderWorker, "start", return_value=True):
+            self.assertTrue(renderer.start())
+
+        self.assertEqual(renderer.get_status()["queue_depth"], 0)
+
+        renderer.release_output()
+        self.assertTrue(renderer.clear_display("boot-handoff"))
+        self.assertEqual(renderer.get_status()["queue_depth"], 1)
+        released = renderer._batch_queue.get()
+        self.assertEqual(released.kind, "critical")
+        self.assertIn("--batch clear", "\n".join(released.commands))
+
     def test_transport_and_batch_limits_match_followup_contract(self):
         self.assertEqual(MAX_ATOMIC_DRAW, 8 * 1024)
         self.assertEqual(MAX_BATCH_BYTES, 64 * 1024)

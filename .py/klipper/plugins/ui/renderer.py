@@ -121,6 +121,7 @@ class FeatherRenderer:
         self._menu_suppressed = False
         self._loader_active = False
         self._output_frozen = False
+        self._output_held = False
         self._font_manifest_loaded = False
         self._semantic_page_id = None
 
@@ -158,6 +159,22 @@ class FeatherRenderer:
     def thaw_output(self):
         self._output_frozen = False
 
+    def hold_output(self):
+        """Suppress framebuffer writes without stopping renderer lifecycle."""
+        self._output_held = True
+
+    def release_output(self):
+        self._output_held = False
+
+    def clear_display(self, key="display-clear"):
+        """Replace every framebuffer pixel before a new display owner draws."""
+        self._footer_drawn = False
+        return self.send([
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
+            "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
+        ], kind="critical", key=key)
+
     @staticmethod
     def quote(value):
         value = str(value).replace("\r", " ").replace("\n", " ")
@@ -191,11 +208,7 @@ class FeatherRenderer:
         # framebuffer. Clear the complete panel before the first partial page
         # render so neither the persistent footer nor the outer margins can
         # expose pixels from the previous screen owner.
-        self.send([
-            self.clear_hitboxes("base"),
-            self.clear_hitboxes("overlay"),
-            "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
-        ], kind="critical", key="worker-clear")
+        self.clear_display("worker-clear")
         return started
 
     def _worker_event_fd_changed(self, old_fd, new_fd):
@@ -223,6 +236,10 @@ class FeatherRenderer:
     def send(self, commands, kind=None, key=None, generation=None,
              receipt=None):
         """Publish one immutable batch; never perform IO or lifecycle work."""
+        if self._output_held:
+            self._next_batch_kind = None
+            self._next_batch_key = None
+            return False
         if self._output_frozen or not commands:
             return False
         immutable = tuple(str(command) for command in commands)

@@ -55,6 +55,7 @@ DISP_LCD_BACKLIGHT_ENABLE = 0x104
 REFRESH_TIME = 1.0
 ACTION_DEBOUNCE = 0.08
 STARTUP_ANIMATION_PERIOD = 0.16
+FORGE_X_SCREEN_BUSY_PATH = "/tmp/forge_x_screen_busy"
 MAX_TOUCH_EVENT = 256
 
 
@@ -194,6 +195,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.renderer.configure_worker(
             register_async, self._renderer_event_fd_changed,
             self._renderer_restarted)
+        self.boot_screen_held = os.path.exists(FORGE_X_SCREEN_BUSY_PATH)
+        if self.boot_screen_held:
+            self.renderer.hold_output()
         self.file_scan_worker = FileScanWorker(register_async)
         self.feature_manager = LazyFeatureManager(self, FEATURE_SPECS)
         self.safety = self._build_safety_registry()
@@ -333,6 +337,23 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _deferred_start_pre_ready_ui(self, eventtime):
         self._start_pre_ready_ui()
 
+    def _release_boot_screen(self):
+        if (not getattr(self, "boot_screen_held", False)
+                or os.path.exists(FORGE_X_SCREEN_BUSY_PATH)):
+            return False
+        self.boot_screen_held = False
+        self.renderer.release_output()
+        renderer_started = self._ensure_renderer_started()
+        if not renderer_started:
+            self.renderer.clear_display("boot-handoff")
+        if self.renderer.output_frozen:
+            return True
+        if self.print_state == PrintState.INACTIVE and not self.error_message:
+            self._render_startup_modal()
+        else:
+            self._show_page(self.page)
+        return True
+
     def _lookup_mod_params_before_ready(self):
         """Return already-loaded settings without waiting for klippy:ready."""
         params = getattr(self, "params", None)
@@ -418,6 +439,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._startup_tick, self.reactor.NOW)
 
     def _startup_tick(self, eventtime):
+        if (getattr(self, "boot_screen_held", False)
+                and not self._release_boot_screen()):
+            return eventtime + STARTUP_ANIMATION_PERIOD
         if self.print_state != PrintState.INACTIVE or self.error_message:
             self.startup_timer = None
             return self.reactor.NEVER
@@ -751,9 +775,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     logging.info("[feather_screen] stale touch ignored: %s", raw_action)
 
     def _show_touch_unavailable(self):
-        if (getattr(self, "touch_available", None) is not False
-                or getattr(self, "touch_warning_visible", False)
-                or getattr(self, "system_shutdown_active", False)
+        if (self.boot_screen_held
+                or self.touch_available is not False
+                or self.touch_warning_visible
+                or self.system_shutdown_active
                 or not self.renderer.touch_warning_allowed):
             return False
         was_frozen = self.renderer.output_frozen
@@ -1843,6 +1868,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             # None corrupts the reactor timer heap; park the callback instead.
             return self.reactor.NEVER
         try:
+            self._release_boot_screen()
             waketime = self._update_cycle(eventtime)
         except Exception:
             failures = getattr(self, "_update_failures", 0) + 1
