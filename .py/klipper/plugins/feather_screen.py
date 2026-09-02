@@ -1747,8 +1747,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self.message_actions,
             x=90, y=95, width=620, height=300, tone="info")
         commands.append(self.renderer.text(
-            400, 173, self.message, ThemeColor.TEXT, "JetBrainsMono 8pt", "center",
-            "middle", max_width=584, max_height=88, wrap=True,
+            400, 215, self.message, ThemeColor.TEXT, "JetBrainsMono 12pt", "center",
+            "middle", max_width=584, max_height=108, wrap=True,
             truncate=True))
         self.renderer.send(commands)
 

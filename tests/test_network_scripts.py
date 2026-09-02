@@ -74,20 +74,18 @@ class NetworkScriptsTest(unittest.TestCase):
             subprocess.run(["bash", "-n", str(script)], check=True)
         subprocess.run(["sh", "-n", str(ETHERNET_MAC_HELPER)], check=True)
 
-    def test_display_mode_resolver_uses_feather_for_missing_value(self):
+    def test_display_mode_resolver_accepts_supported_values_and_defaults(self):
         cases = (
-            ("__DEFAULT__", "__DEFAULT__", "FEATHER"),
-            ("__DEFAULT__", "STOCK", "STOCK"),
-            ("__DEFAULT__", "GUPPY", "GUPPY"),
-            ("__DEFAULT__", "HEADLESS", "HEADLESS"),
-            ("__DEFAULT__", "BROKEN", "FEATHER"),
-            ("0", "FEATHER", "STOCK"),
-            ("1", "STOCK", "FEATHER"),
+            ("__DEFAULT__", "FEATHER"),
+            ("STOCK", "STOCK"),
+            ("GUPPY", "GUPPY"),
+            ("HEADLESS", "HEADLESS"),
+            ("BROKEN", "FEATHER"),
         )
 
-        for legacy, display, expected in cases:
+        for display, expected in cases:
             with self.subTest(
-                    legacy=legacy, display=display, expected=expected), \
+                    display=display, expected=expected), \
                     tempfile.TemporaryDirectory() as directory:
                 directory = pathlib.Path(directory)
                 commands = directory / "commands"
@@ -95,12 +93,7 @@ class NetworkScriptsTest(unittest.TestCase):
                 zconf = commands / "zconf.sh"
                 zconf.write_text(
                     "#!/bin/sh\n"
-                    "key=\"$3\"\n"
-                    "if [ \"$key\" = display_off ]; then\n"
-                    "    value=\"$TEST_DISPLAY_OFF\"\n"
-                    "else\n"
-                    "    value=\"$TEST_DISPLAY\"\n"
-                    "fi\n"
+                    "value=\"$TEST_DISPLAY\"\n"
                     "[ \"$value\" = __DEFAULT__ ] && value=\"$4\"\n"
                     "echo \"$value\"\n",
                     encoding="utf-8")
@@ -112,7 +105,6 @@ class NetworkScriptsTest(unittest.TestCase):
                 env.update({
                     "CMDS": str(commands),
                     "VAR_PATH": str(variables),
-                    "TEST_DISPLAY_OFF": legacy,
                     "TEST_DISPLAY": display,
                 })
 
