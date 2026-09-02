@@ -2131,8 +2131,9 @@ commit_boot_guard
         screen = scripts / "screen.sh"
         screen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         screen.chmod(0o755)
-        database = self.root / "moonraker-sql.db"
-        database.touch()
+        migrate = self.root / "migrate-db"
+        migrate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        migrate.chmod(0o755)
         boot_failure = self.root / "boot-failure"
         self.boot_paths["INIT_FLAG"].touch()
 
@@ -2150,7 +2151,7 @@ commit_boot_guard
         s99 = self._patched_script(
             self.boot_scripts["S99root"], "S99root-late-test", {
                 "/opt/config/mod/.shell/common.sh": str(common),
-                "/opt/config/mod_data/database/moonraker-sql.db": str(database),
+                "/opt/config/mod/.shell/migrate_db.sh": str(migrate),
             })
 
         fake_bin = self.root / "late-bin"

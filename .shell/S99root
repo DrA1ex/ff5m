@@ -56,7 +56,7 @@ start() {
         mount --rbind /dev/pts "$MOD"/dev/pts
     fi
 
-    if [ ! -f /opt/config/mod_data/database/moonraker-sql.db ]; then
+    if ! /opt/config/mod/.shell/migrate_db.sh --check; then
         echo "// Initializing database..."
 
         rm -f /opt/config/mod/sql/version
