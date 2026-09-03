@@ -23,16 +23,25 @@ esac
 
 source /opt/config/mod/.shell/common.sh
 
-if [ -f "$NOT_FIRST_LAUNCH_F" ]; then
-    first_launch=0
-else
-    first_launch=1
-fi
+S99ROOT_CALLER_PID=$PPID
+S99ROOT_CALLER_CMDLINE="/proc/$S99ROOT_CALLER_PID/cmdline"
+
+system_shutdown_in_progress() {
+    [ -r "$S99ROOT_CALLER_CMDLINE" ] || return 1
+    tr '\0' '\n' < "$S99ROOT_CALLER_CMDLINE" \
+        | grep -Fxq "/etc/init.d/rcK"
+}
 
 printer_command_available() {
     [ -e /tmp/printer ] || return 1
     ps | grep -q "[k]lippy.py"
 }
+
+if [ -f "$NOT_FIRST_LAUNCH_F" ]; then
+    first_launch=0
+else
+    first_launch=1
+fi
 
 start() {
     if [ "$first_launch" -eq 1 ] && [ -f "$CUSTOM_BOOT_F" ]; then
@@ -90,10 +99,6 @@ start() {
 }
 
 stop() {
-    if [ "${0##*/}" = "K99root" ] && printer_command_available; then
-        printer_command "action:forge_x_shutting_down"
-    fi
-
     echo "// Stopping Buildroot env..."
     chroot "$MOD" /opt/config/mod/.root/stop.sh
     echo "// Done"
@@ -112,27 +117,10 @@ wait_stopped() {
         && while kill -0 "$(cat "$MOD/var/run/ts_uinput.pid")" >/dev/null 2>&1; do sleep 1; done
 }
 
-switch() {
-    case "$1" in
-        start)
-            start
-        ;;
-
-        stop)
-            stop
-        ;;
-
-        restart|reload)
-            stop
-            wait_stopped
-
-            start
-        ;;
-
-        *)
-            echo "Usage: $0 {start|stop|restart}"
-            exit 1
-    esac
+restart() {
+    stop
+    wait_stopped
+    start
 }
 
 if [ "$first_launch" -eq 1 ]; then
@@ -141,18 +129,49 @@ else
     logged_args=(--screen-no-followup)
 fi
 
-switch "$@" 2>&1 | logged "/data/logFiles/boot.log" "${logged_args[@]}"
-status=${PIPESTATUS[0]}
-
-if [ "$1" = "start" ]; then
-    rm -f "$FORGE_X_SCREEN_BUSY_F"
-fi
+run_logged() {
+    "$@" 2>&1 | logged "/data/logFiles/boot.log" "${logged_args[@]}"
+    return "${PIPESTATUS[0]}"
+}
 
 case "$1" in
-    start|stop)
-        if [ "${0##*/}" != "K99root" ] && printer_command_available; then
+    start)
+        run_logged start
+        status=$?
+
+        # Release Feather only after the startup logger has closed its output.
+        rm -f "$FORGE_X_SCREEN_BUSY_F"
+        if printer_command_available; then
             printer_command "action:forge_x_redraw"
         fi
+    ;;
+
+    stop)
+        system_shutdown=0
+        if system_shutdown_in_progress; then
+            system_shutdown=1
+            if printer_command_available; then
+                printer_command "action:forge_x_shutting_down"
+                sleep 1
+            fi
+        fi
+
+        run_logged stop
+        status=$?
+
+        if [ "$system_shutdown" -eq 0 ] && printer_command_available; then
+            printer_command "action:forge_x_redraw"
+        fi
+    ;;
+
+    restart|reload)
+        run_logged restart
+        status=$?
+    ;;
+
+    *)
+        echo "Usage: $0 {start|stop|restart|reload}"
+        status=1
     ;;
 esac
 

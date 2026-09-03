@@ -80,7 +80,8 @@ initialize() {
     ln -fs /opt/config/mod/.shell/S98camera /etc/init.d/
     ln -fs /opt/config/mod/.shell/S98zssh /etc/init.d/
     ln -fs /opt/config/mod/.shell/S99root /etc/init.d/
-    ln -fs /opt/config/mod/.shell/S99root /etc/init.d/K99root
+    # rcK stops S?? services directly; remove the obsolete unused kill link.
+    rm -f /etc/init.d/K99root
     
     # oh-my-zsh
     mkdir -p /root/.oh-my-zsh

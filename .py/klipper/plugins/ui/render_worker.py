@@ -174,6 +174,10 @@ class RenderBatchQueue:
         with self._condition:
             self._remove(lambda item: item.kind != "critical", coalesced=False)
 
+    def discard_all(self):
+        with self._condition:
+            self._remove(lambda item: True, coalesced=False)
+
     def rendered(self):
         with self._condition:
             self._metrics["rendered_batches"] += 1

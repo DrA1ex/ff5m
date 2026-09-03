@@ -3167,6 +3167,34 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(len(batches), batch_count)
 
+    def test_system_shutdown_replaces_queued_touch_warning(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.shutdown_active = False
+        controller.system_shutdown_active = False
+        controller.boot_screen_held = False
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.touch_available = True
+        controller.touch_warning_visible = False
+
+        commands = controller.renderer.begin_page("Ready")
+        commands += controller.renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        controller.renderer.send(commands)
+        controller._handle_touch_device_status(False)
+
+        controller._handle_gcode_output(
+            "// action:forge_x_shutting_down")
+
+        self.assertEqual(
+            controller.renderer.get_status()["queue_depth"], 1)
+        shutdown = controller.renderer._batch_queue.get()
+        drawing = "\n".join(shutdown.commands)
+        self.assertEqual(shutdown.key, "startup")
+        self.assertIn("FORGE-X", drawing)
+        self.assertIn("SHUTTING DOWN", drawing)
+        self.assertNotIn("TOUCH INPUT UNAVAILABLE", drawing)
+
     def test_root_service_redraws_the_current_page(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.page = FEATHER.ScreenPage.CONTROL_HEAT

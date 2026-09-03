@@ -43,6 +43,34 @@ def material_config():
 
 
 class WorkflowMacroTest(unittest.TestCase):
+    def test_system_power_macros_prepare_hardware_before_action(self):
+        macros = (
+            (BASE, "_PREPARE_SYSTEM_POWER"),
+            (BASE, "SHUTDOWN"),
+            (BASE, "REBOOT"),
+        )
+        preparation = (
+            'RESPOND TYPE=command MSG="action:forge_x_shutting_down"',
+            "BED_MESH_CLEAR",
+            "M400",
+            "SET_PIN PIN=clear_power_off VALUE=1",
+            "WAIT TIME=500",
+            "SET_PIN PIN=clear_power_off VALUE=0",
+        )
+
+        shutdown = execute_macro_chain(macros, "SHUTDOWN")
+        reboot = execute_macro_chain(macros, "REBOOT")
+
+        self.assertEqual(
+            shutdown, preparation + (
+                "SET_PIN PIN=power_off VALUE=0",
+                "RUN_SHELL_COMMAND CMD=sync",
+                "RUN_SHELL_COMMAND CMD=poweroff"))
+        self.assertEqual(
+            reboot, preparation + (
+                "RUN_SHELL_COMMAND CMD=sync",
+                "RUN_SHELL_COMMAND CMD=reboot"))
+
     def test_conditional_homing_publishes_state_only_when_needed(self):
         unhomed = render_macro(BASE, "_HOME_IF_NEEDED", printer={
             "toolhead": {"homed_axes": ""},

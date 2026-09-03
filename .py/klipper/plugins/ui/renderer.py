@@ -149,8 +149,8 @@ class FeatherRenderer:
         return not self._loader_active and bool(actions)
 
     def discard_pending_output(self):
-        """Drop untouched ordinary batches, preserving critical screens."""
-        self._batch_queue.discard_noncritical()
+        """Drop every untouched batch before a final lifecycle screen."""
+        self._batch_queue.discard_all()
 
     def freeze_output(self):
         """Keep the last submitted safety screen as the sole display owner."""

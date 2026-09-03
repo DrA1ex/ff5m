@@ -29,6 +29,8 @@ DEPLOYED_BOOT_MODE_SH = "/opt/config/mod/.shell/boot/boot_mode.sh"
 S00_INIT = ROOT / ".shell" / "S00init"
 INIT_MAIN = ROOT / ".shell" / "init-main.sh"
 FORGE_X_SERVICE = ROOT / ".root" / "forge-x"
+ROOT_START = ROOT / ".root" / "start.sh"
+SUDO_SHIM = ROOT / ".root" / "sudo-shim"
 ZCHECK = ROOT / ".shell" / "commands" / "zcheck.sh"
 ZRESET_CONFIG = ROOT / ".shell" / "commands" / "zreset_config.sh"
 
@@ -130,6 +132,7 @@ class BootRecoveryTest(unittest.TestCase):
         subprocess.run(["bash", "-n", str(INIT_MAIN)], check=True)
         subprocess.run(["bash", "-n", str(ZCHECK)], check=True)
         subprocess.run(["bash", "-n", str(ZRESET_CONFIG)], check=True)
+        subprocess.run(["sh", "-n", str(SUDO_SHIM)], check=True)
         subprocess.run(["python3", "-m", "py_compile", str(RECOVERY_PY)], check=True)
         subprocess.run(
             [str(RECOVERY_PY), "--help"], stdout=subprocess.DEVNULL,
@@ -137,6 +140,73 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertTrue(os.access(RECOVERY_SH, os.X_OK))
         self.assertTrue(os.access(INIT_MAIN, os.X_OK))
         self.assertTrue(os.access(ZRESET_CONFIG, os.X_OK))
+        self.assertTrue(os.access(SUDO_SHIM, os.X_OK))
+
+    def test_sudo_shim_routes_exact_power_actions_to_klipper(self):
+        printer = self.root / "printer"
+        printer.touch()
+        shim = self._patched_script(
+            SUDO_SHIM, "sudo-shim", {"/tmp/printer": str(printer)})
+        fake_bin = self.root / "sudo-bin"
+        fake_bin.mkdir()
+        (fake_bin / "ps").write_text(
+            "#!/bin/sh\n"
+            "[ \"$SUDO_TEST_KLIPPY\" = 1 ] && "
+            "printf '%s\\n' '1 root klippy.py'\n",
+            encoding="utf-8")
+        (fake_bin / "reboot").write_text(
+            "#!/bin/sh\nprintf 'passthrough:%s\\n' \"$*\"\n",
+            encoding="utf-8")
+        for command in ("ps", "reboot"):
+            (fake_bin / command).chmod(0o755)
+        environment = dict(os.environ)
+        environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
+        environment["SUDO_TEST_KLIPPY"] = "1"
+
+        reboot = subprocess.run(
+            [str(shim), "reboot"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(reboot.returncode, 0, reboot.stdout)
+        self.assertEqual(printer.read_text(encoding="utf-8"), "REBOOT\n")
+
+        poweroff = subprocess.run(
+            [str(shim), "poweroff"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(poweroff.returncode, 0, poweroff.stdout)
+        self.assertEqual(printer.read_text(encoding="utf-8"), "SHUTDOWN\n")
+
+        environment["SUDO_TEST_KLIPPY"] = "0"
+        fallback = subprocess.run(
+            [str(shim), "reboot"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(fallback.returncode, 0, fallback.stdout)
+        self.assertEqual(fallback.stdout, "passthrough:\n")
+
+        passthrough = subprocess.run(
+            [str(shim), "reboot", "-f"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(passthrough.returncode, 0, passthrough.stdout)
+        self.assertEqual(passthrough.stdout, "passthrough:-f\n")
+
+    def test_root_start_replaces_existing_sudo_file_with_shim_link(self):
+        installed_sudo = self.root / "sudo"
+        installed_sudo.write_text("legacy sudo\n", encoding="utf-8")
+        start = self._patched_script(
+            ROOT_START, "root-start-test", {
+                "[ -L /usr/bin/ip ] && rm -f /usr/bin/ip": ":",
+                "[ -L /usr/bin/tc ] && rm -f /usr/bin/tc": ":",
+                "ln -fns /opt/config/mod/.root/sudo-shim /usr/bin/sudo":
+                    "ln -fns {} {}\nexit 0".format(
+                        SUDO_SHIM, installed_sudo),
+            })
+
+        completed = subprocess.run(
+            ["bash", str(start)], text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, check=False)
+
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertTrue(installed_sudo.is_symlink())
+        self.assertEqual(installed_sudo.resolve(), SUDO_SHIM.resolve())
 
     def test_boot_mode_resolves_every_flag_combination(self):
         paths = self.boot_paths
@@ -2190,6 +2260,70 @@ commit_boot_guard
         self.assertEqual(
             logged_args.read_text(encoding="utf-8").strip(),
             "/data/logFiles/boot.log --screen-no-followup")
+
+    def test_s99_distinguishes_system_shutdown_from_service_stop(self):
+        self.boot_paths["INIT_FLAG"].touch()
+        common = self.root / "power-common.sh"
+        mod = self.root / "mod"
+        mod.mkdir()
+        printer = self.root / "printer"
+        printer.touch()
+        caller = self.root / "caller-cmdline"
+        common.write_text(
+            "MOD={mod}\n"
+            "NOT_FIRST_LAUNCH_F={root}/not-first\n"
+            "CUSTOM_BOOT_F={root}/custom-boot\n"
+            "SCREEN_FOLLOW_UP_LOG={root}/screen-log\n"
+            "BOOT_FAILURE_F={root}/boot-failure\n"
+            "FORGE_X_SCREEN_BUSY_F={root}/screen-busy\n"
+            "logged() {{ cat; }}\n"
+            "printer_command() {{ printf '%s\\n' \"$1\" > {printer}; }}\n".format(
+                mod=mod, root=self.root, printer=printer),
+            encoding="utf-8")
+        s99 = self._patched_script(
+            self.boot_scripts["S99root"], "S99root-power-test", {
+                "/opt/config/mod/.shell/common.sh": str(common),
+                "/proc/$S99ROOT_CALLER_PID/cmdline": str(caller),
+                "/tmp/printer": str(printer),
+            })
+        fake_bin = self.root / "power-bin"
+        fake_bin.mkdir()
+        (fake_bin / "ps").write_text(
+            "#!/bin/sh\nprintf '%s\\n' '1 root klippy.py'\n",
+            encoding="utf-8")
+        (fake_bin / "chroot").write_text(
+            "#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "sleep").write_text(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}/sleeps\n".format(
+                self.root), encoding="utf-8")
+        for command in ("ps", "chroot", "sleep"):
+            (fake_bin / command).chmod(0o755)
+        environment = dict(os.environ)
+        environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
+
+        caller.write_bytes(b"/bin/bash\0/etc/init.d/rcK\0")
+        system_stop = subprocess.run(
+            ["bash", str(s99), "stop"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+
+        self.assertEqual(system_stop.returncode, 0, system_stop.stdout)
+        self.assertEqual(
+            printer.read_text(encoding="utf-8"),
+            "action:forge_x_shutting_down\n")
+        self.assertEqual(
+            (self.root / "sleeps").read_text(encoding="utf-8"), "1\n")
+
+        printer.write_text("untouched\n", encoding="utf-8")
+        caller.write_bytes(b"/bin/bash\0/etc/init.d/S99root\0stop\0")
+        service_stop = subprocess.run(
+            ["bash", str(s99), "stop"], env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+
+        self.assertEqual(service_stop.returncode, 0, service_stop.stdout)
+        self.assertEqual(
+            printer.read_text(encoding="utf-8"), "action:forge_x_redraw\n")
+        self.assertEqual(
+            (self.root / "sleeps").read_text(encoding="utf-8"), "1\n")
 
     def test_dropbear_dispatch_is_explicit_for_mod_soft_and_recovery(self):
         fake_bin = self.root / "dropbear-bin"

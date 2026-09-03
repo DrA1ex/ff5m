@@ -240,7 +240,32 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 
 `FeatherScreen._process_touch_events()` handles partial FIFO reads, validates generation and format, wakes a dimmed panel on the first touch, debounces actions, and applies page/state gates. A lost device replaces an ordinary interactive page or a button-bearing modal with a non-interactive warning. Pre-ready startup and operation loaders are not covered. Reconnection canonically renders the current page again, restoring any page-owned modal and preserving a frozen shutdown screen's ownership. Continuous motion is further limited to the Move page, idle state, correct homing, and active joystick mode; actual motion remains inside Klipper's planner/toolhead path.
 
-During a normal operating-system reboot or poweroff, init invokes [`.shell/S99root`](../../.shell/S99root) through its `K99root` link. That kill path publishes the neutral `action:forge_x_shutting_down` lifecycle marker before stopping Buildroot services; the manual `STOP_MOD` path invokes `S99root` and does not publish it. Feather observes the marker and freezes its existing critical startup surface with a shutdown message. The shared service stop sequence removes `/dev/input/guppy` last, after display and network services have stopped, so the marker is handled before touch teardown without teaching the touch transport about system lifecycle. Forced reboot, kernel panic, and power loss bypass this graceful lifecycle.
+The public `REBOOT` and `SHUTDOWN` macros call `_PREPARE_SYSTEM_POWER` while
+Klipper is still available. That shared preparation publishes
+`action:forge_x_shutting_down` and resets the controller power-button signal;
+`SHUTDOWN` additionally lowers the Pro power-off pin before invoking the
+ordinary system command. Moonraker runs as root but prefixes machine actions
+with `sudo`, so [`.root/sudo-shim`](../../.root/sudo-shim) translates its exact
+`sudo reboot` and `sudo poweroff` requests back to those public macros. Other
+commands pass through unchanged, and unavailable Klipper falls back to the
+requested system command.
+
+During the resulting graceful reboot or poweroff, BusyBox init runs `rcK`,
+which invokes every `S??*` service with `stop`; it does not invoke the
+corresponding `K??*` link. [`.shell/S99root`](../../.shell/S99root) therefore
+identifies `rcK` as its original caller, publishes the idempotent shutdown
+marker as a fallback, gives Feather one second to render its final screen, and
+then stops the Buildroot services. A manual `STOP_MOD`, reload, or direct
+`S99root stop` remains an ordinary service operation and redraws the current
+page afterward. Forced reboot, kernel panic, and power loss bypass this
+graceful lifecycle.
+
+Feather discards every untouched render batch before queuing the shutdown
+surface, so a pending critical touch-unavailable warning cannot supersede it.
+It then freezes the shutdown surface as the final framebuffer owner. The
+shared service stop sequence removes `/dev/input/guppy` only after the marker
+has had its bounded processing window; the touch transport does not own system
+lifecycle policy.
 
 Before starting Klipper in Feather mode, the boot script creates the common
 Forge-X screen marker `/tmp/forge_x_screen_busy`. Feather still initializes its
@@ -253,8 +278,8 @@ redraw signal is unavailable, the existing startup-animation callback before
 `klippy:ready`, or the normal one-second UI update afterward, observes the
 removed marker and performs the same release without a separate boot timer.
 Later `S99root` calls continue logging without framebuffer output and retain
-the redraw notification. `K99root` does not publish it, so the frozen shutdown
-surface remains unchanged.
+the redraw notification. An `rcK` stop suppresses that redraw, so the frozen
+shutdown surface remains unchanged.
 
 Startup and error pages clear the normal page hitboxes. The only actionable shutdown control is the generation-tagged `FIRMWARE_RESTART` button that Feather exposes after classifying an MCU recovery condition; it still routes through Klipper's normal G-code command path.
 

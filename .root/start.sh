@@ -17,14 +17,9 @@ VAR_PATH="/opt/config/mod_data/variables.cfg"
 [ -L /usr/bin/ip ] && rm -f /usr/bin/ip
 [ -L /usr/bin/tc ] && rm -f /usr/bin/tc
 
-# TODO: Remove this override in the next major Forge-X release together with
-# the legacy sudo shim from our Buildroot image. That shim translated
-# Moonraker's reboot and shutdown requests into printer commands, but current
-# Moonraker invokes the system commands directly and already runs as root.
-# Until a new image is shipped, replace the bundled shim with a transparent
-# command passthrough before Moonraker starts.
-printf '%s\n' '#!/bin/sh' 'exec "$@"' > /usr/bin/sudo
-chmod 755 /usr/bin/sudo
+# This script runs inside the Forge-X chroot. Replace its bundled sudo file;
+# Moonraker prefixes machine actions with sudo even though it runs as root.
+ln -fns /opt/config/mod/.root/sudo-shim /usr/bin/sudo
 
 sed -i '
   /"project_owner":"mainsail-crew","version":"v2\.14\.0"/ {
