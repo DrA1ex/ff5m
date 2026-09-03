@@ -1037,6 +1037,9 @@ cleanup_recovery_runtime
 
     def test_recovery_clock_load_start_and_owned_stop_share_one_lifecycle(self):
         lifecycle = self.root / "clock-lifecycle"
+        saved_clock = self.root / "mod" / "etc" / "fake-hwclock.data"
+        saved_clock.parent.mkdir(parents=True)
+        saved_clock.write_text("2026-09-04 00:00:00\n", encoding="utf-8")
         command = r'''
 source "$1"
 trap - EXIT HUP INT TERM
@@ -1060,6 +1063,35 @@ cleanup_recovery_runtime
             "{}/mod /opt/config/mod/.root/S45ntpd start".format(self.root),
             "{}/mod /opt/config/mod/.root/S45ntpd stop".format(self.root),
         ])
+
+    def test_recovery_clock_sets_default_before_starting_ntp_without_saved_clock(self):
+        lifecycle = self.root / "clock-floor-lifecycle"
+        command = r'''
+source "$1"
+trap - EXIT HUP INT TERM
+MOD="$2/mod"
+RECOVERY_ACTION="$2/action"
+LIFECYCLE="$2/clock-floor-lifecycle"
+chroot() { printf 'chroot:%s\n' "$*" >> "$LIFECYCLE"; }
+date() { printf 'date:%s\n' "$*" >> "$LIFECYCLE"; }
+start_recovery_clock
+cleanup_recovery_runtime
+'''
+        result = subprocess.run(
+            ["bash", "-c", command, "clock-floor-harness",
+             str(self.boot_scripts["recovery.sh"]), str(self.root)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            lifecycle.read_text(encoding="utf-8").splitlines(), [
+                "date:-u -s 2026-01-01 00:00:00",
+                "chroot:{}/mod /opt/config/mod/.root/S45ntpd start".format(
+                    self.root),
+                "chroot:{}/mod /opt/config/mod/.root/S45ntpd stop".format(
+                    self.root),
+            ])
 
     def test_recovery_log_rotates_once_and_captures_runtime_failure(self):
         run_root = self.root / "recovery-log"

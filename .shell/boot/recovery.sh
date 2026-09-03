@@ -88,11 +88,10 @@ stop_recovery_netd() {
 }
 
 start_recovery_clock() {
-    chroot "$MOD" /usr/sbin/fake-hwclock load >/dev/null 2>&1 || true
-
-    if [ -f /run/ntpd.pid ] \
-            && kill -0 "$(cat /run/ntpd.pid)" 2>/dev/null; then
-        return 0
+    if [ -s "$MOD/etc/fake-hwclock.data" ]; then
+        chroot "$MOD" /usr/sbin/fake-hwclock load >/dev/null 2>&1 || true
+    else
+        date -u -s "2026-01-01 00:00:00" >/dev/null 2>&1 || true
     fi
 
     chroot "$MOD" /opt/config/mod/.root/S45ntpd start >/dev/null 2>&1 \
