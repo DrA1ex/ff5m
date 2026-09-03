@@ -572,6 +572,16 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                 self.assertEqual(
                     self._axis_targets(commands, "Z"), [expected])
 
+    def test_end_print_relative_lift_uses_gcode_position_with_active_mesh(self):
+        printer = self._motion_printer(60, park_dz=1)
+        printer["bed_mesh"] = {"profile_name": "auto"}
+        printer["toolhead"]["position"]["z"] = 60.056863
+
+        commands = execute_macro_chain(
+            MOTION_MACROS, "END_PRINT", printer=printer)
+
+        self.assertEqual(self._axis_targets(commands, "Z"), [61])
+
     def test_terminal_motion_macros_clamp_requested_xy(self):
         cases = (
             ("PAUSE", {"X": 999, "Y": -999}),
@@ -675,6 +685,36 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             "G1 X110.0 Y-110.0 Z210.0  F6000",
             "RESTORE_GCODE_STATE NAME=_client_movement",
         ))
+
+    def test_move_safe_relative_targets_ignore_bed_mesh_transform(self):
+        limits = macro_status(BASE, "MOVE_SAFE")
+        cases = (
+            ("unloaded", "", 60.0),
+            ("loaded", "auto", 60.056863),
+        )
+        for label, profile, physical_z in cases:
+            with self.subTest(mesh=label):
+                result = render_macro(BASE, "MOVE_SAFE", printer={
+                    "gcode_macro MOVE_SAFE": limits,
+                    "bed_mesh": {"profile_name": profile},
+                    "gcode_move": {
+                        "gcode_position": {"x": 10, "y": 20, "z": 60},
+                    },
+                    "toolhead": {
+                        "axis_maximum": {"z": 230},
+                        "position": {"x": 10, "y": 20, "z": physical_z},
+                    },
+                }, params={"X": 1, "Y": -2, "Z": -1, "F": 6000})
+
+                self.assertEqual(self._axis_targets(result.commands, "X"), [11])
+                self.assertEqual(self._axis_targets(result.commands, "Y"), [18])
+                self.assertEqual(self._axis_targets(result.commands, "Z"), [59])
+                assert_order(self, result.commands, (
+                    "SAVE_GCODE_STATE NAME=_client_movement",
+                    "G90",
+                    "G1 X11.0 Y18.0 Z59.0  F6000",
+                    "RESTORE_GCODE_STATE NAME=_client_movement",
+                ))
 
     def test_smart_park_uses_fallback_and_rejects_unhomed_motion(self):
         printer = {

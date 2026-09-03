@@ -99,7 +99,9 @@ class FeatherControlsMixin:
         XY is intentionally expressed in Feather/MOVE_SAFE coordinates.  The
         printer's ToolHead XY limits use its parking convention and must not
         change this coordinate system.  Z additionally cannot exceed the
-        physical ToolHead range.
+        physical ToolHead range.  The bounds stay physical: step-jog targets
+        are G-code coordinates, so an active bed mesh or gcode offset shifts
+        the reachable boundary by its magnitude, well inside the Z margin.
         """
         x_limits, y_limits, z_limits = getattr(
             self, "joystick_limits",
@@ -709,7 +711,12 @@ class FeatherControlsMixin:
             if axis not in homed:
                 raise RuntimeError("Home %s before moving" % axis.upper())
             axis_index = "xyz".index(axis)
-            current = float(status["position"][axis_index])
+            # MOVE_SAFE consumes G-code coordinates, so the jog baseline must
+            # be observed in the same space.  The toolhead position carries
+            # any loaded bed mesh or gcode offset on top of it and would
+            # shift every target by that transform.
+            current = float(self.gcode_move.get_status(
+                self.reactor.monotonic())["gcode_position"][axis_index])
             limits = self._feather_move_limits(status)[axis_index]
             if distance > 0.0:
                 target = min(limits[1], current + distance)

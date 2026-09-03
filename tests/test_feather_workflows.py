@@ -2198,6 +2198,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.jog_step = 10.0
         controller.toolhead = StatusObject({
             "homed_axes": "y", "position": (0.0, 0.0, 0.0)})
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 0.0)})
         with self.assertRaisesRegex(RuntimeError, "Home X"):
             controller._handle_move_command(MOVE_UI.X_PLUS)
         controller.toolhead.status["homed_axes"] = "xyz"
@@ -2218,6 +2220,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 0.0),
             "axis_maximum": (120.0, 120.0, 220.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (95.0, -85.0, 205.0)})
 
         controller._handle_move_command(MOVE_UI.X_PLUS)
         controller._handle_move_command(MOVE_UI.Y_MINUS)
@@ -2240,11 +2244,13 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 5.0),
             "axis_maximum": (120.0, 120.0, 220.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 205.0)})
         notices = []
         controller._toast = notices.append
 
         controller._handle_move_command(MOVE_UI.Z_PLUS)
-        controller.toolhead.status["position"] = (0.0, 0.0, 210.0)
+        controller.gcode_move.status["gcode_position"] = (0.0, 0.0, 210.0)
         controller._handle_move_command(MOVE_UI.Z_PLUS)
 
         self.assertEqual(controller.gcode.commands,
@@ -2262,6 +2268,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 0.0),
             "axis_maximum": (120.0, 120.0, 230.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (120.0, 0.0, 230.0)})
         notices = []
         controller._toast = notices.append
 
@@ -2275,12 +2283,31 @@ class MotionHeatSettingsTest(unittest.TestCase):
                           "MOVE_SAFE Z=220 ABSOLUTE=1 F=600"])
         self.assertEqual(len(notices), 4)
 
+    def test_step_jog_targets_gcode_coordinates_with_active_mesh(self):
+        controller = base_controller()
+        controller.jog_step = 1.0
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (105.0, 105.0, 60.056863)})
+        # A loaded bed mesh keeps the machine Z above the G-code Z; the jog
+        # must dispatch the G-code target or every move lands off by the
+        # mesh value at the current XY.
+        controller.gcode_move = StatusObject({
+            "gcode_position": (105.0, 105.0, 60.0)})
+
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
+
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE Z=61 ABSOLUTE=1 F=600"])
+
     def test_low_z_warning_blocks_step_xy_but_keeps_step_z_available(self):
         controller = base_controller()
         controller.jog_step = 1.0
         controller.move_caution_signature = (True, "available")
         controller.toolhead = StatusObject({
             "homed_axes": "xyz", "position": (0.0, 0.0, 20.0)})
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 20.0)})
 
         controller._handle_move_command(MOVE_UI.X_PLUS)
         controller._handle_move_command(MOVE_UI.Y_PLUS)

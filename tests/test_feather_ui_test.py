@@ -459,6 +459,10 @@ class RunnerContractTest(unittest.TestCase):
                 "monotonic": lambda self: 10.0,
             })(),
             "toolhead": toolhead,
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(position)},
+            })(),
             "_feather_move_limits": lambda self, status: (
                 (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
             "_start_touch_action": dispatch,
@@ -476,6 +480,46 @@ class RunnerContractTest(unittest.TestCase):
             dispatched, [SCENARIOS.move_actions.Y_PLUS.wire_id])
         self.assertEqual(feature.scenarios.motion_expected, 110.0)
 
+    def test_motion_step_uses_gcode_position_with_active_mesh(self):
+        machine = [110.0, 110.0, 220.0]
+        gcode = [110.0, 110.0, 219.943137]
+        dispatched = []
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 10.0,
+            })(),
+            "toolhead": type("Toolhead", (), {
+                "get_status": lambda self, eventtime: {
+                    "position": tuple(machine), "homed_axes": "xyz",
+                },
+            })(),
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(gcode)},
+            })(),
+            "_feather_move_limits": lambda self, status: (
+                (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
+            "_start_touch_action": (
+                lambda self, action: dispatched.append(action)),
+            "renderer": type("Renderer", (), {
+                "_buttons": {SCENARIOS.move_actions.Z_MINUS.wire_id: ()},
+                "_toggles": {}, "_hitboxes": {},
+            })(),
+        })()
+        feature = UI_TEST.UITestRun(host)
+
+        feature.scenarios._motion_step("z", 1)
+
+        # The bed mesh keeps the machine Z 0.056863 above the G-code Z, so
+        # the outward jog and its completion must both stay in G-code space.
+        self.assertEqual(
+            dispatched, [SCENARIOS.move_actions.Z_MINUS.wire_id])
+        self.assertEqual(feature.scenarios.motion_expected, 218.943137)
+        self.assertFalse(feature.scenarios._motion_reached("z"))
+        gcode[2] = 218.943137
+        machine[2] = 219.0
+        self.assertTrue(feature.scenarios._motion_reached("z"))
+
     def test_motion_step_waits_for_delayed_toolhead_update(self):
         position = [110.006, 109.0, 220.0]
         dispatched = []
@@ -489,6 +533,10 @@ class RunnerContractTest(unittest.TestCase):
                 "monotonic": lambda self: 10.0,
             })(),
             "toolhead": toolhead,
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(position)},
+            })(),
             "_feather_move_limits": lambda self, status: (
                 (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
             "_start_touch_action": (

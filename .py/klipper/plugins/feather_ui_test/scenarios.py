@@ -1585,14 +1585,21 @@ class ScenarioCatalog:
         status = self.host.toolhead.get_status(self.reactor.monotonic())
         if not all(axis in str(status.get("homed_axes", "")) for axis in "xyz"):
             raise RuntimeError("Home All did not home XYZ")
-        self.motion_origin = tuple(float(value) for value in status["position"][:3])
+        # Jog targets are dispatched through MOVE_SAFE in G-code coordinates,
+        # so the origin and every completion check must observe the same
+        # space; the toolhead position would carry the active bed mesh.
+        self.motion_origin = tuple(float(value) for value in
+                                   self.host.gcode_move.get_status(
+                                       self.reactor.monotonic()
+                                   )["gcode_position"][:3])
         self.host.jog_step = 1.0
         self.host._render_move()
 
     def _motion_step(self, axis, outward):
         status = self.host.toolhead.get_status(self.reactor.monotonic())
         index = "xyz".index(axis)
-        current = float(status["position"][index])
+        current = float(self.host.gcode_move.get_status(
+            self.reactor.monotonic())["gcode_position"][index])
         low, high = self.host._feather_move_limits(status)[index]
         if outward > 0:
             direction = 1 if high - current >= current - low else -1
@@ -1619,8 +1626,8 @@ class ScenarioCatalog:
 
     def _motion_reached(self, axis):
         index = "xyz".index(axis)
-        actual = float(self.host.toolhead.get_status(
-            self.reactor.monotonic())["position"][index])
+        actual = float(self.host.gcode_move.get_status(
+            self.reactor.monotonic())["gcode_position"][index])
         return math.isclose(
             actual, self.motion_expected, abs_tol=0.05)
 
