@@ -700,7 +700,7 @@
     {
       "key": "power_loss_recovery",
       "type": "bool",
-      "default": 0,
+      "default": 1,
       "label": "Enable Power Loss Recovery Feature",
       "description": "Offer recovery after power loss.",
       "restart": "klipper",
