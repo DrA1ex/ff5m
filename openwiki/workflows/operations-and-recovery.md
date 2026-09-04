@@ -190,8 +190,14 @@ connects the installer's output to the standard `logged --send-to-screen` path
 while retaining `recovery.log`, so its `//%` archive-extraction progress remains
 visible. Normal USB-image boot routes the same output through the existing init
 logger and splash. The installer status remains authoritative if either screen
-logger returns a different status; late detached-runner output remains in
-`/data/.firmware-runner/runner.log`.
+logger returns a different status. The detached runner immediately reconnects
+its standard streams to `/dev/console`, and the selected installer inherits
+them unchanged. Immediately before starting the installer, Recovery publishes
+a blank full-screen frame so its final hand-off page cannot remain behind the
+new bottom-aligned log rows. A separate rotated
+`/data/logFiles/firmware-installer-launch.log` retains only hand-off, startup,
+and early-exit lifecycle events and is included in Forge-X debug archives;
+normal installer output remains owned by the installer's application log.
 
 The checksum command now returns non-zero when a listed file is missing or
 changed and prints live checked/failure counts plus a final result.

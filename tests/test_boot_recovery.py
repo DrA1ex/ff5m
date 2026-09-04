@@ -1326,6 +1326,62 @@ printf 'result=%s\\n' "$status"
             "uninstall\n")
         self.assertFalse((run_root / "action").exists())
 
+    def test_recovery_firmware_handoff_clears_screen_after_runtime_cleanup(self):
+        run_root = self.root / "firmware-handoff"
+        run_root.mkdir()
+        image = run_root / "Adventurer5M-test.tgz"
+        image.touch()
+
+        command = r'''
+source "$1"
+trap - EXIT HUP INT TERM
+RUN_ROOT="$2"
+RECOVERY_ACTION="$2/action"
+FIRMWARE_MACHINE=Adventurer5M
+find_stock_python() { echo /bin/true; }
+find_vendor_curl() { return 1; }
+find_vendor_cacert() { return 1; }
+load_stock_printer_identity() { :; }
+mount_recovery_devpts() { :; }
+mount_recovery_chroot() { :; }
+start_recovery_touch() { :; }
+start_recovery_netd() { :; }
+start_recovery_clock() { :; }
+run_recovery_ui() { echo "flash:$RUN_ROOT/Adventurer5M-test.tgz" > "$RECOVERY_ACTION"; }
+valid_firmware_path() { return 0; }
+stop_recovery_ssh() { echo ssh-stopped >> "$RUN_ROOT/lifecycle"; }
+cleanup_recovery_runtime() {
+    echo cleanup >> "$RUN_ROOT/lifecycle"
+    rm -f "$RECOVERY_ACTION"
+}
+screen_typer() { echo "screen:$*" >> "$RUN_ROOT/lifecycle"; }
+sync() { echo sync >> "$RUN_ROOT/lifecycle"; }
+run_firmware_installer() {
+    echo "installer:$1" >> "$RUN_ROOT/lifecycle"
+    return 0
+}
+run_recovery_lifecycle
+printf 'result=%s\n' "$?"
+'''
+        result = subprocess.run(
+            ["bash", "-c", command, "recovery-firmware-harness",
+             str(self.boot_scripts["recovery.sh"]), str(run_root)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+
+        self.assertIn("result=0", result.stdout)
+        self.assertEqual(
+            (run_root / "lifecycle").read_text(encoding="utf-8").splitlines(),
+            [
+                "ssh-stopped",
+                "cleanup",
+                "screen:fill -p 0 0 -s 800 480 -c 0",
+                "sync",
+                "installer:{}".format(image),
+            ],
+        )
+        self.assertFalse((run_root / "action").exists())
+
     def test_recovery_reset_uses_detected_model_and_returns_with_notice(self):
         run_root = self.root / "reset-handoff"
         run_root.mkdir()

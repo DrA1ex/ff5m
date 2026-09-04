@@ -27,6 +27,8 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.staging = self.root / ".firmware"
         self.runner_staging = self.root / ".firmware-runner"
+        self.launch_log = self.root / "firmware-installer-launch.log"
+        self.console_log = self.root / "firmware-console.log"
         self.result = self.root / "entrypoint-result"
         self.typer_log = self.root / "typer.log"
         self.typer = self.root / "typer"
@@ -55,6 +57,7 @@ class FirmwareImageInstallTest(unittest.TestCase):
         self.environment.update({
             "RESULT_PATH": str(self.result),
             "TYPER_LOG": str(self.typer_log),
+            "FORGE_X_FIRMWARE_CONSOLE": "/dev/stdout",
             "PATH": str(self.root) + os.pathsep + self.environment["PATH"],
         })
 
@@ -69,6 +72,8 @@ class FirmwareImageInstallTest(unittest.TestCase):
                 "FIRMWARE_INSTALL_STAGING_DIR=%s" % self.staging,
             "FIRMWARE_INSTALL_RUNNER_DIR=/data/.firmware-runner":
                 "FIRMWARE_INSTALL_RUNNER_DIR=%s" % self.runner_staging,
+            "FIRMWARE_INSTALL_LAUNCH_LOG=/data/logFiles/firmware-installer-launch.log":
+                "FIRMWARE_INSTALL_LAUNCH_LOG=%s" % self.launch_log,
             "FIRMWARE_INSTALL_RESERVE_KB=16384":
                 "FIRMWARE_INSTALL_RESERVE_KB=0",
             "FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30":
@@ -409,17 +414,54 @@ echo unexpected > "$RESULT_PATH"
         result = self._run(image)
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        runner_log = self.runner_staging / "runner.log"
         self._wait_for(
-            lambda: runner_log.exists()
+            lambda: self.launch_log.exists()
             and "Installer exited with status 7"
-            in runner_log.read_text(encoding="utf-8"),
+            in self.launch_log.read_text(encoding="utf-8"),
             "runner did not record the entrypoint failure",
         )
-        runner_output = runner_log.read_text(encoding="utf-8")
+        runner_output = self.launch_log.read_text(encoding="utf-8")
         self.assertIn("Firmware installer failed", runner_output)
         self.assertIn("Ensure writing stopped, then power off.", runner_output)
         self.assertFalse(self.typer_log.exists())
+
+    def test_runner_sends_application_output_only_to_configured_console(self):
+        self.staging.mkdir()
+        runner = self._write_runner()
+        entrypoint = self.staging / "forge-x-init"
+        entrypoint.write_text(
+            "#!/bin/bash\n"
+            "echo application-stdout\n"
+            "echo application-stderr >&2\n"
+            "exit 100\n",
+            encoding="utf-8",
+        )
+        entrypoint.chmod(0o755)
+        environment = dict(self.environment)
+        environment["FORGE_X_FIRMWARE_CONSOLE"] = str(self.console_log)
+
+        with self.launch_log.open("w", encoding="utf-8") as launch_output:
+            result = subprocess.run(
+                [str(runner), str(self.staging), "forge-x-init", "binary",
+                 "Adventurer5M", "0023", "0"],
+                env=environment,
+                text=True,
+                stdout=launch_output,
+                stderr=subprocess.STDOUT,
+                timeout=4,
+                check=False,
+            )
+
+        launch_output = self.launch_log.read_text(encoding="utf-8")
+        console_output = self.console_log.read_text(encoding="utf-8")
+        self.assertEqual(result.returncode, 0, launch_output)
+        self.assertIn("Runner started for binary:forge-x-init", launch_output)
+        self.assertIn(
+            "Installer exited during startup with status 100", launch_output)
+        self.assertNotIn("application-stdout", launch_output)
+        self.assertNotIn("application-stderr", launch_output)
+        self.assertIn("application-stdout", console_output)
+        self.assertIn("application-stderr", console_output)
 
     def test_archive_member_cannot_escape_staging_directory(self):
         image = self._archive("Adventurer5M-test.tgz", [
@@ -609,6 +651,7 @@ echo detached > "$RESULT_PATH"
         entrypoint.write_text(
             "#!/bin/bash\n"
             "while [ ! -e \"$RELEASE_PATH\" ]; do sleep 0.05; done\n"
+            "echo console-after-detach\n"
             "echo detached > \"$RESULT_PATH\"\n",
             encoding="utf-8",
         )
@@ -643,6 +686,11 @@ echo detached > "$RESULT_PATH"
             release.touch()
 
         self._wait_for(self.result.exists, "detached binary did not continue")
+        self._wait_for(
+            lambda: "console-after-detach"
+            in runner_output.read_text(encoding="utf-8"),
+            "detached binary lost its inherited console output",
+        )
 
     def test_binary_runner_trusts_early_handled_failure(self):
         self.staging.mkdir()
@@ -783,6 +831,7 @@ echo detached > "$RESULT_PATH"
         (self.staging / "left-by-installer").write_text("payload", encoding="utf-8")
         self.runner_staging.mkdir()
         (self.runner_staging / "left-by-runner").write_text("payload", encoding="utf-8")
+        self.launch_log.write_text("retain diagnostics\n", encoding="utf-8")
 
         result = subprocess.run(
             ["bash", str(self.install_image), "cleanup"],
@@ -796,6 +845,46 @@ echo detached > "$RESULT_PATH"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse(self.staging.exists())
         self.assertFalse(self.runner_staging.exists())
+        self.assertEqual(
+            self.launch_log.read_text(encoding="utf-8"),
+            "retain diagnostics\n",
+        )
+
+    def test_launch_log_rotation_keeps_three_previous_runs(self):
+        previous = {
+            "": "current\n",
+            ".1": "one\n",
+            ".2": "two\n",
+            ".3": "three\n",
+        }
+        for suffix, content in previous.items():
+            pathlib.Path(str(self.launch_log) + suffix).write_text(
+                content, encoding="utf-8")
+
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; prepare_firmware_launch_log',
+             "firmware-test", str(self.install_image_library)],
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.launch_log.read_text(encoding="utf-8"), "")
+        self.assertEqual(
+            pathlib.Path(str(self.launch_log) + ".1").read_text(encoding="utf-8"),
+            "current\n",
+        )
+        self.assertEqual(
+            pathlib.Path(str(self.launch_log) + ".2").read_text(encoding="utf-8"),
+            "one\n",
+        )
+        self.assertEqual(
+            pathlib.Path(str(self.launch_log) + ".3").read_text(encoding="utf-8"),
+            "two\n",
+        )
 
 
 if __name__ == "__main__":

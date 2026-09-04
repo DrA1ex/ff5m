@@ -49,6 +49,7 @@ TAR_DEBUG_PARAMS=(
     /data/logFiles/printer.log*
     /data/logFiles/moonraker.log*
     /data/logFiles/console*.log
+    /data/logFiles/firmware-installer-launch.log*
     /data/logFiles/firmwareExe.log*
     /data/logFiles/ffstartup-arm.log
     /data/logFiles/dmesg.complete.log

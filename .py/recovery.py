@@ -1392,7 +1392,7 @@ class RecoveryUI:
             if not entries:
                 self.view.message(
                     "NO CLEANUP TARGETS",
-                    "No regular files were found in the supported log, recovery, "
+                    "No files were found in the supported log, recovery, "
                     "or generated-archive locations.")
                 return
 
@@ -1406,7 +1406,7 @@ class RecoveryUI:
                 return
             if not self.view.confirm(
                     "DELETE FILE",
-                    "Delete {} ({})? Only this selected regular file will be removed."
+                    "Delete {} ({})?"
                     .format(selected["path"], format_bytes(selected["size"])),
                     "DELETE"):
                 continue

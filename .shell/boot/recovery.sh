@@ -295,6 +295,10 @@ run_firmware_installer() {
     return "${statuses[0]}"
 }
 
+clear_recovery_screen() {
+    screen_typer fill -p 0 0 -s 800 480 -c 0
+}
+
 run_recovery_lifecycle() {
     local action image status
 
@@ -390,6 +394,8 @@ run_recovery_lifecycle() {
                 cleanup_recovery_runtime
                 trap - EXIT
 
+                clear_recovery_screen \
+                    || echo "?? Unable to clear the Recovery screen before firmware hand-off."
                 sync
                 run_firmware_installer "$image"
                 return $?

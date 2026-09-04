@@ -10,6 +10,7 @@ source /opt/config/mod/.shell/boot/stock_identity.sh || exit 1
 
 FIRMWARE_INSTALL_STAGING_DIR=/data/.firmware
 FIRMWARE_INSTALL_RUNNER_DIR=/data/.firmware-runner
+FIRMWARE_INSTALL_LAUNCH_LOG=/data/logFiles/firmware-installer-launch.log
 FIRMWARE_INSTALL_RESERVE_KB=16384
 FIRMWARE_INSTALL_ERROR_DELAY_SECONDS=30
 FIRMWARE_INSTALL_BASH=/bin/bash
@@ -19,7 +20,6 @@ FIRMWARE_INSTALL_DD=dd
 FIRMWARE_INSTALL_DF=df
 
 FIRMWARE_IMAGE=""
-FIRMWARE_SOURCE_MOUNT=""
 FIRMWARE_ENTRYPOINT=""
 FIRMWARE_ENTRYPOINT_KIND=""
 FIRMWARE_MACHINE=""
@@ -70,20 +70,10 @@ stop_firmware_parent() {
     FIRMWARE_PARENT_STOPPED=1
 }
 
-release_firmware_source_mount() {
-    if [ -n "$FIRMWARE_SOURCE_MOUNT" ]; then
-        umount "$FIRMWARE_SOURCE_MOUNT" >/dev/null 2>&1 || true
-        rmdir "$FIRMWARE_SOURCE_MOUNT" >/dev/null 2>&1 || true
-        FIRMWARE_SOURCE_MOUNT=""
-    fi
-
-}
-
 fail_firmware_image() {
     local reason=$1
     local parent_stopped=0
 
-    release_firmware_source_mount
     stop_firmware_parent && parent_stopped=1
     firmware_message "$reason" "The printer can now be powered off." "@@"
     sync
@@ -108,6 +98,30 @@ cleanup_firmware_staging() {
 
     rm -rf "$FIRMWARE_INSTALL_STAGING_DIR" || return 1
     rm -rf "$FIRMWARE_INSTALL_RUNNER_DIR"
+}
+
+prepare_firmware_launch_log() {
+    local log_dir=${FIRMWARE_INSTALL_LAUNCH_LOG%/*}
+
+    [ -n "$log_dir" ] && [ "$log_dir" != "$FIRMWARE_INSTALL_LAUNCH_LOG" ] \
+        || return 1
+    mkdir -p "$log_dir" || return 1
+
+    rm -f "$FIRMWARE_INSTALL_LAUNCH_LOG.3" || return 1
+    mv -f "$FIRMWARE_INSTALL_LAUNCH_LOG.2" \
+        "$FIRMWARE_INSTALL_LAUNCH_LOG.3" 2>/dev/null || true
+    mv -f "$FIRMWARE_INSTALL_LAUNCH_LOG.1" \
+        "$FIRMWARE_INSTALL_LAUNCH_LOG.2" 2>/dev/null || true
+    mv -f "$FIRMWARE_INSTALL_LAUNCH_LOG" \
+        "$FIRMWARE_INSTALL_LAUNCH_LOG.1" 2>/dev/null || true
+    : > "$FIRMWARE_INSTALL_LAUNCH_LOG" || return 1
+    chmod 0644 "$FIRMWARE_INSTALL_LAUNCH_LOG"
+}
+
+firmware_launch_event() {
+    printf '%s | INFO | firmware-handoff | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" \
+        >> "$FIRMWARE_INSTALL_LAUNCH_LOG"
 }
 
 find_firmware_image() {
@@ -368,29 +382,33 @@ prepare_firmware_runner() {
 
 handoff_firmware_entrypoint() {
     local runner="$FIRMWARE_INSTALL_RUNNER_DIR/runner.sh"
-    local runner_log="$FIRMWARE_INSTALL_RUNNER_DIR/runner.log"
     local entrypoint_name=${FIRMWARE_ENTRYPOINT##*/}
 
+    prepare_firmware_launch_log || return 1
+    firmware_launch_event "Preparing detached firmware runner."
     firmware_message "Preparing firmware installer" \
         "Waiting for Forge-X services to stop."
-    stop_firmware_parent || return 1
-    prepare_firmware_runner || return 1
+    stop_firmware_parent || {
+        firmware_launch_event "Failed to stop the previous firmware parent."
+        return 1
+    }
+    prepare_firmware_runner || {
+        firmware_launch_event "Failed to prepare the detached firmware runner."
+        return 1
+    }
 
     export FORGE_X_FIRMWARE_IMAGE="$FIRMWARE_IMAGE"
+    firmware_launch_event "Starting $entrypoint_name through the detached firmware runner."
     nohup "$runner" "$FIRMWARE_INSTALL_STAGING_DIR" \
         "$entrypoint_name" "$FIRMWARE_ENTRYPOINT_KIND" \
         "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID" \
         "$FIRMWARE_INSTALL_ERROR_DELAY_SECONDS" \
-        </dev/null > "$runner_log" 2>&1 &
+        </dev/null >> "$FIRMWARE_INSTALL_LAUNCH_LOG" 2>&1 &
+    firmware_launch_event "Detached firmware runner started (PID $!)."
 }
 
 install_firmware_image() {
     FIRMWARE_IMAGE=$1
-    FIRMWARE_SOURCE_MOUNT=""
-
-    case "$FIRMWARE_IMAGE" in
-        /tmp/forge-x-boot-flag-*) FIRMWARE_SOURCE_MOUNT=$FIRMWARE_IMAGE ;;
-    esac
 
     load_stock_printer_identity \
         || fail_firmware_image "Cannot identify printer model."
@@ -426,10 +444,10 @@ install_firmware_image() {
     extract_firmware_image "$FIRMWARE_IMAGE" \
         || fail_firmware_image "Cannot extract firmware image."
     sync
-    release_firmware_source_mount
 
     select_firmware_entrypoint \
         || fail_firmware_image "No valid installer in image."
+
     handoff_firmware_entrypoint \
         || fail_firmware_image "Cannot start firmware installer."
 }
@@ -453,5 +471,4 @@ fi
 
 source /opt/config/mod/.shell/common.sh
 
-trap release_firmware_source_mount EXIT
 install_firmware_image "$1"
