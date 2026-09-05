@@ -2106,10 +2106,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                                else {})
                 offer_mesh_save = (
                     stats_state == "complete"
-                    and bool(start.get("zforce_leveling", False))
-                    and not bool(start.get("zskip_leveling", False))
-                    and start.get("zmesh") == "auto"
-                    and mesh_status.get("profile_name") == "auto")
+                    and start.get("zmesh_generated") == "auto"
+                    and mesh_status.get("profile_name") == "auto"
+                    and not self._setting("print_leveling", 0))
                 if offer_mesh_save:
                     self._show_message(
                         "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "

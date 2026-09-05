@@ -42,6 +42,32 @@ def material_config():
     return macro_status(MATERIAL, "_MATERIAL_CONFIG")
 
 
+def start_print_printer(display, bed_mesh, mesh="", zforce_leveling=False,
+                        zskip_leveling=False, use_kamp=False,
+                        print_leveling=False):
+    return {
+        "gcode_macro _START_PRINT": macro_status(
+            BASE, "_START_PRINT", zmesh=mesh,
+            zforce_leveling=zforce_leveling,
+            zskip_leveling=zskip_leveling),
+        "gcode_macro START_PRINT": {"preparation_done": True},
+        "mod_params": {"variables": {
+            "safe_z": 10,
+            "chamber_light_mode": "MANUAL",
+            "display": display,
+            "check_md5": 0,
+            "print_leveling": print_leveling,
+            "use_kamp": use_kamp,
+            "bed_mesh_validation": False,
+            "midi_start": "",
+            "weight_check": False,
+            "disable_priming": True,
+        }},
+        "extruder": {"temperature": 25, "can_extrude": False},
+        "bed_mesh": bed_mesh,
+    }
+
+
 class WorkflowMacroTest(unittest.TestCase):
     def test_system_power_macros_prepare_hardware_before_action(self):
         macros = (
@@ -204,6 +230,58 @@ class WorkflowMacroTest(unittest.TestCase):
         self.assertIn(full_level, result.commands)
         self.assertNotIn(
             "KAMP BED_TEMP=80.0 EXTRUDER_TEMP=245.0", result.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh_generated VALUE='\"auto\"'", result.commands)
+
+    def test_start_print_fallback_mesh_uses_display_persistent_profile(self):
+        cases = (
+            # A pure default start on an alternative screen recreates the
+            # persistent 'auto' profile instead of a temporary mesh.
+            (1, "", "auto"),
+            # A requested but missing 'auto' profile is regenerated as 'auto'.
+            (1, "auto", "auto"),
+            # Stock keeps its temporary 'default' fallback.
+            (0, "", "default"),
+        )
+        for display, mesh, expected in cases:
+            with self.subTest(display=display, mesh=mesh):
+                result = render_macro(
+                    BASE, "_START_PRINT", printer=start_print_printer(
+                        display, {"profile_name": "", "profiles": {}},
+                        mesh=mesh))
+
+                self.assertIn(
+                    "_FULL_BED_LEVEL BED_TEMP=80.0 EXTRUDER_TEMP=245.0 "
+                    "PROFILE=%s" % expected, result.commands)
+                self.assertIn(
+                    "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+                    "VARIABLE=zmesh_generated VALUE='\"%s\"'" % expected,
+                    result.commands)
+
+    def test_start_print_records_generated_mesh_profile(self):
+        cases = (
+            ("forced unnamed mesh", {"zforce_leveling": True}, "", "default"),
+            ("kamp leveling", {"use_kamp": True}, "", "default"),
+            ("loaded requested profile", {}, "PLA_profile", ""),
+            ("skipped leveling", {"zskip_leveling": True}, "", ""),
+            # A print_leveling policy measures the requested profile like any
+            # forced run; the screen decides whether persisting makes sense.
+            ("print_leveling policy with named mesh",
+             {"print_leveling": True}, "auto", "auto"),
+        )
+        for label, overrides, mesh, expected in cases:
+            with self.subTest(label=label):
+                result = render_macro(
+                    BASE, "_START_PRINT", printer=start_print_printer(
+                        1, {"profile_name": "PLA_profile",
+                            "profiles": {"PLA_profile": {}}},
+                        mesh=mesh, **overrides))
+
+                self.assertIn(
+                    "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+                    "VARIABLE=zmesh_generated VALUE='\"%s\"'" % expected,
+                    result.commands)
 
     def test_headless_end_clears_pending_feather_mesh_options(self):
         result = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
