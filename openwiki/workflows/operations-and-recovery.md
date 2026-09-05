@@ -171,6 +171,17 @@ The firmware menu can clear every regular file directly inside the dedicated
 download directory after confirmation; it never follows symlinks or removes
 subdirectories. Individual files remain operator-managed through Fluidd or
 Mainsail.
+The storage menu's large-file browser scans all of `/data` plus `/opt/config`,
+skipping hidden entries and the never-scanned subtrees `/opt/config/mod` and
+`/data/.mod/.forge-x`; the recovery chroot and its kernel mounts live under
+the latter. Those two trees, plus `/opt`, `/root`, and `/data` itself, can
+never be deletion targets. Visible files and whole folders are ranked by
+size, where a folder's size is the eligible bytes of its subtree. Deletion
+revalidates that the scanned inode is unchanged, refuses a directory that
+contains an active mount, and confirms with an irreversible-action warning.
+The scan roots, search-excluded subtrees, and delete-protected paths are the
+`CLEANUP_*` policy lists in [`recovery.py`](../../.py/recovery.py); adjust
+those lists rather than the scanning code.
 The fixed factory catalog additionally checks the published MD5 values. Forge-X
 release discovery uses the GitHub releases API rather than `releases/latest`,
 so stable and prerelease assets remain selectable. Factory and file-recovery

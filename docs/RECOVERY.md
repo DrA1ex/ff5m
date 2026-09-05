@@ -14,7 +14,7 @@ FORGE-X RECOVERY
 └── REBOOT
 ```
 
-`SYSTEM / DIAGNOSTICS` can verify system files, show disk usage, check filesystems without changing them, remove a selected large recovery or log file, and create a diagnostics bundle.
+`SYSTEM / DIAGNOSTICS` can verify system files, show disk usage, check filesystems without changing them, find and delete large files or whole folders anywhere in the printer's data area (including G-code files), and create a diagnostics bundle. Deletion cannot be undone.
 
 `BACKUP / RESET` can create a Forge-X settings backup, restore all Forge-X and printer settings to their defaults, or uninstall Forge-X. Reset automatically selects the correct defaults for Adventurer 5M or Adventurer 5M Pro. It does not delete print files.
 

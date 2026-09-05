@@ -132,9 +132,14 @@ FULL_RECOVERY_IMAGE = {
 
 RECOVERY_IMAGES = (RECOVERY_DRY_IMAGE, FULL_RECOVERY_IMAGE)
 
-CLEANUP_LOG_ROOT = "/data/logFiles"
-CLEANUP_FORGE_X_LOG_ROOT = "/opt/config/mod_data/log"
-CLEANUP_ARCHIVE_ROOT = "/opt/config/mod_data"
+# Cleanup browser policy. These lists are the only place to adjust where the
+# recovery cleanup feature may scan and what it must never touch.
+CLEANUP_SCAN_ROOTS = ("/data", "/opt/config")
+# Subtrees that are never scanned, so nothing inside them is ever offered.
+CLEANUP_SEARCH_EXCLUDED = ("/opt/config/mod", "/data/.mod/.forge-x")
+# Paths that are never deletion targets themselves. Scan roots are protected
+# separately: only entries strictly inside a root are ever offered.
+CLEANUP_DELETE_PROTECTED = ("/opt", "/root", "/data", "/data/.mod/.forge-x")
 
 
 def quote(value):
@@ -521,24 +526,34 @@ def check_filesystems(mounts_path="/proc/mounts"):
     return results
 
 
-def _cleanup_archive_name(name):
-    return (name.startswith(("debug_", "backup_", "forge-x-backup-"))
-            and name.endswith((".tar.gz", ".tar.xz", ".tgz")))
-
-
-def cleanup_roots():
-    return (
-        (CLEANUP_LOG_ROOT, "logs"),
-        (CLEANUP_FORGE_X_LOG_ROOT, "logs"),
-        (DOWNLOAD_DIR, "recovery"),
-        (CLEANUP_ARCHIVE_ROOT, "archives"),
-    )
-
-
-def _path_within(path, root):
-    path = os.path.realpath(path)
-    root = os.path.realpath(root)
+def _cleanup_at_or_within(path, root):
+    path = os.path.normpath(path)
+    root = os.path.normpath(root)
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _cleanup_scan_pruned(path):
+    # Lexical check only: the walk builds paths by joining the scan root and
+    # symlinked directories are pruned, so nothing needs to be resolved here.
+    return any(
+        _cleanup_at_or_within(path, excluded)
+        for excluded in CLEANUP_SEARCH_EXCLUDED)
+
+
+def _cleanup_delete_allowed(path):
+    # Fail closed: the resolved target must sit strictly inside a scan root,
+    # stay outside every excluded subtree, and not be a protected path.
+    path = os.path.realpath(path)
+    if any(_cleanup_at_or_within(path, os.path.realpath(excluded))
+           for excluded in CLEANUP_SEARCH_EXCLUDED):
+        return False
+    if any(path == os.path.realpath(protected)
+           for protected in CLEANUP_DELETE_PROTECTED):
+        return False
+    return any(
+        _cleanup_at_or_within(path, os.path.realpath(root))
+        and path != os.path.realpath(root)
+        for root in CLEANUP_SCAN_ROOTS)
 
 
 def scan_cleanup_files(limit=CLEANUP_LIMIT):
@@ -548,69 +563,133 @@ def scan_cleanup_files(limit=CLEANUP_LIMIT):
     # Keep only the current top N candidates. File count may be unexpectedly
     # large on /data, so the scan must not grow memory with the filesystem.
     largest = []
+
+    def offer(size, sequence, entry):
+        candidate = (size, sequence, entry)
+        if len(largest) < limit:
+            heapq.heappush(largest, candidate)
+        elif size > largest[0][0]:
+            heapq.heapreplace(largest, candidate)
+
     sequence = 0
-    for root, category in cleanup_roots():
+    for root in CLEANUP_SCAN_ROOTS:
+        root = os.path.normpath(root)
         if not os.path.isdir(root):
             continue
+
+        # Folder candidates carry the eligible size of their whole subtree,
+        # which is only final once the root has been walked completely.
+        directory_sizes = {}
         for directory, directories, files in os.walk(root, followlinks=False):
-            directories[:] = [name for name in directories
-                              if not os.path.islink(os.path.join(directory, name))]
+            # Hidden entries, excluded subtrees, and symlinked directories are
+            # never scanned. Pruning /data/.mod also keeps the walk out of the
+            # recovery chroot and its kernel mounts.
+            directories[:] = sorted(
+                name for name in directories
+                if not name.startswith(".")
+                and not os.path.islink(os.path.join(directory, name))
+                and not _cleanup_scan_pruned(os.path.join(directory, name)))
+
             for name in files:
-                path = os.path.join(directory, name)
-                if category == "archives" and not _cleanup_archive_name(name):
+                if name.startswith("."):
                     continue
+
+                path = os.path.join(directory, name)
                 try:
                     info = os.lstat(path)
                 except OSError:
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     continue
-                if not _path_within(path, root):
-                    continue
-                entry = {
+
+                offer(info.st_size, sequence, {
                     "path": path,
                     "root": root,
-                    "category": category,
+                    "directory": False,
                     "size": info.st_size,
                     "dev": info.st_dev,
                     "ino": info.st_ino,
-                }
-                candidate = (info.st_size, sequence, entry)
+                })
                 sequence += 1
-                if len(largest) < limit:
-                    heapq.heappush(largest, candidate)
-                elif info.st_size > largest[0][0]:
-                    heapq.heapreplace(largest, candidate)
+
+                current = directory
+                while current != root:
+                    directory_sizes[current] = (
+                        directory_sizes.get(current, 0) + info.st_size)
+                    current = os.path.dirname(current)
+
+        for path, size in directory_sizes.items():
+            if size <= 0:
+                continue
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            if any(os.path.normpath(path) == os.path.normpath(protected)
+                   for protected in CLEANUP_DELETE_PROTECTED):
+                continue
+
+            offer(size, sequence, {
+                "path": path,
+                "root": root,
+                "directory": True,
+                "size": size,
+                "dev": info.st_dev,
+                "ino": info.st_ino,
+            })
+            sequence += 1
 
     result = [item[2] for item in largest]
     result.sort(key=lambda item: (-item["size"], item["path"]))
     return result
 
 
-def delete_cleanup_file(entry):
-    path = entry["path"]
-    root = entry["root"]
-    category = entry["category"]
-    if not _path_within(path, root):
-        raise RuntimeError("Cleanup path escaped its allowed root.")
-    if category == "archives" and not _cleanup_archive_name(os.path.basename(path)):
-        raise RuntimeError("File is no longer an allowed cleanup target.")
+def _cleanup_refuse_active_mounts(path):
+    try:
+        mounts = read_mounts()
+    except OSError as error:
+        raise RuntimeError(
+            "Unable to verify mounts for the cleanup target.") from error
 
+    target = os.path.realpath(path)
+    for mount in mounts:
+        if _cleanup_at_or_within(os.path.realpath(mount["target"]), target):
+            raise RuntimeError(
+                "Cleanup target contains an active mount: {}."
+                .format(mount["target"]))
+
+
+def delete_cleanup_entry(entry):
+    if not _cleanup_delete_allowed(entry["path"]):
+        raise RuntimeError("Cleanup target is not an allowed deletion target.")
+
+    path = entry["path"]
     parent = os.path.dirname(path)
     name = os.path.basename(path)
-    if not _path_within(parent, root):
-        raise RuntimeError("Cleanup parent escaped its allowed root.")
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY
     descriptor = os.open(parent, flags)
     try:
         current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-        if not stat.S_ISREG(current.st_mode):
+        if entry["directory"]:
+            if not stat.S_ISDIR(current.st_mode):
+                raise RuntimeError("Cleanup target is no longer a directory.")
+        elif not stat.S_ISREG(current.st_mode):
             raise RuntimeError("Cleanup target is no longer a regular file.")
+
         if current.st_dev != entry["dev"] or current.st_ino != entry["ino"]:
             raise RuntimeError("Cleanup target changed after it was scanned.")
-        os.unlink(name, dir_fd=descriptor)
+
+        if entry["directory"]:
+            # rmtree never follows symlinks; an active mount inside the tree
+            # must not be crossed.
+            _cleanup_refuse_active_mounts(path)
+            shutil.rmtree(path)
+        else:
+            os.unlink(name, dir_fd=descriptor)
     finally:
         os.close(descriptor)
 
@@ -1383,7 +1462,8 @@ class RecoveryUI:
 
     def large_files_cleanup(self):
         while True:
-            self.view.progress("LARGE FILES / CLEANUP", "Scanning safe cleanup targets...")
+            self.view.progress(
+                "LARGE FILES / CLEANUP", "Scanning /data and /opt/config...")
             try:
                 entries = scan_cleanup_files()
             except Exception as error:
@@ -1392,32 +1472,32 @@ class RecoveryUI:
             if not entries:
                 self.view.message(
                     "NO CLEANUP TARGETS",
-                    "No files were found in the supported log, recovery, "
-                    "or generated-archive locations.")
+                    "No large files or folders were found in /data or /opt/config.")
                 return
 
             def entry_label(item):
                 root = item["root"].rstrip(os.sep)
                 relative = item["path"][len(root):].lstrip(os.sep)
+                if item["directory"]:
+                    relative += "/"
                 return "{}  {}".format(format_bytes(item["size"]), relative)
 
             selected = self.view.choose("LARGE FILES / CLEANUP", entries, entry_label)
             if selected is None:
                 return
+            noun = "folder" if selected["directory"] else "file"
             if not self.view.confirm(
-                    "DELETE FILE",
-                    "Delete {} ({})?"
-                    .format(selected["path"], format_bytes(selected["size"])),
+                    "DELETE " + noun.upper(),
+                    "Delete {} {} ({})?\n\nThis cannot be undone."
+                    .format(noun, selected["path"], format_bytes(selected["size"])),
                     "DELETE"):
                 continue
             try:
-                delete_cleanup_file(selected)
+                delete_cleanup_entry(selected)
             except Exception as error:
                 self.view.message("DELETE FAILED", str(error))
                 continue
-            self.view.message(
-                "FILE DELETED",
-                "Deleted {}.".format(os.path.basename(selected["path"])))
+            self.view.message("DELETED", "Deleted {}.".format(selected["path"]))
 
     def firmware_menu(self):
         while True:

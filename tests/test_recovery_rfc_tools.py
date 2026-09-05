@@ -270,25 +270,98 @@ class RecoveryRFCToolsTest(unittest.TestCase):
         self.assertLess(elapsed, 3.0)
         self.assertFalse(pathlib.Path(str(destination) + ".part").exists())
 
-    def test_cleanup_scan_is_bounded_includes_forgex_logs_and_revalidates_delete(self):
-        logs = self.root / "logs"
-        forge_logs = self.root / "forge-logs"
-        downloads = self.root / "downloads"
-        archives = self.root / "archives"
-        for directory in (logs, forge_logs, downloads, archives):
-            directory.mkdir()
+    def test_cleanup_policy_guards_real_printer_locations(self):
+        # The shipped policy must keep the system trees unreachable even when
+        # a scan root covers their parent directory.
+        pruned = RECOVERY._cleanup_scan_pruned
+        self.assertTrue(pruned("/opt/config/mod/plugins/base.py"))
+        self.assertTrue(pruned("/data/.mod/.forge-x/root/www"))
+        self.assertFalse(pruned("/opt/config/mod_data/debug.tar.gz"))
+        self.assertFalse(pruned("/data/gcode/model.gcode"))
+        self.assertFalse(pruned("/data/logFiles/recovery.log"))
+        self.assertFalse(pruned("/data/forge-x-recovery/image.tgz"))
 
+        allowed = RECOVERY._cleanup_delete_allowed
+        self.assertFalse(allowed("/opt"))
+        self.assertFalse(allowed("/root"))
+        self.assertFalse(allowed("/data"))
+        self.assertFalse(allowed("/data/.mod/.forge-x"))
+        self.assertFalse(allowed("/opt/config/mod"))
+        self.assertFalse(allowed("/opt/config/mod/anything.py"))
+        self.assertTrue(allowed("/data/gcode/model.gcode"))
+        self.assertTrue(allowed("/data/forge-x-recovery/image.tgz"))
+        self.assertTrue(allowed("/data/logFiles/recovery.log"))
+        self.assertTrue(allowed("/opt/config/mod_data/debug.tar.gz"))
+        self.assertTrue(allowed("/opt/config/settings.json"))
+
+    def test_cleanup_scan_offers_data_and_config_but_not_hidden_or_excluded(self):
+        data = self.root / "data"
+        config = self.root / "config"
+        for directory in (data / "logFiles", data / "gcode",
+                          data / "gcode" / ".cache", data / ".hidden",
+                          data / ".mod" / ".forge-x", config / "mod",
+                          config / "mod_data"):
+            directory.mkdir(parents=True)
+
+        gcode = data / "gcode" / "print.gcode"
+        gcode.write_bytes(b"x" * 1000)
+        (data / "logFiles" / "recovery.log").write_bytes(b"l" * 900)
+        (data / "toplevel.gcode").write_bytes(b"t" * 100)
+        (data / "gcode" / ".cache" / "big.bin").write_bytes(b"c" * 3000)
+        (data / ".hidden" / "secret.gcode").write_bytes(b"h" * 5000)
+        (data / ".mod" / ".forge-x" / "chroot.bin").write_bytes(b"x" * 5000)
+        (config / "mod" / "plugin.py").write_bytes(b"p" * 4000)
+        (config / "mod_data" / "debug.tar.gz").write_bytes(b"d" * 800)
+        (config / "mod_data" / "database").write_bytes(b"b" * 50)
+        (data / "linked.gcode").symlink_to(gcode)
+        (data / "linked-dir").symlink_to(data / "gcode")
+
+        with mock.patch.object(
+                RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data), str(config))), \
+                mock.patch.object(
+                    RECOVERY, "CLEANUP_SEARCH_EXCLUDED",
+                    (str(config / "mod"), str(data / ".mod" / ".forge-x"))), \
+                mock.patch.object(
+                    RECOVERY, "CLEANUP_DELETE_PROTECTED",
+                    (str(data), str(data / "logFiles"))):
+            entries = RECOVERY.scan_cleanup_files()
+
+        paths = {item["path"] for item in entries}
+        self.assertIn(str(gcode), paths)
+        self.assertIn(str(data / "logFiles" / "recovery.log"), paths)
+        self.assertIn(str(data / "toplevel.gcode"), paths)
+        self.assertIn(str(config / "mod_data" / "debug.tar.gz"), paths)
+
+        gcode_folder = next(
+            item for item in entries if item["path"] == str(data / "gcode"))
+        self.assertTrue(gcode_folder["directory"])
+        self.assertEqual(gcode_folder["size"], 1000)
+        mod_data_folder = next(
+            item for item in entries
+            if item["path"] == str(config / "mod_data"))
+        self.assertEqual(mod_data_folder["size"], 850)
+
+        # Hidden entries, excluded subtrees, and symlinks are never scanned,
+        # so they do not appear as candidates and do not inflate totals.
+        self.assertNotIn(str(data / "gcode" / ".cache" / "big.bin"), paths)
+        self.assertNotIn(str(data / ".hidden" / "secret.gcode"), paths)
+        self.assertNotIn(str(data / ".mod" / ".forge-x" / "chroot.bin"), paths)
+        self.assertNotIn(str(config / "mod" / "plugin.py"), paths)
+        self.assertNotIn(str(data / "linked.gcode"), paths)
+        self.assertNotIn(str(data / "linked-dir"), paths)
+
+        # Scan roots and delete-protected directories are never offered as
+        # deletion targets themselves.
+        self.assertNotIn(str(data), paths)
+        self.assertNotIn(str(config), paths)
+        self.assertNotIn(str(data / "logFiles"), paths)
+
+    def test_cleanup_scan_keeps_only_the_largest_candidates(self):
+        data = self.root / "data"
+        data.mkdir()
         for index in range(120):
-            (logs / "log-{:03d}.log".format(index)).write_bytes(
+            (data / "log-{:03d}.log".format(index)).write_bytes(
                 b"x" * (index + 1))
-        forge_log = forge_logs / "forge-x.log"
-        forge_log.write_bytes(b"f" * 1000)
-        (logs / "link.log").symlink_to(logs / "log-119.log")
-        image = downloads / "Adventurer5M-image.tgz"
-        image.write_bytes(b"y" * 800)
-        generated = archives / "debug_20260101.tar.gz"
-        generated.write_bytes(b"z" * 700)
-        (archives / "user.cfg").write_text("keep\n", encoding="utf-8")
 
         real_push = RECOVERY.heapq.heappush
         real_replace = RECOVERY.heapq.heapreplace
@@ -303,35 +376,147 @@ class RecoveryRFCToolsTest(unittest.TestCase):
             largest_heap["size"] = max(largest_heap["size"], len(heap))
             return result
 
-        with mock.patch.object(RECOVERY, "CLEANUP_LOG_ROOT", str(logs)), \
-                mock.patch.object(
-                    RECOVERY, "CLEANUP_FORGE_X_LOG_ROOT", str(forge_logs)), \
-                mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(downloads)), \
-                mock.patch.object(
-                    RECOVERY, "CLEANUP_ARCHIVE_ROOT", str(archives)), \
+        with mock.patch.object(RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data),)), \
+                mock.patch.object(RECOVERY, "CLEANUP_SEARCH_EXCLUDED", ()), \
+                mock.patch.object(RECOVERY, "CLEANUP_DELETE_PROTECTED", ()), \
                 mock.patch.object(
                     RECOVERY.heapq, "heappush", side_effect=tracked_push), \
                 mock.patch.object(
                     RECOVERY.heapq, "heapreplace", side_effect=tracked_replace):
             entries = RECOVERY.scan_cleanup_files(limit=10)
 
-            self.assertEqual(len(entries), 10)
-            self.assertLessEqual(largest_heap["size"], 10)
-            paths = {item["path"] for item in entries}
-            self.assertIn(str(forge_log), paths)
-            self.assertIn(str(image), paths)
-            self.assertIn(str(generated), paths)
-
-            selected = next(item for item in entries if item["path"] == str(forge_log))
-            old_log = forge_logs / "forge-x-old.log"
-            forge_log.rename(old_log)
-            forge_log.write_bytes(b"replacement")
-            with self.assertRaisesRegex(RuntimeError, "changed"):
-                RECOVERY.delete_cleanup_file(selected)
-            self.assertEqual(forge_log.read_bytes(), b"replacement")
-
+        self.assertEqual(len(entries), 10)
+        self.assertLessEqual(largest_heap["size"], 10)
         self.assertEqual(
-            RECOVERY.CLEANUP_FORGE_X_LOG_ROOT, "/opt/config/mod_data/log")
+            [item["size"] for item in entries],
+            sorted((item["size"] for item in entries), reverse=True))
+        self.assertEqual(entries[0]["size"], 120)
+
+    def test_cleanup_delete_removes_files_and_whole_folders_and_refuses_swaps(self):
+        data = self.root / "data"
+        folder = data / "prints"
+        folder.mkdir(parents=True)
+        first = folder / "a.gcode"
+        second = folder / "b.gcode"
+        first.write_bytes(b"a" * 100)
+        second.write_bytes(b"b" * 100)
+
+        with mock.patch.object(RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data),)), \
+                mock.patch.object(RECOVERY, "CLEANUP_SEARCH_EXCLUDED", ()), \
+                mock.patch.object(RECOVERY, "CLEANUP_DELETE_PROTECTED", ()), \
+                mock.patch.object(RECOVERY, "read_mounts", return_value=[]):
+            by_path = {item["path"]: item for item in RECOVERY.scan_cleanup_files()}
+
+            RECOVERY.delete_cleanup_entry(by_path[str(first)])
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+
+            RECOVERY.delete_cleanup_entry(by_path[str(folder)])
+            self.assertFalse(folder.exists())
+            self.assertTrue(data.exists())
+
+            # A target replaced after the scan is refused, and the replacement
+            # content stays untouched.
+            folder.mkdir()
+            replacement = folder / "new.gcode"
+            replacement.write_bytes(b"n" * 10)
+            with self.assertRaisesRegex(RuntimeError, "changed"):
+                RECOVERY.delete_cleanup_entry(by_path[str(folder)])
+
+        self.assertTrue(replacement.exists())
+
+    def test_cleanup_delete_refuses_disallowed_targets(self):
+        data = self.root / "data"
+        folder = data / "prints"
+        folder.mkdir(parents=True)
+        (folder / "a.gcode").write_bytes(b"a" * 10)
+        outside = self.root / "elsewhere"
+        outside.mkdir()
+
+        entry = {
+            "path": "", "root": str(data), "directory": True,
+            "size": 1, "dev": 0, "ino": 0,
+        }
+        with mock.patch.object(
+                RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data),)), \
+                mock.patch.object(
+                    RECOVERY, "CLEANUP_SEARCH_EXCLUDED", (str(data / "mod"),)), \
+                mock.patch.object(
+                    RECOVERY, "CLEANUP_DELETE_PROTECTED", (str(data),)):
+            for path in (str(data), str(data / "mod"),
+                         str(data / "mod" / "inner"), str(outside)):
+                entry["path"] = path
+                with self.assertRaisesRegex(
+                        RuntimeError, "not an allowed deletion target"):
+                    RECOVERY.delete_cleanup_entry(entry)
+
+        self.assertTrue(folder.exists())
+        self.assertTrue(outside.exists())
+
+    def test_cleanup_delete_refuses_folder_containing_active_mount(self):
+        data = self.root / "data"
+        folder = data / "usb"
+        folder.mkdir(parents=True)
+        (folder / "file.bin").write_bytes(b"f" * 100)
+        stick = folder / "stick"
+        stick.mkdir()
+
+        with mock.patch.object(RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data),)), \
+                mock.patch.object(RECOVERY, "CLEANUP_SEARCH_EXCLUDED", ()), \
+                mock.patch.object(RECOVERY, "CLEANUP_DELETE_PROTECTED", ()), \
+                mock.patch.object(
+                    RECOVERY, "read_mounts",
+                    return_value=[{
+                        "source": "/dev/sda1", "target": str(stick),
+                        "type": "ext4", "options": ["rw"],
+                    }]):
+            selected = next(
+                item for item in RECOVERY.scan_cleanup_files()
+                if item["path"] == str(folder))
+            with self.assertRaisesRegex(RuntimeError, "active mount"):
+                RECOVERY.delete_cleanup_entry(selected)
+
+        self.assertTrue(folder.exists())
+        self.assertTrue((folder / "file.bin").exists())
+
+    def test_large_files_cleanup_deletes_folder_after_irreversible_warning(self):
+        data = self.root / "data"
+        folder = data / "prints"
+        folder.mkdir(parents=True)
+        (folder / "print.gcode").write_bytes(b"x" * 500)
+        (data / "small.log").write_bytes(b"s" * 10)
+
+        session = FakeTyperSession((
+            "2:choose.0",
+            "3:confirm.accept",
+            "4:message.back",
+            "6:choose.back",
+        ))
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session)
+
+        with mock.patch.object(RECOVERY, "CLEANUP_SCAN_ROOTS", (str(data),)), \
+                mock.patch.object(RECOVERY, "CLEANUP_SEARCH_EXCLUDED", ()), \
+                mock.patch.object(RECOVERY, "CLEANUP_DELETE_PROTECTED", ()), \
+                mock.patch.object(RECOVERY, "read_mounts", return_value=[]):
+            ui.large_files_cleanup()
+
+        listing = "\n".join(session.frames[1])
+        self.assertIn("prints/", listing)
+
+        confirmation = next(
+            "\n".join(frame) for frame in session.frames
+            if "This cannot be undone." in "\n".join(frame))
+        self.assertIn("DELETE FOLDER", confirmation)
+        self.assertIn(str(folder), confirmation)
+
+        deleted = next(
+            "\n".join(frame) for frame in session.frames
+            if "Deleted {}.".format(folder) in "\n".join(frame))
+        self.assertIn('"DELETED"', deleted)
+
+        self.assertFalse(folder.exists())
+        self.assertTrue((data / "small.log").exists())
 
     def test_filesystem_check_uses_read_only_fsck_for_mounted_targets(self):
         mounts = self.root / "mounts"
