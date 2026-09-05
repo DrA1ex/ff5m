@@ -325,6 +325,32 @@ class BootRecoveryTest(unittest.TestCase):
             "Adventurer5MPro-ForgeX-2.0.0-beta.1.tgz",
         )
 
+    def test_release_catalog_captures_the_published_asset_digest(self):
+        releases = [
+            {
+                "tag_name": "2.0.0",
+                "assets": [{
+                    "name": "Adventurer5M-ForgeX-2.0.0.tgz",
+                    "browser_download_url": "https://example.test/image",
+                    "size": 123,
+                    "digest": "sha256:" + "ab" * 32,
+                }],
+            },
+            {
+                "tag_name": "1.9.0",
+                "assets": [{
+                    "name": "Adventurer5M-ForgeX-1.9.0.tgz",
+                    "browser_download_url": "https://example.test/legacy",
+                    "size": 100,
+                }],
+            },
+        ]
+
+        catalog = RECOVERY.forge_x_catalog("Adventurer5M", releases)
+
+        self.assertEqual(catalog[0]["sha256"], "ab" * 32)
+        self.assertIsNone(catalog[1]["sha256"])
+
     def test_static_pro_catalog_uses_pro_factory_but_shared_recovery_url(self):
         factory = RECOVERY.static_catalog(
             "Adventurer5MPro", RECOVERY.FACTORY_IMAGES)[0]
@@ -332,9 +358,10 @@ class BootRecoveryTest(unittest.TestCase):
             "Adventurer5MPro", RECOVERY.RECOVERY_IMAGES)[0]
 
         self.assertIn("Adventurer5MPro-2.7.8", factory["url"])
-        self.assertEqual(factory["md5"], "5470a03d8dd7d5bc15140b0922b6e4fe")
         self.assertIn("Adventurer5M-3.x.x", recovery["url"])
         self.assertTrue(recovery["name"].startswith("Adventurer5MPro-"))
+        self.assertNotIn("shared", recovery)
+        self.assertNotIn("sha256", recovery)
 
     def test_release_catalog_request_uses_vendor_curl_and_ca_bundle(self):
         curl = self.root / "curl"
@@ -358,13 +385,28 @@ class BootRecoveryTest(unittest.TestCase):
 
     def test_https_error_keeps_the_actionable_curl_line(self):
         stderr = (
-            b"curl: (60) SSL certificate problem: certificate is not yet valid\n"
+            b"curl: (6) Could not resolve host: example.test\n"
             b"More details here: https://curl.se/docs/sslcerts.html\n"
             b"HTTPS-proxy has similar options --proxy-cacert and --proxy-insecure.\n"
         )
 
         self.assertEqual(
             RECOVERY.curl_error(stderr),
+            "curl: (6) Could not resolve host: example.test",
+        )
+
+    def test_certificate_date_failure_explains_unsynchronized_clock(self):
+        stderr = (
+            b"curl: (60) SSL certificate problem: certificate is not yet valid\n"
+            b"More details here: https://curl.se/docs/sslcerts.html\n"
+        )
+
+        self.assertEqual(
+            RECOVERY.curl_error(stderr),
+            "The system clock is not synchronized yet, so HTTPS certificate "
+            "checks fail.\n"
+            "Wait about a minute for the background time sync and retry, "
+            "or reboot to the normal system to sync time first.\n"
             "curl: (60) SSL certificate problem: certificate is not yet valid",
         )
 
@@ -658,9 +700,25 @@ class BootRecoveryTest(unittest.TestCase):
         curl.chmod(0o755)
         return curl, cacert, source
 
-    def test_download_is_atomic_and_validates_published_md5(self):
+    def _sha256_tool(self):
+        # /usr/bin/sha256sum is the printer path; tests delegate to whichever
+        # sha256sum-compatible tool exists on the development machine.
+        tool = shutil.which("sha256sum") or shutil.which("shasum")
+        if not tool:
+            self.skipTest("No sha256sum-compatible tool is available.")
+
+        arguments = "" if tool.endswith("sha256sum") else "-a 256 "
+        script = self.root / "sha256sum"
+        script.write_text(
+            "#!/bin/sh\nexec {} {}\"$@\"\n".format(tool, arguments),
+            encoding="utf-8")
+        script.chmod(0o755)
+        return script
+
+    def test_download_is_atomic_and_validates_published_checksum(self):
         payload = firmware_archive_bytes()
         curl, cacert, source = self._fake_curl(payload)
+        tool = self._sha256_tool()
         download_dir = self.root / "downloads"
         action_file = self.root / "action"
         ui = RECOVERY.RecoveryUI(
@@ -670,12 +728,13 @@ class BootRecoveryTest(unittest.TestCase):
             "name": "Adventurer5M-test.tgz",
             "url": "https://example.test/image",
             "size": len(payload),
-            "md5": hashlib.md5(payload).hexdigest(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
         }
 
         with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
                 mock.patch.object(RECOVERY, "CURL", str(curl)), \
                 mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
                 mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
             path = pathlib.Path(ui.download(entry))
 
@@ -683,30 +742,6 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertFalse(path.with_name(path.name + ".part").exists())
         ui.view.progress.assert_any_call(
             "DOWNLOADING IMAGE", "Connecting to the download server...")
-
-    def test_download_removes_partial_file_after_checksum_failure(self):
-        payload = firmware_archive_bytes()
-        curl, cacert, source = self._fake_curl(payload)
-        download_dir = self.root / "downloads"
-        ui = RECOVERY.RecoveryUI(
-            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
-        ui.view.progress = mock.Mock()
-        entry = {
-            "name": "Adventurer5M-test.tgz",
-            "url": "https://example.test/image",
-            "size": len(payload),
-            "md5": "0" * 32,
-        }
-
-        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
-                mock.patch.object(RECOVERY, "CURL", str(curl)), \
-                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
-                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
-            with self.assertRaisesRegex(RuntimeError, "MD5"):
-                ui.download(entry)
-
-        self.assertFalse((download_dir / entry["name"]).exists())
-        self.assertFalse((download_dir / (entry["name"] + ".part")).exists())
 
     def test_download_failure_stops_the_writer_before_removing_partial_file(self):
         download_dir = self.root / "downloads"
@@ -742,6 +777,273 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertTrue(process.stderr.closed)
         self.assertFalse(
             (download_dir / (entry["name"] + ".part")).exists())
+
+    def test_file_sha256_uses_the_sha256sum_binary(self):
+        tool = self._sha256_tool()
+        payload = b"recovery image bytes"
+        target = self.root / "image.tgz"
+        target.write_bytes(payload)
+
+        with mock.patch.object(RECOVERY, "SHA256SUM", str(tool)):
+            self.assertEqual(
+                RECOVERY.file_sha256(str(target)),
+                hashlib.sha256(payload).hexdigest())
+
+    def test_file_sha256_reports_tool_failures(self):
+        with mock.patch.object(RECOVERY, "SHA256SUM", "/nonexistent/sha256sum"):
+            self.assertRaises(RuntimeError, RECOVERY.file_sha256, "/any/path")
+
+        failed = subprocess.CompletedProcess([], 1, stdout=b"", stderr=b"boom")
+        with mock.patch.object(
+                RECOVERY.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "sha256sum failed"):
+                RECOVERY.file_sha256("/any/path")
+
+        garbled = subprocess.CompletedProcess(
+            [], 0, stdout=b"not-a-digest\n", stderr=b"")
+        with mock.patch.object(
+                RECOVERY.subprocess, "run", return_value=garbled):
+            with self.assertRaisesRegex(RuntimeError, "unexpected result"):
+                RECOVERY.file_sha256("/any/path")
+
+    def test_cached_image_is_reused_when_published_checksums_match(self):
+        payload = firmware_archive_bytes()
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-test.tgz"
+        destination.write_bytes(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+        # No curl is configured, so a download attempt would fail loudly.
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path), destination)
+        self.assertEqual(destination.read_bytes(), payload)
+        self.assertFalse((download_dir / (entry["name"] + ".part")).exists())
+        ui.view.progress.assert_any_call(
+            "VERIFYING IMAGE", "Checking the saved image...")
+
+    def test_static_entry_checks_the_cache_against_the_live_digest(self):
+        payload = firmware_archive_bytes()
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz"
+        destination.write_bytes(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = RECOVERY.static_catalog(
+            "Adventurer5M", (RECOVERY.FULL_RECOVERY_IMAGE,))[0]
+        release = {"assets": [{
+            "name": "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
+            "size": len(payload),
+            "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+        }]}
+
+        # No curl is configured, so a download attempt would fail loudly.
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.object(
+                    RECOVERY, "request_json", return_value=release) as fetch:
+            path = ui.download(entry)
+
+        fetch.assert_called_once_with(
+            "https://api.github.com/repos/DrA1ex/ff5m/releases/tags/1.2.0")
+        self.assertEqual(pathlib.Path(path), destination)
+        self.assertEqual(entry["sha256"], hashlib.sha256(payload).hexdigest())
+        self.assertEqual(entry["size"], len(payload))
+
+    def test_static_entry_redownloads_when_the_server_digest_changes(self):
+        served = firmware_archive_bytes()
+        curl, cacert, source = self._fake_curl(served)
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz"
+        destination.write_bytes(firmware_archive_bytes(name="forge-x-init.sh"))
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = RECOVERY.static_catalog(
+            "Adventurer5M", (RECOVERY.FULL_RECOVERY_IMAGE,))[0]
+        release = {"assets": [{
+            "name": "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
+            "size": len(served),
+            "digest": "sha256:" + hashlib.sha256(served).hexdigest(),
+        }]}
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "CURL", str(curl)), \
+                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.object(RECOVERY, "request_json", return_value=release), \
+                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path).read_bytes(), served)
+        self.assertFalse((download_dir / (entry["name"] + ".part")).exists())
+
+    def test_static_entry_without_a_published_digest_reuses_by_name(self):
+        payload = firmware_archive_bytes()
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz"
+        destination.write_bytes(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = RECOVERY.static_catalog(
+            "Adventurer5M", (RECOVERY.FULL_RECOVERY_IMAGE,))[0]
+        release = {"assets": [{
+            "name": "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
+            "size": len(payload),
+        }]}
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.object(RECOVERY, "request_json", return_value=release):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path), destination)
+        self.assertNotIn("sha256", entry)
+
+    def test_static_entry_reuses_by_name_when_the_api_is_unreachable(self):
+        payload = firmware_archive_bytes()
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz"
+        destination.write_bytes(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = RECOVERY.static_catalog(
+            "Adventurer5M", (RECOVERY.FULL_RECOVERY_IMAGE,))[0]
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.object(
+                    RECOVERY, "request_json",
+                    side_effect=RuntimeError("GitHub is unreachable.")):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path), destination)
+
+    def test_non_release_download_urls_skip_the_live_lookup(self):
+        payload = firmware_archive_bytes()
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        destination = download_dir / "Adventurer5M-test.tgz"
+        destination.write_bytes(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+        }
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.object(RECOVERY, "request_json") as fetch:
+            path = ui.download(entry)
+
+        fetch.assert_not_called()
+        self.assertEqual(pathlib.Path(path), destination)
+
+    def test_cached_image_with_changed_sha256_is_downloaded_again(self):
+        served = firmware_archive_bytes()
+        curl, cacert, source = self._fake_curl(served)
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        stale = download_dir / "Adventurer5M-test.tgz"
+        stale.write_bytes(firmware_archive_bytes(name="forge-x-init.sh"))
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+            "size": len(served),
+            "sha256": hashlib.sha256(served).hexdigest(),
+        }
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "CURL", str(curl)), \
+                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path).read_bytes(), served)
+        self.assertFalse((download_dir / (entry["name"] + ".part")).exists())
+
+    def test_cached_corrupt_image_is_downloaded_again(self):
+        served = firmware_archive_bytes()
+        curl, cacert, source = self._fake_curl(served)
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        download_dir.mkdir()
+        (download_dir / "Adventurer5M-test.tgz").write_bytes(b"broken archive")
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+            "size": len(served),
+            "sha256": hashlib.sha256(served).hexdigest(),
+        }
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "CURL", str(curl)), \
+                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
+            path = ui.download(entry)
+
+        self.assertEqual(pathlib.Path(path).read_bytes(), served)
+
+    def test_download_removes_partial_file_after_sha256_failure(self):
+        payload = firmware_archive_bytes()
+        curl, cacert, source = self._fake_curl(payload)
+        tool = self._sha256_tool()
+        download_dir = self.root / "downloads"
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+            "size": len(payload),
+            "sha256": "0" * 64,
+        }
+
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(download_dir)), \
+                mock.patch.object(RECOVERY, "CURL", str(curl)), \
+                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "SHA256SUM", str(tool)), \
+                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
+            with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                ui.download(entry)
+
+        self.assertFalse((download_dir / entry["name"]).exists())
+        self.assertFalse((download_dir / (entry["name"] + ".part")).exists())
 
     def test_flash_handoff_is_rendered_by_recovery_before_services_stop(self):
         action = self.root / "action"
@@ -1086,7 +1388,7 @@ cleanup_recovery_runtime
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(
             lifecycle.read_text(encoding="utf-8").splitlines(), [
-                "date:-u -s 2026-01-01 00:00:00",
+                "date:-u -s 2026-09-01 00:00:00",
                 "chroot:{}/mod /opt/config/mod/.root/S45ntpd start".format(
                     self.root),
                 "chroot:{}/mod /opt/config/mod/.root/S45ntpd stop".format(

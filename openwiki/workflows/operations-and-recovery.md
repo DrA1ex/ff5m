@@ -164,10 +164,19 @@ actionable error line rather than the final generic certificate-help line.
 The UI acknowledges an image selection immediately and reports the initial
 server-connection stage even before curl has created its partial file. Downloads
 are written as
-`.part` files under `/data/forge-x-recovery`, checked against the GitHub asset
-size, validated as safe firmware archives, and atomically renamed. Because the
-stock Python lacks `_lzma`, `.tar.xz` validation streams through `/usr/bin/xz`.
-The firmware menu can clear every regular file directly inside the dedicated
+`.part` files under `/data/forge-x-recovery`, checked against the asset size
+and SHA-256 digest currently published on the GitHub releases API, validated
+as safe firmware archives, and atomically renamed. Forge-X release entries
+take those values from the release listing; factory and file-recovery entries
+look their asset up live by release URL before the cache decision, so
+replacing an asset on the server automatically re-downloads an outdated saved
+copy. Assets that GitHub published without a digest — and an unreachable
+release API — fall back to matching a saved file by name plus archive
+validation alone. Because the stock Python lacks `_lzma`, `.tar.xz`
+validation streams through `/usr/bin/xz`, and SHA-256 is computed through the
+printer's `/usr/bin/sha256sum`. A saved image that no longer validates or no
+longer matches the published digest is replaced by a fresh download. The
+firmware menu can clear every regular file directly inside the dedicated
 download directory after confirmation; it never follows symlinks or removes
 subdirectories. Individual files remain operator-managed through Fluidd or
 Mainsail.
@@ -182,10 +191,13 @@ contains an active mount, and confirms with an irreversible-action warning.
 The scan roots, search-excluded subtrees, and delete-protected paths are the
 `CLEANUP_*` policy lists in [`recovery.py`](../../.py/recovery.py); adjust
 those lists rather than the scanning code.
-The fixed factory catalog additionally checks the published MD5 values. Forge-X
-release discovery uses the GitHub releases API rather than `releases/latest`,
-so stable and prerelease assets remain selectable. Factory and file-recovery
-entries remain a small explicit catalog matching the documented images.
+The fixed factory and file-recovery catalogs carry only release URLs and
+never frozen checksums: factory images have per-model assets, file-recovery
+images share one asset across models, and integrity values always come from
+the live API. Forge-X release discovery uses the GitHub releases API rather
+than `releases/latest`, so stable and prerelease assets remain selectable.
+Factory and file-recovery entries remain a small explicit catalog matching
+the documented images.
 
 The UI never executes a firmware entrypoint. After two explicit confirmations
 it writes a validated

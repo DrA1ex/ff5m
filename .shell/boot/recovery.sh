@@ -91,7 +91,7 @@ start_recovery_clock() {
     if [ -s "$MOD/etc/fake-hwclock.data" ]; then
         chroot "$MOD" /usr/sbin/fake-hwclock load >/dev/null 2>&1 || true
     else
-        date -u -s "2026-01-01 00:00:00" >/dev/null 2>&1 || true
+        date -u -s "2026-09-01 00:00:00" >/dev/null 2>&1 || true
     fi
 
     chroot "$MOD" /opt/config/mod/.root/S45ntpd start >/dev/null 2>&1 \
