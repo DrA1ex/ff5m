@@ -125,6 +125,12 @@ publishes frames synchronously during calibration. Once the timing model has
 enough valid samples, later frames switch to deferred publication without a
 renderer restart or an unpublished startup frame.
 
+When a page-flipping Typer session ends — normal exit, `TERM`/`INT`, or
+renderer teardown — it copies the currently visible frame into the boot page
+(y offset 0) and pans back before releasing the framebuffer. Fixed-page
+writers such as the boot `logged` renderer and raw `/dev/fb0` writes always
+stay visible after Typer exits.
+
 The worker hands the event FIFO to Klipper's reactor through
 `register_async_callback`; touch remains a direct reactor FD for low-latency
 emergency and joystick input. Before `klippy:ready`, a short reactor timer

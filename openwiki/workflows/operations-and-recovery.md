@@ -199,7 +199,9 @@ status and failure details only through their output streams and never own the
 framebuffer or splash lifecycle. Recovery renders its own hand-off page, then
 connects the installer's output to the standard `logged --send-to-screen` path
 while retaining `recovery.log`, so its `//%` archive-extraction progress remains
-visible. Normal USB-image boot routes the same output through the existing init
+visible; the exiting page-flipping Typer session returns the panel to the boot
+page with the current frame, which is what keeps that boot-page logger visible.
+Normal USB-image boot routes the same output through the existing init
 logger and splash. The installer status remains authoritative if either screen
 logger returns a different status. The detached runner immediately reconnects
 its standard streams to `/dev/console`, and the selected installer inherits
