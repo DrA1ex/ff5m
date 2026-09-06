@@ -4,7 +4,9 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import ast
 import pathlib
+import shlex
 import unittest
 
 from tests.gcode_macro_harness import (
@@ -66,6 +68,166 @@ def start_print_printer(display, bed_mesh, mesh="", zforce_leveling=False,
         "extruder": {"temperature": 25, "can_extrude": False},
         "bed_mesh": bed_mesh,
     }
+
+
+# Sub-macros expanded while executing _START_PRINT. Deeper helpers (KAMP
+# meshing, SMART_PARK, LINE_PURGE, temperature waits, context commands)
+# stay terminal and are asserted as the observable handoff.
+START_PRINT_EXECUTION_CHAIN = (
+    (BASE, "_START_PRINT"),
+    (BASE, "_START_PRINT_PREPARE"),
+    (BASE, "_CANCEL_DELAYED_COMMANDS"),
+    (BASE, "_ENSURE_SERVICES_STARTED"),
+    (BASE, "LOAD_GCODE_OFFSET"),
+    (BASE, "_HOME_IF_NEEDED"),
+    (BASE, "_PREPARE_LEVELING"),
+    (BASE, "_FULL_BED_LEVEL"),
+    (BASE, "KAMP"),
+    (BASE, "_RAISE_WITH_PRINT_CANCEL"),
+    (BASE, "_RAISE_ERROR"),
+)
+
+
+def start_print_state(
+        *,
+        display=1,
+        mesh="",
+        profile_name="auto",
+        profiles=("auto", "PLA_profile"),
+        zforce_leveling=False,
+        zforce_kamp=False,
+        zskip_leveling=False,
+        zskip_zoffset=False,
+        zzoffset=0.0,
+        print_leveling=False,
+        use_kamp=False,
+        mesh_validation=False,
+        validation_clear=False,
+        disable_priming=True,
+        extruder_temperature=25.0,
+        can_extrude=False,
+        chamber_light_mode="MANUAL",
+        check_md5=0,
+        preparation_done=True,
+        midi_start="",
+        weight_check=False,
+        load_zoffset=False,
+        filament_switch_sensor=False,
+        filament_detected=True,
+        start_status=None):
+    """Build the standing printer state for a _START_PRINT execution.
+
+    SET_GCODE_VARIABLE side effects are terminal commands in this harness,
+    so variables the macro sets before reading them back are pre-seeded on
+    the status: print_active is set by the macro itself at the start of
+    every run, and the z* variables hold the START_PRINT wrapper request
+    (or the fully staged status supplied by a wrapper execution).
+    """
+    if start_status is None:
+        start_status = macro_status(
+            BASE, "_START_PRINT", zmesh=mesh, print_active=True,
+            zforce_leveling=zforce_leveling, zforce_kamp=zforce_kamp,
+            zskip_leveling=zskip_leveling, zskip_zoffset=zskip_zoffset,
+            zzoffset=zzoffset)
+    printer = {
+        "gcode_macro _START_PRINT": start_status,
+        "gcode_macro START_PRINT": {"preparation_done": preparation_done},
+        "gcode_macro _ENSURE_SERVICES_STARTED": {"initialized": True},
+        "mod_params": {"variables": {
+            "safe_z": 10,
+            "chamber_light_mode": chamber_light_mode,
+            "display": display,
+            "check_md5": check_md5,
+            "print_leveling": print_leveling,
+            "use_kamp": use_kamp,
+            "bed_mesh_validation": mesh_validation,
+            "bed_mesh_validation_clear": validation_clear,
+            "bed_mesh_validation_tolerance": 0.2,
+            "clear_cooldown_temp": 150,
+            "disable_cleaning": False,
+            "zclear": "_CLEAR1",
+            "z_offset": 0.1,
+            "filament_switch_sensor": filament_switch_sensor,
+            "load_zoffset": load_zoffset,
+            "disable_skew": True,
+            "midi_start": midi_start,
+            "weight_check": weight_check,
+            "disable_priming": disable_priming,
+        }},
+        "extruder": {"temperature": extruder_temperature,
+                     "can_extrude": can_extrude},
+        "bed_mesh": {
+            "profile_name": profile_name,
+            "profiles": {name: {} for name in profiles},
+        },
+        "toolhead": {"homed_axes": "xyz"},
+    }
+    if filament_switch_sensor:
+        printer["filament_switch_sensor e0_sensor"] = {
+            "filament_detected": filament_detected}
+    return printer
+
+
+def run_start_print(**state):
+    return execute_macro_chain(
+        START_PRINT_EXECUTION_CHAIN, "_START_PRINT",
+        printer=start_print_state(**state))
+
+
+def run_headless_start_print(
+        params, *, profiles=("auto", "PLA_profile"), profile_name="auto",
+        feather_force_leveling=None, feather_mesh_name=None, **standing):
+    """Execute the headless START_PRINT wrapper through _START_PRINT.
+
+    The wrapper stages the slicer request with SET_GCODE_VARIABLE
+    commands; the staged values are applied to the _START_PRINT status
+    before the consumer executes, the way Klipper updates macro variables.
+    Returns (wrapper commands, full chain commands); the full chain keeps
+    the wrapper's own commands, so the default-mesh handoff stays ordered
+    in a single stream.
+    """
+    wrapper_status = macro_status(
+        HEADLESS, "START_PRINT", preparation_done=True,
+        feather_force_leveling=feather_force_leveling,
+        feather_mesh_name=feather_mesh_name)
+    wrapper = render_macro(
+        HEADLESS, "START_PRINT",
+        printer={
+            "gcode_macro START_PRINT": wrapper_status,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {name: {} for name in profiles}},
+        }, params=params)
+
+    staged = macro_status(BASE, "_START_PRINT", print_active=True)
+    for command in wrapper.commands:
+        arguments = shlex.split(command)
+        if not arguments or arguments[0] != "SET_GCODE_VARIABLE":
+            continue
+        options = dict(
+            argument.split("=", 1) for argument in arguments[1:])
+        if options.get("MACRO") == "_START_PRINT":
+            staged[options["VARIABLE"]] = ast.literal_eval(options["VALUE"])
+
+    printer = start_print_state(
+        start_status=staged, profiles=profiles, profile_name=profile_name,
+        **standing)
+    printer["gcode_macro START_PRINT"] = wrapper_status
+    full_chain = execute_macro_chain(
+        ((HEADLESS, "START_PRINT"),) + START_PRINT_EXECUTION_CHAIN,
+        "START_PRINT", printer=printer, params=params)
+    return wrapper.commands, full_chain
+
+
+def mesh_actions(commands):
+    names = ("BED_MESH_CALIBRATE", "_KAMP_BED_MESH_CALIBRATE",
+             "BED_MESH_PROFILE")
+    return tuple(command for command in commands
+                 if command.split()[0] in names)
+
+
+def mesh_generated_publish(profile):
+    return ("SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh_generated VALUE='\"%s\"'" % profile)
 
 
 class WorkflowMacroTest(unittest.TestCase):
@@ -950,6 +1112,636 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             render_macro(
                 BASE, "PREPARE_USB",
                 printer={"idle_timeout": {"state": "Printing"}})
+
+
+class StartPrintExecutionTest(unittest.TestCase):
+    """Executes the full _START_PRINT chain to fixate its mesh contract."""
+
+    def test_leveling_branch_selects_exactly_one_mesh_action(self):
+        cases = (
+            ("skipped leveling", {"zskip_leveling": True}, (), ""),
+            ("skipped leveling with standing kamp policy",
+             {"zskip_leveling": True, "use_kamp": True}, (), ""),
+            ("skipped leveling preempts standing print_leveling policy",
+             {"zskip_leveling": True, "print_leveling": True}, (), ""),
+            ("forced kamp", {"zforce_kamp": True},
+             ("_KAMP_BED_MESH_CALIBRATE",), "default"),
+            ("standing kamp policy", {"use_kamp": True},
+             ("_KAMP_BED_MESH_CALIBRATE",), "default"),
+            ("kamp preempts a requested saved profile",
+             {"use_kamp": True, "mesh": "PLA_profile"},
+             ("_KAMP_BED_MESH_CALIBRATE",), "default"),
+            ("forced kamp preempts a requested saved profile",
+             {"zforce_kamp": True, "mesh": "PLA_profile"},
+             ("_KAMP_BED_MESH_CALIBRATE",), "default"),
+            ("forced leveling preempts kamp",
+             {"zforce_kamp": True, "zforce_leveling": True},
+             ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
+            ("forced leveling without a profile name",
+             {"zforce_leveling": True},
+             ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
+            ("forced leveling with a profile name",
+             {"zforce_leveling": True, "mesh": "auto"},
+             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+            ("forced leveling rebuilds a requested saved profile",
+             {"zforce_leveling": True, "mesh": "PLA_profile"},
+             ('BED_MESH_CALIBRATE PROFILE="PLA_profile"',), "PLA_profile"),
+            ("standing print_leveling policy with a profile name",
+             {"print_leveling": True, "mesh": "auto"},
+             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+            ("standing print_leveling policy without a profile name",
+             {"print_leveling": True},
+             ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
+            ("requested saved profile is loaded", {"mesh": "PLA_profile"},
+             ("BED_MESH_PROFILE LOAD=PLA_profile",), ""),
+            ("requested missing profile is regenerated under its name",
+             {"mesh": "missing"},
+             ('BED_MESH_CALIBRATE PROFILE="missing"',), "missing"),
+            ("no request and nothing loaded rebuilds persistent auto",
+             {"profile_name": ""},
+             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+            ("no request and nothing loaded keeps stock default profile",
+             {"profile_name": "", "display": 0},
+             ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
+            ("no request keeps the already loaded profile", {}, (), ""),
+        )
+        for label, scenario, actions, generated in cases:
+            with self.subTest(label=label):
+                commands = run_start_print(**scenario)
+
+                self.assertEqual(mesh_actions(commands), actions)
+                self.assertIn(mesh_generated_publish(generated), commands)
+
+    def test_bed_mesh_validation_protects_only_reused_profiles(self):
+        for label, scenario in (
+                ("kamp generation", {"use_kamp": True}),
+                ("forced full leveling", {"zforce_leveling": True}),
+                ("missing-profile fallback", {"mesh": "missing"})):
+            with self.subTest(generated_by=label):
+                commands = run_start_print(
+                    mesh_validation=True, **scenario)
+
+                self.assertFalse(any(
+                    command.startswith("_CHECK_BED_MESH")
+                    for command in commands))
+
+        cleared = run_start_print(
+            mesh="PLA_profile", mesh_validation=True, validation_clear=True)
+        assert_order(self, cleared, (
+            "BED_MESH_PROFILE LOAD=PLA_profile",
+            "G1 X110 Y110 F6000",
+            "CLEAR_NOZZLE EXTRUDER_TEMP=245.0 BED_TEMP=80.0",
+            "_CHECK_BED_MESH RETRACT=0",
+            '_CONTEXT_STATE NAME="RESUMING HEAT"',
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+        ))
+        self.assertNotIn(
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+            cleared)
+
+        heated = run_start_print(
+            mesh="PLA_profile", mesh_validation=True, can_extrude=True)
+        assert_order(self, heated, (
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+            # The whole _START_PRINT template renders before any command
+            # executes, so the retract decision is deferred to a macro that
+            # renders after the wait and observes the actually-hot extruder.
+            "_CHECK_BED_MESH_AFTER_HEATING",
+        ))
+        self.assertNotIn("CLEAR_NOZZLE EXTRUDER_TEMP=245.0 BED_TEMP=80.0",
+                         heated)
+
+        # The everyday headless print: no explicit request and the wrapper
+        # preloaded the persistent default, so the standing profile is
+        # reused and stays under the validation protection.
+        reused = run_start_print(mesh_validation=True)
+        assert_order(self, reused, (
+            'RESPOND PREFIX="//" MSG="Using loaded bed mesh profile: auto"',
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+            "_CHECK_BED_MESH_AFTER_HEATING",
+        ))
+
+        # SKIP_LEVELING reuses the standing mesh, so the protection
+        # validates it instead of treating the run as a mesh generation.
+        # Standing kamp/leveling policies must not masquerade as a
+        # generated mesh under skip.
+        for standing_flags in ({}, {"use_kamp": True},
+                               {"print_leveling": True}):
+            with self.subTest(skip_with=standing_flags or "no flags"):
+                skipped = run_start_print(
+                    zskip_leveling=True, mesh_validation=True,
+                    **standing_flags)
+                assert_order(self, skipped, (
+                    '_CONTEXT_STATE NAME="SKIPPING LEVELING"',
+                    "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+                    "_CHECK_BED_MESH_AFTER_HEATING",
+                ))
+                self.assertIn(mesh_generated_publish(""), skipped)
+
+    def test_skip_leveling_without_any_profile_warns_and_skips_validation(self):
+        # Nothing is generated and no profile is active: the print must
+        # continue without mesh compensation, say so loudly, and skip the
+        # validation preparation entirely instead of heating for a check
+        # that could only discover its own absence.
+        bare = run_start_print(
+            zskip_leveling=True, profiles=(), profile_name="",
+            mesh_validation=True, validation_clear=True)
+        assert_order(self, bare, (
+            '_CONTEXT_STATE NAME="SKIPPING LEVELING"',
+            'RESPOND PREFIX="warn" MSG="No bed mesh profile is loaded. '
+            'Printing without bed mesh compensation. Check if '
+            'SKIP_LEVELING is intentional."',
+            'RESPOND PREFIX="//" MSG="Bed Mesh Validation Protection is '
+            'skipped because no bed mesh profile is loaded."',
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+        ))
+        self.assertFalse(any(
+            command.startswith("_CHECK_BED_MESH") for command in bare))
+        self.assertNotIn(
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5", bare)
+        self.assertNotIn(
+            "CLEAR_NOZZLE EXTRUDER_TEMP=245.0 BED_TEMP=80.0", bare)
+        self.assertNotIn(
+            'RESPOND PREFIX="//" MSG="Bed Mesh Validation Protection is '
+            'enabled and will run after heating."', bare)
+        self.assertIn(mesh_generated_publish(""), bare)
+
+        # The missing-profile warning is a property of printing without a
+        # mesh, not of the validation setup, and fires unconditionally.
+        unguarded = run_start_print(
+            zskip_leveling=True, profiles=(), profile_name="")
+        self.assertTrue(any(
+            command.startswith(
+                'RESPOND PREFIX="warn" MSG="No bed mesh profile is loaded')
+            for command in unguarded))
+
+    def test_skip_leveling_loads_requested_profile_without_generating(self):
+        # SKIP_LEVELING suppresses generation only. A requested profile is
+        # still loaded over the standing one and, being loaded rather than
+        # generated, stays under the validation protection.
+        loaded = run_start_print(
+            zskip_leveling=True, mesh="PLA_profile", mesh_validation=True)
+        assert_order(self, loaded, (
+            "BED_MESH_PROFILE LOAD=PLA_profile",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+            "_CHECK_BED_MESH_AFTER_HEATING",
+        ))
+        self.assertFalse(any(
+            command.startswith("BED_MESH_CALIBRATE") for command in loaded))
+        self.assertIn(mesh_generated_publish(""), loaded)
+
+        # A requested profile that does not exist cannot be generated under
+        # skip; the standing profile stays in effect with an explicit warn.
+        missing = run_start_print(
+            zskip_leveling=True, mesh="missing", mesh_validation=True)
+        self.assertIn(
+            'RESPOND PREFIX="warn" MSG="Requested bed mesh \'missing\' '
+            'not found. SKIP_LEVELING prevents generating a new one."',
+            missing)
+        self.assertEqual(mesh_actions(missing), ())
+        assert_order(self, missing, (
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+            "_CHECK_BED_MESH_AFTER_HEATING",
+        ))
+
+        # And when nothing else is loaded either, the print runs without a
+        # mesh and skips the validation preparation entirely.
+        bare = run_start_print(
+            zskip_leveling=True, mesh="missing", mesh_validation=True,
+            profiles=(), profile_name="")
+        self.assertFalse(any(
+            command.startswith(("_CHECK_BED_MESH", "BED_MESH"))
+            for command in bare))
+        self.assertNotIn(
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5", bare)
+        self.assertIn(
+            'RESPOND PREFIX="//" MSG="Bed Mesh Validation Protection is '
+            'skipped because no bed mesh profile is loaded."', bare)
+
+    def test_parking_and_priming_follow_the_leveling_mode(self):
+        kamp = run_start_print(use_kamp=True, disable_priming=False)
+        assert_order(self, kamp, (
+            "_KAMP_BED_MESH_CALIBRATE",
+            "SMART_PARK",
+            "LINE_PURGE",
+            "SET_GCODE_VARIABLE MACRO=_LINE_PURGE "
+            "VARIABLE=print_area_min VALUE=None",
+        ))
+        self.assertNotIn("G1 X110 Y110 F6000", kamp)
+        self.assertNotIn("_CLEAR1", kamp)
+
+        stock_kamp = run_start_print(
+            display=0, use_kamp=True, disable_priming=False)
+        self.assertNotIn("SMART_PARK", stock_kamp)
+        self.assertIn("G1 X110 Y110 F6000", stock_kamp)
+        self.assertIn("LINE_PURGE", stock_kamp)
+
+        corner = run_start_print(disable_priming=False)
+        self.assertNotIn("SMART_PARK", corner)
+        self.assertIn("G1 X110 Y110 F6000", corner)
+        self.assertIn("_CLEAR1", corner)
+        self.assertNotIn("LINE_PURGE", corner)
+
+        # SKIP_LEVELING disables the entire leveling flow including the
+        # KAMP-specific parking and purge, even when the KAMP policy is on.
+        skipped = run_start_print(
+            zskip_leveling=True, use_kamp=True, disable_priming=False)
+        self.assertNotIn("SMART_PARK", skipped)
+        self.assertNotIn("LINE_PURGE", skipped)
+        self.assertIn("G1 X110 Y110 F6000", skipped)
+        self.assertIn("_CLEAR1", skipped)
+
+        disabled = run_start_print(use_kamp=True, disable_priming=True)
+        self.assertNotIn("LINE_PURGE", disabled)
+        self.assertNotIn("_CLEAR1", disabled)
+
+    def test_lifecycle_publishes_flags_and_preheats_without_wasting_heat(self):
+        cold = run_start_print()
+        assert_order(self, cold, (
+            "_CONTEXT_BEGIN TYPE=print",
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=print_active VALUE=True",
+            "M140 S80.0",
+            "G1 X110 Y110 F6000",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=print_started VALUE=True",
+            "_CONTEXT_STATE NAME=PRINTING",
+        ))
+        self.assertFalse(
+            any(command.startswith("M104 ") for command in cold))
+
+        hold = run_start_print(extruder_temperature=200.0)
+        self.assertIn("M104 S200.0", hold)
+        self.assertNotIn("M104 S245.0", hold)
+
+        hot = run_start_print(extruder_temperature=245.0)
+        self.assertIn("M104 S245.0", hot)
+
+    def test_environment_options_react_during_start(self):
+        run = run_start_print(
+            chamber_light_mode="PRINT_ONLY", midi_start="startup.mid",
+            weight_check=True, load_zoffset=True)
+        assert_order(self, run, (
+            "LED_ON",
+            "_SET_GCODE_OFFSET Z='0.1'",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+            "PLAY_MIDI FILE=startup.mid",
+            "LOAD_CELL_TARE",
+        ))
+
+        verified = run_start_print(check_md5=1, preparation_done=False)
+        assert_order(self, verified, (
+            '_CONTEXT_STATE NAME="CHECKING FILE"',
+            "CHECK_MD5",
+            "M140 S80.0",
+        ))
+
+    def test_prepare_aborts_when_the_filament_sensor_reports_runout(self):
+        with self.assertRaises(MacroActionError):
+            run_start_print(
+                filament_switch_sensor=True, filament_detected=False)
+
+        started = run_start_print(
+            filament_switch_sensor=True, filament_detected=True)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=print_started VALUE=True", started)
+
+    def test_deprecated_zoffset_arguments_abort_the_print(self):
+        for parameter, overrides in (
+                ("SKIP_ZOFFSET", {"zskip_zoffset": True}),
+                ("Z_OFFSET", {"zzoffset": 0.2})):
+            with self.subTest(parameter=parameter):
+                with self.assertRaises(MacroActionError):
+                    run_start_print(**overrides)
+
+
+class StartPrintDefaultMeshTest(unittest.TestCase):
+    """Lifecycle of the persistent default mesh around _START_PRINT."""
+
+    def test_boot_prepare_loads_the_persistent_auto_profile(self):
+        result = render_macro(
+            HEADLESS, "prepare_headless", section="delayed_gcode")
+
+        self.assertEqual(result.commands, (
+            "BED_MESH_CLEAR", "BED_MESH_PROFILE LOAD=auto"))
+
+    def test_wrapper_preloads_auto_and_start_print_reuses_it(self):
+        wrapper, full = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65})
+
+        assert_order(self, wrapper, (
+            "SET_FILAMENT_SENSOR SENSOR=e0_sensor ENABLE=0",
+            "BED_MESH_CLEAR",
+            "BED_MESH_PROFILE LOAD=auto",
+            "_BACKLIGHT",
+            "_START_PRINT",
+        ))
+        # The pre-loaded persistent profile is the only mesh action in the
+        # whole flow; _START_PRINT reuses it without calibrating.
+        self.assertEqual(mesh_actions(full), ("BED_MESH_PROFILE LOAD=auto",))
+        self.assertIn(mesh_generated_publish(""), full)
+
+    def test_first_print_without_auto_generates_the_persistent_profile(self):
+        wrapper, full = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65},
+            profiles=("PLA_profile",), profile_name="")
+
+        self.assertFalse(any(
+            command.startswith("BED_MESH") for command in wrapper))
+        self.assertEqual(mesh_actions(full),
+                         ('BED_MESH_CALIBRATE PROFILE="auto"',))
+        self.assertIn(mesh_generated_publish("auto"), full)
+
+    def test_feather_rebuild_override_drives_the_staged_request(self):
+        wrapper, full = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65, "SKIP_LEVELING": 1},
+            feather_force_leveling=True, feather_mesh_name=None)
+
+        # The one-print Feather override clears the slicer's SKIP_LEVELING
+        # and requests an unnamed full rebuild, preloaded auto included.
+        assert_order(self, wrapper, (
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zforce_leveling VALUE=1",
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zskip_leveling VALUE=0",
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"\"'",
+            "BED_MESH_PROFILE LOAD=auto",
+            "_START_PRINT",
+        ))
+        self.assertEqual(mesh_actions(full), (
+            "BED_MESH_PROFILE LOAD=auto",
+            'BED_MESH_CALIBRATE PROFILE="default"',
+        ))
+        self.assertIn(mesh_generated_publish("default"), full)
+
+        _, named = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65},
+            feather_force_leveling=True, feather_mesh_name="auto")
+        self.assertEqual(mesh_actions(named), (
+            "BED_MESH_PROFILE LOAD=auto",
+            'BED_MESH_CALIBRATE PROFILE="auto"',
+        ))
+
+    def test_skip_leveling_print_still_loads_the_requested_profile(self):
+        wrapper, full = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65, "SKIP_LEVELING": 1,
+             "MESH": "PLA_profile"})
+
+        # The wrapper preloads the persistent default, then the explicit
+        # slicer request wins without any calibration in between.
+        self.assertEqual(mesh_actions(wrapper),
+                         ("BED_MESH_PROFILE LOAD=auto",))
+        self.assertEqual(mesh_actions(full), (
+            "BED_MESH_PROFILE LOAD=auto",
+            "BED_MESH_PROFILE LOAD=PLA_profile",
+        ))
+
+    def test_wrapper_preload_does_not_shadow_an_explicit_profile_request(self):
+        wrapper, full = run_headless_start_print(
+            {"EXTRUDER_TEMP": 230, "BED_TEMP": 65, "MESH": "PLA_profile"})
+
+        self.assertEqual(mesh_actions(wrapper),
+                         ("BED_MESH_PROFILE LOAD=auto",))
+        self.assertEqual(mesh_actions(full), (
+            "BED_MESH_PROFILE LOAD=auto",
+            "BED_MESH_PROFILE LOAD=PLA_profile",
+        ))
+
+    def test_end_print_removes_only_the_temporary_default_profile(self):
+        temporary = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
+            "mod_params": {"variables": {"stop_motor": 0}},
+            "bed_mesh": {"profile_name": "default"},
+        })
+        persistent = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
+            "mod_params": {"variables": {"stop_motor": 0}},
+            "bed_mesh": {"profile_name": "auto"},
+        })
+
+        assert_order(self, temporary.commands, (
+            "BED_MESH_CLEAR", "BED_MESH_PROFILE REMOVE=default"))
+        self.assertFalse(any(
+            command.startswith("BED_MESH_PROFILE REMOVE")
+            for command in persistent.commands))
+
+
+class LevelingPreparationMacroTest(unittest.TestCase):
+    @staticmethod
+    def _printer(disable_cleaning=False):
+        return {"mod_params": {"variables": {
+            "safe_z": 10,
+            "clear_cooldown_temp": 150.0,
+            "disable_cleaning": disable_cleaning,
+        }}}
+
+    def test_hot_nozzle_is_cleaned_before_leveling(self):
+        result = render_macro(
+            BASE, "_PREPARE_LEVELING", printer=self._printer(),
+            params={"EXTRUDER_TEMP": 240, "BED_TEMP": 80})
+
+        self.assertIn("CLEAR_NOZZLE EXTRUDER_TEMP=240.0 BED_TEMP=80.0",
+                      result.commands)
+        self.assertFalse(any(command.startswith("_WAIT_TEMPERATURE")
+                             for command in result.commands))
+        self.assertNotIn("LOAD_CELL_TARE", result.commands)
+
+    def test_uncleanable_nozzle_heats_under_managed_waits(self):
+        # A cold or disabled-clean nozzle must not be wiped: the heaters
+        # are brought to safe levels through managed waits and the load
+        # cell is tared for the coming probes.
+        cases = (
+            ("disabled by parameter", True, 240, 150.0,
+             "Nozzle cleaning is disabled due to 'disable_cleaning' "
+             "parameter"),
+            ("below cooldown threshold", False, 140, 140.0,
+             "Nozzle cleaning was skipped because nozzle temperature is "
+             "below cooldown threshold"),
+        )
+        for label, disabled, extruder, wait_target, message in cases:
+            with self.subTest(label=label):
+                result = render_macro(
+                    BASE, "_PREPARE_LEVELING",
+                    printer=self._printer(disable_cleaning=disabled),
+                    params={"EXTRUDER_TEMP": extruder, "BED_TEMP": 80})
+
+                assert_order(self, result.commands, (
+                    'RESPOND PREFIX="info" MSG="%s"' % message,
+                    "M140 S80.0",
+                    "_HOME_IF_NEEDED",
+                    "_CONTEXT_STATE NAME=HEATING",
+                    "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=3",
+                    "_WAIT_TEMPERATURE CMD=M104 VALUE=%s BELOW=2 ABOVE=3"
+                    % wait_target,
+                    "LOAD_CELL_TARE",
+                ))
+                self.assertFalse(any(command.startswith("CLEAR_NOZZLE")
+                                     for command in result.commands))
+
+    def test_nozzle_cleaning_restores_the_mesh_it_cleared(self):
+        # PROBE reports absolute Z while G1 moves relative to the active
+        # mesh, so cleaning must clear it first and put it back afterwards.
+        printer = self._printer()
+        restored = render_macro(
+            BASE, "CLEAR_NOZZLE", printer=dict(
+                printer, bed_mesh={"profile_name": "auto"}),
+            params={"EXTRUDER_TEMP": 240, "BED_TEMP": 80})
+        assert_order(self, restored.commands, (
+            "BED_MESH_CLEAR",
+            "M106 P0 S0",
+            'BED_MESH_PROFILE LOAD="auto"',
+            "RESTORE_GCODE_STATE NAME=_clear_nozzle",
+        ))
+
+        bare = render_macro(
+            BASE, "CLEAR_NOZZLE", printer=dict(
+                printer, bed_mesh={"profile_name": ""}),
+            params={"EXTRUDER_TEMP": 240, "BED_TEMP": 80})
+        self.assertIn("BED_MESH_CLEAR", bare.commands)
+        self.assertFalse(any(command.startswith("BED_MESH_PROFILE")
+                             for command in bare.commands))
+
+
+class BedMeshValidationMacroTest(unittest.TestCase):
+    def test_heated_validation_retract_samples_the_extruder_at_call_time(self):
+        # Rendering _START_PRINT samples the printer state once, before any
+        # command executes; deferring the retract decision to this macro
+        # makes it observe the extruder after the temperature wait.
+        for can_extrude, retract in ((True, 1), (False, 0)):
+            with self.subTest(can_extrude=can_extrude):
+                result = render_macro(
+                    BASE, "_CHECK_BED_MESH_AFTER_HEATING",
+                    printer={"extruder": {"can_extrude": can_extrude}})
+
+                self.assertEqual(
+                    result.commands, ("_CHECK_BED_MESH RETRACT=%d" % retract,))
+
+    MESH = (
+        (0.01, 0.02, 0.03, 0.04, 0.05),
+        (0.06, 0.07, 0.08, 0.09, 0.10),
+        (0.11, 0.12, 0.13, 0.14, 0.15),
+        (0.16, 0.17, 0.18, 0.19, 0.20),
+        (0.21, 0.22, 0.23, 0.24, 0.25),
+    )
+
+    @staticmethod
+    def _printer(mesh, mesh_min, mesh_max, profile="auto"):
+        return {
+            "mod_params": {"variables": {
+                "safe_z": 10, "bed_mesh_validation_tolerance": 0.2}},
+            "bed_mesh": {"profile_name": profile, "mesh_matrix": mesh,
+                         "mesh_min": mesh_min, "mesh_max": mesh_max},
+        }
+
+    def test_without_loaded_profile_the_check_warns_and_probes_nothing(self):
+        result = render_macro(BASE, "_CHECK_BED_MESH", printer=self._printer(
+            self.MESH, [-100, -100], [100, 100], profile=""))
+
+        assert_order(self, result.commands, (
+            "_CONTEXT_BEGIN TYPE=mesh_validation",
+            'RESPOND PREFIX="warn" MSG="Skipping bed mesh check; '
+            'no mesh loaded."',
+            "_CONTEXT_END",
+        ))
+        self.assertFalse(any(command.startswith((
+            "_CHECK_BED_MESH_PROBE", "_CHECK_BED_MESH_VERIFY",
+            "_CHECK_BED_MESH_HANDLE_FAIL")) for command in result.commands))
+
+    def test_probes_edge_points_and_matches_them_to_mesh_cells(self):
+        result = render_macro(
+            BASE, "_CHECK_BED_MESH",
+            printer=self._printer(self.MESH, [-100, -100], [100, 100]),
+            params={"RETRACT": 1})
+
+        # Points are inset 5mm from the mesh bounds and skip the middle
+        # column/row to keep plastic traces off the print area; every
+        # verification expects the mesh cell its probe is standing on.
+        self.assertEqual(
+            tuple(command for command in result.commands
+                  if command.startswith(("_CHECK_BED_MESH_PROBE",
+                                         "_CHECK_BED_MESH_VERIFY"))),
+            (
+                "_CHECK_BED_MESH_PROBE X=-105 Y=52.5 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.16 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=-105 Y=-105 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.21 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=52.5 Y=-105 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.04 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=105 Y=-105 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.25 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=105 Y=52.5 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.2 TOLERANCE=0.2",
+            ))
+        assert_order(self, result.commands, (
+            "SAVE_GCODE_STATE NAME=_check_bed_mesh",
+            "RESTORE_GCODE_STATE NAME=_check_bed_mesh",
+            "_CHECK_BED_MESH_HANDLE_FAIL COUNT=5",
+        ))
+
+    def test_probes_stay_within_the_physical_bed(self):
+        result = render_macro(BASE, "_CHECK_BED_MESH", printer=self._printer(
+            [[0.0] * 3 for _ in range(3)], [-120, -120], [120, 120]))
+
+        probes = tuple(command for command in result.commands
+                       if command.startswith("_CHECK_BED_MESH_PROBE"))
+        self.assertEqual(len(probes), 5)
+        for command in probes:
+            coordinates = dict(
+                token.split("=") for token in command.split()[1:3])
+            for axis in ("X", "Y"):
+                self.assertLessEqual(float(coordinates[axis]), 110)
+                self.assertGreaterEqual(float(coordinates[axis]), -110)
+
+    def test_verification_latches_failure_and_accumulates_deviation(self):
+        def verify(diff_sum, tolerance):
+            return render_macro(
+                BASE, "_CHECK_BED_MESH_VERIFY",
+                printer={
+                    "configfile": {"config": {"probe": {"z_offset": 0.25}}},
+                    "probe": {"last_z_result": 0.5},
+                    "gcode_macro _CHECK_BED_MESH": macro_status(
+                        BASE, "_CHECK_BED_MESH", probe_diff_sum=diff_sum),
+                }, params={"EXPECTED": 0.5, "TOLERANCE": tolerance})
+
+        # The expected height folds in the probe offset: 0.5 + 0.25 vs the
+        # probed 0.5 leaves a 0.25mm deviation.
+        self.assertEqual(verify(0, 0.3).commands, (
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
+            "VARIABLE='probe_diff_sum' VALUE=0.25",
+            'RESPOND PREFIX="//" MSG="Probe result match. '
+            'Difference: 0.25 mm."',
+        ))
+
+        self.assertEqual(verify(0.5, 0.2).commands, (
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
+            "VARIABLE='probe_diff_sum' VALUE=0.75",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
+            "VARIABLE='check_failed' VALUE=True",
+            'RESPOND PREFIX="!!" MSG="Probe result doesn\'t match. '
+            'Expected difference within 0.20 mm, but got 0.25 mm."',
+        ))
+
+    def test_handle_fail_cancels_the_print_or_reports_tolerance(self):
+        failed = render_macro(BASE, "_CHECK_BED_MESH_HANDLE_FAIL", printer={
+            "gcode_macro _CHECK_BED_MESH": macro_status(
+                BASE, "_CHECK_BED_MESH", check_failed=True,
+                probe_diff_sum=0.75),
+        }, params={"COUNT": 5})
+        self.assertEqual(failed.commands, (
+            '_RAISE_WITH_PRINT_CANCEL MSG="Bed mesh checking is failed. '
+            'Avg. diff: 0.15 mm"',))
+
+        passed = render_macro(BASE, "_CHECK_BED_MESH_HANDLE_FAIL", printer={
+            "gcode_macro _CHECK_BED_MESH": macro_status(
+                BASE, "_CHECK_BED_MESH", check_failed=False,
+                probe_diff_sum=0.5),
+        }, params={"COUNT": 5})
+        self.assertEqual(passed.commands, (
+            'RESPOND PREFIX="//" MSG="Bed Mesh is within tolerance: '
+            '0.10 mm"',))
 
 
 if __name__ == "__main__":

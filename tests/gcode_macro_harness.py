@@ -40,9 +40,9 @@ class RenderedMacro:
 _SECTION = re.compile(r"^\s*\[([^]]+)\]\s*(?:[#;].*)?$")
 
 
-def load_macro(path, name):
+def load_macro(path, name, section="gcode_macro"):
     sections = _read_sections(path)
-    section_name = "gcode_macro %s" % name
+    section_name = "%s %s" % (section, name)
     matches = [options for current, options in sections
                if current.casefold() == section_name.casefold()]
     if len(matches) != 1:
@@ -70,8 +70,8 @@ def load_macro(path, name):
 
 
 def render_macro(path, name, *, printer=None, params=None, rawparams="",
-                 variables=None):
-    macro = load_macro(path, name)
+                 variables=None, section="gcode_macro"):
+    macro = load_macro(path, name, section)
     context = dict(macro.variables)
     if variables:
         context.update(variables)
