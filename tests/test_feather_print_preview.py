@@ -10,6 +10,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
@@ -269,6 +270,32 @@ class PrintPreviewLayoutTest(unittest.TestCase):
 
 
 class PrintPreviewLifecycleTest(unittest.TestCase):
+    def test_preview_identity_does_not_read_the_filesystem(self):
+        controller = _controller("/data/current.gcode")
+
+        original_stat = PAGES.os.stat
+        PAGES.os.stat = lambda _path: self.fail(
+            "preview identity touched the filesystem")
+        try:
+            key = controller._gcode_preview_key_for(
+                controller.virtual_sdcard.file_path())
+        finally:
+            PAGES.os.stat = original_stat
+
+        self.assertEqual(key[0], "/data/current.gcode")
+
+    def test_inactive_print_never_keeps_preview_animation_alive(self):
+        controller = _controller("/data/current.gcode")
+        controller._gcode_preview = {
+            "key": controller._gcode_preview_key_for(
+                controller.virtual_sdcard.file_path()),
+            "status": "loading",
+        }
+
+        controller.print_state = PrintState.INACTIVE
+
+        self.assertFalse(controller._gcode_preview_loading_active())
+
     def test_ready_result_is_painted_inside_the_box_and_cached(self):
         with PreviewHelper():
             path = _write_gcode()
@@ -297,8 +324,7 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 controller.print_stats.status["info"] = {
                     "current_layer": 1, "total_layer": 2,
                 }
-                with self.assertLogs(level="INFO") as logs:
-                    controller._render_print_page()
+                controller._render_print_page()
             finally:
                 pathlib.Path(path).unlink()
 
@@ -322,39 +348,50 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 PAGES.ThemeColor.PRIMARY), 16)))
         self.assertEqual(_foreground_rows(images[0].payload), {18, 19, 20})
         self.assertEqual(_foreground_rows(images[1].payload), {19, 20})
-        self.assertEqual(sum(
-            "gcode preview recolor" in message for message in logs.output), 1)
 
     def test_layer_change_recolors_cached_mask_once(self):
         with PreviewHelper():
             path = _write_gcode()
             try:
-                worker = SynchronousPreviewWorker()
-                controller = _controller(path, worker)
+                initial_worker = SynchronousPreviewWorker()
+                controller = _controller(path, initial_worker)
                 controller.print_stats.status["info"] = {
                     "current_layer": 1, "total_layer": 2,
                 }
                 controller._render_print_page()
-                submitted = len(worker.submitted)
+                worker = DeferredPreviewWorker()
+                controller.file_scan_worker = worker
                 before = len(controller.batches)
                 controller.print_stats.status["info"] = {
                     "current_layer": 2, "total_layer": 2,
                 }
-                with self.assertLogs(level="INFO") as logs:
-                    controller._update_print_progress(101)
-                    controller._update_print_progress(102)
+                with mock.patch.object(
+                        PAGES, "_colorize_gcode_preview",
+                        wraps=PAGES._colorize_gcode_preview) as colorize:
+                    controller._update_print_progress(104)
+                    self.assertEqual(worker.submitted, [])
+
+                    controller.reactor.now = 105
+                    controller._update_print_progress(105)
+                    controller._update_print_progress(106)
+                    self.assertEqual(len(worker.submitted), 1)
+                    colorize.assert_not_called()
+                    self.assertFalse(any(
+                        command.startswith("--batch image ")
+                        for batch in controller.batches[before:]
+                        for command in batch))
+
+                    worker.finish(0)
+                    colorize.assert_called_once()
             finally:
                 pathlib.Path(path).unlink()
 
-        self.assertEqual(len(worker.submitted), submitted)
         new_images = [
             command for batch in controller.batches[before:]
             for command in batch if command.startswith("--batch image ")
         ]
         self.assertEqual(len(new_images), 1)
         self.assertEqual(_foreground_rows(new_images[0].payload), {18, 19, 20})
-        self.assertEqual(sum(
-            "gcode preview recolor" in message for message in logs.output), 1)
 
     def test_absent_preview_is_remembered_without_resubmission(self):
         with PreviewHelper():

@@ -9,7 +9,6 @@ import math
 import os
 import struct
 import subprocess
-import time
 
 from ui import ThemeColor
 from ff5m_ui.screen import ScreenPage
@@ -20,6 +19,7 @@ GCODE_PREVIEW_PANEL = (536, 74, 240, 263)
 GCODE_PREVIEW_BOX = (544, 112, 224, 217)
 GCODE_PREVIEW_IMAGE_PADDING = 20
 GCODE_PREVIEW_LOADER_PERIOD = 0.08
+GCODE_PREVIEW_REDRAW_PERIOD = 5.0
 GCODE_PREVIEW_LOADER_RADII = (7, 10, 13, 10)
 GCODE_PREVIEW_LOADER_DIAMETER = 72
 PREVIEW_EXECUTABLE = "/opt/config/mod/.bin/exec/preview"
@@ -356,7 +356,7 @@ class PrintingPagesMixin:
                                          button_width, 72, "CANCEL",
                                          state="danger",
                                          font="JetBrainsMono Bold 8pt")
-        preview = self._prepare_gcode_preview()
+        preview = self._prepare_gcode_preview(stats)
         commands += self._gcode_preview_panel_commands(preview)
         if stats is None:
             progress_commands, progress, values = (
@@ -366,8 +366,7 @@ class PrintingPagesMixin:
                 self._current_print_progress_commands(eventtime, stats))
         commands += progress_commands
         if preview is not None and preview["status"] == "ready":
-            commands += self._gcode_preview_image_commands(
-                preview, _layer_progress(stats) if stats is not None else None)
+            commands += self._gcode_preview_image_commands(preview)
             self._stop_gcode_preview_loader()
         elif preview is not None and preview["status"] == "loading":
             self._start_gcode_preview_loader()
@@ -376,13 +375,22 @@ class PrintingPagesMixin:
         accepted = self.renderer.send(commands)
         if (accepted is not False and preview is not None
                 and preview["status"] == "ready"):
-            preview["painted_generation"] = self.renderer.generation
             preview["painted_render_key"] = preview.get("render_key")
+            preview["redraw_after"] = (
+                eventtime + GCODE_PREVIEW_REDRAW_PERIOD)
         self._last_print_controls_ready = controls_ready
         self._last_progress = progress
         self._last_time = values
 
-    def _prepare_gcode_preview(self):
+    def _gcode_preview_render_spec(self, stats=None):
+        layer_state = _layer_progress(stats) if stats is not None else None
+        pending = self.renderer.color(ThemeColor.SECONDARY)
+        printed = self.renderer.color(ThemeColor.PRIMARY)
+        layer_key = (None if layer_state is None
+                     else (layer_state[0], layer_state[1]))
+        return (layer_key, pending, printed), layer_state, pending, printed
+
+    def _prepare_gcode_preview(self, stats=None):
         path = self.virtual_sdcard.file_path()
         key = self._gcode_preview_key_for(path)
         if key is None:
@@ -399,16 +407,25 @@ class PrintingPagesMixin:
             "key": key,
             "status": "loading",
             "image": None,
-            "painted_generation": None,
             "painted_render_key": None,
             "render_key": None,
             "render_blobs": (),
+            "recolor_pending": False,
+            "redraw_after": 0.0,
             "loading_phase": 0,
         }
         self._gcode_preview = preview
 
+        render_spec = self._gcode_preview_render_spec(stats)
+        render_key, layer_state, pending, printed = render_spec
+
         def task():
-            return _render_gcode_preview(path)
+            image = _render_gcode_preview(path)
+            if image is None:
+                return None
+            blobs = _colorize_gcode_preview(
+                image, layer_state, pending, printed)
+            return image, render_key, blobs
 
         worker = getattr(self, "file_scan_worker", None)
         if worker is None:
@@ -447,28 +464,9 @@ class PrintingPagesMixin:
                 preview.get("loading_phase", 0), clear_box=False)
         return commands
 
-    def _gcode_preview_image_commands(self, preview, layer_state=None):
-        image = preview.get("image")
-
-        if image is None:
+    def _gcode_preview_image_commands(self, preview):
+        if preview.get("image") is None:
             return []
-
-        pending = self.renderer.color(ThemeColor.SECONDARY)
-        printed = self.renderer.color(ThemeColor.PRIMARY)
-        layer_key = (None if layer_state is None
-                     else (layer_state[0], layer_state[1]))
-        render_key = (layer_key, pending, printed)
-
-        if preview.get("render_key") != render_key:
-            started = time.monotonic()
-            preview["render_blobs"] = _colorize_gcode_preview(
-                image, layer_state, pending, printed)
-            preview["render_key"] = render_key
-            elapsed_ms = (time.monotonic() - started) * 1000.0
-            logging.info(
-                "[feather_screen] gcode preview recolor layer=%s took %.3f ms",
-                "%s/%s" % layer_key if layer_key is not None else "unknown",
-                elapsed_ms)
 
         x, y, _width, _height = _gcode_preview_image_rect()
         return [
@@ -479,14 +477,7 @@ class PrintingPagesMixin:
     def _gcode_preview_key_for(self, path):
         if not path:
             return None
-        try:
-            stat = os.stat(path)
-        except OSError:
-            return None
-        return (
-            path, stat.st_mtime, stat.st_size,
-            _gcode_preview_image_rect(),
-        )
+        return path, _gcode_preview_image_rect()
 
     def _gcode_preview_ready(self, key, value, error):
         preview = getattr(self, "_gcode_preview", None)
@@ -501,8 +492,10 @@ class PrintingPagesMixin:
             preview["image"] = None
         else:
             preview["status"] = "ready"
-            preview["image"] = value
-        preview["painted_generation"] = None
+            image, render_key, render_blobs = value
+            preview["image"] = image
+            preview["render_key"] = render_key
+            preview["render_blobs"] = render_blobs
 
         if (self._page_paint_allowed(ScreenPage.PRINTING, ScreenPage.PAUSED)
                 and self._gcode_preview_key_for(
@@ -512,6 +505,52 @@ class PrintingPagesMixin:
             # alternate framebuffer page while it still contains pixels from
             # a previous dialog.
             self._render_print_page()
+
+    def _request_gcode_preview_recolor(self, preview, stats, eventtime):
+        render_spec = self._gcode_preview_render_spec(stats)
+        render_key, layer_state, pending, printed = render_spec
+        if render_key == preview.get("render_key"):
+            return False
+        if preview.get("recolor_pending"):
+            return False
+        worker = getattr(self, "file_scan_worker", None)
+        if worker is None:
+            return False
+
+        image = preview["image"]
+        preview["recolor_pending"] = True
+        preview["redraw_after"] = eventtime + GCODE_PREVIEW_REDRAW_PERIOD
+
+        def task():
+            return _colorize_gcode_preview(
+                image, layer_state, pending, printed)
+
+        def ready(value, error):
+            if getattr(self, "_gcode_preview", None) is not preview:
+                return
+            preview["recolor_pending"] = False
+            if error is not None or value is None:
+                logging.info("[feather_screen] gcode preview recolor failed")
+                return
+            preview["render_key"] = render_key
+            preview["render_blobs"] = value
+            if (not self._page_paint_allowed(
+                    ScreenPage.PRINTING, ScreenPage.PAUSED)
+                    or self._gcode_preview_key_for(
+                        self.virtual_sdcard.file_path()) != preview["key"]):
+                return
+            accepted = self.renderer.send(
+                self._gcode_preview_image_commands(preview), kind="state",
+                key="gcode-preview")
+            preview["redraw_after"] = (
+                self.reactor.monotonic() + GCODE_PREVIEW_REDRAW_PERIOD)
+            if accepted is not False:
+                preview["painted_render_key"] = render_key
+
+        if worker.submit(task, ready):
+            return True
+        preview["recolor_pending"] = False
+        return False
 
     def _gcode_preview_loader_frame_commands(self, phase=0, clear_box=True):
         box_x, box_y, box_width, box_height = GCODE_PREVIEW_BOX
@@ -539,6 +578,9 @@ class PrintingPagesMixin:
             preview is not None
             and preview.get("status") == "loading"
             and self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
+            and self.print_state in (
+                PrintState.PREPARING, PrintState.PRINTING,
+                PrintState.PAUSED)
             and self._gcode_preview_key_for(self.virtual_sdcard.file_path())
             == preview.get("key"))
 
@@ -600,18 +642,29 @@ class PrintingPagesMixin:
         stats = self.print_stats.get_status(eventtime)
         commands, progress, values = self._current_print_progress_commands(
             eventtime, stats)
-        if progress == self._last_progress and values == self._last_time:
-            return
+        progress_changed = (
+            progress != self._last_progress or values != self._last_time)
+        if not progress_changed:
+            commands = []
 
         preview = getattr(self, "_gcode_preview", None)
         preview_redraw = False
         if preview is not None and preview.get("status") == "ready":
-            image_commands = self._gcode_preview_image_commands(
-                preview, _layer_progress(stats))
-            if preview.get("painted_render_key") != preview.get("render_key"):
-                commands += image_commands
-                preview_redraw = bool(image_commands)
+            render_key = self._gcode_preview_render_spec(stats)[0]
+            if eventtime >= preview.get("redraw_after", 0.0):
+                if preview.get("render_key") != render_key:
+                    self._request_gcode_preview_recolor(
+                        preview, stats, eventtime)
+                elif preview.get("painted_render_key") != render_key:
+                    image_commands = self._gcode_preview_image_commands(
+                        preview)
+                    commands += image_commands
+                    preview_redraw = bool(image_commands)
+                    preview["redraw_after"] = (
+                        eventtime + GCODE_PREVIEW_REDRAW_PERIOD)
 
+        if not commands:
+            return
         self._last_progress, self._last_time = progress, values
         accepted = self.renderer.send(commands)
         if accepted is not False and preview_redraw:

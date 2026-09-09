@@ -613,6 +613,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             update_notification.stop()
         self._stop_startup_animation()
         self._stop_joystick()
+        self._stop_gcode_preview_loader()
         self.print_state = PrintState.INACTIVE
         if self.joystick_timer is not None:
             self.reactor.unregister_timer(self.joystick_timer)
@@ -2058,6 +2059,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if (old_state == PrintState.IDLE
                 and new_state in (PrintState.PREPARING, PrintState.PRINTING,
                                   PrintState.PAUSED)):
+            # Preview identity is scoped to one print. This avoids filesystem
+            # metadata reads in reactor callbacks while still reloading a file
+            # that was replaced between two print runs under the same path.
+            self._gcode_preview = None
             self.cancel_requested = False
             self._progress_floor = 0.0
             self._progress_source = None

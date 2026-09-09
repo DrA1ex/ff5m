@@ -59,8 +59,10 @@ class BinaryCommand(str):
     __slots__ = ("payload",)
 
     def __new__(cls, command, payload):
+        if not isinstance(payload, bytes):
+            raise TypeError("binary command payload must be immutable bytes")
         value = str.__new__(cls, command)
-        value.payload = bytes(payload)
+        value.payload = payload
         return value
 
 
@@ -316,9 +318,16 @@ class FeatherRenderer:
 
     @staticmethod
     def _serialized_size(commands, receipt=None):
-        """Return exact FIFO bytes without retaining a serialized copy."""
-        return sum(len(frame) for frame in
-                   FeatherRenderer._encode_frames(commands, receipt))
+        """Return a conservative queue weight without building frames."""
+        receipt = (None if receipt is None else
+                   validate_render_receipt_token(receipt))
+        if not commands:
+            return 0
+        return 32 + len(receipt or "") + sum(
+            (len(command.payload) + len(command)
+             if isinstance(command, BinaryCommand)
+             else len(command.encode("utf-8"))) + 64
+            for command in commands)
 
     @staticmethod
     def _encode_frames(commands, receipt=None):

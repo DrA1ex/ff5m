@@ -208,13 +208,25 @@ Each draw frame is a newline-delimited batch protocol ending in `--end`, for exa
 Typer buffers data through `--end`, tokenizes it as an argument protocol rather than a shell command, and processes its `--batch` operations in sequence. `flush` makes accumulated changes visible.
 
 `FeatherRenderer.send()` converts commands to an immutable batch and performs
-only a non-blocking publication to a queue capped at 16 batches and 64 KiB of
-characters per batch. Complete surfaces supersede older generations, keyed
-animation is latest-wins, and critical restart/error/shutdown batches evict
-untouched ordinary work. The worker encodes frames below 3,584 bytes
-(`PIPE_BUF`) and blocks in `poll(POLLOUT)` when the FIFO is full; no retry loop
-is scheduled on the reactor. Typer also locks the draw FIFO to reject a
-competing daemon.
+only a non-blocking publication to a queue capped at 16 batches and a
+conservative 64 KiB weight per batch. Binary payloads remain immutable and are
+measured without assembling or copying their transport frames on the caller.
+Complete surfaces supersede older generations, keyed animation is latest-wins,
+and critical restart/error/shutdown batches evict untouched ordinary work. The
+worker assembles bounded transport frames and blocks in `poll(POLLOUT)` when
+the FIFO is full; no encoding, write retry, or backpressure loop is scheduled
+on the reactor. Typer also locks the draw FIFO to reject a competing daemon.
+
+Print-preview extraction, FXI1 decoding, mask scanning, and PackBits color
+generation run through the existing background task worker. Reactor callbacks
+only capture the current layer/palette decision and enqueue that work; the
+completed immutable blobs are then published through the render queue. The
+loading animation keeps its 80 ms cadence because each tick only constructs a
+small keyed command batch. Layer recolors use latest observed state and are
+submitted at most once per five seconds; while one is pending, fast layer
+changes cannot accumulate obsolete image work. Preview identity is scoped to
+one print lifecycle rather than re-reading file metadata from periodic reactor
+callbacks.
 
 Raster acceleration is an explicit runtime choice. Typer defaults to
 `--raster-acceleration scalar`; `[feather_screen]` accepts

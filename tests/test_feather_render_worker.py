@@ -169,7 +169,7 @@ class RenderWorkerTest(unittest.TestCase):
             acknowledged[0],
             b"--batch fill -p 1 2 -s 3 4 -c 123456\n"
             b"--batch flush --receipt 7:142\n--end\n")
-        self.assertEqual(
+        self.assertGreaterEqual(
             FeatherRenderer._serialized_size(commands, "7:142"),
             len(acknowledged[0]))
 
@@ -192,8 +192,9 @@ class RenderWorkerTest(unittest.TestCase):
             frames[2],
             b"--batch fill -p 1 2 -s 3 4 -c ffffff\n"
             b"--batch flush --receipt 4:9\n--end\n")
-        self.assertEqual(renderer._serialized_size(commands, "4:9"),
-                         sum(map(len, frames)))
+        self.assertGreaterEqual(
+            renderer._serialized_size(commands, "4:9"),
+            sum(map(len, frames)))
 
         self.assertTrue(renderer.send((image,)))
         queued = renderer._batch_queue.get()
@@ -203,6 +204,24 @@ class RenderWorkerTest(unittest.TestCase):
         queued = renderer._batch_queue.get()
         self.assertIsInstance(queued.commands[1], BinaryCommand)
         self.assertEqual(queued.commands[1].payload, image.payload)
+
+    def test_binary_send_does_not_build_transport_frames_on_caller(self):
+        renderer = FeatherRenderer()
+        payload = b"FXI1" + b"x" * 4096
+        image = renderer.image(12, 34, payload)
+
+        self.assertIs(image.payload, payload)
+
+        with mock.patch.object(
+                renderer, "_encode_frames",
+                side_effect=AssertionError("transport encoding on caller")):
+            self.assertTrue(renderer.send((image,)))
+
+        queued = renderer._batch_queue.get()
+        self.assertIs(queued.commands[0], image)
+
+        with self.assertRaisesRegex(TypeError, "immutable bytes"):
+            renderer.image(12, 34, bytearray(payload))
 
     def test_worker_uses_extended_encoder_only_for_receipt_batches(self):
         queue = RenderBatchQueue()
@@ -397,7 +416,7 @@ class RenderWorkerTest(unittest.TestCase):
 
         self.assertLess(ascii_size, MAX_BATCH_BYTES)
         self.assertGreater(cyrillic_size, MAX_BATCH_BYTES)
-        self.assertEqual(
+        self.assertGreaterEqual(
             FeatherRenderer._serialized_size(("a",)),
             len(b"a\n--batch flush\n--end\n"))
 
