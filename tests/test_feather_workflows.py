@@ -31,11 +31,11 @@ from ff5m_ui.heat import runtime as HEAT_UI
 from ff5m_ui.filament import runtime as FILAMENT_UI
 from ff5m_ui.filament.actions import select as select_filament
 from ff5m_ui.z_offset import runtime as Z_OFFSET_UI
-from feather_feature_filament import FilamentFeature
-from feather_feature_z import ZCalibrationFeature
-from feather_z_calibration import (
+from feather.features.filament import FilamentFeature
+from feather.features.z import ZCalibrationFeature
+from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
-from feather_extruder_calibration import FeatherExtruderCalibrationMixin
+from feather.calibration.extruder import FeatherExtruderCalibrationMixin
 
 
 class ScenarioController(FeatherZCalibrationMixin,
@@ -49,11 +49,12 @@ class ScenarioController(FeatherZCalibrationMixin,
     system_shutdown_active = False
 
 
-FILES = __import__("feather_files")
-PAGES = __import__("feather_screen_pages")
-NETWORK = __import__("feather_network")
-NETWORK_PROTOCOL = __import__("feather_netd_protocol")
-NETWORK_UI = __import__("feather_network_ui")
+from feather import files as FILES
+from feather.screen import pages as PAGES
+from feather.screen.pages import files as FILE_PAGES
+from feather.network import client as NETWORK
+from feather.network import protocol as NETWORK_PROTOCOL
+from feather.network import pages as NETWORK_UI
 
 
 class VirtualSD:
@@ -367,7 +368,7 @@ class FileWorkflowTest(unittest.TestCase):
             controller.file_scan_worker.requests)
 
         # A browser left open keeps its snapshot even after the reopen TTL.
-        controller.reactor.now += PAGES.FILE_CACHE_TTL + 1.0
+        controller.reactor.now += FILE_PAGES.FILE_CACHE_TTL + 1.0
         controller._handle_file_action("file.next")
 
         self.assertEqual(controller.file_page, 1)
@@ -390,12 +391,12 @@ class FileWorkflowTest(unittest.TestCase):
         controller.file_entry_cache = {"internal": entries, "usb": entries}
         controller.file_entry_loaded_at = {"internal": 100.0, "usb": 100.0}
 
-        controller.reactor.now = 100.0 + PAGES.FILE_CACHE_TTL - 0.01
+        controller.reactor.now = 100.0 + FILE_PAGES.FILE_CACHE_TTL - 0.01
         self.assertFalse(
             controller._expire_file_entries_if_stale("internal"))
         self.assertIn("internal", controller.file_entry_cache)
 
-        controller.reactor.now = 100.0 + PAGES.FILE_CACHE_TTL
+        controller.reactor.now = 100.0 + FILE_PAGES.FILE_CACHE_TTL
         self.assertTrue(
             controller._expire_file_entries_if_stale("internal"))
         self.assertNotIn("internal", controller.file_entry_cache)
@@ -469,7 +470,7 @@ class FileWorkflowTest(unittest.TestCase):
             controller.print_history = FEATHER.PrintHistory(history_path)
             controller._show_page = lambda page: None
 
-            with mock.patch("feather_screen_pages.time.time",
+            with mock.patch("feather.screen.pages.files.time.time",
                             return_value=1234.0):
                 controller._change_print_state(
                     FEATHER.PrintState.PRINTING, "printing")
@@ -1045,7 +1046,7 @@ class FileWorkflowTest(unittest.TestCase):
             "available": True, "mount_point": "/data/USB"})()
 
         with mock.patch.object(
-                PAGES, "scan_gcode_files",
+                FILE_PAGES, "scan_gcode_files",
                 side_effect=RuntimeError("device disappeared")):
             controller._load_file_entries()
 
@@ -1236,7 +1237,7 @@ class UsbStorageMonitorTest(unittest.TestCase):
         monitor.resume(0.0)
         monitor.tick(0.0)
 
-        with mock.patch("feather_files.os.killpg") as killpg:
+        with mock.patch("feather.files.os.killpg") as killpg:
             monitor.pause()
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
@@ -1251,7 +1252,7 @@ class UsbStorageMonitorTest(unittest.TestCase):
         monitor.resume(0.0)
         monitor.tick(0.0)
 
-        with mock.patch("feather_files.os.killpg") as killpg:
+        with mock.patch("feather.files.os.killpg") as killpg:
             monitor.tick(FILES.USB_HELPER_TIMEOUT)
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
@@ -1264,7 +1265,7 @@ class UsbStorageMonitorTest(unittest.TestCase):
         monitor.resume(0.0)
         monitor.process = running
 
-        with mock.patch("feather_files.os.killpg") as killpg:
+        with mock.patch("feather.files.os.killpg") as killpg:
             monitor.stop()
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
@@ -3628,7 +3629,7 @@ class NetworkWorkflowTest(unittest.TestCase):
         controller.selected_network = {"ssid": "Workshop"}
         controller.password = "secret123"
         controller._show_page = lambda page: None
-        with mock.patch.object(PAGES.subprocess, "Popen") as popen:
+        with mock.patch("subprocess.Popen") as popen:
             sock = attach_network(controller)
             controller._connect_wifi()
 

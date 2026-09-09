@@ -17,7 +17,7 @@ SPEC = importlib.util.spec_from_file_location("operation_context", MODULE_PATH)
 CONTEXT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONTEXT)
 sys.path.insert(0, str(MODULE_PATH.parent))
-import feather_operation_context_fixtures as FIXTURES  # noqa: E402
+from feather.testing import operation_context_fixtures as FIXTURES  # noqa: E402
 
 
 class FakeGCode:

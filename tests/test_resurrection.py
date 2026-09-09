@@ -4,10 +4,10 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import importlib.util
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import threading
 import time
@@ -15,13 +15,11 @@ import unittest
 from unittest import mock
 
 
-MODULE_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
-               "plugins" / "resurrection.py")
-SPEC = importlib.util.spec_from_file_location(
-    "resurrection_under_test", MODULE_PATH)
-RESURRECTION = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(RESURRECTION)
-STATE = __import__("resurrection_state")
+KLIPPER_PATH = pathlib.Path(__file__).parents[1] / ".py" / "klipper"
+sys.path.insert(0, str(KLIPPER_PATH))
+
+from plugins import resurrection as RESURRECTION  # noqa: E402
+from plugins.recovery import state as STATE  # noqa: E402
 
 
 class GCodeRecorder:

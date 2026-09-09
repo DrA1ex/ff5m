@@ -603,7 +603,7 @@ class PrinterRunClient:
         raise RegressionError("printer did not publish the launched run id")
 
     def wait(self, marker, timeout, run_state=None, events_alive=None,
-             progress=None, abort_grace=60):
+             camera_alive=None, progress=None, abort_grace=60):
         run_id, _directory = _safe_remote_run(marker)
         started = self.clock()
         deadline = started + float(timeout)
@@ -613,6 +613,10 @@ class PrinterRunClient:
                 raise RegressionError(
                     "no printer status event for %.0f seconds" %
                     EVENT_STALL_TIMEOUT)
+            if camera_alive is not None and not camera_alive():
+                self.abort(marker, abort_grace=abort_grace)
+                raise RegressionError(
+                    "camera recording stopped during the printer suite")
             if run_state is None:
                 status = self._ui_test_status()
                 if status.get("running") or status.get("finalizing"):
@@ -880,8 +884,7 @@ class MediaPipeline:
         self.work.mkdir(parents=True, exist_ok=True)
         if camera is None:
             self.camera = {"status": "unavailable", "metadata": None}
-            self.warnings.append("No enabled printer camera was available.")
-            return
+            raise RegressionError("no enabled printer camera was available")
         metadata = camera["metadata"]
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -899,10 +902,13 @@ class MediaPipeline:
             process = None
         if process is None or process.poll() is not None:
             self.camera = {"status": "unavailable", "metadata": metadata}
-            self.warnings.append("The printer camera stream could not start.")
-            return
+            raise RegressionError("the printer camera recording could not start")
         self.camera_process = process
         self.camera = {"status": "recording", "metadata": metadata}
+
+    def camera_alive(self):
+        return (self.camera_process is not None
+                and self.camera_process.poll() is None)
 
     def stop_camera(self):
         process = self.camera_process
@@ -1328,12 +1334,14 @@ class MediaPipeline:
 
 
 def _host_preflight(output, suite_count, run_timeout, which=None,
-                    disk_usage=None):
+                    disk_usage=None, runner=None):
     which = which or shutil.which
     disk_usage = disk_usage or shutil.disk_usage
+    runner = runner or subprocess.run
     output = pathlib.Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    missing = [name for name in ("ffmpeg", "ssh", "scp") if not which(name)]
+    paths = {name: which(name) for name in ("ffmpeg", "ssh", "scp")}
+    missing = [name for name, path in paths.items() if not path]
     if missing:
         suffix = (
             " Install FFmpeg with `brew install ffmpeg`."
@@ -1341,6 +1349,16 @@ def _host_preflight(output, suite_count, run_timeout, which=None,
         raise RegressionError(
             "missing host dependencies: %s.%s" %
             (", ".join(missing), suffix))
+    try:
+        ffmpeg = runner(
+            [paths["ffmpeg"], "-version"], text=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RegressionError(
+            "host ffmpeg is not runnable; reinstall it before testing") from exc
+    if ffmpeg.returncode != 0:
+        raise RegressionError(
+            "host ffmpeg is not runnable; reinstall it before testing")
     probe = output / ".write-probe"
     try:
         probe.write_bytes(b"ok")
@@ -1634,6 +1652,10 @@ class RegressionRun:
             marker = None
             timed_out = False
             try:
+                if (not self.args.no_camera
+                        and not self.media.camera_alive()):
+                    raise RegressionError(
+                        "camera recording stopped before the printer suite")
                 marker = self.client.launch(
                     spec, self.args.material,
                     self.args.screen_capture_interval)
@@ -1651,6 +1673,8 @@ class RegressionRun:
                                if self.args.telemetry_rate else None),
                     events_alive=(self.telemetry.events_alive
                                   if self.args.telemetry_rate else None),
+                    camera_alive=(None if self.args.no_camera
+                                  else self.media.camera_alive),
                     progress=self._suite_progress)
                 self.progress("%s: downloading artifacts" % spec["name"])
                 local, summary, manifest = self.client.copy_and_verify(
@@ -1726,18 +1750,23 @@ class RegressionRun:
             self._skip_remaining(0, str(exc))
             return self._finalize(started_wall, media=False)
 
-        camera = None
-        if not self.args.no_camera:
-            try:
-                camera = self.client.discover_camera()
-            except (PrinterConnectionError, RegressionError, OSError):
-                self.report["warnings"].append(
-                    "Camera discovery failed; continuing screen-only.")
         if self.media is None:
             self.media = MediaPipeline(
                 self.output, self.args.fps, sleeper=self.sleeper,
                 telemetry_rate=self.args.telemetry_rate)
         self.started_monotonic = self.clock()
+        if self.args.no_camera:
+            self.media.camera = {"status": "disabled", "metadata": None}
+        else:
+            try:
+                camera = self.client.discover_camera()
+                self.media.start_camera(camera)
+            except (PrinterConnectionError, RegressionError, OSError) as exc:
+                self.report["camera"] = self.media.camera
+                self._fail(type(exc).__name__, exc)
+                self._skip_remaining(0, str(exc))
+                return self._finalize(started_wall, media=False)
+        self.report["camera"] = self.media.camera
         if self.telemetry is None:
             self.telemetry = TelemetryRecorder(
                 self.output, self.args.telemetry_rate,
@@ -1764,13 +1793,11 @@ class RegressionRun:
                 message = "Printer resource monitor could not start: %s" % exc
                 self._fail(type(exc).__name__, message)
                 self._skip_remaining(0, message)
+                if not self.args.no_camera:
+                    self.media.stop_camera()
+                    self.report["camera"] = self.media.camera
                 return self._finalize(started_wall, media=False)
         self.telemetry.start(self.started_monotonic, self._telemetry_test)
-        if self.args.no_camera:
-            self.media.camera = {"status": "disabled", "metadata": None}
-        else:
-            self.media.start_camera(camera)
-        self.report["camera"] = self.media.camera
         try:
             self._run_suites()
         except KeyboardInterrupt:
@@ -1926,7 +1953,9 @@ def _arguments(argv=None):
     parser.add_argument(
         "--connection-timeout", type=_positive_seconds, default=10)
     parser.add_argument("--output")
-    parser.add_argument("--no-camera", action="store_true")
+    parser.add_argument(
+        "--no-camera", action="store_true",
+        help="explicitly allow a regression run without camera recording")
     parser.add_argument(
         "--no-resource-monitor", action="store_true",
         help="skip the printer-side /proc sampler; it is the only observer "

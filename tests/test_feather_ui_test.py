@@ -23,7 +23,7 @@ from feather_ui_test import scenarios as SCENARIOS  # noqa: E402
 from feather_ui_test import context_fixtures as CONTEXT_FIXTURES  # noqa: E402
 from feather_ui_test import resources as RESOURCES  # noqa: E402
 import feather_screen as FEATHER  # noqa: E402
-from feather_feature_manager import LazyFeatureManager  # noqa: E402
+from feather.features.manager import LazyFeatureManager  # noqa: E402
 from tests.visual_checks import hybrid as HYBRID  # noqa: E402
 
 

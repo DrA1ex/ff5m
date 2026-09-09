@@ -25,10 +25,10 @@ from ff5m_ui.move.geometry import (
 from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.heat import runtime as heat_ui
 from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
-import feather_joystick as joystick_ui
-import feather_motion as joystick_motion
-from feather_pagination import Pagination, pagination_footer
-from feather_materials import (
+from feather.control import joystick as joystick_ui
+from feather.control import motion as joystick_motion
+from feather.screen.pagination import Pagination, pagination_footer
+from feather.materials import (
         adaptive_grid_columns, render_material_selector,
     )
 
@@ -974,27 +974,13 @@ class FeatherControlsMixin:
         self.renderer.send(commands)
 
     def _render_calibration_guide(self):
-        kind = getattr(self, "calibration_guide_kind", None)
-        if kind == "extruder":
-            title = "Extruder rotation"
-            steps = (
-                "1. HEAT THE NOZZLE AND MARK 100 MM OF FILAMENT.",
-                "2. EXTRUDE 100 MM, THEN MEASURE THE ACTUAL LENGTH.",
-                "3. NEW DISTANCE = CURRENT DISTANCE X ACTUAL / 100.",
-                "4. UPDATE EXTRUDER ROTATION_DISTANCE IN USER.CFG.",
-            )
-        elif kind == "axes":
-            title = "Axis dimensions"
-            steps = (
-                "1. PRINT THE X/Y SQUARE OR Z TOWER FROM CALIBRATION.MD.",
-                "2. MEASURE THE FINISHED MODEL WITH CALIPERS.",
-                "3. NEW DISTANCE = CURRENT DISTANCE X ACTUAL / EXPECTED.",
-                "4. UPDATE THE STEPPER ROTATION_DISTANCE IN USER.CFG.",
-            )
-        else:
-            title = "Calibration guide"
-            steps = ("OPEN CALIBRATION.MD IN FLUIDD FOR INSTRUCTIONS.",)
-        commands = self.renderer.begin_page(title, back=True)
+        steps = (
+            "1. PRINT THE X/Y SQUARE OR Z TOWER FROM CALIBRATION.MD.",
+            "2. MEASURE THE FINISHED MODEL WITH CALIPERS.",
+            "3. NEW DISTANCE = CURRENT DISTANCE X ACTUAL / EXPECTED.",
+            "4. UPDATE THE STEPPER ROTATION_DISTANCE IN USER.CFG.",
+        )
+        commands = self.renderer.begin_page("Axis dimensions", back=True)
         commands += self.renderer.panel(
             30, 72, 740, 300, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
         for index, step in enumerate(steps):
@@ -1142,7 +1128,6 @@ class FeatherControlsMixin:
             self._start_extruder_calibration()
         elif action == "cal.axes":
             self._require_idle()
-            self.calibration_guide_kind = action.split(".", 1)[1]
             self._show_page(ScreenPage.CALIBRATION_GUIDE)
         elif action.startswith("cal.material."):
             material = action.rsplit(".", 1)[1]

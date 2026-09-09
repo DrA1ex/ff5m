@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).parents[1]
 PLUGINS = ROOT / ".py" / "klipper" / "plugins"
 sys.path.insert(0, str(PLUGINS))
 
-from feather_safety import SafetyRegistry  # noqa: E402
+from feather.safety import SafetyRegistry  # noqa: E402
 
 
 class SafetyRegistryTest(unittest.TestCase):
@@ -64,7 +64,7 @@ class SafetyRegistryTest(unittest.TestCase):
 
         registry = SafetyRegistry()
         registry.register_source("telemetry", provider)
-        with mock.patch("feather_safety.logging.exception") as logged:
+        with mock.patch("feather.safety.logging.exception") as logged:
             self.assertTrue(registry.evaluate("menu", 0.0).visible)
             self.assertTrue(registry.evaluate("menu", 1.0).visible)
         logged.assert_called_once()
@@ -92,7 +92,7 @@ class SafetyRegistryTest(unittest.TestCase):
         retained = sum(max(0, stat.size_diff) for stat in
                        after.compare_to(before, "filename")
                        if stat.traceback[0].filename.endswith(
-                           "feather_safety.py"))
+                           "/feather/safety.py"))
         self.assertLess(retained, 128 * 1024)
         self.assertEqual(registry.lease_count, 0)
         self.assertEqual(registry.source_count, 1)

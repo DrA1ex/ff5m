@@ -53,6 +53,17 @@ MAX_PENDING_DRAW = MAX_BATCH_BYTES
 MAX_ATOMIC_DRAW = 8 * 1024
 
 
+class BinaryCommand(str):
+    """A Typer command whose payload follows its transport header."""
+
+    __slots__ = ("payload",)
+
+    def __new__(cls, command, payload):
+        value = str.__new__(cls, command)
+        value.payload = bytes(payload)
+        return value
+
+
 class FeatherRenderer:
     """Translate small UI primitives into typer display-list commands."""
 
@@ -248,7 +259,9 @@ class FeatherRenderer:
             return False
         if self._output_frozen or not commands:
             return False
-        immutable = tuple(str(command) for command in commands)
+        immutable = tuple(
+            command if isinstance(command, BinaryCommand) else str(command)
+            for command in commands)
         batch_generation = (self._generation if generation is None
                             else int(generation))
         if kind is None and self._next_batch_kind is not None:
@@ -304,72 +317,53 @@ class FeatherRenderer:
     @staticmethod
     def _serialized_size(commands, receipt=None):
         """Return exact FIFO bytes without retaining a serialized copy."""
-        receipt = (None if receipt is None else
-                   validate_render_receipt_token(receipt))
-        intermediate_suffix_size = len("--end\n".encode("utf-8"))
-        final_command = "--batch flush"
-        if receipt is not None:
-            final_command += " --receipt " + receipt
-        final_suffix_size = len(
-            (final_command + "\n--end\n").encode("utf-8"))
-        current_payload_size = 0
-        total_size = 0
-        have_chunk = False
-        for command in commands:
-            line_size = len((str(command) + "\n").encode("utf-8"))
-            if line_size + final_suffix_size > MAX_ATOMIC_DRAW:
-                raise ValueError(
-                    "single Typer command exceeds MAX_ATOMIC_DRAW")
-            if (have_chunk and current_payload_size + line_size
-                    + final_suffix_size > MAX_ATOMIC_DRAW):
-                total_size += current_payload_size + intermediate_suffix_size
-                current_payload_size = 0
-                have_chunk = False
-            current_payload_size += line_size
-            have_chunk = True
-        if have_chunk:
-            total_size += current_payload_size + final_suffix_size
-        return total_size
+        return sum(len(frame) for frame in
+                   FeatherRenderer._encode_frames(commands, receipt))
 
     @staticmethod
     def _encode_frames(commands, receipt=None):
         receipt = (None if receipt is None else
                    validate_render_receipt_token(receipt))
-        intermediate_suffix = ["--end", ""]
         final_command = "--batch flush"
         if receipt is not None:
             final_command += " --receipt " + receipt
-        final_suffix = [final_command, "--end", ""]
-        chunks = []
-        current = []
-        # Reserve the larger final suffix for every chunk. This keeps every
-        # serialized FIFO write within MAX_ATOMIC_DRAW without needing a
-        # second packing pass when the last chunk is selected.
-        suffix_size = len("\n".join(final_suffix).encode("utf-8"))
-        size = suffix_size
+        intermediate_suffix = b"--end\n"
+        final_suffix = (final_command + "\n--end\n").encode("utf-8")
+        frames = []
+        current = bytearray()
+
+        def emit_text(suffix):
+            if current:
+                frames.append(bytearray(current) + suffix)
+                current.clear()
+
         for command in commands:
-            command = str(command)
-            line_size = len((command + "\n").encode("utf-8"))
-            if size + line_size > MAX_ATOMIC_DRAW and not current:
+            if isinstance(command, BinaryCommand):
+                emit_text(intermediate_suffix)
+                header = ("--binary %d %s\n" % (
+                    len(command.payload), str(command))).encode("utf-8")
+                frame = bytearray(header)
+                frame.extend(command.payload)
+                if len(frame) > MAX_ATOMIC_DRAW:
+                    raise ValueError(
+                        "single Typer binary command exceeds MAX_ATOMIC_DRAW")
+                frames.append(frame)
+                continue
+
+            line = (str(command) + "\n").encode("utf-8")
+            if len(line) + len(final_suffix) > MAX_ATOMIC_DRAW:
                 raise ValueError(
                     "single Typer command exceeds MAX_ATOMIC_DRAW")
-            if current and size + line_size > MAX_ATOMIC_DRAW:
-                chunks.append(current)
-                current = []
-                size = suffix_size
-            current.append(command)
-            size += line_size
-        if current:
-            chunks.append(current)
+            if current and len(current) + len(line) + len(final_suffix) > \
+                    MAX_ATOMIC_DRAW:
+                emit_text(intermediate_suffix)
+            current.extend(line)
 
-        frames = []
-        for index, chunk in enumerate(chunks):
-            suffix = (final_suffix if index == len(chunks) - 1
-                      else intermediate_suffix)
-            frame = bytearray("\n".join(chunk + suffix).encode("utf-8"))
-            if len(frame) > MAX_ATOMIC_DRAW:
-                raise ValueError("Typer frame exceeds MAX_ATOMIC_DRAW")
-            frames.append(frame)
+        if current:
+            emit_text(final_suffix)
+        elif frames:
+            frames.append(bytearray(final_suffix))
+
         return frames
 
     def decode_action(self, action):
@@ -459,6 +453,13 @@ class FeatherRenderer:
     def fill(self, x, y, width, height, color=ThemeColor.BACKGROUND):
         return "--batch fill -p %d %d -s %d %d -c %s" % (
             x, y, width, height, self.color(color))
+
+    def image(self, x, y, blob, format="fxi1"):
+        if format != "fxi1":
+            raise ValueError("unsupported image format: %s" % format)
+        return BinaryCommand(
+            "--batch image -p %d %d --format fxi1" % (int(x), int(y)),
+            blob)
 
     def stroke(self, x, y, width, height, color=ThemeColor.PRIMARY, line_width=2):
         return "--batch stroke -p %d %d -s %d %d -c %s -lw %d -sd inner" % (

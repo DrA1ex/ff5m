@@ -14,7 +14,7 @@ PLUGINS = ROOT / ".py" / "klipper" / "plugins"
 sys.path.insert(0, str(PLUGINS))
 
 import feather_screen as FEATHER  # noqa: E402
-from feather_feature_manager import (  # noqa: E402
+from feather.features.manager import (  # noqa: E402
     FeatureHostProxy, FeatureLoadError, FeatureSpec, LazyFeatureManager,
 )
 from ui.lazy import LazyModule, resolve_lazy_export  # noqa: E402
@@ -90,13 +90,13 @@ class LazyImportContractTest(unittest.TestCase):
 import sys
 import feather_screen
 blocked = (
-    'feather_feature_ui_test', 'feather_ui_test',
-    'feather_feature_filament', 'ff5m_ui.filament',
-    'feather_feature_calibration', 'feather_feature_z',
-    'feather_feature_extruder', 'feather_feature_settings',
-    'feather_feature_benchmark', 'ff5m_ui.benchmark',
-    'feather_z_calibration', 'feather_extruder_calibration',
-    'feather_mod_settings',
+    'feather.features.ui_test', 'feather_ui_test',
+    'feather.features.filament', 'ff5m_ui.filament',
+    'feather.features.calibration', 'feather.features.z',
+    'feather.features.extruder', 'feather.features.settings',
+    'feather.features.benchmark', 'ff5m_ui.benchmark',
+    'feather.calibration.z', 'feather.calibration.extruder',
+    'feather.settings.mod',
 )
 assert not [name for name in blocked if name in sys.modules]
 assert 'ff5m_ui.z_offset.constants' in sys.modules
@@ -189,13 +189,13 @@ except ValueError as error:
 else:
     raise AssertionError('invalid raster acceleration was accepted')
 blocked = (
-    'feather_feature_ui_test', 'feather_ui_test',
-    'feather_feature_filament', 'ff5m_ui.filament',
-    'feather_feature_calibration', 'feather_feature_z',
-    'feather_feature_extruder', 'feather_feature_settings',
-    'feather_feature_benchmark', 'ff5m_ui.benchmark',
-    'feather_z_calibration', 'feather_extruder_calibration',
-    'feather_mod_settings',
+    'feather.features.ui_test', 'feather_ui_test',
+    'feather.features.filament', 'ff5m_ui.filament',
+    'feather.features.calibration', 'feather.features.z',
+    'feather.features.extruder', 'feather.features.settings',
+    'feather.features.benchmark', 'ff5m_ui.benchmark',
+    'feather.calibration.z', 'feather.calibration.extruder',
+    'feather.settings.mod',
 )
 assert not [name for name in blocked if name in sys.modules]
 assert 'ff5m_ui.z_offset.constants' in sys.modules
@@ -214,7 +214,7 @@ assert not [name for name in sys.modules
         self.run_clean("""
 import sys
 import feather_screen
-from feather_feature_manager import LazyFeatureManager
+from feather.features.manager import LazyFeatureManager
 from ff5m_ui.screen import ScreenPage
 from ui import FeatherRenderer
 
@@ -229,20 +229,20 @@ host.feature_manager = LazyFeatureManager(host, feather_screen.FEATURE_SPECS)
 manager = host.feature_manager
 filament = manager.get('filament')
 assert filament is manager.get('filament')
-assert 'feather_feature_filament' in sys.modules
+assert 'feather.features.filament' in sys.modules
 assert 'ff5m_ui.filament.runtime' in sys.modules
 assert 'ff5m_ui.filament.material.page' not in sys.modules
 assert 'ff5m_ui.filament.action.page' not in sys.modules
 calibration = manager.get('calibration')
 calibration.render(ScreenPage.CALIBRATION_HOME)
 assert calibration is manager.get('calibration')
-assert 'feather_feature_calibration' in sys.modules
-assert 'feather_feature_z' not in sys.modules
-assert 'feather_feature_extruder' not in sys.modules
-assert 'feather_feature_settings' not in sys.modules
+assert 'feather.features.calibration' in sys.modules
+assert 'feather.features.z' not in sys.modules
+assert 'feather.features.extruder' not in sys.modules
+assert 'feather.features.settings' not in sys.modules
 z_feature = manager.get('z')
 assert z_feature is manager.get('z')
-assert 'feather_z_calibration' in sys.modules
+assert 'feather.calibration.z' in sys.modules
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
 z_feature.render(ScreenPage.SAFE_Z_BRIEFING)
@@ -250,9 +250,9 @@ pages = [name for name in sys.modules
          if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
 assert pages == ['ff5m_ui.z_offset.safe_briefing.page'], pages
 manager.get('extruder')
-assert 'feather_extruder_calibration' in sys.modules
+assert 'feather.calibration.extruder' in sys.modules
 manager.get('settings')
-assert 'feather_mod_settings' in sys.modules
+assert 'feather.settings.mod' in sys.modules
 """)
 
     def test_z_offset_constants_do_not_load_actions_or_pages(self):
@@ -332,7 +332,7 @@ with tempfile.TemporaryDirectory() as directory:
 
 class FeatureHostProxyTest(unittest.TestCase):
     def test_recovery_progress_reset_belongs_to_calibration_feature(self):
-        from feather_feature_calibration import CalibrationFeature
+        from feather.features.calibration import CalibrationFeature
 
         host = types.SimpleNamespace(heating_materials=())
         feature = CalibrationFeature(host)
@@ -493,7 +493,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         self.assertEqual(common.calibration_kind, "z")
         self.assertIsNone(manager.peek("z"))
 
-        import feather_feature_z
+        from feather.features import z as feather_feature_z
         started = []
         with mock.patch.object(
                 feather_feature_z.ZCalibrationFeature,

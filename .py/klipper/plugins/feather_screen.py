@@ -33,21 +33,21 @@ from ui import (
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.print_state import PrintState
-from feather_screen_pages import FeatherPagesMixin, FILE_ROWS
-from feather_files import (
+from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
+from feather.files import (
         DEFAULT_HISTORY_PATH, FileScanWorker, PrintHistory,
         UsbStorageMonitor)
-from feather_screen_controls import (
+from feather.screen.controls import (
         FeatherControlsMixin,
         joystick_ui, joystick_motion,
         JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS)
-from feather_materials import load_material_catalog
-from feather_feature_manager import (
+from feather.materials import load_material_catalog
+from feather.features.manager import (
         FeatureLoadError, FeatureSpec, LazyFeatureManager)
-from feather_safety import SafetyRegistry
-from feather_keyboard import is_keyboard_action
-from feather_update_notification import ForgeXUpdateNotification
+from feather.safety import SafetyRegistry
+from feather.screen.keyboard import is_keyboard_action
+from feather.update_notification import ForgeXUpdateNotification
 
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
@@ -120,29 +120,29 @@ def _feature_module(name):
 
 
 FEATURE_SPECS = (
-    FeatureSpec("ui_test", _feature_module("feather_feature_ui_test"),
+    FeatureSpec("ui_test", _feature_module("ui_test"),
                 "UITestFeature"),
-    FeatureSpec("filament", _feature_module("feather_feature_filament"),
+    FeatureSpec("filament", _feature_module("filament"),
                 "FilamentFeature", (
                     ScreenPage.FILAMENT_MATERIAL, ScreenPage.FILAMENT_ACTION)),
-    FeatureSpec("calibration", _feature_module("feather_feature_calibration"),
+    FeatureSpec("calibration", _feature_module("calibration"),
                 "CalibrationFeature", (
                     ScreenPage.CALIBRATION_HOME, ScreenPage.CALIBRATION_GUIDE,
                     ScreenPage.CALIBRATION_CONFIRM, ScreenPage.CALIBRATION_PROGRESS,
                     ScreenPage.CALIBRATION_RESULT)),
-    FeatureSpec("z", _feature_module("feather_feature_z"),
+    FeatureSpec("z", _feature_module("z"),
                 "ZCalibrationFeature", (
         ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_SUMMARY,
         ScreenPage.Z_OFFSET_PAPER_BRIEFING, ScreenPage.Z_OFFSET_PAPER,
         ScreenPage.SAFE_Z_BRIEFING, ScreenPage.SAFE_Z_CALIBRATION,
         ScreenPage.LIVE_Z_OFFSET)),
-    FeatureSpec("extruder", _feature_module("feather_feature_extruder"),
+    FeatureSpec("extruder", _feature_module("extruder"),
                 "ExtruderCalibrationFeature", (
                     ScreenPage.EXTRUDER_CALIBRATION,)),
-    FeatureSpec("settings", _feature_module("feather_feature_settings"),
+    FeatureSpec("settings", _feature_module("settings"),
                 "SettingsFeature", (
         ScreenPage.SETTINGS, ScreenPage.MOD_SETTINGS, ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE)),
-    FeatureSpec("benchmark", _feature_module("feather_feature_benchmark"),
+    FeatureSpec("benchmark", _feature_module("benchmark"),
                 "BenchmarkFeature", (ScreenPage.RENDER_BENCHMARK,)),
 )
 
@@ -257,6 +257,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.file_confirm_auto_mesh = False
         self.file_source = "internal"
         self.usb_storage = None
+        self._gcode_preview = None
         self.jog_step = 1.0
         self.move_mode = "step"
         self.joystick = None
@@ -1229,6 +1230,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                      or getattr(self, "joystick_action", None) is not None)):
             self._stop_joystick()
         old_page = self.page
+        if (old_page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
+                and page not in (ScreenPage.PRINTING, ScreenPage.PAUSED)):
+            stop_preview_loader = getattr(
+                self, "_stop_gcode_preview_loader", None)
+            if stop_preview_loader is not None:
+                stop_preview_loader()
         self.previous_page = old_page
         self.page = page
         self._notify_features("on_page_changed", old_page, page)

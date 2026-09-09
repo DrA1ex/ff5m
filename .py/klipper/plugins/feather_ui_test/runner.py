@@ -41,7 +41,7 @@ REACTOR_PROBE_FLUSH_INTERVAL = 1.0
 # captures wait.  The names are the ones the macros and plugins actually
 # publish: PROBING and LEVELING from [gcode_macro] bed_screws/bed_level,
 # "CHECKING MESH" from the mesh validation macro, and TARING from the load cell
-# probe in feather_z_calibration.  HOMING is included because _HOME_IF_NEEDED
+# probe in feather.calibration.z.  HOMING is included because _HOME_IF_NEEDED
 # publishes it before several of these.
 PROBING_STATES = frozenset((
     "HOMING", "PROBING", "LEVELING", "CHECKING MESH", "TARING",
@@ -59,24 +59,35 @@ VALID_SUITES = frozenset((
 NONPHYSICAL_SUITES = frozenset(("UI", "COMPONENT", "RENDER"))
 EXTENDED_CONTEXT_SUITES = frozenset(("CONTEXT_PRINT", "CONTEXT_MATERIAL"))
 UI_FINGERPRINT_FILES = (
-    "feather_extruder_calibration.py",
-    "feather_feature_benchmark.py",
-    "feather_feature_calibration.py",
-    "feather_feature_extruder.py",
-    "feather_feature_filament.py",
-    "feather_feature_manager.py",
-    "feather_feature_settings.py",
-    "feather_feature_z.py",
     "feather_screen.py",
-    "feather_screen_controls.py",
-    "feather_screen_pages.py",
-    "feather_network_ui.py",
-    "feather_update_notification.py",
-    "feather_feature_ui_test.py",
-    "feather_keyboard.py",
-    "feather_mod_settings.py",
-    "feather_operation_context_fixtures.py",
-    "feather_pagination.py",
+    "feather/calibration/extruder.py",
+    "feather/calibration/z.py",
+    "feather/control/joystick.py",
+    "feather/control/motion.py",
+    "feather/features/benchmark.py",
+    "feather/features/calibration.py",
+    "feather/features/extruder.py",
+    "feather/features/filament.py",
+    "feather/features/manager.py",
+    "feather/features/settings.py",
+    "feather/features/ui_test.py",
+    "feather/features/z.py",
+    "feather/network/pages.py",
+    "feather/screen/controls.py",
+    "feather/screen/keyboard.py",
+    "feather/screen/pagination.py",
+    "feather/screen/pages/__init__.py",
+    "feather/screen/pages/files.py",
+    "feather/screen/pages/home.py",
+    "feather/screen/pages/mod_editor.py",
+    "feather/screen/pages/mod_settings.py",
+    "feather/screen/pages/print_cancel.py",
+    "feather/screen/pages/printing.py",
+    "feather/screen/pages/recovery.py",
+    "feather/screen/pages/settings.py",
+    "feather/settings/mod.py",
+    "feather/testing/operation_context_fixtures.py",
+    "feather/update_notification.py",
 )
 UI_FINGERPRINT_PACKAGES = ("ui", "ff5m_ui", "feather_ui_test")
 

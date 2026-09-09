@@ -8,13 +8,17 @@ ParameterOption = namedtuple(
 
 
 from ff5m_ui.screen import ScreenPage
-from feather_feature_manager import FeatureHostProxy
-from feather_screen_pages import FeatherPagesMixin
-from feather_keyboard import is_keyboard_action
-import feather_mod_settings as _mod_ui
+from feather.features.manager import FeatureHostProxy
+from feather.screen.pages import (
+    ModEditorPagesMixin, ModSettingsPagesMixin, SettingsPagesMixin,
+)
+from feather.screen.keyboard import is_keyboard_action
+from feather.settings import mod as _mod_ui
 
 
-class SettingsFeature(FeatherPagesMixin, FeatureHostProxy):
+class SettingsFeature(
+        SettingsPagesMixin, ModSettingsPagesMixin, ModEditorPagesMixin,
+        FeatureHostProxy):
     name = "settings"
 
     def __init__(self, host):

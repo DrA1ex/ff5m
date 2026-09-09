@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).parents[1]
 PLUGINS = ROOT / ".py" / "klipper" / "plugins"
 sys.path.insert(0, str(PLUGINS))
 
-import feather_materials as MATERIALS  # noqa: E402
+from feather import materials as MATERIALS  # noqa: E402
 
 
 DEFAULTS = {

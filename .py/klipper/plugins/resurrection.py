@@ -4,15 +4,9 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import enum, json, logging, math, os, queue, sys, threading
+import enum, json, logging, math, os, queue, threading
 
-if __package__:
-    from . import resurrection_state as _state
-else:
-    plugin_dir = os.path.dirname(__file__)
-    if plugin_dir not in sys.path:
-        sys.path.insert(0, plugin_dir)
-    import resurrection_state as _state
+from .recovery import state as _state
 
 GCodeStateParser = _state.GCodeStateParser
 GCodeStateReducer = _state.GCodeStateReducer

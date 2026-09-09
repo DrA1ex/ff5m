@@ -51,7 +51,10 @@ class FakeClient:
         pass
 
     def discover_camera(self):
-        return None
+        return {
+            "url": "http://printer.invalid/camera",
+            "metadata": {"name": "cam", "rotation": 0},
+        }
 
     def launch(self, spec, material, screen_capture_interval,
                start_timeout=20):
@@ -68,12 +71,15 @@ class FakeClient:
         }
 
     def wait(self, marker, timeout, run_state=None, events_alive=None,
-             progress=None):
+             camera_alive=None, progress=None):
         del marker, timeout, run_state
         del progress
         if events_alive is not None and not events_alive():
             raise REGRESSION.RegressionError(
                 "no printer status event for 30 seconds")
+        if camera_alive is not None and not camera_alive():
+            raise REGRESSION.RegressionError(
+                "camera recording stopped during the printer suite")
         return False
 
     def telemetry_snapshot(self):
@@ -155,10 +161,14 @@ class FakeMedia:
             "metadata": None if camera is None else camera["metadata"],
         }
         if camera is None:
-            self.warnings.append("No enabled printer camera was available.")
+            raise REGRESSION.RegressionError(
+                "no enabled printer camera was available")
 
     def stop_camera(self):
         self.stopped = True
+
+    def camera_alive(self):
+        return self.camera.get("status") == "recording"
 
     def finalize(self, suites, duration):
         del suites
@@ -406,6 +416,23 @@ class CameraContractTest(unittest.TestCase):
         self.assertLess(timestamp_option, input_option)
         self.assertEqual(media.camera["status"], "recording")
 
+    def test_camera_start_failure_is_an_infrastructure_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            process = mock.Mock()
+            process.poll.return_value = 1
+            media = REGRESSION.MediaPipeline(
+                temporary, 10, popen=mock.Mock(return_value=process),
+                sleeper=lambda _delay: None)
+
+            with self.assertRaisesRegex(
+                    REGRESSION.RegressionError, "could not start"):
+                media.start_camera({
+                    "url": "http://printer.invalid/camera",
+                    "metadata": {"rotation": 0},
+                })
+
+        self.assertEqual(media.camera["status"], "unavailable")
+
 
 class LaunchContractTest(unittest.TestCase):
     @staticmethod
@@ -534,8 +561,8 @@ class OrchestrationTest(unittest.TestCase):
     def test_console_progress_uses_already_sampled_test_status(self):
         class ProgressClient(FakeClient):
             def wait(self, marker, timeout, run_state=None,
-                     events_alive=None, progress=None):
-                del marker, timeout, run_state, events_alive
+                     events_alive=None, camera_alive=None, progress=None):
+                del marker, timeout, run_state, events_alive, camera_alive
                 progress(65.0)
                 return False
 
@@ -616,15 +643,31 @@ class OrchestrationTest(unittest.TestCase):
         self.assertEqual(report["media"]["status"], "failed")
         self.assertEqual(report["status"], "error")
 
-    def test_camera_degradation_keeps_passed_host_result(self):
+    def test_missing_camera_stops_before_first_suite(self):
         with tempfile.TemporaryDirectory() as temporary:
+            client = FakeClient()
+            client.discover_camera = lambda: None
             media = FakeMedia(status="passed")
             report, _output = self._run(
-                temporary, FakeClient(), media, suite="core")
+                temporary, client, media, suite="core")
 
-        self.assertEqual(report["suites"][0]["status"], "passed")
+        self.assertEqual(client.launched, [])
+        self.assertEqual(report["suites"][0]["status"], "skipped")
         self.assertEqual(report["camera"]["status"], "unavailable")
-        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["status"], "error")
+
+    def test_camera_that_dies_before_launch_stops_the_first_suite(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            client = FakeClient()
+            media = FakeMedia(status="passed")
+            media.camera_alive = lambda: False
+            report, _output = self._run(
+                temporary, client, media, suite="core")
+
+        self.assertEqual(client.launched, [])
+        self.assertEqual(report["suites"][0]["status"],
+                         "infrastructure_error")
+        self.assertEqual(report["status"], "error")
 
     def test_copy_failure_preserves_remote_artifact_and_skips_later(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1033,6 +1076,24 @@ class TelemetryContractTest(unittest.TestCase):
         self.assertFalse(timed_out)
         self.assertEqual(observed, [10.0, 20.0])
 
+    def test_wait_aborts_when_camera_recording_stops(self):
+        marker = {
+            "run_id": "20260811-120000-000001-ui",
+            "suite": "UI",
+            "directory": REGRESSION.ARTIFACT_ROOT +
+                         "/20260811-120000-000001-ui",
+        }
+        client = REGRESSION.PrinterRunClient(object())
+        client.abort = mock.Mock()
+
+        with self.assertRaisesRegex(
+                REGRESSION.RegressionError, "camera recording stopped"):
+            client.wait(
+                marker, 100.0, run_state=lambda _run_id: "active",
+                camera_alive=lambda: False)
+
+        client.abort.assert_called_once_with(marker, abort_grace=60)
+
     def test_run_completion_is_owned_by_status_heartbeat(self):
         recorder = REGRESSION.TelemetryRecorder(
             pathlib.Path("/tmp"), 1.0, lambda: {})
@@ -1438,6 +1499,23 @@ class HostPreflightTest(unittest.TestCase):
                         which=lambda name: available.get(name),
                         disk_usage=lambda _path:
                             shutil.disk_usage(temporary))
+
+    def test_broken_ffmpeg_is_reported_before_printer_work(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "run"
+            available = {
+                name: "/usr/bin/" + name for name in ("ffmpeg", "ssh", "scp")
+            }
+            failed = subprocess.CompletedProcess(
+                [available["ffmpeg"], "-version"], 1, "", "loader error")
+
+            with self.assertRaisesRegex(
+                    REGRESSION.RegressionError, "not runnable"):
+                REGRESSION._host_preflight(
+                    output, 1, 10,
+                    which=lambda name: available.get(name),
+                    disk_usage=lambda _path: shutil.disk_usage(temporary),
+                    runner=lambda *_args, **_kwargs: failed)
 
 
 class PrinterSafetyTest(unittest.TestCase):

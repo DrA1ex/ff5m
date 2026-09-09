@@ -253,9 +253,10 @@ FFmpeg timestamps incoming frames by their host arrival time before normalizing
 the recording to start at zero. A fluctuating or lower-than-declared camera FPS
 therefore changes frame cadence without stretching the camera away from the
 screen and telemetry timelines. Relative webcam URLs resolve to the printer's
-HTTP port 80. `--no-camera` explicitly disables camera capture. An absent or
-failed camera leaves the printer outcomes intact and produces screen-only media
-when semantic screenshots are available.
+HTTP port 80. Camera recording is required by default: host preflight rejects a
+broken FFmpeg installation before contacting the printer, initial camera failure
+stops the run before its first suite, and loss of the recorder aborts an active
+suite. `--no-camera` is the explicit opt-out for a screen-only run.
 
 The host also requests one coherent Feather framebuffer snapshot every 5
 seconds by default. These periodic timeline records complement rather than

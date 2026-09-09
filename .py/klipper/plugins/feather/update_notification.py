@@ -6,7 +6,7 @@
 
 import logging
 
-from feather_pagination import Pagination
+from feather.screen.pagination import Pagination
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.screen import ScreenPage
 from ui import ThemeColor

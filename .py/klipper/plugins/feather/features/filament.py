@@ -3,7 +3,7 @@
 import logging
 
 from ui import Command
-from feather_feature_manager import FeatureHostProxy
+from feather.features.manager import FeatureHostProxy
 from ff5m_ui.filament import runtime as filament_ui
 from ff5m_ui.screen import ScreenPage
 

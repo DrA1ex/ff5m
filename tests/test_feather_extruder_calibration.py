@@ -16,7 +16,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).parents[1]
 PLUGINS = ROOT / ".py" / "klipper" / "plugins"
-MODULE_PATH = PLUGINS / "feather_extruder_calibration.py"
+MODULE_PATH = PLUGINS / "feather" / "calibration" / "extruder.py"
 
 import sys
 sys.path.insert(0, str(PLUGINS))
@@ -559,7 +559,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_extruder_feature_routes_page_cancel_as_immediate_action(self):
-        from feather_feature_extruder import ExtruderCalibrationFeature
+        from feather.features.extruder import ExtruderCalibrationFeature
 
         host = types.SimpleNamespace()
         feature = ExtruderCalibrationFeature(host)

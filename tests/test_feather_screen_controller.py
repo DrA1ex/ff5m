@@ -33,10 +33,10 @@ from ff5m_ui.filament import actions as FILAMENT_ACTIONS
 from ff5m_ui.home import page as HOME_PAGE
 from ff5m_ui.home import state as HOME_STATE
 from ff5m_ui.keys import AppPage
-from feather_feature_filament import FilamentFeature
-from feather_z_calibration import (
+from feather.features.filament import FilamentFeature
+from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
-from feather_extruder_calibration import FeatherExtruderCalibrationMixin
+from feather.calibration.extruder import FeatherExtruderCalibrationMixin
 
 
 class ScenarioController(FeatherZCalibrationMixin,
@@ -591,7 +591,6 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(extruder_started, [True])
 
         controller._handle_calibration_action("cal.axes")
-        self.assertEqual(controller.calibration_guide_kind, "axes")
         self.assertEqual(pages[-1], FEATHER.ScreenPage.CALIBRATION_GUIDE)
 
     def test_pid_confirm_uses_selected_material_temperature(self):
@@ -2257,7 +2256,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
         controller._live_z_adjust_allowed = lambda eventtime: False
-        controller._update_print_progress = lambda eventtime: None
+        controller._current_print_progress_commands = (
+            lambda eventtime: ([], 0, None))
         controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_print_page()
@@ -2286,7 +2286,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.start_print_macro = type("Start", (), {"variables": {
             "print_started": False}})()
         controller._live_z_adjust_allowed = lambda eventtime: False
-        controller._update_print_progress = lambda eventtime: None
+        controller._current_print_progress_commands = (
+            lambda eventtime: ([], 0, None))
         controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_print_page()

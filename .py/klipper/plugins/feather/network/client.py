@@ -13,8 +13,8 @@ daemon-owned network operation.
 
 import logging
 
-import feather_netd_protocol as protocol
-from feather_netd_transport import NetdTransport, SOCKET_PATH
+from feather.network import protocol
+from feather.network.transport import NetdTransport, SOCKET_PATH
 
 
 RETRY_INTERVAL = 5.0

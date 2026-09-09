@@ -266,10 +266,9 @@ class ScenarioCatalog:
         self._add_call(steps, "ui-calibration-pages",
                        self._render_calibration_variants)
         self._add_capture(steps, "ui-calibration-variants")
-        for kind in ("extruder", "axes"):
-            self._add_render_capture(
-                steps, "ui-calibration-guide-" + kind,
-                lambda value=kind: self._render_calibration_guide(value))
+        self._add_render_capture(
+            steps, "ui-calibration-guide-axes",
+            self._render_calibration_guide)
         for kind in ("error", "cancelled", "tuning"):
             self._add_render_capture(
                 steps, "ui-calibration-result-" + kind,
@@ -613,10 +612,8 @@ class ScenarioCatalog:
         }):
             self.host._render_file_entries()
 
-    def _render_calibration_guide(self, kind):
-        feature = self.host.feature_manager.get("calibration")
-        with _temporary_attributes(feature, {"calibration_guide_kind": kind}):
-            self._show(ScreenPage.CALIBRATION_GUIDE)
+    def _render_calibration_guide(self):
+        self._show(ScreenPage.CALIBRATION_GUIDE)
 
     def _render_calibration_result(self, kind):
         feature = self.host.feature_manager.get("calibration")
@@ -660,7 +657,7 @@ class ScenarioCatalog:
             self._show(ScreenPage.LIVE_Z_OFFSET)
 
     def _render_extruder_phase(self, phase):
-        from feather_extruder_calibration import (
+        from feather.calibration.extruder import (
             ExtruderCalibrationSession, UserConfigSnapshot)
 
         feature = self.host.feature_manager.get("extruder")
@@ -707,7 +704,7 @@ class ScenarioCatalog:
             self._show(ScreenPage.MOD_SETTINGS)
 
     def _mod_parameter(self, kind, key=None):
-        import feather_mod_settings as mod_ui
+        from feather.settings import mod as mod_ui
 
         feature = self.host.feature_manager.get("settings")
         for parameter in feature._mod_parameters():

@@ -1,9 +1,9 @@
 ## Z-offset, Safe Z, paper-test, and Live Z feature for Feather.
 
 from ff5m_ui.screen import ScreenPage
-from feather_feature_manager import FeatureHostProxy
-from feather_screen_controls import FeatherControlsMixin
-from feather_z_calibration import (
+from feather.features.manager import FeatureHostProxy
+from feather.screen.controls import FeatherControlsMixin
+from feather.calibration.z import (
         FeatherZCalibrationMixin, ZCalibrationSession)
 
 

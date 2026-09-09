@@ -11,8 +11,8 @@ import unittest
 
 
 MODULE_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
-               "plugins" / "feather_z_calibration.py")
-sys.path.insert(0, str(MODULE_PATH.parent))
+               "plugins" / "feather" / "calibration" / "z.py")
+sys.path.insert(0, str(MODULE_PATH.parents[2]))
 SPEC = importlib.util.spec_from_file_location(
     "feather_z_calibration_test", MODULE_PATH)
 ZCAL = importlib.util.module_from_spec(SPEC)

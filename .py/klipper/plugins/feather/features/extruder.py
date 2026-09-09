@@ -1,8 +1,8 @@
 ## Guided extruder rotation-distance feature for Feather.
 
 from ff5m_ui.screen import ScreenPage
-from feather_feature_manager import FeatureHostProxy
-from feather_extruder_calibration import (
+from feather.features.manager import FeatureHostProxy
+from feather.calibration.extruder import (
         ExtruderCalibrationSession, FeatherExtruderCalibrationMixin)
 
 

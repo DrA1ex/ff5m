@@ -14,7 +14,7 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
            "plugins")
 sys.path.insert(0, str(PLUGINS))
 
-from feather_update_notification import (  # noqa: E402
+from feather.update_notification import (  # noqa: E402
     CHECK_TIMEOUT, DEFAULT_UPDATE_INTERVAL_MINUTES, FAILURE_RETRY_INTERVAL,
     MAX_FAILURE_RETRY_INTERVAL, ForgeXUpdateNotification, STARTUP_DELAY)
 from ff5m_ui.print_state import PrintState  # noqa: E402

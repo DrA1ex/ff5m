@@ -11,7 +11,7 @@ from collections import deque, namedtuple
 
 from ui import ReceiptTracker
 from ui.lazy import LazyModule
-from feather_feature_manager import FeatureHostProxy
+from feather.features.manager import FeatureHostProxy
 from ff5m_ui.benchmark.actions import BenchmarkAction, BenchmarkRoute
 from ff5m_ui.benchmark.constants import BENCHMARK_MODES
 from ff5m_ui.screen import ScreenPage

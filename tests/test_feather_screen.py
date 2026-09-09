@@ -11,6 +11,7 @@ import json
 import pathlib
 import re
 import shlex
+import sys
 import tempfile
 import threading
 import unittest
@@ -23,10 +24,10 @@ SPEC = importlib.util.spec_from_file_location("feather_screen", MODULE_PATH)
 FEATHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FEATHER)
 UI = __import__("ui")
-NETWORK_PROTOCOL = __import__("feather_netd_protocol")
+from feather.network import protocol as NETWORK_PROTOCOL
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
-from feather_feature_z import ZCalibrationFeature
+from feather.features.z import ZCalibrationFeature
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -52,11 +53,13 @@ def joystick_values(snapshot, inertia=0.0, cursor=None):
     return values
 
 
-MOD_UI = __import__("feather_mod_settings")
-SETTINGS = __import__("feather_feature_settings")
-PAGES = __import__("feather_screen_pages")
-KEYBOARD = __import__("feather_keyboard")
-PAGINATION = __import__("feather_pagination")
+from feather.settings import mod as MOD_UI
+from feather.features import settings as SETTINGS
+from feather.screen import pages as PAGES
+from feather.screen.pages import files as FILE_PAGES
+from feather.screen.pages import home as HOME_PAGES
+from feather.screen import keyboard as KEYBOARD
+from feather.screen import pagination as PAGINATION
 
 MOD_PARAMS_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
                    "plugins" / "mod_params.py")
@@ -65,12 +68,10 @@ MOD_PARAMS_SPEC = importlib.util.spec_from_file_location(
 MOD_PARAMS = importlib.util.module_from_spec(MOD_PARAMS_SPEC)
 MOD_PARAMS_SPEC.loader.exec_module(MOD_PARAMS)
 
-RESURRECTION_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
-                     "plugins" / "resurrection.py")
-RESURRECTION_SPEC = importlib.util.spec_from_file_location(
-    "feather_resurrection", RESURRECTION_PATH)
-RESURRECTION = importlib.util.module_from_spec(RESURRECTION_SPEC)
-RESURRECTION_SPEC.loader.exec_module(RESURRECTION)
+KLIPPER_PATH = pathlib.Path(__file__).parents[1] / ".py" / "klipper"
+sys.path.insert(0, str(KLIPPER_PATH))
+
+from plugins import resurrection as RESURRECTION  # noqa: E402
 
 
 class StatusObject:
@@ -218,7 +219,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertIsNone(pagination.absolute_index(2))
 
     def test_file_entries_use_compact_slots_and_keep_mapping_access(self):
-        entry = PAGES.FileEntry(
+        entry = FILE_PAGES.FileEntry(
             "part.gcode", "/data/gcodes/part.gcode", False, 1024, 42)
 
         self.assertFalse(hasattr(entry, "__dict__"))
@@ -393,12 +394,12 @@ class FeatherUtilitiesTest(unittest.TestCase):
     def test_dashboard_reloads_timezone_only_when_localtime_changes(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         stat_result = type("Stat", (), {"st_ino": 10, "st_mtime": 20})()
-        with (mock.patch.object(PAGES.os, "lstat", return_value=stat_result),
-              mock.patch.object(PAGES.os.path, "islink", return_value=True),
+        with (mock.patch.object(HOME_PAGES.os, "lstat", return_value=stat_result),
+              mock.patch.object(HOME_PAGES.os.path, "islink", return_value=True),
               mock.patch.object(
-                  PAGES.os, "readlink",
+                  HOME_PAGES.os, "readlink",
                   return_value="/usr/share/zoneinfo/Asia/Yekaterinburg"),
-              mock.patch.object(PAGES.time, "tzset") as tzset):
+              mock.patch.object(HOME_PAGES.time, "tzset") as tzset):
             controller._refresh_local_timezone()
             controller._refresh_local_timezone()
         tzset.assert_called_once_with()

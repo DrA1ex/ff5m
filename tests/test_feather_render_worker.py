@@ -16,6 +16,7 @@ from ui import (  # noqa: E402
     FeatherRenderer, MAX_ATOMIC_DRAW, MAX_BATCH_BYTES, MAX_BATCHES,
     MAX_PENDING_DRAW, RenderBatch, RenderBatchQueue, TyperRenderWorker,
 )
+from ui.renderer import BinaryCommand  # noqa: E402
 
 
 OLD_ATOMIC_DRAW = 3584
@@ -171,6 +172,37 @@ class RenderWorkerTest(unittest.TestCase):
         self.assertEqual(
             FeatherRenderer._serialized_size(commands, "7:142"),
             len(acknowledged[0]))
+
+    def test_binary_image_is_framed_between_text_and_final_flush(self):
+        renderer = FeatherRenderer()
+        image = renderer.image(12, 34, b"FXI1\x00\n--end\n\xff")
+        commands = ("--batch clear -c 000000", image,
+                    "--batch fill -p 1 2 -s 3 4 -c ffffff")
+
+        frames = renderer._encode_frames(commands, "4:9")
+
+        self.assertIsInstance(image, BinaryCommand)
+        self.assertEqual(frames[0],
+                         b"--batch clear -c 000000\n--end\n")
+        self.assertEqual(
+            frames[1],
+            b"--binary 13 --batch image -p 12 34 --format fxi1\n"
+            b"FXI1\x00\n--end\n\xff")
+        self.assertEqual(
+            frames[2],
+            b"--batch fill -p 1 2 -s 3 4 -c ffffff\n"
+            b"--batch flush --receipt 4:9\n--end\n")
+        self.assertEqual(renderer._serialized_size(commands, "4:9"),
+                         sum(map(len, frames)))
+
+        self.assertTrue(renderer.send((image,)))
+        queued = renderer._batch_queue.get()
+        self.assertIsInstance(queued.commands[0], BinaryCommand)
+        self.assertEqual(queued.commands[0].payload, image.payload)
+        self.assertTrue(renderer.send(commands))
+        queued = renderer._batch_queue.get()
+        self.assertIsInstance(queued.commands[1], BinaryCommand)
+        self.assertEqual(queued.commands[1].payload, image.payload)
 
     def test_worker_uses_extended_encoder_only_for_receipt_batches(self):
         queue = RenderBatchQueue()

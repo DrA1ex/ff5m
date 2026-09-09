@@ -16,7 +16,7 @@ import time
 
 from ui import NumericInputSpec, ThemeColor
 from ff5m_ui.screen import ScreenPage
-from feather_materials import adaptive_grid_columns, render_material_selector
+from feather.materials import adaptive_grid_columns, render_material_selector
 
 
 USER_CFG_PATH = "/opt/config/mod_data/user.cfg"

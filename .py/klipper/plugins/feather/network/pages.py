@@ -13,10 +13,10 @@ prompting, presentation, foreground request completion and explicit CANCEL.
 
 import logging
 
-import feather_netd_protocol as protocol
-import feather_network
-from feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
-from feather_pagination import Pagination
+from feather.network import protocol
+from feather.network import client as feather_network
+from feather.screen.keyboard import TEXT_KEYBOARD, is_keyboard_action
+from feather.screen.pagination import Pagination
 from ui import ThemeColor
 from ff5m_ui.screen import ScreenPage
 

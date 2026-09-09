@@ -1,8 +1,8 @@
 ## Common calibration feature for Feather.
 
 from ff5m_ui.screen import ScreenPage
-from feather_feature_manager import FeatureHostProxy
-from feather_screen_controls import FeatherControlsMixin
+from feather.features.manager import FeatureHostProxy
+from feather.screen.controls import FeatherControlsMixin
 
 
 PAGES = frozenset((
@@ -19,7 +19,6 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         FeatureHostProxy.__init__(self, host)
         self.calibration_kind = None
         self.calibration_page = 0
-        self.calibration_guide_kind = None
         materials = getattr(host, "heating_materials", ())
         self.calibration_material = materials[0] if materials else "n/a"
         self.calibration_clean_nozzle = True

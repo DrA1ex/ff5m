@@ -10,7 +10,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).parents[1]
-MODULE = ROOT / ".py" / "klipper" / "plugins" / "feather_motion.py"
+MODULE = ROOT / ".py" / "klipper" / "plugins" / "feather" / "control" / "motion.py"
 SPEC = importlib.util.spec_from_file_location("feather_motion", MODULE)
 MOTION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MOTION)

@@ -11,7 +11,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).parents[1]
-MODULE = ROOT / ".py" / "klipper" / "plugins" / "feather_joystick.py"
+MODULE = ROOT / ".py" / "klipper" / "plugins" / "feather" / "control" / "joystick.py"
 spec = importlib.util.spec_from_file_location("feather_joystick", MODULE)
 JOYSTICK = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(JOYSTICK)
