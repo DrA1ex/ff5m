@@ -4,13 +4,15 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import copy
+import itertools
 from enum import Enum, IntEnum
 
-from .bindings import StateStore, derived, page_state_keys, resolve
-from .actions import action_wire_id, collect_actions
+from .bindings import Binding, ItemScope, StateStore, derived, page_state_keys, resolve
+from .actions import ItemCommand, action_wire_id, collect_actions, validate_action
 from .identity import PageKey, serialize_key
 from .properties import (
-    CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, SourceSpec,
+    CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy, SourceSpec,
     ValidationSpec, property_schema,
 )
 
@@ -147,6 +149,14 @@ class Rect:
         right = max(self.right, other.right)
         bottom = max(self.bottom, other.bottom)
         return Rect(left, top, right - left, bottom - top)
+
+    def contains(self, other):
+        return (self.x <= other.x and self.y <= other.y
+                and self.right >= other.right and self.bottom >= other.bottom)
+
+    def overlaps(self, other):
+        return (self.x < other.right and other.x < self.right
+                and self.y < other.bottom and other.y < self.bottom)
 
     def align(self, width, height, horizontal="center", vertical="center"):
         width = int(width)
@@ -415,13 +425,34 @@ def _layout_property(name, runtime_type, default, kind="number", choices=(),
     )
 
 
+def _validate_size(value):
+    if value in ("fill", "content"):
+        return value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("size must be fill, content, or an integer")
+    if not 1 <= value <= 4000:
+        raise ValueError("fixed size must be between 1 and 4000")
+    return value
+
+
+def _size_property(name):
+    return PropertySpec(
+        name, (int, str), default=None, nullable=True,
+        validation=ValidationSpec(validator=_validate_size),
+        editor=EditorSpec(
+            "size", label=name.title(), group="Layout",
+            choices=("fill", "content", "fixed"), wire_codec="size",
+            fixed_minimum=1, fixed_maximum=4000),
+        bindings=(), invalidation=Invalidation.LAYOUT,
+        source=SourceSpec(name=name, storage="layout"))
+
+
 LAYOUT_SCHEMA = property_schema(
-    _layout_property("width", int, None, minimum=1, maximum=4000,
-                     nullable=True, wire_codec="integer", auto_label="Auto"),
-    _layout_property("height", int, None, minimum=1, maximum=4000,
-                     nullable=True, wire_codec="integer", auto_label="Auto"),
-    _layout_property("grow", int, 1, minimum=0, maximum=100,
-                     wire_codec="integer"),
+    _size_property("width"),
+    _size_property("height"),
+    _layout_property(
+        "grow", int, 1, minimum=0, maximum=100, wire_codec="integer",
+        help="Used only when this axis is Fill in the parent flow."),
     _layout_property(
         "margin", (tuple, list), (0, 0, 0, 0), kind="insets",
         wire_codec="insets", vector_labels=("Left", "Top", "Right", "Bottom"),
@@ -443,7 +474,7 @@ LAYOUT_SCHEMA = property_schema(
         wire_codec="point", vector_labels=("X", "Y"),
         item_minimum=-4000, item_maximum=4000,
         runtime_guard="overlay_child_axes",
-        help=("For an Auto-sized Overlay child, a positive offset consumes "
+        help=("For a Fill-sized Overlay child, a positive offset consumes "
               "space on that axis and the child fills the remainder of its slot.")),
     _layout_property(
         "allow_overflow", bool, False, kind="checkbox", wire_codec="boolean",
@@ -657,6 +688,8 @@ _KEYWORD_CREATION_SOURCE = CreationSourceContract(
     "core.keyword_call", identity=_STABLE_CREATION_IDENTITY)
 _GRID_CREATION_SOURCE = CreationSourceContract(
     "core.grid_matrix", identity=_STABLE_CREATION_IDENTITY)
+_LIST_VIEW_CREATION_SOURCE = CreationSourceContract(
+    "core.list_view", identity=_STABLE_CREATION_IDENTITY)
 
 
 _SEQUENCE_CREATION_FIELDS = (
@@ -735,12 +768,38 @@ _SPACER_CREATION = CreationContract(
 
 
 _UNSET = object()
+_LIST_VIEW_SEQUENCE = itertools.count(1)
+
+
+def _validate_template_value(value, path):
+    if value is None or isinstance(value, (bool, int, float, str, Enum)):
+        return
+    if isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _validate_template_value(child, "%s[%d]" % (path, index))
+        return
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise TypeError("%s mapping keys must be strings" % path)
+            _validate_template_value(child, "%s.%s" % (path, key))
+        return
+    raise TypeError("%s contains non-portable %s" %
+                    (path, type(value).__name__))
+
+
+def _validate_template_item(value, path="ListView item"):
+    if not isinstance(value, dict):
+        raise TypeError("%s must be a mapping" % path)
+    _validate_template_value(value, path)
+    return value
 
 
 class Node:
     """Base object for layout containers and renderable components."""
 
     covers_bounds = False
+    restores_background = False
     canvas_selectable = True
     property_schema = ()
     structure_contract = None
@@ -752,6 +811,7 @@ class Node:
         self.layout_options = LayoutOptions()
         self.parent = None
         self._dirty = Dirty.CLEAN
+        self._actions_dirty = True
         self._last_signature = _UNSET
         self._repaint_boundary = False
         self._source_mutations = {}
@@ -766,19 +826,25 @@ class Node:
 
     def width(self, value):
         _capture_modifier(self, "width", (("width", 0),))
-        self.layout_options.width = None if value is None else int(value)
+        self.layout_options.width = self._size_value(value)
         return self
 
     def height(self, value):
         _capture_modifier(self, "height", (("height", 0),))
-        self.layout_options.height = None if value is None else int(value)
+        self.layout_options.height = self._size_value(value)
         return self
 
     def size(self, width, height):
         _capture_modifier(self, "size", (("width", 0), ("height", 1)))
-        self.layout_options.width = None if width is None else int(width)
-        self.layout_options.height = None if height is None else int(height)
+        self.layout_options.width = self._size_value(width)
+        self.layout_options.height = self._size_value(height)
         return self
+
+    @staticmethod
+    def _size_value(value):
+        if value in (None, "fill"):
+            return None
+        return _validate_size(value)
 
     def grow(self, value=1):
         _capture_modifier(self, "grow", (("grow", 0),))
@@ -840,19 +906,35 @@ class Node:
     def invalidate_layout(self):
         return self.invalidate(Dirty.LAYOUT)
 
+    def invalidate_actions(self):
+        """Notify the page through its root, independently of paint cleanup."""
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        root._actions_dirty = True
+        return self.invalidate(Dirty.PAINT)
+
     def _adopt(self, *children):
         for child in children:
             if child is None:
                 continue
             child.parent = self
+        self.invalidate_actions()
+        self.invalidate_layout()
 
     def _box(self, bounds):
         options = self.layout_options
         available = bounds.inset(options.margin)
-        width = (available.width - options.offset_x
-                 if options.width is None else options.width)
-        height = (available.height - options.offset_y
-                  if options.height is None else options.height)
+        width = options.width
+        if width == "content":
+            width = self.preferred_extent("horizontal", available.height)
+        if width is None:
+            width = available.width - options.offset_x
+        height = options.height
+        if height == "content":
+            height = self.preferred_extent("vertical", width)
+        if height is None:
+            height = available.height - options.offset_y
         if width < 0 or height < 0:
             raise ValueError(
                 "%s %r offset (%d, %d) exceeds available slot %r" %
@@ -905,7 +987,7 @@ class Node:
         """Return an optional minimum content size for intrinsic containers.
 
         Flow containers use :meth:`preferred_extent` only when a child opts into
-        content sizing.  Intrinsic containers such as an auto-sized ``Grid``
+        content sizing.  Intrinsic containers such as a Content-sized ``Grid``
         additionally need the natural size of their cells even when a leaf would
         normally stretch in a Row/Column.  The default keeps both contracts the
         same; leaves may publish a more useful minimum without changing ordinary
@@ -924,12 +1006,7 @@ class Node:
         return None
 
     def auto_gap_extent(self, direction, cross_extent=None):
-        """Return an intrinsic size used only by ``gap=None`` lists.
-
-        Normal fixed-gap layouts keep their existing flex behavior. Components
-        may opt into a compact intrinsic size so a space-between style list is
-        useful without requiring every child to declare an explicit size.
-        """
+        """Return an optional compact size for ``gap=None`` lists."""
         return self.preferred_extent(direction, cross_extent)
 
     def arrange(self, bounds, result):
@@ -963,6 +1040,18 @@ class Node:
     def render_children(self):
         return ()
 
+    def paint_children(self, state):
+        """Return children that participate in the current paint pass."""
+        del state
+        return self.render_children()
+
+    def opaque_background(self, state, bounds, target):
+        """Return the uniform color this node paints across target, if any."""
+        del state
+        del bounds
+        del target
+        return None
+
     def replace_preview_children(self, children, placements=None):
         """Replace children on a cloned Designer tree through the framework.
 
@@ -990,6 +1079,8 @@ class Node:
             child.update(state, initialize)
 
     def clear_dirty(self):
+        if self._dirty == Dirty.CLEAN:
+            return
         self._dirty = Dirty.CLEAN
         for child in self.render_children():
             child.clear_dirty()
@@ -1003,6 +1094,22 @@ class Node:
     def apply_override(self, name, value):
         for child in self.render_children():
             child.apply_override(name, value)
+
+
+class Template:
+    """A named declarative subtree materialized by a data-driven container."""
+
+    def __init__(self, name, root, sample=None):
+        if not isinstance(name, str) or not name.strip():
+            raise TypeError("Template name must be a non-empty string")
+        if not isinstance(root, Node):
+            raise TypeError("Template root must be a Node")
+        if sample is not None:
+            _validate_template_item(sample, "Template sample")
+        self.name = name.strip()
+        self.root = root
+        self.sample = None if sample is None else copy.deepcopy(dict(sample))
+        self._source = _capture_construction(self, names=("Template",))
 
 
 class SingleChild(Node):
@@ -1092,17 +1199,19 @@ class List(Node):
                 0, int(preferred_cross) -
                 (margin.vertical if self.direction == "horizontal"
                  else margin.horizontal))
-        minimum = child.minimum_extent(self.direction, preferred_cross)
-        if minimum is not None:
-            size = max(0 if size is None else int(size), int(minimum))
-        if size is None:
+        if size == "content":
             preferred = child.preferred_extent(
                 self.direction, preferred_cross)
-            if preferred is None and self.gap is None:
-                preferred = child.auto_gap_extent(
-                    self.direction, preferred_cross)
             if preferred is not None:
                 size = preferred
+        minimum = child.minimum_extent(self.direction, preferred_cross)
+        if minimum is not None:
+            size = max(
+                0 if size in (None, "content") else int(size), int(minimum))
+        if size == "content":
+            return None
+        if size is None and self.gap is None:
+            size = child.auto_gap_extent(self.direction, preferred_cross)
         if size is None:
             return None
         return int(size) + (margin.horizontal if self.direction == "horizontal"
@@ -1173,6 +1282,337 @@ class List(Node):
     def replace_preview_children(self, children, placements=None):
         self.items = tuple(children)
         self._adopt(*self.items)
+
+
+_LIST_VIEW_STRUCTURE = StructureContract(
+    "data_driven", StructureSourceContract(
+        "core.template_definitions", ("template_declarations",)),
+    operations=(), minimum_children=0, placement="flow", reorder=False,
+    canvas=("resize", "multi_select"))
+
+_LIST_VIEW_CREATION = CreationContract(
+    "Data", "data_driven", (
+        CreationFieldSpec(
+            "items", object, required=True,
+            editor=EditorSpec(
+                "state_binding", label="Item source", group="Data"),
+            bindings=("direct",)),
+        CreationFieldSpec(
+            "item_key", str, default="id",
+            editor=EditorSpec(
+                "item_field", label="Item identity field", group="Data"),
+            bindings=()),
+        CreationFieldSpec(
+            "template_key", str, default="kind",
+            editor=EditorSpec(
+                "item_field", label="Template selector field", group="Data"),
+            bindings=()),
+        CreationFieldSpec(
+            "templates", list, required=True, default=({
+                "name": "item", "height": 64,
+                "sample": {"id": "sample:item", "kind": "item"},
+            },),
+            editor=EditorSpec(
+                "template_specs", label="Template definitions", group="Data"),
+            bindings=()),
+        CreationFieldSpec(
+            "direction", str, default="vertical",
+            validation=ValidationSpec(choices=("horizontal", "vertical")),
+            editor=EditorSpec(
+                "select", label="Direction", group="Layout",
+                choices=("horizontal", "vertical")),
+            bindings=()),
+        CreationFieldSpec(
+            "gap", int, default=0,
+            validation=ValidationSpec(minimum=0, maximum=4000),
+            editor=EditorSpec("number", label="Gap", group="Layout"),
+            bindings=()),
+    ), source=_LIST_VIEW_CREATION_SOURCE)
+
+
+class ListView(List):
+    """Materialize named templates from a bound collection."""
+
+    property_schema = property_schema(
+        PropertySpec(
+            "items", (list, tuple), default=(),
+            editor=EditorSpec(
+                "collection_binding", label="Item source", group="Data"),
+            bindings=("direct", "derived"),
+            invalidation=Invalidation.STRUCTURE,
+            source=SourceSpec(name="items", runtime_name="items_binding")),
+        PropertySpec(
+            "item_key", object,
+            editor=EditorSpec(
+                "item_binding", label="Item identity", group="Data"),
+            bindings=("item", "derived"),
+            invalidation=Invalidation.STRUCTURE,
+            source=SourceSpec(name="item_key", runtime_name="item_key_binding")),
+        PropertySpec(
+            "template_key", object,
+            editor=EditorSpec(
+                "item_binding", label="Template selector", group="Data"),
+            bindings=("item", "derived"),
+            invalidation=Invalidation.STRUCTURE,
+            source=SourceSpec(
+                name="template_key", runtime_name="template_key_binding")),
+        PropertySpec(
+            "direction", str, default="vertical",
+            validation=ValidationSpec(choices=("horizontal", "vertical")),
+            editor=EditorSpec(
+                "select", label="Direction", group="Layout",
+                choices=("horizontal", "vertical")),
+            bindings=(), invalidation=Invalidation.STRUCTURE),
+        PropertySpec(
+            "gap", (int, type(None)), default=0, nullable=True,
+            validation=ValidationSpec(minimum=0, maximum=4000),
+            editor=EditorSpec(
+                "number", label="Gap", group="Layout",
+                placeholder="Auto", auto_label="Auto"),
+            bindings=(), invalidation=Invalidation.LAYOUT),
+        PropertySpec(
+            "templates", tuple, default=(),
+            editor=EditorSpec(
+                "template_catalog", label="Templates", group="Data"),
+            bindings=(), invalidation=Invalidation.STRUCTURE, live=False,
+            source=SourceSpec(
+                name="templates", runtime_name="template_names",
+                policy=RewritePolicy.LOCKED,
+                reason="Templates are edited through their declarations")))
+    structure_contract = _LIST_VIEW_STRUCTURE
+    creation_contract = _LIST_VIEW_CREATION
+
+    def __init__(self, items, item_key, template_key, templates,
+                 direction="vertical", gap=0, fallback_template=None, key=None):
+        Node.__init__(self, key=key)
+        if not isinstance(items, (Binding, list, tuple)):
+            raise TypeError("ListView items must be a binding, list or tuple")
+        if not isinstance(item_key, Binding):
+            raise TypeError("ListView item_key must be a binding")
+        if not isinstance(template_key, Binding):
+            raise TypeError("ListView template_key must be a binding")
+        if direction not in ("horizontal", "vertical"):
+            raise ValueError("Unknown ListView direction: %s" % direction)
+        templates = tuple(templates or ())
+        if not templates or not all(isinstance(value, Template)
+                                    for value in templates):
+            raise TypeError("ListView templates must contain Template values")
+        names = [value.name for value in templates]
+        if len(names) != len(set(names)):
+            raise ValueError("ListView template names must be unique")
+        if isinstance(fallback_template, Template):
+            fallback_template = fallback_template.name
+        if fallback_template is not None and fallback_template not in names:
+            raise ValueError("ListView fallback template is not declared")
+        self.items_binding = items
+        self.item_key_binding = item_key
+        self.template_key_binding = template_key
+        self.templates = templates
+        self.template_names = tuple(value.name for value in templates)
+        self.direction = direction
+        self.gap = None if gap is None else int(gap)
+        if self.gap is not None and self.gap < 0:
+            raise ValueError("ListView gap must be non-negative or None")
+        self.fallback_template = fallback_template
+        self.items = ()
+        self._item_scopes = ()
+        self._materialized_values = None
+        self._update_state = None
+        self._update_keys = frozenset()
+        self._designer_mode = False
+        self._template_samples = ()
+        self._list_scope = self._scope_name()
+
+    def _scope_name(self):
+        if self.key is not None:
+            return str(self.key.value if isinstance(self.key, Enum) else self.key)
+        trace = self._source or {}
+        fingerprint = (trace.get("anchor") or {}).get("fingerprint")
+        return ("source:%s" % fingerprint if fingerprint else
+                "declaration:%d" % next(_LIST_VIEW_SEQUENCE))
+
+    def ref(self, key):
+        super().ref(key)
+        self._list_scope = self._scope_name()
+        return self
+
+    @staticmethod
+    def _selector_value(binding, scope):
+        value = resolve(binding, scope)
+        return value.value if isinstance(value, Enum) else value
+
+    def _resolved_items(self, state):
+        values = resolve(self.items_binding, state)
+        if not isinstance(values, (list, tuple)):
+            raise TypeError("ListView items must resolve to a list or tuple")
+        result = []
+        for index, value in enumerate(values):
+            _validate_template_item(value, "ListView item %d" % index)
+            result.append(copy.deepcopy(dict(value)))
+        return result
+
+    def _scoped_ref(self, item_key, local):
+        return "%s[%s]::%s" % (self._list_scope, item_key, local)
+
+    def _prepare_tree(self, root, scope, metadata, definition=False):
+        for node in root.walk():
+            is_root = node is root
+            if node.key is not None:
+                local = node.key.value if isinstance(node.key, Enum) else node.key
+                node.key = self._scoped_ref(metadata["item_key"], local)
+            if definition:
+                node._template_definition = {
+                    "template": metadata["template"],
+                    "sample": True,
+                    "root": is_root,
+                }
+            else:
+                node._template_instance = dict(metadata, root=is_root)
+            for name, value in tuple(node.__dict__.items()):
+                resolved = self._resolve_item_commands(value, scope)
+                if resolved is not value:
+                    setattr(node, name, resolved)
+        root._item_scope = scope
+        return root
+
+    @classmethod
+    def _resolve_item_commands(cls, value, scope):
+        if isinstance(value, ItemCommand):
+            return value.resolve(scope)
+        if isinstance(value, tuple):
+            return tuple(cls._resolve_item_commands(item, scope)
+                         for item in value)
+        if isinstance(value, list):
+            return [cls._resolve_item_commands(item, scope)
+                    for item in value]
+        if isinstance(value, dict):
+            return dict((key, cls._resolve_item_commands(item, scope))
+                        for key, item in value.items())
+        return value
+
+    def _materialize(self, state, values):
+        templates = dict((value.name, value) for value in self.templates)
+        children = []
+        scopes = []
+        seen = set()
+        for index, current in enumerate(values):
+            scope = ItemScope(state, current)
+            item_key = self._selector_value(self.item_key_binding, scope)
+            if item_key is None or isinstance(item_key, (list, tuple, dict)):
+                raise TypeError("ListView item_key must resolve to a scalar")
+            if item_key in seen:
+                raise ValueError("Duplicate ListView item key: %s" % item_key)
+            seen.add(item_key)
+            selected = self._selector_value(self.template_key_binding, scope)
+            selected = str(selected)
+            template = templates.get(selected)
+            if template is None and self.fallback_template is not None:
+                template = templates[self.fallback_template]
+            if template is None:
+                raise ValueError("Unknown ListView template: %s" % selected)
+            metadata = {
+                "template": template.name,
+                "item_key": item_key,
+                "index": index,
+            }
+            root = self._prepare_tree(
+                copy.deepcopy(template.root), scope, metadata)
+            children.append(root)
+            scopes.append(scope)
+        self.items = tuple(children)
+        self._item_scopes = tuple(scopes)
+        self._adopt(*self.items)
+        self._template_samples = self._materialize_samples(state)
+
+    def _materialize_samples(self, state):
+        if not self._designer_mode:
+            return ()
+        result = []
+        visible = not self.items
+        for template in self.templates:
+            if template.sample is None:
+                continue
+            scope = ItemScope(state, template.sample)
+            metadata = {
+                "template": template.name,
+                "item_key": "sample:%s" % template.name,
+                "index": None,
+            }
+            root = self._prepare_tree(
+                copy.deepcopy(template.root), scope, metadata, definition=True)
+            for node in root.walk():
+                node._designer_template_visible = visible
+            root.parent = self
+            result.append(root)
+        return tuple(result)
+
+    def _designer_render_items(self):
+        if self._designer_mode and not self.items:
+            return self._template_samples
+        return self.items
+
+    def update(self, state, initialize=False):
+        if (not initialize and self._dirty == Dirty.CLEAN
+                and state is self._update_state
+                and isinstance(self.items_binding, Binding)
+                and self._update_keys.isdisjoint(state.changed_keys)):
+            return
+
+        refresh_keys = (initialize or self._dirty != Dirty.CLEAN
+                        or self._update_state is None)
+        values = self._resolved_items(state)
+        if (self._materialized_values is None
+                or values != self._materialized_values
+                or (self._designer_mode and not self._template_samples)):
+            self._materialize(state, values)
+            self._materialized_values = copy.deepcopy(values)
+            refresh_keys = True
+            if not initialize:
+                self.invalidate(Dirty.LAYOUT)
+        else:
+            self._item_scopes = tuple(ItemScope(state, value) for value in values)
+            for child, template in zip(
+                    self._template_samples,
+                    (value for value in self.templates if value.sample is not None)):
+                child._item_scope = ItemScope(state, template.sample)
+        for child, scope in zip(self.items, self._item_scopes):
+            child._item_scope = scope
+            child.update(scope, initialize)
+        for child in self._template_samples:
+            child.update(child._item_scope, initialize)
+        if refresh_keys:
+            self._update_keys = frozenset(page_state_keys(self))
+        self._update_state = state
+
+    def _arrange(self, bounds, result):
+        rendered = self._designer_render_items()
+        original = self.items
+        self.items = rendered
+        try:
+            List._arrange(self, bounds, result)
+        finally:
+            self.items = original
+        if rendered is not self._template_samples:
+            for child in self._template_samples:
+                child.arrange(bounds, result)
+
+    def render(self, renderer, state, layout):
+        commands = []
+        for child in self._designer_render_items():
+            scope = getattr(child, "_item_scope", state)
+            commands.extend(child.render(renderer, scope, layout))
+        return commands
+
+    def render_children(self):
+        return self.items + self._template_samples
+
+    def paint_children(self, state):
+        del state
+        return self._designer_render_items()
+
+    def replace_preview_children(self, children, placements=None):
+        raise TypeError(
+            "ListView runtime items are controlled by bound collection data")
 
 
 class Row(List):
@@ -1344,7 +1784,9 @@ class Grid(Node):
                 self.column_gap * max(0, item.column_span - 1))
             child_width = max(0, cell_width - margin.horizontal)
             extent = child.layout_options.height
-            if extent is None:
+            if extent == "content":
+                extent = child.preferred_extent("vertical", child_width)
+            elif extent is None:
                 extent = child.content_extent("vertical", child_width)
             if extent is None:
                 continue
@@ -1369,9 +1811,9 @@ class Grid(Node):
     def preferred_extent(self, direction, cross_extent=None):
         if direction != "vertical" or cross_extent is None:
             return None
-        width = (self.layout_options.width
-                 if self.layout_options.width is not None
-                 else int(cross_extent))
+        width = self.layout_options.width
+        if not isinstance(width, int) or isinstance(width, bool):
+            width = int(cross_extent)
         width = max(0, width - self.layout_options.padding.horizontal)
         sizes = self._intrinsic_row_sizes(width)
         if sizes is None:
@@ -1549,6 +1991,9 @@ class When(SingleChild):
             return self.child.render(renderer, state, layout)
         return []
 
+    def paint_children(self, state):
+        return (self.child,) if resolve(self.predicate, state) else ()
+
 
 class StateCase(When):
     """Designer-friendly conditional Overlay selected by a state value.
@@ -1626,6 +2071,10 @@ class Tree:
 
     def render(self, renderer, state=None):
         current = state if isinstance(state, StateStore) else StateStore((), state)
+        if state is not None:
+            self.root.update(current, initialize=True)
+            self.layout = LayoutResult()
+            self.root.arrange(self.bounds, self.layout)
         return self.root.render(renderer, current, self.layout)
 
     def rect(self, key):
@@ -1688,23 +2137,35 @@ class DeclarativePage(Tree):
             raise TypeError("DeclarativePage page_id must be a PageKey member")
         self._source = _capture_construction(
             self, names=("Page", "PageTree", "DeclarativePage"))
-        super().__init__(content, bounds)
         self.page_key = page_id
         self.page_id = serialize_key(page_id)
-        self.state_schema = page_state_keys(self.root, state_schema)
-        self.actions = {}
-        for action in tuple(actions or ()):
-            self.actions[action_wire_id(action)] = action
-        for wire_id, action in collect_actions(self.root).items():
-            existing = self.actions.get(wire_id)
-            if existing is not None and existing != action:
-                raise ValueError("Semantic action wire collision: %s" % wire_id)
-            self.actions[wire_id] = action
+        self.state_schema = page_state_keys(content, state_schema)
         self.state = StateStore(self.state_schema, state)
+        if state is not None:
+            content.update(self.state, initialize=True)
+        super().__init__(content, bounds)
+        self._declared_actions = tuple(actions or ())
+        self.actions = {}
+        self._refresh_actions()
         self.initialized = state is not None
         if self.initialized:
-            self.root.update(self.state, initialize=True)
             self.root.clear_dirty()
+
+    def _refresh_actions(self):
+        actions = {}
+        for action in self._declared_actions:
+            wire_id = action_wire_id(validate_action(action))
+            existing = actions.get(wire_id)
+            if existing is not None and existing != action:
+                raise ValueError("Semantic action wire collision: %s" % wire_id)
+            actions[wire_id] = action
+        for wire_id, action in collect_actions(self.root).items():
+            existing = actions.get(wire_id)
+            if existing is not None and existing != action:
+                raise ValueError("Semantic action wire collision: %s" % wire_id)
+            actions[wire_id] = action
+        self.actions = actions
+        self.root._actions_dirty = False
 
     def initial_state(self):
         return StateStore(self.state_schema)
@@ -1726,12 +2187,16 @@ class DeclarativePage(Tree):
     def draw(self, renderer, state=None):
         self.state = self._fresh_state(state)
         self.root.update(self.state, initialize=True)
+        self.layout = LayoutResult()
+        self.root.arrange(self.bounds, self.layout)
+        self._refresh_actions()
         set_page_identity = getattr(renderer, "set_semantic_page", None)
         if set_page_identity is not None:
             set_page_identity(self.page_id)
         commands = self.root.render(renderer, self.state, self.layout)
         self.root.clear_dirty()
         self.initialized = True
+        self.state.clear_changes()
         return commands
 
     def update(self, renderer, state=None):
@@ -1741,16 +2206,19 @@ class DeclarativePage(Tree):
             return self.draw(renderer, self.state)
         self.root.update(self.state)
         if self.root._dirty >= Dirty.LAYOUT:
-            self.layout = LayoutResult()
-            self.root.arrange(self.bounds, self.layout)
             return self.draw(renderer, self.state)
+        if self.root._actions_dirty:
+            self._refresh_actions()
         roots = self._dirty_roots()
         commands = []
         for root in roots:
+            commands.extend(self._background_repair(renderer, root))
             commands.extend(
-                root.render_dirty(renderer, self.state, self.layout))
+                root.render_dirty(
+                    renderer, self._paint_state(root), self.layout))
             root.clear_dirty()
-        self._clear_ancestor_flags()
+        self.root.clear_dirty()
+        self.state.clear_changes()
         return commands
 
     def invalidate(self, key, dirty=Dirty.PAINT):
@@ -1758,12 +2226,15 @@ class DeclarativePage(Tree):
 
     def _dirty_roots(self):
         roots = []
-        for node in self.root.walk():
+        pending = [self.root]
+        while pending:
+            node = pending.pop()
             if node._dirty == Dirty.CLEAN:
                 continue
-            children_dirty = any(
-                child._dirty != Dirty.CLEAN for child in node.render_children())
-            if children_dirty and node.state_signature(self.state) is None:
+            children = tuple(child for child in node.render_children()
+                             if child._dirty != Dirty.CLEAN)
+            pending.extend(reversed(children))
+            if children and node.state_signature(self._paint_state(node)) is None:
                 continue
             candidate = self._paint_root(node)
             if any(self._is_ancestor(existing, candidate) for existing in roots):
@@ -1774,15 +2245,124 @@ class DeclarativePage(Tree):
             roots.append(candidate)
         return roots
 
-    @staticmethod
-    def _paint_root(node):
-        candidate = node if node.covers_bounds else None
+    def _paint_root(self, node):
         current = node
         while current is not None:
             if current._repaint_boundary:
                 return current
             current = current.parent
-        return candidate or node
+
+        if node.covers_bounds or node.restores_background:
+            return node
+
+        repaint = node
+        target = self.layout.rect(node)
+        background_found = False
+        branch = node
+        parent = node.parent
+        while parent is not None:
+            if isinstance(parent, Overlay):
+                children = tuple(
+                    parent.paint_children(self._paint_state(parent)))
+                try:
+                    index = next(
+                        index for index, child in enumerate(children)
+                        if child is branch)
+                except StopIteration:
+                    repaint = parent
+                    target = self.layout.rect(parent)
+                    background_found = self._subtree_background(
+                        parent, target, self._paint_state(parent)) is not _UNSET
+                    branch = parent
+                    parent = parent.parent
+                    continue
+
+                foreground = any(
+                    self.layout.rect(child).overlaps(target)
+                    for child in children[index + 1:])
+                if foreground:
+                    repaint = parent
+                    target = self.layout.rect(parent)
+                    background_found = self._subtree_background(
+                        parent, target, self._paint_state(parent)) is not _UNSET
+                elif not background_found:
+                    for sibling in reversed(children[:index]):
+                        bounds = self.layout.rect(sibling)
+                        if not bounds.overlaps(target):
+                            continue
+                        background = (
+                            sibling.opaque_background(
+                                self._paint_state(sibling), bounds, target)
+                            if bounds.contains(target) else None)
+                        if background is None:
+                            repaint = parent
+                            target = self.layout.rect(parent)
+                            background_found = self._subtree_background(
+                                parent, target,
+                                self._paint_state(parent)) is not _UNSET
+                        else:
+                            background_found = True
+                        break
+            branch = parent
+            parent = parent.parent
+        return repaint
+
+    def _subtree_background(self, node, target, state):
+        bounds = self.layout.rect(node)
+        if not bounds.contains(target):
+            return _UNSET
+        state = getattr(node, "_item_scope", state)
+        for child in reversed(tuple(node.paint_children(state))):
+            background = self._subtree_background(child, target, state)
+            if background is not _UNSET:
+                return background
+        background = node.opaque_background(state, bounds, target)
+        return _UNSET if background is None else background
+
+    def _paint_state(self, node):
+        current = node
+        while current is not None:
+            state = getattr(current, "_item_scope", None)
+            if state is not None:
+                return state
+            current = current.parent
+        return self.state
+
+    def _background_under(self, node, target):
+        branch = node
+        parent = node.parent
+        while parent is not None:
+            if isinstance(parent, Overlay):
+                state = self._paint_state(parent)
+                children = tuple(parent.paint_children(state))
+                try:
+                    index = next(
+                        index for index, child in enumerate(children)
+                        if child is branch)
+                except StopIteration:
+                    return _UNSET
+                for sibling in reversed(children[:index]):
+                    background = self._subtree_background(
+                        sibling, target, state)
+                    if background is not _UNSET:
+                        return background
+            branch = parent
+            parent = parent.parent
+        return _UNSET
+
+    def _background_repair(self, renderer, root):
+        """Restore pixels below a transparent dirty composition."""
+        if root.covers_bounds or root.restores_background:
+            return []
+        target = self.layout.rect(root)
+        internal = self._subtree_background(
+            root, target, self._paint_state(root))
+        if internal is not _UNSET:
+            return []
+        background = self._background_under(root, target)
+        if background is _UNSET:
+            return [renderer.fill(*target)]
+        return [renderer.fill(*target, color=background)]
 
     @staticmethod
     def _is_ancestor(ancestor, node):
@@ -1792,13 +2372,6 @@ class DeclarativePage(Tree):
                 return True
             current = current.parent
         return False
-
-    def _clear_ancestor_flags(self):
-        for node in reversed(tuple(self.root.walk())):
-            if any(child._dirty != Dirty.CLEAN
-                   for child in node.render_children()):
-                continue
-            node._dirty = Dirty.CLEAN
 
 
 PageTree = DeclarativePage

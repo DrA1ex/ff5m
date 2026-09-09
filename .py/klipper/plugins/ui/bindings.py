@@ -83,7 +83,7 @@ _STATE_FIELDS = (
 STATE_DECLARATION_CONTRACT = StateDeclarationContract(
     "core.state_enum_member", ("state",), _STATE_FIELDS, _STATE_FIELDS[1:],
     dict((name, "python_literal") for name in _STATE_FIELDS),
-    (bool, int, float, str),
+    (bool, int, float, str, list),
 )
 BINDING_EXPRESSION_CONTRACT = BindingExpressionContract(
     "core.python_expression", ("derived",),
@@ -134,6 +134,26 @@ def _json_value(value):
         return dict((str(_json_value(key)), _json_value(item))
                     for key, item in value.items())
     return value
+
+
+def _validate_portable_collection(value, path="state"):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item_value in enumerate(value):
+            _validate_portable_collection(
+                item_value, "%s[%d]" % (path, index))
+        return
+    if isinstance(value, dict):
+        for key, item_value in value.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    "%s mapping keys must be strings" % path)
+            _validate_portable_collection(
+                item_value, "%s.%s" % (path, key))
+        return
+    raise TypeError(
+        "%s contains non-portable %s" % (path, type(value).__name__))
 
 
 class StateSpec:
@@ -192,6 +212,8 @@ class StateSpec:
         elif not isinstance(value, self.value_type):
             raise TypeError("Expected %s state value, got %s" % (
                 self.value_type.__name__, type(value).__name__))
+        if self.value_type is list:
+            _validate_portable_collection(value)
         if self.minimum is not None and value < self.minimum:
             raise ValueError("State value is below minimum %s" % self.minimum)
         if self.maximum is not None and value > self.maximum:
@@ -244,11 +266,12 @@ def state_spec(key):
 class StateStore:
     """Validated state values addressed only by typed ``StateKey`` members."""
 
-    __slots__ = ("_schema", "_values")
+    __slots__ = ("_schema", "_values", "_changed_keys")
 
     def __init__(self, keys=(), values=None):
         self._schema = tuple(_unique_keys(keys))
         self._values = {}
+        self._changed_keys = frozenset()
         for key in self._schema:
             spec = state_spec(key)
             if spec.available:
@@ -260,12 +283,21 @@ class StateStore:
     def schema(self):
         return self._schema
 
+    @property
+    def changed_keys(self):
+        """Keys changed since the owning page last completed a render."""
+        return self._changed_keys
+
+    def clear_changes(self):
+        self._changed_keys = frozenset()
+
     def copy(self):
         return StateStore(self._schema, self._values)
 
     def __deepcopy__(self, memo):
         copied = StateStore(self._schema)
         copied._values = copy.deepcopy(self._values, memo)
+        copied._changed_keys = self._changed_keys
         return copied
 
     def __getitem__(self, key):
@@ -275,7 +307,8 @@ class StateStore:
             raise KeyError("State key is not declared by this page: %s" % key)
         if key not in self._values:
             raise KeyError("State value is unavailable: %s" % key)
-        return self._values[key]
+        value = self._values[key]
+        return copy.deepcopy(value) if isinstance(value, (list, dict)) else value
 
     def __contains__(self, key):
         return key in self._values
@@ -315,8 +348,14 @@ class StateStore:
                     "Page state updates must use StateKey members, not %r" % key)
             if key not in self._schema:
                 raise KeyError("State key is not declared by this page: %s" % key)
-            staged[key] = state_spec(key).validate(value)
+            validated = state_spec(key).validate(value)
+            staged[key] = (copy.deepcopy(validated)
+                           if isinstance(validated, (list, dict)) else validated)
+        changed = frozenset(
+            key for key, value in staged.items()
+            if key not in self._values or self._values[key] != value)
         self._values.update(staged)
+        self._changed_keys = self._changed_keys.union(changed)
         return self
 
     def as_dict(self, serialized=False):
@@ -390,6 +429,65 @@ class DirectBinding(Binding):
         return {"kind": "direct", "key": serialize_key(self.key)}
 
 
+class ItemBinding(Binding):
+    """A value resolved from the current data-driven container item."""
+
+    __slots__ = ("field", "_source")
+
+    def __init__(self, field):
+        if not isinstance(field, str) or not field:
+            raise TypeError("item() field must be a non-empty string")
+        self.field = field
+        self._source = None
+
+    @property
+    def keys(self):
+        return ()
+
+    def resolve(self, store):
+        current = getattr(store, "item", _UNAVAILABLE)
+        if current is _UNAVAILABLE:
+            raise RuntimeError(
+                "item(%r) can only resolve inside a Template item scope" %
+                self.field)
+        if self.field not in current:
+            raise KeyError("Template item has no field %r" % self.field)
+        return copy.deepcopy(current[self.field])
+
+    def as_dict(self):
+        return {"kind": "item", "field": self.field}
+
+
+class ItemScope:
+    """Read-only item context layered over an ordinary ``StateStore``."""
+
+    __slots__ = ("state", "item")
+
+    def __init__(self, state, current):
+        if not isinstance(state, StateStore):
+            raise TypeError("ItemScope requires a StateStore")
+        if not isinstance(current, dict):
+            raise TypeError("Template item scope requires a mapping")
+        self.state = state
+        self.item = copy.deepcopy(current)
+
+    def __getitem__(self, key):
+        return self.state[key]
+
+    def __contains__(self, key):
+        return key in self.state
+
+    def __iter__(self):
+        return iter(self.state)
+
+    def __len__(self):
+        return len(self.state)
+
+    @property
+    def schema(self):
+        return self.state.schema
+
+
 class DerivedBinding(Binding):
     __slots__ = ("function", "inputs", "_source", "expression_source_contract")
 
@@ -456,6 +554,12 @@ def _validate_callable_arity(function, count):
 def bind(key):
     binding = DirectBinding(key)
     binding._source = _capture_binding(binding, names=("bind",))
+    return binding
+
+
+def item(field):
+    binding = ItemBinding(field)
+    binding._source = _capture_binding(binding, names=("item",))
     return binding
 
 
@@ -555,6 +659,17 @@ def binding_metadata(binding, store):
             "key": serialize_key(binding.key),
             "keys": keys,
             "direct_keys": keys,
+            "transitive_keys": [],
+            "source": _binding_source_metadata(binding),
+        }
+        result.update(_binding_resolution(binding, store))
+        return result
+    if isinstance(binding, ItemBinding):
+        result = {
+            "kind": "item",
+            "field": binding.field,
+            "keys": [],
+            "direct_keys": [],
             "transitive_keys": [],
             "source": _binding_source_metadata(binding),
         }

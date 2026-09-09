@@ -1,11 +1,16 @@
 ## Typed semantic actions and portable router behavior.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
+import copy
 import hashlib
 import json
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 
-from .bindings import StateStore, state_spec
+from .bindings import Binding, StateStore, resolve_deep, state_spec
 from .identity import CommandKey, PageKey, StateKey, serialize_key
 
 
@@ -17,6 +22,10 @@ def _json_value(value):
             return serialize_key(value)
         except TypeError:
             return value.value
+    if type(value) in (SetValue, ItemCommand):
+        result = value.as_dict()
+        result.pop("kind")
+        return result
     if is_dataclass(value):
         return {
             field.name: _json_value(getattr(value, field.name))
@@ -38,6 +47,9 @@ def _json_value(value):
 
 
 def _validate_payload(value):
+    if type(value) in (SetValue, ItemCommand):
+        # These descriptors expose defensive copies of their typed snapshots.
+        return
     if value is None or isinstance(value, (bool, int, float, str, Enum)):
         return
     if isinstance(value, tuple):
@@ -135,19 +147,27 @@ class Replace(Action):
         return {"kind": self.kind, "target": serialize_key(self.target)}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class SetValue(Action):
     key: StateKey
-    value: object
+    _value: object
     kind = "set_value"
 
-    def __post_init__(self):
-        if not isinstance(self.key, StateKey):
+    def __init__(self, key, value):
+        if not isinstance(key, StateKey):
             raise TypeError("SetValue key must be a StateKey member")
-        spec = state_spec(self.key)
+        spec = state_spec(key)
         if not spec.mutable:
             raise ValueError("SetValue requires mutable state")
-        spec.validate(self.value)
+        spec.validate(value)
+        _json_value(value)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "_value", copy.deepcopy(value))
+
+    @property
+    def value(self):
+        # Preserve list/dict state types without exposing the action's snapshot.
+        return copy.deepcopy(self._value)
 
     def as_dict(self):
         return {
@@ -237,6 +257,9 @@ class SimulationHint:
     """Portable observable behavior metadata for a semantic command."""
 
     kind = None
+
+    def __post_init__(self):
+        _validate_payload(self)
 
     def as_dict(self):
         result = {"kind": self.kind}
@@ -358,10 +381,64 @@ class Command(Action):
         }
 
 
+@dataclass(frozen=True, init=False)
+class ItemCommand(Action):
+    """A command declaration resolved against one materialized template item."""
+
+    key: CommandKey
+    _payload: object = None
+    hint: SimulationHint = None
+    kind = "item_command"
+
+    def __init__(self, key, payload=None, hint=None):
+        if not isinstance(key, CommandKey):
+            raise TypeError("ItemCommand key must be a CommandKey member")
+        if not isinstance(payload, Binding):
+            _validate_payload(payload)
+            _json_value(payload)
+        if hint is not None and not isinstance(hint, SimulationHint):
+            raise TypeError("ItemCommand hint must be a SimulationHint")
+        _validate_payload(hint)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "_payload", copy.deepcopy(payload))
+        object.__setattr__(self, "hint", hint)
+
+    @property
+    def payload(self):
+        return copy.deepcopy(self._payload)
+
+    @property
+    def wire_id(self):
+        raise RuntimeError(
+            "ItemCommand has no wire identity outside a Template item scope")
+
+    def resolve(self, scope):
+        return Command(
+            self.key, payload=resolve_deep(self.payload, scope), hint=self.hint)
+
+    def as_dict(self):
+        payload = (self.payload.as_dict()
+                   if isinstance(self.payload, Binding) else _json_value(self.payload))
+        return {
+            "kind": self.kind,
+            "key": serialize_key(self.key),
+            "payload": payload,
+            "hint": None if self.hint is None else self.hint.as_dict(),
+        }
+
+
 def action_wire_id(action):
     if not isinstance(action, Action):
         raise TypeError("Interactive components require a semantic Action")
     return action.wire_id
+
+
+def validate_action(action):
+    """Action replacements must be immutable, portable value objects."""
+    if not isinstance(action, Action):
+        raise TypeError("Interactive components require a semantic Action")
+    _validate_payload(action)
+    return action
 
 
 def action_metadata(action):
@@ -380,6 +457,7 @@ def collect_actions(root):
         if value is None:
             return
         if isinstance(value, Action):
+            validate_action(value)
             wire = value.wire_id
             existing = result.get(wire)
             if existing is not None and existing != value:

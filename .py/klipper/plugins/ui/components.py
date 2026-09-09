@@ -4,16 +4,17 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import copy
 from enum import Enum
 
 from .theme import ThemeColor, ThemeRole
 
-from .actions import Action, action_wire_id
+from .actions import Action, action_wire_id, validate_action
 from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
 from .layout import (
-    CreationContract, CreationIdentityContract, CreationSourceContract, Node, Rect,
-    subdivision_positions,
+    CreationContract, CreationIdentityContract, CreationSourceContract, Dirty,
+    Node, Rect, subdivision_positions,
 )
 from .numeric_input import NumericInputSpec
 from .properties import (
@@ -24,7 +25,8 @@ from .properties import (
 
 def _property(name, runtime_type=object, default=None, kind="auto",
               label=None, group="Component", choices=(), catalog=None,
-              minimum=None, maximum=None, nullable=False, bindings=("direct",),
+              minimum=None, maximum=None, nullable=False,
+              bindings=("direct", "item", "derived"),
               invalidation=Invalidation.PAINT, live=True, source=None,
               storage="attribute", source_position=None, source_index=None,
               runtime_name=None,
@@ -92,6 +94,36 @@ class ButtonStyle:
 class Component(Node):
     """Renderable leaf with automatic state-binding change detection."""
 
+    def _replace_actions(self, name, value):
+        previous = self.__dict__.get(name)
+        if name in self.__dict__ and previous == value:
+            return
+        self.__dict__[name] = value
+        self.invalidate_actions()
+
+    @property
+    def action(self):
+        return self.__dict__.get("action")
+
+    @action.setter
+    def action(self, value):
+        if not isinstance(value, Action):
+            raise TypeError("%s action must be a semantic Action" % type(self).__name__)
+        validate_action(value)
+        self._replace_actions("action", value)
+
+    @property
+    def active_action(self):
+        return self.__dict__.get("active_action")
+
+    @active_action.setter
+    def active_action(self, value):
+        if value is not None and not isinstance(value, Action):
+            raise TypeError("active_action must be a semantic Action or None")
+        if value is not None:
+            validate_action(value)
+        self._replace_actions("active_action", value)
+
     def state_signature(self, state):
         values = []
         for name, value in self.__dict__.items():
@@ -112,6 +144,11 @@ class Fill(Component):
 
     def draw(self, renderer, state, bounds):
         return renderer.fill(*bounds, color=resolve(self.color, state))
+
+    def opaque_background(self, state, bounds, target):
+        del bounds
+        del target
+        return resolve(self.color, state)
 
 
 class Stroke(Component):
@@ -148,6 +185,19 @@ class Panel(Component):
             *bounds, border=resolve(self.border, state),
             background=resolve(self.background, state),
             line_width=resolve(self.line_width, state))
+
+    def opaque_background(self, state, bounds, target):
+        border = resolve(self.border, state)
+        line_width = int(resolve(self.line_width, state))
+        if (border is not None and line_width > 0
+                and (bounds.width < line_width * 2
+                     or bounds.height < line_width * 2)):
+            return None
+        interior = (bounds if border is None or line_width <= 0 else
+                    bounds.inset(line_width))
+        if interior.contains(target):
+            return resolve(self.background, state)
+        return None
 
 
 class Section(Component):
@@ -194,8 +244,6 @@ class Button(Component):
 
     def __init__(self, action, label, state="enabled", key=None, **kwargs):
         super().__init__(key=key)
-        if not isinstance(action, Action):
-            raise TypeError("Button action must be a semantic Action")
         self.action = action
         self.label = label
         self.state = state
@@ -209,9 +257,15 @@ class Button(Component):
             if value.layout is not None and "layout" not in self.kwargs:
                 self.kwargs["layout"] = value.layout
 
-    def auto_gap_extent(self, direction, cross_extent=None):
+    def preferred_extent(self, direction, cross_extent=None):
         if direction == "vertical":
             return 48 + self.layout_options.padding.vertical
+        return None
+
+    def auto_gap_extent(self, direction, cross_extent=None):
+        return self.preferred_extent(direction, cross_extent)
+
+    def content_extent(self, direction, cross_extent=None):
         return None
 
     def draw(self, renderer, state, bounds):
@@ -241,8 +295,6 @@ class ArrowButton(Component):
 
     def __init__(self, action, direction="up", state="enabled", key=None):
         super().__init__(key=key)
-        if not isinstance(action, Action):
-            raise TypeError("ArrowButton action must be a semantic Action")
         if direction not in ("up", "down"):
             raise ValueError("ArrowButton direction must be 'up' or 'down'")
         self.action = action
@@ -269,8 +321,6 @@ class ToggleSwitch(Component):
 
     def __init__(self, action, active=False, enabled=True, key=None):
         super().__init__(key=key)
-        if not isinstance(action, Action):
-            raise TypeError("ToggleSwitch action must be a semantic Action")
         self.action = action
         self.active = active
         self.enabled = enabled
@@ -293,8 +343,6 @@ class Hitbox(Component):
 
     def __init__(self, action, continuous=False, key=None):
         super().__init__(key=key)
-        if not isinstance(action, Action):
-            raise TypeError("Hitbox action must be a semantic Action")
         self.action = action
         self.continuous = continuous
 
@@ -333,48 +381,87 @@ class Text(Component):
         _property(
             "truncate", bool, False, kind="checkbox", group="Text layout",
             storage="kwargs"),
-        _property(
-            "auto_height", bool, False, kind="checkbox", group="Text layout",
-            invalidation=Invalidation.LAYOUT))
+    )
 
     def __init__(self, value, color=ThemeColor.PRIMARY, font=None,
-                 horizontal="center", vertical="center", key=None,
-                 auto_height=False, **kwargs):
+                 horizontal="center", vertical="center", key=None, **kwargs):
         super().__init__(key=key)
+        # Source compatibility only; these aliases are not component fields.
+        legacy_auto_width = bool(kwargs.pop("auto_width", False))
+        legacy_auto_height = bool(kwargs.pop("auto_height", False))
         self.value = value
         self.color = color
         self.font = font
         self.horizontal = horizontal
         self.vertical = vertical
-        self.auto_height = bool(auto_height)
         self.kwargs = kwargs
+        if legacy_auto_width:
+            self.layout_options.width = "content"
+        if legacy_auto_height:
+            self.layout_options.height = "content"
+        self._measurement = self._resolve_measurement()
+        self._measurement_state = None
 
     def apply_override(self, name, value):
         if name == "font" and self.font is None:
             self.font = value
+            self._measurement = self._resolve_measurement()
         elif name == "text_color" and self.color is None:
             self.color = value
 
+    def _resolve_measurement(self, state=None):
+        value = self.value
+        font = self.font
+        maximum_width = self.kwargs.get("max_width")
+        maximum_height = self.kwargs.get("max_height")
+        wrap = self.kwargs.get("wrap", False)
+        if state is not None:
+            value = resolve(value, state)
+            font = resolve(font, state) if font is not None else None
+            maximum_width = resolve(maximum_width, state)
+            maximum_height = resolve(maximum_height, state)
+            wrap = resolve(wrap, state)
+        if not isinstance(value, (str, int, float)):
+            value = None
+        font = font if isinstance(font, str) else "JetBrainsMono 8pt"
+        if not isinstance(maximum_width, (int, float)):
+            maximum_width = None
+        if not isinstance(maximum_height, (int, float)):
+            maximum_height = None
+        return value, font, maximum_width, maximum_height, bool(wrap)
+
+    def _content_width(self):
+        if self._measurement is None:
+            self._measurement = self._resolve_measurement(self._measurement_state)
+        value, font, maximum, _maximum_height, _wrap = self._measurement
+        if value is None:
+            return None
+        width = get_font_metrics().text_width(value, font)
+        if maximum is not None:
+            width = min(width, int(maximum))
+        return max(1, width + self.layout_options.padding.horizontal)
+
     def _content_height(self, cross_extent=None, dynamic_minimum=False):
         metrics = get_font_metrics()
-        font = self.font if isinstance(self.font, str) else "JetBrainsMono 8pt"
+        if self._measurement is None:
+            self._measurement = self._resolve_measurement(self._measurement_state)
+        value, font, maximum_width, maximum, wrap = self._measurement
         metric = metrics.metric(font)
-        wrap = bool(self.kwargs.get("wrap", False))
         width = None
         if wrap:
-            width = self.kwargs.get("max_width")
+            width = maximum_width
             if width is None:
                 width = (self.layout_options.width
-                         if self.layout_options.width is not None
+                         if isinstance(self.layout_options.width, int)
+                         and not isinstance(self.layout_options.width, bool)
                          else cross_extent)
             if width is None and not dynamic_minimum:
                 return None
             if width is not None:
                 width = max(1, int(width) - self.layout_options.padding.horizontal)
-        maximum = self.kwargs.get("max_height")
-        if isinstance(self.value, (str, int, float)):
+        if value is not None:
             text_height = metrics.text_height(
-                self.value, font, max_width=width, wrap=wrap and width is not None)
+                value, font, max_width=width, wrap=wrap and width is not None)
         elif dynamic_minimum:
             text_height = metric.glyph_height
         else:
@@ -385,15 +472,38 @@ class Text(Component):
         return max(metric.glyph_height, height)
 
     def preferred_extent(self, direction, cross_extent=None):
-        wrap = bool(self.kwargs.get("wrap", False))
-        if direction != "vertical" or not (self.auto_height or wrap):
+        if direction == "horizontal":
+            return self._content_width()
+        if direction == "vertical":
+            return self._content_height(cross_extent)
+        return None
+
+    def content_extent(self, direction, cross_extent=None):
+        if direction == "horizontal":
+            return self._content_width()
+        if direction == "vertical":
+            return self._content_height(
+                cross_extent, dynamic_minimum=True)
+        return None
+
+    def auto_gap_extent(self, direction, cross_extent=None):
+        if direction != "vertical" or not self.kwargs.get("wrap", False):
             return None
         return self._content_height(cross_extent)
 
-    def content_extent(self, direction, cross_extent=None):
-        if direction != "vertical":
-            return None
-        return self._content_height(cross_extent, dynamic_minimum=True)
+    def update(self, state, initialize=False):
+        previous = self._measurement
+        self._measurement_state = state
+        # Intrinsic containers may still request a fill-sized leaf's natural
+        # size during layout; resolve it lazily if no text-driven layout runs.
+        measure = (initialize or self.layout_options.width == "content"
+                   or self.layout_options.height == "content"
+                   or self.kwargs.get("wrap", False)
+                   or (previous is not None and previous[4]))
+        self._measurement = self._resolve_measurement(state) if measure else None
+        super().update(state, initialize)
+        if not initialize and measure and previous != self._measurement:
+            self.invalidate(Dirty.LAYOUT)
 
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)
@@ -457,6 +567,27 @@ class NumericKeypad(Component):
     """Reusable numeric entry window; the surrounding page owns its chrome."""
 
     covers_bounds = True
+
+    @property
+    def actions(self):
+        return dict(self.__dict__["actions"])
+
+    @actions.setter
+    def actions(self, value):
+        if not isinstance(value, dict):
+            raise TypeError("NumericKeypad actions must be a dictionary")
+        for name, action in value.items():
+            if not isinstance(action, Action):
+                raise TypeError(
+                    "NumericKeypad action %s must be a semantic Action" % name)
+            validate_action(action)
+        self._replace_actions("actions", dict(value))
+
+    @property
+    def buttons(self):
+        return tuple((action, name, "enabled")
+                     for name, action in self.__dict__["actions"].items())
+
     property_schema = property_schema(
         _text("title", group="Content", live=True),
         _text("subtitle", group="Content", live=True),
@@ -486,19 +617,10 @@ class NumericKeypad(Component):
                  input_border=ThemeColor.SECONDARY,
                  value_color=ThemeColor.BRIGHT, key=None):
         super().__init__(key=key)
-        if not isinstance(actions, dict):
-            raise TypeError("NumericKeypad actions must be a dictionary")
-        for name, action in actions.items():
-            if not isinstance(action, Action):
-                raise TypeError(
-                    "NumericKeypad action %s must be a semantic Action" % name)
         self.title = title
         self.subtitle = subtitle
         self.value = value
-        self.actions = dict(actions)
-        # collect_actions already understands dialog-style button tuples.
-        self.buttons = tuple((action, name, "enabled")
-                             for name, action in self.actions.items())
+        self.actions = actions
         self.mode = mode
         self.minimum = minimum
         self.maximum = maximum
@@ -586,6 +708,7 @@ class Crosshair(Component):
 
 
 class JoystickKnob(Component):
+    restores_background = True
     property_schema = property_schema(
         _select("axis", ("xy", "z"), "xy", group="Behavior"),
         _number("size", 25, minimum=9, maximum=200, group="Knob"),
@@ -611,8 +734,6 @@ class JoystickKnob(Component):
         super().__init__(key=key)
         if axis not in ("xy", "z"):
             raise ValueError("Unknown joystick axis: %s" % axis)
-        if active_action is not None and not isinstance(active_action, Action):
-            raise TypeError("JoystickKnob active_action must be a semantic Action")
         self.axis = axis
         self.position = position
         self.active_action = active_action
@@ -826,6 +947,56 @@ class VerticalScale(Component):
         return commands
 
 
+class ScrollIndicator(Component):
+    """State-bound scroll position inside a fixed visual track."""
+
+    property_schema = property_schema(
+        _number("position", 0, minimum=0, group="Scroll"),
+        _number("count", 1, minimum=1, group="Scroll"),
+        _number(
+            "minimum_thumb", 18, minimum=1, maximum=1000,
+            group="Scroll"),
+        _number(
+            "line_width", 1, minimum=1, maximum=12,
+            group="Appearance"),
+        _color("track_color", ThemeColor.BORDER, group="Appearance"),
+        _color("thumb_color", ThemeColor.PRIMARY, group="Appearance"))
+
+    def __init__(self, position=0, count=1, minimum_thumb=18,
+                 line_width=1, track_color=ThemeColor.BORDER,
+                 thumb_color=ThemeColor.PRIMARY, key=None):
+        super().__init__(key=key)
+        self.position = position
+        self.count = count
+        self.minimum_thumb = minimum_thumb
+        self.line_width = line_width
+        self.track_color = track_color
+        self.thumb_color = thumb_color
+
+    def draw(self, renderer, state, bounds):
+        count = max(1, int(resolve(self.count, state)))
+        position = max(0, min(count - 1, int(resolve(self.position, state))))
+        line_width = max(1, int(resolve(self.line_width, state)))
+        inner_height = max(1, bounds.height - line_width * 4)
+        minimum_thumb = max(1, int(resolve(self.minimum_thumb, state)))
+        thumb_height = min(
+            inner_height, max(minimum_thumb, inner_height // count))
+        travel = max(0, inner_height - thumb_height)
+        thumb_y = (bounds.y + line_width * 2 if count == 1 else
+                   bounds.y + line_width * 2
+                   + travel * position // (count - 1))
+        inset = line_width * 2
+        return [
+            renderer.stroke(
+                *bounds, color=resolve(self.track_color, state),
+                line_width=line_width),
+            renderer.fill(
+                bounds.x + inset, thumb_y,
+                max(1, bounds.width - inset * 2), thumb_height,
+                resolve(self.thumb_color, state)),
+        ]
+
+
 class VerticalGauge(Component):
     property_schema = property_schema(
         _text("title", "LOAD", group="Content", live=True),
@@ -878,6 +1049,22 @@ class VerticalGauge(Component):
 
 
 class Dialog(Component):
+    @property
+    def buttons(self):
+        return copy.deepcopy(self.__dict__["buttons"])
+
+    @buttons.setter
+    def buttons(self, value):
+        buttons = []
+        for button in value:
+            if not isinstance(button, (tuple, list)) or not button:
+                raise TypeError("Dialog buttons must be non-empty sequences")
+            if not isinstance(button[0], Action):
+                raise TypeError("Dialog button action must be a semantic Action")
+            validate_action(button[0])
+            buttons.append(tuple(copy.deepcopy(button)))
+        self._replace_actions("buttons", tuple(buttons))
+
     covers_bounds = True
     property_schema = property_schema(
         _text("title", group="Content", live=True),
@@ -897,11 +1084,6 @@ class Dialog(Component):
     def __init__(self, title, lines, buttons, tone="warning", modal=False,
                  key=None, **kwargs):
         super().__init__(key=key)
-        for button in buttons:
-            if not isinstance(button, (tuple, list)) or not button:
-                raise TypeError("Dialog buttons must be non-empty sequences")
-            if not isinstance(button[0], Action):
-                raise TypeError("Dialog button action must be a semantic Action")
         self.title = title
         self.lines = lines
         self.buttons = buttons
@@ -942,7 +1124,8 @@ def _action_creation(name="action", required=True):
         name, Action, required=required, default=None,
         editor=EditorSpec(
             "semantic_action", label="Action", group="Behavior",
-            catalog="actions"), bindings=(), nullable=not required)
+            catalog="actions", item_payload=True),
+        bindings=(), nullable=not required)
 
 
 def _publish_creation(component, names=(), extra=(), category="Components",
@@ -968,7 +1151,7 @@ _publish_property_source_positions(
     ToggleSwitch, action=0, active=1, enabled=2)
 _publish_property_source_positions(Hitbox, action=0, continuous=1)
 _publish_property_source_positions(
-    Text, value=0, color=1, font=2, horizontal=3, vertical=4, auto_height=6)
+    Text, value=0, color=1, font=2, horizontal=3, vertical=4)
 _publish_property_source_positions(Metric, label=0, value=1, unit=2)
 _publish_property_source_positions(
     NumericKeypad, title=0, value=1, subtitle=3, mode=4, minimum=5,
@@ -984,6 +1167,9 @@ _publish_property_source_positions(
 _publish_property_source_positions(
     VerticalScale, tick_gap=0, tick_width_small=1, tick_width_medium=1,
     tick_width_large=1, depth=2, tick_color=3, center_color=4)
+_publish_property_source_positions(
+    ScrollIndicator, position=0, count=1, minimum_thumb=2, line_width=3,
+    track_color=4, thumb_color=5)
 _publish_property_source_positions(
     VerticalGauge, title=1, unavailable_title=2, unavailable_value=3,
     danger_above=4)
@@ -1003,7 +1189,7 @@ _publish_creation(ToggleSwitch, ("active", "enabled"), (_action_creation(),))
 _publish_creation(Hitbox, ("continuous",), (_action_creation(),))
 _publish_creation(Text, (
     "value", "font", "color", "horizontal", "vertical", "max_width",
-    "max_height", "wrap", "truncate", "auto_height"))
+    "max_height", "wrap", "truncate"))
 _publish_creation(Metric, ("label", "value", "unit"))
 _publish_creation(NumericKeypad, (
     "title", "value", "subtitle", "mode", "minimum", "maximum",
@@ -1023,3 +1209,6 @@ _publish_creation(CornerMarks, ("length", "color"))
 _publish_creation(Crosshair, ("color",))
 _publish_creation(JoystickKnob, ("axis", "size", "color", "background"))
 _publish_creation(VerticalScale, ("tick_gap", "depth", "tick_color", "center_color"))
+_publish_creation(ScrollIndicator, (
+    "position", "count", "minimum_thumb", "line_width", "track_color",
+    "thumb_color"))

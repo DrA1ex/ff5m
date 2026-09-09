@@ -1,4 +1,8 @@
 ## Portable typed identities used by the Feather UI framework.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
@@ -7,6 +11,14 @@ class FrameworkKey(Enum):
     """Base class for application-defined typed framework keys."""
 
     __key_namespace__ = None
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        # Python 3.7 Enum otherwise reconstructs by a copied value; StateSpec
+        # values identify declarations and cannot reconstruct enum members.
+        return self
 
     @property
     def symbol(self):

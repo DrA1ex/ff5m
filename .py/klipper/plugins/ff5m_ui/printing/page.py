@@ -97,11 +97,8 @@ def _metric(label, value, ref):
     return Column(
         Text(label, color=ThemeColor.PRIMARY, font=FONT,
              horizontal="left"),
-        Overlay(
-            Fill(ThemeColor.BACKGROUND),
-            Text(value, color=ThemeColor.TEXT, font=VALUE_FONT,
-                 horizontal="left"),
-        ).ref(ref).repaint_boundary(),
+        Text(value, color=ThemeColor.TEXT, font=VALUE_FONT,
+             horizontal="left").ref(ref),
         gap=0,
     )
 
@@ -124,33 +121,26 @@ def _detail_metrics(first, second, divider=True):
 
 def _details():
     information = Column(
-        Overlay(
-            Fill(ThemeColor.BACKGROUND),
-            Text(
-                bind(PrintingState.FILENAME), color=ThemeColor.PRIMARY,
-                font="JetBrainsMono Bold 12pt", horizontal="left",
-                vertical="top", truncate=True),
-        ).height(24).ref(PrintingRef.FILENAME).repaint_boundary(),
-        Overlay(
-            Fill(ThemeColor.BACKGROUND),
-            Text(
-                bind(PrintingState.STATUS), color=ThemeColor.TEXT, font=FONT,
-                horizontal="left", vertical="top", truncate=True),
-        ).height(24).ref(PrintingRef.STATUS).repaint_boundary(),
+        Text(
+            bind(PrintingState.FILENAME), color=ThemeColor.PRIMARY,
+            font="JetBrainsMono Bold 12pt", horizontal="left",
+            vertical="top", truncate=True,
+        ).height(24).ref(PrintingRef.FILENAME),
+        Text(
+            bind(PrintingState.STATUS), color=ThemeColor.TEXT,
+            font=FONT, horizontal="left", vertical="top", truncate=True,
+        ).height(24).ref(PrintingRef.STATUS),
         gap=8,
     ).padding(top=4)
     progress = Column(
         Row(
             Text("PROGRESS", color=ThemeColor.PRIMARY, font=FONT,
                  horizontal="left"),
-            Overlay(
-                Fill(ThemeColor.BACKGROUND),
-                Text(
-                    derived(lambda value: "%d%%" % value,
-                            bind(PrintingState.PROGRESS)),
-                    color=ThemeColor.PRIMARY, font=VALUE_FONT,
-                    horizontal="right"),
-            ).repaint_boundary(),
+            Text(
+                derived(lambda value: "%d%%" % value,
+                        bind(PrintingState.PROGRESS)),
+                color=ThemeColor.PRIMARY,
+                font=VALUE_FONT, horizontal="right"),
             gap=0,
         ).height(16),
         PrintProgress(bind(PrintingState.PROGRESS)).height(34)

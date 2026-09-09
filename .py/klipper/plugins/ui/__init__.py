@@ -1,8 +1,8 @@
 ## Public Feather UI package.
 
-__version__ = "2.3.0"
+__version__ = "2.5.0"
 FRAMEWORK_API_VERSION = 2
-REFLECTION_SCHEMA_VERSION = "2.1.0"
+REFLECTION_SCHEMA_VERSION = "2.2.0"
 FRAMEWORK_CAPABILITIES = (
     "typed-identities",
     "stable-key-namespaces",
@@ -15,6 +15,7 @@ FRAMEWORK_CAPABILITIES = (
     "structural-editing",
     "package-relative-themes",
     "typed-theme-tokens",
+    "data-driven-list-templates",
 )
 
 
@@ -62,7 +63,8 @@ _EXPORT_GROUPS = (
         "Action", "Back", "CancellationHint", "Command", "CompletionHint",
         "ContinuousMovementHint", "CoolingHint", "DismissToast",
         "DispatchResult",
-        "EditText", "HeatingHint", "HomingHint", "Increment", "MotorStateHint",
+        "EditText", "HeatingHint", "HomingHint", "Increment", "ItemCommand",
+        "MotorStateHint",
         "MovementHint", "Navigate", "ProgressHint", "ProbingHint",
         "Replace", "Router", "SetValue", "SimulationHint", "Toggle",
         "action_metadata", "action_wire_id", "collect_actions",
@@ -70,8 +72,8 @@ _EXPORT_GROUPS = (
     ("bindings", (
         "BINDING_EXPRESSION_CONTRACT", "STATE_DECLARATION_CONTRACT",
         "Binding", "BindingExpressionContract", "DerivedBinding", "DirectBinding",
-        "StateDeclarationContract", "StateSpec", "StateStore", "bind", "derived",
-        "state", "state_spec",
+        "ItemBinding", "ItemScope", "StateDeclarationContract", "StateSpec",
+        "StateStore", "bind", "derived", "item", "state", "state_spec",
     )),
     ("numeric_input", ("NumericInputSpec",)),
     ("properties", (
@@ -84,7 +86,8 @@ _EXPORT_GROUPS = (
         "CreationIdentityContract", "CreationSourceContract",
         "DeclarativePage",
         "Dirty", "Equal", "EqualTracks", "Flex", "Grid", "Insets",
-        "LAYOUT_SCHEMA", "LayoutModifierSpec", "LayoutResult", "LayoutSourceContract", "List", "Node", "Overlay",
+        "LAYOUT_SCHEMA", "LayoutModifierSpec", "LayoutResult", "LayoutSourceContract",
+        "List", "ListView", "Node", "Overlay", "Template",
         "Override", "PAGE_DISCOVERY_CONTRACT", "PageDiscoveryContract",
         "PageTree", "Rect", "Row", "Spacer", "Span",
         "StateCase", "StructureContract", "StructureSourceContract", "Tree", "When", "WrapPanel", "split",
@@ -93,7 +96,7 @@ _EXPORT_GROUPS = (
     ("components", (
         "ArrowButton", "Button", "ButtonStyle", "CornerMarks", "Crosshair", "Dialog",
         "DotGrid", "Fill", "Hitbox", "JoystickKnob", "Metric", "Panel",
-        "NumericKeypad", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge",
+        "NumericKeypad", "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge",
         "VerticalScale",
     )),
 )
@@ -135,7 +138,8 @@ __all__ = (
     "validate_render_receipt_token",
     "rectangles_overlap", "FeatherRenderer",
     "FrameworkKey", "PageKey", "StateKey", "CommandKey", "serialize_key",
-    "Action", "Navigate", "Back", "DismissToast", "Replace", "SetValue", "Toggle", "EditText",
+    "Action", "Navigate", "Back", "DismissToast", "Replace", "SetValue",
+    "Toggle", "EditText", "ItemCommand",
     "Increment", "Command", "SimulationHint", "HomingHint",
     "MovementHint", "ContinuousMovementHint", "MotorStateHint", "HeatingHint",
     "CoolingHint", "ProbingHint", "ProgressHint", "CompletionHint",
@@ -143,8 +147,8 @@ __all__ = (
     "action_wire_id", "collect_actions",
     "BindingExpressionContract", "StateDeclarationContract",
     "BINDING_EXPRESSION_CONTRACT", "STATE_DECLARATION_CONTRACT",
-    "Binding", "DirectBinding", "DerivedBinding", "StateSpec", "StateStore",
-    "state", "state_spec", "bind", "derived",
+    "Binding", "DirectBinding", "DerivedBinding", "ItemBinding", "ItemScope",
+    "StateSpec", "StateStore", "state", "state_spec", "bind", "derived", "item",
     "NumericInputSpec",
     "Invalidation", "RewritePolicy", "EditorSpec", "SourceSpec",
     "ValidationSpec", "CreationFieldSpec", "PropertySpec", "property_names",
@@ -153,12 +157,12 @@ __all__ = (
     "CreationIdentityContract", "CreationSourceContract", "DeclarativePage",
     "Dirty", "Equal", "EqualTracks", "Flex", "Grid", "Insets",
     "LAYOUT_SCHEMA", "LayoutModifierSpec", "LayoutResult",
-    "LayoutSourceContract", "List",
-    "Node", "Overlay", "Override", "PAGE_DISCOVERY_CONTRACT",
+    "LayoutSourceContract", "List", "ListView",
+    "Node", "Overlay", "Override", "PAGE_DISCOVERY_CONTRACT", "Template",
     "PageDiscoveryContract", "PageTree", "Rect", "Row",
     "Spacer", "Span", "StateCase", "StructureContract", "StructureSourceContract", "Tree", "When", "WrapPanel", "split",
     "subdivision_positions", "ArrowButton", "Button",
     "ButtonStyle", "CornerMarks", "Crosshair", "Dialog", "DotGrid",
     "Fill", "Hitbox", "JoystickKnob", "Metric", "NumericKeypad", "Panel",
-    "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge", "VerticalScale",
+    "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge", "VerticalScale",
 )

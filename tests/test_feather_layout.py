@@ -17,7 +17,7 @@ sys.path.insert(0, str(PLUGINS))
 from ui import (  # noqa: E402
     EMPTY, FLEX, ArrowButton, Back, Button, ButtonStyle, Column, Command,
     CommandKey, Equal, FALLBACK_THEME, FeatherRenderer, Fill, Flex, Grid,
-    NumericKeypad, Overlay, Override, PageKey, PageTree, Rect, Spacer,
+    NumericKeypad, Overlay, Override, PageKey, PageTree, Panel, Rect, Spacer,
     StateCase, StateKey, Text, ThemeColor, ThemeRole, ToggleSwitch, Tree,
     WrapPanel, bind, resolve_theme, state, subdivision_positions,
 )
@@ -38,6 +38,7 @@ class TestPage(PageKey):
 class TestState(StateKey):
     LEFT = state(str, default="A")
     RIGHT = state(str, default="B")
+    VISIBLE = state(bool, default=True)
 
 
 class TestCommand(CommandKey):
@@ -421,6 +422,156 @@ class DirtyRenderingTest(unittest.TestCase):
         self.assertNotIn(
             renderer.color(ThemeColor.SECONDARY), drawing)
         self.assertNotIn('-t "B"', drawing)
+
+    def test_transparent_text_restores_the_page_surface(self):
+        page = PageTree(
+            Text(bind(TestState.LEFT), color=ThemeColor.TEXT).ref("label"),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        drawing = "\n".join(page.update(
+            renderer, {TestState.LEFT: "SHORT"}))
+        surface = page.rect("label")
+
+        self.assertIn(
+            "fill -p %d %d -s %d %d -c %s" % (
+                *surface.as_tuple(), renderer.color(ThemeColor.BACKGROUND)),
+            drawing)
+        self.assertIn('-t "SHORT"', drawing)
+
+    def test_transparent_text_replays_its_panel_composition(self):
+        page = PageTree(
+            Overlay(
+                Panel(background=ThemeColor.PANEL),
+                Text(bind(TestState.LEFT), color=ThemeColor.TEXT)
+                .ref("label"),
+            ).ref("card"),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        drawing = "\n".join(page.update(
+            renderer, {TestState.LEFT: "SHORT"}))
+        card = page.rect("card")
+
+        self.assertIn(
+            "fill -p %d %d -s %d %d -c %s" % (
+                *card.as_tuple(), renderer.color(ThemeColor.PANEL)),
+            drawing)
+        self.assertIn("stroke", drawing)
+        self.assertIn('-t "SHORT"', drawing)
+
+    def test_uniform_overlay_surface_repaints_only_text_damage(self):
+        page = PageTree(
+            Overlay(
+                Fill(ThemeColor.PANEL),
+                Column(
+                    Text("STATIC"),
+                    Text(bind(TestState.LEFT)).ref("label"),
+                ),
+            ),
+            Rect(4, 6, 92, 48), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        commands = page.update(renderer, {TestState.LEFT: "SHORT"})
+        surface = page.rect("label")
+
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(
+            commands[0], renderer.fill(*surface, color=ThemeColor.PANEL))
+        self.assertIn('-t "SHORT"', commands[1])
+        self.assertFalse(any("STATIC" in command for command in commands))
+
+    def test_text_inside_panel_border_repaints_only_its_interior(self):
+        page = PageTree(
+            Overlay(
+                Panel(background=ThemeColor.PANEL),
+                Text(bind(TestState.LEFT)).margin(3).ref("label"),
+            ),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        commands = page.update(renderer, {TestState.LEFT: "SHORT"})
+        surface = page.rect("label")
+
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(
+            commands[0], renderer.fill(*surface, color=ThemeColor.PANEL))
+        self.assertFalse(any("stroke" in command for command in commands))
+
+    def test_small_panel_uses_composition_without_invalid_inset(self):
+        page = PageTree(
+            Overlay(
+                Panel(background=ThemeColor.PANEL, line_width=2),
+                Text(bind(TestState.LEFT)).ref("label"),
+            ),
+            Rect(4, 6, 3, 3), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A"})
+        commands = page.update(renderer, {TestState.LEFT: "B"})
+
+        self.assertTrue(any("stroke" in command for command in commands))
+
+    def test_overlapping_foreground_keeps_composition_repaint(self):
+        page = PageTree(
+            Overlay(
+                Fill(ThemeColor.PANEL),
+                Text(bind(TestState.LEFT)).ref("label"),
+                Text("FOREGROUND"),
+            ).ref("composition"),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        commands = page.update(renderer, {TestState.LEFT: "SHORT"})
+
+        self.assertTrue(any("FOREGROUND" in command for command in commands))
+        self.assertIn(
+            renderer.fill(
+                *page.rect("composition"), color=ThemeColor.PANEL),
+            commands)
+
+    def test_outer_foreground_expands_the_composition_repaint(self):
+        page = PageTree(
+            Overlay(
+                Fill(ThemeColor.BACKGROUND),
+                Overlay(
+                    Fill(ThemeColor.PANEL),
+                    Text(bind(TestState.LEFT)).ref("label"),
+                ),
+                Text("OUTER FOREGROUND"),
+            ).ref("composition"),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.LEFT: "A LONG VALUE"})
+        commands = page.update(renderer, {TestState.LEFT: "SHORT"})
+
+        self.assertTrue(
+            any("OUTER FOREGROUND" in command for command in commands))
+
+    def test_hidden_transparent_content_restores_the_surface_below_it(self):
+        page = PageTree(
+            Overlay(
+                Panel(background=ThemeColor.PANEL),
+                StateCase(
+                    Text("TEMPORARY"), selector=bind(TestState.VISIBLE),
+                    expected=True),
+            ).ref("card"),
+            Rect(4, 6, 92, 24), page_id=TestPage.LAYOUT)
+        renderer = FeatherRenderer()
+
+        page.draw(renderer, {TestState.VISIBLE: True})
+        commands = page.update(renderer, {TestState.VISIBLE: False})
+        card = page.rect("card")
+
+        self.assertIn(
+            renderer.fill(*card, color=ThemeColor.PANEL), commands)
+        self.assertFalse(any("TEMPORARY" in command for command in commands))
 
     def test_component_can_be_invalidated_without_a_partial_tree(self):
         page = PageTree(Overlay(

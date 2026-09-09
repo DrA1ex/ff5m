@@ -39,7 +39,7 @@ def _content():
             "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
             color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
         gap=20,
-    ).ref(SafeBriefingRef.TEXT)
+    ).height("content").ref(SafeBriefingRef.TEXT)
     current = Text(
         derived(lambda current, start:
                 "CURRENT: %.3f MM   START HEIGHT: %.3f MM" %

@@ -7,7 +7,7 @@ from .bindings import (
     Binding, StateStore, binding_metadata, resolve, resolve_deep,
 )
 from .identity import FrameworkKey, serialize_key
-from .layout import Grid, LAYOUT_SCHEMA, List, Overlay, When, WrapPanel
+from .layout import Grid, LAYOUT_SCHEMA, List, ListView, Overlay, When, WrapPanel
 from .properties import property_names
 from .source import (
     annotate_affected, construction_metadata, layout_provenance,
@@ -123,7 +123,26 @@ def _condition_name(node, child):
     return "Condition"
 
 
+def _list_view_metadata(node, state):
+    return {
+        "items_binding": binding_metadata(node.items_binding, state)
+                         if isinstance(node.items_binding, Binding) else None,
+        "item_key_binding": binding_metadata(node.item_key_binding, state),
+        "template_key_binding": binding_metadata(node.template_key_binding, state),
+        "direction": node.direction,
+        "gap": node.gap,
+        "fallback_template": node.fallback_template,
+        "templates": [{
+            "name": template.name,
+            "source": construction_metadata(template),
+            "root_source": construction_metadata(template.root),
+            "sample": _json_value(template.sample),
+        } for template in node.templates],
+    }
+
+
 def _node(node, page, state, path, inherited_visible=True):
+    node_state = getattr(node, "_item_scope", state)
     key = node.key
     ref = None if key is None else _value(key)
     try:
@@ -136,14 +155,14 @@ def _node(node, page, state, path, inherited_visible=True):
     if isinstance(node, When):
         predicate = getattr(node, "_designer_original_predicate", node.predicate)
         try:
-            own_visible = bool(resolve(predicate, state))
+            own_visible = bool(resolve(predicate, node_state))
         except Exception:
             own_visible = False
         try:
-            preview_own_visible = bool(resolve(node.predicate, state))
+            preview_own_visible = bool(resolve(node.predicate, node_state))
         except Exception:
             preview_own_visible = False
-        binding = (binding_metadata(predicate, state)
+        binding = (binding_metadata(predicate, node_state)
                    if isinstance(predicate, Binding) else None)
         child = next(iter(node.render_children()), None)
         condition = {
@@ -160,17 +179,25 @@ def _node(node, page, state, path, inherited_visible=True):
             },
         }
     visible = bool(inherited_visible and preview_own_visible)
-    properties, bindings, property_sources = _properties(node, state)
+    properties, bindings, property_sources = _properties(node, node_state)
     if condition is not None:
         properties["predicate"] = own_visible
         property_sources["predicate"] = condition["predicate_source"]
         if condition["binding"] is not None:
             bindings["predicate"] = condition["binding"]
     children = [
-        _node(child, page, state, "%s.%d" % (path, index), visible)
+        _node(child, page, node_state, "%s.%d" % (path, index), visible)
         for index, child in enumerate(node.render_children())
     ]
     source = construction_metadata(node)
+    template_instance = getattr(node, "_template_instance", None)
+    template_definition = getattr(node, "_template_definition", None)
+    if source is not None and (template_instance or template_definition):
+        source = dict(source)
+        source["sharing"] = {
+            "reason": "template",
+            "template": (template_instance or template_definition)["template"],
+        }
     anchor = (source or {}).get("anchor") or {}
     fingerprint = anchor.get("fingerprint")
     stable_id = ref or ("source:%s:%s" % (fingerprint, path)
@@ -206,6 +233,12 @@ def _node(node, page, state, path, inherited_visible=True):
             for name, value in node.__dict__.items()
             if isinstance(value, Action)),
         "container": isinstance(node, (Grid, List, Overlay, WrapPanel)),
+        "list_view": (_list_view_metadata(node, state)
+                      if isinstance(node, ListView) else None),
+        "template_instance": (None if template_instance is None
+                              else dict(template_instance)),
+        "template_definition": (None if template_definition is None
+                                else dict(template_definition)),
         "canvas": {
             "capabilities": (
                 [] if parent_contract is None else list(parent_contract.canvas)),

@@ -1,10 +1,16 @@
 """Version and migration contracts between FF5M and the ui subtree."""
 
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license
+
+import copy
+from enum import Enum
 import os
 import pathlib
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 
 PLUGINS = pathlib.Path(__file__).parents[1] / ".py" / "klipper" / "plugins"
@@ -29,32 +35,57 @@ from ff5m_ui.z_offset.summary.state import SummaryState  # noqa: E402
 
 
 class FrameworkContractTest(unittest.TestCase):
+    def test_keys_preserve_identity_without_modern_enum_copy_hooks(self):
+        # Python 3.7 Enum has no copy hooks: it reconstructs members by value.
+        with patch.object(Enum, "__copy__", None, create=True), \
+                patch.object(Enum, "__deepcopy__", None, create=True):
+            for key in (AppPage.MOVE_STEP, MoveState.CAUTION_ACKNOWLEDGED, MoveCommand.JOYSTICK_XY):
+                with self.subTest(key=key):
+                    self.assertIs(copy.copy(key), key)
+                    self.assertIs(copy.deepcopy(key), key)
+
+    def test_move_caution_dialog_copies_actions_on_legacy_enum(self):
+        from ff5m_ui.move.common import caution_layers
+        from ui.actions import SetValue
+        from ui.components import Dialog
+
+        with patch.object(Enum, "__deepcopy__", None, create=True):
+            layers = caution_layers()
+            dialogs = [node for layer in layers for node in layer.walk() if isinstance(node, Dialog)]
+            self.assertEqual(len(dialogs), 3)
+            for dialog in dialogs:
+                first = next(button[0] for button in dialog.buttons if isinstance(button[0], SetValue))
+                second = next(button[0] for button in dialog.buttons if isinstance(button[0], SetValue))
+                self.assertIsNot(first, second)
+                self.assertEqual(first, second)
+                self.assertIs(first.key, MoveState.CAUTION_ACKNOWLEDGED)
+                self.assertIs(first.value, True)
+
     def test_product_deploys_without_designer_scripts(self):
         self.assertTrue((PLUGINS / "ui" / "__init__.py").is_file())
         self.assertTrue((PLUGINS / "ff5m_ui" / "__init__.py").is_file())
 
-    def test_manifest_is_framework_v2_3(self):
-        self.assertEqual(ui.__version__, "2.3.0")
-        self.assertEqual(ui.FRAMEWORK_API_VERSION, 2)
-        self.assertEqual(ui.REFLECTION_SCHEMA_VERSION, "2.1.0")
-        self.assertEqual(ui.framework_manifest(), {
+    def test_manifest_matches_public_framework_contract(self):
+        manifest = ui.framework_manifest()
+
+        self.assertEqual(manifest, {
             "name": "feather-ui",
-            "version": "2.3.0",
-            "api_version": 2,
-            "reflection_schema_version": "2.1.0",
+            "version": ui.__version__,
+            "api_version": ui.FRAMEWORK_API_VERSION,
+            "reflection_schema_version": ui.REFLECTION_SCHEMA_VERSION,
             "capabilities": list(ui.FRAMEWORK_CAPABILITIES),
         })
 
     def test_vendored_framework_contract(self):
-        self.assertEqual(ui.__version__, "2.3.0")
         self.assertEqual(ui.FRAMEWORK_API_VERSION, 2)
-        self.assertEqual(ui.REFLECTION_SCHEMA_VERSION, "2.1.0")
         self.assertIn("binding-source-authoring", ui.FRAMEWORK_CAPABILITIES)
+        self.assertIn("data-driven-list-templates", ui.FRAMEWORK_CAPABILITIES)
         for name in (
                 "ThemeColor", "ThemeRole", "FeatherRenderer", "PageKey",
                 "Action", "StateStore", "DeclarativePage", "Button",
                 "ArrowButton", "ToggleSwitch", "EditText", "StateCase",
-                "CreationIdentityContract", "RenderReceipt"):
+                "CreationIdentityContract", "RenderReceipt", "ItemCommand",
+                "ItemBinding", "ListView", "Template"):
             self.assertTrue(hasattr(ui, name), name)
         self.assertFalse(hasattr(ui, "Page"))
         self.assertFalse(hasattr(ui, "PrintState"))

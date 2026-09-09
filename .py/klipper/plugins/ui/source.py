@@ -185,9 +185,13 @@ def annotate_affected(tree):
     groups = {}
 
     def collect(node):
+        template = (node.get("template_instance")
+                    or node.get("template_definition") or {})
         target = {
             "id": node.get("id"), "ref": node.get("ref"),
             "type": node.get("type"),
+            "template": template.get("template"),
+            "item_key": template.get("item_key"),
         }
         for area in ("property_sources", "layout_sources", "action_sources"):
             for name, metadata in node.get(area, {}).items():
