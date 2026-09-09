@@ -417,6 +417,8 @@ class Text(Component):
         if kwargs.get("wrap"):
             kwargs.setdefault("max_width", max(1, bounds.width))
             kwargs.setdefault("max_height", max(1, bounds.height))
+        elif kwargs.get("truncate"):
+            kwargs.setdefault("max_width", max(1, bounds.width))
         return renderer.text(
             x, y, resolve(self.value, state), resolve(self.color, state),
             resolve(self.font, state) if self.font is not None

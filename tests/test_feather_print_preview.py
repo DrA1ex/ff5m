@@ -20,6 +20,7 @@ sys.path.insert(0, str(PLUGINS))
 import feather_screen as FEATHER  # noqa: E402
 from feather.screen.pages import printing as PAGES  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
+from ff5m_ui.printing import runtime as printing_ui  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
 from ui.font_metrics import get_font_metrics  # noqa: E402
 
@@ -226,7 +227,8 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         controller._render_print_page()
         drawing = "\n".join(controller.batches[0])
 
-        panel_x, panel_y, panel_width, panel_height = PAGES.GCODE_PREVIEW_PANEL
+        panel = printing_ui.rect(printing_ui.PrintingRef.PREVIEW)
+        panel_x, panel_y, panel_width, panel_height = panel.as_tuple()
         self.assertIn(
             "fill -p %d %d -s %d %d" % (
                 panel_x, panel_y, panel_width, panel_height), drawing)
@@ -242,8 +244,10 @@ class PrintPreviewLayoutTest(unittest.TestCase):
                 action)
         filename = [line for line in drawing.splitlines()
                     if "missing.gcode" in line][0]
+        details = printing_ui.rect(printing_ui.PrintingRef.DETAILS)
         self.assertLessEqual(int(re.search(
-            r"--max-width (\d+)", filename).group(1)) + 25, panel_x - 12)
+            r"--max-width (\d+)", filename).group(1)) + details.x,
+            panel_x - 12)
 
     def test_progress_updates_never_paint_over_the_preview_panel(self):
         controller = _controller("/data/missing.gcode")
@@ -253,7 +257,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
 
         controller._update_print_progress(100)
 
-        panel_x = PAGES.GCODE_PREVIEW_PANEL[0]
+        panel_x = printing_ui.rect(printing_ui.PrintingRef.PREVIEW).x
         for batch in controller.batches:
             for command in batch:
                 match = re.match(
@@ -312,7 +316,10 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
             command for batch in controller.batches for command in batch]
         image = next(command for command in commands
                      if command.startswith("--batch image "))
-        self.assertIn("-p 564 132", image)
+        box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
+        padding = printing_ui.PREVIEW_IMAGE_PADDING
+        self.assertIn("-p %d %d" % (
+            box.x + padding, box.y + padding), image)
         self.assertEqual(image.payload[:4], b"FXI1")
 
     def test_preview_uses_theme_colors_and_fills_from_bottom(self):

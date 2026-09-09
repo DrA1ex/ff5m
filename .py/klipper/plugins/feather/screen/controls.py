@@ -16,6 +16,7 @@ from ui import (
 from ui.lazy import LazyModule
 from ff5m_ui.keys import AppPage
 from ff5m_ui.print_state import PrintState
+from ff5m_ui.printing.actions import PrintingAction, PrintingRoute
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.home.actions import HomeNavigate, HomeRoute
 from ff5m_ui.move.geometry import (
@@ -34,6 +35,7 @@ from feather.materials import (
 
 
 home_ui = LazyModule("ff5m_ui.home.page")
+printing_ui = LazyModule("ff5m_ui.printing.runtime")
 z_offset_ui = LazyModule("ff5m_ui.z_offset.runtime")
 SAFE_Z_ADJUST_STEP = 1.0
 JOG_STEP_MINIMUM = 0.1
@@ -500,6 +502,8 @@ class FeatherControlsMixin:
             return home_ui.PAGE
         if self.page == ScreenPage.CONTROL_HEAT:
             return heat_ui.get_page(self.heating_materials)
+        if self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
+            return printing_ui.get_page()
         if self.page == ScreenPage.CONTROL_MOVE:
             return (move_ui.JOYSTICK_PAGE
                     if getattr(self, "move_mode", "step") == "joystick"
@@ -586,6 +590,15 @@ class FeatherControlsMixin:
     def _dispatch_semantic_ui_action(self, action):
         if isinstance(action, HomeNavigate):
             self._handle_home_navigation(action.route)
+            return
+        if isinstance(action, PrintingAction):
+            if action.route == PrintingRoute.HOME:
+                self.home_during_print = self.print_state in (
+                    PrintState.PREPARING, PrintState.PRINTING,
+                    PrintState.PAUSED)
+                self._show_page(ScreenPage.IDLE_HOME)
+            else:
+                self._handle_print_action(action.wire_id)
             return
         if isinstance(action, Back):
             self._go_back()

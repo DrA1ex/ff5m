@@ -19,6 +19,7 @@ from ff5m_ui.heat.actions import HeatCommand  # noqa: E402
 from ff5m_ui.heat.state import HeatState  # noqa: E402
 from ff5m_ui.move.actions import MoveCommand  # noqa: E402
 from ff5m_ui.move.state import MoveState, ToolheadState  # noqa: E402
+from ff5m_ui.printing.state import PrintingState  # noqa: E402
 from ff5m_ui.z_offset.actions import ZOffsetCommand  # noqa: E402
 from ff5m_ui.z_offset.paper.state import PaperState  # noqa: E402
 from ff5m_ui.z_offset.paper_briefing.state import PaperBriefingState  # noqa: E402
@@ -126,6 +127,7 @@ assert "ui.source" in sys.modules
             MoveCommand: "ui.pages.move.actions.MoveCommand",
             MoveState: "ui.pages.move.state.MoveState",
             ToolheadState: "ui.pages.move.state.ToolheadState",
+            PrintingState: "ui.pages.printing.state.PrintingState",
             ZOffsetCommand: "ui.pages.z_offset.actions.ZOffsetCommand",
             PaperState: "ui.pages.z_offset.paper.state.PaperState",
             PaperBriefingState:

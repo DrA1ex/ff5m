@@ -25,6 +25,8 @@ from ff5m_ui.move import runtime as move  # noqa: E402
 from ff5m_ui.move import geometry as move_geometry  # noqa: E402
 from ff5m_ui.heat import runtime as heat  # noqa: E402
 from ff5m_ui.filament import runtime as filament  # noqa: E402
+from ff5m_ui.printing import runtime as printing  # noqa: E402
+from ff5m_ui.printing.page import create_page as create_printing_page  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset  # noqa: E402
 from ui.reflection import reflect_page  # noqa: E402
 
@@ -68,6 +70,107 @@ class RectLayoutTest(unittest.TestCase):
         self.assertEqual(positions[0][2], -1)
         self.assertEqual(positions[4][2], 0)
         self.assertEqual(positions[-1][2], -1)
+
+
+class PrintingLayoutTest(unittest.TestCase):
+    def _assert_composition(self, page):
+        bounds = page.bounds
+        header = page.rect(printing.PrintingRef.HEADER)
+        home = page.rect(printing.PrintingRef.HOME)
+        details = page.rect(printing.PrintingRef.DETAILS)
+        preview = page.rect(printing.PrintingRef.PREVIEW)
+        preview_box = page.rect(printing.PrintingRef.PREVIEW_BOX)
+        buttons = page.rect(printing.PrintingRef.BUTTONS)
+        controls = [
+            page.rect(printing.PrintingRef.PAUSE),
+            page.rect(printing.PrintingRef.FILAMENT),
+            page.rect(printing.PrintingRef.Z_ADJUST),
+            page.rect(printing.PrintingRef.CANCEL),
+        ]
+
+        self.assertGreater(home.x, bounds.x)
+        self.assertGreater(home.y, header.y)
+        self.assertLess(home.right, header.right)
+        self.assertLess(home.bottom, header.bottom)
+        self.assertLessEqual(header.bottom, details.y)
+        self.assertEqual((details.y, details.height),
+                         (preview.y, preview.height))
+        self.assertLess(details.right, preview.x)
+        self.assertLessEqual(abs(details.width - 2 * preview.width), 1)
+        self.assertLessEqual(preview.bottom, buttons.y)
+        self.assertLessEqual(abs((details.x - bounds.x) -
+                                 (bounds.right - preview.right)), 1)
+
+        preview_left = preview_box.x - preview.x
+        preview_right = preview.right - preview_box.right
+        preview_bottom = preview.bottom - preview_box.bottom
+        self.assertGreater(preview_left, 0)
+        self.assertEqual(preview_left, preview_right)
+        self.assertEqual(preview_left, preview_bottom)
+        self.assertGreater(preview_box.y - preview.y, preview_left)
+
+        self.assertTrue(all(item.width == controls[0].width
+                            for item in controls))
+        self.assertTrue(all(item.height == buttons.height
+                            for item in controls))
+        gaps = [right.x - left.right
+                for left, right in zip(controls, controls[1:])]
+        self.assertGreater(gaps[0], 0)
+        self.assertTrue(all(gap == gaps[0] for gap in gaps))
+        self.assertEqual(buttons.x - bounds.x,
+                         bounds.right - buttons.right)
+        self.assertLessEqual(abs(
+            page.rect(printing.PrintingRef.ELAPSED).width -
+            page.rect(printing.PrintingRef.REMAINING).width), 1)
+        self.assertLessEqual(abs(
+            page.rect(printing.PrintingRef.LAYER).width -
+            page.rect(printing.PrintingRef.HEIGHT).width), 1)
+        for left, right in zip(controls, controls[1:]):
+            self.assertLessEqual(left.right, right.x)
+        for rectangle in (header, home, details, preview, preview_box,
+                          buttons, *controls):
+            self.assertGreaterEqual(rectangle.x, bounds.x)
+            self.assertGreaterEqual(rectangle.y, bounds.y)
+            self.assertLessEqual(rectangle.right, bounds.right)
+            self.assertLessEqual(rectangle.bottom, bounds.bottom)
+        for node in page.root.walk():
+            self.assertEqual(
+                (node.layout_options.offset_x, node.layout_options.offset_y),
+                (0, 0))
+
+    def test_printing_page_composition_is_spacing_driven(self):
+        self._assert_composition(printing.get_page())
+
+    def test_smaller_viewport_reflows_proportional_regions(self):
+        reference = printing.get_page()
+        smaller = create_printing_page(Rect(0, 0, 640, 400))
+
+        self._assert_composition(smaller)
+        self.assertLess(
+            smaller.rect(printing.PrintingRef.DETAILS).width,
+            reference.rect(printing.PrintingRef.DETAILS).width)
+        self.assertLess(
+            smaller.rect(printing.PrintingRef.PREVIEW).width,
+            reference.rect(printing.PrintingRef.PREVIEW).width)
+        self.assertLess(
+            smaller.rect(printing.PrintingRef.PAUSE).width,
+            reference.rect(printing.PrintingRef.PAUSE).width)
+
+    def test_dynamic_status_update_restores_its_component_surface(self):
+        page = create_printing_page(Rect(0, 0, 640, 400))
+        renderer = FeatherRenderer()
+        page.draw(renderer, {
+            printing.PrintingState.STATUS: "A LONG PREPARATION STATUS",
+        })
+
+        drawing = "\n".join(page.update(renderer, {
+            printing.PrintingState.STATUS: "READY",
+        }))
+        status = page.rect(printing.PrintingRef.STATUS)
+
+        self.assertIn(
+            "fill -p %d %d -s %d %d" % status.as_tuple(), drawing)
+        self.assertIn('-t "READY"', drawing)
 
 
 class FrameworkAuthoringContractTest(unittest.TestCase):
@@ -197,6 +300,15 @@ class DeclarativeContainerTest(unittest.TestCase):
         ), Rect(0, 0, 120, 120))
 
         self.assertEqual(tree.rect("text").height, 24)
+
+    def test_truncated_text_uses_its_arranged_width_by_default(self):
+        tree = Tree(
+            Text("A filename that is wider than its slot", truncate=True),
+            Rect(5, 7, 120, 24))
+
+        drawing = "\n".join(tree.render(FeatherRenderer()))
+
+        self.assertIn("--max-width 120", drawing)
 
     def test_column_uses_element_sizes_instead_of_numeric_tuples(self):
         tree = Tree(Column(
@@ -612,19 +724,22 @@ class MovementLayoutTest(unittest.TestCase):
         self.assertIn("xy.pad", move.JOYSTICK_PAGE.layout.keys())
         self.assertIn("home.buttons", move.JOYSTICK_PAGE.layout.keys())
 
-    def test_movement_primary_columns_are_weighted_grid_tracks(self):
-        step_root = move.STEP_PAGE.root
-        joystick_root = move.JOYSTICK_PAGE.root
+    def test_movement_primary_columns_use_simple_visual_proportions(self):
+        axis = move.STEP_PAGE.rect("axis")
+        separator = move.STEP_PAGE.rect("separator.layout")
+        control = move.STEP_PAGE.rect("control")
+        xy = move.JOYSTICK_PAGE.rect("xy.panel")
+        z = move.JOYSTICK_PAGE.rect("z.panel")
+        status = move.JOYSTICK_PAGE.rect("status.panel")
 
-        self.assertIsInstance(step_root, Grid)
-        self.assertEqual(
-            [track.weight if isinstance(track, Flex) else track
-             for track in step_root.columns],
-            [400, 35, 305])
-        self.assertIsInstance(joystick_root, Grid)
-        self.assertEqual(
-            [track.weight for track in joystick_root.columns],
-            [456, 100, 200])
+        self.assertLessEqual(axis.right, separator.x)
+        self.assertLessEqual(separator.right, control.x)
+        self.assertGreater(axis.width, control.width)
+        self.assertLess(axis.width, control.width * 3 // 2)
+        self.assertLessEqual(xy.right, z.x)
+        self.assertLessEqual(z.right, status.x)
+        self.assertGreater(xy.width, status.width)
+        self.assertGreater(status.width, z.width)
 
 
 class ZOffsetLayoutTest(unittest.TestCase):
@@ -655,19 +770,36 @@ class ZOffsetLayoutTest(unittest.TestCase):
             self.assertTrue(any(str(node.value) in command
                                 for command in text_commands))
 
-    def test_complete_z_offset_flow_uses_declarative_pages(self):
-        self.assertEqual(
-            z_offset.SUMMARY_PAGE.rect("summary.save").as_tuple(),
-            (65, 334, 670, 82))
-        self.assertEqual(
-            z_offset.PAPER_PAGE.rect("paper.gauge").as_tuple(),
-            (710, 72, 70, 358))
-        self.assertEqual(
-            z_offset.PAPER_PAGE.rect("paper.probe").as_tuple(),
-            (20, 154, 325, 70))
-        self.assertEqual(
-            z_offset.PAPER_PAGE.rect("paper.accept").as_tuple(),
-            (245, 380, 445, 48))
+    def test_complete_z_offset_flow_has_ordered_non_overlapping_regions(self):
+        summary = z_offset.SUMMARY_PAGE
+        selection = summary.rect("summary.selection")
+        load = summary.rect("summary.load")
+        save = summary.rect("summary.save")
+        paper = z_offset.PAPER_PAGE
+        controls = paper.rect("paper.controls")
+        gauge_layout = paper.rect("paper.gauge.layout")
+        gauge = paper.rect("paper.gauge")
+        finish = paper.rect("paper.finish")
+        reset = paper.rect("paper.reset")
+        accept = paper.rect("paper.accept")
+
+        self.assertLessEqual(selection.right, load.x)
+        self.assertGreater(selection.width, load.width * 2)
+        self.assertLess(selection.width, load.width * 5 // 2)
+        self.assertEqual(save.x - summary.bounds.x,
+                         summary.bounds.right - save.right)
+        self.assertLessEqual(controls.right, gauge_layout.x)
+        self.assertEqual((controls.y, controls.height),
+                         (gauge_layout.y, gauge_layout.height))
+        self.assertGreaterEqual(gauge.y, gauge_layout.y)
+        self.assertLessEqual(gauge.bottom, gauge_layout.bottom)
+        self.assertLessEqual(reset.right, accept.x)
+        self.assertGreater(accept.width, reset.width * 2)
+        self.assertLess(accept.width, reset.width * 5 // 2)
+        self.assertEqual((reset.y, reset.height),
+                         (accept.y, accept.height))
+        self.assertGreaterEqual(reset.x, finish.x)
+        self.assertLessEqual(accept.right, finish.right)
 
     def test_z_offset_button_groups_use_layout_gaps_not_child_margins(self):
         closer = z_offset.PAPER_PAGE.layout.node("paper.closer")

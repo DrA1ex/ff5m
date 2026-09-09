@@ -11,13 +11,11 @@ import struct
 import subprocess
 
 from ui import ThemeColor
+from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.print_state import PrintState
 
 
-GCODE_PREVIEW_PANEL = (536, 74, 240, 263)
-GCODE_PREVIEW_BOX = (544, 112, 224, 217)
-GCODE_PREVIEW_IMAGE_PADDING = 20
 GCODE_PREVIEW_LOADER_PERIOD = 0.08
 GCODE_PREVIEW_REDRAW_PERIOD = 5.0
 GCODE_PREVIEW_LOADER_RADII = (7, 10, 13, 10)
@@ -27,11 +25,11 @@ PREVIEW_TIMEOUT = 15.0
 
 
 def _gcode_preview_image_rect():
-    box_x, box_y, box_width, box_height = GCODE_PREVIEW_BOX
-    padding = max(0, GCODE_PREVIEW_IMAGE_PADDING)
-    width = max(1, box_width - 2 * padding)
-    height = max(1, box_height - 2 * padding)
-    return box_x + padding, box_y + padding, width, height
+    box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
+    padding = max(0, printing_ui.PREVIEW_IMAGE_PADDING)
+    width = max(1, box.width - 2 * padding)
+    height = max(1, box.height - 2 * padding)
+    return box.x + padding, box.y + padding, width, height
 
 
 def _decode_packbits(payload, expected_size):
@@ -299,65 +297,23 @@ class PrintingPagesMixin:
                  if print_stats is not None else None)
         commands = self.renderer.begin_page(
             "PAUSED" if paused else "PRINTING")
-        commands += self.renderer.button(
-            "nav.home", 14, 7, 146, 46, "HOME",
-            font="JetBrainsMono Bold 8pt")
+        preview = self._prepare_gcode_preview(stats)
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
-        commands.append(self.renderer.text(25, 78, filename,
-                                           ThemeColor.PRIMARY, "JetBrainsMono Bold 12pt",
-                                           "left", "middle", max_width=487,
-                                           truncate=True))
-        commands.append(self.renderer.text(
-            25, 110, self._display_status_text(
-                eventtime), ThemeColor.TEXT,
-            "JetBrainsMono 8pt",
-            "left", "middle", max_width=487, truncate=True))
-        commands += [
-            self.renderer.text(25, 142, "PROGRESS", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.stroke(25, 162, 487, 34, ThemeColor.BORDER, 2),
-            self.renderer.fill(25, 208, 487, 1, ThemeColor.BORDER),
-            self.renderer.text(25, 226, "ELAPSED", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(270, 226, "REMAINING", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.fill(264, 216, 1, 48, ThemeColor.BORDER),
-            self.renderer.fill(25, 273, 487, 1, ThemeColor.BORDER),
-            self.renderer.text(25, 291, "LAYER", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-            self.renderer.text(270, 291, "HEIGHT", ThemeColor.PRIMARY,
-                               "JetBrainsMono 8pt", "left", "middle"),
-        ]
-        button_y, button_width, button_gap = 355, 184, 8
-        button_x = 20
-        commands += self.renderer.button("print.resume" if paused else "print.pause",
-                                         button_x, button_y, button_width, 72,
-                                         "RESUME" if paused else "PAUSE",
-                                         state=("disabled" if not controls_ready else
-                                                "busy" if self.pending_action in
-                                                ("print.pause", "print.resume")
-                                                else "enabled"),
-                                         font="JetBrainsMono Bold 8pt")
-        button_x += button_width + button_gap
-        commands += self.renderer.button("print.filament", button_x, button_y,
-                                         button_width, 72, "FILAMENT",
-                                         state=("enabled" if controls_ready
-                                                else "disabled"),
-                                         font="JetBrainsMono Bold 8pt")
-        button_x += button_width + button_gap
-        commands += self.renderer.button(
-            "print.z", button_x, button_y, button_width, 72, "Z ADJUST",
-            state="enabled" if self._live_z_adjust_allowed(
-                self.reactor.monotonic())
-            else "disabled", font="JetBrainsMono Bold 8pt")
-        button_x += button_width + button_gap
-        commands += self.renderer.button("print.cancel", button_x, button_y,
-                                         button_width, 72, "CANCEL",
-                                         state="danger",
-                                         font="JetBrainsMono Bold 8pt")
-        preview = self._prepare_gcode_preview(stats)
-        commands += self._gcode_preview_panel_commands(preview)
+        values = {
+            printing_ui.PrintingState.FILENAME: filename,
+            printing_ui.PrintingState.STATUS:
+                self._display_status_text(eventtime),
+            printing_ui.PrintingState.PAUSED: paused,
+            printing_ui.PrintingState.CONTROLS_READY: controls_ready,
+            printing_ui.PrintingState.PENDING_ACTION:
+                self.pending_action or "",
+            printing_ui.PrintingState.LIVE_Z_ALLOWED:
+                self._live_z_adjust_allowed(eventtime),
+            printing_ui.PrintingState.PREVIEW_STATUS:
+                "none" if preview is None else preview["status"],
+        }
+        commands += printing_ui.render(self.renderer, values)
         if stats is None:
             progress_commands, progress, values = (
                 self._current_print_progress_commands(eventtime))
@@ -369,6 +325,8 @@ class PrintingPagesMixin:
             commands += self._gcode_preview_image_commands(preview)
             self._stop_gcode_preview_loader()
         elif preview is not None and preview["status"] == "loading":
+            commands += self._gcode_preview_loader_frame_commands(
+                preview.get("loading_phase", 0), clear_box=False)
             self._start_gcode_preview_loader()
         else:
             self._stop_gcode_preview_loader()
@@ -442,27 +400,6 @@ class PrintingPagesMixin:
             preview["status"] = "failed"
             self._stop_gcode_preview_loader()
         return preview
-
-    def _gcode_preview_panel_commands(self, preview):
-        x, y, width, height = GCODE_PREVIEW_PANEL
-        commands = self.renderer.panel(
-            x, y, width, height, border=ThemeColor.BORDER,
-            background=ThemeColor.PANEL, line_width=1)
-        commands.append(self.renderer.text(
-            x + 18, y + 21, "PREVIEW", ThemeColor.PRIMARY,
-            "JetBrainsMono 8pt", "left", "middle"))
-
-        if preview is None or preview["status"] == "failed":
-            label = "NO PREVIEW"
-            box_x, box_y, box_width, box_height = GCODE_PREVIEW_BOX
-            commands.append(self.renderer.text(
-                box_x + box_width // 2, box_y + box_height // 2,
-                label, ThemeColor.DIM, "JetBrainsMono 8pt",
-                "center", "middle"))
-        elif preview["status"] == "loading":
-            commands += self._gcode_preview_loader_frame_commands(
-                preview.get("loading_phase", 0), clear_box=False)
-        return commands
 
     def _gcode_preview_image_commands(self, preview):
         if preview.get("image") is None:
@@ -553,7 +490,8 @@ class PrintingPagesMixin:
         return False
 
     def _gcode_preview_loader_frame_commands(self, phase=0, clear_box=True):
-        box_x, box_y, box_width, box_height = GCODE_PREVIEW_BOX
+        box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
+        box_x, box_y, box_width, box_height = box.as_tuple()
         center_x = box_x + box_width // 2
         center_y = box_y + box_height // 2
         radius = GCODE_PREVIEW_LOADER_RADII[int(phase) % len(
@@ -689,26 +627,13 @@ class PrintingPagesMixin:
         height = float(position[2])
         values = (self._clock_duration(elapsed),
                   self._clock_duration(remaining), layer, round(height, 2))
-        width = round(max(0, min(100, progress)) * 475 / 100)
-        commands = [
-            self.renderer.fill(430, 130, 74, 29),
-            self.renderer.text(500, 142, "%d%%" % progress,
-                               ThemeColor.PRIMARY, "JetBrainsMono 12pt", "right", "middle"),
-            self.renderer.fill(31, 168, 475, 22),
-            self.renderer.fill(31, 168, width, 22, ThemeColor.PRIMARY),
-            self.renderer.fill(25, 238, 234, 28),
-            self.renderer.text(25, 252, values[0], ThemeColor.TEXT,
-                               "JetBrainsMono 12pt", "left", "middle"),
-            self.renderer.fill(270, 238, 242, 28),
-            self.renderer.text(270, 252, values[1], ThemeColor.TEXT,
-                               "JetBrainsMono 12pt", "left", "middle"),
-            self.renderer.fill(25, 303, 234, 30),
-            self.renderer.text(25, 318, values[2], ThemeColor.TEXT,
-                               "JetBrainsMono 12pt", "left", "middle"),
-            self.renderer.fill(270, 303, 242, 30),
-            self.renderer.text(270, 318, "%.2f MM" % values[3], ThemeColor.TEXT,
-                               "JetBrainsMono 12pt", "left", "middle"),
-        ]
+        commands = printing_ui.update_progress(self.renderer, {
+            printing_ui.PrintingState.PROGRESS: progress,
+            printing_ui.PrintingState.ELAPSED: values[0],
+            printing_ui.PrintingState.REMAINING: values[1],
+            printing_ui.PrintingState.LAYER: values[2],
+            printing_ui.PrintingState.HEIGHT: "%.2f MM" % values[3],
+        })
         return commands, progress, values
 
     def _print_progress(self, eventtime, stats=None):
@@ -784,11 +709,9 @@ class PrintingPagesMixin:
         return duration, remaining
 
     def _draw_print_status(self, status):
-        self.renderer.send([
-            self.renderer.fill(20, 94, 496, 34),
-            self.renderer.text(25, 110, status, ThemeColor.TEXT,
-                               "JetBrainsMono 8pt", "left", "middle",
-                               max_width=487, truncate=True)])
+        self.renderer.send(printing_ui.update(self.renderer, {
+            printing_ui.PrintingState.STATUS: status,
+        }))
 
     def _update_operation_context(self, eventtime):
         operation = self._operation_context_status(eventtime)

@@ -194,7 +194,7 @@ def _stats():
                 "RASTER", BenchmarkState.RASTER, _format_raster,
                 BenchmarkRef.RASTER_LABEL, BenchmarkRef.RASTER_VALUE),
         ),
-        columns=(Flex(2), Flex(1)), rows=Equal(9), gap=(0, 0),
+        columns=(Flex(2), FLEX), rows=Equal(9), gap=(0, 0),
     ).height(272).margin(left=2, right=2).ref(BenchmarkRef.STATS_GRID)
 
     footer = Column(

@@ -15,7 +15,7 @@ from ui.components import (
     Metric, Panel, Section, Text, VerticalScale,
 )
 from ui.layout import (
-    Column, Equal, Flex, Grid, Overlay, PageTree as Page, Row, Spacer,
+    FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Row, Spacer,
     WrapPanel,
 )
 from ...keys import AppPage
@@ -231,7 +231,7 @@ def _status_panel():
 def _content():
     return Grid(
         matrix=((_xy_panel(), _z_panel(), _status_panel()),),
-        columns=(Flex(456), Flex(100), Flex(200)),
+        columns=(FLEX, 100, 200),
         rows=Equal(1), gap=(10, 0),
     ).ref(JoystickRef.ROOT)
 

@@ -1024,9 +1024,11 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(labels[2], "component-pause-timer")
         self.assertEqual(labels[-2], "component-resume-timer")
         self.assertEqual(labels[-1], "component-context-verify")
-        self.assertEqual(len(captures), 10)
-        self.assertEqual(len(set(captures)), 10)
+        self.assertEqual(
+            len(captures), len(feature.scenarios._component_pages()) + 1)
+        self.assertEqual(len(set(captures)), len(captures))
         self.assertIn("component-default-home", captures)
+        self.assertIn("component-default-printing", captures)
         self.assertIn("component-default-render-benchmark", captures)
         self.assertTrue(all(
             label == "baseline" or label.startswith("component-default-")

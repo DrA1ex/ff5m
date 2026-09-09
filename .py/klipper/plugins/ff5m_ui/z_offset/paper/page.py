@@ -1,11 +1,17 @@
 ## Declarative Z-offset paper test page for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
 from ui.actions import SetValue
 from ui.bindings import bind, derived
 from ui.components import Button, Dialog, Panel, Text, VerticalGauge
-from ui.layout import Column, Equal, Flex, Grid, Overlay, PageTree as Page, Spacer, When
+from ui.layout import (
+    FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Spacer, When,
+)
 from ...keys import AppPage
 from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_SAFE_HALF, PROBE, RESET
 from ..common import CONTENT, FONT, compact
@@ -181,7 +187,7 @@ def _finish():
                 state=adjust_state, font="JetBrainsMono Bold 10pt",
             ).ref(PaperRef.ACCEPT),
         ),),
-        columns=(Flex(205), Flex(445)), rows=Equal(1), gap=(20, 0),
+        columns=(205, FLEX), rows=Equal(1), gap=(20, 0),
     ).ref(PaperRef.FINISH)
 
 
@@ -201,11 +207,11 @@ def _content():
         matrix=((None,), (VerticalGauge(
             bind(PaperState.GAUGE), danger_above=Z_WEIGHT_DANGER,
         ).ref(PaperRef.GAUGE).repaint_boundary(),), (None,)),
-        columns=Equal(1), rows=(16, Flex(1), 12),
+        columns=Equal(1), rows=(16, FLEX, 12),
     ).ref(PaperRef.GAUGE_LAYOUT)
     layout = Grid(
         matrix=((controls, gauge),),
-        columns=(Flex(670), 70), rows=Equal(1), gap=(20, 0),
+        columns=(FLEX, 70), rows=Equal(1), gap=(20, 0),
     ).padding(left=20, right=20).ref(PaperRef.LAYOUT)
     pressure = When(
         derived(lambda dialog: dialog == "pressure", bind(PaperState.DIALOG)),

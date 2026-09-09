@@ -1,11 +1,17 @@
 ## Declarative Z-offset summary page for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
 from ui.actions import SetValue, Toggle
 from ui.bindings import bind, derived
 from ui.components import Button, Dialog, Text
-from ui.layout import Column, Equal, Flex, Grid, Overlay, PageTree as Page, Spacer, When
+from ui.layout import (
+    FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Spacer, When,
+)
 from ...keys import AppPage
 from ..actions import DISCARD_CONFIRM, SAVE, SELECTION_NEXT, ZONE_ACTIONS
 from ..common import CONTENT, FONT, compact
@@ -149,7 +155,7 @@ def _content():
                     bind(SummaryState.LOAD_ZOFFSET)),
             ).ref(SummaryRef.LOAD),
         ),),
-        columns=(Flex(455), Flex(200)), rows=Equal(1), gap=(15, 0),
+        columns=(FLEX, 200), rows=Equal(1), gap=(15, 0),
     )).padding(left=65, right=65).ref(SummaryRef.CHOICES)
     save = Grid(
         matrix=((Button(

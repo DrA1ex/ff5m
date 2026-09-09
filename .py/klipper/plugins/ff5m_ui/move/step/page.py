@@ -183,7 +183,7 @@ def _axis_layout():
     ).ref(StepRef.Z_GRID)
     return Grid(
         matrix=((xy_grid, z_grid),),
-        columns=(Flex(320), Flex(65)), rows=Equal(1), gap=(15, 0),
+        columns=(FLEX, 65), rows=Equal(1), gap=(15, 0),
     ).ref(StepRef.AXIS_LAYOUT)
 
 
@@ -273,7 +273,7 @@ def _content():
     ).ref(StepRef.SEPARATOR_LAYOUT)
     return Grid(
         matrix=((axis, separator, _control_layout()),),
-        columns=(Flex(400), 35, Flex(305)), rows=Equal(1),
+        columns=(FLEX, 35, 305), rows=Equal(1),
     ).padding(left=18, top=1, right=18, bottom=3).ref(StepRef.ROOT)
 
 
