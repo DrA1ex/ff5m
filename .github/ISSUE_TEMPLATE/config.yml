@@ -1,9 +1,14 @@
 blank_issues_enabled: false
 
 contact_links:
+  - name: Questions & Help — GitHub Discussions
+    url: https://github.com/DrA1ex/ff5m/discussions/categories/q-a
+    about: Ask a question or get help if you are not sure whether your problem is a Forge-X bug.
+
   - name: Telegram Forge-X Community
     url: https://t.me/+ihE2Ry8kBNkwYzhi
-    about: Please join the community group
+    about: Get help with Forge-X, discuss problems, or report possible Forge-X bugs.
+
   - name: Discord FlashForge Community
     url: https://discord.gg/K7MH4hAfeX
-    about: Join Discord server. Navigate to Forums -> mods-and-projects -> Forge-X
+    about: Get general help with your printer, or visit Forums → mods-and-projects → Forge-X for Forge-X-specific questions and support.
