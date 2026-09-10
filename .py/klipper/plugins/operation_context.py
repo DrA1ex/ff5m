@@ -318,12 +318,16 @@ class OperationContextManager:
         if not self.contexts and self.pending_cancel is None:
             return False
         count = len(self.contexts)
+        root = self.contexts[0] if self.contexts else None
         self.contexts = []
         self.pending_cancel = None
         self.cancelling = False
         self._changed()
         logging.warning(
             "[operation_context] reset %d context(s): %s", count, reason)
+        if root is not None:
+            self.printer.send_event(
+                "operation_context:end", root.frame_id, "interrupted")
         return True
 
     def _handle_interrupted_operation(self, *args):
@@ -353,6 +357,9 @@ class OperationContextManager:
                 self._run_cleanup(frame, gcmd)
         finally:
             self.cancelling = False
+        if target_index == 0:
+            self.printer.send_event(
+                "operation_context:end", target.frame_id, "cancelled")
         raise gcmd.error(
             "Operation cancelled: %s" % (target.definition.name,))
 
@@ -365,6 +372,9 @@ class OperationContextManager:
         self.next_frame_id += 1
         self.contexts.append(frame)
         self._changed()
+        if len(self.contexts) == 1:
+            self.printer.send_event(
+                "operation_context:begin", frame.frame_id, definition.type_id)
 
     def cmd_CONTEXT_STATE(self, gcmd):
         frame = self._active(gcmd, "_CONTEXT_STATE")
@@ -407,6 +417,9 @@ class OperationContextManager:
                     frame.definition.name, len(frame.saved_states)))
         self.contexts.pop()
         self._changed()
+        if not self.contexts:
+            self.printer.send_event(
+                "operation_context:end", frame.frame_id, "completed")
 
     def cmd_CONTEXT_CANCEL(self, gcmd):
         result = self.request_cancel()

@@ -88,6 +88,24 @@ During initialization, [`.shell/init-main.sh`](../../.shell/init-main.sh) runs `
 
 The plugin registers `klippy:ready`, `klippy:shutdown`, and `klippy:disconnect`. Managed workflow status is read directly from the `operation_context` snapshot during the normal display update cycle. Optional config values are read at Klipper config-load time; defaults deliberately live in Python for upgrade compatibility until Klipper restarts.
 
+External macro launches use `operation_context:begin(frame_id, type)` and
+`operation_context:end(frame_id, outcome)` events. Only the outermost context
+publishes these boundaries; nested calibration inside a print, recovery, or
+another operation cannot claim the screen. Outcomes are `completed`,
+`cancelled`, and `interrupted` (including context reset and G-code errors).
+The context stack remains authoritative for phase text and cancellation.
+
+Feather adopts bed screws, bed mesh, PID, input shaper, Z-offset, and recovery
+operations from idle browsing pages; recovery may also replace its own prompt
+or confirmation. Print statistics, virtual SD activity, busy UI commands, and
+existing workflow pages block adoption. Ignored launches are not queued for
+later display. Adoption only opens progress: it never executes the macro again.
+The calibration feature retains the adopted frame ID until completion and uses
+the existing result/cancellation pages. Recovery completion is deferred to a
+reactor callback so its final status and resumed printing can take effect.
+Shutdown discards pending UI completion, and display failures cannot abort the
+macro. Filament and cold-pull workflows continue using their action prompts.
+
 `feather_update_notification.py` owns the process-local update-notification and active-installation UI state. Five seconds after `klippy:ready`, and only while authoritative print state is idle, it sends a fire-and-forget Klipper remote-method call to Moonraker. The optional `[feather_updates]` Moonraker component returns a bounded projection of the already-cached status selected by its `update_key` option through `feather/update_status`; it uses Moonraker's `internal_transport` API for both status and installation, so it neither refreshes Git for a notification nor changes Moonraker's update-manager implementation. Missing or malformed responses fail closed and schedule the existing bounded retry without allowing an optional WebRequest endpoint to shut down Klipper. Only the idle Home page may present the modal. Starting or pausing a print removes it without setting the version-specific in-memory dismissal. The Update action repeats Feather's idle check, and the adapter revalidates idle state and the expected version before delegating the same configured key to the canonical `machine.update.client` OTA path. While that request is active, the adapter forwards only matching `update_manager:update_response` messages to Feather; the UI displays them in its existing non-interactive loader, reports a structured refusal or failure, and treats the managed-service restart as the expected terminal stage.
 
 ## Boot and restart chain

@@ -1,4 +1,10 @@
 ## Common calibration feature for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+import logging
 
 from ff5m_ui.screen import ScreenPage
 from feather.features.manager import FeatureHostProxy
@@ -18,6 +24,7 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
     def __init__(self, host):
         FeatureHostProxy.__init__(self, host)
         self.calibration_kind = None
+        self.external_context_id = None
         self.calibration_page = 0
         materials = getattr(host, "heating_materials", ())
         self.calibration_material = materials[0] if materials else "n/a"
@@ -89,6 +96,60 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         self.calibration_starting_text = "STARTING..."
         self._reset_calibration_progress()
 
+    def begin_external(self, frame_id, kind):
+        if self.external_context_id is not None:
+            return
+        self.external_context_id = frame_id
+        self.calibration_kind = kind
+        self.calibration_repeat_probe = False
+        self._prepare_calibration_progress()
+        try:
+            self._show_page(ScreenPage.CALIBRATION_PROGRESS)
+        except Exception:
+            self.external_context_id = None
+            raise
+
+    def on_operation_end(self, frame_id, outcome):
+        if frame_id != self.external_context_id:
+            return
+        # Recovery starts the virtual SD and cleanup updates its status after
+        # ending the context. Observe those effects after the command returns.
+        self.reactor.register_callback(
+            lambda eventtime: self._finish_external(frame_id, outcome, eventtime))
+
+    def _finish_external(self, frame_id, outcome, eventtime):
+        if frame_id != self.external_context_id:
+            return
+        self.external_context_id = None
+        try:
+            cancel_page = (self.page == ScreenPage.CANCEL_CONFIRM
+                           and self.operation_cancel_return_page
+                           == ScreenPage.CALIBRATION_PROGRESS)
+            if (self.page != ScreenPage.CALIBRATION_PROGRESS and not cancel_page
+                    or self._safety_print_active(eventtime)):
+                return
+            if cancel_page:
+                self._reset_operation_cancel()
+            self.calibration_cancelled = outcome == "cancelled"
+            self.calibration_error = (
+                "Operation interrupted" if outcome == "interrupted" else None)
+            if self.calibration_kind == "recovery":
+                status = (self.resurrection.get_status(eventtime)
+                          if self.resurrection is not None else {})
+                if status.get("state") == "printing":
+                    return
+                failed = (outcome != "completed"
+                          or status.get("state") != "idle")
+                self._show_message(
+                    "Recovery interrupted" if failed else "Recovery data cleaned up",
+                    ScreenPage.RECOVERY_PROMPT if failed else ScreenPage.IDLE_HOME)
+                return
+            if self.calibration_kind == "mesh" and outcome == "completed":
+                self.calibration_mesh = self._read_mesh_matrix(eventtime)
+            self._show_page(ScreenPage.CALIBRATION_RESULT)
+        except Exception:
+            logging.exception("[feather_screen] unable to finish external operation")
+
     def update(self, eventtime):
         if self._page_paint_allowed(ScreenPage.CALIBRATION_PROGRESS):
             self._update_calibration_progress()
@@ -113,5 +174,6 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                 if page == ScreenPage.CALIBRATION_PROGRESS else ())
 
     def deactivate(self):
+        self.external_context_id = None
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False

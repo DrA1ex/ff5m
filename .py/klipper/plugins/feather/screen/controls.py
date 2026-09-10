@@ -1195,11 +1195,7 @@ class FeatherControlsMixin:
         self.calibration_progress_key = None
         self.calibration_seen_phases = set()
 
-    def _start_calibration(self, repeat_probe=False):
-        self._require_idle()
-        self._cancel_delayed_tasks()
-        self.calibration_repeat_probe = bool(
-            repeat_probe and self.calibration_kind == "screws")
+    def _prepare_calibration_progress(self):
         self.calibration_results = []
         self.calibration_mesh = []
         self.calibration_error = None
@@ -1208,6 +1204,13 @@ class FeatherControlsMixin:
         self.calibration_cancelled = False
         self._reset_calibration_progress()
         self.calibration_starting_text = "STARTING..."
+
+    def _start_calibration(self, repeat_probe=False):
+        self._require_idle()
+        self._cancel_delayed_tasks()
+        self.calibration_repeat_probe = bool(
+            repeat_probe and self.calibration_kind == "screws")
+        self._prepare_calibration_progress()
         self._show_page(ScreenPage.CALIBRATION_PROGRESS)
         self.reactor.register_callback(self._run_calibration)
 
@@ -2068,6 +2071,9 @@ class FeatherControlsMixin:
             ]
         elif self.calibration_kind == "mesh" and self.calibration_mesh:
             matrix = self.calibration_mesh
+            mesh = getattr(self, "bed_mesh", None)
+            status = mesh.get_status(self.reactor.monotonic()) if mesh else {}
+            profile = status.get("profile_name") or "auto"
             values = [cell for row in matrix for cell in row]
             minimum, maximum = min(values), max(values)
             rows, columns = len(matrix), len(matrix[0])
@@ -2087,8 +2093,9 @@ class FeatherControlsMixin:
                                                     "JetBrainsMono Bold 8pt",
                                                     "center", "middle")]
             commands += [
-                self.renderer.text(640, 92, "PROFILE AUTO", ThemeColor.PRIMARY,
-                                   "JetBrainsMono 8pt", "left", "middle"),
+                self.renderer.text(640, 92, "PROFILE %s" % str(profile).upper(),
+                                   ThemeColor.PRIMARY, "JetBrainsMono 8pt",
+                                   "left", "middle", max_width=150, truncate=True),
                 self.renderer.text(640, 145, "MIN %+.3f" % minimum, ThemeColor.TEXT,
                                    "JetBrainsMono 8pt", "left", "middle"),
                 self.renderer.text(640, 185, "MAX %+.3f" % maximum, ThemeColor.TEXT,

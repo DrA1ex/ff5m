@@ -146,6 +146,51 @@ class OperationContextManagerTest(unittest.TestCase):
     def status(self):
         return self.manager.get_status(0.0)
 
+    def test_lifecycle_events_describe_only_the_outer_operation(self):
+        events = []
+        for event in ("begin", "end"):
+            self.printer.register_event_handler(
+                "operation_context:" + event,
+                lambda *args, event=event: events.append(
+                    (event, args, self.status()["context_types"])))
+        self.run_command("_CONTEXT_BEGIN", TYPE="outer")
+        root_id = self.status()["contexts"][0]["id"]
+        self.run_command("_CONTEXT_BEGIN", TYPE="inner")
+        self.run_command("_CONTEXT_END")
+        self.run_command("_CONTEXT_END")
+        self.assertEqual(events, [
+            ("begin", (root_id, "outer"), ("outer",)),
+            ("end", (root_id, "completed"), ()),
+        ])
+
+    def test_lifecycle_reports_interruption_once(self):
+        events = []
+        self.printer.register_event_handler(
+            "operation_context:end", lambda *args: events.append(args))
+        self.run_command("_CONTEXT_BEGIN", TYPE="outer")
+        root_id = self.status()["contexts"][0]["id"]
+        self.run_command("_CONTEXT_BEGIN", TYPE="inner")
+        self.printer.send_event("gcode:command_error")
+        self.printer.send_event("klippy:shutdown")
+        self.assertEqual(events, [(root_id, "interrupted")])
+
+    def test_cancelling_nested_domain_does_not_finish_outer_operation(self):
+        events = []
+        self.printer.register_event_handler(
+            "operation_context:end", lambda *args: events.append(args))
+        self.run_command("_CONTEXT_BEGIN", TYPE="print")
+        root_id = self.status()["contexts"][0]["id"]
+        self.run_command("_CONTEXT_BEGIN", TYPE="local")
+        self.manager.request_cancel()
+        with self.assertRaisesRegex(RuntimeError, "Operation cancelled"):
+            self.run_command("_CONTEXT_CANCEL_POINT")
+        self.assertEqual(events, [])
+        self.assertEqual(self.status()["context_types"], ("print",))
+        self.manager.request_cancel()
+        with self.assertRaisesRegex(RuntimeError, "Operation cancelled"):
+            self.run_command("_CONTEXT_CANCEL_POINT")
+        self.assertEqual(events, [(root_id, "cancelled")])
+
     def test_registers_small_gcode_contract_and_immediate_cancel(self):
         self.assertEqual(set(self.printer.gcode.commands), {
             "_CONTEXT_BEGIN", "_CONTEXT_STATE", "_CONTEXT_END",

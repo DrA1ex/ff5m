@@ -322,6 +322,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
         self.printer.register_event_handler("klippy:disconnect", self._disconnect)
         self.printer.register_event_handler(
+            "operation_context:begin", self._handle_operation_begin)
+        self.printer.register_event_handler(
+            "operation_context:end", self._handle_operation_end)
+        self.printer.register_event_handler(
             "mod_params:changed", self.update_notification.on_mod_params_changed)
         self.gcode.register_command(
             "FEATHER_ABORT", self.cmd_FEATHER_ABORT,
@@ -1390,6 +1394,46 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         wait = getattr(self, "temperature_wait", None)
         return bool(wait is not None and
                     getattr(wait, "variables", {}).get("active", False))
+
+    def _handle_operation_begin(self, frame_id, context_type):
+        # Only top-level contexts publish this event. An idle browsing page
+        # may follow them; an existing workflow always keeps the screen.
+        kinds = {
+            "bed_screws": "screws", "auto_bed_level": "mesh",
+            "bed_level": "mesh", "pid_bed": "pid_bed",
+            "pid_extruder": "pid_extruder", "input_shaper": "shaper",
+            "z_offset": "z", "recovery": "recovery",
+        }
+        kind = kinds.get(context_type)
+        if kind is None or self.print_state != PrintState.IDLE:
+            return
+        pages = (
+            ScreenPage.IDLE_HOME, ScreenPage.MAIN_MENU,
+            ScreenPage.CONTROL_HOME, ScreenPage.CALIBRATION_HOME,
+            ScreenPage.FILE_BROWSER, ScreenPage.SETTINGS,
+        )
+        if self.page not in pages and not (
+                kind == "recovery" and self.page in (
+                    ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)):
+            return
+        try:
+            if (self._safety_print_active(self.reactor.monotonic())
+                    or self._blocking_operation_active()
+                    or getattr(self, "command_depth", 0) > 0
+                    or getattr(self, "pending_action", None) is not None
+                    or self.feature_manager.input_blocked):
+                return
+            self.feature_manager.get("calibration").begin_external(
+                frame_id, kind)
+        except Exception:
+            # A display failure must never abort the externally run macro.
+            logging.exception("[feather_screen] unable to show external operation")
+
+    def _handle_operation_end(self, frame_id, outcome):
+        try:
+            self._notify_features("on_operation_end", frame_id, outcome)
+        except Exception:
+            logging.exception("[feather_screen] unable to finish external operation")
 
     def _operation_context_status(self, eventtime=None):
         manager = getattr(self, "operation_context", None)
