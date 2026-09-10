@@ -20,36 +20,36 @@ body:
         - [GitHub Discussions — Q&A](https://github.com/DrA1ex/ff5m/discussions/categories/q-a)
         - [Telegram Forge-X Community](https://t.me/+ihE2Ry8kBNkwYzhi) — Forge-X help and troubleshooting
         - [Discord FlashForge Community](https://discord.gg/K7MH4hAfeX) — general printer help, or Forums → mods-and-projects → Forge-X for Forge-X-specific help
-
+        
         ### Verify the problem without Forge-X
-
+        
         If the problem can also exist in stock firmware, run `SKIP_MOD` from the Fluidd console and test it again.
         `SKIP_MOD` reboots the printer with Forge-X startup skipped, allowing you to test the same printer without Forge-X services running.
-
+        
         **For intermittent problems, one successful test in stock mode is not enough.**
         Use the printer in stock mode long enough to be reasonably confident that the problem is gone, repeat the conditions that normally trigger it, or re-enable Forge-X and verify that the problem returns.
-
+        
         - If the problem **still occurs after `SKIP_MOD`**, it is **almost certainly not a Forge-X runtime bug**. It is much more likely to be related to the printer itself, hardware, stock firmware, calibration, or saved printer configuration. **Do not open an issue unless you have specific evidence that Forge-X is still involved.**
         - If the problem **does not occur after `SKIP_MOD`**, do not assume Forge-X is responsible after a single test. Confirm the result as described above before reporting it.
         - If the problem concerns functionality that only exists in Forge-X, such as a Forge-X-specific UI or feature, the `SKIP_MOD` test may be **not applicable**.
-
+        
         <details>
         <summary><b>Common problems that are often not Forge-X bugs</b></summary>
-
+        
         Problems such as these are frequently caused by calibration, mechanics, sensors, hardware, or other printer-side issues:
-
+        
         - Incorrect or changing Z-offset / first layer height
         - Unexpected bed mesh changes or inconsistent probing results
         - Print quality, extrusion, or motion problems
         - Mechanical noises or problems with fans, servos, sensors, heaters, motors, or other printer hardware
-
+        
         If the same problem remains after `SKIP_MOD`, treat it as a printer-side problem first unless you have clear evidence that Forge-X is responsible.
-
+        
         </details>
-
-        Please review the documentation and existing issues before submitting a report.
-
-        Support requests, hardware problems, incomplete reports, and reports that do not identify a Forge-X bug may be **closed without further investigation**. Repeated misuse of the issue tracker may result in being blocked.
+        
+        Please review the documentation and existing issues before submitting a report.    
+        
+        Support requests, hardware problems, incomplete reports, and reports that do not identify a Forge-X bug may be **closed without further investigation**. Repeated misuse of the issue tracker may result in being blocked.    
 
   - type: checkboxes
     id: checklist
@@ -133,12 +133,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        ### `SKIP_MOD` Verification
-
+        ### `SKIP_MOD` Verification    
+        
         If the problem can be tested in stock firmware, run `SKIP_MOD` and try to reproduce it before opening the issue.
-
+        
         For intermittent problems, test stock mode for a meaningful period or enough repetitions to compare behavior. Ideally, also return to Forge-X and confirm that the problem returns.
-
         **If the same problem still occurs after `SKIP_MOD`, it is almost certainly not a Forge-X runtime bug.**
 
   - type: dropdown
