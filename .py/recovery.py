@@ -8,7 +8,6 @@
 
 import argparse
 import base64
-import hashlib
 import heapq
 import http.server
 import json
@@ -32,6 +31,7 @@ TYPER = "/opt/config/mod/.bin/exec/typer"
 CURL = os.environ.get("RECOVERY_CURL", "")
 CURL_CACERT = os.environ.get("RECOVERY_CACERT", "")
 XZ = "/usr/bin/xz"
+SHA256SUM = "/usr/bin/sha256sum"
 DRAW_PIPE = "/tmp/forge-x-recovery-draw"
 EVENT_PIPE = "/tmp/forge-x-recovery-events"
 TOUCH_DEVICE = "/dev/input/guppy"
@@ -97,22 +97,22 @@ VERIFICATION_PROGRESS = re.compile(
 FORGE_X_ASSET = re.compile(
     r"^Adventurer5M(?:Pro)?-ForgeX-[A-Za-z0-9._-]+\.(?:tgz|tar\.xz)$")
 
+GITHUB_RELEASE_ASSET_URL = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^/]+)$")
+
+
 FACTORY_IMAGES = (
     {
         "version": "2.7.8 Factory",
         "name": "Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz",
         "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
                "Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz",
-        "md5": "608cb3830e69d1ff946bf699d69c491f",
-        "pro_md5": "5470a03d8dd7d5bc15140b0922b6e4fe",
     },
     {
         "version": "3.1.3 Factory",
         "name": "Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz",
         "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
                "Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz",
-        "md5": "bda2f882433d57ef0a0c9808b96aaf00",
-        "pro_md5": "ae83c3b5fcb9181aec8fc9e5e821d5f4",
     },
 )
 
@@ -121,6 +121,7 @@ RECOVERY_DRY_IMAGE = {
     "name": "Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz",
     "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
            "Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz",
+    "shared": True,
 }
 
 FULL_RECOVERY_IMAGE = {
@@ -128,6 +129,7 @@ FULL_RECOVERY_IMAGE = {
     "name": "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
     "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
            "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
+    "shared": True,
 }
 
 RECOVERY_IMAGES = (RECOVERY_DRY_IMAGE, FULL_RECOVERY_IMAGE)
@@ -166,11 +168,10 @@ def static_catalog(machine, entries):
         entry = dict(source)
         source_name = entry["name"]
         destination_name = model_name(machine, source_name)
-        if machine == "Adventurer5MPro" and entry.get("pro_md5"):
+        if machine == "Adventurer5MPro" and not entry.get("shared"):
             entry["url"] = entry["url"].replace(source_name, destination_name)
-            entry["md5"] = entry["pro_md5"]
 
-        entry.pop("pro_md5", None)
+        entry.pop("shared", None)
         entry["name"] = destination_name
         result.append(entry)
 
@@ -217,12 +218,36 @@ def curl_error(stderr):
     lines = [line.strip() for line in detail.splitlines() if line.strip()]
     for line in lines:
         if line.startswith("curl:"):
-            return line[:240]
+            return explained_curl_error(line[:240])
 
     if lines:
-        return lines[0][:240]
+        return explained_curl_error(lines[0][:240])
 
     return "HTTPS request failed."
+
+
+def explained_curl_error(line):
+    # The printer has no RTC: right after flashing, or with a stale saved
+    # clock, HTTPS fails its certificate date check before the background
+    # NTP sync completes. Name that cause instead of a bare transport error.
+    if "certificate is not yet valid" in line:
+        return (
+            "The system clock is not synchronized yet, so HTTPS certificate "
+            "checks fail.\n"
+            "Wait about a minute for the background time sync and retry, "
+            "or reboot to the normal system to sync time first.\n"
+            + line)
+
+    return line
+
+
+def asset_sha256(asset):
+    # GitHub publishes release asset integrity as "sha256:<hex>"; assets
+    # uploaded before that feature have no digest and skip the check.
+    digest = str(asset.get("digest") or "")
+    if digest.startswith("sha256:"):
+        return digest[len("sha256:"):].lower()
+    return None
 
 
 def forge_x_catalog(machine, releases):
@@ -256,9 +281,54 @@ def forge_x_catalog(machine, releases):
             "name": destination_name,
             "url": asset.get("browser_download_url"),
             "size": int(asset.get("size") or 0),
+            "sha256": asset_sha256(asset),
         })
 
     return result
+
+
+def release_asset_metadata(url):
+    # Live server-side checksum source: the GitHub releases API publishes
+    # each release asset's current size and SHA-256 digest. Deliberately
+    # best-effort — every failure means "no published checksum", never a
+    # blocked cache check or download.
+    match = GITHUB_RELEASE_ASSET_URL.match(str(url or ""))
+    if not match:
+        return None
+
+    owner, repository, tag, name = match.groups()
+    try:
+        release = request_json(
+            "https://api.github.com/repos/{}/{}/releases/tags/{}"
+            .format(owner, repository, urllib.parse.quote(tag)))
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        return None
+
+    if not isinstance(release, dict):
+        return None
+
+    for asset in release.get("assets") or []:
+        if str(asset.get("name") or "") == name:
+            return {
+                "size": int(asset.get("size") or 0),
+                "sha256": asset_sha256(asset),
+            }
+
+    return None
+
+
+def attach_published_checksums(entry):
+    if entry.get("size") or entry.get("sha256"):
+        return
+
+    metadata = release_asset_metadata(entry.get("url"))
+    if not metadata:
+        return
+
+    if metadata["size"]:
+        entry["size"] = metadata["size"]
+    if metadata["sha256"]:
+        entry["sha256"] = metadata["sha256"]
 
 
 def archive_members(path):
@@ -302,6 +372,42 @@ def validate_archive(path):
     entrypoints = {"forge-x-init", "forge-x-init.sh", "flashforge_init.sh"}
     if not entrypoints.intersection(names):
         raise RuntimeError("Firmware archive has no supported installer.")
+
+
+def file_sha256(path):
+    # The stock Python runtime is minimal (it lacks _lzma, for example), so
+    # SHA-256 is computed by the printer's sha256sum binary.
+    try:
+        result = subprocess.run(
+            [SHA256SUM, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=300, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("Unable to compute SHA-256.") from error
+
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            "sha256sum failed: {}".format(detail[:200] or "unknown error"))
+
+    fields = result.stdout.decode("utf-8", "replace").split()
+    if not fields or len(fields[0]) != 64:
+        raise RuntimeError("sha256sum returned an unexpected result.")
+    return fields[0].lower()
+
+
+def cached_image_matches(path, expected_sha256):
+    # A saved image is reused only while it still validates as a firmware
+    # archive and matches the checksum currently published for it; with no
+    # published checksum the file is trusted by name alone.
+    try:
+        validate_archive(path)
+    except (OSError, RuntimeError):
+        return False
+
+    if expected_sha256 and file_sha256(path) != expected_sha256.lower():
+        return False
+
+    return True
 
 
 def format_bytes(value):
@@ -1649,27 +1755,19 @@ class RecoveryUI:
         if not entry.get("url"):
             raise RuntimeError("Release asset has no download URL.")
 
+        attach_published_checksums(entry)
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
         destination = os.path.join(DOWNLOAD_DIR, entry["name"])
         partial = destination + ".part"
         expected_size = int(entry.get("size") or 0)
-        expected_md5 = entry.get("md5")
+        expected_sha256 = entry.get("sha256")
 
         if os.path.exists(destination):
-            validate_archive(destination)
-            if expected_md5:
-                digest = hashlib.md5()
-                with open(destination, "rb") as existing:
-                    for chunk in iter(lambda: existing.read(256 * 1024), b""):
-                        digest.update(chunk)
-                if digest.hexdigest().lower() != expected_md5.lower():
-                    raise RuntimeError(
-                        "Existing image MD5 does not match the published value.")
-
-            return destination
+            self.view.progress("VERIFYING IMAGE", "Checking the saved image...")
+            if cached_image_matches(destination, expected_sha256):
+                return destination
 
         downloaded = 0
-        digest = hashlib.md5()
         process = None
         try:
             free = shutil.disk_usage(DOWNLOAD_DIR).free
@@ -1722,12 +1820,9 @@ class RecoveryUI:
                     "Downloaded size is incorrect: {} of {} bytes."
                     .format(downloaded, expected_size))
 
-            with open(partial, "rb") as saved:
-                for chunk in iter(lambda: saved.read(256 * 1024), b""):
-                    digest.update(chunk)
-
-            if expected_md5 and digest.hexdigest().lower() != expected_md5.lower():
-                raise RuntimeError("Downloaded image MD5 does not match the published value.")
+            if expected_sha256 and file_sha256(partial) != expected_sha256.lower():
+                raise RuntimeError(
+                    "Downloaded image SHA-256 does not match the published value.")
 
             self.view.progress("VERIFYING IMAGE", "Checking firmware archive...")
             validate_archive(partial)

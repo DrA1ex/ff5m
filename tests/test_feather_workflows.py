@@ -764,6 +764,7 @@ class FileWorkflowTest(unittest.TestCase):
             "zforce_leveling": True,
             "zskip_leveling": False,
             "zmesh": "auto",
+            "zmesh_generated": "auto",
         })
         controller.bed_mesh = StatusObject({"profile_name": "auto"})
         restarts = []
@@ -780,6 +781,48 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(messages[0][2], (
             ("mesh.save", "SAVE & RESTART", "enabled"),
             ("message.ok", "LATER", "enabled")))
+
+    def test_completed_fallback_auto_mesh_offers_save(self):
+        # A pure default print start: no mesh argument was given, no profile
+        # was loaded, and the workflow generated the persistent 'auto' mesh.
+        controller = base_controller("printing")
+        controller.start_print_macro.variables.update({
+            "zforce_leveling": False,
+            "zskip_leveling": False,
+            "zmesh": "",
+            "zmesh_generated": "auto",
+        })
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+        messages = []
+        controller._show_message = lambda message, page, actions=None: (
+            messages.append((message, page, actions)))
+
+        controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
+
+        self.assertEqual(len(messages), 1)
+        self.assertIn("ACTIVE FOR THIS SESSION", messages[0][0])
+        self.assertEqual(messages[0][2], (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled")))
+
+    def test_print_leveling_policy_suppresses_mesh_save_offer(self):
+        # print_leveling re-measures the mesh on every print, so persisting
+        # the freshly generated 'auto' profile would be pointless noise.
+        controller = base_controller("printing")
+        controller.params = type("Params", (), {
+            "variables": {"print_leveling": 1}})()
+        controller.start_print_macro.variables.update({
+            "zmesh_generated": "auto",
+        })
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+        messages = []
+        controller._show_message = lambda message, page, actions=None: (
+            messages.append((message, page, actions)))
+
+        controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
+
+        self.assertEqual(len(messages), 1)
+        self.assertIsNone(messages[0][2])
 
     def test_mesh_save_prompt_buttons_fit_message_dialog(self):
         controller = base_controller()
@@ -823,7 +866,7 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(tuple(body.value.splitlines()), lines)
         self.assertTrue(body.wrap)
 
-    def test_incomplete_forced_auto_mesh_does_not_offer_save(self):
+    def test_incomplete_generated_auto_mesh_does_not_offer_save(self):
         for stats_state in ("cancelled", "error"):
             with self.subTest(stats_state=stats_state):
                 controller = base_controller("printing")
@@ -831,6 +874,7 @@ class FileWorkflowTest(unittest.TestCase):
                     "zforce_leveling": True,
                     "zskip_leveling": False,
                     "zmesh": "auto",
+                    "zmesh_generated": "auto",
                 })
                 controller.bed_mesh = StatusObject({"profile_name": "auto"})
                 restarts = []
@@ -846,16 +890,18 @@ class FileWorkflowTest(unittest.TestCase):
                 self.assertEqual(len(messages), 1)
                 self.assertIsNone(messages[0][2])
 
-    def test_completed_print_does_not_offer_save_without_active_forced_auto(self):
+    def test_completed_print_does_not_offer_save_without_generated_auto(self):
         cases = (
-            ({"zforce_leveling": False, "zskip_leveling": False,
-              "zmesh": "auto"}, "auto"),
-            ({"zforce_leveling": True, "zskip_leveling": True,
-              "zmesh": "auto"}, "auto"),
+            # A loaded or reused 'auto' profile was not measured this print.
+            ({"zmesh_generated": ""}, "auto"),
+            # A temporary mesh (KAMP, forced rebuild, stock fallback) is never
+            # a persistence candidate even while active.
+            ({"zmesh_generated": "default"}, "auto"),
+            # A generated mesh that is no longer the active profile.
+            ({"zmesh_generated": "auto"}, ""),
+            # Legacy forced-leveling variables alone do not trigger the offer.
             ({"zforce_leveling": True, "zskip_leveling": False,
-              "zmesh": ""}, "default"),
-            ({"zforce_leveling": True, "zskip_leveling": False,
-              "zmesh": "auto"}, ""),
+              "zmesh": "auto"}, "auto"),
         )
         for variables, profile_name in cases:
             with self.subTest(variables=variables, profile_name=profile_name):
