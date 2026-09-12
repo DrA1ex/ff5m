@@ -7,13 +7,16 @@
 from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 import logging
+import math
 
 try:
-    from .ui import Page, PrintState
+    from .ff5m_ui.screen import ScreenPage as Page
+    from .ff5m_ui.print_state import PrintState
     from .ff5m_ui.z_offset import runtime as z_offset_ui
     from .ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
 except (ImportError, ValueError):
-    from ui import Page, PrintState
+    from ff5m_ui.screen import ScreenPage as Page
+    from ff5m_ui.print_state import PrintState
     from ff5m_ui.z_offset import runtime as z_offset_ui
     from ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
 
@@ -31,6 +34,16 @@ PRESSURE_WARN = 800.0
 PRESSURE_REARM = 600.0
 SAFE_Z_CLEARANCE = 5.0
 SAFE_Z_ADJUST_STEP = 1.0
+SAFE_Z_MINIMUM = 1.0
+SAFE_Z_MAXIMUM = 220.0
+
+
+def validate_safe_z(value):
+    value = float(value)
+    if (not math.isfinite(value) or value < SAFE_Z_MINIMUM
+            or value > SAFE_Z_MAXIMUM):
+        raise ValueError("Safe Z must be from 1 to 220 mm")
+    return value
 
 
 def calculate_z_offset(paper_contact_z, probe_trigger_z,
@@ -113,7 +126,7 @@ class ZCalibrationSession:
         self.original_mesh_profile = str(mesh_profile or "")
         self.probe_z_offset = float(probe_z_offset)
         self.load_zoffset = bool(load_zoffset)
-        self.safe_z = abs(float(safe_z))
+        self.safe_z = validate_safe_z(safe_z)
 
     def clear(self):
         self.__init__()
@@ -126,21 +139,29 @@ class ZCalibrationSession:
 
     def set_safe_z_trigger(self, trigger_z, clearance=SAFE_Z_CLEARANCE):
         self.safe_z_trigger = float(trigger_z)
-        self.safe_z_candidate = self.safe_z_trigger + abs(float(clearance))
+        if not math.isfinite(self.safe_z_trigger):
+            raise ValueError("Probe trigger height must be finite")
+        candidate = self.safe_z_trigger + abs(float(clearance))
+        self.safe_z_candidate = validate_safe_z(max(SAFE_Z_MINIMUM, candidate))
         return self.safe_z_candidate
 
     def adjust_safe_z(self, delta):
         if self.safe_z_candidate is None:
             raise ValueError("Probe the bed before adjusting Safe Z")
-        minimum = self.safe_z_trigger + SAFE_Z_ADJUST_STEP
-        self.safe_z_candidate = max(
-            minimum, self.safe_z_candidate + float(delta))
+        delta = float(delta)
+        if not math.isfinite(delta):
+            raise ValueError("Safe Z adjustment must be finite")
+        minimum = max(
+            SAFE_Z_MINIMUM, self.safe_z_trigger + SAFE_Z_ADJUST_STEP)
+        self.safe_z_candidate = min(
+            SAFE_Z_MAXIMUM,
+            max(minimum, self.safe_z_candidate + delta))
         return self.safe_z_candidate
 
     def accept_safe_z(self):
         if self.safe_z_candidate is None:
             raise ValueError("Probe the bed before saving Safe Z")
-        self.safe_z = round_mm(self.safe_z_candidate)
+        self.safe_z = round_mm(validate_safe_z(self.safe_z_candidate))
         return self.safe_z
 
     def choose_zone(self, key):
@@ -261,8 +282,8 @@ class FeatherZCalibrationMixin:
     def _safe_z(self):
         session = getattr(self, "z_calibration", None)
         if session is not None and session.active:
-            return abs(float(session.safe_z))
-        return abs(float(self._setting("safe_z", 10.0)))
+            return validate_safe_z(session.safe_z)
+        return validate_safe_z(self._setting("safe_z", 10.0))
 
     def _safe_z_preparation_height(self):
         return self._safe_z() * 2.0

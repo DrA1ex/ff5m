@@ -43,6 +43,20 @@ class ZCalibrationStateTest(unittest.TestCase):
 
         self.assertAlmostEqual(session.adjust_safe_z(-100.0), 1.2)
 
+    def test_safe_z_rejects_invalid_state_and_clamps_adjustment_to_axis_margin(self):
+        for value in (0.999, 220.001, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                session = ZCAL.ZCalibrationSession()
+                with self.assertRaisesRegex(ValueError, "Safe Z"):
+                    session.begin(0.0, None, "", -0.25, False, safe_z=value)
+
+        session = ZCAL.ZCalibrationSession()
+        session.begin(0.0, None, "", -0.25, False, safe_z=10.0)
+        session.set_safe_z_trigger(0.0)
+        self.assertEqual(session.adjust_safe_z(1000.0), 220.0)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            session.adjust_safe_z(float("nan"))
+
     def test_formula_supports_negative_configured_probe_offset(self):
         self.assertAlmostEqual(
             ZCAL.calculate_z_offset(0.125, -0.500, -0.250), 0.375)

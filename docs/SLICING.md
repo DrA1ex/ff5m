@@ -28,6 +28,17 @@ End Gcode
 END_PRINT
 ```
 
+> [!CAUTION]
+> Forge-X uses a bed-centered X/Y coordinate system. In **Printer Settings →
+> Basic information → Printable area**, set the four corners to `-110x-110`,
+> `110x-110`, `110x110`, and `-110x110`. Replace the slicer's complete default
+> start block; do not leave `G28` or `G92 X0 Y0 Z0` ahead of the commands above.
+> A legacy `0…220` profile combined with that `G92` shifts a slicer move near
+> `X100 Y100` to a machine move near `X210 Y210`, which Klipper rejects as out
+> of range. Files sliced with the old profile must be re-sliced after both
+> settings are corrected; editing the profile does not change G-code files
+> that were already generated.
+
 ### Configuring Moonraker / Klipper connection
 
 Forge-X connects to the printer through Moonraker, so OrcaSlicer should be configured to upload regular G-code files directly to the printer.
