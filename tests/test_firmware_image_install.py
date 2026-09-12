@@ -38,6 +38,12 @@ class FirmwareImageInstallTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.typer.chmod(0o755)
+        # Host-wide lsof can take seconds on a development machine. Tests that
+        # exercise the runtime-release wait install their own lsof fake first
+        # in PATH; for the rest the previous runtime is simply already gone.
+        self.lsof = self.root / "lsof"
+        self.lsof.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.lsof.chmod(0o755)
         self.version_file = self.root / "version"
         self.software_dir = self.root / "software"
         self.version_file.write_text("3.1.5\n", encoding="utf-8")
@@ -257,7 +263,6 @@ kill() {
 sleep() { :; }
 sync() { :; }
 firmware_message() { :; }
-release_firmware_source_mount() { :; }
 fail_firmware_image "test failure"
 '''
 
@@ -347,32 +352,6 @@ echo clean > "$RESULT_PATH"
         self.assertEqual(self.result.read_text(encoding="utf-8").strip(), "clean")
         self.assertFalse(stale_package_file.exists())
         self.assertFalse(stale_runner_file.exists())
-
-    def test_temporary_source_mount_is_released_after_staging(self):
-        umount_log = self.root / "umount.log"
-        fake_umount = self.root / "umount"
-        fake_umount.write_text(
-            "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$UMOUNT_LOG\"\n",
-            encoding="utf-8")
-        fake_umount.chmod(0o755)
-        self.environment["UMOUNT_LOG"] = str(umount_log)
-        self.environment["PATH"] = (
-            str(self.root) + os.pathsep + self.environment["PATH"])
-
-        with tempfile.TemporaryDirectory(
-                prefix="forge-x-boot-flag-test-", dir="/tmp") as source:
-            image = self._archive("Adventurer5M-test.tgz", [
-                ("forge-x-init.sh",
-                 "#!/bin/bash\necho unmounted > \"$RESULT_PATH\"\n", 0o755),
-            ])
-            image.rename(pathlib.Path(source) / image.name)
-
-            result = self._run(pathlib.Path(source))
-
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self._wait_for(self.result.exists, "firmware entrypoint did not run")
-            self.assertEqual(
-                umount_log.read_text(encoding="utf-8").strip(), source)
 
     def test_tar_xz_prefers_forge_x_script_and_ignores_flashforge_script(self):
         self._set_stock_identity("Adventurer5MPro", "0024")

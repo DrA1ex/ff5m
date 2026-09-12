@@ -114,6 +114,20 @@ gcode:
         with self.assertRaisesRegex(MacroConfigError, "invalid literal"):
             load_macro(self.path, "BAD")
 
+    def test_renders_sections_other_than_gcode_macro(self):
+        self.path.write_text(
+            """[delayed_gcode BOOT_TASK]
+initial_duration: 1
+gcode:
+  BED_MESH_CLEAR
+  BED_MESH_PROFILE LOAD=auto
+""", encoding="utf-8")
+
+        result = render_macro(self.path, "BOOT_TASK", section="delayed_gcode")
+
+        self.assertEqual(result.commands, (
+            "BED_MESH_CLEAR", "BED_MESH_PROFILE LOAD=auto"))
+
 
 if __name__ == "__main__":
     unittest.main()
