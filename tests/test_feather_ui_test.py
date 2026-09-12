@@ -459,6 +459,10 @@ class RunnerContractTest(unittest.TestCase):
                 "monotonic": lambda self: 10.0,
             })(),
             "toolhead": toolhead,
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(position)},
+            })(),
             "_feather_move_limits": lambda self, status: (
                 (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
             "_start_touch_action": dispatch,
@@ -476,6 +480,46 @@ class RunnerContractTest(unittest.TestCase):
             dispatched, [SCENARIOS.move_actions.Y_PLUS.wire_id])
         self.assertEqual(feature.scenarios.motion_expected, 110.0)
 
+    def test_motion_step_uses_gcode_position_with_active_mesh(self):
+        machine = [110.0, 110.0, 220.0]
+        gcode = [110.0, 110.0, 219.943137]
+        dispatched = []
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 10.0,
+            })(),
+            "toolhead": type("Toolhead", (), {
+                "get_status": lambda self, eventtime: {
+                    "position": tuple(machine), "homed_axes": "xyz",
+                },
+            })(),
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(gcode)},
+            })(),
+            "_feather_move_limits": lambda self, status: (
+                (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
+            "_start_touch_action": (
+                lambda self, action: dispatched.append(action)),
+            "renderer": type("Renderer", (), {
+                "_buttons": {SCENARIOS.move_actions.Z_MINUS.wire_id: ()},
+                "_toggles": {}, "_hitboxes": {},
+            })(),
+        })()
+        feature = UI_TEST.UITestRun(host)
+
+        feature.scenarios._motion_step("z", 1)
+
+        # The bed mesh keeps the machine Z 0.056863 above the G-code Z, so
+        # the outward jog and its completion must both stay in G-code space.
+        self.assertEqual(
+            dispatched, [SCENARIOS.move_actions.Z_MINUS.wire_id])
+        self.assertEqual(feature.scenarios.motion_expected, 218.943137)
+        self.assertFalse(feature.scenarios._motion_reached("z"))
+        gcode[2] = 218.943137
+        machine[2] = 219.0
+        self.assertTrue(feature.scenarios._motion_reached("z"))
+
     def test_motion_step_waits_for_delayed_toolhead_update(self):
         position = [110.006, 109.0, 220.0]
         dispatched = []
@@ -489,6 +533,10 @@ class RunnerContractTest(unittest.TestCase):
                 "monotonic": lambda self: 10.0,
             })(),
             "toolhead": toolhead,
+            "gcode_move": type("GcodeMove", (), {
+                "get_status": lambda self, eventtime: {
+                    "gcode_position": tuple(position)},
+            })(),
             "_feather_move_limits": lambda self, status: (
                 (-110.0, 110.0), (-110.0, 110.0), (0.0, 220.0)),
             "_start_touch_action": (
@@ -822,6 +870,34 @@ class RunnerContractTest(unittest.TestCase):
                 "measure-ready", "input", "warning", "result",
                 "exit-warning", "saved")},
             {label for label in captures if label.startswith("ui-extruder-")})
+
+    def test_repeat_file_confirmation_snapshots_cover_both_option_states(self):
+        rendered = []
+        shown = []
+        host = type("Host", (), {
+            "page": FEATHER.ScreenPage.FILE_CONFIRM,
+            "selected_file": {"name": "part.gcode"},
+            "_render_file_confirm": lambda self: rendered.append((
+                self.file_confirm_repeat,
+                self.file_confirm_rebuild_mesh,
+                self.file_confirm_auto_mesh)),
+            "_show_page": lambda self, page: shown.append(page),
+        })()
+        run = type("Run", (), {"host": host})()
+        scenarios = SCENARIOS.ScenarioCatalog(run)
+
+        scenarios._render_repeat_file_confirm(False)
+        scenarios._render_repeat_file_confirm(True)
+        scenarios._return_from_file_confirm()
+
+        self.assertEqual(rendered, [
+            (True, False, False),
+            (True, True, True),
+        ])
+        self.assertFalse(host.file_confirm_repeat)
+        self.assertFalse(host.file_confirm_rebuild_mesh)
+        self.assertFalse(host.file_confirm_auto_mesh)
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_BROWSER])
 
     def test_every_ui_capture_has_a_visual_review_expectation(self):
         expectations = json.loads(

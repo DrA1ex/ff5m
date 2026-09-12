@@ -39,6 +39,11 @@ class ScenarioController(EXTRUDER_CAL.FeatherExtruderCalibrationMixin,
                          FEATHER.FeatherScreen):
     """Test harness for the extracted extruder scenario."""
 
+    boot_screen_held = False
+    touch_available = None
+    touch_warning_visible = False
+    system_shutdown_active = False
+
 
 class ExtruderCalculationTest(unittest.TestCase):
     def test_formula_rounding_and_feed_direction(self):

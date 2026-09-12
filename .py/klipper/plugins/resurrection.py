@@ -55,11 +55,14 @@ class Resurrector:
         self._resume_pending = False
         self._checkpoint_cache = None
         self._checkpoint_cache_loaded = False
+        self._recovery_active = False
         self._worker = None
         self._worker_cancel = None
         self._timer = None
 
         self.printer.register_event_handler("klippy:ready", self._init)
+        self.printer.register_event_handler(
+            "virtual_sdcard:reset_file", self._handle_virtual_sd_reset)
 
         self.gcode.register_command("RESURRECT", self.cmd_RESURRECT)
         self.gcode.register_command("RESURRECT_ABORT", self.cmd_RESURRECT_ABORT)
@@ -74,9 +77,14 @@ class Resurrector:
         The full recovery payload contains an absolute path and toolhead
         coordinates.  Neither is part of the public status contract.
         """
+        restored = (self._recovery_active
+                    and self.print_stats.get_status(eventtime).get("state")
+                    in {"printing", "paused"})
+
         result = {
             "state": self.state.name.lower(),
             "available": self.state == ResurrectorState.RESURRECTION,
+            "restored": restored,
             "supports_pause_markers": True,
             "filename": "",
             "progress": 0.0,
@@ -87,7 +95,7 @@ class Resurrector:
         if not result["available"] or not os.path.isfile(self.file_path):
             return result
         try:
-            if not getattr(self, "_checkpoint_cache_loaded", False):
+            if not self._checkpoint_cache_loaded:
                 with open(self.file_path, "r") as stream:
                     self._checkpoint_cache = json.load(stream)
                 self._checkpoint_cache_loaded = True
@@ -221,9 +229,18 @@ class Resurrector:
         return eventtime + self.dump_time
 
     def _change_state(self, new_state):
+        if new_state in {
+                ResurrectorState.IDLE,
+                ResurrectorState.RESURRECTION,
+                ResurrectorState.DESTROYED,
+        }:
+            self._recovery_active = False
         if self.state != new_state:
             logging.info(f"[resurrection] Change state: {self.state.name} -> {new_state.name}")
             self.state = new_state
+
+    def _handle_virtual_sd_reset(self):
+        self._recovery_active = False
 
     def _print_has_started(self):
         return bool(self.start_print_macro.variables["print_started"])
@@ -266,8 +283,8 @@ class Resurrector:
         self._dump(eventtime)
 
     def _cancel_worker(self):
-        worker = getattr(self, "_worker", None)
-        cancel_event = getattr(self, "_worker_cancel", None)
+        worker = self._worker
+        cancel_event = self._worker_cancel
         if worker is None:
             return
         if cancel_event is not None:
@@ -549,6 +566,9 @@ class Resurrector:
                 return
 
             self.virtual_sdcard.load_file(gcmd, state["_relative_path"])
+            # load_file resets the previous virtual-SD job. Claim the newly
+            # loaded job only after that reset has completed successfully.
+            self._recovery_active = True
             file_loaded = True
             self._change_state(ResurrectorState.PREPARING)
 

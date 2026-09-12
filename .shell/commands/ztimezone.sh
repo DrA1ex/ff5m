@@ -9,8 +9,8 @@
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 export PATH
 
-ZONEINFO_ROOT=${ZONEINFO_ROOT:-/usr/share/zoneinfo}
-LOCALTIME_PATH=${LOCALTIME_PATH:-/etc/localtime}
+ZONEINFO_ROOT=/usr/share/zoneinfo
+LOCALTIME_PATH=/etc/localtime
 
 error() {
     echo "ERROR=$1"

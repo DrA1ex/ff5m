@@ -5,81 +5,32 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import errno
-import importlib
 import logging
 import os
 import signal
 import subprocess
 import time
 
-try:
-    from .ui import Page, PrintState, ThemeColor, ThemeRole
-    from .feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
-    from .feather_files import FileEntry, scan_gcode_files
-    from .feather_pagination import Pagination, pagination_footer
-except (ImportError, ValueError):
-    from ui import Page, PrintState, ThemeColor, ThemeRole
-    from feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
-    from feather_files import FileEntry, scan_gcode_files
-    from feather_pagination import Pagination, pagination_footer
+from ui import ThemeColor, ThemeRole
+from ui.lazy import LazyModule
+from ff5m_ui.screen import ScreenPage
+from ff5m_ui.print_state import PrintState
+
+from feather_keyboard import TEXT_KEYBOARD, is_keyboard_action
+from feather_files import FileEntry, scan_gcode_files
+from feather_pagination import Pagination, pagination_footer
+from feather_network_ui import FeatherNetworkPagesMixin
 
 
-class _LazyModule:
-    """Import a UI module only when its screen is first used."""
-
-    __slots__ = ("_suffix", "_module")
-
-    def __init__(self, suffix):
-        self._suffix = suffix
-        self._module = None
-
-    def _load(self):
-        if self._module is None:
-            name = ("%s.%s" % (__package__, self._suffix)
-                    if __package__ else self._suffix)
-            self._module = importlib.import_module(name)
-        return self._module
-
-    def __getattr__(self, name):
-        return getattr(self._load(), name)
-
-
-home_page = _LazyModule("ff5m_ui.home.page")
-home_state = _LazyModule("ff5m_ui.home.state")
-
-
-class _LazyModUI:
-    """Do not import Mod Settings helpers before Settings is opened."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            name = ("%s.feather_mod_settings" % __package__
-                    if __package__ else "feather_mod_settings")
-            self._module = importlib.import_module(name)
-        return self._module
-
-    def __getattr__(self, name):
-        return getattr(self._load(), name)
-
-
-mod_ui = _LazyModUI()
-
+home_page = LazyModule("ff5m_ui.home.page")
+home_state = LazyModule("ff5m_ui.home.state")
+mod_ui = LazyModule("feather_mod_settings")
 
 FILE_ROWS = 5
-NETWORK_HELPER = "/root/printer_data/scripts/commands/znetwork.sh"
-NETWORK_TIMEOUTS = {
-    "scan": 15.0,
-    "wifi": 45.0,
-    "ethernet": 30.0,
-    "status": 5.0,
-    "status-background": 5.0,
-}
-NETWORK_ROWS = 5
+FILE_CACHE_TTL = 5.0
 
 
-class FeatherPagesMixin:
+class FeatherPagesMixin(FeatherNetworkPagesMixin):
     def _render_home(self):
         return home_page.render(self)
 
@@ -128,36 +79,133 @@ class FeatherPagesMixin:
                                              font="JetBrainsMono 12pt")
         self.renderer.send(commands)
 
-    def _load_file_entries(self):
+    def _normalize_file_source(self):
+        source = getattr(self, "file_source", "internal")
+        usb_storage = getattr(self, "usb_storage", None)
+        if source == "usb" and (
+                usb_storage is None or not usb_storage.available):
+            source = "internal"
+            self.file_source = source
+            self.file_page = 0
+        return source
+
+    def _build_file_scan_task(self, source):
         root = self.virtual_sdcard.sdcard_dirname
         history = getattr(self, "print_history", None)
+        history_snapshot = dict(getattr(history, "timestamps", {}))
         usb_storage = getattr(self, "usb_storage", None)
-        if getattr(self, "file_source", "internal") == "usb":
-            if usb_storage is None or not usb_storage.available:
-                self.file_source = "internal"
-                self.file_page = 0
-            else:
+        if source == "usb":
+            mount_point = usb_storage.mount_point
+            history_prefix = os.path.relpath(mount_point, root)
+
+            def scan_usb():
                 try:
-                    self.file_entries = scan_gcode_files(
-                        usb_storage.mount_point, history,
-                        history_prefix=os.path.relpath(
-                            usb_storage.mount_point, root))
+                    return scan_gcode_files(
+                        mount_point, history_snapshot,
+                        history_prefix=history_prefix)
                 except RuntimeError as exc:
                     # Removable media can disappear between the monitor tick
                     # and directory traversal. Keep the UI responsive; the
                     # next tick will remove the USB entry if its mount is gone.
                     logging.info(
                         "[feather_screen] USB file scan deferred: %s", exc)
-                    self.file_entries = []
-                return
+                    return []
+            return scan_usb
 
         excluded = ((usb_storage.mount_point,)
                     if usb_storage is not None else ())
-        self.file_entries = scan_gcode_files(
-            root, history, excluded_paths=excluded)
-        if usb_storage is not None and usb_storage.available:
-            self.file_entries.insert(0, FileEntry(
-                "USB", usb_storage.mount_point, directory=True))
+        usb_available = bool(
+            usb_storage is not None and usb_storage.available)
+        usb_mount_point = (usb_storage.mount_point
+                           if usb_storage is not None else None)
+
+        def scan_internal():
+            entries = scan_gcode_files(
+                root, history_snapshot, excluded_paths=excluded)
+            if usb_available:
+                entries.insert(0, FileEntry(
+                    "USB", usb_mount_point, directory=True))
+            return entries
+        return scan_internal
+
+    def _load_file_entries(self):
+        """Synchronous compatibility helper for tests and maintenance tools."""
+        source = self._normalize_file_source()
+        self.file_entries = self._build_file_scan_task(source)()
+
+    def _invalidate_file_entries(self, source=None):
+        cache = getattr(self, "file_entry_cache", None)
+        if cache is None:
+            return
+        loaded_at = getattr(self, "file_entry_loaded_at", None)
+        if source is None:
+            cache.clear()
+            if loaded_at is not None:
+                loaded_at.clear()
+        else:
+            cache.pop(source, None)
+            if loaded_at is not None:
+                loaded_at.pop(source, None)
+
+    def _expire_file_entries_if_stale(self, source):
+        cache = getattr(self, "file_entry_cache", {})
+        if source not in cache:
+            return True
+        loaded_at = getattr(self, "file_entry_loaded_at", {})
+        timestamp = loaded_at.get(source)
+        now = self.reactor.monotonic()
+        if timestamp is None or now - timestamp >= FILE_CACHE_TTL:
+            self._invalidate_file_entries(source)
+            return True
+        return False
+
+    def _render_file_loading(self, source):
+        self.file_scan_loading = True
+        self.file_scan_source = source
+        self.file_scan_phase = 0
+        label = ("LOADING USB FILES..." if source == "usb"
+                 else "LOADING PRINT FILES...")
+        self.renderer.loader(label, self.file_scan_phase)
+
+    def _start_file_scan(self, source):
+        if (getattr(self, "file_scan_loading", False)
+                and getattr(self, "file_scan_source", None) == source
+                and getattr(self, "file_scan_token", 0) > 0):
+            return
+        self.file_scan_token = getattr(self, "file_scan_token", 0) + 1
+        token = self.file_scan_token
+        self._render_file_loading(source)
+        task = self._build_file_scan_task(source)
+        submitted = self.file_scan_worker.submit(
+            task, lambda entries, error:
+            self._finish_file_scan(token, source, entries, error))
+        if not submitted:
+            self._finish_file_scan(
+                token, source, None, RuntimeError("File scanner stopped"))
+
+    def _finish_file_scan(self, token, source, entries, error):
+        if token != getattr(self, "file_scan_token", 0):
+            return
+        self.file_scan_loading = False
+        self.file_scan_source = None
+        if error is not None:
+            logging.error(
+                "[feather_screen] unable to scan %s files: %s",
+                source, error)
+            entries = []
+            message = "Unable to load USB files" if source == "usb" \
+                else "Unable to load print files"
+        else:
+            message = None
+        self.file_entry_cache[source] = entries
+        self.file_entry_loaded_at[source] = self.reactor.monotonic()
+        if source == getattr(self, "file_source", "internal"):
+            self.file_entries = entries
+        if (self.page == ScreenPage.FILE_BROWSER
+                and source == getattr(self, "file_source", "internal")):
+            self._render_file_browser()
+            if message is not None:
+                self._toast(message)
 
     def _record_current_print(self):
         history = getattr(self, "print_history", None)
@@ -170,19 +218,35 @@ class FeatherPagesMixin:
             return
         root = virtual_sdcard.sdcard_dirname
         if history.record(root, path, time.time()):
+            self.last_job_path = os.path.relpath(path, root).replace(
+                os.sep, "/")
             self.last_job_name = os.path.basename(path)
+            self._invalidate_file_entries()
 
     def _render_file_browser(self):
-        self._load_file_entries()
+        # Isolated tests and third-party extensions that construct the mixin
+        # without FeatherScreen keep the old synchronous helper behavior.
+        if getattr(self, "file_scan_worker", None) is None:
+            self._load_file_entries()
+            return self._render_file_entries()
+        source = self._normalize_file_source()
+        if source not in self.file_entry_cache:
+            if not (getattr(self, "file_scan_loading", False)
+                    and getattr(self, "file_scan_source", None) == source):
+                self._start_file_scan(source)
+            return
+        self.file_entries = self.file_entry_cache[source]
+        self._render_file_entries()
+
+    def _render_file_entries(self):
         pagination = Pagination(self.file_entries, self.file_page, FILE_ROWS)
         self.file_page = pagination.page
         usb_page = getattr(self, "file_source", "internal") == "usb"
         title = "USB files" if usb_page else "Print files"
         commands = self.renderer.begin_page(title, back=True)
-        if usb_page:
-            commands += self.renderer.button(
-                "file.refresh", 640, 7, 146, 46, "REFRESH",
-                font="JetBrainsMono Bold 8pt")
+        commands += self.renderer.button(
+            "file.refresh", 640, 7, 146, 46, "REFRESH",
+            font="JetBrainsMono Bold 8pt")
         rows = pagination.visible
         for index, entry in enumerate(rows):
             y = 62 + index * 65
@@ -207,7 +271,22 @@ class FeatherPagesMixin:
             self.file_page += 1
             self._render_file_browser()
         elif action == "file.refresh":
+            self.file_page = 0
+            self._invalidate_file_entries(
+                getattr(self, "file_source", "internal"))
             self._render_file_browser()
+        elif action == "file.mesh.rebuild":
+            self.file_confirm_rebuild_mesh = not bool(getattr(
+                self, "file_confirm_rebuild_mesh", False))
+            if not self.file_confirm_rebuild_mesh:
+                self.file_confirm_auto_mesh = False
+            self._render_file_confirm()
+        elif action == "file.mesh.auto":
+            if not getattr(self, "file_confirm_rebuild_mesh", False):
+                return
+            self.file_confirm_auto_mesh = not bool(getattr(
+                self, "file_confirm_auto_mesh", False))
+            self._render_file_confirm()
         elif action == "file.start":
             self._start_selected_file()
         elif action.startswith("file.item"):
@@ -222,22 +301,80 @@ class FeatherPagesMixin:
                 self.file_source = "usb"
                 self.file_page = 0
                 self.selected_file = None
+                self._expire_file_entries_if_stale("usb")
                 self._render_file_browser()
                 return
             self.selected_file = entry
-            self._show_page(Page.FILE_CONFIRM)
+            self.file_confirm_return_page = ScreenPage.FILE_BROWSER
+            self.file_confirm_repeat = False
+            self.file_confirm_rebuild_mesh = False
+            self.file_confirm_auto_mesh = False
+            self._show_page(ScreenPage.FILE_CONFIRM)
+
+    def _open_last_job(self):
+        self._require_idle()
+        relative = getattr(self, "last_job_path", None)
+        if not relative:
+            history = getattr(self, "print_history", None)
+            relative = (history.latest_path()
+                        if history is not None else None)
+        if not relative:
+            raise RuntimeError("No previous print is available")
+        root = os.path.realpath(self.virtual_sdcard.sdcard_dirname)
+        path = os.path.realpath(os.path.join(root, relative))
+        if not os.path.isfile(path) or not path.startswith(root + os.sep):
+            raise RuntimeError("The last print file is no longer available")
+        stat = os.stat(path)
+        self.last_job_path = relative
+        self.last_job_name = os.path.basename(relative)
+        self.selected_file = FileEntry(
+            self.last_job_name, path, size=stat.st_size, mtime=stat.st_mtime)
+        self.file_confirm_return_page = ScreenPage.IDLE_HOME
+        self.file_confirm_repeat = True
+        self.file_confirm_rebuild_mesh = False
+        self.file_confirm_auto_mesh = False
+        self._show_page(ScreenPage.FILE_CONFIRM)
 
     def _render_file_confirm(self):
         entry = self.selected_file
-        commands = self.renderer.begin_page("Start print?", back=True)
+        repeat = getattr(self, "file_confirm_repeat", False)
+        rebuild_mesh = bool(getattr(
+            self, "file_confirm_rebuild_mesh", False))
+        auto_mesh = bool(getattr(self, "file_confirm_auto_mesh", False))
+        rebuild_hint = (
+            "KAMP ENABLED - FULL MESH WILL RUN INSTEAD"
+            if bool(self._setting("use_kamp", False))
+            else "FOR THIS PRINT ONLY")
+        commands = self.renderer.begin_page(
+            "Print again?" if repeat else "Start print?", back=True)
         commands.append(self.renderer.text(
-            400, 150, entry["name"], ThemeColor.BRIGHT, "Roboto Bold 16pt", "center",
-            "middle", max_width=720, truncate=True))
-        commands.append(self.renderer.text(400, 220, self._format_size(entry["size"]),
-                                           ThemeColor.PRIMARY, "Roboto 12pt", "center", "middle"))
-        commands += self.renderer.button("file.start", 220, 310, 360, 100,
-                                         "START PRINT", font="Roboto Bold 16pt")
+            400, 96, entry["name"], ThemeColor.BRIGHT, "Roboto Bold 16pt",
+            "center", "middle", max_width=720, truncate=True))
+        commands.append(self.renderer.text(
+            400, 140, self._format_size(entry["size"]), ThemeColor.PRIMARY,
+            "Roboto 12pt", "center", "middle"))
+        commands += self._file_confirm_option(
+            "file.mesh.rebuild", 170, "REBUILD BED MESH",
+            rebuild_hint, rebuild_mesh)
+        if rebuild_mesh:
+            commands += self._file_confirm_option(
+                "file.mesh.auto", 238, "SAVE MESH FOR FUTURE PRINTS",
+                "YOU'LL BE ASKED AFTER PRINT", auto_mesh)
+        commands += self.renderer.button("file.start", 220, 316, 360, 96,
+                                         "PRINT AGAIN" if repeat else "START PRINT",
+                                         font="Roboto Bold 16pt")
         self.renderer.send(commands)
+
+    def _file_confirm_option(self, action, y, label, subtitle, active):
+        commands = [
+            self.renderer.text(44, y + 12, label, ThemeColor.PRIMARY,
+                               "JetBrainsMono Bold 8pt"),
+            self.renderer.text(44, y + 34, subtitle, ThemeColor.DIM,
+                               "JetBrainsMono 8pt"),
+        ]
+        commands += self.renderer.toggle(
+            action, 679, y + 5, 76, 38, active)
+        return commands
 
     def _start_selected_file(self):
         self._require_idle()
@@ -249,9 +386,28 @@ class FeatherPagesMixin:
         if any(ord(ch) < 32 for ch in relpath):
             raise RuntimeError("Unsupported filename")
         escaped = relpath.replace("\\", "\\\\").replace('"', '\\"')
+        self.last_job_path = relpath.replace(os.sep, "/")
         self.last_job_name = os.path.basename(relpath)
-        self._run_script(
-            'SDCARD_PRINT_FILE FILENAME="%s"' % escaped)
+        rebuild_mesh = bool(getattr(
+            self, "file_confirm_rebuild_mesh", False))
+        auto_mesh = bool(getattr(
+            self, "file_confirm_auto_mesh", False) and rebuild_mesh)
+        # The virtual-SD timer cannot consume the file until this script
+        # yields. Staging after file acceptance avoids a stale one-print choice
+        # when SDCARD_PRINT_FILE rejects the path or an already-active job.
+        force_leveling = "True" if rebuild_mesh else "None"
+        # G-code parsing consumes the outer quotes; literal_eval() in
+        # SET_GCODE_VARIABLE must still receive the inner quoted string.
+        mesh_name = "'\"auto\"'" if auto_mesh else "None"
+        self._run_script("\n".join((
+            'SDCARD_PRINT_FILE FILENAME="%s"' % escaped,
+            "SET_GCODE_VARIABLE MACRO=START_PRINT "
+            "VARIABLE=feather_force_leveling VALUE=%s" % force_leveling,
+            "SET_GCODE_VARIABLE MACRO=START_PRINT "
+            "VARIABLE=feather_mesh_name VALUE=%s" % mesh_name,
+        )))
+        self.file_confirm_rebuild_mesh = False
+        self.file_confirm_auto_mesh = False
 
     def _render_print_page(self):
         paused = self.print_state == PrintState.PAUSED
@@ -268,7 +424,9 @@ class FeatherPagesMixin:
                                            "left", "middle", max_width=750,
                                            truncate=True))
         commands.append(self.renderer.text(
-            25, 110, self.print_status_text, ThemeColor.TEXT, "JetBrainsMono 8pt",
+            25, 110, self._display_status_text(
+                self.reactor.monotonic()), ThemeColor.TEXT,
+            "JetBrainsMono 8pt",
             "left", "middle", max_width=750, truncate=True))
         commands += [
             self.renderer.text(25, 142, "PROGRESS", ThemeColor.PRIMARY,
@@ -315,14 +473,14 @@ class FeatherPagesMixin:
     def _print_controls_ready(self):
         if getattr(self, "print_state", None) == PrintState.PREPARING:
             return False
-        flow = self._print_flow_status()
-        started = bool(getattr(getattr(
-            self, "start_print_macro", None), "variables", {}).get(
-                "print_started", False))
-        return not flow["active"] or started
+        start = getattr(self, "start_print_macro", None)
+        if start is None:
+            return True
+        return bool(getattr(start, "variables", {}).get(
+            "print_started", False))
 
     def _update_print_progress(self, eventtime):
-        if self.page not in (Page.PRINTING, Page.PAUSED):
+        if self.page not in (ScreenPage.PRINTING, ScreenPage.PAUSED):
             return
         controls_ready = self._print_controls_ready()
         if controls_ready != getattr(
@@ -340,6 +498,10 @@ class FeatherPagesMixin:
                               total if total is not None else "?")
         toolhead = self.toolhead.get_status(eventtime)
         position = toolhead.get("position", (0.0, 0.0, 0.0, 0.0))
+        motion_report = getattr(self, "motion_report", None)
+        if motion_report is not None:
+            position = motion_report.get_status(eventtime).get(
+                "live_position", position)
         height = float(position[2])
         values = (self._clock_duration(elapsed),
                   self._clock_duration(remaining), layer, round(height, 2))
@@ -371,11 +533,22 @@ class FeatherPagesMixin:
     def _print_progress(self, eventtime, stats=None):
         stats = stats or self.print_stats.get_status(eventtime)
         status = self.virtual_sdcard.get_status(eventtime)
-        try:
-            sd_progress = float(status.get("progress", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            sd_progress = 0.0
-        sd_progress = max(0.0, min(1.0, sd_progress))
+        duration = stats.get("print_duration") or 0.0
+        sd_progress = status.get("progress") or 0.0
+
+        if not self._print_controls_ready():
+            self._progress_start = (duration, sd_progress)
+            self._progress_floor = 0.0
+            self._progress_source = None
+            return 0.0
+
+        progress_start = getattr(self, "_progress_start", (0.0, 0.0))
+        if progress_start is None:
+            progress_start = self._progress_start = (duration, sd_progress)
+        duration_start, sd_start = progress_start
+        print_duration = max(0.0, duration - duration_start)
+        sd_progress = ((sd_progress - sd_start) / (1.0 - sd_start)
+                       if sd_start < 1.0 else 0.0)
 
         display_status = getattr(self, "display_status", None)
         m73_expiry = float(
@@ -383,31 +556,17 @@ class FeatherPagesMixin:
         if m73_expiry > getattr(self, "_m73_start_expiry", 0.0):
             self._m73_active = True
         m73_progress = getattr(display_status, "progress", None)
-
-        progress = None
-        source = None
-        if getattr(self, "_m73_active", False) and m73_progress is not None:
-            try:
-                progress = float(m73_progress)
-                source = "M73"
-            except (TypeError, ValueError):
-                progress = None
-
         estimate = (getattr(self.virtual_sdcard, "estimate_print_time", None)
                     or status.get("estimate_print_time"))
-        if progress is None and estimate:
-            try:
-                duration = float(stats.get("print_duration", 0.0) or 0.0)
-                estimate = float(estimate)
-                if estimate > 0:
-                    progress = min(0.99, duration / estimate)
-                    source = "TIME"
-            except (TypeError, ValueError):
-                progress = None
 
-        if progress is None:
-            progress = sd_progress
-            source = "SD"
+        if getattr(self, "_m73_active", False) and m73_progress is not None:
+            progress, source = m73_progress, "M73"
+        elif self._restored_print_active(eventtime):
+            progress, source = sd_progress, "SD"
+        elif estimate:
+            progress, source = min(0.99, print_duration / estimate), "TIME"
+        else:
+            progress, source = sd_progress, "SD"
 
         progress = max(0.0, min(1.0, progress))
         progress = max(getattr(self, "_progress_floor", 0.0), progress)
@@ -420,8 +579,11 @@ class FeatherPagesMixin:
     def _print_time_values(self, eventtime, stats=None, progress=None):
         stats = stats or self.print_stats.get_status(eventtime)
         duration = float(stats.get("print_duration", 0.0) or 0.0)
+        restored = self._restored_print_active(eventtime)
         estimate = getattr(self.virtual_sdcard, "estimate_print_time", None)
         if not estimate:
+            if restored:
+                return duration, None
             info = stats.get("info", {})
             current = info.get("current_layer")
             total = info.get("total_layer")
@@ -431,6 +593,10 @@ class FeatherPagesMixin:
                 if progress is None:
                     progress = self._print_progress(eventtime)
                 estimate = duration / progress if progress > 0 else None
+        if restored and estimate is not None and progress is not None:
+            remaining = float(estimate) * max(
+                0.0, 1.0 - max(0.0, min(1.0, progress)))
+            return duration, remaining
         if estimate is not None:
             estimate = max(duration, float(estimate))
         remaining = None if estimate is None else max(0.0, estimate - duration)
@@ -443,25 +609,47 @@ class FeatherPagesMixin:
                                "JetBrainsMono 8pt", "left", "middle",
                                max_width=750, truncate=True)])
 
-    cmd_FEATHER_ABORT_help = "Request cooperative cancellation of START_PRINT"
-    def cmd_FEATHER_ABORT(self, gcmd):
-        """Request cancellation while START_PRINT owns the G-code mutex."""
-        flow = getattr(self, "print_flow", None)
-        variables = getattr(flow, "variables", {})
-        if "cancel_requested" not in variables:
-            raise gcmd.error("_PRINT_FLOW is not configured")
-        if not variables.get("active", False):
-            gcmd.respond_raw("There is no active START_PRINT flow")
+    def _update_operation_context(self, eventtime):
+        operation = self._operation_context_status(eventtime)
+        revision = operation["revision"]
+        if revision == getattr(self, "_last_operation_revision", -1):
             return
-        flow.variables = dict(variables)
-        flow.variables["cancel_requested"] = True
+        self._last_operation_revision = revision
+        if self._page_paint_allowed(ScreenPage.PRINTING, ScreenPage.PAUSED):
+            self._draw_print_status(
+                self._display_status_text(status=operation))
 
-        wait_cmd = getattr(self, "temperature_wait", None)
-        wait_variables = getattr(wait_cmd, "variables", {})
-        if wait_variables.get("active", False):
-            wait_cmd.variables = dict(wait_variables)
-            wait_cmd.variables["cancel"] = True
-        gcmd.respond_raw("Feather cancellation requested")
+    cmd_FEATHER_ABORT_help = "Request cancellation of the active operation"
+    def _request_operation_cancel(self):
+        manager = getattr(self, "operation_context", None)
+        if manager is None:
+            result = {"status": "not_cancelable", "accepted": False,
+                      "request_id": None, "target_name": None,
+                      "blocker_name": None}
+        else:
+            result = manager.request_cancel()
+        return result
+
+    def _clear_operation_cancel_request(self):
+        manager = getattr(self, "operation_context", None)
+        if manager is None:
+            return {"status": "not_pending", "cleared": False,
+                    "request_id": None}
+        return manager.clear_cancel(
+            getattr(self, "operation_cancel_request_id", None))
+
+    def cmd_FEATHER_ABORT(self, gcmd):
+        """Request cooperative cancellation outside the G-code mutex."""
+        result = self._request_operation_cancel()
+        if result["accepted"]:
+            gcmd.respond_raw(
+                "Feather cancellation requested: %s"
+                % (result["target_name"],))
+            if self._temperature_wait_active():
+                self._run_immediate_command("M108")
+        else:
+            gcmd.respond_raw(
+                "The active operation cannot be cancelled safely")
 
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
@@ -490,7 +678,7 @@ class FeatherPagesMixin:
                 if (token != self._filament_request_token
                         or current != "paused"
                         or self.cancel_requested
-                        or self.page not in (Page.PRINTING, Page.PAUSED)):
+                        or self.page not in (ScreenPage.PRINTING, ScreenPage.PAUSED)):
                     logging.info(
                         "[feather_screen] stale filament request discarded "
                         "token=%s current=%s page=%s cancel=%s",
@@ -506,97 +694,205 @@ class FeatherPagesMixin:
                     raise RuntimeError("Z adjust is not available yet")
                 self.live_z_dialog = None
                 self._begin_z_weight_gauge()
-                self._show_page(Page.LIVE_Z_OFFSET)
+                self._show_page(ScreenPage.LIVE_Z_OFFSET)
         elif action == "print.cancel" and stats in ("printing", "paused"):
-            self._show_page(Page.CANCEL_CONFIRM)
-        elif action == "print.cancel.confirm" and stats in ("printing", "paused"):
-            self._filament_request_token = getattr(
-                self, "_filament_request_token", 0) + 1
-            self.pending_action = action
-            self.pending_until = self.reactor.monotonic() + 30.0
-            self.cancel_requested = True
-            self.cancel_waiting_for_heat = self._temperature_wait_active()
-            flow = self._print_flow_status()
-            started = bool(getattr(getattr(self, "start_print_macro", None),
-                                   "variables", {}).get(
-                "print_started", False))
-            if flow["active"] and not started:
-                # START_PRINT owns the dispatcher. Request a cooperative abort
-                # and let the macro stop at the next safe boundary. During a
-                # temperature wait FEATHER_ABORT also sets the M108 flag.
-                self.cancel_mode = "cooperative"
-                self.cancel_phase = flow["phase"]
+            self._open_operation_cancel(
+                ScreenPage.PAUSED if stats == "paused" else ScreenPage.PRINTING,
+                self._accept_print_operation_cancel,
+                self._clear_print_operation_cancel)
+
+    def _open_operation_cancel(
+            self, return_page, on_accept=None, on_clear=None):
+        operation = self._operation_context_status()
+        self.operation_cancel_return_page = return_page
+        self.operation_cancel_on_accept = on_accept
+        self.operation_cancel_on_clear = on_clear
+        self.operation_cancel_request_id = None
+        self.operation_cancel_target_name = (
+            operation.get("cancel_target_name")
+            or operation.get("cancel_blocker_name")
+            or (operation.get("context_path") or (None,))[-1])
+        self.operation_cancel_target_mode = operation.get(
+            "cancel_target_mode")
+        self.cancel_mode = ("confirm" if operation["cancel_available"]
+                            else "not_cancelable")
+        self._show_page(ScreenPage.CANCEL_CONFIRM)
+
+    def _close_operation_cancel(self):
+        if getattr(self, "cancel_mode", None) == "pending":
+            return
+        return_page = getattr(
+            self, "operation_cancel_return_page", ScreenPage.IDLE_HOME)
+        self._reset_operation_cancel()
+        self._show_page(return_page)
+
+    def _reset_operation_cancel(self):
+        self.cancel_mode = None
+        self.operation_cancel_on_accept = None
+        self.operation_cancel_on_clear = None
+        self.operation_cancel_request_id = None
+        self.operation_cancel_target_name = None
+        self.operation_cancel_target_mode = None
+
+    def _handle_operation_cancel_action(self, action):
+        if action == "operation.cancel.back":
+            self._close_operation_cancel()
+            return
+        if (action == "operation.cancel.continue"
+                and self.cancel_mode == "pending"):
+            result = self._clear_operation_cancel_request()
+            if not result.get("cleared", False):
+                # Losing this race is normal: the safe point may already have
+                # taken the request. Repainting alone looked like a dead button.
                 self._render_cancel_confirm()
-                self._run_immediate_command("FEATHER_ABORT")
-                if not self._print_flow_status()["cancel_requested"]:
-                    raise RuntimeError("START_PRINT did not accept cancellation")
-            else:
-                # The preparation macro has returned and virtual SD is now
-                # printing regular G-code. Dispatch CANCEL_PRINT exactly once.
-                self.cancel_mode = "direct"
-                self.cancel_phase = "PRINTING"
+                self._toast("CANCELLATION ALREADY STARTED")
+                return
+            callback = self.operation_cancel_on_clear
+            if callback is not None:
+                callback(result)
+            self.cancel_mode = "cleared"
+            self._close_operation_cancel()
+            return
+        if action != "operation.cancel.confirm" or self.cancel_mode != "confirm":
+            return
+        result = self._request_operation_cancel()
+        if not result["accepted"]:
+            self.cancel_mode = "not_cancelable"
+            self.operation_cancel_target_name = (
+                result.get("blocker_name") or result.get("target_name")
+                or self.operation_cancel_target_name)
+            self._render_cancel_confirm()
+            return
+        self.cancel_mode = "pending"
+        self.operation_cancel_request_id = result.get("request_id")
+        self.operation_cancel_target_name = result.get("target_name")
+        self.operation_cancel_target_mode = result.get("target_mode")
+        # on_accept may block for seconds on the G-code mutex a running print
+        # holds, so paint first. An interrupted wait ends immediately and may
+        # close this page instead, so that path paints after the dispatch.
+        interrupting_wait = self._temperature_wait_active()
+        if not interrupting_wait:
+            self._render_cancel_confirm()
+        callback = self.operation_cancel_on_accept
+        if callback is not None:
+            callback(result)
+        if interrupting_wait:
+            self._run_immediate_command("M108")
+            if (self.page == ScreenPage.CANCEL_CONFIRM
+                    and self.cancel_mode == "pending"):
                 self._render_cancel_confirm()
-                self._run_script("CANCEL_PRINT")
-        elif action == "print.cancel.back":
-            self._show_page(Page.PAUSED if stats == "paused" else Page.PRINTING)
+
+    def _accept_print_operation_cancel(self, result):
+        self._filament_request_token = getattr(
+            self, "_filament_request_token", 0) + 1
+        self.pending_action = "print.cancel.confirm"
+        self.pending_until = self.reactor.monotonic() + 30.0
+        self.cancel_requested = True
+        self.cancel_waiting_for_heat = self._temperature_wait_active()
+        self.cancel_phase = result.get("target_name")
+        started = bool(getattr(
+            getattr(self, "start_print_macro", None), "variables", {}
+        ).get("print_started", False))
+        if started and not self.cancel_waiting_for_heat:
+            try:
+                self._run_script("_CONTEXT_CANCEL_POINT")
+            except Exception:
+                # Delivering the request aborts the print by raising. The print
+                # state transition reports it, so this is not an action failure.
+                logging.info("[feather_screen] print cancellation delivered")
+
+    def _clear_print_operation_cancel(self, result):
+        del result
+        self.pending_action = None
+        self.cancel_requested = False
+        self.cancel_waiting_for_heat = False
+        self.cancel_phase = None
 
     def _render_cancel_confirm(self):
-        if self.pending_action == "print.cancel.confirm":
+        target = str(getattr(
+            self, "operation_cancel_target_name", None) or "operation")
+        interrupt = (getattr(
+            self, "operation_cancel_target_mode", None) == "interruptible")
+        if self.cancel_mode == "not_cancelable":
+            commands = self.renderer.begin_page("CANNOT CANCEL SAFELY")
+            commands.append(self.renderer.text(
+                400, 145, "THIS OPERATION HAS NO SAFE CANCEL POINT",
+                ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
+                "middle", max_width=720, truncate=True))
+            commands.append(self.renderer.text(
+                400, 205, "ABORT STOPS THE PRINTER IMMEDIATELY (M112)",
+                ThemeColor.DIM, "JetBrainsMono 8pt", "center", "middle"))
+            commands += self.renderer.button(
+                "operation.cancel.back", 100, 285, 260, 100,
+                "CONTINUE", font="Roboto Bold 16pt")
+            commands += self.renderer.button(
+                "operation.cancel.force", 440, 285, 260, 100,
+                "ABORT NOW", state="danger", font="Roboto Bold 16pt")
+            self.renderer.send(commands)
+            return
+        if self.cancel_mode == "pending":
             label = self._cancel_progress_label()
             commands = self.renderer.begin_page(
-                "STOPPING PRINT")
+                "%s %s" % (
+                    "INTERRUPTING" if interrupt else "CANCELLING",
+                    target.upper()))
             commands.append(self.renderer.text(
                 400, 170, label, ThemeColor.WARNING,
-                "JetBrainsMono Bold 16pt", "center", "middle"))
+                "JetBrainsMono Bold 16pt", "center", "middle",
+                max_width=700, truncate=True))
             commands.append(self.renderer.text(
-                400, 225, "CANCEL REQUEST ACCEPTED", ThemeColor.PRIMARY,
+                400, 225,
+                ("INTERRUPT REQUEST ACCEPTED" if interrupt
+                 else "CANCEL REQUEST ACCEPTED"),
+                ThemeColor.PRIMARY,
                 "JetBrainsMono 12pt", "center", "middle"))
-            commands.append(self.renderer.text(
-                400, 275, "REQUEST ACCEPTED // CONTROLS LOCKED", ThemeColor.DIM,
-                "JetBrainsMono 8pt", "center", "middle"))
+            commands += self.renderer.button(
+                "operation.cancel.continue", 85, 285, 290, 62,
+                "CONTINUE OPERATION", font="JetBrainsMono Bold 8pt")
+            commands += self.renderer.button(
+                "operation.cancel.force", 425, 285, 290, 62,
+                "ABORT NOW (M112)", state="danger",
+                font="JetBrainsMono Bold 8pt")
+            loader_y = 385
             for index in range(5):
                 commands.append(self.renderer.fill(
-                    290 + index * 48, 325, 32, 12,
+                    290 + index * 48, loader_y, 32, 12,
                     ThemeColor.PRIMARY if index == self.busy_phase % 5 else ThemeColor.MUTED))
             self.renderer.send(commands)
             self._last_cancel_label = label
             return
         commands = self.renderer.begin_page(
-            "Cancel print?", back=True)
-        commands.append(self.renderer.text(400, 170, "The current print will stop",
+            "%s %s?" % (
+                "Interrupt" if interrupt else "Cancel", target), back=False)
+        commands.append(self.renderer.text(400, 170,
+                                           "The operation will stop at a safe point",
                                            ThemeColor.WARNING, "Roboto 16pt", "center", "middle"))
-        commands += self.renderer.button("print.cancel.back", 100, 285, 260, 100,
+        commands += self.renderer.button("operation.cancel.back", 100, 285, 260, 100,
                                          "GO BACK", font="Roboto Bold 16pt")
-        commands += self.renderer.button("print.cancel.confirm", 440, 285, 260, 100,
-                                         "CANCEL",
-                                         state="busy" if self.pending_action ==
-                                         "print.cancel.confirm" else "danger",
+        commands += self.renderer.button("operation.cancel.confirm", 440, 285, 260, 100,
+                                         "INTERRUPT" if interrupt else "CANCEL",
+                                         state="danger",
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
 
-    def _print_flow_status(self):
-        variables = getattr(getattr(self, "print_flow", None), "variables", {})
-        return {"active": bool(variables.get("active", False)),
-                "cancel_requested": bool(variables.get("cancel_requested", False)),
-                "cancel_dispatched": bool(variables.get("cancel_dispatched", False)),
-                "phase": str(variables.get("phase", "PRINTING")).upper()}
-
     def _cancel_progress_label(self):
-        flow = self._print_flow_status()
-        phase = (flow["phase"] if flow["active"] else
-                 (getattr(self, "cancel_phase", None) or "PRINTING"))
-        labels = {"PREPARING": "STOPPING PREPARATION...",
-                  "HOMING": "STOPPING AFTER HOMING...",
-                  "LEVELING": "STOPPING AFTER LEVELING...",
-                  "PARKING": "STOPPING AFTER PARKING...",
-                  "HEATING": "STOPPING HEAT WAIT...",
-                  "PRIMING": "STOPPING AFTER PRIME LINE...",
-                  "CANCELLING": "CANCEL_PRINT RUNNING...",
-                  "PRINTING": "CANCELLING PRINT..."}
-        return labels.get(phase, "STOPPING %s..." % phase)
+        operation = self._operation_context_status()
+        state = str(operation.get("current_state") or "").strip().upper()
+        if (self._temperature_wait_active() or
+                getattr(self, "cancel_waiting_for_heat", False)):
+            if state:
+                return "INTERRUPTING %s..." % (state,)
+            path = operation.get("context_path") or ()
+            if path:
+                return "INTERRUPTING %s..." % str(path[-1]).strip().upper()
+            return "INTERRUPTING TEMPERATURE WAIT..."
+        if state:
+            return "WILL STOP AFTER %s" % (state,)
+        return "WILL STOP AT THE NEXT STEP"
 
     def _update_cancel_progress(self):
-        if self.page != Page.CANCEL_CONFIRM or not self.cancel_requested:
+        if (self.page != ScreenPage.CANCEL_CONFIRM
+                or self.cancel_mode != "pending"):
             return
         label = self._cancel_progress_label()
         self.busy_phase = (self.busy_phase + 1) % 5
@@ -607,10 +903,12 @@ class FeatherPagesMixin:
             commands = [self.renderer.fill(100, 140, 600, 65, ThemeColor.BACKGROUND),
                         self.renderer.text(400, 170, label, ThemeColor.WARNING,
                                            "JetBrainsMono Bold 16pt", "center",
-                                           "middle")]
+                                           "middle", max_width=700,
+                                           truncate=True)]
+        loader_y = 385
         for index in range(5):
             commands.append(self.renderer.fill(
-                290 + index * 48, 325, 32, 12,
+                290 + index * 48, loader_y, 32, 12,
                 ThemeColor.PRIMARY if index == self.busy_phase % 5 else ThemeColor.MUTED))
         self.renderer.send(commands)
 
@@ -618,26 +916,44 @@ class FeatherPagesMixin:
     def _render_settings(self):
         brightness = int(self._setting("backlight", 50))
         sound = bool(self._setting("sound", 1))
+        light_mode = str(self._setting("chamber_light_mode", "AT_BOOT"))
+        light_subtitle = {
+            "MANUAL": "APPLIES IMMEDIATELY",
+            "AT_BOOT": "APPLIES AT BOOT",
+            "PRINT_ONLY": "APPLIES DURING PRINTING",
+        }.get(light_mode, "APPLIES AT BOOT")
         light_available = getattr(self, "chamber_light", None) is not None
         light = (self._chamber_light_brightness()
                  if light_available else None)
         theme = str(getattr(self.renderer, "theme_name", "DEFAULT"))
         commands = self.renderer.begin_page("Settings", back=True)
+        # Hidden diagnostic entry: five title taps within two seconds. The
+        # benchmark feature itself remains unloaded until the fifth tap opens
+        # its page. Keep the hitbox clear of BACK and the emergency action.
+        commands.append(self.renderer.action_hitbox(
+            "settings.benchmark.tap", 170, 7, 450, 46))
         rows = (
-            ("SCREEN BRIGHTNESS", brightness, "settings.brightness", 67, True),
-            ("CHAMBER LIGHT", light, "settings.led", 151, light_available),
+            ("SCREEN BRIGHTNESS", None, brightness,
+             "settings.brightness", 67, True),
+            ("CHAMBER LIGHT", light_subtitle, light,
+             "settings.led", 151, light_available),
         )
-        for label, value, prefix, y, enabled in rows:
+        for label, subtitle, value, prefix, y, enabled in rows:
             commands += [
                 self.renderer.fill(25, y, 750, 70, ThemeColor.PANEL),
                 self.renderer.stroke(25, y, 750, 70, ThemeColor.BORDER, 1),
-                self.renderer.text(44, y + 22, label, ThemeColor.PRIMARY,
+                self.renderer.text(44, y + (18 if subtitle else 35), label,
+                                   ThemeColor.PRIMARY,
                                    "JetBrainsMono Bold 8pt"),
                 self.renderer.text(425, y + 36,
                                    "%d%%" % value if enabled else "--",
-                                   ThemeColor.TEXT if enabled else ThemeColor.DIM,
+                                   ThemeColor.TEXT if enabled else ThemeColor.MUTED,
                                    "JetBrainsMono 12pt", "center"),
             ]
+            if subtitle:
+                commands.append(self.renderer.text(
+                    44, y + 46, subtitle, ThemeColor.DIM,
+                    "JetBrainsMono 8pt"))
             commands += self.renderer.button(prefix + ".minus", 525, y + 12,
                                              105, 46, "-5",
                                              state=("enabled" if enabled
@@ -666,17 +982,20 @@ class FeatherPagesMixin:
 
     def _handle_settings_action(self, action):
         self._require_idle()
+        if action == "settings.benchmark.tap":
+            self._handle_benchmark_tap()
+            return
         if action == "settings.theme":
             parameters = self._mod_parameters()
             for index, param in enumerate(parameters):
                 if param.key == "feather_theme":
-                    self._open_mod_parameter(index, Page.SETTINGS)
+                    self._open_mod_parameter(index, ScreenPage.SETTINGS)
                     return
             raise RuntimeError("Feather theme parameter is unavailable")
         if action == "settings.mod":
             self.mod_page = 0
             self.mod_parameter = None
-            self._show_page(Page.MOD_SETTINGS)
+            self._show_page(ScreenPage.MOD_SETTINGS)
             return
         if action.startswith("settings.led."):
             if getattr(self, "chamber_light", None) is None:
@@ -685,7 +1004,7 @@ class FeatherPagesMixin:
             value = max(
                 0, min(100, self._chamber_light_brightness() + delta))
             self._run_script(
-                "SET_LED LED=chamber_light WHITE=%g SYNC=0" % (value / 100.0))
+                "SET_MOD PARAM=chamber_light VALUE=%d" % value)
             self._render_settings()
             return
         if action == "settings.sound":
@@ -726,101 +1045,188 @@ class FeatherPagesMixin:
     def _mod_parameters(self):
         return mod_ui.visible_parameters(self.params)
 
-    def _render_mod_settings(self):
+    def _render_mod_settings(self, anchor_key=None):
         self._require_idle()
         parameters = self._mod_parameters()
-        pagination = Pagination(
-            parameters, getattr(self, "mod_page", 0),
-            mod_ui.VISIBLE_ROWS)
-        self.mod_page = pagination.page
-        total = pagination.total
-        start = pagination.start
-        visible = pagination.visible
+        pages = mod_ui.category_pages(self.params, parameters)
+        if anchor_key is None:
+            anchor_key = getattr(self, "mod_restore_anchor_key", None)
+        self.mod_restore_anchor_key = None
+        if anchor_key is not None:
+            anchored = mod_ui.page_of_parameter(pages, anchor_key)
+            if anchored is not None:
+                self.mod_page = anchored
+        self.mod_page = max(
+            0, min(getattr(self, "mod_page", 0), len(pages) - 1))
+        sections = pages[self.mod_page]
+        self.mod_action_keys = dict(
+            (index, param.key)
+            for index, param in mod_ui.page_parameters(sections))
+
         commands = self.renderer.begin_page("Mod settings", back=True)
-        first = start + 1 if total else 0
-        last = min(total, start + len(visible))
-        commands.append(self.renderer.text(
-            25, 72, "MOD PARAMETERS // %02d-%02d / %02d" % (first, last, total),
-            ThemeColor.PRIMARY, "JetBrainsMono 8pt"))
-
-        row_x, row_width, row_height = 25, 690, 64
-        for row, param in enumerate(visible):
-            absolute = start + row
-            action = "mod.item.%d" % absolute
-            y = 88 + row * 66
-            title = str(param.label).upper()
-            detail = mod_ui.description(param)
-            commands += [
-                self.renderer.fill(row_x, y, row_width, row_height, ThemeColor.PANEL),
-                self.renderer.stroke(row_x, y, row_width, row_height,
-                                     ThemeColor.BORDER, 1),
-                self.renderer.text(40, y + 14, title, ThemeColor.PRIMARY,
-                                   "JetBrainsMono Bold 8pt", max_width=430,
-                                   truncate=True),
-                self.renderer.text(40, y + 32, param.key, ThemeColor.DIM,
-                                   "JetBrainsMono 8pt"),
-                self.renderer.text(40, y + 50, detail, ThemeColor.TEXT,
-                                   "JetBrainsMono 8pt", max_width=430,
-                                   truncate=True),
-            ]
-            kind = mod_ui.parameter_kind(param)
-            value = mod_ui.display_value(self.params, param)
-            state = "disabled" if getattr(param, "readonly", False) else "enabled"
-            if kind == "bool":
-                commands += self.renderer.toggle(
-                    action, 624, y + 13, 76, 38, value == "ON",
-                    enabled=state == "enabled")
-            else:
-                label = value + " >"
-                commands += self.renderer.button(
-                    action, 520, y + 9, 180, 46, label, state=state,
-                    font="JetBrainsMono 8pt")
-
-        previous_state = (
-            "enabled" if pagination.has_previous else "disabled")
-        next_state = "enabled" if pagination.has_next else "disabled"
-        commands += self.renderer.arrow_button(
-            "mod.prev", 728, 88, 52, 48, "up", state=previous_state)
-        commands += self.renderer.arrow_button(
-            "mod.next", 728, 365, 52, 48, "down", state=next_state)
-        track_y, track_height = 146, 209
-        commands += [self.renderer.stroke(749, track_y, 10, track_height,
-                                          ThemeColor.BORDER, 1)]
-        thumb_height = max(18, track_height // pagination.page_count)
-        thumb_y = (track_y if pagination.page_count == 1 else
-                   track_y + (track_height - thumb_height) * self.mod_page
-                   // (pagination.page_count - 1))
-        commands.append(self.renderer.fill(751, thumb_y + 2, 6,
-                                           max(4, thumb_height - 4), ThemeColor.PRIMARY))
+        y = mod_ui.LIST_TOP
+        for position, section in enumerate(sections):
+            pitch = mod_ui.band_pitch(position)
+            commands += self._mod_category_band(section, y, pitch)
+            y += pitch
+            for index, param in section.items:
+                commands += self._mod_parameter_row(param, index, y)
+                y += mod_ui.ITEM_PITCH
+        upcoming = mod_ui.next_category_hint(pages, self.mod_page)
+        if upcoming is not None:
+            commands += self._mod_next_category_card(upcoming, y)
+        commands += self._mod_scroll_rail(self.mod_page, len(pages))
         self.renderer.send(commands)
 
-    def _open_mod_parameter(self, index, return_page=Page.MOD_SETTINGS):
+    def _mod_category_band(self, section, y, pitch):
+        """Draw the in-list heading that owns the parameter rows below it."""
+        label = section.label + (" (CONT.)" if section.continued else "")
+        counter = "%02d-%02d / %02d" % (
+            section.first, section.first + len(section.items) - 1,
+            section.total)
+        label_font, counter_font = "JetBrainsMono Bold 8pt", "JetBrainsMono 8pt"
+        # The band sits at the bottom of its slot, so the padding of a later
+        # band opens a gap above it and separates it from the rows before.
+        top = y + pitch - mod_ui.BAND_HEIGHT - mod_ui.BAND_GAP_BELOW
+        middle = top + mod_ui.BAND_HEIGHT // 2
+        right = mod_ui.LIST_X + mod_ui.LIST_WIDTH
+        label_x = mod_ui.LIST_X + 14
+        label_limit = (right - self.renderer.text_width(counter, counter_font)
+                       - 20 - label_x)
+        rule_x = label_x + min(
+            label_limit, self.renderer.text_width(label, label_font)) + 10
+        return [
+            self.renderer.fill(mod_ui.LIST_X, top, 4, mod_ui.BAND_HEIGHT,
+                               ThemeColor.PRIMARY),
+            self.renderer.text(label_x, middle, label, ThemeColor.PRIMARY,
+                               label_font, "left", "middle",
+                               max_width=label_limit, truncate=True),
+            self.renderer.fill(rule_x, middle,
+                               max(0, label_x + label_limit - rule_x), 1,
+                               ThemeColor.BORDER),
+            self.renderer.text(right, middle, counter, ThemeColor.DIM,
+                               counter_font, "right", "middle"),
+        ]
+
+    def _mod_parameter_row(self, param, index, y):
+        """Draw one parameter row together with its editing control."""
+        action = "mod.item.%d" % index
+        commands = [
+            self.renderer.fill(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
+                               mod_ui.ITEM_HEIGHT, ThemeColor.PANEL),
+            self.renderer.stroke(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
+                                 mod_ui.ITEM_HEIGHT, ThemeColor.BORDER, 1),
+            self.renderer.text(40, y + 14, str(param.label).upper(),
+                               ThemeColor.PRIMARY, "JetBrainsMono Bold 8pt",
+                               max_width=430, truncate=True),
+            self.renderer.text(40, y + 32, param.key, ThemeColor.DIM,
+                               "JetBrainsMono 8pt"),
+            self.renderer.text(40, y + 50, mod_ui.description(param),
+                               ThemeColor.TEXT, "JetBrainsMono 8pt",
+                               max_width=430, truncate=True),
+        ]
+        state = "disabled" if getattr(param, "readonly", False) else "enabled"
+        if mod_ui.parameter_kind(param) == "bool":
+            raw_value = self.params.variables.get(param.key, param.default)
+            commands += self.renderer.toggle(
+                action, 624, y + 13, 76, 38,
+                mod_ui.bool_display_active(param, raw_value),
+                enabled=state == "enabled")
+        else:
+            commands += self.renderer.button(
+                action, 520, y + 9, 180, 46,
+                mod_ui.display_value(self.params, param) + " >",
+                state=state, font="JetBrainsMono 8pt")
+        return commands
+
+    def _mod_next_category_card(self, label, y):
+        """Turn the space a postponed category left into the way to reach it.
+
+        The card wears the frame of an ordinary list block so it does not pull
+        attention away from the parameters, and carries the accent text of a
+        category heading to show that it leads to that category.
+        """
+        middle = y + mod_ui.ITEM_HEIGHT // 2
+        return [
+            self.renderer.fill(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
+                               mod_ui.ITEM_HEIGHT, ThemeColor.PANEL),
+            self.renderer.stroke(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
+                                 mod_ui.ITEM_HEIGHT, ThemeColor.BORDER, 1),
+            self.renderer.text(
+                mod_ui.LIST_X + mod_ui.LIST_WIDTH // 2, middle,
+                "NEXT: %s >" % label, ThemeColor.TEXT,
+                "JetBrainsMono Bold 8pt", "center", "middle",
+                max_width=mod_ui.LIST_WIDTH - 40, truncate=True),
+            self.renderer.action_hitbox(
+                "mod.more", mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
+                mod_ui.ITEM_HEIGHT),
+        ]
+
+    def _mod_scroll_rail(self, page, page_count):
+        """Draw the page arrows and the position thumb beside the list."""
+        commands = self.renderer.arrow_button(
+            "mod.prev", 728, mod_ui.LIST_TOP, 52, 48, "up",
+            state="enabled" if page > 0 else "disabled")
+        commands += self.renderer.arrow_button(
+            "mod.next", 728, 388, 52, 48, "down",
+            state="enabled" if page + 1 < page_count else "disabled")
+        track_y, track_height = 134, 244
+        commands.append(self.renderer.stroke(749, track_y, 10, track_height,
+                                             ThemeColor.BORDER, 1))
+        thumb_height = max(18, track_height // page_count)
+        thumb_y = (track_y if page_count == 1 else
+                   track_y + (track_height - thumb_height) * page
+                   // (page_count - 1))
+        commands.append(self.renderer.fill(751, thumb_y + 2, 6,
+                                           max(4, thumb_height - 4),
+                                           ThemeColor.PRIMARY))
+        return commands
+
+    def _open_mod_parameter(self, index, return_page=ScreenPage.MOD_SETTINGS):
         parameters = self._mod_parameters()
-        if index < 0 or index >= len(parameters):
-            raise RuntimeError("Parameter is no longer available")
-        param = parameters[index]
+        rendered_key = getattr(self, "mod_action_keys", {}).get(index)
+        if rendered_key is not None:
+            param = next(
+                (candidate for candidate in parameters
+                 if candidate.key == rendered_key), None)
+            if param is None:
+                raise RuntimeError("Parameter is no longer available")
+        else:
+            if index < 0 or index >= len(parameters):
+                raise RuntimeError("Parameter is no longer available")
+            param = parameters[index]
         if getattr(param, "readonly", False):
             raise RuntimeError("This parameter is read-only")
+        # Anchor on the first row of the current page.  Editing a parameter can
+        # reveal or hide dependent rows, so the page number alone would not
+        # bring the user back to the same place.
+        pages = mod_ui.category_pages(self.params, parameters)
+        page = pages[max(0, min(getattr(self, "mod_page", 0), len(pages) - 1))]
+        rows = mod_ui.page_parameters(page)
+        self.mod_restore_anchor_key = rows[0][1].key if rows else None
         self.mod_return_page = return_page
         kind = mod_ui.parameter_kind(param)
         if kind == "bool":
             current = bool(self.params.variables.get(param.key, param.default))
+            new_value = not current
             action = "mod.item.%d" % index
             scheduler = lambda callback, delay: self.reactor.register_callback(
                 callback, self.reactor.monotonic() + delay)
             animate = getattr(self.renderer, "animate_toggle", None)
             if animate is not None:
-                animate(action, not current, scheduler)
+                animate(action, mod_ui.bool_display_active(
+                    param, new_value), scheduler)
 
             def complete():
                 self._render_mod_settings()
                 self._toast("UPDATED: %s" % param.label)
 
-            self._set_mod_value(param, "0" if current else "1",
+            self._set_mod_value(param, "1" if new_value else "0",
                                 complete, minimum_duration=0.14)
             return
         self.mod_parameter = param
         self.mod_edit_value = mod_ui.current_edit_value(self.params, param)
+        self.mod_edit_cursor = len(self.mod_edit_value)
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
         if kind == "enum" or param.key == "feather_theme":
@@ -842,10 +1248,10 @@ class FeatherPagesMixin:
                 disabled = ()
             self._set_parameter_options(
                 options, self.mod_edit_value, descriptions, disabled)
-            self._show_page(Page.PARAMETER_OPTIONS)
+            self._show_page(ScreenPage.PARAMETER_OPTIONS)
         else:
             self.selected_parameter_option = None
-            self._show_page(Page.MOD_VALUE)
+            self._show_page(ScreenPage.MOD_VALUE)
 
     def _set_mod_value(self, param, value, complete=None,
                        minimum_duration=0.0):
@@ -945,18 +1351,20 @@ class FeatherPagesMixin:
             self.mod_page = max(0, self.mod_page - 1)
             self._render_mod_settings()
             return
-        if action == "mod.next":
+        # "mod.more" is the card standing in for a postponed category; it leads
+        # to the page that category starts on, which is the next one.
+        if action in ("mod.next", "mod.more"):
             self.mod_page += 1
             self._render_mod_settings()
             return
         if action.startswith("mod.item."):
             self._open_mod_parameter(
-                int(action.rsplit(".", 1)[1]), Page.MOD_SETTINGS)
+                int(action.rsplit(".", 1)[1]), ScreenPage.MOD_SETTINGS)
             return
         if action == "mod.cancel":
             self.mod_parameter = None
             self._show_page(getattr(
-                self, "mod_return_page", Page.MOD_SETTINGS))
+                self, "mod_return_page", ScreenPage.MOD_SETTINGS))
             return
         param = self.mod_parameter
         if param is None:
@@ -989,7 +1397,7 @@ class FeatherPagesMixin:
                 if param.key == "feather_theme":
                     self.renderer.set_theme(value)
                 return_page = getattr(
-                    self, "mod_return_page", Page.MOD_SETTINGS)
+                    self, "mod_return_page", ScreenPage.MOD_SETTINGS)
                 self.mod_parameter = None
                 self._show_page(return_page)
                 self._toast("UPDATED: %s" % param.label)
@@ -1001,7 +1409,7 @@ class FeatherPagesMixin:
 
             def complete():
                 return_page = getattr(
-                    self, "mod_return_page", Page.MOD_SETTINGS)
+                    self, "mod_return_page", ScreenPage.MOD_SETTINGS)
                 self.mod_parameter = None
                 self._show_page(return_page)
                 self._toast("UPDATED: %s" % param.label)
@@ -1018,9 +1426,10 @@ class FeatherPagesMixin:
             self.mod_edit_value = mod_ui.numeric_input_spec(param).apply(
                 self.mod_edit_value, token)
         elif kind == "str" and is_keyboard_action(action):
-            (self.mod_edit_value, self.mod_keyboard_shift,
+            (self.mod_edit_value, self.mod_edit_cursor,
+             self.mod_keyboard_shift,
              self.mod_keyboard_symbols) = TEXT_KEYBOARD.apply(
-                self.mod_edit_value, action,
+                self.mod_edit_value, self.mod_edit_cursor, action,
                 self.mod_keyboard_shift, self.mod_keyboard_symbols,
                 max_length=mod_ui.MAX_VALUE_LENGTH)
         self._render_mod_value()
@@ -1028,7 +1437,7 @@ class FeatherPagesMixin:
     def _render_parameter_options(self):
         param = self.mod_parameter
         if param is None:
-            self._show_page(Page.MOD_SETTINGS)
+            self._show_page(ScreenPage.MOD_SETTINGS)
             return
         commands = self.renderer.begin_page(str(param.label), back=True)
         commands.append(self.renderer.text(
@@ -1095,7 +1504,7 @@ class FeatherPagesMixin:
     def _render_mod_value(self):
         param = self.mod_parameter
         if param is None:
-            self._show_page(Page.MOD_SETTINGS)
+            self._show_page(ScreenPage.MOD_SETTINGS)
             return
         kind = mod_ui.parameter_kind(param)
         commands = self.renderer.begin_page("Edit value", back=True)
@@ -1113,10 +1522,10 @@ class FeatherPagesMixin:
                                truncate=True),
             self.renderer.fill(25, 120, 750, 53, ThemeColor.PANEL),
             self.renderer.stroke(25, 120, 750, 53, ThemeColor.PRIMARY, 2),
-            self.renderer.text(42, 147, self.mod_edit_value or "_", ThemeColor.PRIMARY,
-                               "JetBrainsMono 12pt", max_width=710,
-                               truncate=True),
         ]
+        commands += TEXT_KEYBOARD.render_value(
+            self.renderer, self.mod_edit_value, self.mod_edit_cursor,
+            42, 147, 710, ThemeColor.PRIMARY)
         commands += self._render_mod_text_keys()
         self.renderer.send(commands)
 
@@ -1147,327 +1556,6 @@ class FeatherPagesMixin:
             "mod.save", 415, 383, 360, 54, "SAVE",
             font="JetBrainsMono Bold 8pt")
         return commands
-
-    def _render_network_home(self):
-        commands = self.renderer.begin_page("Network", back=True)
-        lines = ["Mode: %s" % self.network_status.get("mode", "OFFLINE")]
-        if self.network_status.get("ssid"):
-            lines.append("SSID: %s   Signal: %s dBm" %
-                         (self.network_status["ssid"], self.network_status.get("signal") or "?"))
-        lines.append("IP: %s" % (self.network_status.get("ip") or "Offline"))
-        for index, line in enumerate(lines):
-            commands.append(self.renderer.text(
-                400, 75 + index * 35, line, ThemeColor.BRIGHT, "Roboto 10pt", "center",
-                max_width=660, truncate=True))
-        commands += self.renderer.button("net.scan", 55, 190, 320, 150,
-                                         "WI-FI", font="JetBrainsMono 12pt")
-        commands += self.renderer.button("net.ethernet", 425, 190, 320, 150,
-                                         "ETHERNET DHCP", font="JetBrainsMono 12pt")
-        commands += self.renderer.button("net.retry", 270, 365, 260, 60, "RETRY STATUS")
-        self.renderer.send(commands)
-
-    def _handle_network_action(self, action):
-        if action in ("net.scan", "net.rescan"):
-            self._start_network_process("scan", [NETWORK_HELPER, "scan"], Page.NETWORK_HOME)
-        elif action == "net.retry":
-            self._start_network_process("status", [NETWORK_HELPER, "status"],
-                                        Page.NETWORK_HOME)
-        elif action == "net.ethernet":
-            self._start_network_process("ethernet", [NETWORK_HELPER, "use-ethernet"],
-                                        Page.NETWORK_HOME)
-        elif action in ("net.prev", "net.next"):
-            self.network_page += -1 if action == "net.prev" else 1
-            self._render_wifi_scan()
-        elif action.startswith("net.item"):
-            index = int(action[len("net.item"):])
-            pagination = Pagination(
-                self.networks, self.network_page, NETWORK_ROWS)
-            offset = pagination.absolute_index(index)
-            if offset is not None:
-                self.selected_network = self.networks[offset]
-                self.password = ""
-                self.keyboard_shift = self.keyboard_symbols = False
-                self._show_page(Page.WIFI_PASSWORD)
-        elif action == "net.connect":
-            self._connect_wifi()
-        elif action == "net.cancel":
-            self._cancel_network_process("Network operation cancelled")
-        elif action == "net.password.toggle":
-            self.password_visible = not self.password_visible
-            self._render_keyboard()
-        elif is_keyboard_action(action):
-            (self.password, self.keyboard_shift,
-             self.keyboard_symbols) = TEXT_KEYBOARD.apply(
-                self.password, action, self.keyboard_shift,
-                self.keyboard_symbols, max_length=64)
-            self._render_keyboard()
-
-    def _start_network_process(self, operation, args, return_page):
-        if self.network_process is not None:
-            if self.network_operation == "status-background":
-                self._retire_network_process(self.network_process)
-                self.network_process = None
-                self.network_operation = None
-            else:
-                raise RuntimeError("A network operation is already running")
-        process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            start_new_session=True)
-        self.network_operation = operation
-        self.network_return_page = return_page
-        self.network_process = process
-        self.network_deadline = (self.reactor.monotonic() +
-                                 NETWORK_TIMEOUTS.get(operation, 30.0))
-        self._show_page(Page.NETWORK_PROGRESS)
-
-    def _start_network_status_refresh(self):
-        """Load persisted/live network state without replacing the dashboard."""
-        if self.network_process is not None:
-            return
-        self.network_process = subprocess.Popen(
-            [NETWORK_HELPER, "status"], stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, start_new_session=True)
-        self.network_operation = "status-background"
-        self.network_deadline = (self.reactor.monotonic() +
-                                 NETWORK_TIMEOUTS["status-background"])
-
-    def _poll_network_process(self, eventtime):
-        if self.network_process is None:
-            return
-        if self.network_process.poll() is None:
-            if eventtime >= self.network_deadline:
-                if getattr(self, "network_operation", None) == "status-background":
-                    self._stop_network_process()
-                else:
-                    self._cancel_network_process("Network operation timed out")
-            return
-        output = self.network_process.communicate()[0].decode("utf-8", "replace")
-        returncode = self.network_process.returncode
-        operation = self.network_operation
-        self.network_process = None
-        self.network_operation = None
-        self.network_deadline = 0.0
-        self._cleanup_network_credentials()
-        if returncode != 0:
-            if operation == "status-background":
-                return
-            message = next((line[6:] for line in output.splitlines()
-                            if line.startswith("ERROR=")), "Network operation failed")
-            self._show_message(message, self.network_return_page)
-            return
-        if operation == "scan":
-            networks = {}
-            for line in output.splitlines():
-                if not line.startswith("NETWORK\t"):
-                    continue
-                parts = line.split("\t", 3)
-                if len(parts) != 4 or not parts[1]:
-                    continue
-                ssid, signal, security = parts[1], parts[2], parts[3]
-                if any(ord(ch) < 32 for ch in ssid) or "PSK" not in security:
-                    continue
-                try:
-                    signal = int(signal)
-                except ValueError:
-                    continue
-                current = networks.get(ssid)
-                if current is None or signal > current["signal"]:
-                    networks[ssid] = {"ssid": ssid, "signal": signal,
-                                      "security": security}
-            self.networks = sorted(networks.values(), key=lambda n: -n["signal"])
-            self.network_page = 0
-            self._show_page(Page.WIFI_SCAN)
-        elif operation in ("status", "status-background"):
-            self.network_status = self.parse_network_status(output)
-            if operation == "status":
-                self._show_page(Page.NETWORK_HOME)
-            elif self.page == Page.IDLE_HOME:
-                self._update_dashboard(eventtime)
-        else:
-            self._toast("Network connected")
-            self._start_network_process("status", [NETWORK_HELPER, "status"],
-                                        Page.NETWORK_HOME)
-
-    def _cancel_network_process(self, message):
-        self._stop_network_process()
-        self._show_message(message, self.network_return_page)
-
-    def _stop_network_process(self):
-        if self.network_process is not None:
-            self._retire_network_process(self.network_process)
-            self.network_process = None
-        self.network_operation = None
-        self.network_deadline = 0.0
-        self._cleanup_network_credentials()
-
-    def _retire_network_process(self, process):
-        group_id = None
-        try:
-            group_id = os.getpgid(process.pid)
-            os.killpg(group_id, signal.SIGTERM)
-        except (AttributeError, OSError):
-            try:
-                process.terminate()
-            except OSError:
-                pass
-        stopping = getattr(self, "network_stopping", [])
-        stopping.append(
-            (process, self.reactor.monotonic() + 2.0, group_id))
-        self.network_stopping = stopping
-
-    def _reap_network_processes(self, eventtime):
-        pending = []
-        for process, deadline, group_id in getattr(
-                self, "network_stopping", []):
-            if eventtime >= deadline:
-                if group_id is not None:
-                    try:
-                        os.killpg(group_id, signal.SIGKILL)
-                    except OSError:
-                        pass
-                elif process.poll() is None:
-                    killer = getattr(process, "kill", None)
-                    if killer is not None:
-                        killer()
-                if process.poll() is None:
-                    pending.append((process, deadline, group_id))
-                    continue
-            elif process.poll() is None or group_id is not None:
-                # Keep the process group through the grace period even when
-                # the shell leader exits first; udhcpc may still be alive.
-                pending.append((process, deadline, group_id))
-                continue
-            try:
-                process.communicate()
-            except (OSError, ValueError):
-                pass
-        self.network_stopping = pending
-
-    def _cleanup_network_credentials(self):
-        credentials = getattr(self, "network_credentials", None)
-        self.network_credentials = None
-        if not credentials:
-            return
-        try:
-            os.unlink(credentials)
-        except OSError:
-            pass
-
-    @staticmethod
-    def parse_network_status(output):
-        result = {"mode": "OFFLINE", "ssid": "", "signal": "", "ip": ""}
-        for line in str(output).splitlines():
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.lower()
-            if key in result:
-                result[key] = value.strip()
-        return result
-
-    def _render_network_progress(self):
-        commands = self.renderer.begin_page("Network")
-        label = "Scanning Wi-Fi..." if self.network_operation == "scan" else "Connecting..."
-        commands.append(self.renderer.text(400, 230, label, ThemeColor.PRIMARY, "Roboto Bold 16pt",
-                                           "center", "middle"))
-        commands += self.renderer.button("net.cancel", 270, 340, 260, 70, "CANCEL",
-                                         state="danger")
-        self.renderer.send(commands)
-
-    def _render_wifi_scan(self):
-        pagination = Pagination(
-            self.networks, self.network_page, NETWORK_ROWS)
-        self.network_page = pagination.page
-        commands = self.renderer.begin_page("Select Wi-Fi", back=True)
-        rows = pagination.visible
-        for index, network in enumerate(rows):
-            y = 62 + index * 65
-            label = "%s   %d dBm" % (network["ssid"], network["signal"])
-            commands += self.renderer.button("net.item%d" % index, 30, y, 740, 56,
-                                             label, font="JetBrainsMono 12pt")
-        commands += self.renderer.button("net.prev", 125, 390, 150, 50, "< Page",
-                                         active=pagination.has_previous)
-        commands += self.renderer.button("net.rescan", 325, 390, 150, 50, "RESCAN")
-        commands += self.renderer.button("net.next", 525, 390, 150, 50, "Page >",
-                                         active=pagination.has_next)
-        if not rows:
-            commands.append(self.renderer.text(400, 230, "No supported networks",
-                                               ThemeColor.DIM, "Roboto 16pt", "center", "middle"))
-        self.renderer.send(commands)
-
-    def _render_keyboard(self):
-        ssid = self.selected_network["ssid"]
-        commands = self.renderer.begin_page(ssid, back=True)
-        masked = (self.password if self.password_visible
-                  else "*" * len(self.password))
-        commands += [
-            self.renderer.text(
-                25, 73, "WI-FI PASSWORD", ThemeColor.PRIMARY,
-                "JetBrainsMono Bold 12pt"),
-            self.renderer.text(
-                280, 98, "8-63 ASCII CHARACTERS OR 64 HEX DIGITS",
-                ThemeColor.TEXT, "JetBrainsMono 8pt", max_width=490,
-                truncate=True),
-            self.renderer.fill(25, 120, 750, 53, ThemeColor.PANEL),
-            self.renderer.stroke(25, 120, 750, 53, ThemeColor.PRIMARY, 2),
-            self.renderer.text(
-                42, 147, masked or "_", ThemeColor.PRIMARY,
-                "JetBrainsMono 12pt", max_width=575, truncate=True),
-        ]
-        commands += self.renderer.button(
-            "net.password.toggle", 645, 128, 120, 37,
-            "HIDE" if self.password_visible else "SHOW",
-            font="JetBrainsMono 8pt")
-        commands += TEXT_KEYBOARD.render(
-            self.renderer, self.keyboard_symbols, self.keyboard_shift)
-        valid = self._valid_password(self.password)
-        commands += self.renderer.button(
-            "net.connect", 25, 383, 750, 54, "CONNECT", active=valid,
-            font="JetBrainsMono Bold 8pt")
-        self.renderer.send(commands)
-
-    @staticmethod
-    def _valid_password(password):
-        if len(password) == 64:
-            return all(ch in "0123456789abcdefABCDEF" for ch in password)
-        return 8 <= len(password) <= 63 and all(32 <= ord(ch) <= 126 for ch in password)
-
-    def _connect_wifi(self):
-        if not self._valid_password(self.password):
-            raise RuntimeError("Password must be 8-63 ASCII characters or 64 hex digits")
-        fd, credentials = self._create_credentials_file()
-        try:
-            payload = self.selected_network["ssid"] + "\n" + self.password + "\n"
-            os.write(fd, payload.encode("utf-8"))
-        finally:
-            os.close(fd)
-        self.password = ""
-        self.network_credentials = credentials
-        try:
-            self._start_network_process(
-                "wifi", [NETWORK_HELPER, "connect-wifi", credentials], Page.WIFI_SCAN)
-        except Exception:
-            self._cleanup_network_credentials()
-            raise
-
-    def _create_credentials_file(self):
-        """Create a private file without importing the heavy tempfile module."""
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
-        sequence = getattr(self, "_credential_sequence", 0)
-        for _attempt in range(16):
-            sequence += 1
-            path = "/tmp/feather-wifi-%d-%d" % (os.getpid(), sequence)
-            try:
-                fd = os.open(path, flags, 0o600)
-                self._credential_sequence = sequence
-                os.fchmod(fd, 0o600)
-                return fd, path
-            except OSError as exc:
-                if exc.errno != errno.EEXIST:
-                    raise
-        raise RuntimeError("Unable to allocate Wi-Fi credentials file")
 
     def _render_recovery_prompt(self):
         status = self.recovery_status or {}
@@ -1508,6 +1596,9 @@ class FeatherPagesMixin:
         self.renderer.send(commands)
 
     def _render_action_prompt(self):
+        if self._action_prompt_is_cold_pull():
+            self._render_cold_pull_prompt()
+            return
         prompt = self.action_prompt or {
             "title": "Prompt", "text": [], "rows": [], "footer": []}
         rows = prompt["rows"]
@@ -1573,18 +1664,17 @@ class FeatherPagesMixin:
                 "RESPOND TYPE=command MSG=action:prompt_end")
         elif action in ("recovery.restore", "recovery.cleanup"):
             self.recovery_action = action.split(".", 1)[1]
-            self._show_page(Page.RECOVERY_CONFIRM)
+            self._show_page(ScreenPage.RECOVERY_CONFIRM)
         elif action == "recovery.confirm":
             command = "RESURRECT" if self.recovery_action == "restore" else "RESURRECT_ABORT"
-            status = ("STARTING RECOVERY..."
-                      if command == "RESURRECT" else "STARTING CLEANUP...")
             manager = getattr(self, "feature_manager", None)
             if manager is not None:
-                manager.get("calibration").begin_recovery(status)
+                manager.get("calibration").begin_recovery()
             else:
                 self.calibration_kind = "recovery"
-                self.print_status_text = status
-            self._show_page(Page.CALIBRATION_PROGRESS)
+                self.calibration_starting_text = "STARTING..."
+                self._reset_calibration_progress()
+            self._show_page(ScreenPage.CALIBRATION_PROGRESS)
             self.reactor.register_callback(
                 lambda eventtime, cmd=command: self._run_recovery(eventtime, cmd))
 
@@ -1593,13 +1683,13 @@ class FeatherPagesMixin:
             self._run_script(command)
         except Exception as exc:
             logging.exception("[feather_screen] recovery failed")
-            self._show_message(str(exc), Page.RECOVERY_PROMPT)
+            self._show_message(str(exc), ScreenPage.RECOVERY_PROMPT)
             return
         status = (self.resurrection.get_status(self.reactor.monotonic())
                   if self.resurrection is not None else {})
         if command == "RESURRECT_ABORT" and status.get("available"):
-            self._show_message("Recovery cleanup failed", Page.RECOVERY_PROMPT)
+            self._show_message("Recovery cleanup failed", ScreenPage.RECOVERY_PROMPT)
         elif command == "RESURRECT_ABORT":
-            self._show_message("Recovery data cleaned up", Page.IDLE_HOME)
-        elif self.print_stats.get_status(self.reactor.monotonic())["state"] != "printing":
-            self._show_message("Restore did not start printing", Page.RECOVERY_PROMPT)
+            self._show_message("Recovery data cleaned up", ScreenPage.IDLE_HOME)
+        elif status.get("state") != "printing":
+            self._show_message("Restore did not start printing", ScreenPage.RECOVERY_PROMPT)

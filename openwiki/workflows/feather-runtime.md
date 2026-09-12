@@ -82,7 +82,7 @@ same predicate so a stale touch event cannot bypass the visual lock.
 
 ## How the plugin is installed and loaded
 
-During initialization, [`.shell/S00init`](../../.shell/S00init) runs `apply_klipper_patches()`, linking all files from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into `/opt/klipper/klippy/extras/`. Feather is therefore a standard Klipper extra, not a copied module or a separate Python service.
+During initialization, [`.shell/init-main.sh`](../../.shell/init-main.sh) runs `apply_klipper_patches()`, linking all files from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into `/opt/klipper/klippy/extras/`. Feather is therefore a standard Klipper extra, not a copied module or a separate Python service.
 
 [`.shell/commands/zdisplay.sh`](../../.shell/commands/zdisplay.sh) activates [`.cfg/init.display.feather.cfg`](../../.cfg/init.display.feather.cfg), which adds `config/feather.cfg` to `/opt/config/printer.cfg` and removes competing display roots. `config/feather.cfg` declares `[feather_screen]`; Klipper calls `load_config(config)` in `feather_screen.py`.
 
@@ -94,9 +94,9 @@ The plugin registers `klippy:ready`, `klippy:shutdown`, and `klippy:disconnect`.
 
 On a non-Stock boot, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) starts `netd --adopt-existing` when the mod-owned `network.conf` already exists. The daemon preserves an already-working connection only when its transport, exact Wi-Fi SSID where applicable, address, and DHCP client all match that configuration. It takes ownership of the matching processes and removes the other transport without rewriting network configuration. If the live state cannot be accepted completely, `netd` performs a fresh cleanup and starts the saved target normally. An older installation without `network.conf` starts netd without the adoption flag so the existing one-shot bootstrap can create the mod target first. Feather then boots the MCU and launches [`.shell/commands/zstart_klipper.sh`](../../.shell/commands/zstart_klipper.sh) without waiting for connectivity. The later `S99root` stage invokes [`.root/start.sh`](../../.root/start.sh), which owns `S35tslib` startup for Feather and Guppy as part of the restartable Buildroot service lifecycle. Typer tolerates that startup order by retrying a missing touch device until it appears. Guppy and Headless instead invoke `netd-cli wait --timeout 180` before continuing, preserving their Stock fallback behavior. The three-minute limit belongs to boot only; the daemon has no retry quota for its desired network. The Klipper launcher executes `/opt/klipper/start.sh`, optionally under `chrt -r 5`.
 
-A controlled `netd` shutdown stops its started or adopted supplicant and DHCP clients. Startup has three explicit contracts. `--migrate-existing` is the one-shot live Stock → Feather path: it determines the working vendor transport and may copy that selection and Wi-Fi profile into mod storage. `--adopt-existing` never migrates configuration: it accepts only the live connection matching the existing mod target and removes the other transport. With neither flag, or when requested adoption cannot be completed, startup stops existing network processes, clears both interfaces, and establishes the saved target afresh.
+A controlled `netd` shutdown stops its started or adopted supplicant and DHCP clients. Startup has three explicit contracts. `--migrate-existing` is the one-shot live Stock → Feather path: it determines the working vendor transport and may copy that selection and Wi-Fi profile into mod storage. `--adopt-existing` never migrates configuration: it accepts only the live connection matching the existing mod target and removes the other transport. With neither flag, fresh startup first loads the mod target. If it is absent, netd imports the Stock transport flags from `/opt/config/Adventurer5M.json`; an enabled Stock Wi-Fi target also imports only the enabled profile from `/etc/wpa_supplicant.conf`. A successful bootstrap becomes the normal mod-owned target. Missing, disabled, or incomplete Stock configuration leaves the printer offline. Startup then stops existing network processes, clears both interfaces, and establishes that target afresh.
 
-A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feather`. Its `apply_display_off()` function stops `ffstartup-arm`, `firmwareExe`, and Guppy, starts `S35tslib`, draws the splash, reloads `S00init`, and runs `restart_klipper.sh --hard`. The hard restart terminates `klippy.py` and launches Klipper directly again.
+A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feather`. Its `apply_display_mode()` function stops `ffstartup-arm`, `firmwareExe`, and Guppy, starts `S35tslib`, draws the splash, reloads `S00init`, and runs `restart_klipper.sh --hard`. The hard restart terminates `klippy.py` and launches Klipper directly again.
 
 `S35tslib` starts `/usr/bin/ts_uinput` with tslib variables, creates `/var/run/ts_uinput.pid`, discovers the generated event node under `/sys/class/input`, and symlinks it as `/dev/input/guppy`. Repeated `start` calls are idempotent while that PID is alive.
 
@@ -124,6 +124,12 @@ Typer enters its resident FIFO loop before vsync calibration completes and
 publishes frames synchronously during calibration. Once the timing model has
 enough valid samples, later frames switch to deferred publication without a
 renderer restart or an unpublished startup frame.
+
+When a page-flipping Typer session ends — normal exit, `TERM`/`INT`, or
+renderer teardown — it copies the currently visible frame into the boot page
+(y offset 0) and pans back before releasing the framebuffer. Fixed-page
+writers such as the boot `logged` renderer and raw `/dev/fb0` writes always
+stay visible after Typer exits.
 
 The worker hands the event FIFO to Klipper's reactor through
 `register_async_callback`; touch remains a direct reactor FD for low-latency
@@ -156,7 +162,7 @@ and the two-second TERM/KILL escalation occur only in the worker.
 | `/tmp/typer` | FIFO | Klippy writes complete display-list frames; Typer reads them. Typer unlinks it on normal exit. |
 | `/tmp/feather-events` | FIFO | Typer writes logical touch events; Klipper's reactor reads them. Typer unlinks it on normal exit. |
 | `/run/netd.sock` | `netd` stream socket, mode `0660` | The only network control channel. Carries `GET`, `SUBSCRIBE`, `SCAN`, `CONNECT_WIFI`, `USE_ETHERNET`, and explicit `CANCEL` for Feather and the thin CLI. EOF only removes that client; it never cancels a daemon-owned operation. `.shell/common.sh` bind-mounts `/run`, so the path is the same inside and outside the chroot. |
-| `/data/logFiles/netd.log` | `netd` daemon log | Event-oriented startup, adoption/migration decision, process lifecycle, connection-state and user network-action log. It is opened directly by `netd` so BusyBox daemonization cannot discard it and rotated by `S00init` at boot. Lines use the same timestamp/level/PID/process/message format as `logged`. User actions include the selected transport and SSID, but never credentials or scan-result contents. `zbackup.sh --tar-debug` includes this file and its rotated copies. |
+| `/data/logFiles/netd.log` | `netd` daemon log | Event-oriented startup, adoption/migration decision, process lifecycle, connection-state and user network-action log. It is opened directly by `netd` so BusyBox daemonization cannot discard it and rotated by `init-main.sh` at boot. Lines use the same timestamp/level/PID/process/message format as `logged`. User actions include the selected transport and SSID, but never credentials or scan-result contents. `zbackup.sh --tar-debug` includes this file and its rotated copies. |
 | `/opt/config/mod_data/network.conf` | `netd` | Persistent desired transport and selected SSID. Vendor files are consulted only during one-shot bootstrap or `--migrate-existing`; `--adopt-existing` never changes this file. |
 | `/opt/config/mod_data/wpa_supplicant.conf` | `netd` | Mod-owned saved Wi-Fi definitions. New credentials are persisted only after association and DHCP succeed. |
 | `/tmp/net_ip` | `netd` | The published address. Written on a state transition only — never from a read, which is what made a 1 Hz `status` poll a mutation. |
@@ -169,6 +175,8 @@ and the two-second TERM/KILL escalation occur only in the worker.
 ## USB file browsing
 
 While the printer is idle, Feather subscribes a non-blocking `NETLINK_KOBJECT_UEVENT` socket to the Klipper reactor and filters kernel `add`, `remove`, `change`, and `move` events to the USB block subsystem. It does not add an init service, udev rule, watcher thread, persistent process, or periodic sysfs scan. Event bursts are coalesced for 400 ms before [`.shell/commands/zusb_mount.sh`](../../.shell/commands/zusb_mount.sh) starts as a non-blocking child; the reactor only polls process completion. The helper is terminated after a bounded timeout, and failed or lock-contended attaches use bounded backoff.
+
+Netlink delivery is best-effort. If the kernel reports that the event queue overflowed, Feather keeps the subscription and immediately runs a complete helper reconciliation so the filesystem remains the source of truth.
 
 Feather closes the uevent socket and stops an in-flight reconciliation helper in `PREPARING`, `PRINTING`, and `PAUSED`. It deliberately performs no USB discovery in those states and leaves an existing mount in place for an active USB print. Returning to `IDLE` recreates the subscription and forces one complete helper reconciliation, so a device event missed while printing is recovered without background polling.
 
@@ -238,15 +246,46 @@ For continuous input, Typer emits a `move` heartbeat every 100 ms while a finger
 
 `FeatherScreen._process_touch_events()` handles partial FIFO reads, validates generation and format, wakes a dimmed panel on the first touch, debounces actions, and applies page/state gates. A lost device replaces an ordinary interactive page or a button-bearing modal with a non-interactive warning. Pre-ready startup and operation loaders are not covered. Reconnection canonically renders the current page again, restoring any page-owned modal and preserving a frozen shutdown screen's ownership. Continuous motion is further limited to the Move page, idle state, correct homing, and active joystick mode; actual motion remains inside Klipper's planner/toolhead path.
 
-During a normal operating-system reboot or poweroff, init invokes [`.shell/S99root`](../../.shell/S99root) through its `K99root` link. That kill path publishes the neutral `action:forge_x_shutting_down` lifecycle marker before stopping Buildroot services; the manual `STOP_MOD` path invokes `S99root` and does not publish it. Feather observes the marker and freezes its existing critical startup surface with a shutdown message. The shared service stop sequence removes `/dev/input/guppy` last, after display and network services have stopped, so the marker is handled before touch teardown without teaching the touch transport about system lifecycle. Forced reboot, kernel panic, and power loss bypass this graceful lifecycle.
+The public `REBOOT` and `SHUTDOWN` macros call `_PREPARE_SYSTEM_POWER` while
+Klipper is still available. That shared preparation publishes
+`action:forge_x_shutting_down` and resets the controller power-button signal;
+`SHUTDOWN` additionally lowers the Pro power-off pin before invoking the
+ordinary system command. Moonraker runs as root but prefixes machine actions
+with `sudo`, so [`.root/sudo-shim`](../../.root/sudo-shim) translates its exact
+`sudo reboot` and `sudo poweroff` requests back to those public macros. Other
+commands pass through unchanged, and unavailable Klipper falls back to the
+requested system command.
 
-After `S99root start` or a manual `S99root stop` finishes writing service
-progress to the framebuffer, it publishes `action:forge_x_redraw`. Feather
-then renders the current page again after invalidating its persistent footer
-cache, because the external progress renderer may have overwritten that
-region. The signal is skipped when the Klipper command FIFO is unavailable.
-`K99root` does not publish it, so the frozen shutdown surface remains
-unchanged.
+During the resulting graceful reboot or poweroff, BusyBox init runs `rcK`,
+which invokes every `S??*` service with `stop`; it does not invoke the
+corresponding `K??*` link. [`.shell/S99root`](../../.shell/S99root) therefore
+identifies `rcK` as its original caller, publishes the idempotent shutdown
+marker as a fallback, gives Feather one second to render its final screen, and
+then stops the Buildroot services. A manual `STOP_MOD`, reload, or direct
+`S99root stop` remains an ordinary service operation and redraws the current
+page afterward. Forced reboot, kernel panic, and power loss bypass this
+graceful lifecycle.
+
+Feather discards every untouched render batch before queuing the shutdown
+surface, so a pending critical touch-unavailable warning cannot supersede it.
+It then freezes the shutdown surface as the final framebuffer owner. The
+shared service stop sequence removes `/dev/input/guppy` only after the marker
+has had its bounded processing window; the touch transport does not own system
+lifecycle policy.
+
+Before starting Klipper in Feather mode, the boot script creates the common
+Forge-X screen marker `/tmp/forge_x_screen_busy`. Feather still initializes its
+renderer and runtime, but its renderer output gate discards frames while that
+file exists, leaving the splash and first-boot service logger as the sole
+framebuffer owner. After `S99root start` has closed its `logged` pipeline, it
+removes the file and publishes `action:forge_x_redraw`. Feather releases the
+output gate, clears the complete panel, and renders the current page. If the
+redraw signal is unavailable, the existing startup-animation callback before
+`klippy:ready`, or the normal one-second UI update afterward, observes the
+removed marker and performs the same release without a separate boot timer.
+Later `S99root` calls continue logging without framebuffer output and retain
+the redraw notification. An `rcK` stop suppresses that redraw, so the frozen
+shutdown surface remains unchanged.
 
 Startup and error pages clear the normal page hitboxes. The only actionable shutdown control is the generation-tagged `FIRMWARE_RESTART` button that Feather exposes after classifying an MCU recovery condition; it still routes through Klipper's normal G-code command path.
 

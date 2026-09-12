@@ -36,7 +36,7 @@ GET_MOD PARAM=tune_klipper
 SET_MOD PARAM=tune_klipper VALUE=1
 ```
 
-`GET_MOD_PARAM`/`SET_MOD_PARAM` are equivalent longer command names; `RELOAD_MOD_PARAMS` reloads the persisted values. On a successful change, the configured `changes_gcode` invokes the shell `parameter_changed` hook. That hook owns immediate effects such as rebooting after `tune_klipper`, restarting services, selecting a display, or enabling peripherals. Therefore, edit settings through `SET_MOD`, not by hand-editing `variables.cfg`.
+`GET_MOD_PARAM`/`SET_MOD_PARAM` are equivalent longer command names; `RELOAD_MOD_PARAMS` reloads the persisted values. On a successful change, the configured `changes_gcode` invokes the shell `parameter_changed` hook. That hook owns immediate effects such as restarting Klipper after `tune_klipper`, restarting services, selecting a display, or enabling peripherals. Therefore, edit settings through `SET_MOD`, not by hand-editing `variables.cfg`.
 
 Use [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) for operator-facing parameter guidance. `LIST_MOD_PARAMS` is the authoritative live inventory because the schema evolves.
 

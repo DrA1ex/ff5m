@@ -14,17 +14,14 @@ CMDS=$SCRIPTS/commands
 BINS=/opt/config/mod/.bin/exec
 MOD_DATA=/opt/config/mod_data
 
-INIT_FLAG="/tmp/init_finished_f"
 NOT_FIRST_LAUNCH_F="/tmp/not_first_launch_f"
 CUSTOM_BOOT_F="/tmp/custom_boot_f"
 WIFI_CONNECTED_F="/tmp/wifi_connected_f"
 CAMERA_F="/tmp/camera_f"
 NET_IP_F="/tmp/net_ip"
 
-BOOT_FAILURE_F="/opt/config/mod/BOOT_FLAG_FAILURE"
-BOOT_SKIP_F="/opt/config/mod/BOOT_FLAG_SKIP"
-
 SCREEN_FOLLOW_UP_LOG="/tmp/logged_message_queue"
+FORGE_X_SCREEN_BUSY_F="/tmp/forge_x_screen_busy"
 
 CFG_SCRIPT="$CMDS/zconf.sh"
 VAR_PATH="$MOD_DATA/variables.cfg"

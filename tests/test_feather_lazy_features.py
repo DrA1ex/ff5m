@@ -461,6 +461,10 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller.command_depth = 0
         controller.busy_message = None
         controller.toast_until = 0.0
+        controller.boot_screen_held = False
+        controller.touch_available = None
+        controller.touch_warning_visible = False
+        controller.system_shutdown_active = False
         controller.filament_material = "PLA"
         controller.heating_materials = ("PLA",)
         controller.heating_profiles = {"PLA": (220, 60)}

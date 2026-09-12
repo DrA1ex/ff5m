@@ -23,7 +23,7 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 
 ## Prerequisites
 
-* Stock firmware version: minimum **2.6.5**, maximum **5.1.x**. Firmware versions up to **5.1.x** are verified, including **5.0.3/5.0.4** and **5.1.2–5.1.7**. The **5.1.x** range has been **test-flashed on hardware — the mod installs and runs**, and firmware analysis confirms its kernel, MCU firmware and partition layout are byte-identical to the supported 3.1.3 baseline (see [FIRMWARE_5x_COMPAT.md](/docs/FIRMWARE_5x_COMPAT.md)).   
+* Stock firmware version: minimum **2.6.5**, maximum **5.1.x**. Firmware versions up to **5.1.x** are verified, including **5.0.3/5.0.4** and **5.1.2–5.1.7**. The **5.1.x** range has been **test-flashed on hardware — the mod installs and runs**, and firmware analysis confirms its kernel, MCU firmware and partition layout are byte-identical to the supported 3.1.3 baseline.
   * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
   * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
 * A USB flash drive formatted to FAT32.
@@ -41,7 +41,7 @@ The mod uses the same installation mechanism as the stock firmware:
 5. The printer will automatically install the update. After the installation is finished, you will see a message at the end of the screen.  
 6. Eject the USB drive and reboot the printer.  
 
-After installation, the printer will boot into the modified firmware by default.
+After a fresh installation, the printer will boot into the modified firmware with Feather as its default local screen. An update preserves an existing explicit display choice.
 
 From this point onward, you will receive OTA updates from this repository.
 

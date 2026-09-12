@@ -149,7 +149,7 @@ NETD_PID=""
 EXPECTED_NETD="$(pwd)/mod/.bin/exec/netd"
 
 # These package trees are fully managed by the project. Remove Python sources
-# absent from the incoming archive before S00init reload cleans their matching
+# absent from the incoming archive before init-main reload cleans their matching
 # Klipper extras symlinks.
 for package in \
     ".py/klipper/plugins/ui" \
@@ -282,7 +282,8 @@ if [ "$CHANGED" -eq 1 ] || [ "$FORCE_RESTART" -eq 1 ] && [ "$SKIP_RESTART" -eq 0
     run_service "Database"  "Migrating"     0   "$SKIP_MIGRATE"           /opt/config/mod/.shell/migrate_db.sh
     run_service "Moonraker" "Starting"      0   "$SKIP_MOON_RESTART"      /etc/init.d/S99root start
 
-    run_service "Plugins"   "Reloading"     0   "$SKIP_PLUGIN_RELOAD"     /etc/init.d/S00init reload
+    run_service "Plugins"   "Reloading"     0   "$SKIP_PLUGIN_RELOAD" \
+        /opt/config/mod/.shell/init-main.sh reload
     
     if [ "$KLIPPER_HARD_RESTART" -ne 1 ]; then
         run_service "Klipper"   "Reloading"     0   "$SKIP_KLIPPER_RESTART"   /opt/config/mod/.shell/restart_klipper.sh

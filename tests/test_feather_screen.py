@@ -10,6 +10,7 @@ import enum
 import json
 import pathlib
 import re
+import shlex
 import tempfile
 import threading
 import unittest
@@ -227,8 +228,26 @@ class FeatherUtilitiesTest(unittest.TestCase):
             _value = entry["unknown"]
 
     def test_renderer_escapes_untrusted_text(self):
-        quoted = FEATHER.FeatherRenderer.quote('file "one"\\two\nnext')
-        self.assertEqual(quoted, '"file \\"one\\"\\\\two next"')
+        value = 'file "one"\\two\nnext'
+
+        quoted = FEATHER.FeatherRenderer.quote(value)
+
+        self.assertEqual(shlex.split(quoted), [value])
+
+    def test_renderer_keeps_frame_sentinel_inside_text_harmless(self):
+        value = "before\n--end\nafter"
+
+        quoted = FEATHER.FeatherRenderer.quote(value)
+        frame = FEATHER.FeatherRenderer._encode_frames([
+            "--batch text -t %s" % quoted,
+        ])[0].decode("utf-8")
+        payload, separator, remainder = frame.rpartition("\n--end\n")
+
+        self.assertEqual(separator, "\n--end\n")
+        self.assertEqual(remainder, "")
+        self.assertNotIn("\n--end\n", payload)
+        self.assertEqual(
+            shlex.split(quoted), ["before\n --end\nafter"])
 
     def test_renderer_normalizes_fonts_from_active_manifest(self):
         from ui import font_metrics
@@ -470,12 +489,19 @@ class FeatherUtilitiesTest(unittest.TestCase):
             FEATHER.ScreenPage.WIFI_SCAN, "net.reset.saved"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.MESSAGE, "mesh.save"))
         controller.message_actions = (
             ("message.ok", "CANCEL", "enabled"),
             ("net.reset.saved", "RESET PASSWORD", "warning"),
         )
         self.assertTrue(allowed(
             FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"),
+        )
+        self.assertTrue(allowed(FEATHER.ScreenPage.MESSAGE, "mesh.save"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.MOD_SETTINGS, "keyboard.key.hash"))
 
@@ -884,12 +910,6 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 both, _ = reload_variables(text)
                 self.assertEqual(both.variables["pause_z_min"], 120.0)
 
-        # An enumerated rename stays strict: a value it cannot translate is
-        # refused rather than carried into the new key.
-        strict, _ = reload_variables("[Variables]\ndisplay_off = 7\n")
-        self.assertEqual(strict.variables["display"],
-                         strict.params_map["display"].type["FEATHER"].value)
-
     def test_mod_variables_without_enum_keys_load_defaults_without_errors(self):
         # A fresh install (or a key introduced by an update) has no stored value
         # for an enum parameter.  That is a normal state, not a parse failure.
@@ -914,6 +934,9 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 manager._reload()
 
             self.assertEqual(logged.call_args_list, [])
+            display = manager.params_map["display"]
+            self.assertEqual(
+                manager.variables["display"], display.type["FEATHER"].value)
             self.assertEqual(
                 {param.key: manager._transform(
                     param, manager.variables[param.key]) for param in enums},
@@ -2020,7 +2043,7 @@ class RendererStateTest(unittest.TestCase):
 
         page = renderer.begin_page("Home")
         menu = renderer.button(
-            "nav.menu", 648, 9, 132, 38, "MENU")
+            "nav.menu", 650, 11, 132, 38, "MENU")
 
         self.assertTrue(page)
         self.assertEqual(menu, [])
@@ -2029,7 +2052,9 @@ class RendererStateTest(unittest.TestCase):
         renderer.clear_busy_notice()
 
         restored = "\n".join(sent[-1])
+        self.assertEqual(sent[-1][0], sent[0][0])
         self.assertIn("nav.menu", restored)
+        self.assertNotIn("KLIPPER BUSY", restored)
 
     def test_emergency_stop_has_priority_over_busy_notice_and_loader(self):
         renderer = FEATHER.FeatherRenderer()

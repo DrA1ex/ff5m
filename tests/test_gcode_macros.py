@@ -8,14 +8,23 @@ import pathlib
 import unittest
 
 from tests.gcode_macro_harness import (
-    MacroActionError, load_macro, render_macro)
+    MacroActionError, execute_macro_chain, load_macro, render_macro)
 
 
 ROOT = pathlib.Path(__file__).parents[1]
 BASE = ROOT / "macros" / "base.cfg"
+HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
 SMART_PARK = ROOT / "KAMP" / "Smart_Park.cfg"
+MOTION_MACROS = (
+    (BASE, "M600"),
+    (BASE, "MOVE_SAFE"),
+    (CLIENT, "PAUSE"),
+    (CLIENT, "CANCEL_PRINT"),
+    (CLIENT, "_TOOLHEAD_PARK_PAUSE_CANCEL"),
+    (HEADLESS, "END_PRINT"),
+)
 
 
 def assert_order(test, commands, expected):
@@ -34,6 +43,34 @@ def material_config():
 
 
 class WorkflowMacroTest(unittest.TestCase):
+    def test_system_power_macros_prepare_hardware_before_action(self):
+        macros = (
+            (BASE, "_PREPARE_SYSTEM_POWER"),
+            (BASE, "SHUTDOWN"),
+            (BASE, "REBOOT"),
+        )
+        preparation = (
+            'RESPOND TYPE=command MSG="action:forge_x_shutting_down"',
+            "BED_MESH_CLEAR",
+            "M400",
+            "SET_PIN PIN=clear_power_off VALUE=1",
+            "WAIT TIME=500",
+            "SET_PIN PIN=clear_power_off VALUE=0",
+        )
+
+        shutdown = execute_macro_chain(macros, "SHUTDOWN")
+        reboot = execute_macro_chain(macros, "REBOOT")
+
+        self.assertEqual(
+            shutdown, preparation + (
+                "SET_PIN PIN=power_off VALUE=0",
+                "RUN_SHELL_COMMAND CMD=sync",
+                "RUN_SHELL_COMMAND CMD=poweroff"))
+        self.assertEqual(
+            reboot, preparation + (
+                "RUN_SHELL_COMMAND CMD=sync",
+                "RUN_SHELL_COMMAND CMD=reboot"))
+
     def test_conditional_homing_publishes_state_only_when_needed(self):
         unhomed = render_macro(BASE, "_HOME_IF_NEEDED", printer={
             "toolhead": {"homed_axes": ""},
@@ -86,6 +123,101 @@ class WorkflowMacroTest(unittest.TestCase):
             "_CONTEXT_STATE NAME=PRIMING",
             "_CONTEXT_STATE NAME=PRINTING",
         ))
+
+    def test_feather_start_options_override_leveling_for_one_print(self):
+        start = macro_status(
+            HEADLESS, "START_PRINT", feather_force_leveling=True,
+            feather_mesh_name=None)
+        temporary = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {"auto": {}}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                   "SKIP_LEVELING": 1, "MESH": "slicer"})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zforce_leveling VALUE=1", temporary.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zskip_leveling VALUE=0", temporary.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"\"'", temporary.commands)
+
+        start["feather_mesh_name"] = "auto"
+        persistent = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {"auto": {}}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"auto\"'", persistent.commands)
+
+    def test_headless_start_uses_slicer_values_without_feather_override(self):
+        start = macro_status(HEADLESS, "START_PRINT")
+        result = render_macro(HEADLESS, "START_PRINT", printer={
+            "gcode_macro START_PRINT": start,
+            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "bed_mesh": {"profiles": {}},
+        }, params={"EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                   "FORCE_LEVELING": 0, "SKIP_LEVELING": 1,
+                   "MESH": "slicer"})
+
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zforce_leveling VALUE=0", result.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zskip_leveling VALUE=1", result.commands)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=_START_PRINT "
+            "VARIABLE=zmesh VALUE='\"slicer\"'", result.commands)
+
+    def test_feather_rebuild_uses_full_mesh_even_when_kamp_is_enabled(self):
+        start = macro_status(
+            BASE, "_START_PRINT", zforce_leveling=True, zmesh="auto")
+        result = render_macro(BASE, "_START_PRINT", printer={
+            "gcode_macro _START_PRINT": start,
+            "gcode_macro START_PRINT": {"preparation_done": True},
+            "mod_params": {"variables": {
+                "safe_z": 10,
+                "chamber_light_mode": "MANUAL",
+                "display": 1,
+                "check_md5": 0,
+                "print_leveling": False,
+                "use_kamp": True,
+                "bed_mesh_validation": False,
+                "midi_start": "",
+                "weight_check": False,
+                "disable_priming": True,
+            }},
+            "extruder": {"temperature": 25, "can_extrude": False},
+            "bed_mesh": {"profile_name": "auto", "profiles": {"auto": {}}},
+        })
+
+        full_level = (
+            "_FULL_BED_LEVEL BED_TEMP=80.0 EXTRUDER_TEMP=245.0 "
+            "PROFILE=auto")
+        self.assertIn(full_level, result.commands)
+        self.assertNotIn(
+            "KAMP BED_TEMP=80.0 EXTRUDER_TEMP=245.0", result.commands)
+
+    def test_headless_end_clears_pending_feather_mesh_options(self):
+        result = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
+            "mod_params": {"variables": {"stop_motor": 0}},
+            "bed_mesh": {"profile_name": "auto"},
+        })
+
+        for variable, value in (
+                ("feather_force_leveling", "None"),
+                ("feather_mesh_name", "None")):
+            self.assertIn(
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=%s VALUE=%s" % (variable, value),
+                result.commands)
 
     def test_tuning_macros_emit_their_lifecycle_in_order(self):
         cases = (
@@ -325,6 +457,194 @@ class MaterialMacroTest(unittest.TestCase):
 
 
 class MotionAndIntegrationMacroTest(unittest.TestCase):
+    @staticmethod
+    def _motion_printer(current_z, *, origin=0, safe_z=10,
+                        pause_z_min=50, park_dz=50, homed="xyz"):
+        return {
+            "resurrection": {"supports_pause_markers": False},
+            "gcode_macro _CLIENT_VARIABLE": macro_status(
+                HEADLESS, "_CLIENT_VARIABLE"),
+            "gcode_macro RESUME": {"restore_idle_timeout": 0},
+            "gcode_macro MOVE_SAFE": macro_status(BASE, "MOVE_SAFE"),
+            "configfile": {"settings": {
+                "idle_timeout": {"timeout": 600},
+                "pause_resume": {"recover_velocity": 50},
+                "printer": {"kinematics": "cartesian"},
+            }},
+            "mod_params": {"variables": {
+                "safe_z": safe_z,
+                "pause_z_min": pause_z_min,
+                "park_dz": park_dz,
+                "midi_end": "",
+            }},
+            "pause_resume": {"is_paused": False},
+            "gcode_move": {
+                "homing_origin": {"z": origin},
+                "gcode_position": {"z": current_z},
+                "absolute_coordinates": True,
+            },
+            "toolhead": {
+                "axis_maximum": {"z": 230},
+                "cone_start_z": 230,
+                "homed_axes": homed,
+                "extruder": "",
+                "position": {"x": 0, "y": 0, "z": current_z},
+            },
+            "extruder": {"can_extrude": False},
+        }
+
+    @staticmethod
+    def _axis_targets(commands, axis):
+        targets = []
+        for command in commands:
+            tokens = command.split()
+            if not tokens or tokens[0] != "G1":
+                continue
+            targets.extend(float(token[1:]) for token in tokens[1:]
+                           if token.startswith(axis))
+        return targets
+
+    def test_pause_and_m600_execute_to_bounded_z_motion(self):
+        cases = (
+            (5, 0, 10, 50, 50),
+            (100, 0, 10, 50, 110),
+            (215, 0, 10, 50, 220),
+            (215, 2, 10, 50, 218),
+            (5, 0, 10, 500, 220),
+        )
+        for entry in ("PAUSE", "M600"):
+            for current, origin, safe_z, pause_z_min, expected in cases:
+                with self.subTest(
+                        entry=entry, current=current, origin=origin,
+                        safe_z=safe_z, pause_z_min=pause_z_min):
+                    commands = execute_macro_chain(
+                        MOTION_MACROS, entry, printer=self._motion_printer(
+                            current, origin=origin, safe_z=safe_z,
+                            pause_z_min=pause_z_min))
+
+                    self.assertEqual(
+                        self._axis_targets(commands, "Z"), [expected])
+
+    def test_cancel_executes_park_dz_to_bounded_z_motion(self):
+        cases = (
+            (0, 0, 10, 50, 50),
+            (100, 0, 10, 50, 150),
+            (215, 0, 10, 50, 220),
+            (215, 2, 10, 50, 218),
+            (100, 0, 10, 5, 110),
+            (100, 0, 10, -50, 150),
+            (100, 0, 10, 500, 220),
+        )
+        for paused in (False, True):
+            for current, origin, safe_z, park_dz, expected in cases:
+                with self.subTest(
+                        paused=paused, current=current, origin=origin,
+                        safe_z=safe_z, park_dz=park_dz):
+                    printer = self._motion_printer(
+                        current, origin=origin, safe_z=safe_z,
+                        park_dz=park_dz)
+                    printer["pause_resume"]["is_paused"] = paused
+                    commands = execute_macro_chain(
+                        MOTION_MACROS, "CANCEL_PRINT", printer=printer,
+                        params={"REASON": "USER"})
+
+                    self.assertEqual(
+                        self._axis_targets(commands, "Z"), [expected])
+
+    def test_cancel_publishes_current_reason_before_base_cancel(self):
+        printer = self._motion_printer(100)
+        for params, reason in ((None, ""),
+                               ({"REASON": "FILAMENT RUNOUT"},
+                                "FILAMENT RUNOUT")):
+            with self.subTest(reason=reason):
+                result = render_macro(
+                    CLIENT, "CANCEL_PRINT", printer=printer, params=params)
+                publish = (
+                    "SET_GCODE_VARIABLE MACRO=CANCEL_PRINT "
+                    "VARIABLE=cancel_reason VALUE='\"%s\"'" % reason)
+
+                self.assertIn(publish, result.commands)
+                assert_order(self, result.commands, (
+                    publish,
+                    "CANCEL_PRINT_BASE",
+                ))
+
+    def test_print_failure_forwards_message_as_cancel_reason(self):
+        result = render_macro(
+            BASE, "_RAISE_WITH_PRINT_CANCEL",
+            printer={"gcode_macro _START_PRINT": {"print_active": True}},
+            params={"MSG": "Temperature waiting timed out."})
+
+        self.assertEqual(result.commands, (
+            'CANCEL_PRINT REASON="Temperature waiting timed out."',
+            "M400",
+            'RESPOND PREFIX="!!" MSG="Temperature waiting timed out."',
+            "_RAISE_ERROR",
+        ))
+
+    def test_end_print_executes_move_safe_to_bounded_z_motion(self):
+        cases = (
+            (0, 50, 50),
+            (100, 50, 150),
+            (215, 50, 220),
+            (100, 500, 220),
+            (100, -500, 0),
+        )
+        for current, park_dz, expected in cases:
+            with self.subTest(current=current, park_dz=park_dz):
+                commands = execute_macro_chain(
+                    MOTION_MACROS, "END_PRINT",
+                    printer=self._motion_printer(
+                        current, park_dz=park_dz))
+
+                self.assertEqual(
+                    self._axis_targets(commands, "Z"), [expected])
+
+    def test_end_print_relative_lift_uses_gcode_position_with_active_mesh(self):
+        printer = self._motion_printer(60, park_dz=1)
+        printer["bed_mesh"] = {"profile_name": "auto"}
+        printer["toolhead"]["position"]["z"] = 60.056863
+
+        commands = execute_macro_chain(
+            MOTION_MACROS, "END_PRINT", printer=printer)
+
+        self.assertEqual(self._axis_targets(commands, "Z"), [61])
+
+    def test_terminal_motion_macros_clamp_requested_xy(self):
+        cases = (
+            ("PAUSE", {"X": 999, "Y": -999}),
+            ("M600", {"X": 999, "Y": -999}),
+            ("CANCEL_PRINT", {"REASON": "USER"}),
+            ("END_PRINT", None),
+        )
+        for entry, params in cases:
+            with self.subTest(entry=entry):
+                printer = self._motion_printer(100)
+                client = printer["gcode_macro _CLIENT_VARIABLE"]
+                client["park_at_cancel_x"] = 999
+                client["park_at_cancel_y"] = -999
+                client["custom_park_x"] = 999
+                client["custom_park_y"] = -999
+                commands = execute_macro_chain(
+                    MOTION_MACROS, entry, printer=printer, params=params)
+
+                self.assertEqual(
+                    self._axis_targets(commands, "X"), [110])
+                self.assertEqual(
+                    self._axis_targets(commands, "Y"), [-110])
+
+    def test_terminal_motion_macros_do_not_move_unhomed_axes(self):
+        for entry in ("PAUSE", "M600", "CANCEL_PRINT", "END_PRINT"):
+            with self.subTest(entry=entry):
+                commands = execute_macro_chain(
+                    MOTION_MACROS, entry,
+                    printer=self._motion_printer(100, homed=""),
+                    params={"REASON": "USER"}
+                    if entry == "CANCEL_PRINT" else None)
+
+                self.assertFalse(any(
+                    command.split()[0] == "G1" for command in commands))
+
     def test_pause_park_uses_minimum_lift_and_reachable_z_ceiling(self):
         limits = macro_status(BASE, "MOVE_SAFE")
         cases = (
@@ -393,6 +713,36 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             "G1 X110.0 Y-110.0 Z210.0  F6000",
             "RESTORE_GCODE_STATE NAME=_client_movement",
         ))
+
+    def test_move_safe_relative_targets_ignore_bed_mesh_transform(self):
+        limits = macro_status(BASE, "MOVE_SAFE")
+        cases = (
+            ("unloaded", "", 60.0),
+            ("loaded", "auto", 60.056863),
+        )
+        for label, profile, physical_z in cases:
+            with self.subTest(mesh=label):
+                result = render_macro(BASE, "MOVE_SAFE", printer={
+                    "gcode_macro MOVE_SAFE": limits,
+                    "bed_mesh": {"profile_name": profile},
+                    "gcode_move": {
+                        "gcode_position": {"x": 10, "y": 20, "z": 60},
+                    },
+                    "toolhead": {
+                        "axis_maximum": {"z": 230},
+                        "position": {"x": 10, "y": 20, "z": physical_z},
+                    },
+                }, params={"X": 1, "Y": -2, "Z": -1, "F": 6000})
+
+                self.assertEqual(self._axis_targets(result.commands, "X"), [11])
+                self.assertEqual(self._axis_targets(result.commands, "Y"), [18])
+                self.assertEqual(self._axis_targets(result.commands, "Z"), [59])
+                assert_order(self, result.commands, (
+                    "SAVE_GCODE_STATE NAME=_client_movement",
+                    "G90",
+                    "G1 X11.0 Y18.0 Z59.0  F6000",
+                    "RESTORE_GCODE_STATE NAME=_client_movement",
+                ))
 
     def test_smart_park_uses_fallback_and_rejects_unhomed_motion(self):
         printer = {

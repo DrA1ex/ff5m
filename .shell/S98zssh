@@ -2,26 +2,32 @@
 
 ## Tunnel to remote server
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ## Copyright (C) 2025, Sergei Rozhkov <https://github.com/ghzserg>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_SOFT ] || [ -f /tmp/SKIP_MOD_HARD ]; then
-    echo "SSH tunnel due to SKIP_MOD mode"
-    exit 0
-fi
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 0
+BOOT_MODE=$(forge_x_boot_mode)
+
+case "$BOOT_MODE" in
+    mod)
+    ;;
+
+    *)
+        echo "SSH tunnel disabled in $BOOT_MODE mode"
+        exit 0
+    ;;
+esac
 
 source /opt/config/mod/.shell/common.sh
 CFG_PATH="/opt/config/mod_data/ssh.conf"
-
 
 if ! [ -f /opt/config/mod_data/ssh.key ]; then
     dropbearkey -t ed25519 -f /opt/config/mod_data/ssh.key
     dropbearkey -y -t ed25519 -f /opt/config/mod_data/ssh.key |grep root@kunos >/opt/config/mod_data/ssh.pub.txt
 fi
-
 
 # Create default configuration if needed
 if [ ! -f "$CFG_PATH" ]; then
@@ -37,14 +43,15 @@ PID_FILE=/run/zssh.pid
 
 start() {
     enabled=$($CFG_SCRIPT "$VAR_PATH" --get "zssh" "0")
+
     if [ "$enabled" -eq 0 ]; then
         echo "@@ SSH is disabled"
         return
     fi
-    
+
     if ! is_running; then
         echo "// Starting ssh tunnel..."
-        
+
         sync
         /bin/dropbearmulti dbclient                     \
             -NTfy                                       \
@@ -55,22 +62,22 @@ start() {
             -o ExitOnForwardFailure=yes                 \
             "${SSH_USER}@${SSH_SERVER}"                 \
         &>> "/data/logFiles/ssh.log"
-        
+
         ret=$?
         sync
-        
+
         if [ "$ret" -ne 0 ]; then
             echo "@@ Unable to create SSH tunnel. Returned: $ret"
             exit 1
         fi
-        
+
         echo "// OK"
-        
+
         ps | grep '\-NTf[y]' | head -1 | awk '{print $1}' > "$PID_FILE"
-        
+
         if [ -n "${REMOTE_RUN}" ] && is_running; then
             echo "// Sending remote command..."
-            
+
             sync
             /bin/dropbearmulti dbclient                 \
                 -Tfy                                    \
@@ -79,18 +86,18 @@ start() {
                 "${SSH_USER}@${SSH_SERVER}"             \
                 "${REMOTE_RUN}"                         \
             &>> "/data/logFiles/ssh.log"
-            
+
             ret=$?
             sync
-            
+
             if [ "$ret" -ne 0 ]; then
                 echo "@@ Unable to run remote command over SSH. Returned: $ret"
                 exit 2
             fi
-            
+
             echo "// OK"
         fi
-        
+
         echo "// All done!"
     fi
 }
@@ -103,12 +110,12 @@ stop() {
 
 restart() {
     echo "// Restarting SSH tunnel..."
-    
+
     if is_running; then
         stop
         while is_running; do sleep 1; done
     fi
-    
+
     start
 }
 
@@ -116,7 +123,7 @@ is_running() {
     if [ -f $PID_FILE ] && kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
         return 0
     fi
-    
+
     return 1
 }
 
@@ -140,15 +147,19 @@ switch() {
                 start
             fi
         ;;
+
         stop)
             stop
         ;;
+
         restart)
             restart
         ;;
+
         reload)
             reload
         ;;
+
         test)
             if is_running; then
                 echo "SSH Tunnel is running"
@@ -158,6 +169,7 @@ switch() {
                 return 1
             fi
         ;;
+
         *)
             echo "Usage: $0 {start|stop|restart|reload|test}"
             exit 1

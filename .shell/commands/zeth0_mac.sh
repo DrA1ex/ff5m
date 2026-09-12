@@ -6,8 +6,8 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-INTERFACES_FILE=${INTERFACES_FILE:-/etc/network/interfaces}
-SYS_CLASS_NET=${SYS_CLASS_NET:-/sys/class/net}
+INTERFACES_FILE=/etc/network/interfaces
+SYS_CLASS_NET=/sys/class/net
 
 interface=${1:-eth0}
 interface_dir=$SYS_CLASS_NET/$interface

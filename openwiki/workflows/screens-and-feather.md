@@ -10,8 +10,8 @@ Forge-X supports four mutually exclusive display modes: **STOCK**, **FEATHER**, 
 
 | Mode | Active root config | Local panel behavior | Main interactive control path | Runtime implications |
 |---|---|---|---|---|
-| `STOCK` (default) | [`config/stock.cfg`](../../config/stock.cfg) | Vendor FlashForge application and touch UI | Stock UI/apps, plus Forge-X/Moonraker where compatible | Vendor app starts Klipper and owns stock-screen-specific behavior. It consumes more RAM and can freeze when unsupported direct Klipper actions such as `RESTART` or `SAVE_CONFIG` are used. |
-| `FEATHER` | [`config/feather.cfg`](../../config/feather.cfg) | Forge-X interactive status/control display | Feather for essential local actions; Fluidd/Mainsail for advanced work | First-party, low-resource display. Forge-X starts touchscreen, MCU, and Klipper even while offline; vendor app is stopped. |
+| `STOCK` | [`config/stock.cfg`](../../config/stock.cfg) | Vendor FlashForge application and touch UI | Stock UI/apps, plus Forge-X/Moonraker where compatible | Vendor app starts Klipper and owns stock-screen-specific behavior. It consumes more RAM and can freeze when unsupported direct Klipper actions such as `RESTART` or `SAVE_CONFIG` are used. |
+| `FEATHER` (default) | [`config/feather.cfg`](../../config/feather.cfg) | Forge-X interactive status/control display | Feather for essential local actions; Fluidd/Mainsail for advanced work | First-party, low-resource display. Forge-X starts touchscreen, MCU, and Klipper even while offline; vendor app is stopped. |
 | `GUPPY` | [`config/guppy.cfg`](../../config/guppy.cfg) | Interactive Guppy touchscreen | Guppy plus Fluidd/Mainsail/Moonraker | Separate Guppy/tslib processes are started in the chroot. |
 | `HEADLESS` | [`config/headless.cfg`](../../config/headless.cfg) | No normal local display UI | Fluidd/Mainsail/Moonraker | Lowest UI footprint; intended for remote operation or a custom display implementation. |
 
@@ -73,6 +73,8 @@ config/feather.cfg
 
 The plugin reads Klipper state for extruder/bed temperatures, homed axes, idle and pause state, virtual-SD file, print stats, layer metadata, filament sensor, resurrection state, fan and current-print `M73` progress. Progress source selection is explicit: slicer `M73 P` first, elapsed time divided by slicer total-time metadata second, and virtual-SD file position only as the final fallback. A per-print floor prevents every source, including malformed `M73` sequences, from moving the displayed percentage backwards. It presents a persistent footer, file caption, progress bar, nested operation paths such as `PRINT PREP -> MESH VALIDATION -> CHECKING MESH`, estimated/elapsed time, guided workflows and a bounded error/disconnect panel. Shared hint and dialog primitives keep text inset from their borders. MCU shutdown, communication and scheduling errors are recognized as recoverable states and present a `FIRMWARE_RESTART` button instead of leaving a stale page that appears frozen. Config errors detected during startup offer `RESTART`, while a plain disconnect displays an explicit reconnecting state. During `START_PRINT` preparation, pause and filament controls stay disabled until `_START_PRINT.print_started` confirms that regular print G-code has begun; cancel remains available. Accepted cancellation reports whether a managed temperature wait is being interrupted or the current atomic stage must finish, while the global ABORT/M112 control remains available. Filament entry is additionally guarded by a request token and a live `print_stats` recheck, so a delayed `PAUSE` completion cannot reopen the filament workflow after cancellation or route Back to an inactive print page. Full pages redraw on navigation/state changes; footer, temperatures and progress update from the existing one-second timer. The Move page can also register continuous hitboxes: `typer` supplies absolute screen coordinates starting at `0,0` plus heartbeats, while Feather queues short native toolhead segments with the configured velocity, half acceleration, a bounded queue horizon, and the runtime-reported toolhead axis limits. When the stick is released, retained transverse acceleration is discarded so inertia decays along the current motion vector instead of creating a circular fly-off path.
 
+File confirmation owns two one-print mesh choices. The rebuild choice stages nullable `feather_force_leveling` and `feather_mesh_name` inputs on the headless `START_PRINT`; that macro resolves them into the existing `_START_PRINT.zforce_leveling` and `zmesh` contract. A Feather override also clears `SKIP_LEVELING`, and shared `FORCE_LEVELING` takes priority over KAMP. The screen identifies that override when KAMP is enabled. The dependent choice to retain the new mesh for future prints changes the generated profile from temporary `default` to session profile `auto`. Feather writes both inputs only after `SDCARD_PRINT_FILE` accepts the file, while `_COMMON_END_PRINT` clears them for both normal completion and cancellation. After a successful forced `auto` calibration, Feather re-observes the effective `_START_PRINT` values and active bed-mesh profile and offers permanent persistence through `SAVE_CONFIG`; declining, cancellation, and failure leave the profile unpersisted.
+
 Idle Z calibration and live print adjustment are deliberately separate pages and action namespaces. The idle workflow is an idle-only state machine:
 
 ```text
@@ -105,7 +107,11 @@ Both Z workflows read `temperature_sensor weightValue` once per status tick. Ope
 The print page can return to the dashboard without interrupting the active job.
 On the dashboard, the job card reopens print details, the temperature cards open
 heat controls, and the network card opens network settings. The active job card
-uses the same monotonic progress and time estimates as the full print page.
+uses the same monotonic progress and time estimates as the full print page. A
+Resurrection start keeps the recovered virtual-SD position as its initial
+progress instead of rebasing it to zero. Its elapsed timer follows the ordinary
+Klipper `print_stats.print_duration` lifecycle: it begins with resumed extrusion
+and excludes pauses, just like the former non-interactive Feather display.
 
 The dashboard wall clock reads the printer's Linux system clock, which
 [`.root/S45ntpd`](../../.root/S45ntpd) keeps synchronized through
@@ -122,7 +128,7 @@ Feather stores the selected material in `mod_params` as `current_material`. Sele
 
 ### How operation status reaches Feather
 
-Feather reads `context_path`, `current_state`, cancellation metadata, and the snapshot revision directly from `operation_context`. Managed macros publish compact type/state transitions, so nested operations automatically render their full path without caller-provided status strings. Continue using normal `START_PRINT`, `PAUSE`, `RESUME`, and `CANCEL_PRINT` flows.
+Feather reads `context_path`, `current_state`, cancellation metadata, and the snapshot revision directly from `operation_context`. Managed macros publish compact type/state transitions, so nested operations automatically render their full path without caller-provided status strings. `CANCEL_PRINT` also publishes its current optional `REASON`; Feather includes a non-empty reason in the terminal cancellation message and otherwise keeps the generic result. Continue using normal `START_PRINT`, `PAUSE`, `RESUME`, and `CANCEL_PRINT` flows.
 
 ### Extending Feather safely
 

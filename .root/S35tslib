@@ -64,7 +64,7 @@ start() {
     fi
     
     if start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN; then
-        create_link 30 && echo "OK" || echo "FAIL"
+        create_link 50 && echo "OK" || echo "FAIL"
     else
         echo "FAIL"
     fi

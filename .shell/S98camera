@@ -8,10 +8,18 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-if [ -f /tmp/SKIP_MOD ] || [ -f /tmp/SKIP_MOD_SOFT ] || [ -f /tmp/SKIP_MOD_HARD ]; then
-    echo "Custom camera disabled due to SKIP_MOD mode"
-    exit 0
-fi
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 0
+BOOT_MODE=$(forge_x_boot_mode)
+
+case "$BOOT_MODE" in
+    mod)
+    ;;
+
+    *)
+        echo "Custom camera disabled in $BOOT_MODE mode"
+        exit 0
+    ;;
+esac
 
 source /opt/config/mod/.shell/common.sh
 CFG_PATH="/opt/config/mod_data/camera.conf"
@@ -20,7 +28,6 @@ CFG_PATH="/opt/config/mod_data/camera.conf"
 if [ ! -f "$CFG_PATH" ]; then
     cp "/opt/config/mod/.cfg/default/camera.conf" "$CFG_PATH"
 fi
-
 
 VIDEO="video0"
 
@@ -54,10 +61,9 @@ start() {
             --listen 0.0.0.0 \
             --port 8080 \
             "${_FRAME_CAP_ARGS[@]}"
-        
+
         touch "$CAMERA_F"
         echo "OK"
-
     else
         [ "$SILENT" -eq 0 ] && echo "Camera disabled in configuration"
     fi
@@ -110,15 +116,19 @@ case "$1" in
     start)
         start
     ;;
+
     stop)
         stop
     ;;
+
     restart)
         restart
     ;;
+
     reload)
         reload "$2"
     ;;
+
     *)
         echo "Usage: $0 {start|stop|restart|reload}"
         exit 1

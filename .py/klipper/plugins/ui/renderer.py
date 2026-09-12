@@ -41,6 +41,10 @@ HEADER_BOTTOM = 55
 FOOTER_Y = 444
 FOOTER_HEIGHT = 32
 CONTENT_BOTTOM = FOOTER_Y - 2
+BUSY_NOTICE_X = 622
+BUSY_NOTICE_Y = 9
+BUSY_NOTICE_WIDTH = 160
+BUSY_NOTICE_HEIGHT = 38
 MAX_PENDING_DRAW = MAX_BATCH_BYTES
 # Historical public name retained for compatibility.  This is a bounded
 # logical transport-frame size, not a Linux FIFO atomic-write guarantee:
@@ -117,6 +121,7 @@ class FeatherRenderer:
         self._menu_suppressed = False
         self._loader_active = False
         self._output_frozen = False
+        self._output_held = False
         self._font_manifest_loaded = False
         self._semantic_page_id = None
 
@@ -144,8 +149,8 @@ class FeatherRenderer:
         return not self._loader_active and bool(actions)
 
     def discard_pending_output(self):
-        """Drop untouched ordinary batches, preserving critical screens."""
-        self._batch_queue.discard_noncritical()
+        """Drop every untouched batch before a final lifecycle screen."""
+        self._batch_queue.discard_all()
 
     def freeze_output(self):
         """Keep the last submitted safety screen as the sole display owner."""
@@ -154,9 +159,31 @@ class FeatherRenderer:
     def thaw_output(self):
         self._output_frozen = False
 
+    def hold_output(self):
+        """Suppress framebuffer writes without stopping renderer lifecycle."""
+        self._output_held = True
+
+    def release_output(self):
+        self._output_held = False
+
+    def clear_display(self, key="display-clear"):
+        """Replace every framebuffer pixel before a new display owner draws."""
+        self._footer_drawn = False
+        return self.send([
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
+            "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
+        ], kind="critical", key=key)
+
     @staticmethod
     def quote(value):
-        value = str(value).replace("\r", " ").replace("\n", " ")
+        value = str(value).replace("\r\n", "\n").replace("\r", "\n")
+        # A line containing only the pipe sentinel would terminate the frame
+        # before Typer tokenizes the quoted text. Keep the visible content and
+        # make that reserved line harmless without flattening real line breaks.
+        value = "\n".join(
+            " --end" if line == "--end" else line
+            for line in value.split("\n"))
         value = value.replace("\\", "\\\\").replace('"', '\\"')
         return '"%s"' % value
 
@@ -187,11 +214,7 @@ class FeatherRenderer:
         # framebuffer. Clear the complete panel before the first partial page
         # render so neither the persistent footer nor the outer margins can
         # expose pixels from the previous screen owner.
-        self.send([
-            self.clear_hitboxes("base"),
-            self.clear_hitboxes("overlay"),
-            "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
-        ], kind="critical", key="worker-clear")
+        self.clear_display("worker-clear")
         return started
 
     def _worker_event_fd_changed(self, old_fd, new_fd):
@@ -219,6 +242,10 @@ class FeatherRenderer:
     def send(self, commands, kind=None, key=None, generation=None,
              receipt=None):
         """Publish one immutable batch; never perform IO or lifecycle work."""
+        if self._output_held:
+            self._next_batch_kind = None
+            self._next_batch_key = None
+            return False
         if self._output_frozen or not commands:
             return False
         immutable = tuple(str(command) for command in commands)
@@ -1188,9 +1215,15 @@ class FeatherRenderer:
         if self._busy_label is not None and not show_header_action:
             busy_label = self._busy_label
             commands += [
-                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
-                self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
-                self.text(702, 28, busy_label, ThemeColor.WARNING,
+                self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                          BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                          ThemeRole.HEADER_BACKGROUND),
+                self.stroke(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                            BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                            ThemeColor.WARNING, 2),
+                self.text(BUSY_NOTICE_X + BUSY_NOTICE_WIDTH // 2,
+                          BUSY_NOTICE_Y + BUSY_NOTICE_HEIGHT // 2,
+                          busy_label, ThemeColor.WARNING,
                           "JetBrainsMono Bold 8pt", "center", "middle",
                           max_width=132, truncate=True),
             ]
@@ -1265,9 +1298,15 @@ class FeatherRenderer:
         if self._header_action is not None:
             return
         self.send([
-            self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
-            self.stroke(622, 9, 160, 38, ThemeColor.WARNING, 2),
-            self.text(702, 28, label, ThemeColor.WARNING,
+            self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                      BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                      ThemeRole.HEADER_BACKGROUND),
+            self.stroke(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                        BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                        ThemeColor.WARNING, 2),
+            self.text(BUSY_NOTICE_X + BUSY_NOTICE_WIDTH // 2,
+                      BUSY_NOTICE_Y + BUSY_NOTICE_HEIGHT // 2,
+                      label, ThemeColor.WARNING,
                       "JetBrainsMono Bold 8pt", "center", "middle",
                       max_width=132, truncate=True),
         ])
@@ -1278,18 +1317,20 @@ class FeatherRenderer:
         self._busy_label = None
         if self._header_action is not None:
             return
+        commands = [
+            self.fill(BUSY_NOTICE_X, BUSY_NOTICE_Y,
+                      BUSY_NOTICE_WIDTH, BUSY_NOTICE_HEIGHT,
+                      ThemeRole.HEADER_BACKGROUND)]
         menu = self._buttons.get("nav.menu")
         if menu is not None:
             (x, y, width, height, label, state, font, subtitle, layout,
              subtitle_font, subtitle_color, accent) = menu
-            self.send(self._button_commands(
+            commands += self._button_commands(
                 "nav.menu", x, y, width, height, label, state, font,
                 subtitle, self._menu_suppressed, layout, subtitle_font,
-                subtitle_color, accent))
+                subtitle_color, accent)
             self._menu_suppressed = False
-        else:
-            self.send([
-                self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND)])
+        self.send(commands)
 
     def loader(self, message, phase=0):
         """Replace the page with a non-interactive yielding-operation view."""

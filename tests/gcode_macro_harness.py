@@ -9,6 +9,7 @@ import dataclasses
 import json
 import pathlib
 import re
+import shlex
 
 import jinja2
 
@@ -108,6 +109,56 @@ def render_macro(path, name, *, printer=None, params=None, rawparams="",
         line.strip() for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#"))
     return RenderedMacro(text, commands, tuple(info), tuple(remote_calls))
+
+
+def execute_macro_chain(macros, entry, *, printer=None, params=None):
+    """Expand registered macro calls until only terminal G-code remains."""
+    registry = {}
+    for path, name in macros:
+        key = str(name).casefold()
+        if key in registry:
+            raise MacroConfigError("duplicate registered macro: %s" % name)
+        registry[key] = (path, name)
+
+    entry_key = str(entry).casefold()
+    if entry_key not in registry:
+        raise MacroConfigError("unregistered entry macro: %s" % entry)
+
+    def execute(key, call_params, rawparams, stack):
+        if key in stack:
+            names = [registry[item][1] for item in stack + (key,)]
+            raise MacroConfigError(
+                "recursive macro call: %s" % " -> ".join(names))
+
+        path, name = registry[key]
+        rendered = render_macro(
+            path, name, printer=printer, params=call_params,
+            rawparams=rawparams)
+        commands = []
+        child_stack = stack + (key,)
+        for command in rendered.commands:
+            command_name, _, child_rawparams = command.partition(" ")
+            child_key = command_name.casefold()
+            if child_key not in registry:
+                commands.append(command)
+                continue
+
+            child_params = {}
+            for argument in shlex.split(child_rawparams):
+                if "=" not in argument:
+                    raise MacroConfigError(
+                        "%s invocation requires KEY=VALUE arguments: %s"
+                        % (registry[child_key][1], command))
+                argument_name, value = argument.split("=", 1)
+                child_params[argument_name] = value
+            commands.extend(execute(
+                child_key, child_params, child_rawparams, child_stack))
+        return commands
+
+    root_params = params or {}
+    root_rawparams = " ".join(
+        "%s=%s" % (name, value) for name, value in root_params.items())
+    return tuple(execute(entry_key, root_params, root_rawparams, ()))
 
 
 def _read_sections(path):

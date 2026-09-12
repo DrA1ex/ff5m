@@ -1,0 +1,24 @@
+#!/bin/sh
+
+## Minimal sudo replacement for the root-only Buildroot environment
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+if [ "$#" -eq 1 ]; then
+    case "$1" in
+        reboot) printer_command=REBOOT ;;
+        poweroff) printer_command=SHUTDOWN ;;
+    esac
+fi
+
+if [ -n "$printer_command" ] \
+        && [ -e /tmp/printer ] \
+        && ps | grep -q "[k]lippy.py"; then
+    if printf '%s\n' "$printer_command" > /tmp/printer; then
+        exit 0
+    fi
+fi
+
+exec "$@"

@@ -22,7 +22,7 @@ Use [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) for the operator proc
 | Display ECO mode | `display_eco`; dependent `backlight_eco`; Feather's periodic update; Guppy/Headless `reset_screen` delayed G-code | ECO defaults on. Turning it off hides its brightness setting, cancels pending Guppy/Headless dimming, and restores normal brightness. Feather re-observes the parameter each update. Stock remains vendor-owned and ignores it. |
 | Swap (eMMC, USB, ZRAM, off) | `mod_params.json`; `zchanges.sh`; `.shell/boot/init_swap.sh` | Memory behavior is hardware-sensitive. ZRAM was added in recent history. |
 | Camera | `camera` parameter; `zchanges.sh`; `.shell/S98camera` | The hook checks port 8080 and warns if the stock camera is still active. |
-| Klipper tuning and real-time scheduling | `tune_klipper`, `klipper_rt`; `zchanges.sh` | Tuning may reboot; `klipper_rt` restarts Klipper. `SCHED_RR` is optional and recent. |
+| Klipper tuning and real-time scheduling | `tune_klipper`, `klipper_rt`; `zchanges.sh` | Both settings restart Klipper. `SCHED_RR` is optional and recent. |
 | Config tuning | `tune_config`; `zchanges.sh`; `.py/cfg_backup.py` | Rewrites/restores config through the managed mechanism and restarts Klipper; recalibration follows. |
 | Power-loss recovery | `power_loss_recovery`; `zchanges.sh` | Clears saved resurrection state and may restart Klipper outside stock mode. |
 | Safety and print defaults | `check_md5`, `cell_weight`, Z-offset, cleaning, KAMP, mesh options | Keep macro expectations synchronized with metadata defaults. |
@@ -49,17 +49,17 @@ The first prompt is produced by a background shell command. Fluidd requires each
 
 The display root determines the starting Klipper configuration:
 
-- [`config/stock.cfg`](../../config/stock.cfg) — default stock-screen bridge.
-- [`config/feather.cfg`](../../config/feather.cfg) — Feather UI path.
+- [`config/feather.cfg`](../../config/feather.cfg) — default Feather UI path.
+- [`config/stock.cfg`](../../config/stock.cfg) — stock-screen bridge.
 - [`config/headless.cfg`](../../config/headless.cfg) — no stock UI.
 - [`config/guppy.cfg`](../../config/guppy.cfg) — Guppy UI path.
 
-All consume shared macro behavior. In non-stock modes, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) initializes network access and starts the MCU/Klipper path itself; if network initialization fails, it switches back to stock config. `zchanges.sh` warns explicitly that users must understand bed mesh, Z-offset, and `START_PRINT`/`END_PRINT` behavior before disabling the stock screen.
+All consume shared macro behavior. In non-stock modes, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) initializes network access and starts the MCU/Klipper path itself. Feather continues booting while networking establishes or remains offline; a failed bounded network wait in Guppy or Headless switches back to stock config. `zchanges.sh` warns explicitly that users must understand bed mesh, Z-offset, and `START_PRINT`/`END_PRINT` behavior before disabling the stock screen.
 
 ## Print lifecycle
 
 1. **Slicer emits Forge-X macros.** The intended entry is `START_PRINT EXTRUDER_TEMP=… BED_TEMP=…`, paired with `END_PRINT`. [`config/stock.cfg`](../../config/stock.cfg) rejects a stock `START_PRINT` call missing either temperature and cancels the print.
-2. **Macros capture runtime choices.** `START_PRINT` records temperatures, forced/skip leveling, KAMP, Z-offset, and mesh arguments before delegating to `_START_PRINT`.
+2. **Macros capture runtime choices.** `START_PRINT` records temperatures, forced/skip leveling, KAMP, Z-offset, and mesh arguments before delegating to `_START_PRINT`. Feather may additionally stage a one-print full-mesh override after a selected virtual-SD file has been accepted; the normal and Stock paths retain their existing arguments.
 3. **Stock-screen bridge forwards lifecycle controls.** `RESUME`, `PAUSE`, and `CANCEL_PRINT` send stock firmware commands through `zsend`; print-file macros run optional MD5 verification and route commands to the stock printing path.
 4. **Shared safeguards apply.** [`macros/base.cfg`](../../macros/base.cfg) loads MD5 checking, KAMP, load-cell support, tone support, and safety-oriented motion overrides. For example, its replacement `G28` ensures safe Z/XY parking sequencing.
 5. **Pausing is idempotent.** The shared `PAUSE` does nothing when `pause_resume` already reports a paused print, so a repeated pause never parks twice or overwrites the temperature and idle-timeout state `RESUME` restores. Klipper clears the flag only through `RESUME`, `CLEAR_PAUSE`, or `CANCEL_PRINT`, so anything that stops a print outside `pause_resume` has to clear it itself.

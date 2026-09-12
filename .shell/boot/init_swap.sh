@@ -7,15 +7,15 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-MOD="${MOD:-/data/.mod/.forge-x}"
-CFG_SCRIPT="${CFG_SCRIPT:-/opt/config/mod/.shell/commands/zconf.sh}"
-CFG_PATH="${CFG_PATH:-/opt/config/mod_data/variables.cfg}"
+MOD=/data/.mod/.forge-x
+CFG_SCRIPT=/opt/config/mod/.shell/commands/zconf.sh
+CFG_PATH=/opt/config/mod_data/variables.cfg
 SWAP_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 source "$SWAP_SCRIPT_DIR/usb_storage.sh"
 
 
-SWAP_SIZE="${SWAP_SIZE-${1-64M}}"
+SWAP_SIZE="${1-64M}"
 
 if [ -z "$SWAP_SIZE" ]; then
     echo "Usage: $0 <swap_size>"
@@ -129,7 +129,7 @@ activate_usb_swap() {
 
     echo "// Creating SWAP on USB..."
 
-    wait_seconds="${USB_SWAP_WAIT_SECONDS:-10}"
+    wait_seconds=10
     echo "Waiting up to ${wait_seconds}s for USB storage..."
 
     if ! usb_storage_wait_for_candidates "$wait_seconds"; then
@@ -220,7 +220,7 @@ activate_zram_swap() {
     # 64M is a neutral default for optional cold, latency-insensitive workloads.
     # It is a logical zram capacity, not preallocated physical RAM, and it does
     # not make sudden real-time memory spikes safe.
-    local ZSIZE="${ZRAM_DISKSIZE:-64M}"
+    local ZSIZE=64M
 
     # Loadable zram+zsmalloc modules built for the stock 5.4.61 kernel
     # (vermagic: "5.4.61 SMP preempt mod_unload ARMv7 p2v8"). The AD5M kernel is
@@ -299,10 +299,6 @@ cleanup_mounts() {
         fi
     done
 }
-
-if [ "${INIT_SWAP_LIBRARY_ONLY:-0}" -eq 1 ]; then
-    return 0 2>/dev/null || exit 0
-fi
 
 swap=$($CFG_SCRIPT  $CFG_PATH --get "use_swap" "MMC")
 echo "SWAP: \"$swap\""

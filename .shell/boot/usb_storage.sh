@@ -7,18 +7,17 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 # Do not depend on stock storage services here: both boot-flag detection and
-# swap initialization run before those services. All paths are overridable so
-# the early-boot behavior can be tested without real block devices.
+# swap initialization run before those services.
 
-USB_STORAGE_SYS_BLOCK_ROOT="${USB_STORAGE_SYS_BLOCK_ROOT:-/sys/block}"
-USB_STORAGE_DEV_ROOT="${USB_STORAGE_DEV_ROOT:-/dev}"
-USB_STORAGE_PROC_PARTITIONS="${USB_STORAGE_PROC_PARTITIONS:-/proc/partitions}"
-USB_STORAGE_PROC_MOUNTS="${USB_STORAGE_PROC_MOUNTS:-/proc/mounts}"
-USB_STORAGE_MOUNT_ROOT="${USB_STORAGE_MOUNT_ROOT:-/tmp}"
-USB_STORAGE_LSBLK="${USB_STORAGE_LSBLK:-lsblk}"
-USB_STORAGE_UDEVADM="${USB_STORAGE_UDEVADM:-udevadm}"
-USB_STORAGE_OPERATION_LOCK="${USB_STORAGE_OPERATION_LOCK:-/tmp/forge-x-usb-operation}"
-USB_STORAGE_REQUIRE_BLOCK_DEVICES="${USB_STORAGE_REQUIRE_BLOCK_DEVICES:-1}"
+USB_STORAGE_SYS_BLOCK_ROOT=/sys/block
+USB_STORAGE_DEV_ROOT=/dev
+USB_STORAGE_PROC_PARTITIONS=/proc/partitions
+USB_STORAGE_PROC_MOUNTS=/proc/mounts
+USB_STORAGE_MOUNT_ROOT=/tmp
+USB_STORAGE_LSBLK=lsblk
+USB_STORAGE_UDEVADM=udevadm
+USB_STORAGE_OPERATION_LOCK=/tmp/forge-x-usb-operation
+USB_STORAGE_REQUIRE_BLOCK_DEVICES=1
 
 USB_STORAGE_MOUNT_POINT=""
 USB_STORAGE_MOUNT_FILESYSTEM=""

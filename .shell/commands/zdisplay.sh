@@ -42,17 +42,13 @@ display_guppy() {
 }
 
 test() {
-    local display_off=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display_off" "MISSING")
-
-    if [ "$display_off" != "MISSING" ]; then
-        [ "$display_off" = "0" ] && echo "STOCK" || echo "FEATHER"
-    else
-        local display=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display" "STOCK")
-        echo "$display"
-    fi
+    local default_display="FEATHER"
+    local display=$("$CMDS"/zconf.sh "$VAR_PATH" --get "display" "$default_display")
+    [[ "$display" =~ ^(STOCK|FEATHER|HEADLESS|GUPPY)$ ]] || display="$default_display"
+    echo "$display"
 }
 
-apply_display_off() {
+apply_display_mode() {
     local display_mode
     local stock_owner=0
     display_mode="$(test)"
@@ -94,7 +90,7 @@ apply_display_off() {
     "$SCRIPTS"/screen.sh draw_splash
     "$SCRIPTS"/screen.sh backlight 100
     
-    /etc/init.d/S00init reload
+    /opt/config/mod/.shell/init-main.sh reload
     echo "// Restarting Klipper..." | logged --no-log --send-to-screen
     
     "$SCRIPTS"/restart_klipper.sh --hard
@@ -119,23 +115,23 @@ case "$1" in
     
     feather)
         display_feather
-        apply_display_off
+        apply_display_mode
     ;;
 
     headless)
         display_headless
-        apply_display_off
+        apply_display_mode
     ;;
 
     guppy)
         display_guppy    
-        apply_display_off
+        apply_display_mode
     ;;
     
     apply)
         if [ "$(test)" != "STOCK" ]; then
             echo "Turning off Stock screen..."
-            apply_display_off
+            apply_display_mode
         fi
     ;;
     

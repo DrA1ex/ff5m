@@ -35,9 +35,6 @@ revert_klipper_patches() {
             echo "?? Restored \"$target\""
         fi
     done
-
-    # Klipper tunning
-    "$CMDS"/ztune_klipper.sh 0
 }
 
 fail() {
@@ -102,7 +99,7 @@ uninstall() {
     echo "// Removing services..."
     
     rm -f /etc/init.d/S00fix
-    rm -f /etc/init.d/S00init
+    rm -f /etc/init.d/S00init /etc/init.d/.S00init.*
     rm -f /etc/init.d/S55boot
     rm -f /etc/init.d/S99root
     rm -f /etc/init.d/S99moon
