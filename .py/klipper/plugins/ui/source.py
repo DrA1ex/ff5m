@@ -82,6 +82,22 @@ def capture_construction(instance, names=()):
     return metadata
 
 
+def capture_binding(binding, names=()):
+    """Delegate binding tracing to the active external provider."""
+    provider = _provider()
+    if provider is None:
+        return None
+    hook = getattr(provider, "capture_binding", None)
+    if hook is None:
+        return None
+    metadata = hook(binding, names=names)
+    if metadata is None:
+        return None
+    metadata = dict(metadata)
+    metadata["_provider_token"] = _token_for(provider)
+    return metadata
+
+
 def capture_modifier(node, method, properties):
     """Delegate fluent layout tracing without importing source tooling."""
     provider = _provider() or _node_provider(node)
@@ -196,3 +212,17 @@ def annotate_affected(tree):
     collect(tree)
     apply(tree)
     return tree
+
+
+def _install_layout_hooks():
+    from . import layout
+    layout._install_source_hooks(capture_construction, capture_modifier)
+
+
+def _install_binding_hook():
+    from . import bindings
+    bindings._install_source_hook(capture_binding)
+
+
+_install_layout_hooks()
+_install_binding_hook()

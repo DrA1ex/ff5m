@@ -1,0 +1,229 @@
+<!doctype html>
+<!--
+  Feather Theme Editor.
+
+  Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+
+  This file may be distributed under the terms of the GNU GPLv3 license
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Feather Theme Editor</title>
+<link rel="stylesheet" href="/theme-editor.css">
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <h1>Feather Theme Editor</h1>
+    <div class="toolbar">
+      <button id="generateButton" class="generate-action">Generate</button>
+      <div class="field">
+        <label>Theme / starting point</label>
+        <div class="theme-select-wrap">
+          <select id="themeSelect"></select>
+          <button id="deleteTheme" class="delete-theme" title="Delete saved theme"
+            aria-label="Delete saved theme" hidden>×</button>
+        </div>
+      </div>
+      <div class="field name-field">
+        <label>Custom theme name</label>
+        <input id="themeName" type="text" maxlength="32" required
+          pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="MY_THEME">
+      </div>
+      <div class="field desc-field">
+        <label>Description</label>
+        <input id="themeDescription" type="text" minlength="1" maxlength="80" required
+          placeholder="Custom palette">
+      </div>
+      <details id="saveMenu" class="action-menu">
+        <summary class="primary-action">Save <span aria-hidden="true">▾</span></summary>
+        <div class="action-menu-items">
+          <button id="downloadButton" disabled>Download JSON</button>
+          <button id="applyButton" disabled>Apply to printer</button>
+          <span id="applyHint" class="action-hint"></span>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div id="validationStatus" class="status">Waiting for theme…</div>
+
+  <div class="layout">
+    <div class="editor-stack">
+      <section class="panel">
+        <h2>ThemeColor</h2>
+        <div class="panel-body"><div id="colorGrid" class="color-grid"></div></div>
+      </section>
+
+      <section class="panel">
+        <h2>ThemeRole</h2>
+        <div class="panel-body">
+          <div id="roleGrid" class="role-grid"></div>
+          <div class="note">A role may reference ThemeColor or use custom HEX. Omitted roles resolve through DEFAULT_THEME_ROLES.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Export JSON</h2>
+        <div class="panel-body">
+          <textarea id="jsonBox" class="json-box" spellcheck="false"></textarea>
+          <div class="small-actions">
+            <button id="applyJson" class="secondary-action">Apply JSON</button>
+            <button id="copyJson" class="secondary-action">Copy</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="preview-wrap">
+      <section class="panel">
+        <h2>Live controls</h2>
+        <div class="panel-body">
+          <div id="preview" class="preview">
+            <div class="preview-title">ROLE-BASED COMPONENT PREVIEW</div>
+            <div class="preview-header">HEADER</div>
+            <div class="preview-grid">
+              <div class="preview-card preview-card-wide">
+                <h3>BUTTONS</h3>
+                <div class="preview-button-row">
+                  <button class="demo-button">BUTTON</button>
+                  <button class="demo-button selected">SELECTED</button>
+                </div>
+              </div>
+              <div class="preview-card">
+                <h3>TEMPERATURE ROLES</h3>
+                <div class="temps">
+                  <b class="temp-nozzle">NOZZLE 150C</b>
+                  <b class="temp-bed">BED 60C</b>
+                  <b class="temp-fan">FAN 80%</b>
+                </div>
+              </div>
+              <div class="preview-card preview-card-wide">
+                <h3>STATUS COLORS / STATES</h3>
+                <div class="statuses">
+                  <span class="chip warning"><b>WARNING</b><small>Needs attention</small></span>
+                  <span class="chip danger"><b>DANGER</b><small>Abort / error</small></span>
+                  <span class="chip success"><b>SUCCESS</b><small>Completed</small></span>
+                  <span class="chip info"><b>INFO</b><small>Secondary state</small></span>
+                  <span class="chip active"><b>ACTIVE</b><small>Primary action</small></span>
+                  <span class="chip idle"><b>IDLE</b><small>Muted / disabled</small></span>
+                </div>
+              </div>
+              <div class="preview-card">
+                <h3>DIRECT BASE TOKENS</h3>
+                <div class="tokens">
+                  <div class="token t-text"><span>TEXT</span><b>Aa</b></div>
+                  <div class="token t-bright"><span>BRIGHT</span><b>Aa</b></div>
+                  <div class="token t-primary"><span>PRIMARY</span><b>Aa</b></div>
+                  <div class="token t-secondary"><span>SECONDARY</span><b>Aa</b></div>
+                  <div class="token t-dim"><span>DIM</span><b>Aa</b></div>
+                  <div class="token t-muted"><span>MUTED</span><b>Aa</b></div>
+                </div>
+              </div>
+            </div>
+            <div class="runtime-block">
+              <h3>RUNTIME COMBINATIONS / REGRESSION CASES</h3>
+              <div id="runtimeGrid" class="runtime-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>ThemeRole usage combinations</h2>
+        <div class="panel-body">
+          <div id="roleSpecimens" class="role-combinations"></div>
+          <div class="note">
+            Every role is shown once in its runtime combination. Each color is marked DEFAULT or OVERRIDE.
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Physical color map</h2>
+        <div class="panel-body">
+          <div id="physicalMap" class="physical-grid"></div>
+          <div class="note">Unique physical HEX values across both ThemeColor and resolved ThemeRole values.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<dialog id="generatorDialog" class="generator-dialog" aria-labelledby="generatorTitle">
+  <div class="generator-head">
+    <h2 id="generatorTitle">Generate a new theme</h2>
+    <button id="generatorClose" class="generator-close" aria-label="Close">×</button>
+  </div>
+  <div class="generator-body">
+    <div class="generator-row generator-row-primary">
+      <div class="field">
+        <label for="generatorHex">Base color</label>
+        <div class="generator-color">
+          <input id="generatorColor" type="color" value="#35d9e6" aria-label="Base color picker">
+          <input id="generatorHex" class="hex-input" type="text" value="35d9e6" maxlength="7" aria-label="Base color HEX">
+        </div>
+      </div>
+      <div class="field">
+        <label for="generatorCharacter">Preset</label>
+        <select id="generatorCharacter"></select>
+      </div>
+    </div>
+    <div class="generator-row generator-row-settings">
+      <div class="field">
+        <label for="generatorPaletteStrategy">Palette</label>
+        <select id="generatorPaletteStrategy"></select>
+      </div>
+      <div class="field">
+        <label for="generatorDistribution">Distribution</label>
+        <select id="generatorDistribution"></select>
+      </div>
+      <div class="field">
+        <label>Appearance</label>
+        <div class="generator-mode">
+          <label><input type="radio" name="generatorMode" value="dark" checked> Dark</label>
+          <label><input type="radio" name="generatorMode" value="light"> Light</label>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Decorative accents</label>
+      <div id="generatorPalette" class="generator-palette"></div>
+    </div>
+    <div class="field">
+      <label>Semantic colors</label>
+      <div id="generatorSemanticPalette" class="generator-semantic-palette"></div>
+    </div>
+    <div class="field generator-preview-field">
+      <label>Quick preview</label>
+      <div id="generatorMiniPreview" class="generator-mini-preview">
+        <div class="generator-preview-header">THEME HEADER</div>
+        <div class="generator-preview-body">
+          <button type="button" class="generator-preview-button">BUTTON</button>
+          <button type="button" class="generator-preview-button selected">SELECTED</button>
+          <div class="generator-preview-toast">TOAST</div>
+          <div class="generator-preview-accent">ACCENT</div>
+          <div class="generator-preview-danger">DANGER</div>
+          <div class="generator-preview-type">
+            <b>Display text</b><span>Body text</span><small>Muted note</small>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="generatorName">Theme name</label>
+      <input id="generatorName" type="text" maxlength="32"
+        pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="LIGHT_TEAL">
+    </div>
+  </div>
+  <div class="generator-footer">
+    <button id="generatorCancel" class="secondary-action">Cancel</button>
+    <button id="generatorCreate" class="primary-action">Create Theme</button>
+  </div>
+</dialog>
+
+<script src="/theme-editor.js"></script>
+</body>
+</html>

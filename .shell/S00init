@@ -2,7 +2,7 @@
 
 ## Mod's initialization script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -13,6 +13,7 @@ handle_special_boot_mode() {
     if /opt/config/mod/.shell/boot/init_boot_flag.sh apply; then
         rm -f "$BOOT_FAILURE_F"
 
+        "$SCRIPTS/screen.sh" splash_stop
         exit 0
     fi
 }
@@ -51,14 +52,15 @@ handle_boot_options() {
 }
 
 initialize() {
+    rm -f "$VERSION_PATCH_F"
+    "$SCRIPTS/screen.sh" splash_start
+    
     echo "// Initialization started"
     
     echo "// Checking special boot mode..."
     handle_special_boot_mode
     
     # If we are here: mod loading not skipped
-
-    xzcat "$LOAD_IMG_XZ" > /dev/fb0
 
     # Perform date fix before time was loaded
     date 2025.01.01-00:00:00 > /dev/null
@@ -69,6 +71,7 @@ initialize() {
     rotate_logs "/data/logFiles/boot.log"
     rotate_logs "/data/logFiles/ssh.log"
     rotate_logs "/data/logFiles/wifi.log"
+    rotate_logs "/data/logFiles/netd.log"
 
     sync
     
@@ -102,23 +105,20 @@ initialize() {
     # version
     GIT_BRANCH=$(chroot "$MOD" git --git-dir=/opt/config/mod/.git rev-parse --abbrev-ref HEAD)
     GIT_COMMIT_ID=$(chroot "$MOD" git --git-dir=/opt/config/mod/.git rev-parse --short HEAD)
-    GIT_COMMIT_DATE=$(chroot "$MOD" git --git-dir=/opt/config/mod/.git show -s HEAD --format=%cd --date=format:'%d.%m.%Y %H:%M:%S')
-    
-    FIRMWARE_VERSION=$(cat /root/version)
+    FIRMWARE_VERSION=$(cat "$FIRMWARE_VERSION_F")
     MOD_VERSION=$(cat "$VERSION_F")
-    PATCH_VERSION="$GIT_BRANCH-$GIT_COMMIT_ID @ $GIT_COMMIT_DATE"
+    PATCH_VERSION="$GIT_COMMIT_ID"
 
-    if [ -f /opt/config/mod/patch.txt ]; then
-        cp -f /opt/config/mod/patch.txt /tmp/version_patch
-    elif [ "$GIT_BRANCH" != "main" ]; then
-        echo "$GIT_BRANCH-$GIT_COMMIT_ID" > /tmp/version_patch
+    rm -f "$VERSION_PATCH_F"
+    if [ -f /opt/config/mod/patch.txt ] || [ "$GIT_BRANCH" != "main" ]; then
+        echo "$GIT_COMMIT_ID" > "$VERSION_PATCH_F"
     fi
     
     chroot "$MOD" /opt/config/mod/.root/version.sh "$FIRMWARE_VERSION" "$MOD_VERSION" "$PATCH_VERSION"
     sync
 
-    # Print version onto the screen
-    "$SCRIPTS/screen.sh" draw_loading --no-clear
+    # Add the mod version to the already running splash without restarting it.
+    "$SCRIPTS/screen.sh" splash_version "$MOD_VERSION"
 
     # Check core version and ota version compatibility
     if ! MSG=$("$CMDS"/zversion.sh test); then

@@ -18,23 +18,32 @@ def compact(content):
     return Override(content).with_button_style(COMPACT_BUTTONS).apply()
 
 
-def _caution_visible(z, homed_z, acknowledged, threshold):
-    return (bool(homed_z) and float(z) < float(threshold)
-            and not bool(acknowledged))
-
-
-def _caution_for(profile):
-    return lambda z, homed_z, acknowledged, current, threshold: (
-        _caution_visible(z, homed_z, acknowledged, threshold)
-        and current == profile)
-
-
-def _caution_height(threshold):
-    return "Z IS BELOW %g MM" % float(threshold)
-
-
 CAUTION_WIDTH = 420
 CAUTION_HEIGHT = 266
+
+
+def _caution_layer(profile, last_line, buttons):
+    visible = derived(
+        lambda z, homed_z, acknowledged, current, threshold, profile=profile:
+        homed_z and z < threshold and not acknowledged and current == profile,
+        bind(ToolheadState.Z),
+        bind(ToolheadState.HOMED_Z),
+        bind(MoveState.CAUTION_ACKNOWLEDGED),
+        bind(MoveState.AUTO_PROFILE_STATE),
+        bind(MoveState.CAUTION_Z),
+    )
+    lines = derived(
+        lambda threshold, final=last_line: (
+            "Z IS BELOW %g MM" % threshold,
+            "XY MOTION MAY SCRATCH THE BED",
+            final,
+        ),
+        bind(MoveState.CAUTION_Z),
+    )
+    return When(visible, Dialog(
+        "CAUTION", lines, buttons,
+        tone="warning", modal=False,
+    ))
 
 
 def caution_layers():
@@ -43,39 +52,19 @@ def caution_layers():
     The external Designer sees this only through framework reflection, typed
     state and semantic actions. No preview-only warning implementation exists.
     """
-    inputs = (
-        bind(ToolheadState.Z),
-        bind(ToolheadState.HOMED_Z),
-        bind(MoveState.CAUTION_ACKNOWLEDGED),
-        bind(MoveState.AUTO_PROFILE_STATE),
-        bind(MoveState.CAUTION_Z),
-    )
-    height = derived(_caution_height, bind(MoveState.CAUTION_Z))
     dismiss = SetValue(MoveState.CAUTION_ACKNOWLEDGED, True)
     return (
-        When(derived(_caution_for("active"), *inputs), Dialog(
-            "CAUTION",
-            (height, "XY MOTION MAY SCRATCH THE BED",
-             "BED PROFILE 'AUTO' IS LOADED"),
+        _caution_layer(
+            "active", "BED PROFILE 'AUTO' IS LOADED",
             ((CAUTION_UNLOAD, "UNLOAD", "warning"),
-             (dismiss, "OK", "enabled")),
-            tone="warning", modal=False,
-        )),
-        When(derived(_caution_for("available"), *inputs), Dialog(
-            "CAUTION",
-            (height, "XY MOTION MAY SCRATCH THE BED",
-             "LOAD BED PROFILE 'AUTO'?"),
+             (dismiss, "OK", "enabled"))),
+        _caution_layer(
+            "available", "LOAD BED PROFILE 'AUTO'?",
             ((dismiss, "CONTINUE", "enabled"),
-             (CAUTION_AUTO, "LOAD", "warning")),
-            tone="warning", modal=False,
-        )),
-        When(derived(_caution_for("missing"), *inputs), Dialog(
-            "CAUTION",
-            (height, "XY MOTION MAY SCRATCH THE BED",
-             "PROFILE 'AUTO' IS NOT AVAILABLE"),
-            ((dismiss, "CONTINUE", "enabled"),),
-            tone="warning", modal=False,
-        )),
+             (CAUTION_AUTO, "LOAD", "warning"))),
+        _caution_layer(
+            "missing", "PROFILE 'AUTO' IS NOT AVAILABLE",
+            ((dismiss, "CONTINUE", "enabled"),)),
     )
 
 

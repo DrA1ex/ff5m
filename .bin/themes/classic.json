@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "CLASSIC",
+  "description": "Windows 95-style system gray, navy, teal and beveled highlights",
+  "colors": {
+    "background": "C0C0C0",
+    "text": "000080",
+    "text_highlight": "1084D0",
+    "accent": "008080",
+    "wire": "FFFFFF",
+    "shadow": "7F7F7F",
+    "beam": "D4D0C8",
+    "glitch_primary": "1084D0",
+    "glitch_secondary": "008080",
+    "glitch_cut": "C0C0C0",
+    "subtitle": "111111",
+    "debug": "666666",
+    "info": "111111",
+    "warn": "805000",
+    "error": "A80000",
+    "uptime": "000080"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "RED",
+  "description": "Neon red on black with white-hot highlights",
+  "colors": {
+    "background": "080204",
+    "text": "ff304f",
+    "text_highlight": "fff7f8",
+    "accent": "ff6b81",
+    "wire": "ffe5e8",
+    "shadow": "5c1020",
+    "beam": "fff7f8",
+    "glitch_primary": "ff0033",
+    "glitch_secondary": "ff6b81",
+    "glitch_cut": "030102",
+    "subtitle": "ffe5e8",
+    "debug": "8a4c57",
+    "info": "ffe5e8",
+    "warn": "ffb000",
+    "error": "ff0033",
+    "uptime": "ff6b81"
+  }
+}

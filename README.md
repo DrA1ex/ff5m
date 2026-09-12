@@ -1,5 +1,5 @@
 <p align="center">
-   <img width="600" src="https://github.com/user-attachments/assets/1e1e0b03-a424-4da3-8285-d62dd74470de" />
+   <img width="600" src="https://github.com/user-attachments/assets/4e443f9c-02a7-483a-a9da-9afa6db6be2a" />
 </p>
 
 # Flashforge Adventurer 5M (Pro) Firmware Mod
@@ -25,16 +25,21 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 **Don’t delete** installation, uninstallation, or recovery **logs** — it’s may help to restore your printer.
 
 ## Features
+
 <p align="center">
-<img width="400" src="https://github.com/user-attachments/assets/c7ff5d09-3786-4b69-b8d5-1f254c809de7" />
-<img width="400" src="https://github.com/user-attachments/assets/6f3b9343-d3d1-4f0e-b4cf-9ac1041502b2" />
+<img width="400" src="https://github.com/user-attachments/assets/7837ec81-6a88-4a1b-81d1-2266a87025bf" />
+<img width="400" src="https://github.com/user-attachments/assets/48b40175-1928-439c-baa6-78ae157efaf3" />
+<img width="400" src="https://github.com/user-attachments/assets/51d381fd-e98c-44c4-9518-c4a64c88bcf4" />
+<img width="400" src="https://github.com/user-attachments/assets/2e0fafd5-15b3-4e7e-ad26-6cf7c67613fe" />
+<img width="400" src="https://github.com/user-attachments/assets/28a0ef3f-e7cf-4648-aff8-7f273d2b055b" />
 </p>
 
+- Fully interactive **Feather** screen
 - **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
 - **Klipper** with many patches/fixes/plugins specially adapted for AD5M
 - **Moonraker**
 - **Fluidd** & **Mainsail**
-- Fully interactive **Feather** touchscreen and adapted **Guppy**  
+- Adapted **Guppy** screen
 - Local and USB G-code browsing and print control from Feather
 - GuidedZ-offset, bed, extruder, PID, and Input Shaper calibration
 - Originally developed **Power Loss Recovery** specially for AD5M

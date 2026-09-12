@@ -1615,6 +1615,12 @@ class SimpleProvider(BaseProvider):
         self.script_path = config.get("script_path", "/etc/init.d/")
         self.script_timeout = config.getfloat("script_timeout", 30.)
 
+    async def shutdown(self) -> None:
+        await self._exec_sudo_command(self.shutdown_action)
+
+    async def reboot(self) -> None:
+        await self._exec_sudo_command("reboot")
+
     async def do_service_action(
         self, action: str, service_name: str
     ) -> None:

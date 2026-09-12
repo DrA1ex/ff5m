@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "SYNTH",
+  "description": "Synthwave magenta and violet",
+  "colors": {
+    "background": "090314",
+    "text": "ff4fd8",
+    "text_highlight": "fff8ff",
+    "accent": "8b5cf6",
+    "wire": "f5e8ff",
+    "shadow": "45227f",
+    "beam": "fff8ff",
+    "glitch_primary": "ff4fd8",
+    "glitch_secondary": "8b5cf6",
+    "glitch_cut": "040108",
+    "subtitle": "f5e8ff",
+    "debug": "80658f",
+    "info": "f5e8ff",
+    "warn": "ffd166",
+    "error": "ff3864",
+    "uptime": "8b5cf6"
+  }
+}

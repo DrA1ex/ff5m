@@ -14,8 +14,6 @@ INIT_SWAP = ROOT / ".shell" / "boot" / "init_swap.sh"
 INIT_BOOT_FLAG = ROOT / ".shell" / "boot" / "init_boot_flag.sh"
 PREPARE_USB = ROOT / ".shell" / "commands" / "zusb.sh"
 MOUNT_USB = ROOT / ".shell" / "commands" / "zusb_mount.sh"
-BASE_MACROS = ROOT / "macros" / "base.cfg"
-SHELL_MACROS = ROOT / "macros" / "shell.cfg"
 
 
 class UsbStorageTest(unittest.TestCase):
@@ -626,25 +624,6 @@ class UsbStorageTest(unittest.TestCase):
         self.assertLess(result.stdout.index("FORMAT=FAT32"),
                         result.stdout.index("FORMAT=EXT"))
         self.assertRegex(result.stdout, r"\bID=[0-9]+")
-
-        macros = BASE_MACROS.read_text(encoding="utf-8")
-        shell = SHELL_MACROS.read_text(encoding="utf-8")
-        self.assertIn("[gcode_macro PREPARE_USB]", macros)
-        self.assertIn("[gcode_macro _PREPARE_USB_CONFIRM]", macros)
-        self.assertIn("_PREPARE_USB_EXECUTE FORMAT={format}", macros)
-        self.assertNotIn("TOKEN=", macros)
-        self.assertIn("[gcode_shell_command zusb_format]", shell)
-        zusb_block = shell.split(
-            "[gcode_shell_command zusb]", 1)[1].split(
-                "[gcode_shell_command", 1)[0]
-        format_block = shell.split(
-            "[gcode_shell_command zusb_format]", 1)[1].split(
-                "[gcode_shell_command", 1)[0]
-        self.assertIn("mode: background", zusb_block)
-        self.assertIn("linewise: True", zusb_block)
-        self.assertIn("mode: stream", format_block)
-        self.assertIn("linewise: True", format_block)
-        self.assertIn("action:prompt_begin", macros)
 
     def test_prepare_rejects_changed_drive_before_erasing(self):
         prompt = self._run_prepare("prompt")

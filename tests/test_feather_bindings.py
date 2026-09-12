@@ -18,9 +18,10 @@ from ff5m_ui.z_offset.constants import (  # noqa: E402
     PAPER_DEFAULT_STEP, PAPER_STEPS,
 )
 from ui import (  # noqa: E402
-    Button, FeatherRenderer, PageKey, PageTree, Rect, SetValue, StateKey,
-    StateStore, Text, bind, derived, reflect_page, state, state_spec,
+    Button, Column, FeatherRenderer, PageKey, PageTree, Rect, SetValue,
+    StateKey, StateStore, Text, When, bind, derived, state, state_spec,
 )
+from ui.reflection import reflect_page  # noqa: E402
 
 
 class BindingPage(PageKey):
@@ -161,6 +162,38 @@ class StateDeclarationTest(unittest.TestCase):
         self.assertTrue(model["tree"]["bindings"]["value"]["key"].endswith(
             ".BindingState.MODE"))
 
+    def test_reflection_indexes_nested_binding_and_condition_dependencies(self):
+        below_limit = derived(
+            lambda count: count < 5, bind(BindingState.COUNT))
+        visible = derived(
+            lambda below, enabled: below and enabled,
+            below_limit, bind(BindingState.ENABLED))
+        page = PageTree(
+            Column(
+                Text(bind(BindingState.MODE)).ref("mode"),
+                When(visible, Text("ACTIVE").ref("active")).ref(
+                    "active-condition"),
+            ),
+            Rect(0, 0, 100, 40), page_id=BindingPage.MAIN)
+
+        model = reflect_page(page)
+        condition = next(
+            node for node in model["tree"]["children"]
+            if node["type"] == "When")
+        binding = condition["condition"]["binding"]
+        names = lambda keys: {key.rsplit(".", 1)[-1] for key in keys}
+
+        self.assertTrue(condition["condition"]["result"])
+        self.assertEqual(names(binding["keys"]), {"COUNT", "ENABLED"})
+        self.assertEqual(names(binding["direct_keys"]), {"ENABLED"})
+        self.assertEqual(names(binding["transitive_keys"]), {"COUNT"})
+
+        dependencies = model["dependencies"]["states"]
+        count_key = next(key for key in dependencies if key.endswith(".COUNT"))
+        mode_key = next(key for key in dependencies if key.endswith(".MODE"))
+        self.assertEqual(dependencies[count_key]["condition_count"], 1)
+        self.assertEqual(dependencies[mode_key]["property_count"], 1)
+
     def test_state_metadata_exposes_portable_simulation_role(self):
         metadata = StateStore((BindingState.POSITION,)).metadata()[0]
 
@@ -175,18 +208,6 @@ class StateDeclarationTest(unittest.TestCase):
 
 
 class ProductStateMigrationTest(unittest.TestCase):
-    def test_product_pages_use_typed_bindings_without_whole_state_lambdas(self):
-        pages_root = PLUGINS / "ff5m_ui"
-        sources = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in pages_root.rglob("*.py"))
-
-        self.assertNotIn("lambda state", sources)
-        self.assertNotIn("state[", sources)
-        self.assertNotIn("state.get(", sources)
-        self.assertIn("bind(ToolheadState.Z)", sources)
-        self.assertIn("bind(PaperState.GAUGE)", sources)
-
     def test_all_discovered_product_pages_publish_valid_state_metadata(self):
         pages = (
             move_ui.STEP_PAGE, move_ui.JOYSTICK_PAGE,

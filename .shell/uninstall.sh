@@ -2,7 +2,7 @@
 
 ## Mod's uninstall script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -132,6 +132,7 @@ uninstall() {
     if [ "$1" != "--soft" ]; then
         echo "// Hard remove step..."
         rm -rf /opt/config/mod_data
+        rm -rf /opt/.netd-private
         
         echo "// Removing root access..."
         rm -rf /etc/init.d/S50sshd /etc/init.d/S55date /bin/dropbearmulti /bin/dropbear /bin/dropbearkey /bin/scp /etc/dropbear /etc/init.d/S60dropbear

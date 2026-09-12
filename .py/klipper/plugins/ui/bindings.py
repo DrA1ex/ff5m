@@ -1,6 +1,7 @@
 ## Typed state declarations and bindings for the Feather UI framework.
 
 import copy
+import inspect
 from enum import Enum
 
 from .identity import StateKey, serialize_key
@@ -8,6 +9,108 @@ from .theme import ThemeColor, ThemeRole
 
 
 _UNAVAILABLE = object()
+
+
+class StateDeclarationContract:
+    """Framework-owned source grammar for one ``StateKey`` member."""
+
+    __slots__ = (
+        "strategy", "factory_names", "positional_fields", "editable_fields",
+        "field_codecs", "portable_types", "supported_forms",
+    )
+
+    def __init__(self, strategy, factory_names, positional_fields,
+                 editable_fields, field_codecs, portable_types,
+                 supported_forms=("direct_enum_assignment",)):
+        self.strategy = str(strategy)
+        self.factory_names = tuple(str(value) for value in factory_names)
+        self.positional_fields = tuple(str(value) for value in positional_fields)
+        self.editable_fields = tuple(str(value) for value in editable_fields)
+        self.field_codecs = dict((str(name), str(codec))
+                                 for name, codec in field_codecs.items())
+        self.portable_types = tuple(portable_types)
+        self.supported_forms = tuple(str(value) for value in supported_forms)
+
+    def as_dict(self):
+        return {
+            "strategy": self.strategy,
+            "factory_names": list(self.factory_names),
+            "positional_fields": list(self.positional_fields),
+            "editable_fields": list(self.editable_fields),
+            "field_codecs": dict(self.field_codecs),
+            "portable_types": [_type_name(value)
+                               for value in self.portable_types],
+            "supported_forms": list(self.supported_forms),
+        }
+
+
+class BindingExpressionContract:
+    """Framework-owned grammar for authoring a derived expression."""
+
+    __slots__ = (
+        "strategy", "factory_names", "callable_forms", "allowed_ast_nodes",
+        "allowed_globals", "portable_default_types", "sharing",
+    )
+
+    def __init__(self, strategy, factory_names, callable_forms,
+                 allowed_ast_nodes, allowed_globals=(),
+                 portable_default_types=(), sharing="catalog_uses"):
+        self.strategy = str(strategy)
+        self.factory_names = tuple(str(value) for value in factory_names)
+        self.callable_forms = tuple(str(value) for value in callable_forms)
+        self.allowed_ast_nodes = tuple(str(value) for value in allowed_ast_nodes)
+        self.allowed_globals = tuple(str(value) for value in allowed_globals)
+        self.portable_default_types = tuple(portable_default_types)
+        self.sharing = str(sharing)
+
+    def as_dict(self):
+        return {
+            "strategy": self.strategy,
+            "factory_names": list(self.factory_names),
+            "callable_forms": list(self.callable_forms),
+            "allowed_ast_nodes": list(self.allowed_ast_nodes),
+            "allowed_globals": list(self.allowed_globals),
+            "portable_default_types": [
+                _type_name(value) for value in self.portable_default_types],
+            "sharing": self.sharing,
+        }
+
+
+_STATE_FIELDS = (
+    "value_type", "default", "minimum", "maximum", "choices", "mutable",
+    "unit", "category", "simulation_role", "simulation_home",
+)
+STATE_DECLARATION_CONTRACT = StateDeclarationContract(
+    "core.state_enum_member", ("state",), _STATE_FIELDS, _STATE_FIELDS[1:],
+    dict((name, "python_literal") for name in _STATE_FIELDS),
+    (bool, int, float, str),
+)
+BINDING_EXPRESSION_CONTRACT = BindingExpressionContract(
+    "core.python_expression", ("derived",),
+    ("inline_lambda", "same_module_single_return"),
+    (
+        "Expression", "BoolOp", "BinOp", "UnaryOp", "IfExp", "Compare",
+        "Name", "Load", "Constant", "Attribute", "Subscript", "Slice",
+        "Tuple", "List", "Dict",
+        "Set", "JoinedStr", "FormattedValue", "And", "Or", "Not", "UAdd",
+        "USub", "Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "Pow",
+        "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In",
+        "NotIn",
+    ),
+    allowed_globals=("ThemeColor", "ThemeRole"),
+    portable_default_types=(
+        type(None), str, int, float, bool, tuple, list, dict, Enum),
+)
+
+
+def _capture_binding(binding, names=()):
+    return None
+
+
+def _install_source_hook(capture_binding):
+    """Install the optional neutral binding provenance hook."""
+    global _capture_binding
+    _capture_binding = capture_binding
 
 
 def _type_name(value_type):
@@ -39,6 +142,7 @@ class StateSpec:
     __slots__ = (
         "value_type", "default", "minimum", "maximum", "choices",
         "mutable", "unit", "category", "simulation_role", "simulation_home",
+        "declaration_source_contract",
     )
 
     def __init__(self, value_type, default=_UNAVAILABLE, minimum=None,
@@ -59,6 +163,7 @@ class StateSpec:
         if self.simulation_role == "":
             raise ValueError("simulation_role must not be empty")
         self.simulation_home = simulation_home
+        self.declaration_source_contract = None
         if self.simulation_home is not None and self.simulation_role is None:
             raise ValueError("simulation_home requires simulation_role")
         if self.simulation_home is not None:
@@ -109,6 +214,9 @@ class StateSpec:
             "category": self.category,
             "simulation_role": self.simulation_role,
             "simulation_home": _json_value(self.simulation_home),
+            "declaration_source_contract": (
+                None if self.declaration_source_contract is None
+                else self.declaration_source_contract.as_dict()),
         }
 
 
@@ -116,10 +224,12 @@ def state(value_type, default=_UNAVAILABLE, minimum=None, maximum=None,
           choices=None, mutable=True, unit=None, category=None,
           simulation_role=None, simulation_home=None):
     """Declare metadata for a ``StateKey`` enum member."""
-    return StateSpec(
+    spec = StateSpec(
         value_type, default=default, minimum=minimum, maximum=maximum,
         choices=choices, mutable=mutable, unit=unit, category=category,
         simulation_role=simulation_role, simulation_home=simulation_home)
+    spec.declaration_source_contract = STATE_DECLARATION_CONTRACT
+    return spec
 
 
 def state_spec(key):
@@ -262,11 +372,12 @@ class Binding:
 
 
 class DirectBinding(Binding):
-    __slots__ = ("key",)
+    __slots__ = ("key", "_source")
 
     def __init__(self, key):
         state_spec(key)
         self.key = key
+        self._source = None
 
     @property
     def keys(self):
@@ -280,7 +391,7 @@ class DirectBinding(Binding):
 
 
 class DerivedBinding(Binding):
-    __slots__ = ("function", "inputs")
+    __slots__ = ("function", "inputs", "_source", "expression_source_contract")
 
     def __init__(self, function, inputs):
         if not callable(function):
@@ -291,6 +402,8 @@ class DerivedBinding(Binding):
         _validate_callable_arity(function, len(inputs))
         self.function = function
         self.inputs = inputs
+        self._source = None
+        self.expression_source_contract = None
 
     @property
     def keys(self):
@@ -341,11 +454,16 @@ def _validate_callable_arity(function, count):
 
 
 def bind(key):
-    return DirectBinding(key)
+    binding = DirectBinding(key)
+    binding._source = _capture_binding(binding, names=("bind",))
+    return binding
 
 
 def derived(function, *inputs):
-    return DerivedBinding(function, inputs)
+    binding = DerivedBinding(function, inputs)
+    binding.expression_source_contract = BINDING_EXPRESSION_CONTRACT
+    binding._source = _capture_binding(binding, names=("derived",))
+    return binding
 
 
 def resolve(value, store):
@@ -376,6 +494,99 @@ def resolve_deep(value, store):
         return dict((key, resolve_deep(item, store))
                     for key, item in value.items())
     return value
+
+
+def _binding_resolution(binding, store):
+    try:
+        return {"resolved": _json_value(binding.resolve(store))}
+    except Exception as error:
+        return {"resolved": None, "error": str(error)}
+
+
+def _callable_metadata(function):
+    result = {
+        "name": getattr(function, "__name__", "<callable>"),
+        "qualname": getattr(function, "__qualname__", None),
+        "module": getattr(function, "__module__", None),
+    }
+    code = getattr(function, "__code__", None)
+    if code is not None:
+        result["location"] = {
+            "file": inspect.getsourcefile(function),
+            "line": int(code.co_firstlineno),
+        }
+    return result
+
+
+def _binding_source_metadata(binding):
+    trace = getattr(binding, "_source", None)
+    if not isinstance(trace, dict):
+        return None
+    anchor = trace.get("anchor")
+    if not isinstance(anchor, dict):
+        return None
+    return {
+        "file": anchor.get("file"),
+        "relative_file": anchor.get("relative_file"),
+        "range": anchor.get("range"),
+        "expression": anchor.get("expression"),
+        "kind": anchor.get("kind"),
+        "callable": anchor.get("callable"),
+        "fingerprint": anchor.get("fingerprint"),
+        "context_fingerprint": anchor.get("context_fingerprint"),
+        "file_fingerprint": anchor.get("file_fingerprint"),
+        "call_chain": list(trace.get("chain", ())),
+    }
+
+
+def binding_metadata(binding, store):
+    """Return resolved, recursive Designer metadata for one binding.
+
+    The compact :meth:`Binding.as_dict` representation remains suitable for
+    persistent/runtime contracts. This richer form is produced only during
+    reflection, so normal printer rendering does not retain dependency trees.
+    """
+    if not isinstance(binding, Binding):
+        raise TypeError("binding_metadata requires a Binding")
+    keys = [serialize_key(key) for key in binding.keys]
+    if isinstance(binding, DirectBinding):
+        result = {
+            "kind": "direct",
+            "key": serialize_key(binding.key),
+            "keys": keys,
+            "direct_keys": keys,
+            "transitive_keys": [],
+            "source": _binding_source_metadata(binding),
+        }
+        result.update(_binding_resolution(binding, store))
+        return result
+    if isinstance(binding, DerivedBinding):
+        inputs = [binding_metadata(item, store) for item in binding.inputs]
+        direct = []
+        transitive = []
+        for item in inputs:
+            target = direct if item.get("kind") == "direct" else transitive
+            for key in item.get("keys", ()):
+                if key not in target:
+                    target.append(key)
+        result = {
+            "kind": "derived",
+            "keys": keys,
+            "direct_keys": direct,
+            "transitive_keys": [key for key in transitive if key not in direct],
+            "inputs": inputs,
+            "callable": _callable_metadata(binding.function),
+            "source": _binding_source_metadata(binding),
+            "expression_source_contract": (
+                None if binding.expression_source_contract is None
+                else binding.expression_source_contract.as_dict()),
+        }
+        result.update(_binding_resolution(binding, store))
+        return result
+    result = binding.as_dict()
+    result["keys"] = keys
+    result.update(_binding_resolution(binding, store))
+    return result
 
 
 def binding_keys(value):

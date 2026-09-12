@@ -105,6 +105,20 @@ class Back(Action):
 
 
 @dataclass(frozen=True)
+class DismissToast(Action):
+    """Dismiss the framework-owned transient toast overlay."""
+
+    kind = "dismiss_toast"
+
+    @property
+    def wire_id(self):
+        return "global.toast.dismiss"
+
+    def as_dict(self):
+        return {"kind": self.kind}
+
+
+@dataclass(frozen=True)
 class Replace(Action):
     target: PageKey
     kind = "replace"
@@ -187,6 +201,36 @@ class Increment(Action):
             "amount": _json_value(self.amount),
             "wrap": bool(self.wrap),
         }
+
+
+@dataclass(frozen=True)
+class EditText(Action):
+    """Portable editing of a mutable string state value."""
+
+    key: StateKey
+    operation: str = "append"
+    text: str = ""
+    kind = "edit_text"
+
+    def __post_init__(self):
+        if not isinstance(self.key, StateKey):
+            raise TypeError("EditText key must be a StateKey member")
+        spec = state_spec(self.key)
+        if not spec.mutable or spec.value_type is not str:
+            raise TypeError("EditText requires mutable string state")
+        if self.operation not in ("append", "backspace", "clear"):
+            raise ValueError("Unknown EditText operation: %s" % self.operation)
+        if not isinstance(self.text, str):
+            raise TypeError("EditText text must be a string")
+
+    def as_dict(self):
+        return {
+            "kind": self.kind, "key": serialize_key(self.key),
+            "operation": self.operation, "text": self.text,
+        }
+
+
+_STATE_ACTIONS = (SetValue, Toggle, Increment, EditText)
 
 
 class SimulationHint:
@@ -278,6 +322,7 @@ class Command(Action):
     key: CommandKey
     payload: object = None
     hint: SimulationHint = None
+    state_effect: Action = None
     kind = "command"
 
     def __post_init__(self):
@@ -287,6 +332,10 @@ class Command(Action):
         _json_value(self.payload)
         if self.hint is not None and not isinstance(self.hint, SimulationHint):
             raise TypeError("Command hint must be a SimulationHint")
+        if (self.state_effect is not None
+                and not isinstance(self.state_effect, _STATE_ACTIONS)):
+            raise TypeError(
+                "Command state_effect must be a portable state action")
 
     @property
     def wire_id(self):
@@ -303,6 +352,9 @@ class Command(Action):
             "key": serialize_key(self.key),
             "payload": _json_value(self.payload),
             "hint": None if self.hint is None else self.hint.as_dict(),
+            "state_effect": (
+                None if self.state_effect is None
+                else self.state_effect.as_dict()),
         }
 
 
@@ -345,6 +397,39 @@ def collect_actions(root):
         add(getattr(node, "action", None))
         add(getattr(node, "active_action", None))
         add(getattr(node, "buttons", None))
+    return result
+
+
+def _apply_state_action(store, action):
+    result = store.copy()
+    if isinstance(action, SetValue):
+        value = action.value
+    elif isinstance(action, Toggle):
+        value = not store[action.key]
+    elif isinstance(action, Increment):
+        spec = state_spec(action.key)
+        current = store[action.key]
+        if spec.choices is not None:
+            choices = tuple(spec.choices)
+            index = choices.index(current) + int(action.amount)
+            if action.wrap:
+                index %= len(choices)
+            else:
+                index = max(0, min(len(choices) - 1, index))
+            value = choices[index]
+        else:
+            value = current + action.amount
+            if spec.minimum is not None:
+                value = max(spec.minimum, value)
+            if spec.maximum is not None:
+                value = min(spec.maximum, value)
+    elif action.operation == "append":
+        value = store[action.key] + action.text
+    elif action.operation == "backspace":
+        value = store[action.key][:-1]
+    else:
+        value = ""
+    result.update({action.key: value})
     return result
 
 
@@ -405,31 +490,10 @@ class Router:
             page = self.current
             store = self.page().initial_state()
             history_changed = True
-        elif isinstance(action, SetValue):
-            store = store.copy()
-            store.update({action.key: action.value})
-        elif isinstance(action, Toggle):
-            store = store.copy()
-            store.update({action.key: not store[action.key]})
-        elif isinstance(action, Increment):
-            store = store.copy()
-            spec = state_spec(action.key)
-            current = store[action.key]
-            if spec.choices is not None:
-                choices = tuple(spec.choices)
-                index = choices.index(current) + int(action.amount)
-                if action.wrap:
-                    index %= len(choices)
-                else:
-                    index = max(0, min(len(choices) - 1, index))
-                value = choices[index]
-            else:
-                value = current + action.amount
-                if spec.minimum is not None:
-                    value = max(spec.minimum, value)
-                if spec.maximum is not None:
-                    value = min(spec.maximum, value)
-            store.update({action.key: value})
+        elif isinstance(action, _STATE_ACTIONS):
+            store = _apply_state_action(store, action)
         elif isinstance(action, Command):
             command = action
+            if action.state_effect is not None:
+                store = _apply_state_action(store, action.state_effect)
         return DispatchResult(page, store, command, history_changed)

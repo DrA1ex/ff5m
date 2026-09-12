@@ -2,7 +2,7 @@
 
 ## General service to control forge-x services
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ## Copyright (C) 2025, Sergei Rozhkov <https://github.com/ghzserg>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
@@ -16,6 +16,11 @@ fi
 
 
 source /opt/config/mod/.shell/common.sh
+
+printer_command_available() {
+    [ -e /tmp/printer ] || return 1
+    ps | grep -q "[k]lippy.py"
+}
 
 start() {
     if [ ! -f "$NOT_FIRST_LAUNCH_F" ] &&  [ -f "$CUSTOM_BOOT_F" ]; then
@@ -61,6 +66,7 @@ start() {
 
     if [ ! -f "$NOT_FIRST_LAUNCH_F" ]; then
         echo "// Done. Loaded for $(awk '{print $1}' < /proc/uptime) sec."
+        "$SCRIPTS"/screen.sh splash_stop
         echo "// Finishing boot..."
     else
         echo "// Done."
@@ -72,6 +78,10 @@ start() {
 }
 
 stop() {
+    if [ "${0##*/}" = "K99root" ] && printer_command_available; then
+        printer_command "action:forge_x_shutting_down"
+    fi
+
     echo "// Stopping Buildroot env..."
     chroot "$MOD" /opt/config/mod/.root/stop.sh
     echo "// Done"
@@ -106,5 +116,14 @@ switch() {
 }
 
 switch "$@" 2>&1 | logged "/data/logFiles/boot.log" --send-to-screen --screen-no-followup
+status=$?
 
-exit $?
+case "$1" in
+    start|stop)
+        if [ "${0##*/}" != "K99root" ] && printer_command_available; then
+            printer_command "action:forge_x_redraw"
+        fi
+    ;;
+esac
+
+exit "$status"

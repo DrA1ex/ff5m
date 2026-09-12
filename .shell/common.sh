@@ -2,7 +2,7 @@
 
 ## Mod's common variables and functions
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -18,7 +18,6 @@ INIT_FLAG="/tmp/init_finished_f"
 NOT_FIRST_LAUNCH_F="/tmp/not_first_launch_f"
 CUSTOM_BOOT_F="/tmp/custom_boot_f"
 WIFI_CONNECTED_F="/tmp/wifi_connected_f"
-ETHERNET_CONNECTED_F="/tmp/ethernet_connected_f"
 CAMERA_F="/tmp/camera_f"
 NET_IP_F="/tmp/net_ip"
 
@@ -32,14 +31,50 @@ VAR_PATH="$MOD_DATA/variables.cfg"
 
 FLASHED_VERSION_F="$MOD"/version.txt
 VERSION_F=/opt/config/mod/version.txt
+FIRMWARE_VERSION_F=/root/version
+VERSION_PATCH_F=/tmp/version_patch
 
-LOAD_IMG_XZ="/opt/config/mod/load.img.xz"
-[ -f /opt/config/mod_data/load.img.xz ] && LOAD_IMG_XZ="/opt/config/mod_data/load.img.xz"
+SCREEN_THEME_BUILTIN_DIR="/opt/config/mod/.bin/themes"
+SCREEN_THEME_USER_DIR="/opt/config/mod_data/themes/splash"
+SPLASH_CONTROL_FIFO="/tmp/forge_x_splash_control"
 
-SPLASH_IMG_XZ="/opt/config/mod/splash.img.xz"
-[ -f /opt/config/mod_data/splash.img.xz ] && SPLASH_IMG_XZ="/opt/config/mod_data/splash.img.xz"
 
 PATH="$BINS:$PATH"
+
+screen_theme_name() {
+    if [ -f "$VAR_PATH" ]; then
+        "$CFG_SCRIPT" "$VAR_PATH" --get "feather_theme" "DEFAULT"
+    else
+        echo "DEFAULT"
+    fi
+}
+
+screen_theme_args() {
+    local theme
+    theme="$(screen_theme_name)"
+    [ -n "$theme" ] || theme="DEFAULT"
+
+    SCREEN_THEME_ARGS=(
+        --themes-path "$SCREEN_THEME_BUILTIN_DIR"
+        --themes-path "$SCREEN_THEME_USER_DIR"
+        --theme "$theme"
+    )
+}
+
+# All shell callers get the same theme lookup and override semantics without
+# repeating screen theme paths at every logging callsite.
+logged() {
+    screen_theme_args
+    "$BINS/logged" "${SCREEN_THEME_ARGS[@]}" "$@"
+}
+
+# One-shot shell screen rendering can run while another process (notably logged)
+# is mapped to a specific framebuffer page. Keep Typer double-buffered to avoid
+# visible intermediate drawing, but publish by copying to the currently visible
+# page only. A short-lived Typer must never leave FBIOPAN_DISPLAY on another page.
+screen_typer() {
+    "$BINS/typer" -db --framebuffer-copy-only "$@"
+}
 
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
@@ -87,7 +122,7 @@ message() {
     echo "RESPOND PREFIX='$prefix' MSG='$text'" > /tmp/printer
 }
 
-command() {
+printer_command() {
     local value="$1"
     
     echo "RESPOND TYPE=command MSG='$value'" > /tmp/printer

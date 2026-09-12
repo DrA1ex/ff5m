@@ -10,34 +10,168 @@ export LANG=en_US.UTF-8
 
 source /opt/config/mod/.shell/common.sh
 
-load_version() {
-    export FIRMWARE_VERSION=$(cat /root/version)
-    export MOD_VERSION=$(cat /opt/config/mod/version.txt)
-    export MOD_VERSION_PATCH=$(cat /tmp/version_patch 2> /dev/null)
-
+splash_running() {
+    [ -p "$SPLASH_CONTROL_FIFO" ] || return 1
+    pidof splash > /dev/null 2>&1
 }
 
-print_versions() {
-    local batches=(
-        --batch fill -p 72 270 -s 311 54 -c 0
-        --batch fill -p 417 270 -s 311 54 -c 0
-        --batch text -ha center -va middle -p 228 286 -c b47aff -f "JetBrainsMono Bold 12pt" --max-width 280 --truncate -t "v$MOD_VERSION"
-        --batch text -ha center -va middle -p 572 297 -c 35d9e6 -f "JetBrainsMono Bold 12pt" --max-width 280 --truncate -t "v$FIRMWARE_VERSION"
-    )
+splash_seed() {
+    local uptime
 
-    if [ -n "$MOD_VERSION_PATCH" ]; then
-        batches+=(
-            --batch text -ha center -va middle -p 228 310 -c b47aff -f "JetBrainsMono Bold 8pt" --max-width 280 --truncate -t "$MOD_VERSION_PATCH"
-        )
+    if read -r uptime _ < /proc/uptime; then
+        printf '%s\n' "${uptime%%.*}"
+    else
+        printf '%s\n' "1"
+    fi
+}
+
+splash_command() {
+    local command="$1"
+    shift
+
+    [ -p "$SPLASH_CONTROL_FIFO" ] || return 1
+
+    # Open read/write so a stale FIFO cannot block the shell while opening it.
+    case "$command" in
+        subtitle)
+            { printf 'subtitle %s\n' "$*" >&3; } 3<> "$SPLASH_CONTROL_FIFO"
+        ;;
+        stop)
+            { printf 'stop\n' >&3; } 3<> "$SPLASH_CONTROL_FIFO"
+        ;;
+        *)
+            echo "Unknown splash command: $command" >&2
+            return 1
+        ;;
+    esac
+}
+
+splash_start() {
+    if splash_running; then
+        echo "?? Splash already running"
+        return 0
     fi
 
-    "$BINS/typer" -db batch "${batches[@]}"
+    echo "Starting splash..."
+
+    rm -f "$SPLASH_CONTROL_FIFO"
+    screen_theme_args
+
+    "$BINS/splash" \
+        "${SCREEN_THEME_ARGS[@]}" \
+        --subtitle "$(splash_subtitle)" \
+        --seed "$(splash_seed)" \
+        --control-fifo "$SPLASH_CONTROL_FIFO" \
+        </dev/null >/dev/null 2>&1 &
+
+    echo "Splash: Waiting for FIFO"
+
+    local attempts=0
+    while [ ! -p "$SPLASH_CONTROL_FIFO" ] && [ "$attempts" -lt 50 ]; do
+        sleep 0.1
+        attempts=$((attempts + 1))
+    done
+
+    if [ ! -p "$SPLASH_CONTROL_FIFO" ]; then
+        echo "?? Splash: control FIFO was not created"
+        return 1
+    fi
+
+    echo "Splash: Done"
+}
+
+splash_set_subtitle() {
+    splash_command subtitle "$1" || echo "splash: cannot update subtitle; splash is not running" >&2
+}
+
+splash_subtitle() {
+    local version="${1:-}"
+    local patch=""
+    local firmware=""
+
+    if [ -z "$version" ] && [ -s "$VERSION_F" ]; then
+        version="$(cat "$VERSION_F")"
+    fi
+
+    if [ -n "$version" ] && [ -s "$VERSION_PATCH_F" ]; then
+        patch="$(cat "$VERSION_PATCH_F")"
+        patch="${patch#@}"
+    fi
+
+    local display_mode
+    display_mode="$("$CMDS"/zdisplay.sh test)"
+    if [ "$display_mode" = "STOCK" ] && [ -s "$FIRMWARE_VERSION_F" ]; then
+        firmware="$(cat "$FIRMWARE_VERSION_F")"
+    fi
+
+    if [ -z "$version" ]; then
+        printf '%s\n' "FLASHFORGE AD5M (PRO) MOD"
+        return 0
+    fi
+
+    local subtitle
+    if [ -n "$patch" ] || [ -n "$firmware" ]; then
+        subtitle="FF AD5M (PRO) MOD // V${version}"
+    else
+        subtitle="FLASHFORGE AD5M (PRO) MOD  // V${version}"
+    fi
+
+    [ -n "$patch" ] && subtitle="$subtitle @${patch}"
+    [ -n "$firmware" ] && subtitle="$subtitle // FW V${firmware}"
+
+    printf '%s\n' "$subtitle"
+}
+
+splash_set_version() {
+    local version="$1"
+    [ -n "$version" ] || return 0
+
+    splash_set_subtitle "$(splash_subtitle "$version")"
+}
+
+splash_stop() {
+    if [ ! -p "$SPLASH_CONTROL_FIFO" ]; then
+        return 0
+    fi
+
+    echo "Stopping splash..."
+
+    splash_command stop || return 0
+
+    local attempts=0
+    while [ -p "$SPLASH_CONTROL_FIFO" ] && [ "$attempts" -lt 30 ]; do
+        sleep 0.1
+        attempts=$((attempts + 1))
+    done
+
+    if [ -p "$SPLASH_CONTROL_FIFO" ]; then
+        echo "?? Splash: stop command timed out"
+        return 1
+    fi
+}
+
+# Preserve the original draw_splash semantics: draw one neutral frame and return.
+# This must not create a long-lived renderer or a control FIFO.
+draw_splash() {
+    screen_theme_args
+
+    "$BINS/splash" \
+        "${SCREEN_THEME_ARGS[@]}" \
+        --subtitle "$(splash_subtitle)" \
+        --seed "$(splash_seed)" \
+        --static
+
+    local display_mode
+    display_mode="$("$CMDS"/zdisplay.sh test)"
+    if [ "$display_mode" = "HEADLESS" ] && [ -s "$NET_IP_F" ]; then
+        print_prepare_status "IP: $(cat "$NET_IP_F")"
+    fi
 }
 
 print_message() {
     local text="$1"
     
-    "$BINS/typer" -db batch \
+    screen_typer batch \
         --batch fill -p 0 370 -s 800 50 -c 0 \
         --batch text -ha center -p 400 400 -c 35d9e6 -f "JetBrainsMono 12pt" --max-width 760 --truncate -t "$text"
 }
@@ -48,7 +182,7 @@ print_progress() {
     value=$((value > 100 ? 100 : value))
     local progress_width=$(( value * 380 / 100 ))
     
-    "$BINS/typer" -db batch \
+    screen_typer batch \
         --batch fill    -c 0         -p 200 420 -s 400 40 \
         --batch stroke  -c 35d9e6    -p 200 420 -s 400 40 -lw 2 -sd inner \
         --batch fill    -c b47aff    -p 210 430 -s $progress_width 20 \
@@ -59,7 +193,7 @@ print_progress() {
 print_prepare_status() {
     local text="$1"
     
-    "$BINS/typer" -db batch \
+    screen_typer batch \
         --batch fill -p 205 425 -s 390 30 -c 0 \
         --batch text -p 400 440 -ha center -va middle -c 35d9e6 -f "JetBrainsMono 8pt" -b 0 --max-width 370 --truncate -t "${text}"
 }
@@ -78,11 +212,11 @@ print_time() {
 
 print_left_panel() {
     if [ -z "$1" ]; then
-        "$BINS/typer" fill -c 0 -p 0 400 -s 200 80
+        screen_typer fill -c 0 -p 0 400 -s 200 80
         return
     fi
 
-    "$BINS/typer" -db batch\
+    screen_typer batch \
         --batch fill -c 0 -p 0 400 -s 200 80 \
         --batch text -p 180 440 -va middle -ha right -c 00f0f0 -b 0 -t "$1"
 }
@@ -103,27 +237,24 @@ convert_duration() {
 }
 
 case "$1" in
-    draw_loading)
-        load_version
-
-        if [ "$2" != "--no-clear" ]; then
-            xzcat "$LOAD_IMG_XZ" > /dev/fb0
-        fi
-        
-        print_versions
+    splash_start)
+        splash_start
     ;;
-    
+
+    splash_version)
+        splash_set_version "$2"
+    ;;
+
+    splash_subtitle)
+        splash_set_subtitle "$2"
+    ;;
+
+    splash_stop)
+        splash_stop
+    ;;
+
     draw_splash)
-        load_version
-        if [ "$2" != "--no-clear" ]; then
-            xzcat "$SPLASH_IMG_XZ" > /dev/fb0
-        fi
-
-        print_versions
-
-        if [ -f "$NET_IP_F" ]; then
-            print_prepare_status "IP: $(cat "$NET_IP_F")"
-        fi
+        draw_splash
     ;;
 
     draw_status_bar)
@@ -176,7 +307,7 @@ case "$1" in
             --batch text -p $x $y  -c "$servo_color"    -ha right    -va middle -f  "Typicons 12pt"      -t "$icon_servo"
         ) && x=$((x - x_offset))
         
-        "$BINS/typer" -db batch "${batches[@]}"
+        screen_typer batch "${batches[@]}"
     ;;
     
     print_file)
@@ -237,6 +368,6 @@ case "$1" in
         chroot "$MOD" /root/printer_data/py/backlight.py $value
     ;;
     *)
-        echo "Usage: $0 <command> [args...]"
+        echo "Usage: $0 splash_start|splash_version|splash_subtitle|splash_stop|draw_splash|<screen command> [args...]"
         exit 1
 esac

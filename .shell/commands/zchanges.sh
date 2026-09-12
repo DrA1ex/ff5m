@@ -2,7 +2,7 @@
 
 ## Mod's parameters change handle
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -56,10 +56,10 @@ case "$key" in
             [ -f "$cam_pid_file" ] && kill -0 "$(cat $cam_pid_file)" 2>/dev/null; MOD_CAM_ACTIVE=$(( $? == 0 ))
             
             if [ "$STREAM_ACTIVE" -eq 1 ] && [ "$MOD_CAM_ACTIVE" -eq 0 ]; then
-                command "action:prompt_begin Camera"
-                command 'action:prompt_text The camera is currently in use! Disable it in the Stock Screen settings and try again.'
-                command "action:prompt_end"
-                command "action:prompt_show"
+                printer_command "action:prompt_begin Camera"
+                printer_command 'action:prompt_text The camera is currently in use! Disable it in the Stock Screen settings and try again.'
+                printer_command "action:prompt_end"
+                printer_command "action:prompt_show"
                 
                 exit 1
             fi

@@ -2,17 +2,13 @@
 
 import logging
 
-try:
-    from .ui import Command, Page
-    from .feather_feature_manager import FeatureHostProxy
-    from .ff5m_ui.filament import runtime as filament_ui
-except (ImportError, ValueError):
-    from ui import Command, Page
-    from feather_feature_manager import FeatureHostProxy
-    from ff5m_ui.filament import runtime as filament_ui
+from ui import Command
+from feather_feature_manager import FeatureHostProxy
+from ff5m_ui.filament import runtime as filament_ui
+from ff5m_ui.screen import ScreenPage
 
 
-PAGES = frozenset((Page.FILAMENT_MATERIAL, Page.FILAMENT_ACTION))
+PAGES = frozenset((ScreenPage.FILAMENT_MATERIAL, ScreenPage.FILAMENT_ACTION))
 
 
 class FilamentFeature(FeatureHostProxy):
@@ -91,15 +87,15 @@ class FilamentFeature(FeatureHostProxy):
         self._selected_target = None
 
     def _semantic_page(self, page):
-        if page == Page.FILAMENT_MATERIAL:
+        if page == ScreenPage.FILAMENT_MATERIAL:
             return filament_ui.get_material_page(self._profiles())
-        if page == Page.FILAMENT_ACTION:
+        if page == ScreenPage.FILAMENT_ACTION:
             return filament_ui.get_action_page(
                 self._host.filament_from_pause)
         return None
 
     def render(self, page):
-        if page == Page.FILAMENT_MATERIAL:
+        if page == ScreenPage.FILAMENT_MATERIAL:
             commands = self._host.renderer.begin_page(
                 "Select material", back=True)
             commands += filament_ui.render_material(
@@ -150,17 +146,17 @@ class FilamentFeature(FeatureHostProxy):
         return True
 
     def back(self, page):
-        if page == Page.FILAMENT_ACTION:
+        if page == ScreenPage.FILAMENT_ACTION:
             # Returning to material choice is presentation-only. The selected
             # target stays active until the user finishes or leaves the flow.
-            self._host._show_page(Page.FILAMENT_MATERIAL)
-        elif page == Page.FILAMENT_MATERIAL:
+            self._host._show_page(ScreenPage.FILAMENT_MATERIAL)
+        elif page == ScreenPage.FILAMENT_MATERIAL:
             self._leave_workflow()
             if self._host.filament_from_pause:
                 self._host._show_page(self._host.page_for_print_state())
             else:
                 self._host._show_page(getattr(
-                    self._host, "filament_return_page", Page.MAIN_MENU))
+                    self._host, "filament_return_page", ScreenPage.MAIN_MENU))
         else:
             return False
         return True
@@ -171,7 +167,7 @@ class FilamentFeature(FeatureHostProxy):
             return
         status, values, signature = self._values(eventtime)
         self._sync_cooling_fan(status)
-        if self._host.page != Page.FILAMENT_ACTION:
+        if not self._host._page_paint_allowed(ScreenPage.FILAMENT_ACTION):
             return
         if signature == self._last_signature:
             return

@@ -84,28 +84,38 @@ class StepRef(Enum):
 STEP_REFS = (StepRef.PRESET_0, StepRef.PRESET_1, StepRef.PRESET_2)
 
 
-def _all_homed(homed_x, homed_y, homed_z):
-    return homed_x and homed_y and homed_z
-
-
 def _status_label(homed_x, homed_y, homed_z):
-    missing = "".join(
-        axis for axis, homed in (("X", homed_x), ("Y", homed_y),
-                                 ("Z", homed_z)) if not homed)
-    return "HOMED: XYZ" if not missing else "NOT HOMED: %s" % missing
+    return ("HOMED: XYZ" if homed_x and homed_y and homed_z else
+            "NOT HOMED: %s%s%s" % (
+                "" if homed_x else "X",
+                "" if homed_y else "Y",
+                "" if homed_z else "Z"))
 
 
-def _homed_color(*values):
-    return ThemeColor.PRIMARY if all(values) else ThemeColor.WARNING
+def _xy_position_label(x, y):
+    return "X %7.2f   Y %7.2f" % (x, y)
 
 
-def _homed_label(*values):
-    return "HOMED" if all(values) else "HOME"
+def _z_position_label(z):
+    return "Z %7.2f" % z
 
 
-def _axis_status(label, homed_bindings, refs):
-    color = derived(_homed_color, *homed_bindings)
-    state_label = derived(_homed_label, *homed_bindings)
+def _step_value_label(value):
+    return "%g MM" % value
+
+
+def _step_preset_selected(current, preset):
+    active = 10.0 if current >= 10.0 else (1.0 if current >= 1.0 else 0.1)
+    return "selected" if active == preset else "enabled"
+
+
+def _axis_status(label, homed, refs):
+    color = derived(
+        lambda ready: ThemeColor.PRIMARY if ready else ThemeColor.WARNING,
+        homed)
+    state_label = derived(
+        lambda ready: "HOMED" if ready else "HOME",
+        homed)
     return Overlay(
         Fill(ThemeColor.PANEL).ref(refs[0]),
         Stroke(color, 2).ref(refs[1]),
@@ -116,29 +126,26 @@ def _axis_status(label, homed_bindings, refs):
 
 
 def _status_card():
-    homed = (
-        bind(ToolheadState.HOMED_X),
-        bind(ToolheadState.HOMED_Y),
-        bind(ToolheadState.HOMED_Z),
-    )
+    homed_x = bind(ToolheadState.HOMED_X)
+    homed_y = bind(ToolheadState.HOMED_Y)
+    homed_z = bind(ToolheadState.HOMED_Z)
     return Overlay(
         Fill(ThemeColor.BACKGROUND).ref(StepRef.STATUS_BACKGROUND),
         Text(
-            derived(_status_label, *homed),
+            derived(_status_label, homed_x, homed_y, homed_z),
             color=derived(
-                lambda x, y, z: ThemeColor.PRIMARY if _all_homed(x, y, z)
+                lambda x, y, z: ThemeColor.PRIMARY if x and y and z
                 else ThemeColor.WARNING,
-                *homed),
+                homed_x, homed_y, homed_z),
         ).height(34).align(vertical="top").ref(StepRef.STATUS_STATE),
         Text(
-            derived(
-                lambda x, y: "X %7.2f   Y %7.2f" % (x, y),
-                bind(ToolheadState.X), bind(ToolheadState.Y)),
+            derived(_xy_position_label,
+                    bind(ToolheadState.X), bind(ToolheadState.Y)),
             color=ThemeColor.TEXT,
         ).height(46).margin(top=34).align(vertical="top") \
          .ref(StepRef.STATUS_XY),
         Text(
-            derived(lambda z: "Z %7.2f" % z, bind(ToolheadState.Z)),
+            derived(_z_position_label, bind(ToolheadState.Z)),
             color=ThemeColor.TEXT,
         ).height(26).margin(top=70).align(vertical="top").allow_overflow() \
          .ref(StepRef.STATUS_Z),
@@ -146,9 +153,10 @@ def _status_card():
 
 
 def _axis_layout():
-    xy_homed = (
+    xy_homed = derived(
+        lambda x, y: x and y,
         bind(ToolheadState.HOMED_X), bind(ToolheadState.HOMED_Y))
-    z_homed = (bind(ToolheadState.HOMED_Z),)
+    z_homed = bind(ToolheadState.HOMED_Z)
     xy_grid = Grid(
         matrix=(
             (EMPTY, Button(Y_PLUS, "Y+").ref(StepRef.XY_UP), EMPTY),
@@ -204,8 +212,7 @@ def _control_layout():
         matrix=((
             Button(Increment(MoveState.JOG_STEP, -1), "-").ref(StepRef.STEP_MINUS),
             Text(
-                derived(lambda value: "%g MM" % value,
-                        bind(MoveState.JOG_STEP)),
+                derived(_step_value_label, bind(MoveState.JOG_STEP)),
                 color=ThemeColor.TEXT,
             ).ref(StepRef.STEP_VALUE),
             Button(Increment(MoveState.JOG_STEP, 1), "+").ref(StepRef.STEP_PLUS),
@@ -218,7 +225,7 @@ def _control_layout():
                 SetValue(MoveState.JOG_STEP, value), "%g" % value,
                 state=derived(
                     lambda current, expected=value:
-                    "selected" if current == expected else "enabled",
+                    _step_preset_selected(current, expected),
                     bind(MoveState.JOG_STEP)),
             ).ref(STEP_REFS[index])
             for index, value in enumerate(STEP_VALUES)),

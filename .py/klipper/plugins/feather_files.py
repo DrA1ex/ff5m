@@ -7,9 +7,11 @@
 import json
 import logging
 import os
+import queue
 import signal
 import socket
 import subprocess
+import threading
 
 
 DEFAULT_HISTORY_PATH = "/opt/config/mod_data/feather_print_history.json"
@@ -24,6 +26,80 @@ USB_EVENT_SETTLE = 0.4
 USB_EVENT_BUFFER = 16384
 NETLINK_KOBJECT_UEVENT = 15
 AF_NETLINK = getattr(socket, "AF_NETLINK", 16)
+
+
+class FileScanWorker:
+    """Run filesystem scans away from Klipper's reactor thread.
+
+    Only the newest queued request is retained.  A scan already in progress is
+    allowed to finish, but its controller token can discard the stale result.
+    """
+
+    _STOP = object()
+
+    def __init__(self, schedule_async):
+        self._schedule_async = schedule_async
+        self._tasks = queue.Queue(maxsize=1)
+        self._lock = threading.Lock()
+        self._stopped = False
+        self._thread = threading.Thread(
+            target=self._work, name="feather-file-scan")
+        self._thread.daemon = True
+        self._thread.start()
+
+    def submit(self, task, callback):
+        request = (task, callback)
+        with self._lock:
+            if self._stopped:
+                return False
+            while True:
+                try:
+                    self._tasks.put_nowait(request)
+                    return True
+                except queue.Full:
+                    try:
+                        self._tasks.get_nowait()
+                    except queue.Empty:
+                        pass
+
+    def stop(self):
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            while True:
+                try:
+                    self._tasks.get_nowait()
+                except queue.Empty:
+                    break
+            self._tasks.put_nowait(self._STOP)
+
+    def _work(self):
+        while True:
+            request = self._tasks.get()
+            if request is self._STOP:
+                return
+            task, callback = request
+            result = None
+            error = None
+            try:
+                result = task()
+            except Exception as exc:
+                error = exc
+
+            with self._lock:
+                if self._stopped:
+                    continue
+
+            def deliver(_eventtime, value=result, failure=error,
+                        done=callback):
+                done(value, failure)
+
+            try:
+                self._schedule_async(deliver)
+            except (OSError, TypeError):
+                logging.exception(
+                    "[feather_screen] unable to deliver file scan result")
 
 
 class FileEntry:
@@ -47,6 +123,10 @@ class FileEntry:
 def _relative_path(root, path):
     root = os.path.realpath(root)
     path = os.path.realpath(path)
+    return _relative_path_resolved(root, path)
+
+
+def _relative_path_resolved(root, path):
     if path == root or not path.startswith(root + os.sep):
         return None
     relative = os.path.relpath(path, root)
@@ -85,6 +165,12 @@ class PrintHistory:
 
     def last_printed(self, relative_path):
         return self.timestamps.get(relative_path, 0.0)
+
+    def latest_path(self):
+        if not self.timestamps:
+            return None
+        return max(
+            self.timestamps.items(), key=lambda item: (item[1], item[0]))[0]
 
     def record(self, root, path, timestamp):
         relative = _relative_path(root, path)
@@ -141,7 +227,10 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH,
                 for child in listing:
                     if child.name.startswith("."):
                         continue
-                    path = os.path.realpath(child.path)
+                    # scandir roots are already canonical and symlinks are not
+                    # followed below. Avoid two realpath/stat walks per row on
+                    # the printer's slow flash storage.
+                    path = os.path.abspath(child.path)
                     if path != root and not path.startswith(root + os.sep):
                         continue
                     if child.is_dir(follow_symlinks=False):
@@ -152,7 +241,7 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH,
                             or not child.name.lower().endswith(
                                 VALID_GCODE_EXTS)):
                         continue
-                    relative = _relative_path(root, path)
+                    relative = _relative_path_resolved(root, path)
                     if relative is None:
                         continue
                     stat = child.stat(follow_symlinks=False)
@@ -164,8 +253,12 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH,
     def sort_key(item):
         history_name = (history_prefix + "/" + item.name
                         if history_prefix else item.name)
-        printed = (history.last_printed(history_name)
-                   if history is not None else 0.0)
+        if history is None:
+            printed = 0.0
+        elif hasattr(history, "last_printed"):
+            printed = history.last_printed(history_name)
+        else:
+            printed = history.get(history_name, 0.0)
         recency = max(float(item.mtime), float(printed))
         return (-recency, item.name.lower())
 

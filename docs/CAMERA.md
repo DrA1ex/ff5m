@@ -43,11 +43,11 @@ REDUCE_MEMORY=0
 # Enable this to use image post-processing
 POST_PROCESSING=1
 
-# You can adjust these settings to fine-tune the camera's image quality.
-# Visit the settings page at:
+# Preview and tune these settings at:
 # http://printer_ip:8080/control.htm
-# After testing, apply the desired values to the configuration fields below.
-# Don’t forget to uncomment the parameters by removing the '#'.
+# Changes apply to the running camera automatically.
+# "Save" updates this file and keeps the values after a restart.
+# You can also edit the values below manually and run CAMERA_RELOAD.
 
 # E_BRIGHTNESS=0
 # E_CONTRAST=35
@@ -63,8 +63,45 @@ POST_PROCESSING=1
 # E_EXPOSURE_ABSOLUTE=80
 ```
 
-You can adjust these parameters to suit your needs. For example, you might want set better resolution or FPS.
-But be careful since, check actual camera ram usage after that, using `MEM` macros in Fluidd's console.
+You can adjust these parameters to suit your camera. Increasing resolution or
+FPS can increase memory use, so check the result with the `MEM` macro under the
+same workload used while printing.
+
+Open `http://printer_ip:8080/control.htm` to see the live MJPEG stream and the
+current image controls. The image updates continuously over one stream
+connection and reconnects if camera recovery closes that connection.
+
+- Every edit is applied to the running camera automatically after a short
+  delay, without writing `camera.conf`. Temporary values remain active across
+  an in-process camera recovery, but are replaced by the file on
+  `CAMERA_RELOAD` or service restart. While an arrow key is held, intermediate
+  values are applied at least once per second; the final value is applied
+  shortly after the key is released.
+- The panel reads supported ranges, current values, and menu entries from the
+  active V4L2 driver. Camera menus and small discrete integer ranges are shown
+  as selectors, so invalid intermediate values cannot be entered. A numeric
+  selector whose advertised minimum is above zero also includes `0 (special)`
+  for camera drivers that accept zero as an undocumented off value. Hold
+  `Shift` while pressing an arrow key to move a numeric control by ten steps.
+- **Save** atomically updates the image-control entries in `camera.conf` and
+  preserves unrelated settings and comments. Saving is available because
+  `S98camera` passes the configuration path through `--controls-file`.
+- After editing `camera.conf` manually, run `CAMERA_RELOAD`. The streamer
+  rereads the file without restarting the HTTP service.
+
+The panel, controls API, and MJPEG stream share the streamer's existing HTTP
+listener. Opening the panel does not start another HTTP server or allocate a
+second server-side frame buffer; its `<img>` connects to the existing MJPEG
+route. A controls request uses one bounded HTTP client slot only while the
+request is active.
+
+On every service start and camera recovery, saved controls are applied after
+the first completed frame so UVC initialization cannot immediately overwrite
+them. Changes to resolution, FPS, video device, or memory-reduction mode still
+require `CAMERA_RESTART`.
+
+The control page has no separate authentication layer. Treat port 8080 as a
+trusted-LAN interface and do not expose it directly to an untrusted network.
 
 #### Step 2: Disable Stock Camera
 To ensure the mod's camera is used, you need to disable the stock camera functionality. Here’s how:

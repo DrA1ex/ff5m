@@ -2,7 +2,7 @@
 
 ## Service for forge-x camera
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ## Copyright (C) 2025, Sergei Rozhkov <https://github.com/ghzserg>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
@@ -27,24 +27,15 @@ VIDEO="video0"
 PID_FILE=/run/camera.pid
 source "/opt/config/mod_data/camera.conf"
 
-_VIDEO_P="/dev/${VIDEO}"
+_STREAMER_DEVICE="/dev/${VIDEO}"
 
-_REDUCE_MEM_PARAMS=""
+_FRAME_CAP_ARGS=()
 if [ -z "$REDUCE_MEMORY" ] || [ "$REDUCE_MEMORY" == "1" ]; then
-    _REDUCE_MEM_PARAMS="-fs $(( WIDTH * HEIGHT * 2 ))"
+    _FRAME_CAP_ARGS=(--frame-cap)
 fi
 
 if [ "$VIDEO" = "auto" ]; then
-    _VIDEO_P="/dev/video0"
-    
-    for device in /dev/video*; do
-        v4l2-ctl -d $device -V &> /dev/null
-        
-        if [ "$?" -eq 0 ]; then
-            _VIDEO_P=$device
-            break;
-        fi
-    done
+    _STREAMER_DEVICE="auto"
 fi
 
 [[ " $* " =~ " --silent " ]] && SILENT=1 || SILENT=0
@@ -54,13 +45,19 @@ start() {
 
     enabled=$($CFG_SCRIPT "$VAR_PATH" --get "camera" "0")
     if [ "$enabled" -eq 1 ]; then
-        v4l2-ctl -d "${_VIDEO_P}" --set-fmt-video=width="${WIDTH}",height="${HEIGHT}"
-        start-stop-daemon -Sbm -p $PID_FILE --exec /opt/bin/mjpg_streamer -- -o "/opt/lib/mjpg-streamer/output_http.so -w /opt/mjpg-streamer/www -p 8080" -i  "/opt/lib/mjpg-streamer/input_uvc.so -d ${_VIDEO_P} -r ${WIDTH}x${HEIGHT} -f $FPS -b 1 ${_REDUCE_MEM_PARAMS}"
+        start-stop-daemon -Sbm -p "$PID_FILE" --exec $BINS/mjpg_streamer -- \
+            --device "${_STREAMER_DEVICE}" \
+            --controls-file "$CFG_PATH" \
+            --resolution "${WIDTH}x${HEIGHT}" \
+            --fps "$FPS" \
+            --buffers 1 \
+            --listen 0.0.0.0 \
+            --port 8080 \
+            "${_FRAME_CAP_ARGS[@]}"
         
         touch "$CAMERA_F"
         echo "OK"
 
-        apply_effects
     else
         [ "$SILENT" -eq 0 ] && echo "Camera disabled in configuration"
     fi
@@ -100,45 +97,12 @@ reload() {
         exit 0
     fi
 
-    if apply_effects; then
-        [ "$SILENT" -eq 0 ] && echo "Effects applied"
-    fi
-}
-
-set_effect() {
-    local control="$1"
-    local var_name="$2"
-    local var="$(eval echo '$'"$var_name")"
-
-    if [ -n "$var" ]; then
-        v4l2-ctl -d "${_VIDEO_P}" --set-ctrl "$control=$var" &> /dev/null
-
-        if [ $? -ne 0 ]; then
-            echo "Camera effect '$control' not supported"
-        fi
-    fi
-}
-
-apply_effects() {
-    local effects_on="$($CFG_SCRIPT "$CFG_PATH" --get "POST_PROCESSING" "1")"
-    if [ "$effects_on" -eq 0 ]; then
+    if ! kill -HUP "$(cat "$PID_FILE")"; then
+        echo "Failed to request camera effects reload" >&2
         return 1
     fi
 
-    set_effect brightness                   E_BRIGHTNESS
-    set_effect contrast                     E_CONTRAST
-    set_effect gain                         E_GAIN
-    set_effect gamma                        E_GAMMA
-    set_effect hue                          E_HUE
-    set_effect saturation                   E_SATURATION
-    set_effect sharpness                    E_SHARPNESS
-    set_effect power_line_frequency         E_POWER_LINE_FREQUENCY
-    set_effect white_balance_temperature    E_WHITE_BALANCE_TEMPERATURE
-    set_effect backlight_compensation       E_BACKLIGHT_COMPENSATION
-    set_effect exposure_auto                E_EXPOSURE_AUTO
-    set_effect exposure_absolute            E_EXPOSURE_ABSOLUTE
-
-    return 0
+    [ "$SILENT" -eq 0 ] && echo "Effects applied"
 }
 
 

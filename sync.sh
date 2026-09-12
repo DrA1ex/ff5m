@@ -267,14 +267,8 @@ declare -a EXCLUDES=(
     "*/__pycache__"
     "./sync_remote.sh"
     "./tests/"
-    "./.bin/src/**/bin"
-    "./.bin/src/**/CMakeFiles"
-    "./.bin/src/**/Makefile"
-    "./.bin/src/**/CMakeCache.txt"
-    "./.bin/src/**/cmake_install.cmake"
-    "./.bin/src/**/.cmake"
-    "./.bin/src/**/Testing"
-    "./.bin/src/cmake-build-*"
+    "./.bin/src/"
+    "./.bin/lib/"
 )
 
 if [ "$SKIP_HEAVY" -eq 1 ]; then

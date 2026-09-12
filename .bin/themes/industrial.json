@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "INDUSTRIAL",
+  "description": "Charcoal industrial console with machine amber and muted olive",
+  "colors": {
+    "background": "0a0b0a",
+    "text": "d5a444",
+    "text_highlight": "f7f2e8",
+    "accent": "93a27a",
+    "wire": "e6dfcf",
+    "shadow": "4b5640",
+    "beam": "f0c36a",
+    "glitch_primary": "93a27a",
+    "glitch_secondary": "d5a444",
+    "glitch_cut": "040504",
+    "subtitle": "e6dfcf",
+    "debug": "8a8378",
+    "info": "e6dfcf",
+    "warn": "f0c36a",
+    "error": "d65c46",
+    "uptime": "93a27a"
+  }
+}

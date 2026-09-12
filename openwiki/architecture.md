@@ -7,7 +7,7 @@ Forge-X adapts the stock Flashforge appliance instead of replacing it with a con
 ```text
 Vendor init
   ├─ .shell/S00init       prepare data, swap, chroot, links, patches, config, DB
-  ├─ .shell/S55boot       select display/network boot path; start MCU + Klipper
+  ├─ .shell/S55boot       select display path; start netd when non-Stock; MCU + Klipper
   └─ .shell/S99root       initialize database if needed; start/stop chroot services
        └─ .root/start.sh  NTP, Moonraker, HTTP, optional Guppy, user init scripts
 ```
@@ -18,7 +18,7 @@ Vendor init
 
 `S00init` also applies optional `block_cloud` handling. When enabled it adds *marked* `/etc/hosts` entries and removes only entries it previously added when disabled. It is intentionally opt-in because it breaks stock cloud-dependent features; it is not a firewall.
 
-[`.shell/S55boot`](../.shell/S55boot) selects the active display path. In Feather, Guppy, and headless modes it performs DHCP setup, starts the MCU utility and Klipper, and falls back to stock display if network initialization fails. Stock mode retains the vendor application path. See [Screen modes and Feather](workflows/screens-and-feather.md) for configuration selection, first-party Feather rendering, and mode-specific workflow consequences.
+[`.shell/boot/boot.sh`](../.shell/boot/boot.sh) selects the active display path and starts the long-lived netd daemon for non-Stock modes. It uses `--adopt-existing` when the mod target already exists; an older installation without `network.conf` starts once in normal fresh mode so cold bootstrap remains reachable. Feather continues immediately; Guppy/headless use the thin `netd-cli wait --timeout 180` and retain the Stock fallback when that three-minute boot wait expires. Stock starts no mod networking. Wi-Fi driver loading, DHCP, continuous reconnection, adoption and network state belong to `netd`; shell contains no second networking control path. Early system init may already have networking online before `S55boot`. The adoption flag preserves it only when the live transport and exact Wi-Fi SSID match the existing mod target, then removes the other transport without migrating configuration. A mismatch falls back to full cleanup and a fresh saved-target startup. The separate `--migrate-existing` mode is reserved for live Stock → Feather migration. `netd` periodically reconciles observed WPA/interface/IP/process state, while events trigger the same observation sooner and retain decisive one-shot WPA failures such as authentication errors. See [Screen modes and Feather](workflows/screens-and-feather.md) for configuration selection, first-party Feather rendering, and mode-specific workflow consequences.
 
 [`.shell/S99root`](../.shell/S99root) is the service coordinator. On first use it starts/stops the chroot to create the Moonraker database, applies migrations, restores OTA state, then starts normal services. It bypasses this entirely when a skip flag is active.
 

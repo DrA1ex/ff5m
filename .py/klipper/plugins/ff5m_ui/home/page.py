@@ -1,191 +1,258 @@
-## Imperative rendering for the Feather home dashboard.
+## Declarative Feather home dashboard.
 ##
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-from ui import Page, ThemeColor, ThemeRole
+from enum import Enum
 
-from .state import collect_dashboard
+from ui import ThemeColor, ThemeRole
+from ui.bindings import bind, derived
+from ui.components import Button, Fill, Hitbox, Panel, Text
+from ui.layout import Overlay, PageTree, Rect
+
+from ..keys import AppPage
+from ..screen import ScreenPage
+from .actions import FILAMENT, HEAT, JOB, LAST_JOB, MENU, MOVE, NETWORK
+from .state import HomeState, collect_dashboard, dashboard_values
 
 
-CLOCK_LEFT = 18
-CLOCK_TOP = 7
-CLOCK_WIDTH = 142
-CLOCK_HEIGHT = 46
-CLOCK_TEXT_X = 28
-CLOCK_TEXT_Y = 29
-CLOCK_TEXT_MAX_WIDTH = CLOCK_LEFT + CLOCK_WIDTH - CLOCK_TEXT_X
+PAGE_TITLE = "FORGE-X // FEATHER"
+PAGE_BOUNDS = Rect(0, 0, 800, 442)
+FONT = "JetBrainsMono 8pt"
+VALUE_FONT = "JetBrainsMono 12pt"
+CLOCK_FONT = "Roboto 16pt"
+
+
+class HomeRef(Enum):
+    ROOT = "home.root"
+    CLOCK = "home.clock"
+    MENU = "home.menu"
+    NOZZLE = "home.nozzle"
+    BED = "home.bed"
+    NETWORK = "home.network"
+    JOB = "home.job"
+    LAST_JOB = "home.last_job"
+    MATERIAL = "home.material"
+    TOOLHEAD = "home.toolhead"
+
+
+def _placed(node, x, y, width, height):
+    return node.size(width, height).offset(x, y)
+
+
+def _temperature(current, target):
+    return "%d / %d C" % (current, target)
+
+
+def _heat_status(target):
+    return "HEATING" if target > 0 else "OFF"
+
+
+def _nozzle_color(target):
+    return ThemeRole.TEMPERATURE_NOZZLE if target > 0 else ThemeColor.DIM
+
+
+def _bed_color(target):
+    return ThemeRole.TEMPERATURE_BED if target > 0 else ThemeColor.DIM
+
+
+def _job_filename(active, filename):
+    return filename if active else "NO ACTIVE JOB"
+
+
+def _job_state(active, value):
+    return value if active else "READY"
+
+
+def _job_title_color(active):
+    return ThemeColor.TEXT if active else ThemeColor.PRIMARY
+
+
+def _job_state_color(value):
+    return ThemeColor.WARNING if value == "PAUSED" else ThemeColor.PRIMARY
+
+
+def _job_detail(active, value):
+    return value if active else ""
+
+
+def _job_progress(active, progress, elapsed, remaining):
+    if not active:
+        return ""
+    return "%d%% // %s / %s" % (progress, elapsed, remaining)
+
+
+def _homed_color(value):
+    return ThemeColor.PRIMARY if value == "XYZ" else ThemeColor.WARNING
+
+
+def _card(x, width, label, border, dynamic, key):
+    return _placed(
+        Overlay(
+            Panel(border=border, background=ThemeColor.PANEL, line_width=2),
+            _placed(Text(label, color=border, font=FONT),
+                    0, 8, width, 40),
+            _placed(dynamic, 3, 40, width - 6, 87),
+        ).ref(key), x, 72, width, 132)
+
+
+def _temperature_value(value, target, status_color):
+    return Overlay(
+        Fill(ThemeColor.PANEL),
+        _placed(Text(
+            derived(_temperature, bind(value), bind(target)),
+            color=ThemeColor.TEXT, font=VALUE_FONT), 0, 10, 229, 34),
+        _placed(Text(
+            derived(_heat_status, bind(target)),
+            color=derived(status_color, bind(target)), font=FONT),
+            0, 52, 229, 34),
+    ).repaint_boundary()
+
+
+def _network_value():
+    return Overlay(
+        Fill(ThemeColor.PANEL),
+        _placed(Text(
+            bind(HomeState.NETWORK_NAME), color=ThemeColor.TEXT, font=FONT,
+            max_width=210, truncate=True), 0, 10, 230, 34),
+        _placed(Text(
+            bind(HomeState.NETWORK_ADDRESS), color=ThemeColor.PRIMARY,
+            font=FONT, max_width=210, truncate=True), 0, 52, 230, 34),
+    ).repaint_boundary()
+
+
+def _job_panel():
+    active = bind(HomeState.JOB_ACTIVE)
+    state = bind(HomeState.JOB_STATE)
+    dynamic = _placed(
+        Overlay(
+            Fill(ThemeColor.PANEL),
+            _placed(Text(
+                derived(_job_filename, active, bind(HomeState.JOB_FILENAME)),
+                color=derived(_job_title_color, active),
+                font="JetBrainsMono Bold 8pt", horizontal="left",
+                max_width=560, truncate=True), 15, 6, 560, 24),
+            _placed(Text(
+                derived(_job_state, active, state),
+                color=derived(_job_state_color, state), font=FONT,
+                horizontal="right"), 590, 6, 137, 24),
+            _placed(Text(
+                derived(_job_detail, active, bind(HomeState.JOB_DETAIL)),
+                color=ThemeColor.DIM, font=FONT, horizontal="left",
+                max_width=330, truncate=True), 15, 43, 330, 24),
+            _placed(Text(
+                derived(
+                    _job_progress, active, bind(HomeState.JOB_PROGRESS),
+                    bind(HomeState.JOB_ELAPSED),
+                    bind(HomeState.JOB_REMAINING)),
+                color=ThemeColor.TEXT, font=FONT, horizontal="right",
+                max_width=350, truncate=True), 377, 43, 350, 24),
+        ).repaint_boundary(), 4, 32, 742, 76)
+    return _placed(
+        Overlay(
+            Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL,
+                  line_width=2),
+            _placed(Text(
+                "JOB STATUS", color=ThemeColor.PRIMARY, font=FONT,
+                horizontal="left"), 19, 8, 200, 24),
+            dynamic,
+        ).ref(HomeRef.JOB), 25, 220, 750, 112)
+
+
+def _bottom_value(value, color, x, width, text_x, max_width, key):
+    return _placed(
+        Overlay(
+            Fill(ThemeColor.BACKGROUND),
+            _placed(Text(
+                value, color=color, font=FONT, horizontal="left",
+                max_width=max_width, truncate=True),
+                text_x, 5, max_width, 24),
+        ).repaint_boundary().ref(key), x, 393, width, 34)
+
+
+def create_page():
+    nozzle = _temperature_value(
+        HomeState.NOZZLE, HomeState.NOZZLE_TARGET, _nozzle_color)
+    bed = _temperature_value(
+        HomeState.BED, HomeState.BED_TARGET, _bed_color)
+    root = Overlay(
+        _placed(
+            Overlay(
+                Fill(ThemeRole.HEADER_BACKGROUND),
+                _placed(Text(
+                    bind(HomeState.CLOCK), color=ThemeRole.HEADER_TEXT,
+                    font=CLOCK_FONT, horizontal="left",
+                    max_width=132, truncate=True), 10, 0, 132, 44),
+            ).repaint_boundary().ref(HomeRef.CLOCK), 18, 8, 142, 46),
+        _placed(Button(
+            MENU, "MENU", font="JetBrainsMono Bold 8pt").ref(HomeRef.MENU),
+            650, 11, 132, 38),
+        _card(25, 235, "NOZZLE", ThemeRole.TEMPERATURE_NOZZLE,
+              nozzle, HomeRef.NOZZLE),
+        _card(282, 235, "BED", ThemeRole.TEMPERATURE_BED,
+              bed, HomeRef.BED),
+        _card(539, 236, "NETWORK", ThemeColor.PRIMARY,
+              _network_value(), HomeRef.NETWORK),
+        _job_panel(),
+        _placed(Fill(ThemeColor.BORDER), 25, 345, 750, 1),
+        _placed(Text(
+            "LAST JOB", color=ThemeColor.DIM, font=FONT,
+            horizontal="left"), 28, 353, 240, 24),
+        _placed(Text(
+            "MATERIAL", color=ThemeColor.DIM, font=FONT,
+            horizontal="left"), 300, 353, 220, 24),
+        _placed(Text(
+            "TOOLHEAD", color=ThemeColor.DIM, font=FONT,
+            horizontal="left"), 570, 353, 180, 24),
+        _placed(Fill(ThemeColor.BORDER), 282, 353, 1, 74),
+        _placed(Fill(ThemeColor.BORDER), 542, 353, 1, 74),
+        _bottom_value(
+            bind(HomeState.LAST_JOB), ThemeColor.TEXT,
+            25, 257, 3, 240, HomeRef.LAST_JOB),
+        _bottom_value(
+            bind(HomeState.MATERIAL), ThemeColor.TEXT,
+            283, 259, 17, 220, HomeRef.MATERIAL),
+        _bottom_value(
+            bind(HomeState.HOMED_AXES),
+            derived(_homed_color, bind(HomeState.HOMED_AXES)),
+            543, 232, 27, 160, HomeRef.TOOLHEAD),
+        _placed(Hitbox(HEAT), 25, 72, 492, 132),
+        _placed(Hitbox(NETWORK), 539, 72, 236, 132),
+        _placed(Hitbox(JOB), 25, 220, 750, 112),
+        _placed(Hitbox(LAST_JOB), 25, 345, 257, 97),
+        _placed(Hitbox(FILAMENT), 283, 345, 259, 97),
+        _placed(Hitbox(MOVE), 543, 345, 232, 97),
+    ).ref(HomeRef.ROOT)
+    page = PageTree(root, PAGE_BOUNDS, page_id=AppPage.HOME)
+    page.title = PAGE_TITLE
+    page.show_back = False
+    return page
+
+
+PAGE = create_page()
 
 
 def render(host):
-    commands = host.renderer.begin_page("FORGE-X // FEATHER")
-    commands += host.renderer.button(
-        "nav.menu", 648, 9, 132, 38, "MENU",
-        font="JetBrainsMono Bold 8pt")
-    panels = (
-        (25, 72, 235, 132, "NOZZLE", ThemeRole.TEMPERATURE_NOZZLE),
-        (282, 72, 235, 132, "BED", ThemeRole.TEMPERATURE_BED),
-        (539, 72, 236, 132, "NETWORK", ThemeColor.PRIMARY),
-    )
-    for x, y, width, height, label, color in panels:
-        commands += [
-            host.renderer.fill(x, y, width, height, ThemeColor.PANEL),
-            host.renderer.stroke(x, y, width, height, color, 2),
-            host.renderer.text(
-                x + width // 2, y + 28, label, color,
-                "JetBrainsMono 8pt", "center", "middle"),
-        ]
-    commands += [
-        host.renderer.fill(25, 220, 750, 112, ThemeColor.PANEL),
-        host.renderer.stroke(25, 220, 750, 112, ThemeColor.BORDER, 2),
-        host.renderer.text(
-            44, 240, "JOB STATUS", ThemeColor.PRIMARY,
-            "JetBrainsMono 8pt", "left", "middle"),
-        host.renderer.fill(25, 345, 750, 1, ThemeColor.BORDER),
-        host.renderer.text(
-            28, 365, "LAST JOB", ThemeColor.DIM,
-            "JetBrainsMono 8pt", "left", "middle"),
-        host.renderer.text(
-            300, 365, "MATERIAL", ThemeColor.DIM,
-            "JetBrainsMono 8pt", "left", "middle"),
-        host.renderer.text(
-            570, 365, "TOOLHEAD", ThemeColor.DIM,
-            "JetBrainsMono 8pt", "left", "middle"),
-        host.renderer.fill(282, 353, 1, 74, ThemeColor.BORDER),
-        host.renderer.fill(542, 353, 1, 74, ThemeColor.BORDER),
-        host.renderer.action_hitbox("nav.heat", 25, 72, 492, 132),
-        host.renderer.action_hitbox("nav.network", 539, 72, 236, 132),
-        host.renderer.action_hitbox("nav.job", 25, 220, 750, 112),
-        host.renderer.action_hitbox("nav.filament", 283, 345, 259, 97),
-        host.renderer.action_hitbox("nav.move", 543, 345, 232, 97),
-    ]
+    eventtime = host.reactor.monotonic()
+    current = collect_dashboard(host, eventtime)
+    commands = host.renderer.begin_page(PAGE_TITLE)
+    commands += PAGE.draw(host.renderer, dashboard_values(current))
     host.renderer.send(commands)
-    host._last_dashboard = None
-    host._update_dashboard(host.reactor.monotonic())
+    host._last_dashboard = current
 
 
 def update(host, eventtime):
-    if host.page != Page.IDLE_HOME:
+    if host.page != ScreenPage.IDLE_HOME:
         return
     current = collect_dashboard(host, eventtime)
     if current == host._last_dashboard:
         return
     previous = host._last_dashboard
     host._last_dashboard = current
-    commands = []
-
-    if (previous is None
-            or (current.nozzle, current.nozzle_target)
-            != (previous.nozzle, previous.nozzle_target)):
-        commands += [
-            host.renderer.fill(28, 112, 229, 87, ThemeColor.PANEL),
-            host.renderer.text(
-                142, 139, "%d / %d C" % (
-                    current.nozzle, current.nozzle_target), ThemeColor.TEXT,
-                "JetBrainsMono 12pt", "center", "middle"),
-            host.renderer.text(
-                142, 181,
-                "HEATING" if current.nozzle_target > 0 else "OFF",
-                (ThemeRole.TEMPERATURE_NOZZLE
-                 if current.nozzle_target > 0 else ThemeColor.DIM),
-                "JetBrainsMono 8pt", "center", "middle"),
-        ]
-
-    if (previous is None
-            or (current.bed, current.bed_target)
-            != (previous.bed, previous.bed_target)):
-        commands += [
-            host.renderer.fill(285, 112, 229, 87, ThemeColor.PANEL),
-            host.renderer.text(
-                399, 139, "%d / %d C" % (
-                    current.bed, current.bed_target), ThemeColor.TEXT,
-                "JetBrainsMono 12pt", "center", "middle"),
-            host.renderer.text(
-                399, 181,
-                "HEATING" if current.bed_target > 0 else "OFF",
-                (ThemeRole.TEMPERATURE_BED
-                 if current.bed_target > 0 else ThemeColor.DIM),
-                "JetBrainsMono 8pt", "center", "middle"),
-        ]
-
-    if (previous is None
-            or (current.network_name, current.network_address)
-            != (previous.network_name, previous.network_address)):
-        commands += [
-            host.renderer.fill(542, 112, 230, 87, ThemeColor.PANEL),
-            host.renderer.text(
-                657, 139, current.network_name, ThemeColor.TEXT,
-                "JetBrainsMono 8pt", "center", "middle", max_width=210,
-                truncate=True),
-            host.renderer.text(
-                657, 181, current.network_address, ThemeColor.PRIMARY,
-                "JetBrainsMono 8pt", "center", "middle", max_width=210,
-                truncate=True),
-        ]
-
-    if previous is None or current.job != previous.job:
-        job = current.job
-        commands += [
-            host.renderer.fill(29, 252, 742, 76, ThemeColor.PANEL),
-            host.renderer.text(
-                44, 270, job.filename if job.active else "NO ACTIVE JOB",
-                ThemeColor.TEXT if job.active else ThemeColor.PRIMARY,
-                "JetBrainsMono Bold 8pt", "left", "middle",
-                max_width=560, truncate=True),
-            host.renderer.text(
-                756, 270, job.state if job.active else "READY",
-                (ThemeColor.WARNING
-                 if job.state == "PAUSED" else ThemeColor.PRIMARY),
-                "JetBrainsMono 8pt", "right", "middle"),
-        ]
-        if job.active:
-            commands += [
-                host.renderer.text(
-                    44, 307, job.detail, ThemeColor.DIM,
-                    "JetBrainsMono 8pt", "left", "middle",
-                    max_width=330, truncate=True),
-                host.renderer.text(
-                    756, 307, "%d%% // %s / %s" % (
-                        job.progress, job.elapsed, job.remaining),
-                    ThemeColor.TEXT, "JetBrainsMono 8pt", "right", "middle",
-                    max_width=350, truncate=True),
-            ]
-
-    if (previous is None
-            or (current.last_job, current.material, current.homed_axes)
-            != (previous.last_job, previous.material, previous.homed_axes)):
-        commands += [
-            host.renderer.fill(25, 393, 750, 34, ThemeColor.BACKGROUND),
-            host.renderer.text(
-                28, 410, current.last_job, ThemeColor.TEXT,
-                "JetBrainsMono 8pt", "left", "middle", max_width=240,
-                truncate=True),
-            host.renderer.text(
-                300, 410, current.material, ThemeColor.TEXT,
-                "JetBrainsMono 8pt", "left", "middle", max_width=220,
-                truncate=True),
-            host.renderer.text(
-                570, 410, current.homed_axes,
-                (ThemeColor.PRIMARY
-                 if current.homed_axes == "XYZ" else ThemeColor.WARNING),
-                "JetBrainsMono 8pt", "left", "middle"),
-        ]
-
-    if previous is None or current.clock != previous.clock:
-        commands += clock_commands(host.renderer, current.clock)
-
-    host.renderer.send(commands)
-
-
-def clock_commands(renderer, clock):
-    """Draw the clock using the header contrast and a stable-width face."""
-    return [
-        renderer.fill(
-            CLOCK_LEFT, CLOCK_TOP, CLOCK_WIDTH, CLOCK_HEIGHT,
-            ThemeRole.HEADER_BACKGROUND),
-        renderer.text(
-            CLOCK_TEXT_X, CLOCK_TEXT_Y, clock, ThemeRole.HEADER_TEXT,
-            "JetBrainsMono 16pt", "left", "middle",
-            max_width=CLOCK_TEXT_MAX_WIDTH, truncate=True),
-    ]
+    if previous is None:
+        commands = PAGE.draw(host.renderer, dashboard_values(current))
+    else:
+        commands = PAGE.update(host.renderer, dashboard_values(current))
+    if commands:
+        host.renderer.send(commands)

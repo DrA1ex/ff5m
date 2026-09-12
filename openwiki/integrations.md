@@ -15,12 +15,31 @@ Fluidd and Mainsail are available through the printer HTTP service; the README d
 
 ## Camera
 
-[`.shell/S98camera`](../.shell/S98camera) controls optional `mjpg_streamer` on port 8080. It creates a default persistent camera configuration when needed, supports explicit or auto-selected V4L2 devices, applies configured resolution/FPS, and can reduce internal frame-buffer memory. It also attempts configured V4L2 visual controls after start/reload.
+[`.shell/S98camera`](../.shell/S98camera) controls optional `mjpg_streamer` on port 8080. It creates a default persistent camera configuration when needed, passes the path through `--controls-file`, passes explicit V4L2 devices directly, and delegates `auto` selection and recovery to the streamer. Resolution/FPS and the optional frame cap are startup settings. The streamer owns visual controls: it reads them from the same configuration, applies them after the first completed frame of every camera open, and rereads them when the service sends `SIGHUP` for `CAMERA_RELOAD`.
+
+The streamer serves a compiled-in low-memory panel at `/control.htm`. Its
+`<img>` uses the existing MJPEG endpoint, so there is no second server-side
+frame buffer or second HTTP server. `GET /controls` returns the desired state
+plus ranges, current values, and menu entries queried from the active V4L2
+driver. The panel renders menus and small discrete ranges as selectors and
+automatically sends bounded temporary updates after each edit. Numeric
+selectors also expose a special zero when the advertised range starts above
+zero, while real V4L2 menus remain limited to their queried entries. The UI
+combines a short debounce with a one-second maximum wait, so held keys produce
+periodic feedback without flooding the controls endpoint. Its single
+**Save** button atomically updates the known `camera.conf` entries while
+preserving unrelated settings and comments. Persistence must fail when no
+controls-file path was supplied. HTTP client threads never issue V4L2 ioctls
+directly; they publish an update for the capture thread so device close/recovery
+cannot race control application. Controls requests use the existing bounded
+client threads only for their duration; no permanent panel worker is created.
 
 Camera is enabled through the persistent `camera` parameter; source comments and [`docs/CAMERA.md`](../docs/CAMERA.md) make two constraints clear:
 
 - do not run stock and mod camera paths simultaneously;
 - higher image rate/resolution can consume scarce RAM, so verify memory under expected print load.
+- port 8080 and its write-capable control panel have no separate authentication,
+  so keep them on a trusted network or behind an authenticated proxy/tunnel.
 
 ## Screen modes
 

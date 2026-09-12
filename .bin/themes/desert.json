@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "DESERT",
+  "description": "Sand, gold and ochre with a Dune II-era desert-console character",
+  "colors": {
+    "background": "080503",
+    "text": "e0ad45",
+    "text_highlight": "f7e6b0",
+    "accent": "f0c65a",
+    "wire": "d8c28f",
+    "shadow": "694719",
+    "beam": "f7e6b0",
+    "glitch_primary": "8c682b",
+    "glitch_secondary": "d84b32",
+    "glitch_cut": "030201",
+    "subtitle": "d8c28f",
+    "debug": "806c49",
+    "info": "d8c28f",
+    "warn": "f0c65a",
+    "error": "d84b32",
+    "uptime": "e0ad45"
+  }
+}

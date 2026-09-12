@@ -44,13 +44,13 @@ case $1 in
             message "Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the latest firmware image manually from the Releases page." "!!"
             message "Visit: https://github.com/drA1ex/ff5m/releases" "!!"
 
-            command "action:prompt_end"
-            command "action:prompt_begin Firmware update required"
-            command "action:prompt_text The current firmware is not compatible with the flashed core."
-            command "action:prompt_text Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the firmware manually."
-            command "action:prompt_footer_button Download to USB|DOWNLOAD_FIRMWARE_UPDATE|primary"
-            command "action:prompt_footer_button Close|RESPOND TYPE=command MSG=action:prompt_end|secondary"
-            command "action:prompt_show"
+            printer_command "action:prompt_end"
+            printer_command "action:prompt_begin Firmware update required"
+            printer_command "action:prompt_text The current firmware is not compatible with the flashed core."
+            printer_command "action:prompt_text Insert a FAT32 USB drive and run DOWNLOAD_FIRMWARE_UPDATE, or download the firmware manually."
+            printer_command "action:prompt_footer_button Download to USB|DOWNLOAD_FIRMWARE_UPDATE|primary"
+            printer_command "action:prompt_footer_button Close|RESPOND TYPE=command MSG=action:prompt_end|secondary"
+            printer_command "action:prompt_show"
         fi
     ;;
     *)

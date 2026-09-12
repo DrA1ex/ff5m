@@ -40,7 +40,9 @@ The first touch after the panel dims only wakes the display; it does not activat
 
 Feather can browse G-code stored on the printer or on a connected USB drive. It supports folders, multi-page file lists, refresh, file information, print confirmation, and a recent-print list.
 
-During a print, Feather shows progress, elapsed and remaining time, layer and height information. It provides pause, resume, filament change, live Z adjustment, and guarded cancellation. Cancellation is also available while the printer is preparing a job, including homing, leveling, heating, and priming.
+During a print, Feather shows progress, elapsed and remaining time, layer and height information. It provides pause, resume, filament change, live Z adjustment, and guarded cancellation. Preparation reports the separate context path and current state, for example `PRINT PREP -> MESH VALIDATION -> HEATING NOZZLE`, instead of relying on a caller-provided `CONTEXT`/`STAGE` string.
+
+Cancellation is also available while the printer is preparing a job. Normal **Cancel** accepts `interruptible` work and uses the nearest explicit `cancelable` cleanup domain when one exists; homing, probing, and motion remain atomic until the next context boundary. Managed temperature waits are interrupted immediately through `M108`. A pending request offers **Continue Operation** or immediate `M112`, while `non_interruptible` work offers only Continue or `M112`.
 
 #### Movement, heating, and lighting
 
@@ -52,9 +54,17 @@ Material presets are shared with the Forge-X filament macros. Feather remembers 
 
 The Calibration page includes guided workflows for bed screws, bed mesh, Safe Z, Z offset, extruder feed, PID, and Input Shaper. Follow the instructions on the screen and review the result before saving it.
 
+#### Update notifications
+
+When Moonraker reports that a newer Forge-X version is available, Feather can show the new version and a short, scrollable list of changes while the printer is idle. Select **UPDATE** to start the normal Forge-X OTA update, or **LATER** to hide that version until the printer or Klipper restarts. If a print starts, the notification closes immediately and may return after the printer is idle again.
+
 #### Network, settings, and themes
 
-Feather can scan for Wi-Fi networks, enter normal WPA/WPA2-PSK credentials with the on-screen keyboard, configure DHCP Ethernet, and show the active connection, signal, and IP address. Static addressing and enterprise Wi-Fi still require advanced configuration outside Feather.
+Feather can scan for 2.4 and 5 GHz Wi-Fi networks, enter normal WPA/WPA2-PSK credentials with the on-screen keyboard, configure DHCP Ethernet, and show the live connection state, signal, and IP address. Its Wi-Fi list presents the band, SSID, and signal in separate columns. A saved network is marked in the scan list and reconnects immediately when selected; use **RESET PASSWORD** to replace its credential.
+
+Feather starts without waiting for the saved network. While that startup connection is active, the dashboard shows **CONNECTING** and the Network page can either keep waiting or cancel it before choosing another network. The screen keeps the connection state current while the printer reconnects. Any network change may briefly take the printer offline. If a Wi-Fi change fails, Feather returns to the previous saved Wi-Fi network when possible.
+
+Static addressing and enterprise Wi-Fi still require advanced configuration outside Feather.
 
 Feather Settings provides display brightness, chamber-light level, sound feedback, Forge-X parameters, and theme selection. Settings that require a Klipper or printer restart are identified before they are applied.
 
@@ -135,33 +145,3 @@ Useful implementation references in the full repository include:
 - `/.py/klipper/plugins/feather_screen.py` — Feather controller and UI integration;
 - `/config/feather.cfg` — related macros and configuration;
 - `/.shell/screen.sh` — display startup integration.
-
-### Custom Loading and Splash Screens
-
-Choose a bundled Feather theme from Feather Settings. Custom theme JSON files can be placed in:
-
-```text
-/opt/config/mod_data/themes
-```
-
-Use a bundled theme file as the schema reference.
-
-For a custom boot image:
-
-1. Create an 800 × 480 PNG.
-
-#### Example of Conversion (ImageMagick)
-
-2. Convert it to compressed BGRA, for example with ImageMagick:
-
-   ```sh
-   convert -size 800x480 xc:none splash.png -geometry +0+0 -composite -depth 8 bgra:- | xz -c > splash.img.xz
-   ```
-
-#### Installation
-
-3. Upload the file to `mod_data` in Fluidd:
-   - `splash.img.xz` — splash image;
-   - `load.img.xz` — loading image.
-
-Keep the lower area of the loading image clear so boot messages remain readable.

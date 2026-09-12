@@ -144,13 +144,17 @@ fi
 echo -e "${BLUE}Comparing files...${NC}"
 
 CHANGED=0
+NETD_CHANGED=0
+NETD_PID=""
+EXPECTED_NETD="$(pwd)/mod/.bin/exec/netd"
 
 # These package trees are fully managed by the project. Remove Python sources
 # absent from the incoming archive before S00init reload cleans their matching
 # Klipper extras symlinks.
 for package in \
     ".py/klipper/plugins/ui" \
-    ".py/klipper/plugins/ff5m_ui"; do
+    ".py/klipper/plugins/ff5m_ui" \
+    ".py/klipper/plugins/feather_ui_test"; do
     SRC_PACKAGE="./.sync/${package}"
     DEST_PACKAGE="./mod/${package}"
     if [ ! -d "$SRC_PACKAGE" ] || [ ! -d "$DEST_PACKAGE" ]; then
@@ -188,9 +192,29 @@ while read -r file; do
             exit 2
         fi
 
-        cp "$SRC_FILE" "$DEST_FILE"
+        if [ "$DEST_FILE" = "./mod/.bin/exec/netd" ]; then
+            # Replacing the inode is safe while the old daemon is executing;
+            # truncating the running image in place fails with ETXTBSY.
+            for candidate in $(pidof netd 2>/dev/null); do
+                current_exe=$(readlink "/proc/$candidate/exe" 2>/dev/null)
+                if [ "$current_exe" = "$EXPECTED_NETD" ]; then
+                    NETD_PID="$candidate"
+                    break
+                fi
+            done
+            STAGED_FILE="${DEST_FILE}.sync.$$"
+            rm -f "$STAGED_FILE"
+            cp -p "$SRC_FILE" "$STAGED_FILE" \
+                && mv -f "$STAGED_FILE" "$DEST_FILE"
+            copy_result=$?
+            rm -f "$STAGED_FILE"
+            NETD_CHANGED=1
+        else
+            cp "$SRC_FILE" "$DEST_FILE"
+            copy_result=$?
+        fi
 
-        if [ $? -ne 0 ]; then
+        if [ "$copy_result" -ne 0 ]; then
             echo -e "${RED}Failed to copy file: $DEST_FILE${NC}"
             cleanup
             exit 2
@@ -201,6 +225,35 @@ while read -r file; do
 done < <(find ./.sync -type f)
 
 cleanup
+
+if [ "$NETD_CHANGED" -eq 1 ] && [ -n "$NETD_PID" ]; then
+    echo -e "${YELLOW}► Handing the live network to updated netd${NC}"
+    if ! kill -HUP "$NETD_PID" 2>/dev/null; then
+        echo -e "${RED}Failed to request netd handoff${NC}"
+        exit 2
+    fi
+    for _ in 1 2 3 4 5; do
+        kill -0 "$NETD_PID" 2>/dev/null || break
+        sleep 1
+    done
+    if kill -0 "$NETD_PID" 2>/dev/null; then
+        echo -e "${RED}Old netd did not stop after handoff${NC}"
+        exit 2
+    fi
+    rm -f /run/netd.sock
+    if ! start-stop-daemon -Sb --exec "$EXPECTED_NETD" -- --adopt-existing; then
+        echo -e "${RED}Failed to start updated netd${NC}"
+        exit 2
+    fi
+    for _ in 1 2 3 4 5; do
+        [ -S /run/netd.sock ] && break
+        sleep 1
+    done
+    if [ ! -S /run/netd.sock ]; then
+        echo -e "${RED}Updated netd did not publish its socket${NC}"
+        exit 2
+    fi
+fi
 
 # To avoid restarting after Moonraker's Git repair.
 SKIP_REBOOT_F="/data/.mod/.forge-x/tmp/mod_skip_reboot"

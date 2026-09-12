@@ -1,5 +1,6 @@
 ## Runtime facade for movement page packages.
 
+from ui.lazy import resolve_lazy_export
 from .actions import (
     CAUTION_AUTO, CAUTION_DISMISS, CAUTION_UNLOAD, DISABLE_MOTORS, HOME_ALL,
     HOME_XY, HOME_Z, JOYSTICK_XY, JOYSTICK_Z, X_MINUS, X_PLUS, Y_MINUS,
@@ -25,11 +26,5 @@ _LAZY_EXPORTS = {
 
 
 def __getattr__(name):
-    target = _LAZY_EXPORTS.get(name)
-    if target is None:
-        raise AttributeError("module %r has no attribute %r" % (__name__, name))
-    module = __import__("%s.%s" % (__package__, target[0]),
-                        fromlist=(target[1],))
-    value = getattr(module, target[1])
-    globals()[name] = value
-    return value
+    return resolve_lazy_export(
+        globals(), name, _LAZY_EXPORTS, __package__)

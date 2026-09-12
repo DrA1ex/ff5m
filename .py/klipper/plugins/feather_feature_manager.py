@@ -109,6 +109,13 @@ class LazyFeatureManager:
                 return True
         return False
 
+    def blocks_action(self, action):
+        for feature in self.loaded():
+            callback = getattr(feature, "blocks_action", None)
+            if callback is not None and callback(action):
+                return True
+        return False
+
     def safety_active_reasons(self, eventtime):
         reasons = []
         for feature in self.loaded():
@@ -147,27 +154,38 @@ class LazyFeatureManager:
 
 
 class FeatureHostProxy:
-    """Keep feature state local while exposing shared controller services."""
+    """Expose controller services while keeping feature state local.
 
-    _shared_writes = frozenset((
-        "page", "previous_page", "print_status_text",
-    ))
+    Reads not implemented by a feature are delegated to the controller. The
+    small set of controller fields that features may update is declared as
+    explicit properties instead of being hidden in ``__setattr__`` routing.
+    """
 
     def __init__(self, host):
-        object.__setattr__(self, "_host", host)
+        self._host = host
 
     @property
     def feature_manager(self):
         return self._host.feature_manager
 
+    @property
+    def page(self):
+        return self._host.page
+
+    @page.setter
+    def page(self, value):
+        self._host.page = value
+
+    @property
+    def previous_page(self):
+        return self._host.previous_page
+
+    @previous_page.setter
+    def previous_page(self, value):
+        self._host.previous_page = value
+
     def __getattr__(self, name):
         return getattr(self._host, name)
-
-    def __setattr__(self, name, value):
-        if name in self._shared_writes and "_host" in self.__dict__:
-            setattr(self._host, name, value)
-            return
-        object.__setattr__(self, name, value)
 
     def allows_action(self, page, action):
         return False
@@ -185,9 +203,6 @@ class FeatureHostProxy:
         return False
 
     def update(self, eventtime):
-        pass
-
-    def on_print_status(self, status):
         pass
 
     def on_gcode_output(self, message):

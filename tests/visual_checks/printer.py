@@ -9,20 +9,19 @@
 import base64
 import json
 import pathlib
-import re
 import subprocess
 import time
-import urllib.error
-import urllib.request
+
+from tests.printer_connection import (
+    ARTIFACT_ROOT,
+    SAFE_HOST,
+    PrinterConnection,
+    PrinterConnectionError,
+)
 
 
-SAFE_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
 SAFE_SUITES = frozenset(("UI", "COMPONENT"))
-ARTIFACT_ROOT = "/data/feather-ui-tests"
-
-
-class PrinterCollectionError(RuntimeError):
-    pass
+PrinterCollectionError = PrinterConnectionError
 
 
 class PrinterCollector:
@@ -31,75 +30,43 @@ class PrinterCollector:
         self.host = str(host or "").strip()
         self.confirmed_idle = bool(confirmed_idle)
         self.timeout = float(timeout)
-        self.requester = requester or urllib.request.urlopen
-        self.command_runner = command_runner or subprocess.run
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
-        if not SAFE_HOST.match(self.host) or "@" in self.host:
-            raise PrinterCollectionError("invalid printer host")
+        self.connection = PrinterConnection(
+            self.host, timeout=self.timeout, requester=requester,
+            command_runner=command_runner)
+
+    @property
+    def requester(self):
+        return self.connection.requester
+
+    @requester.setter
+    def requester(self, value):
+        self.connection.requester = value
+
+    @property
+    def command_runner(self):
+        return self.connection.command_runner
+
+    @command_runner.setter
+    def command_runner(self, value):
+        self.connection.command_runner = value
 
     @property
     def base_url(self):
-        host = self.host
-        if ":" in host and not host.startswith("["):
-            host = "[" + host + "]"
-        return "http://%s:7125" % host
+        return self.connection.base_url
 
     def _json(self, method, path, payload=None):
-        data = None
-        headers = {"Accept": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(
-            self.base_url + path, data=data, headers=headers, method=method)
-        try:
-            response = self.requester(request, timeout=self.timeout)
-            with response:
-                value = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            raise PrinterCollectionError(
-                "printer API is unavailable: %s" % exc) from exc
-        if not isinstance(value, dict) or value.get("error"):
-            raise PrinterCollectionError("printer API returned an error")
-        return value
+        return self.connection.request_json(method, path, payload)
 
     def preflight(self):
         if not self.confirmed_idle:
             raise PrinterCollectionError(
                 "live collection requires --confirm-printer-idle")
-        value = self._json(
-            "GET", "/printer/objects/query?print_stats&extruder&heater_bed"
-            "&virtual_sdcard")
-        status = dict(value.get("result", {}).get("status", {}))
-        print_state = str(
-            dict(status.get("print_stats", {})).get("state", "")).lower()
-        if print_state in ("printing", "paused"):
-            raise PrinterCollectionError("a print is active")
-        for name in ("extruder", "heater_bed"):
-            target = float(dict(status.get(name, {})).get("target", 0.0) or 0.0)
-            if target > 0.0:
-                raise PrinterCollectionError("turn heaters off before testing")
-        virtual_sd = dict(status.get("virtual_sdcard", {}))
-        if bool(virtual_sd.get("is_active", False)):
-            raise PrinterCollectionError("virtual SD is active")
-        return {
-            "print_state": print_state or "unknown",
-            "heaters_off": True,
-            "virtual_sd_inactive": True,
-        }
+        return self.connection.require_safe_idle()
 
     def _ssh(self, remote_command, timeout=None):
-        result = self.command_runner(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-             "root@" + self.host, remote_command],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=timeout or self.timeout)
-        if result.returncode != 0:
-            raise PrinterCollectionError(
-                "read-only SSH query failed: %s" %
-                " ".join(result.stderr.split())[:300])
-        return result.stdout.strip()
+        return self.connection.ssh(remote_command, timeout=timeout)
 
     def _latest(self, suite):
         suffix = "-" + suite.lower()

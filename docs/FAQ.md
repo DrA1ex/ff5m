@@ -179,8 +179,9 @@ SSH connection issues may arise because:
 
 ### The mod isn’t loading and is stuck at the network connection step.
 
-This can happen when you are using the Feather screen, and the mod cannot connect to the network.  
-Since the mod requires a network connection to function, it will keep attempting to connect until successful.
+On the **Stock Screen**, the boot workflow can wait for its configured network and eventually return to the stock application if the mod cannot establish it. The troubleshooting below remains applicable to that workflow.
+
+The **Feather Screen** does not wait for networking before loading. Its dashboard shows **CONNECTING** while the saved connection is being restored. Open **Network** to see the current connection step. You can keep waiting or press **CANCEL** to remain offline and return to the Network page. If the attempt has already ended, Feather remains usable offline and allows a new Wi-Fi or Ethernet connection.
 
 Printers are often metal-shielded, meaning Wi-Fi signals may struggle to reach the antenna.  
 Consider switching to a 2.4GHz Wi-Fi network. You can do this from the stock screen or by manually editing the `/etc/wpa_supplicant.conf` configuration file by adding `freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462` to the network section, example below.
@@ -194,17 +195,15 @@ network={
 }
 ```
 
-If the mod still cannot connect within 5 minutes, the stock screen will load instead.
+In the blocking Stock workflow, the stock screen loads if the mod still cannot connect within the configured retry period.
 
 If the mod doesn’t load at all, use [screen-mode recovery](SCREEN.md#switching-to-feather-screen) to switch back to the original stock screen.
 
 ### Why did the Wi-Fi credentials get forgotten?
 
-This isn’t a case of forgotten Wi-Fi credentials. They’re saved and preserved after every boot.
+On the **Stock Screen**, this is not a case of forgotten credentials: they are saved and preserved after every boot. The actual issue is usually the connection. The Stock connection menu does not reconnect a known network directly and may ask for its password again. Disable and re-enable Wi-Fi to make Stock reconnect with the saved credentials.
 
-The actual issue is with the connection - the Wi-Fi module on the Flashforge is weak. Sometimes, the printer can’t connect in time, and the connection menu doesn’t support reconnecting to known networks. Instead, it always tries to establish a new connection, which is why your credentials don’t auto-fill.
-
-To reconnect, you’ll need to disable Wi-Fi and then enable it again. This will force the printer to connect to the last known network with the saved credentials.
+The **Feather Screen** behaves differently. A saved network is marked in its scan list and reconnects without asking for the password. Use **RESET PASSWORD** when the credential really has changed.
 
 ---
 
@@ -282,7 +281,7 @@ The system has two stages:
 To customize the warning limit, you can modify the `user.cfg` file by adding the following:
 
 ```cfg
-[temperature_sensor weight_value]
+[temperature_sensor weightValue]
 trigger_value: 700
 ```
 
@@ -484,10 +483,26 @@ Obico, a Python-based tool, may work as a standalone application (not a Moonrake
 ## Additional Configuration and Troubleshooting
 
 ### How do I adjust the camera settings?
-Edit the `camera.conf` file or use the web control panel at `http://printer_IP:8080/control.htm`. Manually transfer web panel adjustments to `E_<parameter>` properties in `camera.conf`, as changes are not saved automatically. Apply settings manually with the `CAMERA_RELOAD` macro.
+Open `http://printer_IP:8080/control.htm` for a continuously updating preview
+and the supported image controls. Each edit is applied to the running camera
+automatically. The panel reads ranges and menu entries from the camera, and
+**Save** atomically writes the visible values to `camera.conf` so they survive a
+restart. If you edit `camera.conf` manually, run `CAMERA_RELOAD` to apply it
+without restarting the HTTP stream service. The panel uses the existing camera
+HTTP server and MJPEG endpoint; it does not start a second server.
+
+For numeric selectors whose camera-reported minimum is greater than zero, the
+panel adds `0 (special)` because some drivers still accept zero as an
+undocumented off value (for example, Gain). `Shift` + arrow changes numeric
+controls by ten steps instead of one. Holding an arrow key applies an
+intermediate value once per second, then applies the final value shortly after
+the key is released.
 
 ### I adjusted the camera settings, but they are not applied after a reboot
-Some camera settings are applied only when a print starts. Use the `CAMERA_RELOAD` macro to apply changes manually at any time.
+Make sure `POST_PROCESSING=1` and the desired `E_<parameter>` lines are
+uncommented in `camera.conf`, or use **Save** in the control panel.
+Saved controls are loaded on service start and applied after the camera's first
+completed frame. `CAMERA_RELOAD` can be used to reread the file manually.
 
 ### What should I do about the warning after an SSH connection: `wtmp_write: problem writing /dev/null/wtmp: Not a directory`?
 This warning is harmless and indicates an incomplete core system configuration in the firmware. It does not affect functionality and can be ignored.

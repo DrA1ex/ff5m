@@ -1,0 +1,26 @@
+{
+  "PETG": {
+    "bed": 65,
+    "bed_initial": 70,
+    "fan_speed": 0.3,
+    "flow_ratio": 0.92,
+    "nozzle": 250,
+    "nozzle_initial": 250,
+    "pressure_advance": 0.076,
+    "retract_length": 0.68,
+    "retract_speed": 35,
+    "unretract_speed": 35
+  },
+  "PLA": {
+    "bed": 50,
+    "bed_initial": 55,
+    "fan_speed": 1.0,
+    "flow_ratio": 0.975,
+    "nozzle": 220,
+    "nozzle_initial": 220,
+    "pressure_advance": 0.039,
+    "retract_length": 0.3,
+    "retract_speed": 35,
+    "unretract_speed": 35
+  }
+}

@@ -50,7 +50,179 @@
         "HEADLESS": 2,
         "GUPPY": 3
       }
+    },
+    "ChamberLightModeEnum": {
+      "type": "str",
+      "values": {
+        "MANUAL": "MANUAL",
+        "AT_BOOT": "AT_BOOT",
+        "PRINT_ONLY": "PRINT_ONLY"
+      }
     }
+  },
+  "ui": {
+    "schema_version": 1,
+    "categories": [
+      {
+        "id": "primary",
+        "label": "ESSENTIAL",
+        "order": 1,
+        "parameters": [
+          "display",
+          "z_offset",
+          "load_zoffset",
+          "use_kamp",
+          "camera",
+          "print_leveling",
+          "safe_z",
+          "pause_z_min",
+          "filament_switch_sensor",
+          "chamber_light",
+          "chamber_light_mode"
+        ]
+      },
+      {
+        "id": "safety_tuning",
+        "label": "SAFETY & TUNING",
+        "order": 2,
+        "parameters": [
+          "weight_check",
+          "weight_check_max",
+          "cell_weight",
+          "bed_mesh_validation",
+          "bed_mesh_validation_clear",
+          "bed_mesh_validation_tolerance",
+          "tune_config",
+          "tune_klipper"
+        ]
+      },
+      {
+        "id": "behavior_ui",
+        "label": "PRINT & INTERFACE",
+        "order": 3,
+        "parameters": [
+          "disable_priming",
+          "zclear",
+          "disable_cleaning",
+          "clear_cooldown_temp",
+          "load_zoffset_cleaning",
+          "disable_skew",
+          "park_dz",
+          "stop_motor",
+          "auto_reboot",
+          "power_loss_recovery",
+          "feather_theme",
+          "backlight",
+          "display_eco",
+          "backlight_eco",
+          "sound",
+          "close_dialogs"
+        ]
+      },
+      {
+        "id": "system_services",
+        "label": "SYSTEM SERVICES",
+        "order": 4,
+        "parameters": [
+          "use_swap",
+          "check_md5",
+          "mod_check_update",
+          "mod_check_update_interval",
+          "block_cloud",
+          "zssh",
+          "disable_screen_led",
+          "disable_web",
+          "disable_moonraker"
+        ]
+      },
+      {
+        "id": "experimental",
+        "label": "EXPERIMENTAL",
+        "order": 5,
+        "parameters": [
+          "klipper_rt",
+          "zram_algo"
+        ]
+      },
+      {
+        "id": "midi",
+        "label": "MIDI",
+        "order": 6,
+        "parameters": [
+          "midi_on",
+          "midi_start",
+          "midi_end"
+        ]
+      },
+      {
+        "id": "other",
+        "label": "OTHER",
+        "order": 7,
+        "fallback": true,
+        "parameters": []
+      }
+    ],
+    "strict_visibility_dependencies": [
+      {
+        "parameter": "mod_check_update_interval",
+        "depends_on": "mod_check_update",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "backlight_eco",
+        "depends_on": "display_eco",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "weight_check_max",
+        "depends_on": "weight_check",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "bed_mesh_validation_clear",
+        "depends_on": "bed_mesh_validation",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "bed_mesh_validation_tolerance",
+        "depends_on": "bed_mesh_validation",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "zram_algo",
+        "depends_on": "use_swap",
+        "operator": "equals",
+        "value": "ZRAM"
+      },
+      {
+        "parameter": "load_zoffset_cleaning",
+        "depends_on": "disable_cleaning",
+        "operator": "equals",
+        "value": false
+      }
+    ],
+    "independent_but_grouped": [
+      {
+        "parameter": "cell_weight",
+        "note": "Keep near load-cell safety but do not hide behind weight_check."
+      },
+      {
+        "parameters": [
+          "tune_config",
+          "tune_klipper"
+        ],
+        "note": "Group together; they are independent settings."
+      }
+    ],
+    "warning_only_not_dependencies": [
+      "disable_web",
+      "disable_moonraker"
+    ]
   },
   "parameters": [
     {
@@ -58,7 +230,7 @@
       "type": "AutoRebootEnum",
       "default": "OFF",
       "label": "Auto-restart",
-      "description": "Restart automatically after print completion.",
+      "description": "Restart after a completed print.",
       "options": {
         "OFF": "disabled",
         "SIMPLE_90": "after 1.5 minutes",
@@ -86,6 +258,9 @@
       "label": "Nozzle priming before print",
       "description": "Control the purge line before printing.",
       "options": ["YES", "NO"],
+      "ui": {
+        "inverted": true
+      },
       "order": 20000
     },
     {
@@ -93,8 +268,11 @@
       "type": "bool",
       "default": 0,
       "label": "Nozzle cleaning before calibration",
-      "description": "Control nozzle cleaning before calibration.",
+      "description": "Clean the nozzle before calibration.",
       "options": ["YES", "NO"],
+      "ui": {
+        "inverted": true
+      },
       "order": 20000
     },
     {
@@ -102,8 +280,11 @@
       "type": "bool",
       "default": 0,
       "label": "Allow stock firmware to control LED",
-      "description": "Give chamber LED control to stock firmware.",
+      "description": "Let stock firmware control the LED.",
       "options": ["YES", "NO"],
+      "ui": {
+        "inverted": true
+      },
       "order": 100
     },
     {
@@ -111,8 +292,11 @@
       "type": "bool",
       "default": 1,
       "label": "SKEW correction",
-      "description": "Enable or disable configured skew correction.",
+      "description": "Apply the configured skew correction.",
       "options": ["YES", "NO"],
+      "ui": {
+        "inverted": true
+      },
       "order": 20000
     },
     {
@@ -120,7 +304,7 @@
       "type": "bool",
       "default": 0,
       "label": "Klipper real-time priority (SCHED_RR)",
-      "description": "Give Klipper low real-time CPU priority.",
+      "description": "Give Klipper low real-time priority.",
       "restart": "klipper"
     },
     {
@@ -128,7 +312,7 @@
       "type": "bool",
       "default": 0,
       "label": "Tune klipper parameters",
-      "description": "Apply Forge-X Klipper compatibility tuning.",
+      "description": "Apply Forge-X Klipper tuning.",
       "restart": "printer",
       "deprecated": {
         "key": "fix_e0017",
@@ -145,6 +329,21 @@
       "label": "MD5 verification",
       "description": "Verify supported G-code file checksums.",
       "warning": "To make the checksum validation work, you need to add a post-processing script to your slicer.\nScripts can be downloaded from 'Configuration -> mod' (addMD5.sh or addMD5.bat)"
+    },
+    {
+      "key": "mod_check_update",
+      "type": "bool",
+      "default": 1,
+      "label": "Check for Forge-X updates",
+      "description": "Check for Forge-X updates."
+    },
+    {
+      "key": "mod_check_update_interval",
+      "type": "int",
+      "default": 360,
+      "minimum": 1,
+      "label": "Update check interval",
+      "description": "Minutes between successful checks."
     },
     {
       "key": "cell_weight",
@@ -183,9 +382,23 @@
       "type": "float",
       "default": 10.0,
       "label": "Safe Z height, mm",
-      "description": "Set the absolute Z height used before lateral parking and calibration moves.",
+      "description": "Set the Z height before lateral moves.",
       "warning": "Bed leveling and a non-standard nozzle can reduce the real nozzle-to-bed clearance. Use a value that is safe for your printer and verify Z-offset calibration after changing the bed or nozzle.",
       "order": 10003
+    },
+    {
+      "key": "pause_z_min",
+      "type": "float",
+      "default": 50.0,
+      "label": "Pause minimum Z, mm",
+      "description": "Set the minimum Z for pause parking.",
+      "minimum": 0.0,
+      "fraction_digits": 1,
+      "order": 10004,
+      "deprecated": {
+        "key": "m600_z_min",
+        "carry_over": true
+      }
     },
     {
       "key": "sound",
@@ -200,32 +413,53 @@
       "type": "str",
       "default": "DEFAULT",
       "label": "Feather color theme",
-      "description": "Choose the color palette used on every Feather screen.",
+      "description": "Choose the Feather color palette.",
       "order": 49999
     },
     {
       "key": "backlight",
       "type": "int",
-      "default": 50,
+      "default": 80,
       "label": "Screen brightness",
       "description": "Set normal display brightness percent.",
       "order": 50001
     },
     {
+      "key": "display_eco",
+      "type": "bool",
+      "default": 1,
+      "label": "Display ECO mode",
+      "description": "Dim the display after inactivity.",
+      "order": 50002
+    },
+    {
       "key": "backlight_eco",
       "type": "int",
-      "default": 10,
+      "default": 30,
       "label": "Screen brightness in ECO mode",
       "description": "Set dimmed display brightness percent.",
-      "order": 50002
+      "order": 50003
     },
     {
       "key": "chamber_light",
       "type": "int",
       "default": 50,
       "label": "Chamber light brightness",
-      "description": "Last selected chamber light brightness percent.",
+      "description": "Last selected light brightness.",
       "order": 50003
+    },
+    {
+      "key": "chamber_light_mode",
+      "type": "ChamberLightModeEnum",
+      "default": "AT_BOOT",
+      "label": "Chamber light mode",
+      "description": "Choose when brightness is applied.",
+      "options": {
+        "MANUAL": "change the light only when adjusted manually",
+        "AT_BOOT": "restore saved brightness at startup",
+        "PRINT_ONLY": "turn on only during printing"
+      },
+      "order": 50004
     },
     {
       "key": "current_material",
@@ -234,14 +468,14 @@
       "label": "Current material",
       "description": "Last selected filament material.",
       "hidden": true,
-      "order": 50004
+      "order": 50005
     },
     {
       "key": "midi_on",
       "type": "str",
       "default": "",
       "label": "MIDI on startup",
-      "description": "Set the MIDI sequence played at startup.",
+      "description": "Set the MIDI played at startup.",
       "order": 50010
     },
     {
@@ -249,7 +483,7 @@
       "type": "str",
       "default": "",
       "label": "MIDI when starting print",
-      "description": "Set the MIDI sequence played at print start.",
+      "description": "Set the MIDI played at print start.",
       "order": 50011
     },
     {
@@ -257,7 +491,7 @@
       "type": "str",
       "default": "",
       "label": "MIDI when completing print",
-      "description": "Set the MIDI sequence played after printing.",
+      "description": "Set the MIDI played after printing.",
       "order": 50012
     },
     {
@@ -273,7 +507,7 @@
       "type": "bool",
       "default": 1,
       "label": "Motors",
-      "description": "Choose motor behavior after print completion.",
+      "description": "Choose motor behavior after a print.",
       "options": ["Do not turn off", "Turn off automatically"],
       "order": 30000
     },
@@ -322,16 +556,16 @@
       "key": "park_dz",
       "type": "int",
       "default": 50,
-      "label": "Parking offset after print completion, mm",
-      "description": "Set Z lift after a completed print, in mm.",
+      "label": "Parking offset after print, mm",
+      "description": "Set the Z lift after a print.",
       "order": 20000
     },
     {
       "key": "clear_cooldown_temp",
       "type": "int",
       "default": 120,
-      "label": "Cooldown temperature for CLEAR_NOZZLE, Cº",
-      "description": "Set nozzle-cleaning cooldown temperature.",
+      "label": "CLEAR_NOZZLE temperature, Cº",
+      "description": "Set the nozzle cooldown temperature.",
       "order": 20000
     },
     {
@@ -354,6 +588,14 @@
           "1": "'FEATHER'"
         }
       }
+    },
+    {
+      "key": "show_feather_promo",
+      "type": "bool",
+      "default": 1,
+      "label": "Show Feather upgrade prompt",
+      "description": "Offer Feather screen after startup.",
+      "hidden": true
     },
     {
       "key": "camera",
@@ -394,7 +636,7 @@
       "type": "int",
       "default": 1200,
       "label": "Bed collision protection, weight",
-      "description": "Set collision detection weight threshold.",
+      "description": "Set the collision weight threshold.",
       "order": 11
     },
     {
@@ -410,7 +652,7 @@
       "type": "bool",
       "default": 0,
       "label": "Clear before Bed Mesh Validation",
-      "description": "Clean the nozzle before mesh validation.",
+      "description": "Clean the nozzle before validation.",
       "order": 13
     },
     {
@@ -436,7 +678,7 @@
       "type": "bool",
       "default": 1,
       "label": "Use filament switch sensor",
-      "description": "Pause when the filament sensor triggers.",
+      "description": "Pause when the sensor triggers.",
       "order": 100
     },
     {
@@ -460,7 +702,7 @@
       "type": "bool",
       "default": 0,
       "label": "Enable Power Loss Recovery Feature",
-      "description": "Offer recovery after unexpected power loss.",
+      "description": "Offer recovery after power loss.",
       "restart": "klipper",
       "order": 30000
     }

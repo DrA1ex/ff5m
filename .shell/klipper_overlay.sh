@@ -129,9 +129,6 @@ klipper_overlay_link_plugins() {
         klipper_overlay_ignored "$rel_file" && continue
 
         target="$target_dir/extras/$rel_file"
-        parent=$(dirname "$target")
-        mkdir -p "$parent" || return 1
-
         if [ -L "$target" ]; then
             current=$(readlink "$target") || return 1
             [ "$current" = "$file" ] && continue
@@ -141,6 +138,9 @@ klipper_overlay_link_plugins() {
             echo "@@ Refusing to overwrite klipper plugin target: $target"
             return 1
         fi
+
+        parent=${target%/*}
+        mkdir -p "$parent" || return 1
 
         echo "// Link klipper plugin file: $file"
         ln -s "$file" "$target" || return 1
@@ -162,9 +162,6 @@ klipper_overlay_link_patches() {
         esac
 
         target="$target_dir/$rel_file"
-        parent=$(dirname "$target")
-        mkdir -p "$parent" || return 1
-
         if [ -L "$target" ]; then
             current=$(readlink "$target") || return 1
             [ "$current" = "$file" ] && continue
@@ -172,6 +169,9 @@ klipper_overlay_link_patches() {
             echo "@@ Refusing to overwrite unmanaged klipper symlink: $target"
             return 1
         fi
+
+        parent=${target%/*}
+        mkdir -p "$parent" || return 1
 
         if [ -e "$target" ]; then
             if [ ! -e "$target.bak" ] && [ ! -L "$target.bak" ]; then

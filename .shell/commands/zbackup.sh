@@ -2,7 +2,7 @@
 
 ## Configuration backup and restore
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -47,10 +47,10 @@ TAR_DEBUG_PARAMS=(
     /data/logFiles/skip.log*
     /data/logFiles/ssh.log*
     /data/logFiles/wifi.log*
+    /data/logFiles/netd.log*
     /data/logFiles/service.log*
     /data/logFiles/uninstall.log*
     /data/logFiles/mod/*.log*
-    /data/logFiles/service.log*
     /data/logFiles/verification.log*
     /data/logFiles/printer.log*
     /data/logFiles/moonraker.log*

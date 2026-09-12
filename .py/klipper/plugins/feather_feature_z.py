@@ -1,25 +1,29 @@
 ## Z-offset, Safe Z, paper-test, and Live Z feature for Feather.
 
-try:
-    from .ui import Page
-    from .feather_feature_manager import FeatureHostProxy
-    from .feather_screen_controls import FeatherControlsMixin
-    from .feather_z_calibration import (
-        FeatherZCalibrationMixin, ZCalibrationSession)
-except (ImportError, ValueError):
-    from ui import Page
-    from feather_feature_manager import FeatureHostProxy
-    from feather_screen_controls import FeatherControlsMixin
-    from feather_z_calibration import (
+from ff5m_ui.screen import ScreenPage
+from feather_feature_manager import FeatureHostProxy
+from feather_screen_controls import FeatherControlsMixin
+from feather_z_calibration import (
         FeatherZCalibrationMixin, ZCalibrationSession)
 
 
 PAGES = frozenset((
-    Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY,
-    Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
-    Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
-    Page.LIVE_Z_OFFSET,
+    ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_SUMMARY,
+    ScreenPage.Z_OFFSET_PAPER_BRIEFING, ScreenPage.Z_OFFSET_PAPER,
+    ScreenPage.SAFE_Z_BRIEFING, ScreenPage.SAFE_Z_CALIBRATION,
+    ScreenPage.LIVE_Z_OFFSET,
 ))
+
+
+def _calibration_property(name):
+    """Declare one exact field shared with the calibration feature."""
+    def get_value(feature):
+        return getattr(feature._calibration_feature(), name)
+
+    def set_value(feature, value):
+        setattr(feature._calibration_feature(), name, value)
+
+    return property(get_value, set_value)
 
 
 class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
@@ -34,20 +38,18 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         self.live_z_limit_warned = False
         self.z_weight_gauge = None
 
+    calibration_cancel_dispatched = _calibration_property(
+        "calibration_cancel_dispatched")
+    calibration_cancel_requested = _calibration_property(
+        "calibration_cancel_requested")
+    calibration_cancelled = _calibration_property("calibration_cancelled")
+    calibration_clean_nozzle = _calibration_property(
+        "calibration_clean_nozzle")
+    calibration_error = _calibration_property("calibration_error")
+    calibration_material = _calibration_property("calibration_material")
+
     def _calibration_feature(self):
         return self.feature_manager.get("calibration")
-
-    def __getattr__(self, name):
-        if name.startswith("calibration_"):
-            return getattr(self._calibration_feature(), name)
-        return FeatureHostProxy.__getattr__(self, name)
-
-    def __setattr__(self, name, value):
-        if (name.startswith("calibration_") and
-                "_host" in self.__dict__):
-            setattr(self._calibration_feature(), name, value)
-            return
-        FeatureHostProxy.__setattr__(self, name, value)
 
     def start_calibration(self):
         self._start_z_calibration()
@@ -57,28 +59,28 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
             raise RuntimeError("Z adjust is not available yet")
         self.live_z_dialog = None
         self._begin_z_weight_gauge()
-        self._show_page(Page.LIVE_Z_OFFSET)
+        self._show_page(ScreenPage.LIVE_Z_OFFSET)
 
     def render(self, page):
         {
-            Page.CALIBRATION_Z: self._render_z_summary,
-            Page.Z_OFFSET_SUMMARY: self._render_z_summary,
-            Page.Z_OFFSET_PAPER_BRIEFING: self._render_z_paper_briefing,
-            Page.Z_OFFSET_PAPER: self._render_z_paper,
-            Page.SAFE_Z_BRIEFING: self._render_safe_z_briefing,
-            Page.SAFE_Z_CALIBRATION: self._render_safe_z,
-            Page.LIVE_Z_OFFSET: self._render_live_z_offset,
+            ScreenPage.CALIBRATION_Z: self._render_z_summary,
+            ScreenPage.Z_OFFSET_SUMMARY: self._render_z_summary,
+            ScreenPage.Z_OFFSET_PAPER_BRIEFING: self._render_z_paper_briefing,
+            ScreenPage.Z_OFFSET_PAPER: self._render_z_paper,
+            ScreenPage.SAFE_Z_BRIEFING: self._render_safe_z_briefing,
+            ScreenPage.SAFE_Z_CALIBRATION: self._render_safe_z,
+            ScreenPage.LIVE_Z_OFFSET: self._render_live_z_offset,
         }[page]()
 
     def allows_action(self, page, action):
         exact = {
-            Page.CALIBRATION_Z: ("nav.back",),
-            Page.Z_OFFSET_SUMMARY: ("nav.back",),
-            Page.Z_OFFSET_PAPER_BRIEFING: ("nav.back",),
-            Page.Z_OFFSET_PAPER: ("nav.back",),
-            Page.SAFE_Z_BRIEFING: ("nav.back",),
-            Page.SAFE_Z_CALIBRATION: ("nav.back",),
-            Page.LIVE_Z_OFFSET: (
+            ScreenPage.CALIBRATION_Z: ("nav.back",),
+            ScreenPage.Z_OFFSET_SUMMARY: ("nav.back",),
+            ScreenPage.Z_OFFSET_PAPER_BRIEFING: ("nav.back",),
+            ScreenPage.Z_OFFSET_PAPER: ("nav.back",),
+            ScreenPage.SAFE_Z_BRIEFING: ("nav.back",),
+            ScreenPage.SAFE_Z_CALIBRATION: ("nav.back",),
+            ScreenPage.LIVE_Z_OFFSET: (
                 "nav.back", "live_z.step.0005", "live_z.step.001",
                 "live_z.step.005", "live_z.closer", "live_z.farther",
                 "live_z.save", "live_z.warning.ok", "live_z.save.no",
@@ -102,37 +104,37 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         return True
 
     def safety_armed_reasons(self, page, eventtime):
-        if page not in (Page.Z_OFFSET_PAPER_BRIEFING, Page.Z_OFFSET_PAPER,
-                        Page.SAFE_Z_BRIEFING, Page.SAFE_Z_CALIBRATION,
-                        Page.LIVE_Z_OFFSET):
+        if page not in (ScreenPage.Z_OFFSET_PAPER_BRIEFING, ScreenPage.Z_OFFSET_PAPER,
+                        ScreenPage.SAFE_Z_BRIEFING, ScreenPage.SAFE_Z_CALIBRATION,
+                        ScreenPage.LIVE_Z_OFFSET):
             return ()
         return ("z-controls",) if self._homed_motion_available(
             eventtime) else ()
 
     def back(self, page):
         session = self.z_calibration
-        if page in (Page.CALIBRATION_Z, Page.Z_OFFSET_SUMMARY):
+        if page in (ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_SUMMARY):
             if session.results:
                 session.dialog = "discard"
                 self._render_z_summary()
-            elif page == Page.Z_OFFSET_SUMMARY and session.active:
+            elif page == ScreenPage.Z_OFFSET_SUMMARY and session.active:
                 self._begin_safe_z_calibration(preserve_result=True)
             else:
                 self._cancel_z_calibration()
-        elif page == Page.SAFE_Z_BRIEFING:
+        elif page == ScreenPage.SAFE_Z_BRIEFING:
             self._cancel_z_calibration()
-        elif page == Page.SAFE_Z_CALIBRATION:
+        elif page == ScreenPage.SAFE_Z_CALIBRATION:
             self._run_blocking_gcode(
                 "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" %
                 self._safe_z_preparation_height(), "LIFTING Z...")
-            self._show_page(Page.SAFE_Z_BRIEFING)
-        elif page == Page.Z_OFFSET_PAPER_BRIEFING:
-            self._show_page(Page.Z_OFFSET_SUMMARY)
-        elif page == Page.Z_OFFSET_PAPER:
+            self._show_page(ScreenPage.SAFE_Z_BRIEFING)
+        elif page == ScreenPage.Z_OFFSET_PAPER_BRIEFING:
+            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+        elif page == ScreenPage.Z_OFFSET_PAPER:
             session.dialog = None
             self._run_blocking_gcode(self._safe_z_move_command(), "LIFTING Z...")
-            self._show_page(Page.Z_OFFSET_SUMMARY)
-        elif page == Page.LIVE_Z_OFFSET:
+            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+        elif page == ScreenPage.LIVE_Z_OFFSET:
             self.live_z_dialog = None
             self._show_page(self.page_for_print_state())
         else:
@@ -140,13 +142,17 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         return True
 
     def update(self, eventtime):
-        if self.page in (Page.CALIBRATION_Z, Page.Z_OFFSET_PAPER,
-                         Page.LIVE_Z_OFFSET):
-            if not (self.page == Page.LIVE_Z_OFFSET and
-                    self.live_z_dialog is not None) and not (
-                        self.page == Page.Z_OFFSET_PAPER and
-                        self.z_calibration.dialog is not None):
-                self._update_z_weight_status(eventtime)
+        if not self._page_paint_allowed(
+                ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_PAPER,
+                ScreenPage.LIVE_Z_OFFSET):
+            return
+        if (self.page == ScreenPage.LIVE_Z_OFFSET and
+                self.live_z_dialog is not None):
+            return
+        if (self.page == ScreenPage.Z_OFFSET_PAPER and
+                self.z_calibration.dialog is not None):
+            return
+        self._update_z_weight_status(eventtime)
 
     def on_print_state_changed(self, old_state, new_state, stats_state):
         if new_state.name in ("PREPARING", "PRINTING") and old_state.name not in (

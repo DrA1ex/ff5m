@@ -6,6 +6,8 @@ import os
 import re
 import subprocess
 
+from .font_policy import DEFAULT_FONT, FONT_FALLBACKS
+
 
 SCHEMA = "font-metrics/v1"
 WRAP_ALGORITHM = "word-v1"
@@ -17,11 +19,11 @@ _FONT_NAME = re.compile(r"^(.+) (\d+)pt$")
 class FontMetric:
     __slots__ = (
         "name", "advance_x", "monospaced", "advance_y", "top", "bottom",
-        "unicode_ranges", "_range_offsets",
+        "unicode_ranges", "fallback", "_range_offsets",
     )
 
     def __init__(self, name, advance_x, monospaced, advance_y, top, bottom,
-                 unicode_ranges):
+                 unicode_ranges, fallback=None):
         self.name = name
         self.advance_x = advance_x
         self.monospaced = monospaced
@@ -29,6 +31,7 @@ class FontMetric:
         self.top = top
         self.bottom = bottom
         self.unicode_ranges = unicode_ranges
+        self.fallback = fallback
         offsets = []
         offset = 0
         for start, end in unicode_ranges:
@@ -52,27 +55,43 @@ class FontMetric:
     def text_advance(self, value):
         return sum(self.character_advance(character) for character in str(value))
 
+    def supports_text(self, value):
+        return all(character in "\n\r\t" or self.character_advance(character) > 0
+                   for character in str(value))
+
 
 class FontMetrics:
-    __slots__ = ("fonts", "names")
+    __slots__ = ("fonts", "names", "default_font")
 
-    def __init__(self, fonts):
+    def __init__(self, fonts, default_font=None):
         self.fonts = dict((metric.name, metric) for metric in fonts)
         self.names = tuple(sorted(self.fonts))
+        if not self.names:
+            raise ValueError("font metrics must contain fonts")
+        self.default_font = default_font or self.names[0]
+        if self.default_font not in self.fonts:
+            raise ValueError("default_font must name a declared font")
+        for metric in self.fonts.values():
+            if metric.fallback is not None and metric.fallback not in self.fonts:
+                raise ValueError(
+                    "font fallback %r for %r is not declared" %
+                    (metric.fallback, metric.name))
 
     def normalize_font(self, font, allow_proportional=False):
-        match = _FONT_NAME.match(str(font))
+        value = str(font)
+        if value in self.fonts:
+            return value
+        match = _FONT_NAME.match(value)
         if match is None:
             logging.warning(
-                "[feather_screen] unsupported font %r; using JetBrainsMono 12pt",
-                font)
-            return self._default_name()
+                "[feather_screen] unsupported font %r; using %s",
+                font, self.default_font)
+            return self.default_font
         family, requested = match.group(1), int(match.group(2))
-        # Feather's UI font must cover the bundled Cyrillic strings. Typer
-        # still reports Roboto, but legacy Roboto requests intentionally map to
-        # the equivalent JetBrains Mono face as they did before the manifest.
-        if family.startswith("Roboto") and not allow_proportional:
-            family = family.replace("Roboto", "JetBrainsMono", 1)
+        # ``allow_proportional`` remains in the public signature for callers
+        # written against framework 2.0. The manifest is authoritative: every
+        # declared face is renderable regardless of spacing model.
+        del allow_proportional
         candidates = []
         for name in self.names:
             candidate = _FONT_NAME.match(name)
@@ -80,26 +99,49 @@ class FontMetrics:
                 candidates.append((int(candidate.group(2)), name))
         if not candidates:
             logging.warning(
-                "[feather_screen] unsupported font %r; using JetBrainsMono 12pt",
-                font)
-            return self._default_name()
+                "[feather_screen] unsupported font %r; using %s",
+                font, self.default_font)
+            return self.default_font
         return min(
             candidates, key=lambda item: (abs(item[0] - requested), item[0]))[1]
 
-    def _default_name(self):
-        if "JetBrainsMono 12pt" in self.fonts:
-            return "JetBrainsMono 12pt"
-        return self.names[0]
+    def _supporting_font(self, value, requested):
+        requested_match = _FONT_NAME.match(requested)
+        requested_size = (
+            int(requested_match.group(2)) if requested_match is not None else None)
+        candidates = []
+        for name in self.names:
+            metric = self.fonts[name]
+            if not metric.supports_text(value):
+                continue
+            match = _FONT_NAME.match(name)
+            size = int(match.group(2)) if match is not None else None
+            distance = (
+                abs(size - requested_size)
+                if size is not None and requested_size is not None else 0)
+            candidates.append((distance, name))
+        return min(candidates)[1] if candidates else None
+
+    def normalize_for_text(self, font, value):
+        normalized = self.normalize_font(font)
+        current = normalized
+        visited = set()
+        while current not in visited:
+            visited.add(current)
+            metric = self.fonts[current]
+            if metric.supports_text(value):
+                return current
+            if metric.fallback is None:
+                break
+            current = metric.fallback
+        supporting = self._supporting_font(value, normalized)
+        return supporting or self.default_font
 
     def metric(self, font):
         return self.fonts[self.normalize_font(font)]
 
-    def available_fonts(self):
-        return tuple(name for name in self.names
-                     if name.startswith("JetBrainsMono"))
-
     def text_width(self, value, font):
-        return self.metric(font).text_advance(value)
+        return self.fonts[self.normalize_for_text(font, value)].text_advance(value)
 
     def wrap_text(self, value, font, max_width):
         """Implement TextDrawer's whitespace and long-word rules (word-v1)."""
@@ -107,7 +149,8 @@ class FontMetrics:
         width = int(max_width)
         if width <= 0:
             return [text]
-        metric = self.metric(font)
+        font = self.normalize_for_text(font, text)
+        metric = self.fonts[font]
 
         def fits(line):
             return metric.text_advance(line) <= width
@@ -159,7 +202,8 @@ class FontMetrics:
         return lines
 
     def text_height(self, value, font, max_width=None, wrap=False):
-        metric = self.metric(font)
+        font = self.normalize_for_text(font, value)
+        metric = self.fonts[font]
         if wrap:
             lines = self.wrap_text(value, font, max_width)
         else:
@@ -243,9 +287,60 @@ def parse_manifest(value):
     return FontMetrics(metrics)
 
 
+def apply_font_policy(metrics, default_font=None, fallbacks=None):
+    """Apply project-owned selection and glyph fallback policy in place."""
+    if default_font is None:
+        default_font = DEFAULT_FONT
+    if fallbacks is None:
+        fallbacks = FONT_FALLBACKS
+    if not isinstance(default_font, str) or not default_font:
+        raise ValueError("default_font must be a non-empty string")
+    if default_font not in metrics.fonts:
+        raise ValueError("default_font must name a declared font")
+    if not isinstance(fallbacks, dict):
+        raise ValueError("font fallbacks must be a mapping")
+
+    normalized_fallbacks = {}
+    unknown = []
+    for name, fallback in fallbacks.items():
+        if (not isinstance(name, str) or not name or
+                not isinstance(fallback, str) or not fallback):
+            raise ValueError(
+                "font fallback policy names must be non-empty strings")
+        if name not in metrics.fonts or fallback not in metrics.fonts:
+            unknown.append(name)
+        else:
+            normalized_fallbacks[name] = fallback
+    if unknown:
+        raise ValueError(
+            "font fallback policy references undeclared fonts: %s" %
+            ", ".join(sorted(unknown)))
+
+    metrics.default_font = default_font
+    for name in metrics.names:
+        metrics.fonts[name].fallback = normalized_fallbacks.get(name)
+    return metrics
+
+
+def parse_project_manifest(value):
+    """Parse measured data and apply this project's overridable font policy."""
+    return apply_font_policy(parse_manifest(value))
+
+
 def load_fallback_metrics(path=FALLBACK_PATH):
     with open(path, "rb") as stream:
-        return parse_manifest(stream.read())
+        return parse_project_manifest(stream.read())
+
+
+def _inherit_policy(metrics, policy):
+    if policy.default_font in metrics.fonts:
+        metrics.default_font = policy.default_font
+    for name in metrics.names:
+        policy_metric = policy.fonts.get(name)
+        metrics.fonts[name].fallback = (
+            policy_metric.fallback if policy_metric is not None and
+            policy_metric.fallback in metrics.fonts else None)
+    return metrics
 
 
 def load_runtime_metrics(binary, timeout=0.35, fallback=None):
@@ -256,7 +351,7 @@ def load_runtime_metrics(binary, timeout=0.35, fallback=None):
             stderr=subprocess.PIPE, timeout=timeout, check=False)
         if completed.returncode != 0:
             raise ValueError("Typer returned %d" % completed.returncode)
-        return parse_manifest(completed.stdout)
+        return _inherit_policy(parse_manifest(completed.stdout), fallback)
     except (OSError, TypeError, ValueError, UnicodeError,
             subprocess.TimeoutExpired) as error:
         logging.warning(

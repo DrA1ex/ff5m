@@ -1,6 +1,7 @@
 """Shared numeric keypad editing, validation, and rendering tests."""
 
 import pathlib
+import re
 import sys
 import unittest
 
@@ -51,6 +52,22 @@ class NumericInputSpecTest(unittest.TestCase):
 
 
 class NumericKeypadTest(unittest.TestCase):
+    @staticmethod
+    def _contrast_ratio(foreground, background):
+        def luminance(value):
+            channels = []
+            for offset in (0, 2, 4):
+                channel = int(value[offset:offset + 2], 16) / 255.0
+                channels.append(
+                    channel / 12.92 if channel <= 0.04045 else
+                    ((channel + 0.055) / 1.055) ** 2.4)
+            return (0.2126 * channels[0] + 0.7152 * channels[1]
+                    + 0.0722 * channels[2])
+
+        lighter, darker = sorted(
+            (luminance(foreground), luminance(background)), reverse=True)
+        return (lighter + 0.05) / (darker + 0.05)
+
     def test_renderer_keeps_page_chrome_outside_keypad(self):
         renderer = FeatherRenderer()
         renderer.begin_page("Measured distance", back=True)
@@ -125,6 +142,28 @@ class NumericKeypadTest(unittest.TestCase):
                 renderer.color(ThemeColor.PRIMARY),
                 renderer.color(ThemeColor.BRIGHT)))
         self.assertGreaterEqual(drawing.count(keypad_style), 11)
+
+    def test_specialized_light_themes_render_readable_digit_keys(self):
+        actions = dict((digit, "key.%s" % digit)
+                       for digit in "0123456789")
+        actions.update({"backspace": "key.back", "confirm": "key.save"})
+
+        for theme in ("CLASSIC", "AUBERGINE"):
+            with self.subTest(theme=theme):
+                renderer = FeatherRenderer()
+                self.assertTrue(renderer.set_theme(theme))
+                drawing = renderer.numeric_keypad(
+                    18, 65, 764, 370, "VALUE", "15", actions,
+                    mode="integer")
+                digit = next(
+                    line for line in drawing if '-t "1"' in line)
+                colors = re.search(
+                    r"--background ([0-9a-f]{6}).*"
+                    r"--text-color ([0-9a-f]{6})", digit)
+
+                self.assertIsNotNone(colors)
+                self.assertGreaterEqual(
+                    self._contrast_ratio(*colors.groups()), 4.5)
 
 
 if __name__ == "__main__":

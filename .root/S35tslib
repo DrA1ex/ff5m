@@ -22,8 +22,17 @@ export TSLIB_CALIBFILE=/etc/pointercal
 export TSLIB_FBDEVICE=/dev/fb0
 
 create_link() {
-    DEVICE=$(grep -l "ts_uinput" /sys/class/input/event*/device/name | head -n 1)
-    if [ "$DEVICE" = "" ]; then
+    attempts="${1:-1}"
+
+    while [ "$attempts" -gt 0 ]; do
+        DEVICE=$(grep -l "ts_uinput" /sys/class/input/event*/device/name | head -n 1)
+        [ -n "$DEVICE" ] && break
+
+        attempts=$((attempts - 1))
+        [ "$attempts" -gt 0 ] && sleep 0.1
+    done
+
+    if [ -z "$DEVICE" ]; then
         echo "Unable to obtain input device."
         return 1
     fi
@@ -54,8 +63,11 @@ start() {
         ln -fns /tmp/parent_root/opt/tslib-1.12/etc/pointercal /etc/
     fi
     
-    start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN
-    [ $? = 0 ] && sleep 3 && create_link && echo "OK" || echo "FAIL"
+    if start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN; then
+        create_link 30 && echo "OK" || echo "FAIL"
+    else
+        echo "FAIL"
+    fi
 }
 
 stop() {

@@ -9,7 +9,7 @@ Installation uses a FAT32 USB drive and an intact release archive named for the 
 ## Normal boot and updates
 
 - `.shell/S00init` is installed into stock init and performs runtime preparation before services launch.
-- `.shell/S55boot` decides whether to pursue the mod path or stock fallback; alternate screens require successful network initialization.
+- `.shell/boot/boot.sh` starts `netd` directly for non-Stock modes. Feather continues offline-capable without waiting; Guppy/headless use the thin `netd-cli wait --timeout 180` and retain the Stock fallback. The wait timeout is boot policy only; `netd` itself keeps the configured network reconnecting indefinitely.
 - `.shell/S99root` creates/migrates Moonraker state on first run and starts the chroot stack.
 - Moonraker's update manager defines the Forge-X, Fluidd, Mainsail, and GuppyScreen updaters in [`moonraker.conf`](../../moonraker.conf). User instructions say OTA updates are initiated through **Configuration → Software Update** and are limited to the same major version ([`docs/INSTALL.md`](../../docs/INSTALL.md)).
 

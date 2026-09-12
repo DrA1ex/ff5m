@@ -7,22 +7,22 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import enum
 import logging
 import math
 
-from .actions import Action, action_wire_id
+from .actions import Action, DismissToast, action_wire_id
 from .font_metrics import (
     get_font_metrics, load_runtime_metrics, set_font_metrics,
 )
 from .numeric_input import NumericInputSpec
+from .render_receipts import validate_render_receipt_token
 from .theme import ThemeColor, ThemeRole, resolve_theme
 from .theme_catalog import (
     DEFAULT_THEME, FALLBACK_THEME, THEME_DIRECTORY, USER_THEME_DIRECTORY,
     ThemeCatalog, normalize_theme_name,
 )
 from .render_worker import (
-    MAX_BATCH_CHARS, MAX_BATCHES, RenderBatch, RenderBatchQueue,
+    MAX_BATCH_BYTES, MAX_BATCHES, RenderBatch, RenderBatchQueue,
     TyperRenderWorker,
 )
 
@@ -41,63 +41,12 @@ HEADER_BOTTOM = 55
 FOOTER_Y = 444
 FOOTER_HEIGHT = 32
 CONTENT_BOTTOM = FOOTER_Y - 2
-MAX_PENDING_DRAW = MAX_BATCH_CHARS
-# Keep each FIFO write below Linux PIPE_BUF.  An atomic frame is either fully
-# accepted or retried, so a page cannot remain half-rendered until a later UI
-# update happens to drain the tail.
-MAX_ATOMIC_DRAW = 3584
-
-
-
-class Page(enum.Enum):
-    IDLE_HOME = 1
-    MAIN_MENU = 25
-    CONTROL_HOME = 2
-    FILE_BROWSER = 3
-    FILE_CONFIRM = 4
-    PRINTING = 5
-    PAUSED = 6
-    CANCEL_CONFIRM = 7
-    CONTROL_MOVE = 8
-    CONTROL_HEAT = 9
-    FILAMENT_MATERIAL = 10
-    FILAMENT_ACTION = 11
-    CALIBRATION_HOME = 12
-    CALIBRATION_Z = 13
-    CALIBRATION_CONFIRM = 14
-    CALIBRATION_PROGRESS = 15
-    CALIBRATION_RESULT = 16
-    SETTINGS = 17
-    NETWORK_HOME = 18
-    WIFI_SCAN = 19
-    WIFI_PASSWORD = 20
-    NETWORK_PROGRESS = 21
-    RECOVERY_PROMPT = 22
-    RECOVERY_CONFIRM = 23
-    MESSAGE = 24
-    MOD_SETTINGS = 26
-    PARAMETER_OPTIONS = 27
-    MOD_VALUE = 28
-    ERROR = 29
-    LIVE_Z_OFFSET = 30
-    Z_OFFSET_SUMMARY = 31
-    Z_OFFSET_PAPER = 32
-    Z_OFFSET_PAPER_BRIEFING = 33
-    ACTION_PROMPT = 34
-    CALIBRATION_GUIDE = 35
-    SAFE_Z_BRIEFING = 36
-    SAFE_Z_CALIBRATION = 37
-    EXTRUDER_CALIBRATION = 38
-
-
-class PrintState(enum.Enum):
-    INACTIVE = 0
-    IDLE = 1
-    PREPARING = 2
-    PRINTING = 3
-    PAUSED = 4
-    FINISHED = 5
-    DESTROYED = 100
+MAX_PENDING_DRAW = MAX_BATCH_BYTES
+# Historical public name retained for compatibility.  This is a bounded
+# logical transport-frame size, not a Linux FIFO atomic-write guarantee:
+# 8 KiB may exceed PIPE_BUF.  Correctness depends on TyperRenderWorker being
+# the sole draw-FIFO writer and completing partial writes in _write_frame().
+MAX_ATOMIC_DRAW = 8 * 1024
 
 
 class FeatherRenderer:
@@ -118,19 +67,25 @@ class FeatherRenderer:
         "busy": (ThemeRole.BUTTON_BACKGROUND, ThemeColor.WARNING,
                  ThemeColor.WARNING),
         "pressed": (ThemeColor.PRESSED_BACKGROUND, ThemeColor.BRIGHT, ThemeColor.BRIGHT),
-        "keypad": (ThemeColor.PRIMARY_DARK, ThemeColor.PRIMARY,
-                   ThemeColor.BRIGHT),
+        "keypad": (ThemeRole.ACCENT_BACKGROUND, ThemeRole.ACCENT_BORDER,
+                   ThemeRole.ACCENT_TEXT),
         "keypad_aux": (ThemeColor.PANEL, ThemeColor.SECONDARY,
                        ThemeColor.SECONDARY),
-        "keypad_confirm": (ThemeColor.PRIMARY_DARK, ThemeColor.PRIMARY,
-                           ThemeColor.BRIGHT),
+        "keypad_confirm": (
+            ThemeRole.ACCENT_BACKGROUND, ThemeRole.ACCENT_BORDER,
+            ThemeRole.ACCENT_TEXT),
     }
     BUTTON_TEXT_PADDING = 16
     HINT_TEXT_PADDING = 20
     DIALOG_TEXT_PADDING = 28
-    def __init__(self, debug=False, theme_directories=None, blending=True):
+    def __init__(self, debug=False, theme_directories=None, blending=True,
+                 raster_acceleration="scalar"):
         self.debug = debug
         self.blending = bool(blending)
+        self.raster_acceleration = str(raster_acceleration).strip().lower()
+        if self.raster_acceleration not in ("scalar", "neon"):
+            raise ValueError("invalid raster acceleration: %s" %
+                             raster_acceleration)
         self._theme_directories = tuple(
             theme_directories or (THEME_DIRECTORY, USER_THEME_DIRECTORY))
         self._theme_catalog = ThemeCatalog.from_directories(
@@ -149,7 +104,7 @@ class FeatherRenderer:
         self._toggles = {}
         self._hitboxes = {}
         self._generation = 0
-        self._batch_queue = RenderBatchQueue(MAX_BATCHES, MAX_BATCH_CHARS)
+        self._batch_queue = RenderBatchQueue(MAX_BATCHES, MAX_BATCH_BYTES)
         self._worker = None
         self._async_scheduler = None
         self._event_fd_handler = None
@@ -158,7 +113,7 @@ class FeatherRenderer:
         self._next_batch_kind = None
         self._next_batch_key = None
         self._busy_label = None
-        self._emergency_stop_visible = False
+        self._header_action = None
         self._menu_suppressed = False
         self._loader_active = False
         self._output_frozen = False
@@ -179,6 +134,14 @@ class FeatherRenderer:
     @property
     def output_frozen(self):
         return self._output_frozen
+
+    @property
+    def touch_warning_allowed(self):
+        """Whether the visible surface has controls worth protecting."""
+        actions = set(self._buttons)
+        actions.update(
+            action for action in self._hitboxes if action != "global.wake")
+        return not self._loader_active and bool(actions)
 
     def discard_pending_output(self):
         """Drop untouched ordinary batches, preserving critical screens."""
@@ -214,7 +177,8 @@ class FeatherRenderer:
             self._batch_queue, self._encode_frames, self.debug,
             (TYPER_BINARY, DRAW_PIPE, EVENT_PIPE, TOUCH_DEVICE),
             self._async_scheduler, self._worker_event_fd_changed,
-            self._worker_restarted, load_fonts, blending=self.blending)
+            self._worker_restarted, load_fonts, blending=self.blending,
+            raster_acceleration=self.raster_acceleration)
         started = self._worker.start()
         self._busy_label = None
         self._last_footer = None
@@ -224,7 +188,8 @@ class FeatherRenderer:
         # render so neither the persistent footer nor the outer margins can
         # expose pixels from the previous screen owner.
         self.send([
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             "--batch clear -c %s" % self.color(ThemeColor.BACKGROUND),
         ], kind="critical", key="worker-clear")
         return started
@@ -251,7 +216,8 @@ class FeatherRenderer:
             return self._worker.request_restart()
         return False
 
-    def send(self, commands, kind=None, key=None, generation=None):
+    def send(self, commands, kind=None, key=None, generation=None,
+             receipt=None):
         """Publish one immutable batch; never perform IO or lifecycle work."""
         if self._output_frozen or not commands:
             return False
@@ -267,9 +233,17 @@ class FeatherRenderer:
                     self._last_submitted_generation else "state")
         if kind not in ("critical", "surface", "state", "animation"):
             raise ValueError("unknown render batch kind: %s" % kind)
-        character_count = sum(len(command) for command in immutable)
+        try:
+            receipt = (None if receipt is None else
+                       validate_render_receipt_token(receipt))
+            serialized_size = self._serialized_size(immutable, receipt)
+        except ValueError as exc:
+            logging.warning("[feather_screen] rejected render batch: %s", exc)
+            self._batch_queue.reject_submission()
+            return False
         batch = RenderBatch(
-            immutable, kind, key, batch_generation, character_count, None)
+            immutable, kind, key, batch_generation, serialized_size, None,
+            receipt)
         accepted = self._batch_queue.put_nowait(batch)
         if accepted:
             self._last_submitted_generation = max(
@@ -281,8 +255,9 @@ class FeatherRenderer:
         self._next_batch_kind = kind
         self._next_batch_key = key
 
-    def send_animation(self, commands, key):
-        return self.send(commands, kind="animation", key=key)
+    def send_animation(self, commands, key, receipt=None):
+        return self.send(
+            commands, kind="animation", key=key, receipt=receipt)
 
     def get_status(self):
         if self._worker is None:
@@ -300,26 +275,74 @@ class FeatherRenderer:
         self._semantic_page_id = str(page_id)
 
     @staticmethod
-    def _encode_frames(commands):
-        suffix = ["--batch flush", "--end", ""]
-        frames = []
-        current = []
-        size = len("\n".join(suffix).encode("utf-8"))
+    def _serialized_size(commands, receipt=None):
+        """Return exact FIFO bytes without retaining a serialized copy."""
+        receipt = (None if receipt is None else
+                   validate_render_receipt_token(receipt))
+        intermediate_suffix_size = len("--end\n".encode("utf-8"))
+        final_command = "--batch flush"
+        if receipt is not None:
+            final_command += " --receipt " + receipt
+        final_suffix_size = len(
+            (final_command + "\n--end\n").encode("utf-8"))
+        current_payload_size = 0
+        total_size = 0
+        have_chunk = False
         for command in commands:
             line_size = len((str(command) + "\n").encode("utf-8"))
+            if line_size + final_suffix_size > MAX_ATOMIC_DRAW:
+                raise ValueError(
+                    "single Typer command exceeds MAX_ATOMIC_DRAW")
+            if (have_chunk and current_payload_size + line_size
+                    + final_suffix_size > MAX_ATOMIC_DRAW):
+                total_size += current_payload_size + intermediate_suffix_size
+                current_payload_size = 0
+                have_chunk = False
+            current_payload_size += line_size
+            have_chunk = True
+        if have_chunk:
+            total_size += current_payload_size + final_suffix_size
+        return total_size
+
+    @staticmethod
+    def _encode_frames(commands, receipt=None):
+        receipt = (None if receipt is None else
+                   validate_render_receipt_token(receipt))
+        intermediate_suffix = ["--end", ""]
+        final_command = "--batch flush"
+        if receipt is not None:
+            final_command += " --receipt " + receipt
+        final_suffix = [final_command, "--end", ""]
+        chunks = []
+        current = []
+        # Reserve the larger final suffix for every chunk. This keeps every
+        # serialized FIFO write within MAX_ATOMIC_DRAW without needing a
+        # second packing pass when the last chunk is selected.
+        suffix_size = len("\n".join(final_suffix).encode("utf-8"))
+        size = suffix_size
+        for command in commands:
+            command = str(command)
+            line_size = len((command + "\n").encode("utf-8"))
             if size + line_size > MAX_ATOMIC_DRAW and not current:
                 raise ValueError(
                     "single Typer command exceeds MAX_ATOMIC_DRAW")
             if current and size + line_size > MAX_ATOMIC_DRAW:
-                frames.append(bytearray(
-                    "\n".join(current + suffix).encode("utf-8")))
+                chunks.append(current)
                 current = []
-                size = len("\n".join(suffix).encode("utf-8"))
-            current.append(str(command))
+                size = suffix_size
+            current.append(command)
             size += line_size
         if current:
-            frames.append(bytearray(
-                "\n".join(current + suffix).encode("utf-8")))
+            chunks.append(current)
+
+        frames = []
+        for index, chunk in enumerate(chunks):
+            suffix = (final_suffix if index == len(chunks) - 1
+                      else intermediate_suffix)
+            frame = bytearray("\n".join(chunk + suffix).encode("utf-8"))
+            if len(frame) > MAX_ATOMIC_DRAW:
+                raise ValueError("Typer frame exceeds MAX_ATOMIC_DRAW")
+            frames.append(frame)
         return frames
 
     def decode_action(self, action):
@@ -435,18 +458,24 @@ class FeatherRenderer:
                 half_width * 2 + 1, 1, color))
         return commands
 
-    def hint_box(self, message, center_x, y, max_width=740, min_width=180,
-                 height=44, border=ThemeColor.SECONDARY,
-                 background=ThemeColor.BACKGROUND, font="JetBrainsMono 8pt"):
-        """Draw a centered one-line hint with guaranteed inner padding."""
-        font = self.normalize_font(font)
-        available = max(1, int(max_width) - 2 * self.HINT_TEXT_PADDING)
+    def _hint_box_geometry(self, message, center_x, max_width, min_width,
+                           font):
         label = str(message).upper()
+        font = self.normalize_font_for_text(font, label)
+        available = max(1, int(max_width) - 2 * self.HINT_TEXT_PADDING)
         width = min(
             int(max_width),
             max(int(min_width),
                 self.text_width(label, font) + 2 * self.HINT_TEXT_PADDING))
         x = int(center_x) - width // 2
+        return label, font, available, x, width
+
+    def hint_box(self, message, center_x, y, max_width=740, min_width=180,
+                 height=44, border=ThemeColor.SECONDARY,
+                 background=ThemeColor.BACKGROUND, font="JetBrainsMono 8pt"):
+        """Draw a centered one-line hint with guaranteed inner padding."""
+        label, font, available, x, width = self._hint_box_geometry(
+            message, center_x, max_width, min_width, font)
         commands = self.panel(
             x, int(y), width, int(height), border=border,
             background=background, line_width=2)
@@ -694,8 +723,8 @@ class FeatherRenderer:
              font="JetBrainsMono 12pt", h_align="left", v_align="middle",
              max_width=None, max_height=None, wrap=False, truncate=False,
              proportional=False):
-        font = self.normalize_font(font, proportional)
         value = str(value)
+        font = self.normalize_font_for_text(font, value)
         if (wrap or truncate) and (max_width is None or int(max_width) <= 0):
             raise ValueError("wrap and truncate require max_width")
         if wrap and (max_height is None or int(max_height) <= 0):
@@ -723,14 +752,14 @@ class FeatherRenderer:
         return command + " -t %s" % self.quote(value)
 
     @classmethod
-    def available_fonts(cls):
-        """Return the exact font names compiled into Typer."""
-        return get_font_metrics().available_fonts()
-
-    @classmethod
     def normalize_font(cls, font, allow_proportional=False):
         """Map UI font requests to sizes actually compiled into typer."""
         return get_font_metrics().normalize_font(font, allow_proportional)
+
+    @classmethod
+    def normalize_font_for_text(cls, font, value):
+        """Use the requested face when it covers the rendered text."""
+        return get_font_metrics().normalize_for_text(font, value)
 
     @classmethod
     def font_advance(cls, font):
@@ -745,10 +774,23 @@ class FeatherRenderer:
         return get_font_metrics().text_width(value, font)
 
     @staticmethod
-    def hitbox(action, x, y, width, height, continuous=False):
+    def hitbox(action, x, y, width, height, continuous=False, layer="base"):
+        layer = str(layer).lower()
+        if layer not in ("base", "overlay"):
+            raise ValueError("unknown hitbox layer: %s" % layer)
         command = "--batch hitbox --id %s -p %d %d -s %d %d" % (
             action, x, y, width, height)
-        return command + (" --continuous" if continuous else "")
+        if continuous:
+            command += " --continuous"
+        command += " --layer %s" % layer
+        return command
+
+    @staticmethod
+    def clear_hitboxes(layer="base"):
+        layer = str(layer).lower()
+        if layer not in ("base", "overlay"):
+            raise ValueError("unknown hitbox layer: %s" % layer)
+        return "--batch clear-hitboxes --layer " + layer
 
     def action_hitbox(self, action, x, y, width, height, continuous=False):
         logical_action = (
@@ -757,6 +799,11 @@ class FeatherRenderer:
             x, y, width, height, bool(continuous))
         return self.hitbox(self._wire_action(action), x, y, width, height,
                            continuous)
+
+    def overlay_hitbox(self, action, x, y, width, height, continuous=False):
+        return self.hitbox(
+            self._wire_action(action), x, y, width, height,
+            continuous, layer="overlay")
 
     def _toggle_commands(self, x, y, width, height, thumb_x, enabled):
         border = ThemeColor.PRIMARY if enabled else ThemeColor.MUTED
@@ -819,7 +866,8 @@ class FeatherRenderer:
         self._toggles = {}
         self._hitboxes = {}
         self.send([
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
         ])
 
@@ -850,10 +898,11 @@ class FeatherRenderer:
                    "--border %s --text-color %s -lw 2 -f %s "
                    "--max-width %d --truncate -t %s" %
                    (x, y, width, height, background, border, text_color,
-                    self.quote(self.normalize_font(font)),
+                    self.quote(self.normalize_font_for_text(
+                        font, display_label)),
                     max_width, self.quote(display_label)))
         if include_hitbox and state not in ("disabled", "busy"):
-            command += " --id %s" % action
+            command += " --id %s --layer base" % action
         return [command]
 
     def _button_commands(self, action, x, y, width, height, label, state,
@@ -950,14 +999,14 @@ class FeatherRenderer:
         if state not in self.BUTTON_COLORS:
             state = "enabled"
         if layout == "center":
-            font = self.normalize_font(font)
+            font = self.normalize_font_for_text(font, label)
         if state not in ("disabled", "busy"):
             self._buttons[logical_action] = (
                 x, y, width, height, label, state, font, subtitle, layout,
                 subtitle_font, subtitle_color, accent)
         if (logical_action == "nav.menu"
                 and (self._busy_label is not None
-                     or self._emergency_stop_visible)):
+                     or self._header_action is not None)):
             self._menu_suppressed = True
             return []
         if logical_action == "nav.menu":
@@ -987,14 +1036,16 @@ class FeatherRenderer:
             self._wire_action(action), x, y, width, height, direction, state)
 
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
-               height=220, tone="warning", modal=True):
+               height=220, tone="warning", modal=True,
+               preserve_header_action=True):
         """Build a modal dialog from standard panel, text, and button primitives.
 
         ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
         existing hitboxes makes a dialog genuinely modal even when it only
         covers one control region visually. Set ``modal`` to false for a
         localized overlay whose caller will explicitly re-register the
-        controls that remain available.
+        controls that remain available. Set ``preserve_header_action`` to
+        false when loss of input makes even that action unusable.
         """
         tones = {
             "warning": ThemeColor.WARNING,
@@ -1003,21 +1054,26 @@ class FeatherRenderer:
         }
         border = tones.get(tone, ThemeColor.PRIMARY)
         commands = []
-        preserve_emergency = self._emergency_stop_visible
+        show_header_action = (
+            preserve_header_action and self._header_action is not None)
         if modal:
             self._buttons = {}
             self._toggles = {}
             self._hitboxes = {}
-            commands += ["--batch clear-hitboxes", self._wake_hitbox()]
+            commands += [
+                self.clear_hitboxes("base"),
+                self.clear_hitboxes("overlay"),
+                self._wake_hitbox(),
+            ]
         commands += self.panel(
             x, y, width, height, border=border, background=ThemeColor.PANEL)
         commands.append(self.text(
             x + width // 2, y + 34, str(title).upper(), border,
             "JetBrainsMono Bold 16pt", "center", "middle",
             max_width=width - 2 * self.DIALOG_TEXT_PADDING, truncate=True))
-        for index, line in enumerate(tuple(lines)[:4]):
+        for index, line in enumerate(tuple(lines)[:5]):
             commands.append(self.text(
-                x + width // 2, y + 78 + index * 24, str(line), ThemeColor.TEXT,
+                x + width // 2, y + 86 + index * 24, str(line), ThemeColor.TEXT,
                 "JetBrainsMono 8pt", "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING,
                 truncate=True))
@@ -1034,8 +1090,8 @@ class FeatherRenderer:
                     action, x + margin + index * (button_width + gap),
                     button_y, button_width, 42, label, state=state,
                     font="JetBrainsMono 8pt")
-        if modal and preserve_emergency:
-            commands += self._emergency_stop_commands()
+        if modal and show_header_action:
+            commands += self._header_action_commands()
         return commands
 
     def flash_button(self, action):
@@ -1071,19 +1127,28 @@ class FeatherRenderer:
                 False, layout, subtitle_font, subtitle_color, accent))
         return True
 
-    def set_emergency_stop_visible(self, visible):
-        visible = bool(visible)
-        if visible == self._emergency_stop_visible:
+    def set_header_action(self, action=None, label="", state="danger",
+                          font="JetBrainsMono Bold 8pt"):
+        value = (None if action is None else
+                 (action, str(label), str(state), str(font)))
+        if value == self._header_action:
             return False
-        self._emergency_stop_visible = visible
-        if not visible:
-            self._buttons.pop("global.abort", None)
+        previous = self._header_action
+        self._header_action = value
+        if previous is not None:
+            old_action = previous[0]
+            old_wire_id = (action_wire_id(old_action)
+                           if isinstance(old_action, Action)
+                           else str(old_action))
+            self._buttons.pop(old_wire_id, None)
         return True
 
-    def _emergency_stop_commands(self):
+    def _header_action_commands(self):
+        if self._header_action is None:
+            return []
+        action, label, state, font = self._header_action
         return self.button(
-            "global.abort", 648, 7, 132, 46, "ABORT",
-            state="danger", font="JetBrainsMono Bold 8pt")
+            action, 648, 7, 132, 46, label, state=state, font=font)
 
     def begin_page(self, title, back=False):
         self._loader_active = False
@@ -1093,9 +1158,10 @@ class FeatherRenderer:
         self._toggles = {}
         self._hitboxes = {}
         self._menu_suppressed = False
-        show_abort = self._emergency_stop_visible
+        show_header_action = self._header_action is not None
         commands = [
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
             # Preserve the footer framebuffer. It is a persistent status area
             # and is updated independently only when one of its values changes.
@@ -1119,7 +1185,7 @@ class FeatherRenderer:
             self.fill(18, HEADER_BOTTOM, 764, 1, ThemeRole.HEADER_BORDER),
             self.fill(18, FOOTER_Y - 2, 764, 1, ThemeColor.BORDER),
         ]
-        if self._busy_label is not None and not show_abort:
+        if self._busy_label is not None and not show_header_action:
             busy_label = self._busy_label
             commands += [
                 self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
@@ -1128,8 +1194,8 @@ class FeatherRenderer:
                           "JetBrainsMono Bold 8pt", "center", "middle",
                           max_width=132, truncate=True),
             ]
-        if show_abort:
-            commands += self._emergency_stop_commands()
+        if show_header_action:
+            commands += self._header_action_commands()
         if self._footer_values is not None and not self._footer_drawn:
             commands += self._footer_commands(self._footer_values)
             self._last_footer = self._footer_values
@@ -1137,8 +1203,7 @@ class FeatherRenderer:
         return commands
 
     def _footer_commands(self, values):
-        left = "NOZZLE %.0f/%.0fC | BED %.0f/%.0fC" % values[:4]
-        right = "%s | %s" % (values[4], str(values[5]).upper())
+        left, right = values
         return [
             # The footer is a persistent framebuffer region. Clear its full
             # extent before drawing the inner panel so startup overlays and
@@ -1157,29 +1222,47 @@ class FeatherRenderer:
                       truncate=True),
         ]
 
-    def footer(self, nozzle, nozzle_target, bed, bed_target, network, state):
-        values = (round(nozzle, 1), round(nozzle_target), round(bed, 1),
-                  round(bed_target), network, state)
+    def footer(self, left, right):
+        values = (str(left), str(right))
         self._footer_values = values
-        if values == self._last_footer:
+        if self._footer_drawn and values == self._last_footer:
             return
-        self._last_footer = values
-        self._footer_drawn = True
+        self._footer_drawn = False
+        if self._output_frozen:
+            return
         self.prioritize_next_batch("state", "footer")
-        self.send(self._footer_commands(values))
+        if self.send(self._footer_commands(values)) is not False:
+            self._last_footer = values
+            self._footer_drawn = True
+
+    def invalidate_footer(self):
+        """Require the next page frame to restore the persistent footer."""
+        self._footer_drawn = False
 
     def toast(self, message):
-        self.send(self.hint_box(
-            message, 400, 397, max_width=740, min_width=180, height=44,
+        y = 397
+        height = 44
+        _label, _font, _available, x, width = self._hint_box_geometry(
+            message, 400, 740, 180, "JetBrainsMono 8pt")
+        commands = self.hint_box(
+            message, 400, y, max_width=740, min_width=180, height=height,
             border=ThemeColor.SECONDARY, background=ThemeColor.BACKGROUND,
-            font="JetBrainsMono 8pt"))
+            font="JetBrainsMono 8pt")
+        commands.append(self.overlay_hitbox(
+            DismissToast(), x, y, width, height))
+        self.prioritize_next_batch("state", "toast")
+        self.send(commands)
 
-    def busy_notice(self, label="KLIPPER BUSY"):
+    def clear_toast_hitbox(self):
+        self.prioritize_next_batch("state", "toast-hitbox")
+        self.send([self.clear_hitboxes("overlay")])
+
+    def busy_notice(self, label="PLEASE WAIT"):
         label = str(label).upper()
         if label == self._busy_label:
             return
         self._busy_label = label
-        if self._emergency_stop_visible:
+        if self._header_action is not None:
             return
         self.send([
             self.fill(622, 9, 160, 38, ThemeRole.HEADER_BACKGROUND),
@@ -1193,7 +1276,7 @@ class FeatherRenderer:
         if self._busy_label is None:
             return
         self._busy_label = None
-        if self._emergency_stop_visible:
+        if self._header_action is not None:
             return
         menu = self._buttons.get("nav.menu")
         if menu is not None:
@@ -1217,12 +1300,13 @@ class FeatherRenderer:
         if first_frame:
             self._generation += 1
             self._loader_active = True
-        preserve_emergency = self._emergency_stop_visible
+        preserve_header_action = self._header_action is not None
         self._buttons = {}
         self._toggles = {}
         self._hitboxes = {}
         commands = [
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
             # Clear the header too: leaving the old Back button painted made
             # it look usable even though its hitbox had been removed.
@@ -1235,23 +1319,26 @@ class FeatherRenderer:
                       max_width=440, truncate=True),
             self.fill(18, HEADER_BOTTOM, 764, 1, ThemeRole.HEADER_BORDER),
             self.fill(18, FOOTER_Y - 2, 764, 1, ThemeColor.BORDER),
-            self.text(400, 190, message, ThemeColor.TEXT, "JetBrainsMono Bold 16pt",
-                      "center", "middle"),
+            # Bottom-aligned so a second line grows into the free band under
+            # the header; below it there is no room. 93 px = two lines.
+            self.text(400, 215, message, ThemeColor.TEXT, "JetBrainsMono Bold 16pt",
+                      "center", "bottom", max_width=704, max_height=93,
+                      wrap=True, truncate=True),
             self.text(400, 235, "PLEASE WAIT", ThemeColor.DIM, "JetBrainsMono 12pt",
                       "center", "middle"),
         ]
         for index in range(5):
             color = ThemeColor.PRIMARY if index == phase % 5 else ThemeColor.MUTED
             commands.append(self.fill(290 + index * 48, 280, 32, 12, color))
-        if preserve_emergency:
-            commands += self._emergency_stop_commands()
+        if preserve_header_action:
+            commands += self._header_action_commands()
         self.prioritize_next_batch(
             "surface" if first_frame else "animation", "loader")
         self.send(commands)
 
-    def startup_modal(self, phase=0, restarting=False):
-        """Draw the pre-ready Klipper loading modal and its pulse frame."""
-        # This full-screen modal owns the framebuffer until Klipper is ready.
+    def startup_modal(self, title, detail, phase=0, critical=False):
+        """Draw a pre-ready loading modal and its pulse frame."""
+        # This full-screen modal owns the framebuffer until the host is ready.
         # Invalidate animations scheduled by the page underneath it so a late
         # toggle/button frame cannot be painted over the restart screen.
         self._generation += 1
@@ -1259,10 +1346,9 @@ class FeatherRenderer:
         self._buttons = {}
         self._toggles = {}
         self._hitboxes = {}
-        detail = ("RESTART IN PROGRESS - DISPLAY MAY PAUSE"
-                  if restarting else "INITIALIZING PRINTER SERVICES")
         commands = [
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
             self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, ThemeColor.OVERLAY),
         ]
@@ -1270,18 +1356,18 @@ class FeatherRenderer:
             150, 120, 500, 250, border=ThemeColor.PRIMARY,
             background=ThemeColor.PANEL, line_width=2)
         commands += [
-            self.text(400, 170, "INITIALIZING KLIPPER", ThemeColor.PRIMARY,
+            self.text(400, 170, str(title), ThemeColor.PRIMARY,
                       "JetBrainsMono Bold 16pt", "center", "middle"),
         ]
         commands += self.startup_pulse(phase)
         commands += [
             self.text(400, 300, "PLEASE WAIT", ThemeColor.TEXT,
                       "JetBrainsMono 12pt", "center", "middle"),
-            self.text(400, 335, detail, ThemeColor.DIM,
+            self.text(400, 335, str(detail), ThemeColor.DIM,
                       "JetBrainsMono 8pt", "center", "middle"),
         ]
         self.prioritize_next_batch(
-            "critical" if restarting else "surface", "startup")
+            "critical" if critical else "surface", "startup")
         self.send(commands)
 
     def startup_pulse(self, phase=0):
@@ -1291,6 +1377,26 @@ class FeatherRenderer:
         commands += self.filled_circle(400, 232, pulse, ThemeColor.SECONDARY)
         return commands
 
+    def touch_unavailable_modal(self):
+        """Replace an interactive surface until touch input reconnects."""
+        self._generation += 1
+        self._footer_drawn = False
+        commands = [
+            self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, ThemeColor.OVERLAY),
+        ]
+        commands += self.dialog(
+            "Touch input unavailable", (), (),
+            x=110, y=110, width=580, height=270, tone="warning",
+            preserve_header_action=False)
+        commands.append(self.text(
+            400, 245,
+            "THE TOUCH DEVICE IS NOT AVAILABLE. "
+            "WAITING FOR AUTOMATIC RECONNECTION.",
+            ThemeColor.TEXT, "JetBrainsMono 12pt", "center", "middle",
+            max_width=524, max_height=108, wrap=True, truncate=True))
+        self.prioritize_next_batch("critical", "touch-unavailable")
+        self.send(commands)
+
     def applying_modal(self, message="APPLYING CHANGES"):
         """Dim the page and draw a non-interactive modal progress panel."""
         self._generation += 1
@@ -1299,7 +1405,8 @@ class FeatherRenderer:
         self._toggles = {}
         self._hitboxes = {}
         commands = [
-            "--batch clear-hitboxes",
+            self.clear_hitboxes("base"),
+            self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
             self.fill(0, HEADER_BOTTOM + 1, SCREEN_WIDTH,
                       CONTENT_BOTTOM - HEADER_BOTTOM - 1, ThemeColor.OVERLAY),

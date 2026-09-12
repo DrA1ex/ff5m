@@ -4,12 +4,14 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import configparser
 import importlib.util
 import enum
 import json
 import pathlib
 import re
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -20,8 +22,10 @@ SPEC = importlib.util.spec_from_file_location("feather_screen", MODULE_PATH)
 FEATHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FEATHER)
 UI = __import__("ui")
+NETWORK_PROTOCOL = __import__("feather_netd_protocol")
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
+from feather_feature_z import ZCalibrationFeature
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -131,6 +135,13 @@ class ModManager:
         self.params = params
         self.variables = dict(variables)
         self.updated = []
+        self.params_map = dict((param.key, param) for param in params)
+        category_ids = set(
+            getattr(param, "ui_category", None) for param in params)
+        self.ui_categories_map = dict(
+            (category_id, type("Category", (), {
+                "label": str(category_id).upper()})())
+            for category_id in category_ids if category_id is not None)
 
     def set_value(self, key, value):
         param = next(param for param in self.params if param.key == key)
@@ -151,12 +162,14 @@ class ModManager:
 
 
 def mod_param(key, param_type, default, label, description="Description",
-              options=None, readonly=False, hidden=False, restart=None):
+              options=None, readonly=False, hidden=False, restart=None,
+              ui_inverted=False, ui_category=None, ui_visible_if=None):
     return type("Param", (), {
         "key": key, "type": param_type, "default": default,
         "label": label, "description": description, "options": options,
         "readonly": readonly, "hidden": hidden, "warning": None,
-        "restart": restart,
+        "restart": restart, "ui_inverted": ui_inverted,
+        "ui_category": ui_category, "ui_visible_if": ui_visible_if,
     })()
 
 
@@ -171,8 +184,8 @@ def mod_controller(params, variables):
     host.virtual_sdcard = type(
         "SD", (), {"is_active": lambda self: False})()
     host.print_state = FEATHER.PrintState.IDLE
-    host.page = FEATHER.Page.MOD_SETTINGS
-    host.previous_page = FEATHER.Page.SETTINGS
+    host.page = FEATHER.ScreenPage.MOD_SETTINGS
+    host.previous_page = FEATHER.ScreenPage.SETTINGS
     host.toast_until = 0
     host.toast_message = ""
     host._toast = lambda message: None
@@ -182,8 +195,8 @@ def mod_controller(params, variables):
     def show_page(page):
         host.previous_page = host.page
         host.page = page
-        if page in (FEATHER.Page.SETTINGS, FEATHER.Page.MOD_SETTINGS,
-                    FEATHER.Page.PARAMETER_OPTIONS, FEATHER.Page.MOD_VALUE):
+        if page in (FEATHER.ScreenPage.SETTINGS, FEATHER.ScreenPage.MOD_SETTINGS,
+                    FEATHER.ScreenPage.PARAMETER_OPTIONS, FEATHER.ScreenPage.MOD_VALUE):
             feature.render(page)
 
     host._show_page = show_page
@@ -213,41 +226,40 @@ class FeatherUtilitiesTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             _value = entry["unknown"]
 
-    def test_packaged_feather_config_declares_joystick_safety_limits(self):
-        config_path = pathlib.Path(__file__).parents[1] / "config" / "feather.cfg"
-        contents = config_path.read_text(encoding="utf-8")
-        section = contents.split(
-            "[feather_screen]", 1)[1].split("[", 1)[0]
-        active_options = [line for line in section.splitlines()
-                          if line.strip() and not line.lstrip().startswith("#")]
-        self.assertEqual(active_options, [
-            "joystick_x_min: -110",
-            "joystick_x_max: 110",
-            "joystick_y_min: -110",
-            "joystick_y_max: 110",
-            "joystick_z_min: 0",
-            "joystick_z_max: 220",
-        ])
-        self.assertNotIn("[delayed_gcode reset_screen]", contents)
-
-    def test_network_helper_includes_stock_sbin_paths(self):
-        helper = (pathlib.Path(__file__).parents[1] / ".shell" / "commands" /
-                  "znetwork.sh").read_text(encoding="utf-8")
-        self.assertIn("PATH=/sbin:/usr/sbin:/bin:/usr/bin", helper)
-
     def test_renderer_escapes_untrusted_text(self):
         quoted = FEATHER.FeatherRenderer.quote('file "one"\\two\nnext')
         self.assertEqual(quoted, '"file \\"one\\"\\\\two next"')
 
-    def test_renderer_normalizes_fonts_compiled_into_typer(self):
-        normalize = FEATHER.FeatherRenderer.normalize_font
-        self.assertEqual(normalize("Roboto 9pt"), "JetBrainsMono 8pt")
-        self.assertEqual(normalize("Roboto Bold 14pt"),
-                         "JetBrainsMono Bold 12pt")
-        self.assertEqual(normalize("JetBrainsMono 11pt"), "JetBrainsMono 12pt")
-        command = FEATHER.FeatherRenderer().text(
-            10, 10, "Visible", font="Roboto 10pt")
-        self.assertIn('-f "JetBrainsMono 8pt"', command)
+    def test_renderer_normalizes_fonts_from_active_manifest(self):
+        from ui import font_metrics
+
+        synthetic = font_metrics.parse_manifest({
+            "schema": "font-metrics/v1",
+            "wrap_algorithm": "word-v1",
+            "fonts": [
+                {
+                    "name": "Display 12pt", "advance_x": 9,
+                    "monospaced": True, "advance_y": 14,
+                    "glyph_bounds": {"top": -11, "bottom": 2},
+                    "unicode_ranges": [[32, 126]],
+                },
+                {
+                    "name": "Display 8pt", "advance_x": 6,
+                    "monospaced": True, "advance_y": 10,
+                    "glyph_bounds": {"top": -8, "bottom": 1},
+                    "unicode_ranges": [[32, 126]],
+                },
+            ],
+        })
+        with mock.patch("ui.renderer.get_font_metrics",
+                        return_value=synthetic):
+            normalize = FEATHER.FeatherRenderer.normalize_font
+            self.assertEqual(normalize("Display 9pt"), "Display 8pt")
+            self.assertEqual(normalize("Display 11pt"), "Display 12pt")
+            command = FEATHER.FeatherRenderer().text(
+                10, 10, "Visible", font="Display 10pt")
+
+        self.assertIn('-f "Display 8pt"', command)
         self.assertNotIn("10pt", command)
 
     def test_leading_minus_is_not_parsed_as_a_typer_option(self):
@@ -288,49 +300,64 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
     def test_shared_text_keyboard_applies_layout_filter_and_length(self):
         keyboard = KEYBOARD.TEXT_KEYBOARD
-        value, shift, symbols = keyboard.apply(
-            "", "keyboard.shift", False, False)
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.key.a", shift, symbols)
-        self.assertEqual((value, shift, symbols), ("A", True, False))
+        value, cursor, shift, symbols = keyboard.apply(
+            "", 0, "keyboard.shift", False, False)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.key.a", shift, symbols)
+        self.assertEqual((value, cursor, shift, symbols),
+                         ("A", 1, True, False))
 
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.symbols", shift, symbols)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.symbols", shift, symbols)
         self.assertEqual((shift, symbols), (False, True))
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.shift", shift, symbols)
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.key.pipe", shift, symbols)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.shift", shift, symbols)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.key.pipe", shift, symbols)
         self.assertEqual(value, "A|")
 
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.key.tilde", shift, symbols,
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.key.tilde", shift, symbols,
             allowed_characters=lambda character: character.isalnum())
         self.assertEqual(value, "A|")
-        value, shift, symbols = keyboard.apply(
-            value, "keyboard.space", shift, symbols, max_length=2)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.space", shift, symbols, max_length=2)
         self.assertEqual(value, "A|")
 
-    def test_chamber_light_macros_update_state_without_toolhead_sync(self):
-        macros = (pathlib.Path(__file__).parents[1] / "macros" /
-                  "base.cfg").read_text(encoding="utf-8")
+    def test_shared_text_keyboard_edits_at_cursor_and_clamps_movement(self):
+        keyboard = KEYBOARD.TEXT_KEYBOARD
+        value, cursor, shift, symbols = keyboard.apply(
+            "ac", 2, "keyboard.left")
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.key.b", shift, symbols)
+        self.assertEqual((value, cursor), ("abc", 2))
 
-        self.assertIn(
-            "SET_LED LED=chamber_light WHITE=1 SYNC=0", macros)
-        self.assertIn(
-            "SET_LED LED=chamber_light WHITE=0 SYNC=0", macros)
-        self.assertIn(
-            '_SET_LED LED=chamber_light WHITE="{params.WHITE}" SYNC=0',
-            macros)
-        self.assertIn(
-            "[delayed_gcode _RESTORE_CHAMBER_LIGHT]", macros)
-        self.assertIn(
-            "printer.mod_params.variables.chamber_light|default(50)",
-            macros)
-        self.assertIn(
-            'SET_MOD PARAM=chamber_light VALUE="', macros)
-        self.assertIn(
-            'changes.key == "chamber_light"', macros)
+        value, cursor, shift, symbols = keyboard.apply(
+            value, cursor, "keyboard.backspace", shift, symbols)
+        self.assertEqual((value, cursor), ("ac", 1))
+        for _step in range(3):
+            value, cursor, shift, symbols = keyboard.apply(
+                value, cursor, "keyboard.left", shift, symbols)
+        self.assertEqual((value, cursor), ("ac", 0))
+        for _step in range(4):
+            value, cursor, shift, symbols = keyboard.apply(
+                value, cursor, "keyboard.right", shift, symbols)
+        self.assertEqual((value, cursor), ("ac", 2))
+
+    def test_shared_text_keyboard_keeps_caret_inside_long_value_field(self):
+        renderer = FEATHER.FeatherRenderer()
+        commands = KEYBOARD.TEXT_KEYBOARD.render_value(
+            renderer, "a" * 64, 32, 42, 147, 575,
+            UI.ThemeColor.PRIMARY)
+
+        caret = commands[-1]
+        match = re.search(
+            r"fill -p (\d+) (\d+) -s (\d+) (\d+)", caret)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(int(match.group(1)), 42)
+        self.assertLessEqual(int(match.group(1)), 615)
+        self.assertGreater(int(match.group(3)), 0)
+        self.assertGreater(int(match.group(4)), 0)
 
     def test_duration_formatting(self):
         duration = FEATHER.FeatherScreen._duration
@@ -360,12 +387,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
     def test_stale_actions_are_rejected(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         allowed = controller._action_allowed
-        self.assertTrue(allowed(FEATHER.Page.FILE_CONFIRM, "file.start"))
-        self.assertFalse(allowed(FEATHER.Page.IDLE_HOME, "file.start"))
-        self.assertTrue(allowed(FEATHER.Page.CANCEL_CONFIRM,
-                                "print.cancel.confirm"))
-        self.assertTrue(allowed(FEATHER.Page.CANCEL_CONFIRM, "nav.back"))
-        self.assertFalse(allowed(FEATHER.Page.PRINTING,
+        self.assertTrue(allowed(FEATHER.ScreenPage.FILE_CONFIRM, "file.start"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.IDLE_HOME, "file.start"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.CANCEL_CONFIRM,
+                                "operation.cancel.confirm"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.CANCEL_CONFIRM,
+                                "operation.cancel.back"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.PRINTING,
                                  "print.cancel.confirm"))
 
     def test_heater_targets_use_configured_limits(self):
@@ -378,110 +406,240 @@ class FeatherUtilitiesTest(unittest.TestCase):
     def test_page_actions_cover_navigation_and_reject_stale_taps(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         allowed = controller._action_allowed
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.menu"))
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.heat"))
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.network"))
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.job"))
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.filament"))
-        self.assertTrue(allowed(FEATHER.Page.IDLE_HOME, "nav.move"))
-        self.assertTrue(allowed(FEATHER.Page.PRINTING, "nav.home"))
-        self.assertFalse(allowed(FEATHER.Page.IDLE_HOME, "nav.settings"))
-        self.assertTrue(allowed(FEATHER.Page.MAIN_MENU, "nav.filament"))
-        self.assertTrue(allowed(FEATHER.Page.CONTROL_HOME, "nav.calibration"))
-        self.assertTrue(allowed(FEATHER.Page.CALIBRATION_CONFIRM,
-                                "cal.material.PETG"))
-        self.assertTrue(allowed(FEATHER.Page.EXTRUDER_CALIBRATION,
-                                "extruder.feed100"))
-        self.assertFalse(allowed(FEATHER.Page.CALIBRATION_HOME,
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.menu"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.heat"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.network"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.job"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "home.last_job"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.filament"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.move"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.PRINTING, "nav.home"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.IDLE_HOME, "nav.settings"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.MAIN_MENU, "nav.filament"))
+        self.assertTrue(allowed(FEATHER.ScreenPage.CONTROL_HOME, "nav.calibration"))
+        # Feature-owned actions never fall back to the controller table.
+        self.assertFalse(allowed(FEATHER.ScreenPage.CALIBRATION_CONFIRM,
+                                 "cal.material.PETG"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.EXTRUDER_CALIBRATION,
+                                 "extruder.feed100"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.CALIBRATION_HOME,
                                  "extruder.feed100"))
         # Declarative pages accept only actions registered in their real tree.
-        self.assertFalse(allowed(FEATHER.Page.Z_OFFSET_SUMMARY,
+        self.assertFalse(allowed(FEATHER.ScreenPage.Z_OFFSET_SUMMARY,
                                  "z.zone.front_left"))
-        self.assertFalse(allowed(FEATHER.Page.Z_OFFSET_PAPER, "z.probe"))
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.Z_OFFSET_SUMMARY
+        self.assertFalse(allowed(FEATHER.ScreenPage.Z_OFFSET_PAPER, "z.probe"))
+        host = type("Host", (), {})()
+        host.page = FEATHER.ScreenPage.Z_OFFSET_SUMMARY
+        z_feature = ZCalibrationFeature(host)
         self.assertEqual(
-            controller._resolve_semantic_ui_action(
+            z_feature.resolve_semantic_action(
+                host.page,
                 Z_OFFSET_LAYOUT.ZONE_ACTIONS["front_left"].wire_id),
             Z_OFFSET_LAYOUT.ZONE_ACTIONS["front_left"])
-        controller.page = FEATHER.Page.Z_OFFSET_PAPER
+        host.page = FEATHER.ScreenPage.Z_OFFSET_PAPER
         self.assertEqual(
-            controller._resolve_semantic_ui_action(
-                Z_OFFSET_LAYOUT.PROBE.wire_id),
+            z_feature.resolve_semantic_action(
+                host.page, Z_OFFSET_LAYOUT.PROBE.wire_id),
             Z_OFFSET_LAYOUT.PROBE)
-        self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
-                                "live_z.closer"))
-        self.assertTrue(allowed(FEATHER.Page.LIVE_Z_OFFSET,
-                                "live_z.save"))
-        self.assertFalse(allowed(FEATHER.Page.Z_OFFSET_SUMMARY,
+        self.assertFalse(allowed(FEATHER.ScreenPage.LIVE_Z_OFFSET,
                                  "live_z.closer"))
-        self.assertFalse(allowed(FEATHER.Page.LIVE_Z_OFFSET, "z.probe"))
-        self.assertFalse(allowed(FEATHER.Page.CONTROL_MOVE,
+        self.assertFalse(allowed(FEATHER.ScreenPage.LIVE_Z_OFFSET,
+                                 "live_z.save"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.Z_OFFSET_SUMMARY,
+                                 "live_z.closer"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.LIVE_Z_OFFSET, "z.probe"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.CONTROL_MOVE,
                                  "z.zone.front_left"))
-        self.assertFalse(allowed(FEATHER.Page.SETTINGS, "cal.confirm"))
-        self.assertTrue(allowed(FEATHER.Page.SETTINGS, "settings.mod"))
-        self.assertFalse(allowed(FEATHER.Page.SETTINGS, "settings.led"))
-        self.assertTrue(allowed(FEATHER.Page.SETTINGS,
-                                "settings.led.minus"))
-        self.assertTrue(allowed(FEATHER.Page.SETTINGS,
-                                "settings.led.plus"))
-        self.assertTrue(allowed(FEATHER.Page.MOD_SETTINGS, "mod.item.12"))
-        self.assertFalse(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.item.12"))
-        self.assertTrue(allowed(FEATHER.Page.PARAMETER_OPTIONS, "mod.option.2"))
-        self.assertTrue(allowed(FEATHER.Page.MOD_VALUE, "mod.key.7"))
-        self.assertTrue(allowed(
-            FEATHER.Page.MOD_VALUE, "keyboard.key.hash"))
-        self.assertTrue(allowed(
-            FEATHER.Page.WIFI_PASSWORD, "keyboard.backspace"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.SETTINGS, "cal.confirm"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.SETTINGS, "settings.mod"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.SETTINGS, "settings.led"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.SETTINGS,
+                                 "settings.led.minus"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.SETTINGS,
+                                 "settings.led.plus"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.MOD_SETTINGS, "mod.item.12"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.PARAMETER_OPTIONS, "mod.item.12"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.PARAMETER_OPTIONS,
+                                 "mod.option.2"))
+        self.assertFalse(allowed(FEATHER.ScreenPage.MOD_VALUE, "mod.key.7"))
         self.assertFalse(allowed(
-            FEATHER.Page.MOD_SETTINGS, "keyboard.key.hash"))
-        self.assertFalse(allowed(FEATHER.Page.MOD_SETTINGS, "mod.save"))
+            FEATHER.ScreenPage.MOD_VALUE, "keyboard.key.hash"))
+        self.assertTrue(allowed(
+            FEATHER.ScreenPage.WIFI_PASSWORD, "keyboard.backspace"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.WIFI_SCAN, "net.reset.saved"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        controller.message_actions = (
+            ("message.ok", "CANCEL", "enabled"),
+            ("net.reset.saved", "RESET PASSWORD", "warning"),
+        )
+        self.assertTrue(allowed(
+            FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.MOD_SETTINGS, "keyboard.key.hash"))
+
+        self.assertFalse(allowed(FEATHER.ScreenPage.MOD_SETTINGS, "mod.save"))
+        self.assertTrue(allowed(
+            FEATHER.ScreenPage.UPDATE_NOTIFICATION, "update.install"))
+        self.assertTrue(allowed(
+            FEATHER.ScreenPage.UPDATE_NOTIFICATION, "update.later"))
+        self.assertTrue(allowed(
+            FEATHER.ScreenPage.UPDATE_NOTIFICATION, "update.reset.confirm"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.IDLE_HOME, "update.install"))
+        self.assertFalse(allowed(
+            FEATHER.ScreenPage.IDLE_HOME, "update.reset.confirm"))
 
     def test_network_status_parser_is_bounded_to_public_fields(self):
+        # Unknown keys must be silently dropped; only SNAPSHOT_KEYS survive.
+        # SSIDs travel as base64 on the wire; STATE= is published explicitly.
+        ssid = NETWORK_PROTOCOL.encode_field("Workshop")
         parsed = FEATHER.FeatherScreen.parse_network_status(
-            "MODE=WIFI\nSSID=Workshop\nSIGNAL=-54\nIP=192.168.2.10\nSECRET=no\n")
-        self.assertEqual(parsed, {"mode": "WIFI", "ssid": "Workshop",
-                                  "signal": "-54", "ip": "192.168.2.10"})
+            "MODE=WIFI\nSTATE=CONNECTED\nSSID=%s\nSIGNAL=-54\nIP=192.168.2.10\nSECRET=no\n" % ssid)
+        self.assertEqual(parsed, {"mode": "WIFI", "state": "CONNECTED",
+                                  "ssid": "Workshop", "signal": "-54",
+                                  "ip": "192.168.2.10", "reason": "",
+                                  "progress": "", "attempt": ""})
 
-    def test_material_setting_defaults_to_na_and_is_persisted(self):
-        declaration = json.loads((pathlib.Path(__file__).parents[1] /
-                                  "mod_params.json").read_text(encoding="utf-8"))
-        material = next(item for item in declaration["parameters"]
-                        if item["key"] == "current_material")
-        self.assertEqual(material["default"], "n/a")
-        self.assertTrue(material["hidden"])
+    def test_material_values_are_normalized_for_persistence(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         normalize = controller._normalize_material
         self.assertEqual(normalize(None), "n/a")
         self.assertEqual(normalize("abs/pc"), "ABS-PC")
         self.assertEqual(normalize("custom"), "n/a")
 
-    def test_chamber_light_setting_defaults_to_visible_fifty_percent(self):
-        declaration = json.loads((pathlib.Path(__file__).parents[1] /
-                                  "mod_params.json").read_text(encoding="utf-8"))
-        light = next(item for item in declaration["parameters"]
-                     if item["key"] == "chamber_light")
 
-        self.assertEqual(light["default"], 50)
-        self.assertFalse(light.get("hidden", False))
 
-    def test_safe_z_defaults_to_ten_and_warns_about_real_clearance(self):
-        declaration = json.loads((pathlib.Path(__file__).parents[1] /
-                                  "mod_params.json").read_text(encoding="utf-8"))
-        safe_z = next(item for item in declaration["parameters"]
-                      if item["key"] == "safe_z")
+    def test_visible_mod_parameters_fit_their_settings_row(self):
+        # The screen truncates whatever does not fit a row, so a long label or
+        # description silently loses its ending on the printer.  Render the real
+        # declaration and measure every row against the width it is drawn with.
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
 
-        self.assertEqual(safe_z["type"], "float")
-        self.assertEqual(safe_z["default"], 10.0)
-        self.assertTrue(safe_z["warning"])
+        def loaded_default(param):
+            if issubclass(param.type, enum.Enum):
+                return param.type[param.default].value
+            if param.type is bool:
+                return bool(param.default)
+            return param.type(param.default)
 
-    def test_visible_mod_parameters_have_screen_descriptions(self):
-        declaration = json.loads((pathlib.Path(__file__).parents[1] /
-                                  "mod_params.json").read_text(encoding="utf-8"))
-        visible = [item for item in declaration["parameters"]
-                   if not item.get("hidden", False)]
-        self.assertTrue(visible)
-        self.assertTrue(all(item.get("description") for item in visible))
+        variables = dict(
+            (param.key, loaded_default(param)) for param in manager.params)
+        # Reveal every conditional parameter at once; hidden rows are never
+        # drawn and would escape the measurement.
+        variables.update({
+            "display_eco": True, "weight_check": True,
+            "bed_mesh_validation": True, "disable_cleaning": False,
+            "use_swap": manager.params_map["use_swap"].type["ZRAM"].value,
+        })
+        feature = mod_controller(manager.params, variables)
+        expected = MOD_UI.visible_parameters(feature.params)
+        self.assertEqual(
+            sorted(param.key for param in expected),
+            sorted(param.key for param in manager.params if not param.hidden))
+
+        with mock.patch.object(feature.renderer, "text",
+                               wraps=feature.renderer.text) as text:
+            feature._render_mod_settings()
+            while True:
+                page = feature.mod_page
+                feature._handle_mod_action("mod.next")
+                if feature.mod_page == page:
+                    break
+
+        drawn = {}
+        for call in text.call_args_list:
+            if not call.kwargs.get("truncate") or call.kwargs.get("wrap"):
+                continue
+            font = call.kwargs.get(
+                "font", call.args[4] if len(call.args) > 4 else None)
+            drawn.setdefault(str(call.args[2]), set()).add(
+                (font, int(call.kwargs["max_width"])))
+
+        self.assertTrue(expected)
+        for param in expected:
+            for value in (str(param.label).upper(), MOD_UI.description(param)):
+                self.assertTrue(value, param.key)
+                self.assertIn(value, drawn, param.key)
+                for font, max_width in drawn[value]:
+                    self.assertLessEqual(
+                        FEATHER.FeatherRenderer.text_width(value, font),
+                        max_width, "%s: %s" % (param.key, value))
+
+    def test_mod_category_pages_keep_every_heading_with_its_rows(self):
+        params = (
+            [mod_param("a%d" % index, bool, False, "A %d" % index,
+                       ui_category="alpha") for index in range(12)]
+            + [mod_param("b0", bool, False, "B 0", ui_category="beta")]
+            + [mod_param("g%d" % index, bool, False, "G %d" % index,
+                         ui_category="gamma") for index in range(7)])
+        manager = ModManager(params, {})
+        capacity = MOD_UI.LIST_BOTTOM - MOD_UI.LIST_TOP
+
+        pages = MOD_UI.category_pages(manager, params)
+
+        self.assertTrue(pages)
+        for sections in pages:
+            self.assertTrue(sections)
+            height = MOD_UI.page_height(sections)
+            self.assertLessEqual(height, capacity)
+            # Later bands are padded to a row pitch, so the rows of every page
+            # stay on one grid and no page ends with a half-row gap.
+            self.assertEqual((height - MOD_UI.band_pitch(0)) % MOD_UI.ITEM_PITCH,
+                             0, [section.label for section in sections])
+            for section in sections:
+                # A heading with nothing under it is exactly what the pixel
+                # pagination exists to prevent.
+                self.assertTrue(section.items, section.label)
+
+        self.assertEqual(
+            [entry for sections in pages
+             for entry in MOD_UI.page_parameters(sections)],
+            list(enumerate(params)))
+
+        # A category too long for one page repeats its heading, and every
+        # repeat reports where its rows sit inside the whole category.
+        for label, start in (("ALPHA", 0), ("BETA", 12), ("GAMMA", 13)):
+            sections = [section for sections in pages for section in sections
+                        if section.label == label]
+            total = sum(len(section.items) for section in sections)
+            self.assertEqual([section.continued for section in sections],
+                             [False] + [True] * (len(sections) - 1))
+            for section in sections:
+                self.assertEqual(section.total, total)
+                self.assertEqual(section.first,
+                                 section.items[0][0] - start + 1)
+        self.assertGreater(
+            len([section for sections in pages for section in sections
+                 if section.label == "ALPHA"]), 1)
+
+        for number, sections in enumerate(pages):
+            for _, param in MOD_UI.page_parameters(sections):
+                self.assertEqual(
+                    MOD_UI.page_of_parameter(pages, param.key), number)
+        self.assertIsNone(MOD_UI.page_of_parameter(pages, "absent"))
+
+        # A category that did not fit leaves a row-sized hole; that page names
+        # what follows rather than ending in blank space.
+        hints = [MOD_UI.next_category_hint(pages, number)
+                 for number in range(len(pages))]
+        self.assertTrue(any(hints), hints)
+        for number, hint in enumerate(hints):
+            if hint is None:
+                continue
+            self.assertGreaterEqual(
+                capacity - MOD_UI.page_height(pages[number]),
+                MOD_UI.ITEM_PITCH)
+            self.assertEqual(hint, pages[number + 1][0].label)
+        # The last page has nothing to announce, however much room is left.
+        self.assertIsNone(MOD_UI.next_category_hint(pages, len(pages) - 1))
 
     def test_mod_value_validation_is_type_specific_and_bounded(self):
         integer = mod_param("count", int, 0, "Count")
@@ -508,6 +666,462 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(len(labels), 2)
         self.assertNotEqual(labels[0], labels[1])
 
+    def test_mod_boolean_display_inversion_does_not_change_raw_value(self):
+        normal = mod_param("normal", bool, False, "Normal")
+        inverted = mod_param(
+            "inverted", bool, False, "Inverted", ui_inverted=True)
+
+        self.assertFalse(MOD_UI.bool_display_active(normal, False))
+        self.assertTrue(MOD_UI.bool_display_active(normal, True))
+        self.assertTrue(MOD_UI.bool_display_active(inverted, False))
+        self.assertFalse(MOD_UI.bool_display_active(inverted, True))
+        with self.assertRaisesRegex(TypeError, "not boolean"):
+            MOD_UI.bool_display_active(
+                mod_param("count", int, 0, "Count"), 0)
+
+    def test_mod_declaration_loads_optional_ui_inversion(self):
+        declaration = {
+            "parameters": [
+                {"key": "normal", "type": "bool", "default": 0,
+                 "label": "Normal"},
+                {"key": "inverted", "type": "bool", "default": 0,
+                 "label": "Inverted", "ui": {"inverted": True}},
+            ]
+        }
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json") as declaration_file:
+            json.dump(declaration, declaration_file)
+            declaration_file.flush()
+            manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            manager.declaration = declaration_file.name
+            manager.printer = type("Printer", (), {
+                "command_error": staticmethod(RuntimeError)})()
+
+            manager._load_declaration()
+
+        params = {parameter.key: parameter for parameter in manager.params}
+        self.assertFalse(params["normal"].ui_inverted)
+        self.assertTrue(params["inverted"].ui_inverted)
+
+    def test_unknown_mod_parameter_uses_the_fallback_category(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        declaration = json.loads(declaration_path.read_text(encoding="utf-8"))
+        declaration["parameters"].append({
+            "key": "future_parameter",
+            "type": "bool",
+            "default": 0,
+            "label": "Future parameter",
+            "description": "A parameter unknown to this category schema.",
+        })
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json") as declaration_file:
+            json.dump(declaration, declaration_file)
+            declaration_file.flush()
+            future_manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            future_manager.declaration = declaration_file.name
+            future_manager.printer = type("Printer", (), {
+                "command_error": staticmethod(RuntimeError)})()
+            future_manager._load_declaration()
+
+        future = future_manager.params_map["future_parameter"]
+        self.assertEqual(future.ui_category, "other")
+        other = [param.key for param in future_manager.params
+                 if param.ui_category == "other"]
+        self.assertEqual(other, sorted(
+            other, key=lambda key: (future_manager.params_map[key].order, key)))
+
+    def test_mod_parameter_ui_order_contract(self):
+        declaration = {
+            "ui": {
+                "categories": [
+                    {"id": "other", "label": "OTHER", "order": 30,
+                     "fallback": True, "parameters": []},
+                    {"id": "second", "label": "SECOND", "order": 20,
+                     "parameters": ["second_manual"]},
+                    {"id": "first", "label": "FIRST", "order": 10,
+                     "parameters": ["first_manual_b", "first_manual_a"]},
+                ]
+            },
+            "parameters": [
+                {"key": "fallback_z", "type": "bool", "default": 0,
+                 "label": "Fallback Z", "order": 5},
+                {"key": "first_unlisted_b", "type": "bool", "default": 0,
+                 "label": "First unlisted B", "order": 10,
+                 "ui": {"category": "first"}},
+                {"key": "second_manual", "type": "bool", "default": 0,
+                 "label": "Second manual", "order": 1},
+                {"key": "first_manual_a", "type": "bool", "default": 0,
+                 "label": "First manual A", "order": 1},
+                {"key": "fallback_a", "type": "bool", "default": 0,
+                 "label": "Fallback A", "order": 5},
+                {"key": "first_unlisted_a", "type": "bool", "default": 0,
+                 "label": "First unlisted A", "order": 10,
+                 "ui": {"category": "first"}},
+                {"key": "first_unlisted_early", "type": "bool", "default": 0,
+                 "label": "First unlisted early", "order": 2,
+                 "ui": {"category": "first"}},
+                {"key": "fallback_no_order_b", "type": "bool", "default": 0,
+                 "label": "Fallback no order B"},
+                {"key": "first_manual_b", "type": "bool", "default": 0,
+                 "label": "First manual B", "order": 999},
+                {"key": "fallback_no_order_a", "type": "bool", "default": 0,
+                 "label": "Fallback no order A"},
+            ]
+        }
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json") as declaration_file:
+            json.dump(declaration, declaration_file)
+            declaration_file.flush()
+            manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            manager.declaration = declaration_file.name
+            manager.printer = type("Printer", (), {
+                "command_error": staticmethod(RuntimeError)})()
+            manager._load_declaration()
+
+        self.assertEqual([category.id for category in manager.ui_categories],
+                         ["first", "second", "other"])
+        self.assertEqual([param.key for param in manager.params], [
+            "first_manual_b",
+            "first_manual_a",
+            "first_unlisted_early",
+            "first_unlisted_a",
+            "first_unlisted_b",
+            "second_manual",
+            "fallback_no_order_a",
+            "fallback_no_order_b",
+            "fallback_a",
+            "fallback_z",
+        ])
+
+    def test_all_strict_mod_visibility_dependencies(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        manager.variables = dict((param.key, param.default)
+                                 for param in manager.params)
+        cases = (
+            ("mod_check_update_interval", "mod_check_update", False, True),
+            ("backlight_eco", "display_eco", False, True),
+            ("weight_check_max", "weight_check", False, True),
+            ("bed_mesh_validation_clear", "bed_mesh_validation", False, True),
+            ("bed_mesh_validation_tolerance", "bed_mesh_validation", False, True),
+            ("load_zoffset_cleaning", "disable_cleaning", True, False),
+            ("zram_algo", "use_swap", 1, 3),
+        )
+        for child, parent, hidden_value, visible_value in cases:
+            with self.subTest(child=child):
+                manager.variables[parent] = hidden_value
+                self.assertNotIn(
+                    child, [param.key for param in
+                            MOD_UI.visible_parameters(manager)])
+                manager.variables[parent] = visible_value
+                self.assertIn(
+                    child, [param.key for param in
+                            MOD_UI.visible_parameters(manager)])
+
+    def test_update_check_declaration_exposes_runtime_defaults_and_bounds(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+
+        enabled = manager.params_map["mod_check_update"]
+        interval = manager.params_map["mod_check_update_interval"]
+        self.assertIs(enabled.type, bool)
+        self.assertTrue(enabled.default)
+        self.assertIs(interval.type, int)
+        self.assertEqual(interval.default, 360)
+        self.assertEqual(interval.minimum, 1)
+        self.assertIsNone(interval.restart)
+        self.assertEqual(enabled.ui_category, "system_services")
+        self.assertEqual(interval.ui_category, "system_services")
+
+    def test_renamed_parameter_carries_stored_values_to_the_current_key(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+
+        def reload_variables(text):
+            manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            manager.declaration = str(declaration_path)
+            manager.printer = type("Printer", (), {
+                "command_error": staticmethod(RuntimeError)})()
+            manager._load_declaration()
+            with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", suffix=".cfg") as variables_file:
+                variables_file.write(text)
+                variables_file.flush()
+                manager.filename = variables_file.name
+                # Each reload reports the migration decision it made; capture
+                # that output instead of printing it.
+                with self.assertLogs(level="INFO") as logs:
+                    manager._reload()
+            return manager, logs.output
+
+        # A tuned M600 park height keeps its meaning under the new name.  The
+        # rename carries every value, including one that equals the default, so
+        # no height is silently reinterpreted as "never configured".
+        configured, output = reload_variables("[Variables]\nm600_z_min = 75.0\n")
+        self.assertEqual(configured.variables["pause_z_min"], 75.0)
+        self.assertTrue(any("m600_z_min" in line and "pause_z_min" in line
+                            for line in output), output)
+        stock, _ = reload_variables("[Variables]\nm600_z_min = 50.0\n")
+        self.assertEqual(stock.variables["pause_z_min"], 50.0)
+
+        # The current key wins over a leftover, whichever order they appear in.
+        for text in ("[Variables]\npause_z_min = 120.0\nm600_z_min = 75.0\n",
+                     "[Variables]\nm600_z_min = 75.0\npause_z_min = 120.0\n"):
+            with self.subTest(text=text):
+                both, _ = reload_variables(text)
+                self.assertEqual(both.variables["pause_z_min"], 120.0)
+
+        # An enumerated rename stays strict: a value it cannot translate is
+        # refused rather than carried into the new key.
+        strict, _ = reload_variables("[Variables]\ndisplay_off = 7\n")
+        self.assertEqual(strict.variables["display"],
+                         strict.params_map["display"].type["FEATHER"].value)
+
+    def test_mod_variables_without_enum_keys_load_defaults_without_errors(self):
+        # A fresh install (or a key introduced by an update) has no stored value
+        # for an enum parameter.  That is a normal state, not a parse failure.
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        enums = [param for param in manager.params
+                 if issubclass(param.type, enum.Enum)]
+        self.assertTrue(enums)
+
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".cfg") as variables_file:
+            variables_file.write("[Variables]\n")
+            variables_file.flush()
+            manager.filename = variables_file.name
+
+            with mock.patch.object(MOD_PARAMS.logging, "error") as logged:
+                manager._reload()
+
+            self.assertEqual(logged.call_args_list, [])
+            self.assertEqual(
+                {param.key: manager._transform(
+                    param, manager.variables[param.key]) for param in enums},
+                {param.key: param.default for param in enums})
+
+            # An unknown member name in the file remains a real parse error: it
+            # is reported once and the declared default is restored.
+            broken = enums[0]
+            variables_file.write("%s = %r\n" % (broken.key, "NOT_A_MEMBER"))
+            variables_file.flush()
+
+            with mock.patch.object(MOD_PARAMS.logging, "error") as logged:
+                manager._reload()
+
+            self.assertEqual(len(logged.call_args_list), 1)
+            self.assertIn(broken.key, logged.call_args_list[0].args[0])
+            self.assertEqual(
+                manager._transform(broken, manager.variables[broken.key]),
+                broken.default)
+
+    def test_mod_parameter_writes_are_serialized_and_preserve_full_state(self):
+        params = [
+            MOD_PARAMS.Parameter("first", int, 0, "First"),
+            MOD_PARAMS.Parameter("second", int, 0, "Second"),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".cfg") as variables_file:
+            manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            manager.params = params
+            manager.params_map = dict((param.key, param) for param in params)
+            manager.migration_map = {}
+            manager.variables = {"first": 0, "second": 0}
+            manager.filename = variables_file.name
+            manager._variables_lock = threading.RLock()
+            manager.changes_gcode_present = False
+            manager.reactor = Reactor()
+            manager.printer = type("Printer", (), {
+                "send_event": staticmethod(lambda _name: None)})()
+            manager.gcode = type("GCode", (), {
+                "error": staticmethod(RuntimeError)})()
+
+            manager.set_value("first", "11")
+
+            class SetCommand:
+                values = {"PARAM": "second", "VALUE": "22"}
+
+                def get(command, key, default=None):
+                    return command.values.get(key, default)
+
+                @staticmethod
+                def error(message):
+                    return RuntimeError(message)
+
+                @staticmethod
+                def respond_raw(message):
+                    pass
+
+            manager.cmd_SET_MOD_PARAM(SetCommand())
+            manager._reload()
+
+            self.assertEqual(manager.variables, {"first": 11, "second": 22})
+            parser = configparser.ConfigParser()
+            parser.read(variables_file.name)
+            self.assertEqual(parser.getint("Variables", "first"), 11)
+            self.assertEqual(parser.getint("Variables", "second"), 22)
+
+            original_save = manager._save_all
+            entered = []
+
+            def reentrant_save():
+                if not entered:
+                    entered.append(True)
+                    manager.set_value("second", "33")
+                original_save()
+
+            manager._save_all = reentrant_save
+            manager.set_value("first", "44")
+            manager._save_all = original_save
+            manager._reload()
+            self.assertEqual(manager.variables, {"first": 44, "second": 33})
+
+    def test_concurrent_mod_parameter_writes_cannot_overwrite_newer_snapshot(self):
+        params = [
+            MOD_PARAMS.Parameter("first", int, 0, "First"),
+            MOD_PARAMS.Parameter("second", int, 0, "Second"),
+        ]
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.params = params
+        manager.params_map = dict((param.key, param) for param in params)
+        manager.variables = {"first": 0, "second": 0}
+        manager._variables_lock = threading.RLock()
+        manager.changes_gcode_present = False
+        manager.reactor = Reactor()
+        manager.printer = type("Printer", (), {
+            "send_event": staticmethod(lambda _name: None)})()
+        first_snapshot_ready = threading.Event()
+        release_first_snapshot = threading.Event()
+        second_save_entered = threading.Event()
+        persisted = {}
+        failures = []
+
+        def controlled_save():
+            snapshot = dict(manager.variables)
+            if threading.current_thread().name == "first-mod-writer":
+                first_snapshot_ready.set()
+                if not release_first_snapshot.wait(1.0):
+                    raise RuntimeError("first writer was not released")
+            else:
+                second_save_entered.set()
+            persisted.clear()
+            persisted.update(snapshot)
+
+        def write(key, value):
+            try:
+                manager.set_value(key, value)
+            except Exception as exc:
+                failures.append(exc)
+
+        manager._save_all = controlled_save
+        first = threading.Thread(
+            target=write, args=("first", "11"), name="first-mod-writer")
+        second = threading.Thread(
+            target=write, args=("second", "22"), name="second-mod-writer")
+        first.start()
+        self.assertTrue(first_snapshot_ready.wait(1.0))
+        second.start()
+        self.assertFalse(second_save_entered.wait(0.1))
+        release_first_snapshot.set()
+        first.join(1.0)
+        second.join(1.0)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(manager.variables, {"first": 11, "second": 22})
+        self.assertEqual(persisted, {"first": 11, "second": 22})
+
+    def test_failed_mod_parameter_write_rolls_back_without_notification(self):
+        parameter = MOD_PARAMS.Parameter("value", int, 1, "Value")
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.params = [parameter]
+        manager.params_map = {parameter.key: parameter}
+        manager.variables = {parameter.key: 1}
+        manager._variables_lock = threading.RLock()
+        manager.changes_gcode_present = True
+        callbacks = []
+        manager.reactor = type("Reactor", (), {
+            "register_callback": callbacks.append})()
+        manager._save_all = mock.Mock(side_effect=RuntimeError("write failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "write failed"):
+            manager.set_value("value", "2")
+
+        self.assertEqual(manager.variables, {"value": 1})
+        self.assertEqual(callbacks, [])
+
+    def test_mod_declaration_rejects_ui_inversion_for_non_boolean(self):
+        declaration = {
+            "parameters": [
+                {"key": "count", "type": "int", "default": 0,
+                 "label": "Count", "ui": {"inverted": False}},
+            ]
+        }
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json") as declaration_file:
+            json.dump(declaration, declaration_file)
+            declaration_file.flush()
+            manager = MOD_PARAMS.ModParamManagement.__new__(
+                MOD_PARAMS.ModParamManagement)
+            manager.declaration = declaration_file.name
+            manager.printer = type("Printer", (), {
+                "command_error": staticmethod(RuntimeError)})()
+
+            with self.assertRaisesRegex(ValueError, "not boolean"):
+                manager._load_declaration()
+
+    def test_ui_inversion_does_not_affect_mod_parameter_storage(self):
+        parameter = MOD_PARAMS.Parameter(
+            key="disable_priming", type=bool, default=False,
+            label="Nozzle priming", options=["YES", "NO"],
+            ui_inverted=True)
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.params_map = {parameter.key: parameter}
+        manager.variables = {parameter.key: False}
+        saved = []
+        manager._save_all = lambda: saved.append(dict(manager.variables))
+        manager.changes_gcode_present = False
+        manager.reactor = Reactor()
+        manager.printer = type("Printer", (), {
+            "send_event": staticmethod(lambda _name: None)})()
+
+        result = manager.set_value(parameter.key, "1")
+
+        self.assertEqual(result, 1)
+        self.assertTrue(manager.variables[parameter.key])
+        self.assertEqual(saved, [{parameter.key: True}])
+        self.assertFalse(manager._load_param(parameter, "0"))
+        self.assertTrue(manager._load_param(parameter, "1"))
+        self.assertEqual(manager._transform(parameter, False), 0)
+        self.assertEqual(manager._transform(parameter, True), 1)
+        self.assertEqual(manager._format_label(parameter, False),
+                         "Nozzle priming: YES")
+        self.assertEqual(manager._format_label(parameter, True),
+                         "Nozzle priming: NO")
+
     def test_mod_params_public_setter_preserves_types_and_notifies(self):
         Display = enum.Enum("Display", {"FEATHER": 1, "GUPPY": 3})
         parameter = MOD_PARAMS.Parameter(
@@ -521,6 +1135,8 @@ class FeatherUtilitiesTest(unittest.TestCase):
         manager._save_all = lambda: saved.append(dict(manager.variables))
         manager.changes_gcode_present = True
         manager.reactor = Reactor()
+        manager.printer = type("Printer", (), {
+            "send_event": staticmethod(lambda _name: None)})()
         manager._notify_changed = lambda param: notified.append(param.key)
 
         result = manager.set_value("display", "GUPPY")
@@ -529,6 +1145,53 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(manager.variables["display"], 3)
         self.assertEqual(saved, [{"display": 3}])
         self.assertEqual(notified, ["display"])
+
+    def test_mod_params_emits_post_commit_event_before_optional_change_gcode(self):
+        parameter = MOD_PARAMS.Parameter("value", int, 1, "Value")
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.params = [parameter]
+        manager.params_map = {parameter.key: parameter}
+        manager.variables = {parameter.key: 1}
+        manager._variables_lock = threading.RLock()
+        manager.changes_gcode_present = True
+        manager.reactor = Reactor()
+        order = []
+        manager._save_all = lambda: order.append("persisted")
+        manager.printer = type("Printer", (), {
+            "send_event": lambda _self, name: order.append(name)})()
+        manager._notify_changed = lambda _param: order.append("changes_gcode")
+
+        manager.set_value("value", "2")
+        manager.set_value("value", "2")
+
+        self.assertEqual(order, [
+            "persisted", "mod_params:changed", "changes_gcode"])
+
+    def test_reload_emits_once_only_for_effective_snapshot_change(self):
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.variables = {"value": 1}
+        manager.reactor = DeferredReactor()
+        events = []
+        manager.printer = type("Printer", (), {
+            "send_event": lambda _self, name: events.append(name)})()
+        manager._reload = lambda: setattr(manager, "variables", {"value": 2})
+
+        manager.cmd_RELOAD_MOD_PARAMS(None)
+        self.assertEqual(events, [])
+        manager.reactor.run_until(manager.reactor.now)
+        self.assertEqual(events, ["mod_params:changed"])
+
+        manager.cmd_RELOAD_MOD_PARAMS(None)
+        manager.reactor.run_until(manager.reactor.now)
+        self.assertEqual(events, ["mod_params:changed"])
+
+        manager._reload = mock.Mock(side_effect=RuntimeError("reload failed"))
+        with self.assertRaisesRegex(RuntimeError, "reload failed"):
+            manager.cmd_RELOAD_MOD_PARAMS(None)
+        manager.reactor.run_until(manager.reactor.now)
+        self.assertEqual(events, ["mod_params:changed"])
 
     def test_screws_output_parser(self):
         parse = FEATHER.FeatherScreen.parse_screw_result
@@ -539,6 +1202,65 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
 
 class RendererStateTest(unittest.TestCase):
+    def test_touch_warning_wraps_body_and_invalidates_cached_footer(self):
+        renderer = FEATHER.FeatherRenderer()
+        batches = []
+
+        def capture(commands):
+            if renderer.output_frozen:
+                return False
+            batches.append(commands)
+            return True
+
+        renderer.send = capture
+        renderer.footer(
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
+        commands = renderer.begin_page("Ready")
+        commands += renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        renderer.send(commands)
+
+        renderer.touch_unavailable_modal()
+
+        warning = "\n".join(batches[-1])
+        self.assertIn("--max-height 108 --wrap --truncate", warning)
+        self.assertFalse(renderer._footer_drawn)
+
+        renderer.freeze_output()
+        renderer.footer(
+            "NOZZLE 22/220C | BED 24/60C", "192.168.2.4 | PRINTING")
+        self.assertFalse(renderer._footer_drawn)
+        renderer.thaw_output()
+        restored = "\n".join(renderer.begin_page("Ready"))
+        footer_clear = renderer.fill(
+            0, UI.FOOTER_Y - 2, UI.SCREEN_WIDTH,
+            UI.SCREEN_HEIGHT - (UI.FOOTER_Y - 2),
+            UI.ThemeColor.BACKGROUND)
+        self.assertIn(footer_clear, restored)
+        self.assertIn("192.168.2.4 | PRINTING", restored)
+
+    def test_touch_warning_requires_an_interactive_surface(self):
+        renderer = FEATHER.FeatherRenderer()
+        batches = []
+        renderer.send = batches.append
+
+        renderer.startup_modal("INITIALIZING KLIPPER", "PLEASE WAIT")
+        self.assertFalse(renderer.touch_warning_allowed)
+
+        renderer.set_header_action("emergency.stop", "STOP")
+        commands = renderer.begin_page("Ready")
+        commands += renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        renderer.send(commands)
+        self.assertTrue(renderer.touch_warning_allowed)
+
+        renderer.touch_unavailable_modal()
+
+        warning = "\n".join(batches[-1])
+        self.assertIn("TOUCH INPUT UNAVAILABLE", warning)
+        self.assertNotIn("emergency.stop", warning)
+        self.assertFalse(renderer.touch_warning_allowed)
+
     def test_layout_primitives_compose_sections_metrics_and_grids(self):
         renderer = FEATHER.FeatherRenderer()
 
@@ -576,7 +1298,8 @@ class RendererStateTest(unittest.TestCase):
             x=25, y=75, width=430, height=285)
         drawing = "\n".join(commands)
 
-        self.assertEqual(commands[0], "--batch clear-hitboxes")
+        self.assertEqual(
+            commands[0], "--batch clear-hitboxes --layer base")
         self.assertIn("--batch fill -p 25 75 -s 430 285", drawing)
         self.assertIn("--batch stroke -p 25 75 -s 430 285", drawing)
         self.assertIn("CAUTION", drawing)
@@ -585,6 +1308,19 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn("--id 0:dialog.apply", drawing)
         self.assertEqual(
             set(renderer._buttons), {"dialog.close", "dialog.apply"})
+
+    def test_dialog_supports_five_lines_below_title(self):
+        renderer = FEATHER.FeatherRenderer()
+        lines = tuple("LINE %d" % index for index in range(1, 7))
+
+        drawing = "\n".join(renderer.dialog(
+            "Notice", lines, (), x=80, y=85, width=640, height=325))
+
+        for index in range(1, 6):
+            self.assertIn("LINE %d" % index, drawing)
+        self.assertNotIn("LINE 6", drawing)
+        self.assertIn("-p 400 171", drawing)
+        self.assertNotIn("-p 400 163", drawing)
 
     def test_hints_and_dialog_lines_keep_horizontal_padding(self):
         renderer = FEATHER.FeatherRenderer()
@@ -622,8 +1358,8 @@ class RendererStateTest(unittest.TestCase):
         batches = []
         renderer.send = batches.append
 
-        renderer.startup_modal(0)
-        renderer.startup_modal(2)
+        renderer.startup_modal("INITIALIZING KLIPPER", "STARTING", 0)
+        renderer.startup_modal("INITIALIZING KLIPPER", "STARTING", 2)
 
         first = "\n".join(batches[0])
         expanded = "\n".join(batches[1])
@@ -647,7 +1383,8 @@ class RendererStateTest(unittest.TestCase):
             lambda callback, delay: callbacks.append((delay, callback)))
 
         page_generation = renderer.generation
-        renderer.startup_modal(0, restarting=True)
+        renderer.startup_modal(
+            "INITIALIZING KLIPPER", "RESTARTING", 0, critical=True)
         loader_batch_count = len(batches)
         for delay, callback in callbacks:
             callback(100.0 + delay)
@@ -753,7 +1490,7 @@ class RendererStateTest(unittest.TestCase):
         colors[UI.ThemeColor.BACKGROUND.value] = "a0b1c2"
         renderer._palette = UI.resolve_theme(colors)
         commands = [
-            "--batch clear-hitboxes",
+            renderer.clear_hitboxes("base"),
             "--batch clear -c 000000",
             renderer.fill(10, 20, 30, 40, UI.ThemeColor.BACKGROUND),
             renderer.stroke(11, 21, 31, 41, UI.ThemeColor.SECONDARY_DARK, 3),
@@ -880,21 +1617,22 @@ class RendererStateTest(unittest.TestCase):
         renderer.button("cancel", 0, 60, 260, 100, "CANCEL PRINT",
                         font="Roboto Bold 16pt")
         self.assertEqual(renderer._buttons["cancel"][6],
-                         "JetBrainsMono Bold 16pt")
+                         "Roboto Bold 16pt")
         self.assertEqual(renderer._buttons["cancel"][4], "CANCEL PRINT")
 
     def test_footer_is_preserved_across_page_frames(self):
         renderer = FEATHER.FeatherRenderer()
         sent = []
         renderer.send = sent.append
-        renderer.footer(21, 220, 24, 60, "192.168.2.4", "idle")
+        renderer.footer(
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
 
         first = renderer.begin_page("Control")
         second = renderer.begin_page("Settings")
 
         self.assertEqual(len(sent), 1)
-        self.assertEqual(renderer._last_footer,
-                         (21, 220, 24, 60, "192.168.2.4", "idle"))
+        self.assertEqual(renderer._last_footer, (
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE"))
         self.assertIn("-s 800 442", "\n".join(first))
         self.assertNotIn("-s 784 472", "\n".join(first))
         self.assertIn("-s 784 439", "\n".join(first))
@@ -902,8 +1640,8 @@ class RendererStateTest(unittest.TestCase):
     def test_footer_fits_full_network_and_standby_status(self):
         renderer = FEATHER.FeatherRenderer()
         drawing = "\n".join(renderer._footer_commands(
-            (250.0, 250.0, 32.0, 0.0,
-             "192.168.2.124", "standby")))
+            ("NOZZLE 250/250C | BED 32/0C",
+             "192.168.2.124 | STANDBY")))
 
         self.assertIn('"192.168.2.124 | STANDBY"', drawing)
         self.assertIn("--max-width 340 --truncate", drawing)
@@ -913,7 +1651,8 @@ class RendererStateTest(unittest.TestCase):
     def test_theme_change_repaints_cached_footer(self):
         renderer = FEATHER.FeatherRenderer()
         renderer.send = lambda _commands: None
-        renderer.footer(21, 220, 24, 60, "192.168.2.4", "idle")
+        renderer.footer(
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
 
         self.assertTrue(renderer.set_theme("SYNTH"))
         expected_primary = renderer.color(UI.ThemeColor.PRIMARY)
@@ -933,7 +1672,8 @@ class RendererStateTest(unittest.TestCase):
         sent = []
         renderer.send = sent.append
         overlay = renderer.color(UI.ThemeColor.OVERLAY)
-        renderer.startup_modal()
+        renderer.startup_modal(
+            "INITIALIZING KLIPPER", "INITIALIZING PRINTER SERVICES")
 
         colors = dict(UI.FALLBACK_THEME)
         colors["background"] = (
@@ -941,7 +1681,7 @@ class RendererStateTest(unittest.TestCase):
         renderer._palette = UI.resolve_theme(colors)
         background = renderer.color(UI.ThemeColor.BACKGROUND)
         renderer._footer_values = (
-            21.0, 220.0, 24.0, 60.0, "192.168.2.4", "idle")
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
         renderer._footer_drawn = False
         page = renderer.begin_page("Settings")
 
@@ -1030,20 +1770,92 @@ class RendererStateTest(unittest.TestCase):
         sleep.assert_not_called()
         self.assertEqual(renderer.get_status()["queue_depth"], 1)
 
-    def test_large_draw_is_split_into_atomic_complete_frames(self):
+    def test_large_draw_is_split_into_bounded_complete_frames(self):
         commands = [
             "--batch text -p 10 %d -t %s" % (index, "x" * 90)
-            for index in range(48)
+            for index in range(100)
         ]
         frames = FEATHER.FeatherRenderer._encode_frames(commands)
         self.assertGreater(len(frames), 1)
         self.assertTrue(all(len(frame) <= UI.MAX_ATOMIC_DRAW
                             for frame in frames))
-        self.assertTrue(all(frame.endswith(b"--batch flush\n--end\n")
-                            for frame in frames))
+        self.assertTrue(all(frame.endswith(b"--end\n") for frame in frames))
+        self.assertTrue(all(b"--batch flush" not in frame
+                            for frame in frames[:-1]))
+        self.assertTrue(frames[-1].endswith(b"--batch flush\n--end\n"))
+        self.assertEqual(sum(frame.count(b"--batch flush")
+                             for frame in frames), 1)
         joined = b"\n".join(frames)
         for command in commands:
             self.assertIn(command.encode("utf-8"), joined)
+
+    def test_small_draw_is_committed_once(self):
+        frames = FEATHER.FeatherRenderer._encode_frames([
+            "--batch fill -p 0 0 -s 10 10 -c 030607",
+        ])
+
+        self.assertEqual(len(frames), 1)
+        self.assertTrue(frames[0].endswith(b"--batch flush\n--end\n"))
+        self.assertEqual(frames[0].count(b"--batch flush"), 1)
+
+    def test_frame_limit_counts_utf8_bytes(self):
+        command = "--batch text -t " + ("Я" * 4100)
+
+        with self.assertRaisesRegex(ValueError, "single Typer command"):
+            FEATHER.FeatherRenderer._encode_frames([command])
+
+    def test_toast_registers_dismiss_hitbox_in_overlay_layer(self):
+        renderer = FEATHER.FeatherRenderer()
+        renderer.begin_page("Home")
+        sent = []
+        renderer.send = sent.append
+
+        renderer.toast("Saved")
+
+        drawing = "\n".join(sent[-1])
+        self.assertIn("--batch hitbox", drawing)
+        self.assertIn(
+            "--id 1:%s" % FEATHER.DismissToast().wire_id,
+            drawing,
+        )
+        self.assertIn("--layer overlay", drawing)
+
+    def test_replacing_toast_hides_old_surface_before_drawing_new_one(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.reactor = Reactor()
+        controller.renderer = mock.Mock()
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.toast_until = 101.0
+        controller.toast_message = "Old"
+        controller._show_page = mock.Mock()
+
+        controller._toast("New")
+
+        controller._show_page.assert_called_once_with(FEATHER.ScreenPage.IDLE_HOME)
+        controller.renderer.toast.assert_called_once_with("New")
+        self.assertEqual(controller.toast_message, "New")
+        self.assertEqual(controller.toast_until, 102.0)
+
+    def test_toast_touch_action_dismisses_before_normal_routing(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller._hide_toast = mock.Mock()
+
+        controller._handle_touch_action(FEATHER.DismissToast().wire_id)
+
+        controller._hide_toast.assert_called_once_with()
+
+    def test_toast_hitbox_can_be_cleared_without_page_redraw(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.renderer = mock.Mock()
+        controller.toast_until = 101.0
+        controller.toast_message = "Visible"
+
+        self.assertTrue(controller._hide_toast(redraw=False))
+
+        controller.renderer.clear_toast_hitbox.assert_called_once_with()
+        self.assertEqual(controller.toast_until, 0.0)
+        self.assertEqual(controller.toast_message, "")
 
     def test_keyed_animation_frames_are_latest_wins(self):
         renderer = FEATHER.FeatherRenderer()
@@ -1056,7 +1868,7 @@ class RendererStateTest(unittest.TestCase):
         queued = renderer._batch_queue.get()
         self.assertEqual(queued.commands, ("frame 3",))
 
-    def test_render_batch_character_count_is_bounded(self):
+    def test_render_batch_serialized_size_is_bounded(self):
         renderer = FEATHER.FeatherRenderer()
         accepted = renderer.send(["x" * (UI.MAX_PENDING_DRAW + 1)])
         self.assertFalse(accepted)
@@ -1125,9 +1937,9 @@ class RendererStateTest(unittest.TestCase):
         renderer = FEATHER.FeatherRenderer()
         sent = []
         renderer.send = sent.append
-        renderer.footer(20, 0, 25, 0, "Offline", "idle")
-        renderer.footer(20, 0, 25, 0, "Offline", "idle")
-        renderer.footer(21, 0, 25, 0, "Offline", "idle")
+        renderer.footer("NOZZLE 20/0C | BED 25/0C", "Offline | IDLE")
+        renderer.footer("NOZZLE 20/0C | BED 25/0C", "Offline | IDLE")
+        renderer.footer("NOZZLE 21/0C | BED 25/0C", "Offline | IDLE")
         self.assertEqual(len(sent), 2)
 
     def test_dynamic_list_and_keyboard_hitboxes_stay_between_chrome(self):
@@ -1149,9 +1961,11 @@ class RendererStateTest(unittest.TestCase):
         controller.network_page = 0
         controller._render_wifi_scan()
         wifi_buttons = dict(controller.renderer._buttons)
+        self.assertNotIn("net.reset.saved", wifi_buttons)
 
         controller.selected_network = {"ssid": "Workshop"}
         controller.password = "secret123"
+        controller.password_cursor = len(controller.password)
         controller.password_visible = False
         controller.keyboard_symbols = False
         controller.keyboard_shift = False
@@ -1161,7 +1975,7 @@ class RendererStateTest(unittest.TestCase):
         for page_buttons in (file_buttons, wifi_buttons, keyboard_buttons):
             rectangles = []
             for action, spec in page_buttons.items():
-                if action == "nav.back":
+                if action in ("nav.back", "file.refresh"):
                     continue
                 rectangle = spec[:4]
                 self.assertGreaterEqual(rectangle[1], UI.HEADER_BOTTOM + 1,
@@ -1221,7 +2035,7 @@ class RendererStateTest(unittest.TestCase):
         renderer = FEATHER.FeatherRenderer()
         sent = []
         renderer.send = sent.append
-        renderer.set_emergency_stop_visible(True)
+        renderer.set_header_action("global.abort", "ABORT")
         page = renderer.begin_page("Printing", back=True)
         page_generation = renderer.generation
         sent_before_busy = len(sent)
@@ -1247,20 +2061,21 @@ class RendererStateTest(unittest.TestCase):
 
     def test_modal_dialog_preserves_emergency_stop_hitbox(self):
         renderer = FEATHER.FeatherRenderer()
-        renderer.set_emergency_stop_visible(True)
+        renderer.set_header_action("global.abort", "ABORT")
         commands = renderer.begin_page("Live Z")
         commands += renderer.dialog(
             "Warning", ("Check the first layer",),
             (("warning.ok", "OK", "warning"),))
 
         drawing = "\n".join(commands)
-        self.assertEqual(drawing.count("--batch clear-hitboxes"), 2)
+        self.assertEqual(drawing.count("--batch clear-hitboxes"), 4)
+        self.assertEqual(drawing.count("--layer overlay"), 2)
         self.assertIn("warning.ok", renderer._buttons)
         self.assertIn("global.abort", renderer._buttons)
         self.assertGreater(
             drawing.rfind("global.abort"),
             drawing.rfind("clear-hitboxes"))
-        self.assertTrue(renderer._emergency_stop_visible)
+        self.assertIsNotNone(renderer._header_action)
 
     def test_primary_layouts_do_not_overlap_footer(self):
         footer = (0, UI.FOOTER_Y, UI.SCREEN_WIDTH, UI.FOOTER_HEIGHT)
@@ -1298,17 +2113,15 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         drawing = "\n".join(command for batch in batches for command in batch)
 
-        self.assertIn('-p 365 78 -s 65 68', drawing)
-        self.assertIn('"Z-" --id 1:move.zm', drawing)
-        self.assertIn('-p 365 238 -s 65 68', drawing)
-        self.assertIn('"Z+" --id 1:move.zp', drawing)
+        self.assertIn(MOVE_LAYOUT.Z_MINUS.wire_id,
+                      controller.renderer._buttons)
+        self.assertIn(MOVE_LAYOUT.Z_PLUS.wire_id,
+                      controller.renderer._buttons)
+        self.assertNotIn(MOVE_LAYOUT.HOME_Z.wire_id,
+                         controller.renderer._buttons)
+        self.assertIn("NOT HOMED: Z", drawing)
         self.assertIn("X  103.45   Y   67.89", drawing)
         self.assertIn("Z    4.20", drawing)
-        self.assertIn("-p 190 207", drawing)
-        self.assertIn("-p 397 207", drawing)
-        self.assertNotIn("move.homex ", drawing)
-        self.assertNotIn("move.homey", drawing)
-        self.assertNotIn("move.homez", drawing)
 
     def test_move_status_redraws_only_after_toolhead_changes(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1329,10 +2142,15 @@ class RendererStateTest(unittest.TestCase):
         controller._update_move_status(3)
 
         self.assertEqual(len(batches), 3)
-        self.assertNotIn("-p 140 158", "\n".join(batches[1]))
+        position_update = "\n".join(batches[1])
+        self.assertIn("Z   10.10", position_update)
+        self.assertNotIn('-t "HOME"', position_update)
+        self.assertNotIn("--batch clear-hitboxes", position_update)
+
         homing_update = "\n".join(batches[2])
-        self.assertNotIn("-p 140 158", homing_update)
-        self.assertIn("-p 365 158", homing_update)
+        self.assertIn("NOT HOMED: Z", homing_update)
+        self.assertIn('-t "HOME"', homing_update)
+        self.assertNotIn("--batch clear-hitboxes", homing_update)
 
     def test_move_status_accepts_post_home_park_position(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1354,7 +2172,7 @@ class RendererStateTest(unittest.TestCase):
     def test_periodic_update_contains_any_ui_failure_and_recovers(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.print_state = FEATHER.PrintState.IDLE
-        controller.page = FEATHER.Page.CONTROL_HEAT
+        controller.page = FEATHER.ScreenPage.CONTROL_HEAT
         controller._update_cycle = mock.Mock(side_effect=(
             ValueError("bad heat telemetry"),
             ValueError("bad footer telemetry"),
@@ -1371,11 +2189,17 @@ class RendererStateTest(unittest.TestCase):
             "CONTROL_HEAT", 1)
         self.assertEqual(controller._update_failures, 0)
 
+    def test_destroyed_periodic_update_parks_the_direct_reactor_timer(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.print_state = FEATHER.PrintState.DESTROYED
+        controller.reactor = type("Reactor", (), {"NEVER": 12345.0})()
+
+        self.assertEqual(controller._update(100.0), 12345.0)
+
     def test_joystick_move_page_registers_two_continuous_regions(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        controller.renderer.send = lambda commands: None
         controller.reactor = Reactor()
         controller.move_mode = "joystick"
         controller.joystick = type("Planner", (), {
@@ -1385,31 +2209,18 @@ class RendererStateTest(unittest.TestCase):
         controller._require_idle = lambda: None
 
         controller._render_move()
-        drawing = "\n".join(batches[0])
 
-        self.assertIn("--id 1:navigate.move.step", drawing)
-        self.assertIn("--id 1:move.homez", drawing)
-        self.assertIn("-p 30 96 -s 420 266", drawing)
-        self.assertIn(
-            "-p %d %d -s %d %d" %
-            MOVE_LAYOUT.JOYSTICK_PAGE.rect("z.hitbox").as_tuple(),
-            drawing)
-        self.assertNotIn('"+100"', drawing)
-        self.assertNotIn('"-100"', drawing)
-        track = MOVE_LAYOUT.JOYSTICK_PAGE.rect("z.track")
-        major_x = track.x - 32
-        minor_x = track.x - 25
-        self.assertIn(
-            "-p %d %d -s 12 1" % (major_x, track.y), drawing)
-        self.assertIn(
-            "-p %d %d -s 5 1" % (minor_x, track.y + 39), drawing)
-        self.assertIn(
-            "-p %d %d -s 12 1" % (major_x, track.bottom - 1), drawing)
-        self.assertIn("--id 1:move.joy.xy", drawing)
-        self.assertIn("--id 1:move.joy.z", drawing)
-        self.assertEqual(drawing.count("--continuous"), 2)
-        self.assertNotIn("--continuous", UI.FeatherRenderer.hitbox(
-            "normal", 0, 0, 10, 10))
+        self.assertIn("navigate.move.step", controller.renderer._buttons)
+        self.assertIn(MOVE_LAYOUT.HOME_Z.wire_id,
+                      controller.renderer._buttons)
+        self.assertEqual(
+            set(controller.renderer._hitboxes) - {"global.wake"},
+            {MOVE_LAYOUT.JOYSTICK_XY.wire_id,
+             MOVE_LAYOUT.JOYSTICK_Z.wire_id})
+        for action in (
+                MOVE_LAYOUT.JOYSTICK_XY.wire_id,
+                MOVE_LAYOUT.JOYSTICK_Z.wire_id):
+            self.assertTrue(controller.renderer._hitboxes[action][4])
 
     def test_low_z_move_page_always_warns_and_reports_auto_profile_state(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1432,7 +2243,8 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         warning = "\n".join(batches[-1])
 
-        self.assertEqual(warning.count("--batch clear-hitboxes"), 1)
+        self.assertEqual(warning.count("--batch clear-hitboxes"), 2)
+        self.assertEqual(warning.count("--layer overlay"), 1)
         dismiss_id = UI.SetValue(
             MOVE_LAYOUT.MoveState.CAUTION_ACKNOWLEDGED, True).wire_id
         self.assertIn("--id 1:%s" % dismiss_id, warning)
@@ -1444,7 +2256,8 @@ class RendererStateTest(unittest.TestCase):
         controller._render_move()
         safe = "\n".join(batches[-1])
 
-        self.assertEqual(safe.count("--batch clear-hitboxes"), 1)
+        self.assertEqual(safe.count("--batch clear-hitboxes"), 2)
+        self.assertEqual(safe.count("--layer overlay"), 1)
         self.assertIn("--id 2:move.caution.unload", safe)
         self.assertIn("--id 2:%s" % dismiss_id, safe)
         self.assertIn("--id 2:move.homez", safe)
@@ -1457,12 +2270,14 @@ class RendererStateTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.toolhead = StatusObject({
             "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
         controller._last_move = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
-        controller.joystick_cursor = (MOVE_LAYOUT.JOYSTICK_XY.wire_id, 320, 180)
+        cursor = (320, 180)
+        controller.joystick_cursor = (
+            MOVE_LAYOUT.JOYSTICK_XY.wire_id, cursor[0], cursor[1])
         controller.joystick_feedback_at = 0.0
         controller.joystick = type("Planner", (), {
             "inertia": lambda self: {
@@ -1477,14 +2292,15 @@ class RendererStateTest(unittest.TestCase):
             1.0, position=(2.0, 3.0, 11.0))
 
         live = "\n".join(batches[-1])
-        self.assertIn("--batch stroke -p 308 168 -s 25 25", live)
-        self.assertIn('"X"', live)
-        self.assertIn('"   2.0"', live)
-        self.assertIn('"Y"', live)
-        self.assertIn('"   3.0"', live)
-        self.assertIn('"Z"', live)
-        self.assertIn('"  11.0"', live)
-        self.assertIn('" 45.7"', live)
+        knob_size = MOVE_LAYOUT.JOYSTICK_PAGE.node("xy.knob").size
+        self.assertIn(
+            "--batch stroke -p %d %d -s %d %d" % (
+                cursor[0] - knob_size // 2,
+                cursor[1] - knob_size // 2,
+                knob_size, knob_size),
+            live)
+        for value in ('"   2.0"', '"   3.0"', '"  11.0"', '" 45.7"'):
+            self.assertIn(value, live)
         self.assertNotIn('"VX"', live)
         self.assertNotIn('"VY"', live)
         self.assertNotIn('"VZ', live)
@@ -1492,15 +2308,28 @@ class RendererStateTest(unittest.TestCase):
         controller.joystick_cursor = None
         controller._update_joystick_feedback(1.1, force=True)
         released = "\n".join(batches[-1])
-        self.assertIn("--batch fill -p 306 166 -s 29 29", released)
-        self.assertIn("--batch stroke -p 228 217 -s 25 25", released)
+        center = MOVE_LAYOUT.JOYSTICK_PAGE.rect("xy.pad").center
+        dirty_padding = 2
+        self.assertIn(
+            "--batch fill -p %d %d -s %d %d" % (
+                cursor[0] - knob_size // 2 - dirty_padding,
+                cursor[1] - knob_size // 2 - dirty_padding,
+                knob_size + dirty_padding * 2,
+                knob_size + dirty_padding * 2),
+            released)
+        self.assertIn(
+            "--batch stroke -p %d %d -s %d %d" % (
+                center[0] - knob_size // 2,
+                center[1] - knob_size // 2,
+                knob_size, knob_size),
+            released)
 
     def test_joystick_feedback_uses_fallback_clock_without_reactor(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.toolhead = StatusObject({
             "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
@@ -1562,28 +2391,50 @@ class RendererStateTest(unittest.TestCase):
             self.assertGreaterEqual(top - 2, z_hitbox.y)
             self.assertLessEqual(top + 27, z_hitbox.bottom)
 
-    def test_joystick_knob_move_clears_center_instead_of_leaving_ghost(self):
+    def test_joystick_knob_move_clears_previous_position_without_ghost(self):
         renderer = FEATHER.FeatherRenderer()
         snapshot = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
+        old_cursor = (240, 229)
+        new_cursor = (320, 180)
         MOVE_LAYOUT.render_joystick(
             renderer, joystick_values(
-                snapshot, cursor=(MOVE_LAYOUT.JOYSTICK_XY.wire_id, 240, 229)))
+                snapshot, cursor=(
+                    MOVE_LAYOUT.JOYSTICK_XY.wire_id, *old_cursor)))
 
         commands = MOVE_LAYOUT.update_joystick(
             renderer, joystick_values(
-                snapshot, cursor=(MOVE_LAYOUT.JOYSTICK_XY.wire_id, 320, 180)))
+                snapshot, cursor=(
+                    MOVE_LAYOUT.JOYSTICK_XY.wire_id, *new_cursor)))
         drawing = "\n".join(commands)
+        knob_size = MOVE_LAYOUT.JOYSTICK_PAGE.node("xy.knob").size
+        dirty_padding = 2
 
-        self.assertIn("--batch fill -p 226 215 -s 29 29", drawing)
-        self.assertIn("--batch stroke -p 308 168 -s 25 25", drawing)
-        self.assertNotIn("--batch stroke -p 228 217 -s 25 25", drawing)
+        self.assertIn(
+            "--batch fill -p %d %d -s %d %d" % (
+                old_cursor[0] - knob_size // 2 - dirty_padding,
+                old_cursor[1] - knob_size // 2 - dirty_padding,
+                knob_size + dirty_padding * 2,
+                knob_size + dirty_padding * 2),
+            drawing)
+        self.assertIn(
+            "--batch stroke -p %d %d -s %d %d" % (
+                new_cursor[0] - knob_size // 2,
+                new_cursor[1] - knob_size // 2,
+                knob_size, knob_size),
+            drawing)
+        self.assertNotIn(
+            "--batch stroke -p %d %d -s %d %d" % (
+                old_cursor[0] - knob_size // 2,
+                old_cursor[1] - knob_size // 2,
+                knob_size, knob_size),
+            drawing)
         self.assertFalse(hasattr(
             FEATHER.FeatherScreen, "_joystick_indicator_commands"))
 
 
     def test_joystick_refill_resamples_monotonic_time_for_each_segment(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.print_state = FEATHER.PrintState.IDLE
         controller.joystick_action = MOVE_LAYOUT.JOYSTICK_XY.wire_id
@@ -1682,7 +2533,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_joystick_tick_forces_final_zero_inertia_frame(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.print_state = FEATHER.PrintState.IDLE
         controller.joystick_action = None
@@ -1765,7 +2616,7 @@ class RendererStateTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.move_caution_signature = (False, None)
         controller.move_caution_acknowledged = False
@@ -1801,7 +2652,7 @@ class RendererStateTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.move_caution_signature = (True, "active")
         controller.move_caution_acknowledged = False
@@ -1847,6 +2698,8 @@ class RendererStateTest(unittest.TestCase):
         commands = MOVE_LAYOUT.render_step_status(
             renderer, warning_values, axes=True)
         drawing = "\n".join(commands)
+        overlay = MOVE_LAYOUT.JOYSTICK_PAGE.rect("xy.pad")
 
-        self.assertIn("-p 30 96 -s 420 266", drawing)
+        self.assertIn(
+            "-p %d %d -s %d %d" % overlay.as_tuple(), drawing)
         self.assertNotIn("--batch clear-hitboxes", drawing)

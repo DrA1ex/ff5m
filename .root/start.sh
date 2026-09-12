@@ -28,6 +28,11 @@ sed -i 's/\("project_owner":"\)mainsail-crew\("\)/\1DrA1ex\2/' /root/www/mainsai
 
 ######
 
+DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "STOCK")
+if [ "$DISPLAY_MODE" = "FEATHER" ] || [ "$DISPLAY_MODE" = "GUPPY" ]; then
+    /opt/config/mod/.root/S35tslib start
+fi
+
 /opt/config/mod/.root/S45ntpd start
 
 DISABLE_MOONRAKER=$("$CFG_SCRIPT" "$VAR_PATH" --get "disable_moonraker" "0")
@@ -56,11 +61,7 @@ else
     echo "Web services disabled as per configuration."
 fi
 
-DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "STOCK")
-if [ "$DISPLAY_MODE" = "FEATHER" ]; then
-    /opt/config/mod/.root/S35tslib start
-elif [ "$DISPLAY_MODE" = "GUPPY" ]; then
-    /opt/config/mod/.root/S35tslib start
+if [ "$DISPLAY_MODE" = "GUPPY" ]; then
     /opt/config/mod/.root/S80guppyscreen start
 fi
 

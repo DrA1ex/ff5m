@@ -43,6 +43,9 @@ class ThemeRole(str, Enum):
     BUTTON_SELECTED_BACKGROUND = "button_selected_background"
     BUTTON_SELECTED_BORDER = "button_selected_border"
     BUTTON_SELECTED_TEXT = "button_selected_text"
+    ACCENT_BACKGROUND = "accent_background"
+    ACCENT_BORDER = "accent_border"
+    ACCENT_TEXT = "accent_text"
     HEADER_BACKGROUND = "header_background"
     HEADER_TEXT = "header_text"
     HEADER_BORDER = "header_border"
@@ -61,6 +64,9 @@ DEFAULT_THEME_ROLES = MappingProxyType({
     ThemeRole.BUTTON_SELECTED_BACKGROUND: ThemeColor.PANEL,
     ThemeRole.BUTTON_SELECTED_BORDER: ThemeColor.SECONDARY,
     ThemeRole.BUTTON_SELECTED_TEXT: ThemeColor.SECONDARY,
+    ThemeRole.ACCENT_BACKGROUND: ThemeColor.PRIMARY_DARK,
+    ThemeRole.ACCENT_BORDER: ThemeColor.PRIMARY,
+    ThemeRole.ACCENT_TEXT: ThemeColor.BRIGHT,
     ThemeRole.HEADER_BACKGROUND: ThemeColor.PANEL,
     ThemeRole.HEADER_TEXT: ThemeColor.PRIMARY,
     ThemeRole.HEADER_BORDER: ThemeColor.BORDER,
@@ -68,6 +74,32 @@ DEFAULT_THEME_ROLES = MappingProxyType({
     ThemeRole.TEMPERATURE_BED: ThemeColor.PRIMARY,
     ThemeRole.TEMPERATURE_FAN: ThemeColor.PRIMARY,
 })
+
+
+def normalize_theme_token(value, nullable=False):
+    """Validate a typed theme token or normalize a custom HEX color.
+
+    Named palette values are intentionally not accepted as strings. Runtime
+    declarations must use ``ThemeColor`` or ``ThemeRole`` so token references
+    remain explicit and statically searchable. A six-digit HEX string remains
+    available for intentionally custom colors outside the active theme.
+    """
+    if value is None:
+        if nullable:
+            return None
+        raise TypeError("theme color must not be None")
+    if isinstance(value, (ThemeColor, ThemeRole)):
+        return value
+    if not isinstance(value, str):
+        raise TypeError(
+            "theme color must be ThemeColor, ThemeRole or HEX string, got %r" %
+            (value,))
+    normalized = value.strip().lower().lstrip("#")
+    if _HEX_COLOR.fullmatch(normalized) is not None:
+        return normalized
+    raise ValueError(
+        "named theme colors must use ThemeColor or ThemeRole; "
+        "custom colors must be six-digit hexadecimal strings")
 
 
 class ResolvedTheme:
@@ -79,11 +111,10 @@ class ResolvedTheme:
         self._values = MappingProxyType(dict(values))
 
     def resolve(self, token):
-        if not isinstance(token, (ThemeColor, ThemeRole)):
-            raise TypeError(
-                "theme color must be ThemeColor or ThemeRole, got %r" %
-                (token,))
-        return self._values[token]
+        token = normalize_theme_token(token)
+        if isinstance(token, (ThemeColor, ThemeRole)):
+            return self._values[token]
+        return token
 
     def as_dict(self):
         return dict((token.value, value) for token, value in self._values.items())
