@@ -9,19 +9,6 @@
 
 
 source /opt/config/mod/.shell/common.sh
-source /opt/config/mod/.shell/network_common.sh
-
-if [ ! -f /etc/init.d/S00init ]; then
-    echo "@@ Missing initialization script. Initialize now."
-    
-    rm -f /etc/init.d/S00fix
-    ln -s "$SCRIPTS/S00init" /etc/init.d/S00init
-    /etc/init.d/S00init start
-fi
-
-DISPLAY_MODE="$("$CMDS"/zdisplay.sh test)"
-DISPLAY_OFF=0
-[ "$DISPLAY_MODE" != "STOCK" ] && DISPLAY_OFF=1
 
 # The stock QT app (firmwareExe) pops a "Please upgrade the slicer software to
 # version V1.7.3 or later." modal on every boot of the stock screen, even at
@@ -40,139 +27,41 @@ suppress_slicer_nag() {
     sed -i 's/\("CheckAppFrist"[ ]*:[ ]*\)true/\1false/' "$config_file"
 }
 
-wifi_init() {
-    local send_to_screen=${1:-0}
-    local ret
-
-    [ -f /etc/wpa_supplicant.conf ] || {
-        echo "@@ Wi-Fi configuration is missing." >&2
-        return 1
-    }
-
-    echo "Configuration found"
-
-    if ! ip link show wlan0 >/dev/null 2>&1; then
-        echo "Load kernel module."
-        insmod /lib/modules/8821cu.ko 2>/dev/null \
-            || modprobe 8821cu \
-            || { echo "@@ Failed to load Wi-Fi driver." >&2; return 1; }
-    fi
-
-    echo "// Try to connect..."
-
-    for _ in $(seq 5); do
-        if [ "$send_to_screen" -eq 1 ]; then
-            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 \
-                | logged --no-print --send-to-screen /data/logFiles/wifi.log
-        else
-            "$SCRIPTS/boot/wifi_connect.sh" 2>&1 \
-                | logged --no-print /data/logFiles/wifi.log
-        fi
-        ret=${PIPESTATUS[0]}
-
-        if [ "$ret" -eq 0 ]; then
-            # Retire Ethernet only after Wi-Fi has an address. Until this
-            # point it remains a working rollback path.
-            network_deactivate_interface eth0
-            rm -f "$ETHERNET_CONNECTED_F"
-
-            touch "$WIFI_CONNECTED_F"
-            sync
-
-            echo "Start wifi reconnect daemon."
-            killall wpa_cli 2>/dev/null || true
-            wpa_cli -B -a "$SCRIPTS/boot/wifi_reconnect.sh" -i wlan0 \
-                || echo "@@ Failed to start Wi-Fi reconnect daemon." >&2
-
-            echo "// Connected!"
-            return 0
-        fi
-
-        echo "@@ WPA start failed. Retry..."
-        sleep 1
-    done
-
-    return 1
-}
-
-ethernet_init() {
-    echo "// Initializing Ethernet connection..."
-
-    # Keep Wi-Fi alive until Ethernet has actually obtained a lease. This
-    # makes switching modes transactional instead of dropping both links.
-    network_activate_dhcp eth0 25 \
-        || { echo "@@ Failed to initialize connection!"; return 1; }
-
-    killall wpa_cli 2>/dev/null || true
-    killall wpa_supplicant 2>/dev/null || true
-    network_deactivate_interface wlan0
-    rm -f "$WIFI_CONNECTED_F"
-
-    touch "$ETHERNET_CONNECTED_F"
-    sync
-
-    echo "// Ethernet connection initialized with DHCP"
-}
-
-save_network_ip() {
-    local ip
-
-    rm -f "$NET_IP_F"
-    ip="$(network_ipv4 "$1")"
-    [ -n "$ip" ] && echo "$ip" > "$NET_IP_F"
-}
-
-network_init() {
-    local send_wifi_to_screen=${1:-0}
-    local config_file network_mode ethernet_status
-
-    config_file=$(ls /opt/config/Adventurer5M*.json 2>/dev/null | head -n 1)
-
-    network_mode=""
-    [ -f /opt/config/mod_data/network_mode ] \
-        && network_mode=$(head -n 1 /opt/config/mod_data/network_mode)
-
-    case "$network_mode" in
-        WIFI|ETHERNET) ;;
-        *) network_mode="" ;;
-    esac
-
-    if [ -z "$network_mode" ]; then
-        [ -f "$config_file" ] || {
-            echo "@@ Config file not found" >&2
-            return 1
-        }
-
-        ethernet_status=$(grep "ethernetStatus" < "$config_file" \
-            | sed 's/.*"ethernetStatus"[ ]*:[ ]*\([^,]*\).*/\1/')
-
-        if [ "$ethernet_status" = "true" ]; then
-            network_mode="ETHERNET"
-        else
-            network_mode="WIFI"
-        fi
-    fi
-
-    case "$network_mode" in
-        ETHERNET)
-            ethernet_init && save_network_ip eth0
-        ;;
-        WIFI)
-            wifi_init "$send_wifi_to_screen" && save_network_ip wlan0
-        ;;
-    esac
-}
+DISPLAY_MODE="$("$CMDS"/zdisplay.sh test)"
+DISPLAY_OFF=0
+[ "$DISPLAY_MODE" != "STOCK" ] && DISPLAY_OFF=1
 
 if [ "$DISPLAY_OFF" -eq 1 ]; then
-    echo "// Network initialization..."
+    echo "// Starting netd..."
     rm -f "$NET_IP_F"
 
-    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
-        # Run independently from the boot pipeline. Feather does not wait for
-        # network initialization and reports the resulting state itself.
-        # Also run it fully detached to avoid leaving a shell process running.
-        network_init 0 </dev/null >/dev/null 2>&1 &
-    elif ! network_init 1; then
+    network_result=0
+
+    if ! pidof netd >/dev/null 2>&1; then
+        rm -f /run/netd.sock
+        netd_args=()
+        # Adoption is read-only and therefore requires an existing mod target.
+        # An older installation without network.conf needs the normal one-shot
+        # bootstrap before future boots can safely adopt its early live link.
+        [ -f "$MOD_DATA/network.conf" ] && netd_args=(--adopt-existing)
+        start-stop-daemon -Sb --exec "$(command -v netd)" -- "${netd_args[@]}"
+    fi
+
+    if [ "$DISPLAY_MODE" != "FEATHER" ]; then
+        # Give the freshly started daemon a moment to publish its socket; this is
+        # service startup synchronization, not network retry policy.
+        for _ in 1 2 3 4 5; do
+            [ -S /run/netd.sock ] && break
+            sleep 1
+        done
+        # Guppy/headless only bound how long boot waits. netd itself keeps the
+        # configured network alive/reconnecting indefinitely.
+        netd-cli --timeout 180 wait || network_result=$?
+    fi
+
+    if [ "$network_result" -ne 0 ] && [ "$DISPLAY_MODE" != "FEATHER" ]; then
+        killall netd >/dev/null 2>&1 || true
+        rm -f /run/netd.sock
         echo "?? Switch config to enabled screen..."
         "$CMDS"/zdisplay.sh stock --skip-reboot
 
@@ -184,11 +73,7 @@ if [ "$DISPLAY_OFF" -eq 1 ]; then
 fi
 
 if [ "$DISPLAY_OFF" -eq 1 ]; then
-    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
-        echo "// Starting Feather; network initialization continues in background."
-    else
-        echo "// Network initialized. Starting alternative display."
-    fi
+    echo "// Starting alternative display."
 
     touch "$CUSTOM_BOOT_F"
     sync
@@ -198,15 +83,11 @@ if [ "$DISPLAY_OFF" -eq 1 ]; then
     mount -t configfs none /sys/kernel/config -o rw,relatime
     mount -t debugfs none /sys/kernel/debug -o rw,relatime
 
-    if [ "$DISPLAY_MODE" = "FEATHER" ]; then
-        echo "// Starting calibrated Feather touch input..."
-        chroot "$MOD" /opt/config/mod/.root/S35tslib start
-    fi
-    
     echo "// MCU booting..."
     /opt/config/mod/.bin/exec/boot_mcu 2>&1
     
     echo "// Start klipper."
+    [ "$DISPLAY_MODE" = "FEATHER" ] && touch "$FORGE_X_SCREEN_BUSY_F"
     /opt/config/mod/.shell/commands/zstart_klipper.sh &> /dev/null
     
     echo "// Boot sequence done!"

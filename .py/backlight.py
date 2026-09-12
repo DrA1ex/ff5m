@@ -10,13 +10,14 @@
 
 from fcntl import ioctl
 from struct import pack
-import argparse
 import errno
+import sys
 
 DISP_LCD_SET_BRIGHTNESS = 0x102
 DISP_LCD_GET_BRIGHTNESS = 0x103
 DISP_LCD_BACKLIGHT_ENABLE = 0x104
 DISP_LCD_BACKLIGHT_DISABLE = 0x105
+
 
 def backlight_enable(enable=True):
     if enable:
@@ -40,35 +41,62 @@ def backlight_get():
 
 def backlight_set(value):
     with open("/dev/disp", "wb") as f:
-        ioctl(f, DISP_LCD_SET_BRIGHTNESS, pack("=L", 0) + pack("=L", int(1 + (value * (255/100.0)))))
+        raw_value = int(1 + (value * (255 / 100.0)))
+        ioctl(f, DISP_LCD_SET_BRIGHTNESS,
+              pack("=L", 0) + pack("=L", raw_value))
 
-def inputrange(value):
+
+def parse_brightness(value):
     try:
         value = float(value)
     except ValueError:
-        raise argparse.ArgumentTypeError("input must be int or float")
+        raise ValueError("input must be int or float")
 
     if not (value is None or (value >= 0 and value <= 100.0)):
-        raise argparse.ArgumentTypeError("value must be within 0-100 or -1")
+        raise ValueError("value must be within 0-100")
     return value
 
-def main():
+def parse_args(argv):
+    if not argv:
+        return None
+    if len(argv) == 1 and argv[0] not in ("-h", "--help"):
+        try:
+            return parse_brightness(argv[0])
+        except ValueError:
+            pass
+
+    import argparse
+
+    def inputrange(value):
+        try:
+            return parse_brightness(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc))
+
     parser = argparse.ArgumentParser(
         prog="FF AD5M Backlight control",
-        description='Control the backlight, 0 disables, 1-100% sets backlight from 1 to 100%. Credits to @xblax for finding the IOCTLs.',
-        epilog="See https://github.com/consp/flashforge_ad5m_backlight and https://github.com/xblax/flashforge_adm5_klipper_mod")
+        description=(
+            "Control the backlight: 0 disables it, 1-100 sets brightness. "
+            "Credits to @xblax for finding the IOCTLs."),
+        epilog=(
+            "See https://github.com/consp/flashforge_ad5m_backlight and "
+            "https://github.com/xblax/flashforge_adm5_klipper_mod"))
 
     parser.add_argument(
             'brightness',
             type=inputrange,
             const=None,
             nargs='?',
-            help="brightness, 0 disables, >0 to 100.0 sets brightness in %%, nothing returns current value (0-255)",
+            help=(
+                "brightness: 0 disables, >0 to 100 sets a percentage; "
+                "omitting it returns the current raw value (0-255)"),
             )
 
-    args = parser.parse_args()
+    return parser.parse_args(argv).brightness
 
-    value = args.brightness
+
+def main(argv=None):
+    value = parse_args(sys.argv[1:] if argv is None else argv)
 
     if value is None:
         print("%d" % backlight_get())
@@ -76,7 +104,7 @@ def main():
         backlight_enable(False)
     else:
         backlight_enable()
-        backlight_set(args.brightness)
+        backlight_set(value)
 
 if __name__ == "__main__":
     main()

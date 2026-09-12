@@ -124,14 +124,15 @@ class SourceSpec:
     """Source rewrite and runtime storage policy for a property."""
 
     __slots__ = (
-        "name", "index", "storage", "runtime_name", "runtime_index",
+        "name", "position", "index", "storage", "runtime_name", "runtime_index",
         "policy", "reason",
     )
 
-    def __init__(self, name=None, index=None, storage="attribute",
+    def __init__(self, name=None, position=None, index=None, storage="attribute",
                  runtime_name=None, runtime_index=None,
                  policy=RewritePolicy.LITERAL_OR_BINDING, reason=None):
         self.name = None if name is None else str(name)
+        self.position = None if position is None else int(position)
         self.index = None if index is None else int(index)
         self.storage = str(storage)
         self.runtime_name = None if runtime_name is None else str(runtime_name)
@@ -143,6 +144,7 @@ class SourceSpec:
     def as_dict(self, property_name=None):
         return {
             "name": self.name or property_name,
+            "position": self.position,
             "index": self.index,
             "storage": self.storage,
             "runtime_name": self.runtime_name or property_name,

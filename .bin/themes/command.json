@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "COMMAND",
+  "description": "Olive command terminal with amber indicators and restrained red faults",
+  "colors": {
+    "background": "090a07",
+    "text": "9ab06c",
+    "text_highlight": "f6f9e9",
+    "accent": "d8a63f",
+    "wire": "dde5c8",
+    "shadow": "49572d",
+    "beam": "f2c66d",
+    "glitch_primary": "d8a63f",
+    "glitch_secondary": "d94a32",
+    "glitch_cut": "040503",
+    "subtitle": "dde5c8",
+    "debug": "7d8669",
+    "info": "dde5c8",
+    "warn": "f2c66d",
+    "error": "d94a32",
+    "uptime": "d8a63f"
+  }
+}

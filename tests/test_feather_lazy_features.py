@@ -15,8 +15,67 @@ sys.path.insert(0, str(PLUGINS))
 
 import feather_screen as FEATHER  # noqa: E402
 from feather_feature_manager import (  # noqa: E402
-    FeatureLoadError, FeatureSpec, LazyFeatureManager,
+    FeatureHostProxy, FeatureLoadError, FeatureSpec, LazyFeatureManager,
 )
+from ui.lazy import LazyModule, resolve_lazy_export  # noqa: E402
+
+
+class SharedLazyImportTest(unittest.TestCase):
+    def test_module_proxy_imports_only_on_first_attribute_access(self):
+        module = types.SimpleNamespace(first=1, second=2)
+        with mock.patch("ui.lazy.importlib.import_module",
+                        return_value=module) as importer:
+            proxy = LazyModule("test.lazy_target")
+            importer.assert_not_called()
+
+            self.assertEqual(proxy.first, 1)
+            self.assertEqual(proxy.second, 2)
+
+        importer.assert_called_once_with("test.lazy_target")
+
+    def test_module_proxy_qualifies_name_internally(self):
+        module = types.SimpleNamespace(value=3)
+        with mock.patch("ui.lazy.importlib.import_module",
+                        return_value=module) as importer:
+            proxy = LazyModule("feature.runtime", package="extras")
+            self.assertEqual(proxy.value, 3)
+
+        importer.assert_called_once_with("extras.feature.runtime")
+
+    def test_failed_proxy_import_can_be_retried(self):
+        module = types.SimpleNamespace(value="ready")
+        with mock.patch(
+                "ui.lazy.importlib.import_module",
+                side_effect=(ImportError("not ready"), module)) as importer:
+            proxy = LazyModule("test.retry_target")
+            with self.assertRaises(ImportError):
+                proxy.value
+            self.assertEqual(proxy.value, "ready")
+
+        self.assertEqual(importer.call_count, 2)
+
+    def test_lazy_export_resolves_alias_and_caches_public_value(self):
+        namespace = {"__name__": "test.facade"}
+        module = types.SimpleNamespace(INTERNAL=object())
+        exports = {"PUBLIC": ("implementation", "INTERNAL")}
+        with mock.patch("ui.lazy.importlib.import_module",
+                        return_value=module) as importer:
+            first = resolve_lazy_export(
+                namespace, "PUBLIC", exports, "test.facade")
+            second = resolve_lazy_export(
+                namespace, "PUBLIC", exports, "test.facade")
+
+        self.assertIs(first, module.INTERNAL)
+        self.assertIs(second, first)
+        self.assertIs(namespace["PUBLIC"], first)
+        importer.assert_called_once_with("test.facade.implementation")
+
+    def test_unknown_lazy_export_uses_normal_module_attribute_contract(self):
+        with self.assertRaisesRegex(
+                AttributeError, "test.facade.*MISSING"):
+            resolve_lazy_export(
+                {"__name__": "test.facade"}, "MISSING", {})
+
 
 
 class LazyImportContractTest(unittest.TestCase):
@@ -31,22 +90,28 @@ class LazyImportContractTest(unittest.TestCase):
 import sys
 import feather_screen
 blocked = (
-    'feather_feature_ui_test',
+    'feather_feature_ui_test', 'feather_ui_test',
     'feather_feature_filament', 'ff5m_ui.filament',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
+    'feather_feature_benchmark', 'ff5m_ui.benchmark',
     'feather_z_calibration', 'feather_extruder_calibration',
     'feather_mod_settings',
 )
 assert not [name for name in blocked if name in sys.modules]
-z_offset_modules = set(
-    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
-assert z_offset_modules == {
-    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
-}, z_offset_modules
+assert 'ff5m_ui.z_offset.constants' in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.z_offset.') and
+            (name.endswith('.page') or name.endswith('.runtime') or
+             name.endswith('.actions') or name.endswith('.common'))]
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.benchmark')]
+assert '__getattr__' not in feather_screen.FeatherScreen.__dict__
+assert not hasattr(feather_screen, 'ZCalibrationSession')
+assert not hasattr(feather_screen, 'ExtruderCalibrationSession')
 """)
 
     def test_controller_construction_keeps_product_features_cold(self):
@@ -84,9 +149,10 @@ class Printer:
         pass
 
 class Config:
-    def __init__(self, blending=None):
+    def __init__(self, blending=None, raster_acceleration=None):
         self.printer = Printer()
         self.blending = blending
+        self.raster_acceleration = raster_acceleration
     def get_printer(self):
         return self.printer
     def getboolean(self, name, default=False):
@@ -96,6 +162,8 @@ class Config:
     def getfloat(self, name, default=None, minval=None):
         return default
     def get(self, name, default=None):
+        if name == 'raster_acceleration' and self.raster_acceleration is not None:
+            return self.raster_acceleration
         return default
     def error(self, message):
         return ValueError(message)
@@ -106,26 +174,40 @@ assert controller.feature_manager.loaded() == ()
 assert controller.gcode.immediate == {'FEATHER_ABORT'}
 assert controller.blending is True
 assert controller.renderer.blending is True
+assert controller.raster_acceleration == 'scalar'
+assert controller.renderer.raster_acceleration == 'scalar'
 disabled = feather_screen.FeatherScreen(Config(False))
 assert disabled.blending is False
 assert disabled.renderer.blending is False
+accelerated = feather_screen.FeatherScreen(Config(raster_acceleration='NeOn'))
+assert accelerated.raster_acceleration == 'neon'
+assert accelerated.renderer.raster_acceleration == 'neon'
+try:
+    feather_screen.FeatherScreen(Config(raster_acceleration='dsp'))
+except ValueError as error:
+    assert 'raster_acceleration must be scalar or neon' in str(error)
+else:
+    raise AssertionError('invalid raster acceleration was accepted')
 blocked = (
-    'feather_feature_ui_test',
+    'feather_feature_ui_test', 'feather_ui_test',
     'feather_feature_filament', 'ff5m_ui.filament',
     'feather_feature_calibration', 'feather_feature_z',
     'feather_feature_extruder', 'feather_feature_settings',
+    'feather_feature_benchmark', 'ff5m_ui.benchmark',
     'feather_z_calibration', 'feather_extruder_calibration',
     'feather_mod_settings',
 )
 assert not [name for name in blocked if name in sys.modules]
-z_offset_modules = set(
-    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
-assert z_offset_modules == {
-    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
-}, z_offset_modules
+assert 'ff5m_ui.z_offset.constants' in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.z_offset.') and
+            (name.endswith('.page') or name.endswith('.runtime') or
+             name.endswith('.actions') or name.endswith('.common'))]
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.filament')]
 assert 'ff5m_ui.heat.page' not in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.benchmark')]
 """)
 
     def test_features_load_sequentially_and_are_singletons(self):
@@ -133,7 +215,8 @@ assert 'ff5m_ui.heat.page' not in sys.modules
 import sys
 import feather_screen
 from feather_feature_manager import LazyFeatureManager
-from ui import FeatherRenderer, Page
+from ff5m_ui.screen import ScreenPage
+from ui import FeatherRenderer
 
 class Host:
     pass
@@ -151,7 +234,7 @@ assert 'ff5m_ui.filament.runtime' in sys.modules
 assert 'ff5m_ui.filament.material.page' not in sys.modules
 assert 'ff5m_ui.filament.action.page' not in sys.modules
 calibration = manager.get('calibration')
-calibration.render(Page.CALIBRATION_HOME)
+calibration.render(ScreenPage.CALIBRATION_HOME)
 assert calibration is manager.get('calibration')
 assert 'feather_feature_calibration' in sys.modules
 assert 'feather_feature_z' not in sys.modules
@@ -162,7 +245,7 @@ assert z_feature is manager.get('z')
 assert 'feather_z_calibration' in sys.modules
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
-z_feature.render(Page.SAFE_Z_BRIEFING)
+z_feature.render(ScreenPage.SAFE_Z_BRIEFING)
 pages = [name for name in sys.modules
          if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
 assert pages == ['ff5m_ui.z_offset.safe_briefing.page'], pages
@@ -181,11 +264,10 @@ from ff5m_ui.z_offset.constants import (
 
 assert PAPER_DEFAULT_STEP in PAPER_STEPS
 assert Z_WEIGHT_DANGER > 0
-loaded = set(
-    name for name in sys.modules if name.startswith('ff5m_ui.z_offset'))
-assert loaded == {
-    'ff5m_ui.z_offset', 'ff5m_ui.z_offset.constants',
-}, loaded
+assert 'ff5m_ui.z_offset.constants' in sys.modules
+assert not [name for name in sys.modules
+            if name.startswith('ff5m_ui.z_offset.') and
+            name != 'ff5m_ui.z_offset.constants']
 """)
 
     def test_z_offset_public_actions_remain_lazy_exports(self):
@@ -200,7 +282,7 @@ assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.z_offset') and name.endswith('.page')]
 """)
 
-    def test_klipper_package_feature_uses_the_core_page_enum(self):
+    def test_klipper_package_feature_uses_the_product_page_keys(self):
         self.run_clean("""
 import os
 import pathlib
@@ -217,10 +299,10 @@ with tempfile.TemporaryDirectory() as directory:
         object(), feather_screen.FEATURE_SPECS)
     feature = manager.get('calibration')
     feature_module = sys.modules[type(feature).__module__]
-    assert feature_module.Page is feather_screen.Page
+    assert feature_module.ScreenPage is feather_screen.ScreenPage
 """)
 
-    def test_klipper_fallback_feature_uses_the_core_page_enum(self):
+    def test_klipper_fallback_feature_uses_the_product_page_keys(self):
         source = """
 import os
 import pathlib
@@ -237,7 +319,7 @@ with tempfile.TemporaryDirectory() as directory:
         object(), feather_screen.FEATURE_SPECS)
     feature = manager.get('calibration')
     feature_module = sys.modules[type(feature).__module__]
-    assert feature_module.Page is feather_screen.Page
+    assert feature_module.ScreenPage is feather_screen.ScreenPage
 """
         environment = dict(os.environ)
         environment.pop("PYTHONPATH", None)
@@ -246,6 +328,36 @@ with tempfile.TemporaryDirectory() as directory:
             env=environment, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class FeatureHostProxyTest(unittest.TestCase):
+    def test_recovery_progress_reset_belongs_to_calibration_feature(self):
+        from feather_feature_calibration import CalibrationFeature
+
+        host = types.SimpleNamespace(heating_materials=())
+        feature = CalibrationFeature(host)
+        feature.calibration_progress_key = ("mesh", ("PREP", "LEVEL"))
+        feature.calibration_seen_phases = {"PREP", "LEVEL"}
+
+        feature.begin_recovery()
+
+        self.assertEqual(feature.calibration_kind, "recovery")
+        self.assertIsNone(feature.calibration_progress_key)
+        self.assertEqual(feature.calibration_seen_phases, set())
+        self.assertFalse(hasattr(host, "calibration_progress_key"))
+
+    def test_shared_controller_fields_are_explicit_properties(self):
+        host = types.SimpleNamespace(page=1, previous_page=0)
+        proxy = FeatureHostProxy(host)
+
+        proxy.page = 2
+        proxy.previous_page = 1
+        proxy.local_state = "feature-only"
+
+        self.assertEqual(host.page, 2)
+        self.assertEqual(host.previous_page, 1)
+        self.assertFalse(hasattr(host, "local_state"))
+        self.assertEqual(proxy.local_state, "feature-only")
 
 
 class FeatureManagerTest(unittest.TestCase):
@@ -341,14 +453,18 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         })()
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.send = lambda commands: None
-        controller.page = FEATHER.Page.CONTROL_HOME
-        controller.previous_page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.CONTROL_HOME
+        controller.previous_page = FEATHER.ScreenPage.IDLE_HOME
         controller.print_state = FEATHER.PrintState.IDLE
         controller.last_action_time = -1.0
         controller.pending_action = None
         controller.command_depth = 0
         controller.busy_message = None
         controller.toast_until = 0.0
+        controller.boot_screen_held = False
+        controller.touch_available = None
+        controller.touch_warning_visible = False
+        controller.system_shutdown_active = False
         controller.filament_material = "PLA"
         controller.heating_materials = ("PLA",)
         controller.heating_profiles = {"PLA": (220, 60)}
@@ -366,14 +482,14 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller = self.controller()
         manager = controller.feature_manager
 
-        controller._show_page(FEATHER.Page.CALIBRATION_HOME)
+        controller._show_page(FEATHER.ScreenPage.CALIBRATION_HOME)
         common = manager.peek("calibration")
         self.assertIsNotNone(common)
         self.assertIsNone(manager.peek("z"))
         self.assertNotIn("calibration_kind", controller.__dict__)
 
         controller._dispatch_action("cal.z")
-        self.assertEqual(controller.page, FEATHER.Page.CALIBRATION_CONFIRM)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CALIBRATION_CONFIRM)
         self.assertEqual(common.calibration_kind, "z")
         self.assertIsNone(manager.peek("z"))
 
@@ -406,13 +522,13 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         manager = controller.feature_manager
 
         self.assertIsNone(manager.peek("filament"))
-        controller._show_page(FEATHER.Page.FILAMENT_MATERIAL)
+        controller._show_page(FEATHER.ScreenPage.FILAMENT_MATERIAL)
 
         self.assertIsNotNone(manager.peek("filament"))
-        self.assertEqual(controller.page, FEATHER.Page.FILAMENT_MATERIAL)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.FILAMENT_MATERIAL)
 
-        controller._show_page(FEATHER.Page.FILAMENT_ACTION)
-        self.assertEqual(controller.page, FEATHER.Page.FILAMENT_ACTION)
+        controller._show_page(FEATHER.ScreenPage.FILAMENT_ACTION)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.FILAMENT_ACTION)
 
     def test_z_motion_pages_arm_abort_only_after_homing(self):
         controller = self.controller()
@@ -422,11 +538,11 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         })()
         feature = controller.feature_manager.get("z")
         pages = (
-            FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
-            FEATHER.Page.Z_OFFSET_PAPER,
-            FEATHER.Page.SAFE_Z_BRIEFING,
-            FEATHER.Page.SAFE_Z_CALIBRATION,
-            FEATHER.Page.LIVE_Z_OFFSET,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER,
+            FEATHER.ScreenPage.SAFE_Z_BRIEFING,
+            FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+            FEATHER.ScreenPage.LIVE_Z_OFFSET,
         )
 
         for page in pages:
@@ -442,7 +558,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller.params = type("Params", (), {"variables": {}})()
         controller.chamber_light = None
 
-        controller._show_page(FEATHER.Page.SETTINGS)
+        controller._show_page(FEATHER.ScreenPage.SETTINGS)
         settings = controller.feature_manager.peek("settings")
 
         self.assertIsNotNone(settings)

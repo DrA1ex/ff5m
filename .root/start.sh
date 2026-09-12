@@ -17,6 +17,10 @@ VAR_PATH="/opt/config/mod_data/variables.cfg"
 [ -L /usr/bin/ip ] && rm -f /usr/bin/ip
 [ -L /usr/bin/tc ] && rm -f /usr/bin/tc
 
+# This script runs inside the Forge-X chroot. Replace its bundled sudo file;
+# Moonraker prefixes machine actions with sudo even though it runs as root.
+ln -fns /opt/config/mod/.root/sudo-shim /usr/bin/sudo
+
 sed -i '
   /"project_owner":"mainsail-crew","version":"v2\.14\.0"/ {
     s/"project_owner":"mainsail-crew"/"project_owner":"DrA1ex"/
@@ -27,6 +31,11 @@ sed -i '
 sed -i 's/\("project_owner":"\)mainsail-crew\("\)/\1DrA1ex\2/' /root/www/mainsail/release_info.json
 
 ######
+
+DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "FEATHER")
+if [ "$DISPLAY_MODE" = "FEATHER" ] || [ "$DISPLAY_MODE" = "GUPPY" ]; then
+    /opt/config/mod/.root/S35tslib start
+fi
 
 /opt/config/mod/.root/S45ntpd start
 
@@ -56,11 +65,7 @@ else
     echo "Web services disabled as per configuration."
 fi
 
-DISPLAY_MODE=$("$CFG_SCRIPT" "$VAR_PATH" --get "display" "STOCK")
-if [ "$DISPLAY_MODE" = "FEATHER" ]; then
-    /opt/config/mod/.root/S35tslib start
-elif [ "$DISPLAY_MODE" = "GUPPY" ]; then
-    /opt/config/mod/.root/S35tslib start
+if [ "$DISPLAY_MODE" = "GUPPY" ]; then
     /opt/config/mod/.root/S80guppyscreen start
 fi
 

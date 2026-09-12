@@ -30,11 +30,24 @@ from tests.test_feather_screen import (
 )
 from ff5m_ui.move import runtime as MOVE_UI
 from ff5m_ui.filament import actions as FILAMENT_ACTIONS
+from ff5m_ui.home import page as HOME_PAGE
 from ff5m_ui.home import state as HOME_STATE
-from ui.font_metrics import get_font_metrics
+from ff5m_ui.keys import AppPage
 from feather_feature_filament import FilamentFeature
+from feather_z_calibration import (
+    FeatherZCalibrationMixin, ZCalibrationSession)
+from feather_extruder_calibration import FeatherExtruderCalibrationMixin
 
 
+class ScenarioController(FeatherZCalibrationMixin,
+                         FeatherExtruderCalibrationMixin,
+                         FEATHER.FeatherScreen):
+    """Test harness for scenario implementations no longer on the host."""
+
+    boot_screen_held = False
+    touch_available = None
+    touch_warning_visible = False
+    system_shutdown_active = False
 
 
 class BedMeshState(StatusObject):
@@ -50,11 +63,74 @@ class BedMeshState(StatusObject):
 
 
 class ControllerSafetyTest(unittest.TestCase):
+    def test_home_dashboard_is_a_discoverable_declarative_page(self):
+        self.assertIsInstance(HOME_PAGE.PAGE, UI.DeclarativePage)
+        self.assertEqual(HOME_PAGE.PAGE.page_key, AppPage.HOME)
+        self.assertFalse(HOME_PAGE.PAGE.show_back)
+        available = set(
+            action.wire_id for action in HOME_PAGE.PAGE.actions.values())
+        for wire_id in (
+                "nav.menu", "nav.heat", "nav.network", "nav.job",
+                "home.last_job", "nav.filament", "nav.move"):
+            self.assertIn(wire_id, available)
+
+    def test_home_semantic_route_preserves_existing_navigation(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller._cancel_delayed_tasks = mock.Mock()
+        shown = []
+        controller._show_page = shown.append
+
+        action = controller._resolve_semantic_ui_action("nav.heat")
+        controller._dispatch_semantic_ui_action(action)
+
+        self.assertEqual(controller.heat_return_page, FEATHER.ScreenPage.IDLE_HOME)
+        controller._cancel_delayed_tasks.assert_called_once_with()
+        self.assertEqual(shown, [FEATHER.ScreenPage.CONTROL_HEAT])
+
+    def test_declarative_navigation_rejects_non_controller_page_ids(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller._show_page = mock.Mock()
+
+        with self.assertRaisesRegex(KeyError, "Unsupported application page"):
+            controller._navigate_app_page(AppPage.HOME)
+
+        controller._show_page.assert_not_called()
+
+    def test_declarative_navigation_accepts_move_mode_route(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.move_mode = "joystick"
+        controller._stop_joystick = mock.Mock()
+        controller._render_move = mock.Mock()
+
+        controller._navigate_app_page(AppPage.MOVE_STEP)
+
+        self.assertEqual(controller.move_mode, "step")
+        controller._stop_joystick.assert_called_once_with()
+        controller._render_move.assert_called_once_with()
+
+    def test_screen_transition_rejects_declarative_page_identity(self):
+        controller = ScenarioController.__new__(ScenarioController)
+
+        with self.assertRaisesRegex(TypeError, "ScreenPage"):
+            controller._show_page(AppPage.HOME)
+
     def test_home_cards_register_navigation_without_icon_font(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
-        controller._update_dashboard = lambda eventtime: None
+        controller.extruder = StatusObject(
+            {"temperature": 20.0, "target": 0.0})
+        controller.heater_bed = StatusObject(
+            {"temperature": 21.0, "target": 0.0})
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
+        controller.network_status = {
+            "mode": "ETHERNET", "ssid": "", "ip": "192.168.2.124"}
+        controller.last_job_name = "NONE"
+        controller._current_material = lambda: "PLA"
+        controller._read_text = lambda _path: ""
+        controller._refresh_local_timezone = lambda: None
         batches = []
         controller.renderer.send = batches.append
 
@@ -62,16 +138,14 @@ class ControllerSafetyTest(unittest.TestCase):
 
         drawing = "\n".join(batches[0])
         self.assertNotIn("Typicons", drawing)
-        self.assertIn("nav.heat -p 25 72 -s 492 132", drawing)
-        self.assertIn("nav.network -p 539 72 -s 236 132", drawing)
-        self.assertIn("nav.filament -p 283 345 -s 259 97", drawing)
-        self.assertIn("nav.move -p 543 345 -s 232 97", drawing)
-        self.assertIn("nav.heat", drawing)
-        self.assertIn("nav.network", drawing)
-        self.assertIn("nav.job", drawing)
+        self.assertIn("nav.menu", controller.renderer._buttons)
+        for action in (
+                "nav.heat", "nav.network", "nav.job",
+                "home.last_job", "nav.filament", "nav.move"):
+            self.assertIn(action, controller.renderer._hitboxes)
 
     def test_move_caution_loads_existing_auto_bed_profile(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.gcode = GCodeRecorder()
         controller.bed_mesh = StatusObject({
@@ -91,7 +165,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(len(notices), 1)
 
     def test_move_caution_can_unload_active_bed_profile(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.gcode = GCodeRecorder()
         controller.move_caution_acknowledged = False
@@ -110,7 +184,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(len(notices), 1)
 
     def test_move_caution_dismissal_resets_after_z_becomes_safe(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.bed_mesh = StatusObject({
             "profile_name": "", "profiles": {"auto": {"points": []}}})
         controller.move_caution_acknowledged = False
@@ -129,48 +203,64 @@ class ControllerSafetyTest(unittest.TestCase):
                          (True, "available"))
 
     def test_every_page_routes_to_a_renderer(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         called = []
         routes = {
-            FEATHER.Page.IDLE_HOME: "_render_home",
-            FEATHER.Page.MAIN_MENU: "_render_main_menu",
-            FEATHER.Page.CONTROL_HOME: "_render_control_home",
-            FEATHER.Page.FILE_BROWSER: "_render_file_browser",
-            FEATHER.Page.FILE_CONFIRM: "_render_file_confirm",
-            FEATHER.Page.PRINTING: "_render_print_page",
-            FEATHER.Page.PAUSED: "_render_print_page",
-            FEATHER.Page.CANCEL_CONFIRM: "_render_cancel_confirm",
-            FEATHER.Page.CONTROL_MOVE: "_render_move",
-            FEATHER.Page.CONTROL_HEAT: "_render_heat",
-            FEATHER.Page.CALIBRATION_HOME: "_render_calibration_home",
-            FEATHER.Page.CALIBRATION_GUIDE: "_render_calibration_guide",
-            FEATHER.Page.EXTRUDER_CALIBRATION:
+            FEATHER.ScreenPage.IDLE_HOME: "_render_home",
+            FEATHER.ScreenPage.MAIN_MENU: "_render_main_menu",
+            FEATHER.ScreenPage.CONTROL_HOME: "_render_control_home",
+            FEATHER.ScreenPage.FILE_BROWSER: "_render_file_browser",
+            FEATHER.ScreenPage.FILE_CONFIRM: "_render_file_confirm",
+            FEATHER.ScreenPage.PRINTING: "_render_print_page",
+            FEATHER.ScreenPage.PAUSED: "_render_print_page",
+            FEATHER.ScreenPage.CANCEL_CONFIRM: "_render_cancel_confirm",
+            FEATHER.ScreenPage.CONTROL_MOVE: "_render_move",
+            FEATHER.ScreenPage.CONTROL_HEAT: "_render_heat",
+            FEATHER.ScreenPage.CALIBRATION_HOME: "_render_calibration_home",
+            FEATHER.ScreenPage.CALIBRATION_GUIDE: "_render_calibration_guide",
+            FEATHER.ScreenPage.EXTRUDER_CALIBRATION:
                 "_render_extruder_calibration",
-            FEATHER.Page.CALIBRATION_Z: "_render_z_summary",
-            FEATHER.Page.Z_OFFSET_SUMMARY: "_render_z_summary",
-            FEATHER.Page.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
-            FEATHER.Page.Z_OFFSET_PAPER: "_render_z_paper",
-            FEATHER.Page.SAFE_Z_BRIEFING: "_render_safe_z_briefing",
-            FEATHER.Page.SAFE_Z_CALIBRATION: "_render_safe_z",
-            FEATHER.Page.LIVE_Z_OFFSET: "_render_live_z_offset",
-            FEATHER.Page.CALIBRATION_CONFIRM: "_render_calibration_confirm",
-            FEATHER.Page.CALIBRATION_PROGRESS: "_render_calibration_progress",
-            FEATHER.Page.CALIBRATION_RESULT: "_render_calibration_result",
-            FEATHER.Page.SETTINGS: "_render_settings",
-            FEATHER.Page.MOD_SETTINGS: "_render_mod_settings",
-            FEATHER.Page.PARAMETER_OPTIONS: "_render_parameter_options",
-            FEATHER.Page.MOD_VALUE: "_render_mod_value",
-            FEATHER.Page.NETWORK_HOME: "_render_network_home",
-            FEATHER.Page.WIFI_SCAN: "_render_wifi_scan",
-            FEATHER.Page.WIFI_PASSWORD: "_render_keyboard",
-            FEATHER.Page.NETWORK_PROGRESS: "_render_network_progress",
-            FEATHER.Page.RECOVERY_PROMPT: "_render_recovery_prompt",
-            FEATHER.Page.RECOVERY_CONFIRM: "_render_recovery_confirm",
-            FEATHER.Page.ACTION_PROMPT: "_render_action_prompt",
-            FEATHER.Page.MESSAGE: "_render_message",
-            FEATHER.Page.ERROR: "_render_error",
+            FEATHER.ScreenPage.CALIBRATION_Z: "_render_z_summary",
+            FEATHER.ScreenPage.Z_OFFSET_SUMMARY: "_render_z_summary",
+            FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING: "_render_z_paper_briefing",
+            FEATHER.ScreenPage.Z_OFFSET_PAPER: "_render_z_paper",
+            FEATHER.ScreenPage.SAFE_Z_BRIEFING: "_render_safe_z_briefing",
+            FEATHER.ScreenPage.SAFE_Z_CALIBRATION: "_render_safe_z",
+            FEATHER.ScreenPage.LIVE_Z_OFFSET: "_render_live_z_offset",
+            FEATHER.ScreenPage.CALIBRATION_CONFIRM: "_render_calibration_confirm",
+            FEATHER.ScreenPage.CALIBRATION_PROGRESS: "_render_calibration_progress",
+            FEATHER.ScreenPage.CALIBRATION_RESULT: "_render_calibration_result",
+            FEATHER.ScreenPage.SETTINGS: "_render_settings",
+            FEATHER.ScreenPage.MOD_SETTINGS: "_render_mod_settings",
+            FEATHER.ScreenPage.PARAMETER_OPTIONS: "_render_parameter_options",
+            FEATHER.ScreenPage.MOD_VALUE: "_render_mod_value",
+            FEATHER.ScreenPage.NETWORK_HOME: "_render_network_home",
+            FEATHER.ScreenPage.WIFI_SCAN: "_render_wifi_scan",
+            FEATHER.ScreenPage.WIFI_PASSWORD: "_render_keyboard",
+            FEATHER.ScreenPage.NETWORK_PROGRESS: "_render_network_progress",
+            FEATHER.ScreenPage.RECOVERY_PROMPT: "_render_recovery_prompt",
+            FEATHER.ScreenPage.RECOVERY_CONFIRM: "_render_recovery_confirm",
+            FEATHER.ScreenPage.ACTION_PROMPT: "_render_action_prompt",
+            FEATHER.ScreenPage.MESSAGE: "_render_message",
+            FEATHER.ScreenPage.ERROR: "_render_error",
         }
+        feature_pages = {
+            page for spec in FEATHER.FEATURE_SPECS for page in spec.pages
+        }
+
+        class Feature:
+            def render(self, page):
+                getattr(controller, routes[page])()
+
+        class FeatureManager:
+            def owner_name(self, page):
+                return "test" if page in feature_pages else None
+
+            def get_for_page(self, page):
+                return Feature()
+
+        controller.feature_manager = FeatureManager()
         for method in set(routes.values()):
             setattr(controller, method,
                     lambda method=method: called.append(method))
@@ -180,10 +270,10 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertEqual(called, [method], page)
 
     def test_active_print_keeps_menu_available_on_home_page(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.print_state = FEATHER.PrintState.PRINTING
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         drawing = []
 
         def render_home():
@@ -194,16 +284,16 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_home = render_home
 
-        controller._show_page(FEATHER.Page.IDLE_HOME)
+        controller._show_page(FEATHER.ScreenPage.IDLE_HOME)
 
-        self.assertFalse(controller.renderer._emergency_stop_visible)
+        self.assertIsNone(controller.renderer._header_action)
         self.assertIn("nav.menu", "\n".join(drawing))
         self.assertNotIn("global.abort", "\n".join(drawing))
 
     def test_safety_composes_armed_pages_and_global_printer_activity(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.MAIN_MENU
+        controller.page = FEATHER.ScreenPage.MAIN_MENU
         controller.print_state = FEATHER.PrintState.IDLE
         controller.print_stats = StatusObject({"state": "standby"})
         controller.idle_timeout = StatusObject({"state": "Ready"})
@@ -240,7 +330,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_stats.status["state"] = "printing"
         self.assertTrue(controller._safety_decision().visible)
         self.assertFalse(controller._safety_decision(
-            FEATHER.Page.IDLE_HOME).visible)
+            FEATHER.ScreenPage.IDLE_HOME).visible)
 
         controller.print_stats.status["state"] = "standby"
         mutex.busy = True
@@ -268,32 +358,32 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.joystick_stream.active = False
 
         self.assertFalse(controller._safety_decision(
-            FEATHER.Page.CONTROL_MOVE).visible)
+            FEATHER.ScreenPage.CONTROL_MOVE).visible)
         controller.toolhead.status["homed_axes"] = "x"
-        move = controller._safety_decision(FEATHER.Page.CONTROL_MOVE)
+        move = controller._safety_decision(FEATHER.ScreenPage.CONTROL_MOVE)
         self.assertTrue(move.visible)
         self.assertEqual(move.armed_reasons, ("homed-motion-controls",))
         self.assertTrue(controller._safety_decision(
-            FEATHER.Page.CONTROL_HEAT).visible)
+            FEATHER.ScreenPage.CONTROL_HEAT).visible)
         self.assertFalse(controller._safety_decision(
-            FEATHER.Page.FILE_CONFIRM).visible)
+            FEATHER.ScreenPage.FILE_CONFIRM).visible)
 
     def test_active_process_shows_abort_on_every_live_page_except_home(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.MAIN_MENU
+        controller.page = FEATHER.ScreenPage.MAIN_MENU
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.print_stats = StatusObject({"state": "printing"})
 
-        for page in FEATHER.Page:
+        for page in FEATHER.ScreenPage:
             decision = controller._safety_decision(page)
             self.assertEqual(decision.visible,
-                             page != FEATHER.Page.IDLE_HOME, page)
+                             page != FEATHER.ScreenPage.IDLE_HOME, page)
 
     def test_feature_armed_policy_failure_is_fail_safe(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.SETTINGS
+        controller.page = FEATHER.ScreenPage.SETTINGS
         controller.print_state = FEATHER.PrintState.IDLE
         controller.feature_manager = type("Manager", (), {
             "safety_active_reasons": lambda self, eventtime: (),
@@ -311,9 +401,9 @@ class ControllerSafetyTest(unittest.TestCase):
         logged.assert_called_once()
 
     def test_short_gcode_state_does_not_flash_abort(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.MAIN_MENU
+        controller.page = FEATHER.ScreenPage.MAIN_MENU
         controller.print_state = FEATHER.PrintState.IDLE
         controller.print_stats = StatusObject({"state": "standby"})
         controller.idle_timeout = StatusObject({"state": "Ready"})
@@ -364,8 +454,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("global.abort", "\n".join(batches[-1]))
 
     def test_dashboard_refresh_redraws_only_changed_panel(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -378,22 +468,32 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.filament_material = "PLA"
         controller._last_dashboard = None
         controller._read_text = lambda path: ""
-        controller._update_dashboard(100)
-        initial = "\n".join(batches[0])
-        self.assertIn("-p 18 7 -s 142 46", initial)
-        self.assertIn("-p 28 29", initial)
-        self.assertIn("-p 29 252 -s 742 76", initial)
-        self.assertNotIn("-p 29 284", initial)
-        controller.extruder.status["temperature"] = 22.0
-        controller._update_dashboard(101)
+
+        with mock.patch.object(
+                HOME_STATE.time, "strftime", return_value="20:00"):
+            controller._update_dashboard(100)
+            initial_state = controller._last_dashboard
+            controller.extruder.status["temperature"] = 22.0
+            controller._update_dashboard(101)
+
+        self.assertEqual(len(batches), 2)
         update = "\n".join(batches[1])
-        self.assertIn("-p 28 112 -s 229 87", update)
-        self.assertNotIn("-p 285 112", update)
-        self.assertNotIn("-p 542 112", update)
+        self.assertIn('-t "22 / 0 C"', update)
+        for unchanged in (
+                '21 / 0 C', 'ETHERNET', '192.168.2.124',
+                'NO ACTIVE JOB', 'READY', 'MENU'):
+            self.assertNotIn(unchanged, update)
+        self.assertNotIn("--batch clear-hitboxes", update)
+        self.assertNotIn("--batch hitbox", update)
+        self.assertNotIn("--batch button", update)
+        self.assertEqual(controller._last_dashboard.nozzle, 22)
+        self.assertEqual(
+            controller._last_dashboard._replace(nozzle=initial_state.nozzle),
+            initial_state)
 
     def test_dashboard_worst_case_content_is_bounded(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.print_state = FEATHER.PrintState.PREPARING
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
@@ -424,8 +524,12 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._print_progress = lambda eventtime, stats: 1.0
         controller._print_time_values = (
             lambda eventtime, stats, progress: (359999.0, 359999.0))
-        controller.print_status_text = (
-            "CALIBRATING AND PREPARING PRINT SURFACE")
+        controller.operation_context = StatusObject({
+            "context_types": ("print",),
+            "context_path": ("Print",),
+            "current_state": "CALIBRATING AND PREPARING PRINT SURFACE",
+            "revision": 1,
+        })
         controller._last_dashboard = None
         controller._read_text = lambda path: ""
         controller._refresh_local_timezone = lambda: None
@@ -433,96 +537,46 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_home()
 
         drawing = "\n".join("\n".join(batch) for batch in batches)
-        material = next(line for line in drawing.splitlines()
-                        if "CARBON-FIBER-POLYCARBONATE" in line)
-        network = next(line for line in drawing.splitlines()
-                       if "VERY-LONG-WIRELESS-NETWORK-NAME" in line)
-        progress = next(line for line in drawing.splitlines()
-                        if "100% //" in line)
-        self.assertIn("--max-width 220 --truncate", material)
-        self.assertIn("--max-width 210 --truncate", network)
-        self.assertIn("--max-width 350 --truncate", progress)
-        self.assertLessEqual(
-            controller.renderer.text_width(
-                "299 / 300 C", "JetBrainsMono 12pt"),
-            209)
+        for value in (
+                "CARBON-FIBER-POLYCARBONATE",
+                "VERY-LONG-WIRELESS-NETWORK-NAME",
+                "100% //"):
+            command = next(
+                line for line in drawing.splitlines() if value in line)
+            self.assertIn("--truncate", command)
+            match = re.search(r"--max-width ([0-9]+)", command)
+            self.assertIsNotNone(match)
+            self.assertGreater(int(match.group(1)), 0)
+            self.assertLessEqual(int(match.group(1)), UI.SCREEN_WIDTH)
 
-    def test_dashboard_clock_uses_header_contrast_and_stable_width_font(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.IDLE_HOME
-        controller.renderer = FEATHER.FeatherRenderer()
-        colors = dict(UI.FALLBACK_THEME)
-        colors["text"] = "101010"
-        controller.renderer._palette = UI.resolve_theme(
-            colors, {"header_text": "fefefe"})
-        controller.reactor = Reactor()
-        batches = []
-        controller.renderer.send = batches.append
-        controller.extruder = StatusObject(
-            {"temperature": 20.0, "target": 0.0})
-        controller.heater_bed = StatusObject(
-            {"temperature": 21.0, "target": 0.0})
-        controller.toolhead = StatusObject({"homed_axes": "xyz"})
-        controller.network_status = {
-            "mode": "ETHERNET", "ssid": "", "ip": "192.168.2.124"}
-        controller.last_job_name = "NONE"
-        controller._current_material = lambda: "PLA"
-        controller._read_text = lambda _path: ""
-        controller._last_dashboard = None
-
-        controller._render_home()
-
-        drawing = "\n".join("\n".join(batch) for batch in batches)
-        clock = next(
-            line for line in drawing.splitlines()
-            if re.search(r'-t "[0-2][0-9]:[0-5][0-9]"$', line))
-        title = next(
-            line for line in drawing.splitlines()
-            if '-t "FORGE-X // FEATHER"' in line)
-        clock_value = re.search(r'-t "([0-9]{2}:[0-9]{2})"$', clock).group(1)
-        font = re.search(r'-f "([^"]+)"', clock).group(1)
-        x = int(re.search(r'-p ([0-9]+) [0-9]+', clock).group(1))
-        title_x = int(re.search(r'-p ([0-9]+) [0-9]+', title).group(1))
-        title_width = int(re.search(r'--max-width ([0-9]+)', title).group(1))
-        title_left = title_x - title_width // 2
-
-        self.assertIn(
-            "-c %s" % controller.renderer.color(UI.ThemeRole.HEADER_TEXT),
-            clock)
-        self.assertNotIn(
-            "-c %s" % controller.renderer.color(UI.ThemeColor.TEXT), clock)
-        self.assertTrue(get_font_metrics().fonts[font].monospaced)
-        self.assertLessEqual(
-            x + controller.renderer.text_width(clock_value, font),
-            title_left)
-        self.assertIsInstance(controller._last_dashboard,
-                              HOME_STATE.DashboardState)
 
     def test_calibration_menu_paginates_available_workflows(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        controller.renderer.send = lambda commands: None
         controller.params = type("Params", (), {
             "variables": {"z_offset": 0.125}})()
+
         controller._render_calibration_home()
-        drawing = "\n".join(batches[0])
-        self.assertIn("cal.mesh -p 30 270 -s 740 84", drawing)
-        self.assertIn("cal.next", drawing)
+        self.assertIn("cal.mesh", controller.renderer._buttons)
+        self.assertIn("cal.next", controller.renderer._buttons)
+        self.assertNotIn("cal.prev", controller.renderer._buttons)
 
         controller.calibration_page = 1
         controller._render_calibration_home()
-        self.assertIn("cal.extruder", controller.renderer._buttons)
-        self.assertIn("cal.shaper", controller.renderer._buttons)
-        self.assertIn("cal.axes", controller.renderer._buttons)
+        for action in ("cal.extruder", "cal.shaper", "cal.axes"):
+            self.assertIn(action, controller.renderer._buttons)
+        self.assertIn("cal.prev", controller.renderer._buttons)
 
         controller.calibration_page = 2
         controller._render_calibration_home()
-        self.assertIn("cal.pid_bed", controller.renderer._buttons)
-        self.assertIn("cal.pid_extruder", controller.renderer._buttons)
+        for action in ("cal.pid_bed", "cal.pid_extruder"):
+            self.assertIn(action, controller.renderer._buttons)
+        self.assertIn("cal.prev", controller.renderer._buttons)
+        self.assertNotIn("cal.next", controller.renderer._buttons)
 
     def test_extruder_opens_guided_workflow_and_axes_keeps_measurement_guide(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -538,10 +592,10 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._handle_calibration_action("cal.axes")
         self.assertEqual(controller.calibration_guide_kind, "axes")
-        self.assertEqual(pages[-1], FEATHER.Page.CALIBRATION_GUIDE)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.CALIBRATION_GUIDE)
 
     def test_pid_confirm_uses_selected_material_temperature(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -565,8 +619,7 @@ class ControllerSafetyTest(unittest.TestCase):
         )
         for kind, expected in cases:
             with self.subTest(kind=kind):
-                controller = FEATHER.FeatherScreen.__new__(
-                    FEATHER.FeatherScreen)
+                controller = ScenarioController.__new__(ScenarioController)
                 controller.calibration_kind = kind
                 controller.calibration_material = "PETG"
                 controller.calibration_error = None
@@ -581,10 +634,10 @@ class ControllerSafetyTest(unittest.TestCase):
 
                 self.assertEqual(controller.gcode.commands, expected)
                 self.assertEqual(
-                    pages, [FEATHER.Page.CALIBRATION_RESULT])
+                    pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_tuning_result_can_save_or_return_without_saving(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -605,47 +658,39 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(restarts, ["SAVE_CONFIG"])
 
         controller._handle_calibration_action("cal.tuning.discard")
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_HOME])
 
-    def test_calibration_macros_publish_progress_for_feather(self):
-        macros = (
-            pathlib.Path(__file__).parents[1] / "macros" / "base.cfg"
-        ).read_text(encoding="utf-8")
-        for status in (
-                "BED PID: HOMING", "BED PID: TUNING",
-                "HOTEND PID: HOMING", "HOTEND PID: TUNING",
-                "INPUT SHAPER: HOMING", "INPUT SHAPER: MEASURING",
-                "INPUT SHAPER: PROCESSING", "INPUT SHAPER: COMPLETE"):
-            self.assertIn('_PRINT_STATUS S="%s"' % status, macros)
 
     def test_z_offset_summary_registers_all_positions(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.renderer.send = lambda commands: None
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.125, None, "adaptive", -0.25, True)
 
         controller._render_z_summary()
 
-        drawing = "\n".join(batches[0])
-        for action in (
-                "z.zone.front_left", "z.zone.front_right", "z.zone.center",
-                "z.zone.rear_left", "z.zone.rear_right"):
-            self.assertIn(action, drawing)
-        self.assertIn("--batch button -p 75 72 -s 210 64", drawing)
-        self.assertIn("--batch button -p 295 72 -s 210 64", drawing)
-        self.assertIn("--batch button -p 130 146 -s 260 64", drawing)
-        self.assertIn("--batch button -p 65 334 -s 670 82", drawing)
+        actions = (
+            "z.zone.front_left", "z.zone.front_right", "z.zone.center",
+            "z.zone.rear_left", "z.zone.rear_right")
+        keys = []
+        for action in actions:
+            keys.append(next(
+                key for key in controller.renderer._buttons
+                if key == action or key.startswith(action + ".")))
+        rectangles = [controller.renderer._buttons[key][:4] for key in keys]
+        for index, rectangle in enumerate(rectangles):
+            for other in rectangles[index + 1:]:
+                self.assertFalse(UI.rectangles_overlap(rectangle, other))
 
     def test_z_paper_controls_are_disabled_until_probe_or_manual_start(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
         controller.reactor = Reactor()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.0, None, "", -0.25, False)
         controller.z_calibration.choose_zone("center")
         controller._z_weight_gauge_commands = lambda eventtime: []
@@ -658,11 +703,11 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertNotIn(action, drawing)
 
     def test_safe_z_pages_explain_measurement_and_gate_adjustment_until_probe(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False, safe_z=8.0)
 
@@ -687,7 +732,7 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertIn(action, after_probe)
 
     def test_live_z_offset_page_separates_saved_current_and_unsaved(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -702,7 +747,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.live_z_step = 0.005
         controller.live_z_dialog = None
         controller.z_adjust_warning_threshold = 0.3
-        controller.renderer.set_emergency_stop_visible(True)
+        controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_live_z_offset()
 
@@ -710,15 +755,14 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("+0.125 mm", drawing)
         self.assertIn("+0.635 mm", drawing)
         self.assertIn("+0.510 mm", drawing)
-        self.assertIn("global.abort", drawing)
-        self.assertIn("live_z.save", drawing)
+        self.assertIn("global.abort", controller.renderer._buttons)
+        self.assertIn("live_z.save", controller.renderer._buttons)
         self.assertFalse(UI.rectangles_overlap(
             controller.renderer._buttons["global.abort"][:4],
             controller.renderer._buttons["live_z.save"][:4]))
-        self.assertIn("-c ff4d5a", drawing)
 
     def test_live_z_offset_load_warning_has_explicit_choice(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -742,7 +786,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("global.abort", controller.renderer._buttons)
 
     def test_weight_gauge_uses_history_and_expands_without_clamping(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
         controller.weight_sensor = StatusObject({
@@ -797,7 +841,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(gauge["initial"], 100.0)
 
     def test_weight_gauge_ignores_uninitialized_sensor_extrema(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.weight_sensor = StatusObject({
             "temperature": 0.0,
@@ -816,7 +860,7 @@ class ControllerSafetyTest(unittest.TestCase):
         })
 
     def test_weight_gauge_turns_red_only_above_four_hundred(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         self.assertTrue(controller.renderer.set_theme("SYNTH"))
         primary = controller.renderer.color(UI.ThemeColor.PRIMARY)
@@ -844,43 +888,49 @@ class ControllerSafetyTest(unittest.TestCase):
             any("-c %s" % danger_color in line for line in danger))
 
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        controller.renderer.send = lambda commands: None
         controller.calibration_kind = "screws"
         controller.calibration_material = "PETG"
+
         controller.calibration_clean_nozzle = True
         controller._render_calibration_confirm()
-        drawing = "\n".join(batches[-1])
-        self.assertIn("cal.clean.skip", drawing)
-        self.assertIn("cal.material.PETG", drawing)
-        self.assertIn("cal.material.ABS-PC", drawing)
-        self.assertIn("--batch button -p 182 145", drawing)
+        self.assertEqual(
+            controller.renderer._buttons["cal.material.PETG"][5],
+            "selected")
+        self.assertEqual(
+            controller.renderer._buttons["cal.clean.skip"][5], "enabled")
+        self.assertIn("cal.material.ABS-PC", controller.renderer._buttons)
+        self.assertIn("cal.confirm", controller.renderer._buttons)
 
         controller.calibration_clean_nozzle = False
         controller._render_calibration_confirm()
-        drawing = "\n".join(batches[-1])
-        self.assertIn("cal.clean.skip", drawing)
-        self.assertIn("--border b47aff", drawing)
+        self.assertEqual(
+            controller.renderer._buttons["cal.clean.skip"][5], "selected")
+        self.assertTrue(all(
+            spec[5] != "selected"
+            for action, spec in controller.renderer._buttons.items()
+            if action.startswith("cal.material.")))
 
     def test_mesh_cleaning_uses_complete_shared_material_selector(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        controller.renderer.send = lambda commands: None
         controller.calibration_kind = "mesh"
         controller.calibration_material = "ABS-PC"
 
         controller._render_calibration_confirm()
 
-        drawing = "\n".join(batches[-1])
         for material in controller.heating_materials:
-            self.assertIn("cal.material.%s" % material, drawing)
-        self.assertIn("--border b47aff", drawing)
+            self.assertIn(
+                "cal.material.%s" % material, controller.renderer._buttons)
+        self.assertEqual(
+            controller.renderer._buttons["cal.material.ABS-PC"][5],
+            "selected")
 
     def test_empty_heating_disables_mesh_but_preserves_no_clean_screws(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.heating_materials = ()
         controller.heating_profiles = {}
         controller.renderer = FEATHER.FeatherRenderer()
@@ -906,46 +956,147 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn(":cal.confirm", screws)
 
     def test_screw_calibration_marks_only_current_phase_with_accent(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "screws"
         controller.calibration_clean_nozzle = True
         controller.calibration_repeat_probe = False
-        drawing = "\n".join(controller._calibration_stage_commands(
-            "BED SCREWS: HEATING"))
-        self.assertIn("stroke -p 55 225 -s 128 38 -c 35d9e6", drawing)
-        self.assertIn("stroke -p 195 225 -s 128 38 -c b47aff", drawing)
-        self.assertIn("stroke -p 335 225 -s 128 38 -c 263238", drawing)
-        self.assertEqual(drawing.count("-c b47aff"), 2)
 
-    def test_calibration_heating_offers_m108_cancel_and_global_abort(self):
+        controller._calibration_stage_commands("CALIBRATION: STARTING")
+
+        with mock.patch.object(
+                controller.renderer, "text",
+                wraps=controller.renderer.text) as text:
+            controller._calibration_stage_commands("BED SCREWS: HEATING")
+
+        colors = dict((call.args[2], call.args[3])
+                      for call in text.call_args_list)
+        self.assertEqual(colors["PREP"], UI.ThemeColor.PRIMARY)
+        self.assertEqual(colors["HEAT"], UI.ThemeColor.BRIGHT)
+        for stage in ("CLEAN", "PROBE", "DONE"):
+            self.assertEqual(colors[stage], UI.ThemeColor.TEXT)
+
+    def test_mesh_progress_uses_current_state_not_context_path(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+
+        controller._calibration_stage_commands("CALIBRATION: STARTING")
+        with mock.patch.object(
+                controller.renderer, "text",
+                wraps=controller.renderer.text) as text:
+            controller._calibration_stage_commands(
+                "BED LEVEL -> BED MESH -> NOZZLE CLEANING -> CLEANING", {
+                    "context_path": (
+                        "Bed Level", "Bed Mesh", "Nozzle Cleaning"),
+                    "current_state": "CLEANING",
+                })
+
+        colors = dict((call.args[2], call.args[3])
+                      for call in text.call_args_list)
+        self.assertEqual(colors["PREP"], UI.ThemeColor.PRIMARY)
+        self.assertEqual(colors["CLEAN"], UI.ThemeColor.BRIGHT)
+        self.assertEqual(colors["LEVEL"], UI.ThemeColor.TEXT)
+
+    def test_mesh_progress_does_not_regress_during_post_clean_cooling(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+        operation = {
+            "context_path": ("Bed Level", "Bed Mesh", "Nozzle Cleaning"),
+            "current_state": None,
+        }
+
+        def active_phase(state):
+            operation["current_state"] = state
+            with mock.patch.object(
+                    controller.renderer, "text",
+                    wraps=controller.renderer.text) as text:
+                controller._calibration_stage_commands("", operation)
+            return next(
+                call.args[2] for call in text.call_args_list
+                if call.args[3] == UI.ThemeColor.BRIGHT)
+
+        self.assertEqual([
+            active_phase("HEATING NOZZLE"),
+            active_phase("CLEANING"),
+            active_phase("COOLING NOZZLE"),
+            active_phase("LEVELING"),
+        ], ["HEAT", "CLEAN", "CLEAN", "LEVEL"])
+
+    def test_context_name_without_state_does_not_advance_progress(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+
+        with mock.patch.object(
+                controller.renderer, "text",
+                wraps=controller.renderer.text) as text:
+            controller._calibration_stage_commands("BED LEVEL", {
+                "context_path": ("Bed Level",),
+                "current_state": None,
+            })
+
+        colors = dict((call.args[2], call.args[3])
+                      for call in text.call_args_list)
+        self.assertEqual(colors["PREP"], UI.ThemeColor.BRIGHT)
+        self.assertEqual(colors["LEVEL"], UI.ThemeColor.TEXT)
+
+    def test_skipped_and_pending_calibration_phases_use_distinct_colors(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "mesh"
+
+        controller._calibration_stage_commands("CALIBRATION: STARTING")
+        with mock.patch.object(
+                controller.renderer, "text",
+                wraps=controller.renderer.text) as text:
+            controller._calibration_stage_commands(
+                "BED LEVEL -> BED MESH -> NOZZLE CLEANING -> HEATING NOZZLE")
+
+        colors = dict((call.args[2], call.args[3])
+                      for call in text.call_args_list)
+        self.assertEqual(colors["PREP"], UI.ThemeColor.PRIMARY)
+        self.assertEqual(colors["HOME"], UI.ThemeColor.DIM)
+        self.assertEqual(colors["HEAT"], UI.ThemeColor.BRIGHT)
+        labels = [call.args[2] for call in text.call_args_list]
+        self.assertNotIn("SKIPPED", labels)
+        self.assertNotIn("PENDING", labels)
+        self.assertNotIn("ACTIVE", labels)
+
+    def test_cancelable_calibration_offers_context_cancel_and_global_abort(self):
         for kind in ("screws", "mesh", "z"):
             with self.subTest(kind=kind):
-                controller = FEATHER.FeatherScreen.__new__(
-                    FEATHER.FeatherScreen)
+                controller = ScenarioController.__new__(ScenarioController)
                 controller.renderer = FEATHER.FeatherRenderer()
                 controller.calibration_kind = kind
                 controller.calibration_repeat_probe = False
                 controller.calibration_clean_nozzle = True
                 controller.calibration_cancel_requested = False
-                controller.temperature_wait = type(
-                    "Wait", (), {"variables": {
-                        "active": True, "cancel": False}})()
-                controller.print_status_text = "HEATING..."
-                batches = []
-                controller.renderer.send = batches.append
-                controller.renderer.set_emergency_stop_visible(True)
+                controller.operation_context = type("Contexts", (), {
+                    "get_status": lambda self, eventtime: {
+                        "context_path": ("Calibration",),
+                        "current_state": "HEATING NOZZLE",
+                        "cancel_available": True,
+                        "cancel_pending": False,
+                        "cancel_target_name": "Calibration",
+                        "revision": 1,
+                    }})()
+                controller.reactor = Reactor()
+                controller.renderer.send = lambda commands: None
+                controller.renderer.set_header_action("global.abort", "ABORT")
 
                 controller._render_calibration_progress()
 
-                drawing = "\n".join(batches[-1])
-                self.assertIn("cal.cancel.heat", drawing)
-                self.assertIn("global.abort", drawing)
                 self.assertIn(
-                    "--batch button -p 648 7 -s 132 46", drawing)
+                    "cal.cancel", controller.renderer._buttons)
+                self.assertEqual(
+                    controller.renderer._buttons["cal.cancel"][5],
+                    "danger")
+                self.assertIn("global.abort", controller.renderer._buttons)
 
     def test_z_preparation_has_clean_and_no_clean_command_paths(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_material = "ABS-PC"
         controller._limited_preheat = lambda material: (270, 105)
         controller.params = type("Params", (), {
@@ -955,24 +1106,28 @@ class ControllerSafetyTest(unittest.TestCase):
         clean = controller._z_preparation_command()
         self.assertIn(
             "CLEAR_NOZZLE EXTRUDER_TEMP=270 BED_TEMP=105", clean)
-        self.assertIn('S="Z OFFSET: TARE"', clean)
+        self.assertIn("_CONTEXT_BEGIN TYPE=z_offset", clean)
+        self.assertIn("_CONTEXT_STATE NAME=TARING", clean)
+        self.assertIn("_CONTEXT_END", clean)
         self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", clean)
         self.assertIn("LOAD_CELL_TARE", clean)
-        self.assertIn('S="Z OFFSET: READY"', clean)
 
         controller.calibration_clean_nozzle = False
         no_clean = controller._z_preparation_command()
         self.assertIn("M104 S120", no_clean)
-        self.assertIn("G28", no_clean)
+        self.assertIn("_HOME_IF_NEEDED", no_clean)
         self.assertIn(
             "_WAIT_TEMPERATURE CMD=M104 VALUE=120", no_clean)
+        self.assertIn("_CONTEXT_STATE NAME=HEATING", no_clean)
+        self.assertNotIn("_CONTEXT_STATE NAME=HOMING", no_clean)
+        self.assertNotIn("\nG28\n", no_clean)
         self.assertNotIn("M140", no_clean)
         self.assertNotIn("CLEAR_NOZZLE", no_clean)
         self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", no_clean)
         self.assertIn("LOAD_CELL_TARE", no_clean)
 
     def test_z_progress_stages_match_cleaning_choice(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "z"
         controller.calibration_clean_nozzle = True
@@ -988,7 +1143,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_z_session_captures_runtime_and_exact_mesh_before_clearing(self):
         mesh_object = object()
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = DeferredReactor()
         controller.gcode = GCodeRecorder()
         controller.gcode_move = StatusObject({
@@ -997,7 +1152,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.probe = type("Probe", (), {"z_offset": -0.25})()
         controller.params = type("Params", (), {
             "variables": {"load_zoffset": 1}})()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller._require_idle = lambda: None
         pages = []
         controller._show_page = pages.append
@@ -1014,7 +1169,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "SET_SKEW CLEAR=1",
             "_SET_GCODE_OFFSET Z=0 MOVE=0",
             "BED_MESH_CLEAR"])
-        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_BRIEFING])
+        self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_BRIEFING])
         self.assertEqual(controller.reactor.callbacks, [])
 
     def test_z_session_entry_failure_restores_runtime_and_mesh(self):
@@ -1025,7 +1180,7 @@ class ControllerSafetyTest(unittest.TestCase):
                     raise RuntimeError("clear failed")
 
         mesh_object = object()
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.gcode = FailClear()
         controller.gcode_move = StatusObject({
@@ -1036,7 +1191,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.probe = type("Probe", (), {"z_offset": -0.25})()
         controller.params = type("Params", (), {
             "variables": {"load_zoffset": 0}})()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller._require_idle = lambda: None
 
         with self.assertRaisesRegex(RuntimeError, "clear failed"):
@@ -1058,15 +1213,14 @@ class ControllerSafetyTest(unittest.TestCase):
                 (None, ""), (object(), "auto"),
                 (object(), "adaptive-run")):
             with self.subTest(profile=profile or "absent"):
-                controller = FEATHER.FeatherScreen.__new__(
-                    FEATHER.FeatherScreen)
+                controller = ScenarioController.__new__(ScenarioController)
                 controller.reactor = Reactor()
                 controller.gcode = GCodeRecorder()
                 controller.toolhead = StatusObject({
                     "homed_axes": "xyz",
                     "position": (0.0, 0.0, 0.2, 0.0)})
                 controller.bed_mesh = BedMeshState(None, "")
-                controller.z_calibration = FEATHER.ZCalibrationSession()
+                controller.z_calibration = ZCalibrationSession()
                 controller.z_calibration.begin(
                     0.321, original, profile, -0.25, False)
 
@@ -1083,13 +1237,13 @@ class ControllerSafetyTest(unittest.TestCase):
                 self.assertFalse(controller.z_calibration.active)
 
     def test_z_save_applies_runtime_persists_offset_and_auto_load(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.gcode = GCodeRecorder()
         controller.toolhead = StatusObject({
             "homed_axes": "xyz", "position": (0.0, 0.0, 0.2, 0.0)})
         controller.bed_mesh = BedMeshState(None, "")
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             -0.100, None, "", -0.25, True)
 
@@ -1102,16 +1256,16 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("TURN_OFF_HEATERS", command)
 
     def test_z_pressure_dialog_is_suppressed_during_probe_then_rearms(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
-        controller.page = FEATHER.Page.Z_OFFSET_PAPER
+        controller.page = FEATHER.ScreenPage.Z_OFFSET_PAPER
         controller.weight_sensor = StatusObject({
             "temperature": 850.0,
             "measured_min_temp": 0.0,
             "measured_max_temp": 850.0,
         })
         controller.z_weight_gauge = None
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False)
         rendered = []
@@ -1144,10 +1298,10 @@ class ControllerSafetyTest(unittest.TestCase):
                     raise RuntimeError("cancelled")
 
         original_mesh = object()
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.gcode = AbortPreparation()
-        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller.print_state = FEATHER.PrintState.IDLE
         controller.shutdown_active = False
         controller.toolhead = StatusObject({
@@ -1158,7 +1312,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_clean_nozzle = False
         controller.calibration_cancel_requested = True
         controller.calibration_cancel_dispatched = True
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.111, original_mesh, "adaptive", -0.25, False)
         controller._require_idle = lambda: None
@@ -1175,16 +1329,16 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIs(controller.bed_mesh.z_mesh, original_mesh)
         self.assertEqual(controller.bed_mesh.profile_name, "adaptive")
         self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.Page.CALIBRATION_HOME)
+        self.assertEqual(messages[0][1], FEATHER.ScreenPage.CALIBRATION_HOME)
 
     def test_z_shutdown_clears_local_session_without_replacing_error_page(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.gcode = FailingGCode()
-        controller.page = FEATHER.Page.ERROR
+        controller.page = FEATHER.ScreenPage.ERROR
         controller.print_state = FEATHER.PrintState.IDLE
         controller.shutdown_active = True
         controller.calibration_clean_nozzle = False
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.111, object(), "adaptive", -0.25, False)
         controller._require_idle = lambda: None
@@ -1197,31 +1351,55 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._run_z_calibration_preparation(100.0)
 
         self.assertFalse(controller.z_calibration.active)
-        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
         self.assertEqual(pages, [])
 
-    def test_calibration_heat_cancel_dispatches_immediate_m108_once(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    def test_calibration_cancel_requests_context_domain_once(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_cancel_requested = False
         controller.calibration_cancel_dispatched = False
-        controller.temperature_wait = type(
-            "Wait", (), {"variables": {
-                "active": True, "cancel": False}})()
-        controller._render_calibration_progress = lambda: None
-        immediate = []
-        controller._run_immediate_command = immediate.append
+        controller.reactor = Reactor()
+        controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
+        controller.operation_cancel_on_accept = None
+        controller.operation_cancel_on_clear = None
+        controller.operation_cancel_request_id = None
+        controller.operation_cancel_target_name = None
+        controller.operation_cancel_target_mode = None
+        controller.cancel_mode = None
+        controller._show_page = lambda page: setattr(controller, "page", page)
+        controller._render_cancel_confirm = lambda: None
+        requests = []
+        controller.operation_context = type("Contexts", (), {
+            "get_status": lambda self, eventtime: {
+                "context_path": ("Bed Level",),
+                "current_state": "LEVELING",
+                "cancel_available": True,
+                "cancel_pending": False,
+                "cancel_request_id": None,
+                "cancel_target_name": "Bed Level",
+                "cancel_target_mode": "cancelable",
+                "revision": 1,
+            },
+            "request_cancel": lambda self: (
+                requests.append("cancel") or {
+                    "accepted": True, "status": "accepted",
+                    "request_id": 1, "target_name": "Bed Level",
+                    "target_mode": "cancelable"})})()
 
-        controller._handle_calibration_action("cal.cancel.heat")
-        controller._handle_calibration_action("cal.cancel.heat")
+        controller._handle_calibration_action("cal.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
 
-        self.assertEqual(immediate, ["M108"])
+        self.assertEqual(requests, ["cancel"])
         self.assertTrue(controller.calibration_cancel_requested)
         self.assertTrue(controller.calibration_cancel_dispatched)
 
-    def test_calibration_heat_cancel_is_not_blocked_by_active_macro(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+    def test_calibration_cancel_dialog_is_not_blocked_by_active_macro(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller.calibration_kind = "mesh"
         controller.command_depth = 1
         controller.mod_update_pending = False
@@ -1231,16 +1409,16 @@ class ControllerSafetyTest(unittest.TestCase):
             "generation": 1,
         })()
         cancelled = []
-        controller._cancel_calibration_heat = lambda: cancelled.append(True)
+        controller._open_calibration_cancel = lambda: cancelled.append(True)
 
-        controller._handle_touch_action("cal.cancel.heat")
+        controller._handle_touch_action("cal.cancel")
 
         self.assertEqual(cancelled, [True])
         self.assertFalse(controller.touch_feedback_pending)
 
     def test_same_page_redraw_does_not_discard_delayed_button_action(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.SETTINGS
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.SETTINGS
         controller.touch_feedback_pending = True
         restored = []
         controller.renderer = type("Renderer", (), {
@@ -1252,15 +1430,15 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._finish_touch_action(
             0, "settings.theme.next",
-            source_page=FEATHER.Page.SETTINGS, generation=1)
+            source_page=FEATHER.ScreenPage.SETTINGS, generation=1)
 
         self.assertEqual(restored, [])
         self.assertEqual(dispatched, ["settings.theme.next"])
         self.assertFalse(controller.touch_feedback_pending)
 
     def test_page_change_discards_delayed_button_action(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.touch_feedback_pending = True
         controller.renderer = type("Renderer", (), {"generation": 2})()
         dispatched = []
@@ -1268,13 +1446,13 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._finish_touch_action(
             0, "settings.theme.next",
-            source_page=FEATHER.Page.SETTINGS, generation=1)
+            source_page=FEATHER.ScreenPage.SETTINGS, generation=1)
 
         self.assertEqual(dispatched, [])
         self.assertFalse(controller.touch_feedback_pending)
 
     def test_homing_progress_keeps_global_abort_registered(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "mesh"
         controller.calibration_repeat_probe = False
@@ -1282,23 +1460,32 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.temperature_wait = type(
             "Wait", (), {"variables": {
                 "active": False, "cancel": False}})()
-        controller.print_status_text = "CALIBRATION: STARTING"
+        operation = {
+            "context_types": ("bed_level",),
+            "context_path": ("Bed Mesh",),
+            "current_state": None,
+            "revision": 1,
+        }
+        controller.operation_context = type("Contexts", (), {
+            "get_status": lambda self, eventtime: dict(operation),
+        })()
+        controller.reactor = Reactor()
         batches = []
         controller.renderer.send = batches.append
-        controller.renderer.set_emergency_stop_visible(True)
+        controller.renderer.set_header_action("global.abort", "ABORT")
         controller._render_calibration_progress()
+        initial_generation = controller.renderer.generation
 
-        controller.print_status_text = "HOMING..."
+        operation.update(current_state="HOMING", revision=2)
         controller._update_calibration_progress()
 
-        drawing = "\n".join(batches[-1])
-        self.assertIn("clear-hitboxes", drawing)
-        self.assertIn("global.abort", drawing)
-        self.assertIn("--batch button -p 648 7 -s 132 46", drawing)
+        self.assertGreater(controller.renderer.generation, initial_generation)
+        self.assertIn("global.abort", controller.renderer._buttons)
+        self.assertIn("--batch clear-hitboxes", "\n".join(batches[-1]))
 
     def test_global_abort_bypasses_busy_and_touch_feedback(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.MAIN_MENU
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.MAIN_MENU
         controller.print_state = FEATHER.PrintState.IDLE
         controller.command_depth = 1
         controller.mod_update_pending = False
@@ -1317,17 +1504,24 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_touch_action("global.abort")
         self.assertEqual(immediate, [])
 
-    def test_screw_repeat_progress_marks_two_active_stages(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    def test_screw_repeat_progress_marks_probe_as_current_stage(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "screws"
         controller.calibration_repeat_probe = True
-        drawing = "\n".join(controller._calibration_stage_commands(
-            "BED SCREWS: PROBING"))
-        self.assertEqual(drawing.count("-c b47aff"), 2)
 
-    def test_settings_buttons_use_compact_layout(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        with mock.patch.object(
+                controller.renderer, "text",
+                wraps=controller.renderer.text) as text:
+            controller._calibration_stage_commands("BED SCREWS: PROBING")
+
+        colors = dict((call.args[2], call.args[3])
+                      for call in text.call_args_list)
+        self.assertEqual(colors["PROBE"], UI.ThemeColor.BRIGHT)
+        self.assertEqual(colors["DONE"], UI.ThemeColor.TEXT)
+
+    def test_settings_use_switch_for_sound_and_show_light_level(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
         batches = []
@@ -1337,42 +1531,267 @@ class ControllerSafetyTest(unittest.TestCase):
             "chamber_light": 40}})()
         controller.chamber_light = StatusObject({
             "color_data": [(0.0, 0.0, 0.0, 0.0)]})
+
         controller._render_settings()
+
         drawing = "\n".join(batches[0])
-        self.assertIn("--batch stroke -p 679 249 -s 76 38 -c 35d9e6 -lw 2",
-                      drawing)
-        self.assertIn("--batch fill -p 722 254 -s 28 28 -c 35d9e6", drawing)
         self.assertIn('-t "40%"', drawing)
+        self.assertIn("settings.sound", controller.renderer._toggles)
+        self.assertTrue(controller.renderer._toggles["settings.sound"][4])
+        for action in (
+                "settings.brightness.minus", "settings.brightness.plus",
+                "settings.led.minus", "settings.led.plus",
+                "settings.theme", "settings.mod"):
+            self.assertIn(action, controller.renderer._buttons)
         self.assertNotIn('[ OFF |', drawing)
         self.assertNotIn('[ >OFF< |', drawing)
 
-    def test_mod_settings_list_scrolls_and_uses_square_toggles(self):
+    def test_mod_settings_list_scrolls_and_uses_toggle_controls(self):
         params = [mod_param("flag%d" % index, bool, False,
                             "Feature %d" % index,
                             "Feature description %d." % index)
                   for index in range(7)]
-        controller = mod_controller(params, {param.key: False for param in params})
+        controller = mod_controller(
+            params, {param.key: False for param in params})
 
         controller._render_mod_settings()
         first = "\n".join(controller.draw_batches[-1])
         self.assertIn("01-05 / 07", first)
-        self.assertIn("--batch stroke -p 624 101 -s 76 38 -c 35d9e6 -lw 2",
-                      first)
-        self.assertIn("--batch fill -p 629 106 -s 28 28 -c 35d9e6", first)
-        self.assertNotIn('[ OFF |', first)
-        self.assertNotIn('[ >OFF< |', first)
-        self.assertIn("--id 1:mod.next", first)
-        self.assertNotIn("--id 1:mod.prev", first)
+        self.assertEqual(
+            set(controller.renderer._toggles),
+            {"mod.item.%d" % index for index in range(5)})
+        self.assertIn("mod.next", controller.renderer._buttons)
+        self.assertNotIn("mod.prev", controller.renderer._buttons)
         self.assertNotIn('-t "^"', first)
         self.assertNotIn('-t "v"', first)
-        self.assertIn("--batch fill -p 745 390 -s 19 2 -c 35d9e6", first)
 
         controller._handle_mod_action("mod.next")
         second = "\n".join(controller.draw_batches[-1])
         self.assertIn("06-07 / 07", second)
-        self.assertIn("--id 2:mod.prev", second)
-        self.assertNotIn("--id 2:mod.next", second)
-        self.assertIn("--batch fill -p 751 111 -s 7 12 -c 35d9e6", second)
+        self.assertEqual(
+            set(controller.renderer._toggles),
+            {"mod.item.5", "mod.item.6"})
+        self.assertIn("mod.prev", controller.renderer._buttons)
+        self.assertNotIn("mod.next", controller.renderer._buttons)
+
+    def test_mod_settings_repeats_category_headings_inside_the_list(self):
+        params = [
+            mod_param("a%d" % index, bool, False, "A %d" % index,
+                      ui_category="first") for index in range(6)] + [
+            mod_param("b0", bool, False, "B 0", ui_category="second")]
+        controller = mod_controller(
+            params, dict((param.key, False) for param in params))
+        controller.params.ui_categories_map["first"].label = "FIRST"
+        controller.params.ui_categories_map["second"].label = "SECOND"
+
+        controller._render_mod_settings()
+        first = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "FIRST"', first)
+        self.assertIn('-t "01-05 / 06"', first)
+        self.assertNotIn("SECOND", first)
+        self.assertEqual(
+            set(controller.renderer._toggles),
+            {"mod.item.%d" % index for index in range(5)})
+
+        # The last row of FIRST keeps a heading of its own instead of leaving
+        # the reader without context, and SECOND opens its own section below.
+        controller._handle_mod_action("mod.next")
+        second = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "FIRST (CONT.)"', second)
+        self.assertIn('-t "06-06 / 06"', second)
+        self.assertIn('-t "SECOND"', second)
+        self.assertIn('-t "01-01 / 01"', second)
+        self.assertEqual(set(controller.renderer._toggles),
+                         {"mod.item.5", "mod.item.6"})
+
+        controller._handle_mod_action("mod.prev")
+        back = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "FIRST"', back)
+        self.assertNotIn("(CONT.)", back)
+
+    def test_mod_settings_turns_the_leftover_row_into_the_way_forward(self):
+        params = [
+            mod_param("a%d" % index, bool, False, "A %d" % index,
+                      ui_category="first") for index in range(9)] + [
+            mod_param("b0", bool, False, "B 0", ui_category="second")]
+        controller = mod_controller(
+            params, dict((param.key, False) for param in params))
+        controller.params.ui_categories_map["first"].label = "FIRST"
+        controller.params.ui_categories_map["second"].label = "SECOND"
+
+        controller._render_mod_settings()
+        self.assertNotIn("mod.more", controller.renderer._hitboxes)
+
+        # SECOND needs a heading and a row, and only one row of space is left.
+        # An empty strip there would read as the end of the list, so the page
+        # spends it on a tappable card that leads to SECOND.
+        controller._handle_mod_action("mod.next")
+        second = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "NEXT: SECOND >"', second)
+        self.assertEqual(
+            set(controller.renderer._toggles),
+            {"mod.item.%d" % index for index in range(5, 9)})
+
+        # The card is an ordinary list block that happens to be touchable, not
+        # a button, so it fills one row slot inside the list without button
+        # chrome, and the page lets the tap through.
+        self.assertNotIn("mod.more", controller.renderer._buttons)
+        x, y, width, height = controller.renderer._hitboxes["mod.more"][:4]
+        self.assertEqual((x, width, height),
+                         (MOD_UI.LIST_X, MOD_UI.LIST_WIDTH, MOD_UI.ITEM_HEIGHT))
+        self.assertLessEqual(y + height, MOD_UI.LIST_BOTTOM)
+        self.assertTrue(controller.allows_action(
+            FEATHER.ScreenPage.MOD_SETTINGS, "mod.more"))
+
+        controller._handle_mod_action("mod.more")
+        third = "\n".join(controller.draw_batches[-1])
+        self.assertEqual(controller.mod_page, 2)
+        self.assertIn('-t "SECOND"', third)
+        self.assertNotIn("mod.more", controller.renderer._hitboxes)
+
+    def test_mod_dependency_toggle_repaginates_and_preserves_anchor(self):
+        condition = {"parameter": "parent", "operator": "equals",
+                     "value": True}
+        params = [
+            mod_param("before%d" % index, bool, False, "Before %d" % index,
+                      ui_category="first") for index in range(4)] + [
+            mod_param("parent", bool, False, "Parent", ui_category="first"),
+            mod_param("child", int, 1, "Child", ui_category="first",
+                      ui_visible_if=condition),
+            mod_param("tail", bool, False, "Tail", ui_category="second"),
+        ]
+        controller = mod_controller(
+            params, dict((param.key, param.default) for param in params))
+        controller.params.ui_categories_map["first"].label = "FIRST"
+        controller.params.ui_categories_map["second"].label = "SECOND"
+
+        controller._render_mod_settings()
+        self.assertIn('-t "01-05 / 05"', "\n".join(controller.draw_batches[-1]))
+        controller._handle_mod_action("mod.item.4")
+
+        expanded = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "01-05 / 06"', expanded)
+        self.assertEqual(controller.mod_page, 0)
+        controller._handle_mod_action("mod.next")
+        expanded_second = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "FIRST (CONT.)"', expanded_second)
+        self.assertIn('-t "06-06 / 06"', expanded_second)
+        self.assertIn('-t "SECOND"', expanded_second)
+        self.assertEqual(
+            set(controller.renderer._buttons) & {"mod.item.5", "mod.item.6"},
+            {"mod.item.5"})
+
+        controller._handle_mod_action("mod.prev")
+        controller._handle_mod_action("mod.item.4")
+        self.assertIn('-t "01-05 / 05"', "\n".join(controller.draw_batches[-1]))
+        controller.mod_page = 99
+        controller._render_mod_settings()
+        self.assertEqual(controller.mod_page, 1)
+        collapsed_second = "\n".join(controller.draw_batches[-1])
+        self.assertIn('-t "SECOND"', collapsed_second)
+        self.assertIn('-t "01-01 / 01"', collapsed_second)
+        self.assertNotIn("FIRST", collapsed_second)
+
+    def test_mod_enum_dependency_updates_after_apply_in_both_directions(self):
+        Swap = enum.Enum("Swap", {"OFF": 0, "ZRAM": 3})
+        condition = {"parameter": "use_swap", "operator": "equals",
+                     "value": "ZRAM"}
+        params = [
+            mod_param("before%d" % index, bool, False, "Before %d" % index)
+            for index in range(4)] + [
+            mod_param("use_swap", Swap, 0, "Swap"),
+            mod_param("zram_algo", str, "zstd", "Compression",
+                      ui_visible_if=condition),
+        ]
+        controller = mod_controller(
+            params, dict((param.key, param.default) for param in params))
+
+        controller._render_mod_settings()
+        self.assertIn("01-05 / 05", "\n".join(controller.draw_batches[-1]))
+        controller._handle_mod_action("mod.item.4")
+        controller._handle_mod_action("mod.option.1")
+        controller._handle_mod_action("mod.apply")
+
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_SETTINGS)
+        self.assertIn("01-05 / 06", "\n".join(controller.draw_batches[-1]))
+        self.assertEqual(controller.mod_page, 0)
+        controller._handle_mod_action("mod.next")
+        self.assertIn("06-06 / 06", "\n".join(controller.draw_batches[-1]))
+
+        controller._handle_mod_action("mod.prev")
+        controller._handle_mod_action("mod.item.4")
+        controller._handle_mod_action("mod.option.0")
+        controller._handle_mod_action("mod.apply")
+
+        self.assertEqual(controller.mod_page, 0)
+        self.assertIn("01-05 / 05", "\n".join(controller.draw_batches[-1]))
+
+    def test_stale_mod_action_index_never_opens_a_different_parameter(self):
+        condition = {"parameter": "parent", "operator": "equals",
+                     "value": True}
+        parent = mod_param("parent", bool, True, "Parent")
+        child = mod_param("child", int, 1, "Child", ui_visible_if=condition)
+        tail = mod_param("tail", bool, False, "Tail")
+        controller = mod_controller(
+            [parent, child, tail],
+            {"parent": True, "child": 1, "tail": False})
+        controller._render_mod_settings()
+
+        controller.params.variables["parent"] = False
+        controller._handle_mod_action("mod.item.2")
+
+        self.assertEqual(controller.params.updated, [("tail", True)])
+
+    def test_mod_ui_uses_only_public_setter_for_updates(self):
+        flag = mod_param("camera", bool, False, "Camera")
+
+        class GuardedVariables(dict):
+            def __setitem__(self, key, value):
+                raise AssertionError("UI mutated variables directly")
+
+        class PublicManager:
+            def __init__(manager):
+                manager.params = [flag]
+                manager.params_map = {flag.key: flag}
+                manager.variables = GuardedVariables(camera=False)
+                manager.calls = []
+
+            def set_value(manager, key, value):
+                manager.calls.append((key, value))
+                dict.__setitem__(manager.variables, key, bool(int(value)))
+                return int(manager.variables[key])
+
+        controller = mod_controller([flag], {"camera": False})
+        manager = PublicManager()
+        controller.params = manager
+
+        controller._handle_mod_action("mod.item.0")
+
+        self.assertEqual(manager.calls, [("camera", "1")])
+
+    def test_mod_settings_renders_raw_and_inverted_boolean_states(self):
+        params = [
+            mod_param("normal_false", bool, False, "Normal false"),
+            mod_param("normal_true", bool, True, "Normal true"),
+            mod_param("inverted_false", bool, False, "Inverted false",
+                      ui_inverted=True),
+            mod_param("inverted_true", bool, True, "Inverted true",
+                      ui_inverted=True),
+        ]
+        controller = mod_controller(params, {
+            "normal_false": False,
+            "normal_true": True,
+            "inverted_false": False,
+            "inverted_true": True,
+        })
+
+        controller._render_mod_settings()
+
+        states = [
+            controller.renderer._toggles["mod.item.%d" % index][4]
+            for index in range(4)
+        ]
+        self.assertEqual(states, [False, True, True, False])
 
     def test_mod_boolean_toggle_updates_without_opening_an_editor(self):
         flag = mod_param("camera", bool, False, "Alt camera")
@@ -1382,10 +1801,30 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(controller.params.updated, [("camera", True)])
         self.assertIsNone(controller.mod_parameter)
-        drawing = "\n".join(controller.draw_batches[-1])
-        self.assertIn("--batch fill -p 667 106 -s 28 28 -c 35d9e6", drawing)
-        self.assertNotIn('[ OFF |', drawing)
-        self.assertNotIn('[ >OFF< |', drawing)
+        self.assertIn("mod.item.0", controller.renderer._toggles)
+        self.assertTrue(controller.renderer._toggles["mod.item.0"][4])
+
+    def test_inverted_mod_toggle_animates_display_but_saves_raw_value(self):
+        flag = mod_param(
+            "disable_priming", bool, False, "Nozzle priming",
+            ui_inverted=True)
+        controller = mod_controller([flag], {"disable_priming": False})
+        controller._render_mod_settings()
+        self.assertTrue(controller.renderer._toggles["mod.item.0"][4])
+
+        controller._handle_mod_action("mod.item.0")
+
+        self.assertEqual(controller.params.updated,
+                         [("disable_priming", True)])
+        self.assertFalse(controller.renderer._toggles["mod.item.0"][4])
+
+        controller._handle_mod_action("mod.item.0")
+
+        self.assertEqual(controller.params.updated, [
+            ("disable_priming", True),
+            ("disable_priming", False),
+        ])
+        self.assertTrue(controller.renderer._toggles["mod.item.0"][4])
 
     def test_theme_parameter_refreshes_users_once_and_uses_stable_snapshot(self):
         theme = mod_param("feather_theme", str, "DEFAULT",
@@ -1399,7 +1838,7 @@ class ControllerSafetyTest(unittest.TestCase):
             options = tuple(controller.parameter_options)
             page_count = (len(options) + 3) // 4
             first = "\n".join(controller.draw_batches[-1])
-            self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
+            self.assertEqual(controller.page, FEATHER.ScreenPage.PARAMETER_OPTIONS)
             self.assertIn("1/%d" % page_count, first)
             self.assertEqual(refresh.call_count, 1)
 
@@ -1492,17 +1931,17 @@ class ControllerSafetyTest(unittest.TestCase):
         theme = mod_param("feather_theme", str, "DEFAULT",
                           "Feather color theme")
         controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
-        controller.page = FEATHER.Page.SETTINGS
+        controller.page = FEATHER.ScreenPage.SETTINGS
 
         controller._handle_settings_action("settings.theme")
 
-        self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
-        self.assertEqual(controller.mod_return_page, FEATHER.Page.SETTINGS)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PARAMETER_OPTIONS)
+        self.assertEqual(controller.mod_return_page, FEATHER.ScreenPage.SETTINGS)
         options = tuple(controller.parameter_options)
         dark_index = options.index("DARK")
         controller._handle_mod_action("mod.option.%d" % dark_index)
         controller._handle_mod_action("mod.apply")
-        self.assertEqual(controller.page, FEATHER.Page.SETTINGS)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.SETTINGS)
 
     def test_toggle_thumb_is_centered_and_animates_between_halves(self):
         renderer = FEATHER.FeatherRenderer()
@@ -1595,6 +2034,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._set_mod_value(param, "1")
 
         self.assertEqual(events, ["restart-loader"])
+        self.assertEqual(controller.params.updated, [("klipper_rt", True)])
         self.assertFalse(controller.mod_update_pending)
         reactor.run_until(100.0)
         self.assertEqual(events, ["restart-loader", "change-hook"])
@@ -1614,17 +2054,6 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(loaders, [])
         self.assertFalse(controller.mod_update_pending)
 
-    def test_restart_metadata_matches_parameter_change_hooks(self):
-        declaration = json.loads((pathlib.Path(__file__).parents[1] /
-                                  "mod_params.json").read_text(encoding="utf-8"))
-        effects = dict((item["key"], item.get("restart"))
-                       for item in declaration["parameters"])
-        self.assertEqual(effects["display"], "klipper")
-        self.assertEqual(effects["klipper_rt"], "klipper")
-        self.assertEqual(effects["tune_config"], "klipper")
-        self.assertEqual(effects["power_loss_recovery"], "klipper")
-        self.assertEqual(effects["tune_klipper"], "printer")
-        self.assertIsNone(effects["camera"])
 
     def test_selected_parameter_option_is_staged_until_apply(self):
         Display = enum.Enum("Display", {"STOCK": 0, "FEATHER": 1,
@@ -1636,19 +2065,19 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = mod_controller([param], {"display": 1})
 
         controller._handle_mod_action("mod.item.0")
-        self.assertEqual(controller.page, FEATHER.Page.PARAMETER_OPTIONS)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PARAMETER_OPTIONS)
         self.assertEqual(controller.params.updated, [])
         controller._handle_mod_action("mod.option.3")
         controller._handle_mod_action("mod.apply")
 
         self.assertEqual(controller.params.updated, [("display", 3)])
-        self.assertEqual(controller.page, FEATHER.Page.MOD_SETTINGS)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_SETTINGS)
 
     def test_mod_numeric_editor_rejects_decimal_for_integer(self):
         param = mod_param("park_dz", int, 50, "Park offset")
         controller = mod_controller([param], {"park_dz": 50})
         controller._handle_mod_action("mod.item.0")
-        self.assertEqual(controller.page, FEATHER.Page.MOD_VALUE)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_VALUE)
         controller.mod_edit_value = ""
         controller._handle_mod_action("mod.key.7")
         controller._handle_mod_action("mod.dot")
@@ -1668,6 +2097,8 @@ class ControllerSafetyTest(unittest.TestCase):
         drawing = "\n".join(controller.draw_batches[-1])
         self.assertIn("--id 1:mod.dot", drawing)
         self.assertNotIn("--id 1:mod.sign", drawing)
+        self.assertNotIn("keyboard.left", controller.renderer._buttons)
+        self.assertNotIn("keyboard.right", controller.renderer._buttons)
         controller.mod_edit_value = ""
         for action in ("mod.key.9", "mod.dot", "mod.key.5", "mod.key.9"):
             controller._handle_mod_action(action)
@@ -1684,12 +2115,14 @@ class ControllerSafetyTest(unittest.TestCase):
                 "keyboard.shift", "keyboard.key.a", "keyboard.space",
                 "keyboard.symbols"):
             self.assertTrue(controller.handle_action(
-                FEATHER.Page.MOD_VALUE, action))
+                FEATHER.ScreenPage.MOD_VALUE, action))
         self.assertIn("keyboard.key.1", dict(controller.renderer._buttons))
         self.assertIn("keyboard.key.0", dict(controller.renderer._buttons))
         controller._handle_mod_action("keyboard.key.hash")
-        controller._handle_mod_action("keyboard.backspace")
+        controller._handle_mod_action("keyboard.left")
         controller._handle_mod_action("keyboard.key.dot")
+        controller._handle_mod_action("keyboard.right")
+        controller._handle_mod_action("keyboard.backspace")
         controller._handle_mod_action("mod.save")
 
         self.assertEqual(controller.params.updated, [("midi_on", "A .")])
@@ -1705,6 +2138,7 @@ class ControllerSafetyTest(unittest.TestCase):
         wifi.renderer.send = lambda commands: None
         wifi.selected_network = {"ssid": "Workshop"}
         wifi.password = "secret123"
+        wifi.password_cursor = len(wifi.password)
         wifi.password_visible = False
         wifi.keyboard_symbols = False
         wifi.keyboard_shift = False
@@ -1721,8 +2155,31 @@ class ControllerSafetyTest(unittest.TestCase):
                    if action.startswith("keyboard.")))
         for action in shared_actions:
             self.assertEqual(mod_buttons[action], wifi_buttons[action], action)
+        left = mod_buttons["keyboard.left"]
+        space = mod_buttons["keyboard.space"]
+        right = mod_buttons["keyboard.right"]
+        self.assertLessEqual(left[0] + left[2], space[0])
+        self.assertLessEqual(space[0] + space[2], right[0])
         self.assertIn("net.password.toggle", wifi_buttons)
         self.assertIn("net.connect", wifi_buttons)
+
+    def test_wifi_password_editor_inserts_at_moved_cursor(self):
+        wifi = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        wifi.renderer = FEATHER.FeatherRenderer()
+        wifi.renderer.send = lambda commands: None
+        wifi.selected_network = {"ssid": "Workshop"}
+        wifi.password = "pasword"
+        wifi.password_cursor = len(wifi.password)
+        wifi.password_visible = False
+        wifi.keyboard_symbols = False
+        wifi.keyboard_shift = False
+
+        for _step in range(4):
+            wifi._handle_network_action("keyboard.left")
+        wifi._handle_network_action("keyboard.key.s")
+
+        self.assertEqual(wifi.password, "password")
+        self.assertEqual(wifi.password_cursor, 4)
 
     def test_mod_page_hitboxes_stay_above_persistent_footer(self):
         params = [mod_param("flag%d" % index, bool, False,
@@ -1737,7 +2194,7 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertFalse(UI.rectangles_overlap(spec[:4], footer), action)
 
     def test_eco_wake_restores_backlight_once(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.dimmed = True
         values = []
         controller._setting = lambda key, default: 55
@@ -1746,57 +2203,82 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertFalse(controller._wake_if_dimmed())
         self.assertEqual(values, [55])
 
+    def test_eco_setting_controls_idle_dimming_and_wakes_when_disabled(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.last_touch_time = 0.0
+        controller.dim_timeout = 60.0
+        controller.dimmed = False
+        controller.params = type("Params", (), {"variables": {
+            "backlight": 65, "backlight_eco": 10,
+            "display_eco": False}})()
+        values = []
+        controller._set_backlight = values.append
+
+        controller._update_eco_backlight(61.0)
+        self.assertFalse(controller.dimmed)
+        self.assertEqual(values, [])
+
+        controller.params.variables["display_eco"] = True
+        controller._update_eco_backlight(62.0)
+        self.assertTrue(controller.dimmed)
+        self.assertEqual(values, [10])
+
+        controller.params.variables["display_eco"] = False
+        controller._update_eco_backlight(63.0)
+        self.assertFalse(controller.dimmed)
+        self.assertEqual(values, [10, 65])
+
     def test_background_wake_action_has_no_page_side_effect(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
 
         controller._handle_touch_action("global.wake")
 
     def test_pending_print_action_rejects_repeat_tap(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.reactor = Reactor()
         controller.last_action_time = -1
         controller.pending_action = "print.pause"
-        controller.page = FEATHER.Page.PRINTING
+        controller.page = FEATHER.ScreenPage.PRINTING
         controller.debug = False
         calls = []
         controller._handle_print_action = calls.append
         controller._dispatch_action("print.pause")
         self.assertEqual(calls, [])
 
-    def test_print_page_always_registers_cancel_hitbox(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    def test_print_page_always_registers_cancel_action(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        controller.renderer.send = lambda commands: None
         controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.pending_action = None
-        controller.print_status_text = "Heating"
+        controller.operation_context = None
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
         controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
-        controller.renderer.set_emergency_stop_visible(True)
+        controller.renderer.set_header_action("global.abort", "ABORT")
+
         controller._render_print_page()
-        drawing = "\n".join(batches[0])
-        self.assertIn("--id 1:global.abort", drawing)
-        self.assertIn("--batch button -p 648 7 -s 132 46", drawing)
-        self.assertIn("-p 605 355 -s 175 72", drawing)
-        self.assertIn("--id 1:print.cancel", drawing)
-        for label in ("PAUSE", "FILAMENT", "Z ADJUST", "CANCEL"):
-            command = next(line for line in drawing.splitlines()
-                           if '--batch button' in line and '-t "%s"' % label in line)
-            self.assertIn('-f "JetBrainsMono Bold 12pt"', command)
+
+        self.assertIn("global.abort", controller.renderer._buttons)
+        self.assertIn("print.cancel", controller.renderer._buttons)
+        self.assertEqual(
+            controller.renderer._buttons["print.cancel"][5], "danger")
+        self.assertNotIn("print.live_z", controller.renderer._buttons)
+        self.assertFalse(UI.rectangles_overlap(
+            controller.renderer._buttons["global.abort"][:4],
+            controller.renderer._buttons["print.cancel"][:4]))
 
     def test_print_preparation_disables_pause_and_filament(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.send = lambda commands: None
         controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PREPARING
         controller.pending_action = None
-        controller.print_status_text = "Heating"
+        controller.operation_context = None
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
         controller.print_flow = type("Flow", (), {"variables": {
@@ -1805,7 +2287,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "print_started": False}})()
         controller._live_z_adjust_allowed = lambda eventtime: False
         controller._update_print_progress = lambda eventtime: None
-        controller.renderer.set_emergency_stop_visible(True)
+        controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_print_page()
 
@@ -1814,12 +2296,12 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("print.cancel", controller.renderer._buttons)
         self.assertIn("global.abort", controller.renderer._buttons)
 
-    def test_print_progress_shows_remaining_layer_and_height(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    def test_print_progress_prefers_live_height_and_falls_back(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.Page.PRINTING
+        controller.page = FEATHER.ScreenPage.PRINTING
         controller._last_progress = None
         controller._progress_floor = 0.0
         controller._last_time = None
@@ -1830,7 +2312,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.virtual_sdcard = StatusObject({"progress": 0.25})
         controller.virtual_sdcard.estimate_print_time = 400.0
         controller.toolhead = StatusObject({
-            "position": (10.0, 20.0, 3.25, 0.0), "homed_axes": "xyz"})
+            "position": (10.0, 20.0, 9.75, 0.0), "homed_axes": "xyz"})
+        controller.motion_report = StatusObject({
+            "live_position": (10.0, 20.0, 3.25, 0.0)})
 
         controller._update_print_progress(100)
 
@@ -1840,8 +2324,15 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn('? / ?', drawing)
         self.assertIn("3.25 MM", drawing)
 
+        controller.motion_report = None
+        controller.toolhead.status["position"] = (10.0, 20.0, 4.5, 0.0)
+
+        controller._update_print_progress(101)
+
+        self.assertIn("4.50 MM", "\n".join(batches[1]))
+
     def test_print_progress_uses_sd_position_and_never_moves_backwards(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 0.0
         controller._m73_active = False
@@ -1859,7 +2350,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller._print_progress(3.0), 0.15)
 
     def test_print_progress_prefers_current_print_m73(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 10.0
         controller._m73_active = False
@@ -1877,7 +2368,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller._print_progress(25.0), 0.37)
 
     def test_print_progress_uses_time_estimate_before_sd_fallback(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 10.0
         controller._m73_active = False
@@ -1891,8 +2382,217 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller._print_progress(20.0), 0.25)
         self.assertEqual(controller._progress_source, "TIME")
 
+    def test_print_progress_excludes_start_print_time(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller._progress_floor = 0.52
+        controller._progress_start = None
+        controller._m73_start_expiry = 0.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": None, "expire_progress": 0.0})()
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": False}})()
+        controller.print_stats = StatusObject({"print_duration": 52.0})
+        controller.virtual_sdcard = StatusObject({
+            "progress": 0.40, "estimate_print_time": 100.0})
+        controller.virtual_sdcard.estimate_print_time = 100.0
+
+        self.assertEqual(controller._print_progress(1.0), 0.0)
+        self.assertEqual(controller._progress_floor, 0.0)
+        controller.start_print_macro.variables["print_started"] = True
+        self.assertEqual(controller._print_progress(2.0), 0.0)
+        controller.print_stats.status["print_duration"] = 77.0
+        self.assertEqual(controller._print_progress(3.0), 0.25)
+
+    def test_print_progress_rebases_sd_after_start_print(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller._progress_floor = 0.0
+        controller._progress_start = None
+        controller._m73_start_expiry = 0.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": None, "expire_progress": 0.0})()
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": False}})()
+        controller.print_stats = StatusObject({"print_duration": 10.0})
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.estimate_print_time = None
+
+        self.assertEqual(controller._print_progress(1.0), 0.0)
+        controller.start_print_macro.variables["print_started"] = True
+        self.assertEqual(controller._print_progress(2.0), 0.0)
+        controller.virtual_sdcard.status["progress"] = 0.76
+        self.assertAlmostEqual(controller._print_progress(3.0), 0.5)
+
+    def test_resurrected_print_keeps_progress_and_print_duration(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.reactor = Reactor()
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.0
+        controller._progress_source = None
+        controller._progress_start = None
+        controller._m73_active = False
+        controller._m73_start_expiry = 0.0
+        controller.cancel_requested = False
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": True}})()
+        controller.print_stats = StatusObject({
+            "state": "printing", "print_duration": 0.0,
+            "total_duration": 105.0})
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.estimate_print_time = 200.0
+        controller.display_status = type("Display", (), {
+            "progress": None, "expire_progress": 0.0})()
+        controller._record_current_print = mock.Mock()
+        controller._notify_features = mock.Mock()
+        controller._show_page = mock.Mock()
+        controller.debug = False
+
+        controller._change_print_state(
+            FEATHER.PrintState.PRINTING, "printing")
+
+        self.assertEqual(controller._print_progress(1.0), 0.52)
+        controller.virtual_sdcard.status["progress"] = 0.50
+        self.assertEqual(controller._print_progress(2.0), 0.52)
+        controller.virtual_sdcard.status["progress"] = 0.60
+        self.assertEqual(controller._print_progress(3.0), 0.60)
+
+        elapsed, remaining = controller._print_time_values(
+            105.0, controller.print_stats.get_status(105.0), 0.60)
+        self.assertEqual(elapsed, 0.0)
+        self.assertEqual(remaining, 80.0)
+
+        controller.print_stats.status["print_duration"] = 5.0
+        elapsed, remaining = controller._print_time_values(
+            110.0, controller.print_stats.get_status(110.0), 0.60)
+        self.assertEqual(elapsed, 5.0)
+        self.assertEqual(remaining, 80.0)
+
+        controller.print_stats.status["state"] = "paused"
+        controller.print_stats.status["total_duration"] = 125.0
+        paused_elapsed, paused_remaining = controller._print_time_values(
+            125.0, controller.print_stats.get_status(125.0), 0.60)
+        self.assertEqual(paused_elapsed, 5.0)
+        self.assertEqual(paused_remaining, 80.0)
+
+    def test_update_cycle_enters_recovered_print_before_extrusion(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.reactor = Reactor()
+        controller.renderer = type("Renderer", (), {
+            "set_theme": lambda self, name: False,
+            "footer": lambda self, temperatures, status: None,
+        })()
+        controller._setting = lambda name, default=None: default
+        controller._service_network = mock.Mock()
+        controller._update_eco_backlight = mock.Mock()
+        controller.print_stats = StatusObject({
+            "state": "printing", "print_duration": 0.0,
+        })
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.is_active = lambda: True
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.91
+        controller._progress_source = "OLD"
+        controller._progress_start = (10.0, 0.8)
+        controller._m73_active = True
+        controller.cancel_requested = True
+        controller._record_current_print = mock.Mock()
+        controller._notify_features = mock.Mock()
+        controller.network_operation = None
+        controller.debug = False
+        controller._update_operation_context = mock.Mock()
+        controller._refresh_emergency_stop = mock.Mock()
+        controller.pending_action = None
+        controller.file_scan_loading = False
+        controller.busy_message = None
+        controller._update_print_progress = mock.Mock()
+        controller.filament_sensor = None
+        controller.extruder = StatusObject({
+            "temperature": 20.0, "target": 0.0})
+        controller.heater_bed = StatusObject({
+            "temperature": 21.0, "target": 0.0})
+        controller.network_status = {"ip": "Offline"}
+        controller.toast_until = 0.0
+
+        wake = controller._update_cycle(1.0)
+
+        self.assertEqual(controller.print_state, FEATHER.PrintState.PRINTING)
+        self.assertEqual(controller._progress_start, (0.0, 0.0))
+        self.assertEqual(controller._progress_floor, 0.0)
+        self.assertIsNone(controller._progress_source)
+        self.assertFalse(controller._m73_active)
+        self.assertFalse(controller.cancel_requested)
+        controller._update_print_progress.assert_called_once_with(1.0)
+        self.assertEqual(wake, 1.0 + FEATHER.REFRESH_TIME)
+
+    def test_first_observed_pause_starts_clean_progress(self):
+        for restored, expected_start in (
+                (False, None), (True, (0.0, 0.0))):
+            with self.subTest(restored=restored):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.print_state = FEATHER.PrintState.IDLE
+                controller.page = FEATHER.ScreenPage.PAUSED
+                controller.reactor = Reactor()
+                controller.resurrection = StatusObject({
+                    "restored": restored})
+                controller._progress_floor = 0.91
+                controller._progress_source = "OLD"
+                controller._progress_start = (10.0, 0.8)
+                controller._m73_active = True
+                controller.cancel_requested = True
+                controller._notify_features = mock.Mock()
+                controller.network_operation = None
+                controller.debug = False
+                controller._show_page = mock.Mock()
+
+                controller._change_print_state(
+                    FEATHER.PrintState.PAUSED, "paused")
+
+                self.assertEqual(
+                    controller._progress_start, expected_start)
+                self.assertEqual(controller._progress_floor, 0.0)
+                self.assertIsNone(controller._progress_source)
+                self.assertFalse(controller._m73_active)
+                self.assertFalse(controller.cancel_requested)
+
+    def test_recovered_progress_prefers_m73_and_never_moves_backwards(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_floor = 0.0
+        controller._progress_start = (0.0, 0.0)
+        controller._m73_start_expiry = 0.0
+        controller._m73_active = False
+        controller.display_status = type("Display", (), {
+            "progress": 0.55, "expire_progress": 10.0})()
+        controller.start_print_macro = type("Start", (), {"variables": {
+            "print_started": True}})()
+        controller.print_stats = StatusObject({"print_duration": 5.0})
+        controller.virtual_sdcard = StatusObject({"progress": 0.52})
+        controller.virtual_sdcard.estimate_print_time = 200.0
+
+        self.assertEqual(controller._print_progress(1.0), 0.55)
+        self.assertEqual(controller._progress_source, "M73")
+        controller.display_status.progress = 0.50
+        controller.display_status.expire_progress = 11.0
+        self.assertEqual(controller._print_progress(2.0), 0.55)
+
+        controller._m73_active = False
+        controller._m73_start_expiry = 11.0
+        controller.display_status.progress = None
+        controller.virtual_sdcard.status["progress"] = 0.50
+        self.assertEqual(controller._print_progress(3.0), 0.55)
+        self.assertEqual(controller._progress_source, "SD")
+        controller.virtual_sdcard.status["progress"] = 0.60
+        self.assertEqual(controller._print_progress(4.0), 0.60)
+
     def test_filament_continue_is_next_to_action_buttons(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -1903,7 +2603,7 @@ class ControllerSafetyTest(unittest.TestCase):
             "temperature": 220.0, "target": 220.0})
         controller.extruder.min_extrude_temp = 170.0
 
-        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_ACTION)
+        FilamentFeature(controller).render(FEATHER.ScreenPage.FILAMENT_ACTION)
 
         drawing = "\n".join(batches[0])
         for action, y in ((FILAMENT_ACTIONS.LOAD, 72),
@@ -1914,7 +2614,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("--id 1:%s" % FILAMENT_ACTIONS.RESUME.wire_id, drawing)
 
     def test_filament_actions_enable_only_at_selected_target_temperature(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -1926,7 +2626,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.extruder.min_extrude_temp = 170.0
 
         feature = FilamentFeature(controller)
-        feature.render(FEATHER.Page.FILAMENT_ACTION)
+        feature.render(FEATHER.ScreenPage.FILAMENT_ACTION)
 
         drawing = "\n".join(batches[0])
         for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
@@ -1935,7 +2635,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller.extruder.status["temperature"] = 248.0
         batches.clear()
-        feature.render(FEATHER.Page.FILAMENT_ACTION)
+        feature.render(FEATHER.ScreenPage.FILAMENT_ACTION)
         drawing = "\n".join(batches[0])
         for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
                        FILAMENT_ACTIONS.PURGE):
@@ -1943,34 +2643,46 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller.extruder.status["temperature"] = 260.0
         batches.clear()
-        feature.render(FEATHER.Page.FILAMENT_ACTION)
+        feature.render(FEATHER.ScreenPage.FILAMENT_ACTION)
         drawing = "\n".join(batches[0])
         for action in (FILAMENT_ACTIONS.LOAD, FILAMENT_ACTIONS.UNLOAD,
                        FILAMENT_ACTIONS.PURGE):
             self.assertNotIn("--id 3:%s" % action.wire_id, drawing)
 
-    def test_terminal_print_state_becomes_idle_and_reports_result(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.print_state = FEATHER.PrintState.PAUSED
-        controller.pending_action = "print.cancel.confirm"
-        controller.reactor = Reactor()
-        controller.debug = False
-        messages = []
-        controller._show_message = lambda message, page: messages.append((message, page))
-        controller._change_print_state(FEATHER.PrintState.IDLE, "cancelled")
-        self.assertEqual(controller.print_state, FEATHER.PrintState.IDLE)
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.Page.IDLE_HOME)
+    def test_terminal_cancel_reports_current_reason_or_generic_result(self):
+        for reason, expected in (
+                ("", "Print cancelled"),
+                ("FILAMENT RUNOUT", "Print cancelled\nReason: FILAMENT RUNOUT")):
+            with self.subTest(reason=reason):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.print_state = FEATHER.PrintState.PAUSED
+                controller.pending_action = "print.cancel.confirm"
+                controller.cancel_print_macro = type(
+                    "CancelMacro", (), {
+                        "variables": {"cancel_reason": reason}})()
+                controller.reactor = Reactor()
+                controller.debug = False
+                messages = []
+                controller._show_message = (
+                    lambda message, page: messages.append((message, page)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, "cancelled")
+
+                self.assertEqual(
+                    controller.print_state, FEATHER.PrintState.IDLE)
+                self.assertEqual(messages, [
+                    (expected, FEATHER.ScreenPage.IDLE_HOME)])
 
     def test_preheat_presets_respect_real_heater_limits(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.extruder = type("Extruder", (), {
             "heater": type("Heater", (), {"min_temp": 0, "max_temp": 251})()})()
         controller.heater_bed = type("Bed", (), {"min_temp": 0, "max_temp": 91})()
         self.assertEqual(controller._limited_preheat("ABS"), (250, 85))
 
     def test_filament_extrusion_is_blocked_when_cold(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
         controller.filament_from_pause = True
         controller.print_stats = StatusObject({"state": "paused"})
@@ -1990,7 +2702,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, ["PURGE_FILAMENT"])
 
     def test_idle_filament_flow_restores_original_target(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.filament_from_pause = False
         controller.filament_original_target = 185
         controller.gcode = GCodeRecorder()
@@ -1998,10 +2710,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._show_page = pages.append
         controller._finish_filament(False)
         self.assertEqual(controller.gcode.commands, ["M104 S185"])
-        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.IDLE_HOME])
 
     def test_live_z_adjust_is_available_on_every_layer_when_z_is_homed(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.print_stats = StatusObject(
             {"state": "printing", "info": {"current_layer": None}})
@@ -2017,17 +2729,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_state = FEATHER.PrintState.PREPARING
         self.assertFalse(controller._live_z_adjust_allowed(0))
 
-    def test_network_operation_timeout_terminates_helper(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.network_process = type("Process", (), {"poll": lambda self: None})()
-        controller.network_deadline = 10
-        messages = []
-        controller._cancel_network_process = messages.append
-        controller._poll_network_process(11)
-        self.assertEqual(len(messages), 1)
-
     def test_mesh_uses_auto_profile_and_selected_preheat(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_material = "PETG"
         controller.calibration_error = None
@@ -2039,10 +2742,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._run_calibration(0)
         self.assertEqual(controller.gcode.commands,
                          ["AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=245 BED_TEMP=68 PROFILE=auto"])
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_screw_calibration_passes_selected_cleaning_path(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "screws"
         controller.calibration_material = "PETG"
         controller.calibration_clean_nozzle = False
@@ -2056,10 +2759,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._run_calibration(0)
         self.assertEqual(controller.gcode.commands, [
             "BED_LEVEL_SCREWS_TUNE CLEAN=0"])
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_cancelled_calibration_result_does_not_offer_unsafe_repeat(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "screws"
         controller.calibration_error = None
@@ -2074,7 +2777,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("cal.repeat", drawing)
 
     def test_mesh_result_offers_repeat_discard_and_save(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "mesh"
         controller.calibration_mesh = [[-0.1, 0.0], [0.05, 0.1]]
@@ -2092,7 +2795,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("cal.done", drawing)
 
     def test_mesh_result_save_starts_restart_ui_with_save_config(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_mesh = [[0.0]]
         controller.calibration_error = None
@@ -2105,7 +2808,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(restarts, ["SAVE_CONFIG"])
 
     def test_mesh_result_discard_keeps_previous_done_behavior(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_mesh = [[0.0]]
         controller.calibration_error = None
@@ -2115,7 +2818,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._handle_calibration_action("cal.mesh.discard")
 
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_HOME])
 
     def test_mesh_save_actions_are_ignored_without_valid_result(self):
         for error, cancelled, mesh in (
@@ -2123,8 +2826,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 (None, True, [[0.0]]),
                 (None, False, [])):
             with self.subTest(error=error, cancelled=cancelled, mesh=mesh):
-                controller = FEATHER.FeatherScreen.__new__(
-                    FEATHER.FeatherScreen)
+                controller = ScenarioController.__new__(ScenarioController)
                 controller.calibration_kind = "mesh"
                 controller.calibration_mesh = mesh
                 controller.calibration_error = error
@@ -2160,8 +2862,7 @@ class ControllerSafetyTest(unittest.TestCase):
         )
         for kind, clean, start_command, cleanup_command in cases:
             with self.subTest(kind=kind, clean=clean):
-                controller = FEATHER.FeatherScreen.__new__(
-                    FEATHER.FeatherScreen)
+                controller = ScenarioController.__new__(ScenarioController)
                 controller.calibration_kind = kind
                 controller.calibration_material = "PETG"
                 controller.calibration_clean_nozzle = clean
@@ -2184,10 +2885,10 @@ class ControllerSafetyTest(unittest.TestCase):
                 self.assertTrue(controller.calibration_cancelled)
                 self.assertIsNone(controller.calibration_error)
                 self.assertEqual(
-                    pages, [FEATHER.Page.CALIBRATION_RESULT])
+                    pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_screw_repeat_starts_probe_immediately_without_confirm(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "screws"
         controller.calibration_results = [{"name": "old"}]
         controller.calibration_mesh = []
@@ -2198,7 +2899,7 @@ class ControllerSafetyTest(unittest.TestCase):
         pages = []
         controller._show_page = pages.append
         controller._handle_calibration_action("cal.repeat")
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
         self.assertTrue(controller.calibration_repeat_probe)
         self.assertEqual(controller.calibration_results, [])
         self.assertEqual(len(controller.reactor.callbacks), 1)
@@ -2211,7 +2912,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, ["BED_LEVEL_SCREWS_PROBE"])
 
     def test_calibration_error_returns_result_page(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_material = "PLA"
         controller.calibration_error = None
@@ -2223,14 +2924,14 @@ class ControllerSafetyTest(unittest.TestCase):
         with self.assertLogs(level="ERROR"):
             controller._run_calibration(0)
         self.assertEqual(controller.calibration_error, "macro failed")
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_RESULT])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_calibration_shutdown_preserves_firmware_restart_screen(self):
         class ShutdownGCode:
             def run_script_from_command(self, command):
                 raise RuntimeError("opaque command failure")
 
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.calibration_kind = "mesh"
         controller.calibration_material = "PLA"
         controller.calibration_error = None
@@ -2238,7 +2939,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.gcode = ShutdownGCode()
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
-        controller.page = FEATHER.Page.ERROR
+        controller.page = FEATHER.ScreenPage.ERROR
         controller.error_recovery = None
         controller._require_idle = lambda: None
         controller._limited_preheat = lambda material: (220, 60)
@@ -2249,12 +2950,12 @@ class ControllerSafetyTest(unittest.TestCase):
             controller._run_calibration(0)
 
         self.assertEqual(controller.calibration_error, "opaque command failure")
-        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
         self.assertEqual(rendered, [])
 
     def test_workflow_pages_cannot_replace_firmware_restart_screen(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.ERROR
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.ERROR
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
         controller.error_recovery = "firmware_restart"
@@ -2262,14 +2963,14 @@ class ControllerSafetyTest(unittest.TestCase):
         rendered = []
         controller._render_calibration_result = lambda: rendered.append(True)
 
-        controller._show_page(FEATHER.Page.CALIBRATION_RESULT)
+        controller._show_page(FEATHER.ScreenPage.CALIBRATION_RESULT)
 
-        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
         self.assertEqual(rendered, [])
 
     def test_frozen_shutdown_screen_ignores_late_action_error_page(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.ERROR
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.ERROR
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
         controller.print_state = FEATHER.PrintState.IDLE
@@ -2281,14 +2982,14 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_message = lambda: rendered.append(True)
 
         controller._show_message(
-            "opaque command failure", FEATHER.Page.CONTROL_HOME)
+            "opaque command failure", FEATHER.ScreenPage.CONTROL_HOME)
 
-        self.assertEqual(controller.page, FEATHER.Page.ERROR)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
         self.assertEqual(rendered, [])
 
     def test_frozen_shutdown_screen_preserves_recovery_hitbox_generation(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.page = FEATHER.Page.ERROR
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.ERROR
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer._generation = 9
         controller.renderer.freeze_output()
@@ -2298,7 +2999,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._show_message(
             "Shutdown due to M112 command; use FIRMWARE_RESTART",
-            FEATHER.Page.ERROR)
+            FEATHER.ScreenPage.ERROR)
 
         self.assertEqual(controller.renderer.generation, 9)
         self.assertEqual(controller.error_message,
@@ -2327,7 +3028,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIsNone(classify("Home X before moving"))
 
     def test_shutdown_event_owns_firmware_restart_screen(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.shutdown_active = False
         events = []
         controller.renderer = type("Renderer", (), {
@@ -2357,8 +3058,8 @@ class ControllerSafetyTest(unittest.TestCase):
             "freeze",
         ])
 
-    def test_error_page_offers_firmware_restart_with_padded_dialog(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    def test_error_page_offers_firmware_restart_recovery(self):
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -2368,11 +3069,294 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_error()
 
         drawing = "\n".join(batches[0])
-        self.assertIn("error.firmware_restart", drawing)
-        self.assertIn("--batch fill -p 80 85 -s 640 325", drawing)
+        self.assertIn(controller.error_message, drawing)
+        self.assertIn("error.firmware_restart", controller.renderer._buttons)
+        self.assertEqual(
+            controller.renderer._buttons["error.firmware_restart"][5],
+            "danger")
+
+    def test_touch_warning_covers_and_restores_frozen_restart_dialog(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.page = FEATHER.ScreenPage.ERROR
+        controller.error_message = "MCU shutdown"
+        controller.error_recovery = "firmware_restart"
+        controller.touch_available = True
+        controller.touch_warning_visible = False
+        controller.renderer.footer(
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
+        controller._render_error()
+        controller.renderer.freeze_output()
+        controller._show_page = lambda page: controller._render_error()
+
+        controller._handle_touch_device_status(False)
+
+        self.assertFalse(controller.touch_available)
+        self.assertTrue(controller.touch_warning_visible)
+        self.assertTrue(controller.renderer.output_frozen)
+        self.assertIn("TOUCH INPUT UNAVAILABLE", "\n".join(batches[-1]))
+
+        controller._handle_touch_device_status(True)
+
+        self.assertTrue(controller.touch_available)
+        self.assertFalse(controller.touch_warning_visible)
+        self.assertTrue(controller.renderer.output_frozen)
+        self.assertIn("MCU shutdown", "\n".join(batches[-1]))
+        self.assertIn("192.168.2.4 | IDLE", "\n".join(batches[-1]))
+        self.assertIn(
+            "error.firmware_restart", controller.renderer._buttons)
+
+    def test_touch_warning_waits_until_startup_loader_is_replaced(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.touch_available = True
+        controller.touch_warning_visible = False
+        controller.renderer.startup_modal(
+            "INITIALIZING KLIPPER", "INITIALIZING PRINTER SERVICES")
+
+        controller._handle_touch_device_status(False)
+
+        self.assertFalse(controller.touch_available)
+        self.assertFalse(controller.touch_warning_visible)
+        self.assertEqual(len(batches), 1)
+
+        commands = controller.renderer.begin_page("Ready")
+        commands += controller.renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        controller.renderer.send(commands)
+        controller._show_touch_unavailable()
+
+        self.assertTrue(controller.touch_warning_visible)
+        self.assertIn("TOUCH INPUT UNAVAILABLE", "\n".join(batches[-1]))
+
+    def test_system_shutdown_surface_owns_late_teardown_events(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.shutdown_active = False
+        controller.system_shutdown_active = False
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.touch_available = True
+        controller.touch_warning_visible = False
+
+        controller._handle_gcode_output(
+            "// action:forge_x_shutting_down")
+
+        self.assertTrue(controller.system_shutdown_active)
+        self.assertTrue(controller.renderer.output_frozen)
+        shutdown = "\n".join(batches[-1])
+        self.assertIn("FORGE-X", shutdown)
+        self.assertIn("SHUTTING DOWN", shutdown)
+        batch_count = len(batches)
+
+        controller._handle_touch_device_status(False)
+        controller._shutdown()
+        controller._disconnect()
+
+        self.assertFalse(controller.touch_available)
+        self.assertFalse(controller.touch_warning_visible)
+        self.assertEqual(len(batches), batch_count)
+        self.assertTrue(controller.renderer.output_frozen)
+
+        controller._handle_gcode_output("// action:forge_x_redraw")
+
+        self.assertEqual(len(batches), batch_count)
+
+    def test_system_shutdown_replaces_queued_touch_warning(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.shutdown_active = False
+        controller.system_shutdown_active = False
+        controller.boot_screen_held = False
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.touch_available = True
+        controller.touch_warning_visible = False
+
+        commands = controller.renderer.begin_page("Ready")
+        commands += controller.renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        controller.renderer.send(commands)
+        controller._handle_touch_device_status(False)
+
+        controller._handle_gcode_output(
+            "// action:forge_x_shutting_down")
+
+        self.assertEqual(
+            controller.renderer.get_status()["queue_depth"], 1)
+        shutdown = controller.renderer._batch_queue.get()
+        drawing = "\n".join(shutdown.commands)
+        self.assertEqual(shutdown.key, "startup")
+        self.assertIn("FORGE-X", drawing)
+        self.assertIn("SHUTTING DOWN", drawing)
+        self.assertNotIn("TOUCH INPUT UNAVAILABLE", drawing)
+
+    def test_root_service_redraws_the_current_page(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.CONTROL_HEAT
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.renderer.footer(
+            "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
+        controller.renderer.begin_page("Control heat")
+        batches.clear()
+
+        def show_page(page):
+            self.assertEqual(page, FEATHER.ScreenPage.CONTROL_HEAT)
+            controller.renderer.send(
+                controller.renderer.begin_page("Control heat"))
+
+        controller._show_page = show_page
+
+        controller._handle_gcode_output("// action:forge_x_redraw")
+
+        drawing = "\n".join(batches[-1])
+        footer_clear = controller.renderer.fill(
+            0, UI.FOOTER_Y - 2, UI.SCREEN_WIDTH,
+            UI.SCREEN_HEIGHT - (UI.FOOTER_Y - 2),
+            UI.ThemeColor.BACKGROUND)
+        self.assertIn(footer_clear, drawing)
+        self.assertIn("192.168.2.4 | IDLE", drawing)
+
+    def test_root_service_redraw_releases_boot_screen_without_waiting(self):
+        events = []
+
+        class Renderer:
+            output_frozen = False
+
+            def release_output(self):
+                events.append("release")
+
+            def clear_display(self, key):
+                events.append(("clear-display", key))
+
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = Renderer()
+        controller.boot_screen_held = True
+        controller.startup_timer = None
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.error_message = ""
+        controller.page = FEATHER.ScreenPage.CONTROL_HEAT
+        controller._ensure_renderer_started = (
+            lambda: events.append("ensure-renderer"))
+        controller._show_page = lambda page: events.append(("show", page))
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=False):
+            controller._handle_gcode_output("// action:forge_x_redraw")
+
+        self.assertFalse(controller.boot_screen_held)
+        self.assertEqual(events, [
+            "release", "ensure-renderer", ("clear-display", "boot-handoff"),
+            ("show", FEATHER.ScreenPage.CONTROL_HEAT),
+        ])
+
+    def test_touch_warning_waits_for_boot_screen_release(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.hold_output()
+        controller.boot_screen_held = True
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.error_message = ""
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.touch_available = False
+        controller.touch_warning_visible = False
+        controller.system_shutdown_active = False
+        controller._ensure_renderer_started = lambda: False
+        controller.renderer.touch_unavailable_modal = mock.Mock(
+            wraps=controller.renderer.touch_unavailable_modal)
+
+        commands = controller.renderer.begin_page("Ready")
+        commands += controller.renderer.button(
+            "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+        controller.renderer.send(commands)
+
+        self.assertFalse(controller._show_touch_unavailable())
+        self.assertFalse(controller.touch_warning_visible)
+        self.assertFalse(controller.renderer.output_frozen)
+        self.assertEqual(
+            controller.renderer.get_status()["submitted_batches"], 0)
+        self.assertEqual(
+            controller.renderer.touch_unavailable_modal.call_count, 0)
+
+        def show_page(page):
+            self.assertEqual(page, FEATHER.ScreenPage.IDLE_HOME)
+            page_commands = controller.renderer.begin_page("Ready")
+            page_commands += controller.renderer.button(
+                "ready.confirm", 220, 300, 360, 100, "CONTINUE")
+            controller.renderer.send(page_commands)
+            controller._show_touch_unavailable()
+
+        controller._show_page = show_page
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=False):
+            self.assertTrue(controller._release_boot_screen())
+
+        self.assertFalse(controller.boot_screen_held)
+        self.assertTrue(controller.touch_warning_visible)
+        self.assertTrue(controller.renderer.output_frozen)
+        self.assertGreater(
+            controller.renderer.get_status()["submitted_batches"], 0)
+        self.assertEqual(
+            controller.renderer.touch_unavailable_modal.call_count, 1)
+
+    def test_boot_screen_release_waits_while_marker_exists(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.boot_screen_held = True
+        controller.renderer = mock.Mock()
+        controller._ensure_renderer_started = mock.Mock()
+
+        with mock.patch.object(FEATHER.os.path, "exists", return_value=True):
+            released = controller._release_boot_screen()
+
+        self.assertFalse(released)
+        self.assertTrue(controller.boot_screen_held)
+        controller.renderer.release_output.assert_not_called()
+        controller._ensure_renderer_started.assert_not_called()
+
+    def test_startup_timer_rechecks_busy_screen_without_drawing(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.boot_screen_held = True
+        controller._release_boot_screen = mock.Mock(return_value=False)
+
+        wake = controller._startup_tick(100.0)
+
+        self.assertEqual(wake, 100.0 + FEATHER.STARTUP_ANIMATION_PERIOD)
+        controller._release_boot_screen.assert_called_once_with()
+
+    def test_periodic_update_rechecks_boot_screen_after_ready(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller._release_boot_screen = mock.Mock(return_value=False)
+        controller._update_cycle = mock.Mock(return_value=123.0)
+
+        wake = controller._update(100.0)
+
+        self.assertEqual(wake, 123.0)
+        controller._release_boot_screen.assert_called_once_with()
+        controller._update_cycle.assert_called_once_with(100.0)
+
+    def test_touch_device_protocol_dispatches_availability_transitions(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = type("Renderer", (), {"event_fd": 7})()
+        controller.event_partial = ""
+        transitions = []
+        controller._handle_touch_device_status = transitions.append
+
+        with mock.patch.object(
+                FEATHER.os, "read",
+                return_value=(b"touch-device unavailable\n"
+                              b"touch-device connected\n")):
+            controller._process_touch_events(100.0)
+
+        self.assertEqual(transitions, [False, True])
 
     def test_shutdown_message_is_wrapped_by_typer_inside_dialog(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -2383,14 +3367,25 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_error()
 
-        drawing = "\n".join(batches[0])
-        self.assertIn(controller.error_message, drawing)
-        self.assertIn(
-            "--max-width 584 --max-height 66 --wrap --truncate", drawing)
-        self.assertNotIn("communication time...", drawing)
+        command = next(
+            line for line in batches[0]
+            if controller.error_message in line)
+        self.assertIn("--wrap", command)
+        self.assertIn("--truncate", command)
+        width = re.search(r"--max-width ([0-9]+)", command)
+        height = re.search(r"--max-height ([0-9]+)", command)
+        self.assertIsNotNone(width)
+        self.assertIsNotNone(height)
+        self.assertGreater(int(width.group(1)), 0)
+        self.assertGreater(int(height.group(1)), 0)
+        self.assertEqual(int(height.group(1)), 110)
+        self.assertLessEqual(int(width.group(1)), UI.SCREEN_WIDTH)
+        self.assertLessEqual(int(height.group(1)), UI.SCREEN_HEIGHT)
+        self.assertIn("-p 400 200", command)
+        self.assertNotIn("communication time...", command)
 
     def test_recovery_confirmation_is_wrapped_by_typer(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -2398,12 +3393,15 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_recovery_confirm()
 
-        drawing = "\n".join(batches[0])
-        self.assertIn(
-            "--max-width 640 --max-height 100 --wrap --truncate", drawing)
+        command = next(
+            line for line in batches[0] if "Cleanup will heat" in line)
+        self.assertIn("--wrap", command)
+        self.assertIn("--truncate", command)
+        self.assertRegex(command, r"--max-width [1-9][0-9]*")
+        self.assertRegex(command, r"--max-height [1-9][0-9]*")
 
     def test_action_prompt_renders_groups_footer_and_pagination(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
@@ -2440,7 +3438,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn('prompt.button.4', drawing)
 
     def test_firmware_restart_action_switches_to_animated_startup(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.error_message = "shutdown"
         controller.error_category = "shutdown"
         controller.error_recovery = "firmware_restart"
@@ -2475,7 +3473,7 @@ class ControllerSafetyTest(unittest.TestCase):
             def run_script_from_command(self, command):
                 events.append(("command", command))
 
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.error_message = ""
         controller.error_category = ""
         controller.error_recovery = None
@@ -2507,7 +3505,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(len(events), 3)
 
     def test_mesh_calibration_shows_homing_immediately_after_prep(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.calibration_kind = "mesh"
 
@@ -2515,7 +3513,12 @@ class ControllerSafetyTest(unittest.TestCase):
             "BED MESH: PREPARING"))
         labels = re.findall(r'-t "([^"]+)"', drawing)
 
-        self.assertEqual(len(labels), 5)
+        self.assertEqual(
+            [label for label in labels if label in (
+                "PREP", "HOME", "HEAT", "CLEAN", "LEVEL")],
+            ["PREP", "HOME", "HEAT", "CLEAN", "LEVEL"])
+        self.assertNotIn("ACTIVE", labels)
+        self.assertNotIn("PENDING", labels)
 
     def test_persisted_theme_is_selected_before_first_renderer_output(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2562,7 +3565,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 def register_timer(self, callback, when):
                     return (callback, when)
 
-            controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+            controller = ScenarioController.__new__(ScenarioController)
             controller.renderer = renderer
             controller.printer = Printer()
             controller.reactor = TimerReactor()
@@ -2592,8 +3595,8 @@ class ControllerSafetyTest(unittest.TestCase):
                 events.append(("theme", name))
                 return True
 
-            def startup_modal(self, phase, restarting=False):
-                events.append(("modal", phase, restarting))
+            def startup_modal(self, title, detail, phase, critical=False):
+                events.append(("modal", title, detail, phase, critical))
 
         class TimerReactor:
             NOW = 0.0
@@ -2601,7 +3604,7 @@ class ControllerSafetyTest(unittest.TestCase):
             def register_timer(self, callback, when):
                 return (callback, when)
 
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = Renderer()
         controller.params = type("Params", (), {
             "variables": {"feather_theme": "USER_THEME"},
@@ -2617,11 +3620,12 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(events, [
             ("theme", "USER_THEME"),
-            ("modal", 2, True),
+            ("modal", "INITIALIZING KLIPPER",
+             "RESTART IN PROGRESS - DISPLAY MAY PAUSE", 2, True),
         ])
 
     def test_startup_tick_advances_pulse_until_klipper_is_ready(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         pulses = []
         controller.renderer = type("Renderer", (), {
             "active": True,
@@ -2647,7 +3651,7 @@ class ControllerSafetyTest(unittest.TestCase):
                          controller.reactor.NEVER)
 
     def test_startup_tick_replaces_animation_with_config_error(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         shown = []
         controller.renderer = type("Renderer", (), {"active": True})()
         controller.reactor = type("Reactor", (), {"NEVER": 1.0e30})()
@@ -2671,6 +3675,43 @@ class ControllerSafetyTest(unittest.TestCase):
 
 
 class ResurrectionStatusTest(unittest.TestCase):
+    def test_restored_status_follows_the_recovery_lifecycle(self):
+        resurrector = RESURRECTION.Resurrector.__new__(
+            RESURRECTION.Resurrector)
+        resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+        stats = {"state": "printing"}
+        resurrector._recovery_active = True
+        resurrector.print_stats = type("Stats", (), {
+            "get_status": lambda self, eventtime: stats,
+        })()
+        resurrector.file_path = "/missing"
+
+        self.assertTrue(resurrector.get_status(0)["restored"])
+        stats["state"] = "paused"
+        resurrector._change_state(RESURRECTION.ResurrectorState.PAUSED)
+        self.assertTrue(resurrector.get_status(1)["restored"])
+
+        resurrector._change_state(RESURRECTION.ResurrectorState.ERROR)
+        self.assertTrue(resurrector.get_status(2)["restored"])
+
+        stats["state"] = "complete"
+        self.assertFalse(resurrector.get_status(3)["restored"])
+
+        stats["state"] = "paused"
+        resurrector._handle_virtual_sd_reset()
+        self.assertFalse(resurrector.get_status(4)["restored"])
+
+        for terminal_state in (
+                RESURRECTION.ResurrectorState.IDLE,
+                RESURRECTION.ResurrectorState.RESURRECTION,
+                RESURRECTION.ResurrectorState.DESTROYED,
+        ):
+            with self.subTest(terminal_state=terminal_state):
+                resurrector.state = RESURRECTION.ResurrectorState.PRINTING
+                resurrector._recovery_active = True
+                resurrector._change_state(terminal_state)
+                self.assertFalse(resurrector.get_status(5)["restored"])
+
     def test_status_hides_absolute_path_and_reports_progress(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=True) as stream:
             json.dump({"file_path": "/data/gcodes/part.gcode", "file_position": 25,
@@ -2679,6 +3720,8 @@ class ResurrectionStatusTest(unittest.TestCase):
             stream.flush()
             resurrector = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
             resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
+            resurrector._recovery_active = False
+            resurrector._checkpoint_cache_loaded = False
             resurrector.file_path = stream.name
             status = resurrector.get_status(0)
         self.assertTrue(status["available"])

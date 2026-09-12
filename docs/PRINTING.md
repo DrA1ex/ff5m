@@ -1,6 +1,8 @@
 # Printing
 
-Forge-X uses the normal print macros: `START_PRINT` starts a job, `END_PRINT` finishes it, and `PAUSE`, `RESUME`, and `CANCEL_PRINT` control an active print. If a temperature wait created by Forge-X is active, `M108` stops that wait.
+Forge-X uses the normal print macros: `START_PRINT` starts a job, `END_PRINT` finishes it, and `PAUSE`, `RESUME`, and `CANCEL_PRINT` control an active print. Preparation and related workflows expose nested operation contexts such as `PRINT -> BED MESH -> HEATING BED` to supported UIs. `interruptible` work stops at the next managed boundary, while `cancelable` contexts additionally own cleanup domains; homing, probing, and other atomic commands finish first. `non_interruptible` work offers only Continue or the immediate emergency stop `M112`.
+
+Forge-X routes controllable nozzle/bed waits—including loading, Cold Pull, and resume reheating—through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.
 
 For the required slicer start/end G-code and upload configuration, see [Slicing](SLICING.md).
 

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "AMBER",
+  "description": "Amber-green phosphor: green face with warm amber instrumentation",
+  "colors": {
+    "background": "030802",
+    "text": "69d540",
+    "text_highlight": "e3ffd5",
+    "accent": "f2c14e",
+    "wire": "a8cf45",
+    "shadow": "25531a",
+    "beam": "e3ffd5",
+    "glitch_primary": "a8cf45",
+    "glitch_secondary": "f2c14e",
+    "glitch_cut": "010301",
+    "subtitle": "b9e7a5",
+    "debug": "4c7d42",
+    "info": "b9e7a5",
+    "warn": "f2c14e",
+    "error": "e66b3d",
+    "uptime": "a8cf45"
+  }
+}

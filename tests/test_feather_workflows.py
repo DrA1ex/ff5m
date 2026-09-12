@@ -4,28 +4,56 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import ast
+import errno
 import os
 import pathlib
+import queue
+import shlex
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
 try:
     from tests.test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject)
+    from tests.feather_render_test_helper import RenderCapture
 except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject)
+    from feather_render_test_helper import RenderCapture
 
+from ui import CONTENT_BOTTOM, Increment
 from ff5m_ui.move import runtime as MOVE_UI
+from ff5m_ui.move.step import page as MOVE_STEP_PAGE
 from ff5m_ui.heat import runtime as HEAT_UI
 from ff5m_ui.filament import runtime as FILAMENT_UI
 from ff5m_ui.filament.actions import select as select_filament
 from ff5m_ui.z_offset import runtime as Z_OFFSET_UI
 from feather_feature_filament import FilamentFeature
+from feather_feature_z import ZCalibrationFeature
+from feather_z_calibration import (
+    FeatherZCalibrationMixin, ZCalibrationSession)
+from feather_extruder_calibration import FeatherExtruderCalibrationMixin
+
+
+class ScenarioController(FeatherZCalibrationMixin,
+                         FeatherExtruderCalibrationMixin,
+                         FEATHER.FeatherScreen):
+    """Test harness for scenario implementations no longer on the host."""
+
+    boot_screen_held = False
+    touch_available = None
+    touch_warning_visible = False
+    system_shutdown_active = False
+
 
 FILES = __import__("feather_files")
 PAGES = __import__("feather_screen_pages")
+NETWORK = __import__("feather_network")
+NETWORK_PROTOCOL = __import__("feather_netd_protocol")
+NETWORK_UI = __import__("feather_network_ui")
 
 
 class VirtualSD:
@@ -39,22 +67,6 @@ class VirtualSD:
 
     def file_path(self):
         return self.current_path
-
-
-class FinishedProcess:
-    def __init__(self, output, returncode=0):
-        self.output = output.encode("utf-8")
-        self.returncode = returncode
-        self.terminated = False
-
-    def poll(self):
-        return self.returncode
-
-    def communicate(self):
-        return (self.output, None)
-
-    def terminate(self):
-        self.terminated = True
 
 
 class UsbProcess:
@@ -94,7 +106,10 @@ class UsbEventSocket:
     def recv(self, size):
         if not self.messages:
             raise BlockingIOError()
-        return self.messages.pop(0)
+        message = self.messages.pop(0)
+        if isinstance(message, BaseException):
+            raise message
+        return message
 
     def close(self):
         self.closed = True
@@ -114,10 +129,48 @@ class UsbReactor:
         self.unregistered.append(handle)
 
 
+class OperationContextStub(StatusObject):
+    def request_cancel(self):
+        if self.status.get("cancel_pending", False):
+            state = "already_pending"
+        elif self.status.get("cancel_available", False):
+            state = "accepted"
+            self.status["cancel_pending"] = True
+            self.status["cancel_request_id"] = (
+                self.status.get("cancel_request_id") or 1)
+            self.status["revision"] = self.status.get("revision", 0) + 1
+        else:
+            return {"status": "not_cancelable", "accepted": False,
+                    "request_id": None, "target_name": None,
+                    "blocker_name": self.status.get("cancel_blocker_name")}
+        return {
+            "status": state, "accepted": True,
+            "request_id": self.status.get("cancel_request_id"),
+            "target_name": self.status.get("cancel_target_name", "Print"),
+            "target_mode": self.status.get("cancel_target_mode"),
+        }
+
+    def clear_cancel(self, request_id=None):
+        active_id = self.status.get("cancel_request_id")
+        if not self.status.get("cancel_pending", False):
+            return {"status": "not_pending", "cleared": False,
+                    "request_id": None}
+        if request_id is not None and request_id != active_id:
+            return {"status": "stale_request", "cleared": False,
+                    "request_id": active_id}
+        self.status["cancel_pending"] = False
+        self.status["cancel_request_id"] = None
+        self.status["revision"] = self.status.get("revision", 0) + 1
+        return {"status": "cleared", "cleared": True,
+                "request_id": active_id}
+
+
 def base_controller(state="idle"):
-    controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    controller = ScenarioController.__new__(ScenarioController)
     controller.reactor = Reactor()
     controller.reactor.register_callback = lambda callback, waketime=None: None
+    controller.reactor.register_fd = lambda fd, callback: "netd-fd"
+    controller.reactor.unregister_fd = lambda handle: None
     controller.gcode = GCodeRecorder()
     controller.print_stats = StatusObject(
         {"state": state, "info": {"current_layer": 1, "total_layer": 10}})
@@ -128,14 +181,37 @@ def base_controller(state="idle"):
     controller.cancel_waiting_for_heat = False
     controller.cancel_mode = None
     controller.cancel_phase = None
+    controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
+    controller.operation_cancel_on_accept = None
+    controller.operation_cancel_on_clear = None
+    controller.operation_cancel_request_id = None
+    controller.operation_cancel_target_name = None
+    controller.operation_cancel_target_mode = None
+    controller._last_context_cancel_result = None
     controller._filament_request_token = 0
     controller.busy_phase = 0
-    controller.print_flow = type("Flow", (), {"variables": {
-        "active": False, "cancel_requested": False,
-        "cancel_dispatched": False, "phase": "IDLE"}})()
+    controller.temperature_wait = type("Wait", (), {"variables": {
+        "active": False, "cancel": False}})()
+    printing = state in ("printing", "paused")
+    controller.operation_context = OperationContextStub({
+        "contexts": (),
+        "context_path": ("Print",) if printing else (),
+        "context_types": ("print",) if printing else (),
+        "current_state": "PRINTING" if printing else None,
+        "cancel_available": printing,
+        "cancel_pending": False,
+        "cancel_request_id": None,
+        "cancel_target_type": "print" if printing else None,
+        "cancel_target_name": "Print" if printing else None,
+        "cancel_target_mode": "cancelable" if printing else None,
+        "cancel_blocker_type": None,
+        "cancel_blocker_name": None,
+        "revision": 0,
+    })
+    controller._last_operation_revision = -1
     controller.start_print_macro = type("Start", (), {"variables": {
         "print_started": state in ("printing", "paused")}})()
-    controller.page = FEATHER.Page.IDLE_HOME
+    controller.page = FEATHER.ScreenPage.IDLE_HOME
     controller.print_state = {
         "idle": FEATHER.PrintState.IDLE,
         "printing": FEATHER.PrintState.PRINTING,
@@ -147,10 +223,185 @@ def base_controller(state="idle"):
     controller._toast = lambda message: None
     controller._render_print_page = lambda: None
     controller._render_cancel_confirm = lambda: None
+    controller.network_client = None
+    controller.network_operation = None
+    controller.network_return_page = FEATHER.ScreenPage.NETWORK_HOME
+    controller.network_parent_page = FEATHER.ScreenPage.MAIN_MENU
+    controller.network_deadline = 0.0
+    controller.network_probe_pending = False
+    controller.network_cancel_pending = False
+    controller.networks = []
+    controller.network_page = 0
+    controller.selected_network = None
+    controller.password = ""
+    controller.network_status = NETWORK_PROTOCOL.blank_status()
     return controller
 
 
+class FakeNetworkSocket:
+    """A netd socket that records commands and replays scripted lines."""
+
+    def __init__(self, replies=()):
+        self.sent = []
+        self.pending = list(replies)
+        self.closed = False
+
+    def sendall(self, data):
+        if self.closed:
+            raise OSError(errno.EPIPE, "closed")
+        self.sent.append(data.decode("utf-8").strip())
+
+    def recv(self, size):
+        if not self.pending:
+            raise BlockingIOError(errno.EAGAIN, "no data")
+        return self.pending.pop(0).encode("utf-8")
+
+    def fileno(self):
+        return 42
+
+    def close(self):
+        self.closed = True
+
+    def settimeout(self, value):
+        pass
+
+
+def attach_network(controller, replies=(), sock=None):
+    """Give the controller a live client over a fake socket.
+
+    The dashboard is stubbed unless the test already replaced it. A published
+    status line repaints whatever page is open, and the harness starts on
+    IDLE_HOME, so the real dashboard would run and reach printer objects these
+    tests have no reason to build. The two tests that assert on the repaint
+    install their own stub before calling this.
+    """
+    if "_update_dashboard" not in controller.__dict__:
+        controller._update_dashboard = lambda eventtime: None
+    if not hasattr(controller.reactor, "register_fd"):
+        controller.reactor.register_fd = lambda fd, callback: "network"
+    if not hasattr(controller.reactor, "unregister_fd"):
+        controller.reactor.unregister_fd = lambda handle: None
+    sock = sock if sock is not None else FakeNetworkSocket(replies)
+    previous_status = dict(controller.network_status)
+    controller.network_client = NETWORK.NetworkClient(
+        controller.reactor, controller._on_network_event,
+        opener=lambda: sock)
+    controller.network_client.status.update(previous_status)
+    controller.network_status = controller.network_client.status
+    controller.network_client._attach()
+    sock.sent.clear()
+    return sock
+
+
 class FileWorkflowTest(unittest.TestCase):
+    def test_file_scan_worker_keeps_io_off_caller_and_delivers_on_scheduler(self):
+        callbacks = queue.Queue()
+        delivered = []
+        worker = FILES.FileScanWorker(callbacks.put)
+        try:
+            self.assertTrue(worker.submit(
+                lambda: threading.current_thread().name,
+                lambda value, error: delivered.append((value, error))))
+            callback = callbacks.get(timeout=1.0)
+            self.assertEqual(delivered, [])
+            callback(0.0)
+            self.assertEqual(delivered, [("feather-file-scan", None)])
+        finally:
+            worker.stop()
+        self.assertFalse(worker.submit(lambda: None, lambda value, error: None))
+
+    def test_file_browser_loads_in_background_and_pages_use_cached_scan(self):
+        class PendingWorker:
+            def __init__(self):
+                self.requests = []
+
+            def submit(self, task, callback):
+                self.requests.append((task, callback))
+                return True
+
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_source = "internal"
+        controller.file_page = 0
+        controller.file_entries = []
+        controller.file_entry_cache = {}
+        controller.file_entry_loaded_at = {}
+        controller.file_scan_loading = False
+        controller.file_scan_source = None
+        controller.file_scan_phase = 0
+        controller.file_scan_token = 0
+        controller.usb_storage = None
+        controller.file_scan_worker = PendingWorker()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        old_entries = [FILES.FileEntry(
+            "old-%d.gcode" % index, "/data/old-%d.gcode" % index)
+            for index in range(7)]
+        new_entries = [FILES.FileEntry(
+            "new-%d.gcode" % index, "/data/new-%d.gcode" % index)
+            for index in range(7)]
+        controller._build_file_scan_task = lambda source: lambda: old_entries
+
+        controller._render_file_browser()
+
+        self.assertEqual(len(controller.file_scan_worker.requests), 1)
+        self.assertTrue(controller.file_scan_loading)
+
+        # A newer request supersedes an in-flight result. This covers USB
+        # changes and explicit refreshes racing a slow flash scan.
+        first_callback = controller.file_scan_worker.requests[0][1]
+        controller._invalidate_file_entries("internal")
+        controller.file_scan_loading = False
+        controller._build_file_scan_task = lambda source: lambda: new_entries
+        controller._start_file_scan("internal")
+        second_callback = controller.file_scan_worker.requests[1][1]
+        first_callback(old_entries, None)
+        self.assertNotIn("internal", controller.file_entry_cache)
+        second_callback(new_entries, None)
+
+        self.assertFalse(controller.file_scan_loading)
+        self.assertIs(controller.file_entry_cache["internal"], new_entries)
+        self.assertTrue(rendering.latest.has_action("file.refresh"))
+        requests_before_page_change = len(
+            controller.file_scan_worker.requests)
+
+        # A browser left open keeps its snapshot even after the reopen TTL.
+        controller.reactor.now += PAGES.FILE_CACHE_TTL + 1.0
+        controller._handle_file_action("file.next")
+
+        self.assertEqual(controller.file_page, 1)
+        self.assertEqual(
+            len(controller.file_scan_worker.requests),
+            requests_before_page_change)
+
+        controller._build_file_scan_task = lambda source: lambda: new_entries
+        controller._handle_file_action("file.refresh")
+
+        self.assertEqual(controller.file_source, "internal")
+        self.assertEqual(controller.file_page, 0)
+        self.assertEqual(
+            len(controller.file_scan_worker.requests),
+            requests_before_page_change + 1)
+
+    def test_file_cache_ttl_applies_when_browser_is_reopened(self):
+        controller = base_controller()
+        entries = [FILES.FileEntry("part.gcode", "/data/part.gcode")]
+        controller.file_entry_cache = {"internal": entries, "usb": entries}
+        controller.file_entry_loaded_at = {"internal": 100.0, "usb": 100.0}
+
+        controller.reactor.now = 100.0 + PAGES.FILE_CACHE_TTL - 0.01
+        self.assertFalse(
+            controller._expire_file_entries_if_stale("internal"))
+        self.assertIn("internal", controller.file_entry_cache)
+
+        controller.reactor.now = 100.0 + PAGES.FILE_CACHE_TTL
+        self.assertTrue(
+            controller._expire_file_entries_if_stale("internal"))
+        self.assertNotIn("internal", controller.file_entry_cache)
+        self.assertNotIn("internal", controller.file_entry_loaded_at)
+        self.assertIn("usb", controller.file_entry_cache)
+
     def test_file_browser_flattens_two_levels_and_skips_hidden_trees(self):
         with tempfile.TemporaryDirectory() as root:
             level_one = os.path.join(root, "models")
@@ -196,6 +447,7 @@ class FileWorkflowTest(unittest.TestCase):
             history = FEATHER.PrintHistory(history_path)
             history.record(root, old_printed, 40)
             history.record(root, recently_added, 20)
+            self.assertEqual(history.latest_path(), "old-printed.gcode")
 
             controller = base_controller()
             controller.virtual_sdcard = VirtualSD(root)
@@ -225,7 +477,211 @@ class FileWorkflowTest(unittest.TestCase):
             reloaded = FEATHER.PrintHistory(history_path)
             self.assertEqual(
                 reloaded.last_printed("models/part.gcode"), 1234.0)
+            self.assertEqual(reloaded.latest_path(), "models/part.gcode")
+            self.assertEqual(controller.last_job_path, "models/part.gcode")
             self.assertEqual(controller.last_job_name, "part.gcode")
+
+    def test_idle_last_job_opens_repeat_print_confirmation(self):
+        with tempfile.TemporaryDirectory() as root:
+            relative = "models/part.gcode"
+            path = os.path.join(root, relative)
+            os.makedirs(os.path.dirname(path))
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.last_job_path = relative
+            controller.last_job_name = "part.gcode"
+            shown = []
+            controller._show_page = shown.append
+
+            action = controller._resolve_semantic_ui_action("home.last_job")
+            controller._dispatch_semantic_ui_action(action)
+
+            self.assertEqual(shown, [FEATHER.ScreenPage.FILE_CONFIRM])
+            self.assertEqual(
+                controller.selected_file["path"], os.path.realpath(path))
+            self.assertEqual(controller.selected_file["name"], "part.gcode")
+            self.assertEqual(
+                controller.file_confirm_return_page, FEATHER.ScreenPage.IDLE_HOME)
+            self.assertTrue(controller.file_confirm_repeat)
+
+    def test_last_job_is_inactive_while_printing(self):
+        controller = base_controller("printing")
+        opened = []
+        controller._open_last_job = lambda: opened.append(True)
+
+        action = controller._resolve_semantic_ui_action("home.last_job")
+        controller._dispatch_semantic_ui_action(action)
+
+        self.assertEqual(opened, [])
+
+        controller = base_controller()
+        controller.print_state = FEATHER.PrintState.PREPARING
+        controller._open_last_job = lambda: opened.append(True)
+        action = controller._resolve_semantic_ui_action("home.last_job")
+        controller._dispatch_semantic_ui_action(action)
+
+        self.assertEqual(opened, [])
+
+    def test_missing_last_job_file_is_rejected_before_confirmation(self):
+        with tempfile.TemporaryDirectory() as root:
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.last_job_path = "removed.gcode"
+
+            with self.assertRaisesRegex(
+                    RuntimeError, "no longer available"):
+                controller._open_last_job()
+
+    def test_repeat_confirmation_returns_to_dashboard(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+        controller.selected_file = {"path": "/data/part.gcode"}
+        controller.file_confirm_return_page = FEATHER.ScreenPage.IDLE_HOME
+        controller.file_confirm_repeat = True
+        shown = []
+        controller._show_page = shown.append
+
+        controller._go_back()
+
+        self.assertEqual(shown, [FEATHER.ScreenPage.IDLE_HOME])
+        self.assertIsNone(controller.selected_file)
+        self.assertFalse(controller.file_confirm_repeat)
+
+    def test_repeat_confirmation_changes_the_start_control(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.file_confirm_repeat = True
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_file_confirm()
+        repeat_label = rendering.latest.button("file.start").label
+        controller.file_confirm_repeat = False
+        controller._render_file_confirm()
+
+        self.assertNotEqual(
+            repeat_label, rendering.latest.button("file.start").label)
+
+    def test_file_confirmation_reveals_auto_profile_only_after_mesh_rebuild(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.file_confirm_rebuild_mesh = False
+        controller.file_confirm_auto_mesh = False
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_file_confirm()
+
+        self.assertTrue(rendering.latest.has_action("file.mesh.rebuild"))
+        self.assertFalse(rendering.latest.has_action("file.mesh.auto"))
+
+        controller._handle_file_action("file.mesh.rebuild")
+
+        self.assertTrue(controller.file_confirm_rebuild_mesh)
+        self.assertTrue(rendering.latest.has_action("file.mesh.auto"))
+
+        controller._handle_file_action("file.mesh.auto")
+        self.assertTrue(controller.file_confirm_auto_mesh)
+
+        controller._handle_file_action("file.mesh.rebuild")
+        self.assertFalse(controller.file_confirm_rebuild_mesh)
+        self.assertFalse(controller.file_confirm_auto_mesh)
+        self.assertFalse(rendering.latest.has_action("file.mesh.auto"))
+
+    def test_file_confirmation_explains_full_mesh_override_when_kamp_enabled(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.params = type("Params", (), {
+            "variables": {"use_kamp": False}})()
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_file_confirm()
+        normal_copy = tuple(text.value for text in rendering.latest.texts)
+        controller.params.variables["use_kamp"] = True
+        controller._render_file_confirm()
+
+        kamp_copy = tuple(text.value for text in rendering.latest.texts)
+        self.assertEqual(len(kamp_copy), len(normal_copy))
+        self.assertEqual(sum(
+            before != after
+            for before, after in zip(normal_copy, kamp_copy)), 1)
+
+    def test_file_confirmation_controls_stay_inside_content_area(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "a-very-long-print-file-name.gcode", "/data/part.gcode",
+            size=1024)
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_file_confirm()
+
+        toggles = []
+        for action in ("file.mesh.rebuild", "file.mesh.auto"):
+            bounds = rendering.latest.toggle(action).bounds
+            self.assertGreaterEqual(bounds.x, 0)
+            self.assertGreaterEqual(bounds.y, 54)
+            self.assertLessEqual(bounds.right, 800)
+            self.assertLessEqual(bounds.bottom, 430)
+            toggles.append(bounds)
+        start = rendering.latest.button("file.start").bounds
+        self.assertLess(toggles[0].bottom, toggles[1].y)
+        self.assertLess(toggles[1].bottom, start.y)
+        self.assertLessEqual(start.bottom, 430)
+
+    def test_file_confirmation_uses_compact_unboxed_layout(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=1024)
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_file_confirm()
+
+        frame = rendering.latest
+        filename = frame.text(controller.selected_file["name"])
+        size = frame.text(controller._format_size(controller.selected_file["size"]))
+        first_toggle = frame.toggle("file.mesh.rebuild").bounds
+        start = frame.button("file.start").bounds
+        full_width_option_panels = [
+            shape for shape in frame.shapes
+            if (size.y < shape.bounds.y < start.y
+                and shape.bounds.width >= 700
+                and shape.bounds.height >= 20)]
+
+        self.assertEqual(full_width_option_panels, [])
+        self.assertGreaterEqual(filename.y, 94)
+        self.assertGreaterEqual(size.y - filename.y, 40)
+        self.assertGreaterEqual(first_toggle.y - size.y, 30)
+        self.assertGreaterEqual(start.height, 72)
+        self.assertLessEqual(start.height, 96)
+        self.assertGreaterEqual(CONTENT_BOTTOM - start.bottom, 24)
+        self.assertLessEqual(CONTENT_BOTTOM - start.bottom, 36)
+
+    def test_back_from_file_confirmation_discards_mesh_options(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+        controller.selected_file = {"path": "/data/part.gcode"}
+        controller.file_confirm_rebuild_mesh = True
+        controller.file_confirm_auto_mesh = True
+        shown = []
+        controller._show_page = shown.append
+
+        controller._go_back()
+
+        self.assertFalse(controller.file_confirm_rebuild_mesh)
+        self.assertFalse(controller.file_confirm_auto_mesh)
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_BROWSER])
 
     def test_start_file_rechecks_path_and_escapes_filename(self):
         with tempfile.TemporaryDirectory() as root:
@@ -236,11 +692,207 @@ class FileWorkflowTest(unittest.TestCase):
             controller.selected_file = {"path": path}
             controller._start_selected_file()
             self.assertEqual(
-                controller.gcode.commands,
-                ['SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"'])
+                controller.gcode.commands[0].splitlines(), [
+                    'SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"',
+                    "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                    "VARIABLE=feather_force_leveling VALUE=None",
+                    "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                    "VARIABLE=feather_mesh_name VALUE=None",
+                ])
+            self.assertEqual(controller.last_job_path, 'part "one".gcode')
             os.unlink(path)
             with self.assertRaisesRegex(RuntimeError, "no longer available"):
                 controller._start_selected_file()
+
+    def test_start_file_passes_one_print_mesh_options_after_file_load(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = {"path": path}
+            controller.file_confirm_rebuild_mesh = True
+            controller.file_confirm_auto_mesh = True
+
+            controller._start_selected_file()
+
+            self.assertEqual(controller.gcode.commands[0].splitlines(), [
+                'SDCARD_PRINT_FILE FILENAME="part.gcode"',
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_force_leveling VALUE=True",
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_mesh_name VALUE='\"auto\"'",
+            ])
+            self.assertFalse(controller.file_confirm_rebuild_mesh)
+            self.assertFalse(controller.file_confirm_auto_mesh)
+
+    def test_start_file_string_option_survives_klipper_parameter_parsing(self):
+        class LiteralParsingGCode:
+            def __init__(self):
+                self.variables = {}
+
+            def run_script(self, script):
+                for command in script.splitlines():
+                    arguments = shlex.split(command)
+                    if arguments[0] != "SET_GCODE_VARIABLE":
+                        continue
+                    params = dict(
+                        argument.split("=", 1) for argument in arguments[1:])
+                    self.variables[params["VARIABLE"]] = ast.literal_eval(
+                        params["VALUE"])
+
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller()
+            controller.gcode = LiteralParsingGCode()
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = {"path": path}
+            controller.file_confirm_rebuild_mesh = True
+            controller.file_confirm_auto_mesh = True
+
+            controller._start_selected_file()
+
+            self.assertEqual(controller.gcode.variables, {
+                "feather_force_leveling": True,
+                "feather_mesh_name": "auto",
+            })
+
+    def test_completed_forced_auto_mesh_offers_save(self):
+        controller = base_controller("printing")
+        controller.start_print_macro.variables.update({
+            "zforce_leveling": True,
+            "zskip_leveling": False,
+            "zmesh": "auto",
+        })
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+        restarts = []
+        messages = []
+        controller._restart_klipper = restarts.append
+        controller._show_message = lambda message, page, actions=None: (
+            messages.append((message, page, actions)))
+
+        controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
+
+        self.assertEqual(restarts, [])
+        self.assertEqual(len(messages), 1)
+        self.assertIn("ACTIVE FOR THIS SESSION", messages[0][0])
+        self.assertEqual(messages[0][2], (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled")))
+
+    def test_mesh_save_prompt_buttons_fit_message_dialog(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.message = (
+            "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
+            "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART.")
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"))
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_message()
+
+        frame = rendering.latest
+        body = frame.text(controller.message)
+        self.assertEqual(body.font, "JetBrainsMono 12pt")
+        self.assertEqual(body.max_height, 108)
+        self.assertTrue(body.wrap)
+        self.assertTrue(body.truncate)
+        save = frame.button("mesh.save").bounds
+        later = frame.button("message.ok").bounds
+        for button in (save, later):
+            self.assertGreaterEqual(button.x, 0)
+            self.assertGreaterEqual(button.y, 54)
+            self.assertLessEqual(button.right, 800)
+            self.assertLessEqual(button.bottom, 430)
+        self.assertLess(save.right, later.x)
+
+    def test_message_preserves_explicit_line_breaks(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        lines = ("First line", "Second line")
+        controller.message = "\n".join(lines)
+        controller.message_actions = (("message.ok", "OK", "enabled"),)
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_message()
+
+        body = rendering.latest.text(controller.message)
+        self.assertEqual(tuple(body.value.splitlines()), lines)
+        self.assertTrue(body.wrap)
+
+    def test_incomplete_forced_auto_mesh_does_not_offer_save(self):
+        for stats_state in ("cancelled", "error"):
+            with self.subTest(stats_state=stats_state):
+                controller = base_controller("printing")
+                controller.start_print_macro.variables.update({
+                    "zforce_leveling": True,
+                    "zskip_leveling": False,
+                    "zmesh": "auto",
+                })
+                controller.bed_mesh = StatusObject({"profile_name": "auto"})
+                restarts = []
+                messages = []
+                controller._restart_klipper = restarts.append
+                controller._show_message = lambda message, page, actions=None: (
+                    messages.append((message, page, actions)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, stats_state)
+
+                self.assertEqual(restarts, [])
+                self.assertEqual(len(messages), 1)
+                self.assertIsNone(messages[0][2])
+
+    def test_completed_print_does_not_offer_save_without_active_forced_auto(self):
+        cases = (
+            ({"zforce_leveling": False, "zskip_leveling": False,
+              "zmesh": "auto"}, "auto"),
+            ({"zforce_leveling": True, "zskip_leveling": True,
+              "zmesh": "auto"}, "auto"),
+            ({"zforce_leveling": True, "zskip_leveling": False,
+              "zmesh": ""}, "default"),
+            ({"zforce_leveling": True, "zskip_leveling": False,
+              "zmesh": "auto"}, ""),
+        )
+        for variables, profile_name in cases:
+            with self.subTest(variables=variables, profile_name=profile_name):
+                controller = base_controller("printing")
+                controller.start_print_macro.variables.update(variables)
+                controller.bed_mesh = StatusObject({
+                    "profile_name": profile_name})
+                messages = []
+                controller._show_message = (
+                    lambda message, page, actions=None:
+                    messages.append((message, page, actions)))
+
+                controller._change_print_state(
+                    FEATHER.PrintState.IDLE, "complete")
+
+                self.assertEqual(len(messages), 1)
+                self.assertIsNone(messages[0][2])
+
+    def test_mesh_save_action_requires_idle_and_runs_save_config(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.MESSAGE
+        controller.last_action_time = -1
+        controller.message_actions = (
+            ("mesh.save", "SAVE & RESTART", "enabled"),
+            ("message.ok", "LATER", "enabled"))
+        checked = []
+        restarts = []
+        controller._require_idle = lambda: checked.append(True)
+        controller._restart_klipper = restarts.append
+        controller._blocking_operation_active = lambda: False
+        controller.feature_manager = None
+        controller.bed_mesh = StatusObject({"profile_name": "auto"})
+
+        controller._dispatch_action("mesh.save")
+
+        self.assertEqual(checked, [True])
+        self.assertEqual(restarts, ["SAVE_CONFIG"])
 
     def test_usb_directory_is_first_and_keeps_internal_list_flat(self):
         with tempfile.TemporaryDirectory() as root:
@@ -291,8 +943,13 @@ class FileWorkflowTest(unittest.TestCase):
                 ["models/old.gcode", "new.gcode"])
             controller.selected_file = controller.file_entries[0]
             controller._start_selected_file()
-            self.assertEqual(controller.gcode.commands, [
-                'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"'])
+            self.assertEqual(controller.gcode.commands[0].splitlines(), [
+                'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"',
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_force_leveling VALUE=None",
+                "SET_GCODE_VARIABLE MACRO=START_PRINT "
+                "VARIABLE=feather_mesh_name VALUE=None",
+            ])
 
     def test_usb_directory_navigation_and_removal_return_to_root(self):
         controller = base_controller()
@@ -308,18 +965,21 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(controller.file_source, "usb")
         self.assertEqual(rendered, ["usb"])
 
+        controller.file_page = 3
         controller._handle_file_action("file.refresh")
+        self.assertEqual(controller.file_source, "usb")
+        self.assertEqual(controller.file_page, 0)
         self.assertEqual(rendered, ["usb", "usb"])
 
-        controller.page = FEATHER.Page.FILE_BROWSER
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
         shown = []
         controller._show_page = lambda page: shown.append(page)
         controller._go_back()
         self.assertEqual(controller.file_source, "internal")
-        self.assertEqual(shown, [FEATHER.Page.FILE_BROWSER])
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_BROWSER])
 
         controller.file_source = "usb"
-        controller.page = FEATHER.Page.FILE_BROWSER
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
         controller.usb_storage = type("USB", (), {
             "available": False,
             "resume": lambda self, eventtime: None,
@@ -349,7 +1009,7 @@ class FileWorkflowTest(unittest.TestCase):
     def test_usb_removal_from_confirmation_shows_message(self):
         controller = base_controller()
         controller.file_source = "usb"
-        controller.page = FEATHER.Page.FILE_CONFIRM
+        controller.page = FEATHER.ScreenPage.FILE_CONFIRM
         controller.selected_file = {"path": "/data/USB/job.gcode"}
         controller.usb_storage = type("USB", (), {
             "available": False,
@@ -365,7 +1025,7 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(controller.file_source, "internal")
         self.assertIsNone(controller.selected_file)
         self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.Page.FILE_BROWSER)
+        self.assertEqual(messages[0][1], FEATHER.ScreenPage.FILE_BROWSER)
 
 
 class UsbStorageMonitorTest(unittest.TestCase):
@@ -459,6 +1119,28 @@ class UsbStorageMonitorTest(unittest.TestCase):
 
         self.assertEqual(len(calls), 1)
 
+    def test_event_overflow_keeps_subscription_and_reconciles_state(self):
+        mounted = [False]
+        monitor, calls, reactor, events = self._monitor(
+            [UsbProcess("NONE\n", returncode=2),
+             UsbProcess("NONE\n", returncode=2)], mounted)
+        monitor.resume(0.0)
+        monitor.tick(0.0)
+        monitor.tick(1.0)
+        self.assertEqual(len(calls), 1)
+
+        events.messages.append(OSError(errno.ENOBUFS, "queue overflowed"))
+        with self.assertLogs(level="WARNING") as logs:
+            monitor._handle_events(2.0)
+
+        self.assertIn("reconciling current state", logs.output[-1])
+        self.assertIs(monitor.event_socket, events)
+        self.assertFalse(events.closed)
+        self.assertEqual(reactor.unregistered, [])
+
+        monitor.tick(2.0)
+        self.assertEqual(len(calls), 2)
+
     def test_pause_closes_events_and_resume_forces_reconciliation(self):
         mounted = [False]
         monitor, calls, reactor, events = self._monitor(
@@ -549,7 +1231,6 @@ class UsbStorageMonitorTest(unittest.TestCase):
 class PrintWorkflowTest(unittest.TestCase):
     def test_filament_is_rejected_during_start_print_preparation(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update(active=True, phase="HEATING")
         controller.start_print_macro.variables["print_started"] = False
         notices = []
         controller._toast = notices.append
@@ -561,7 +1242,7 @@ class PrintWorkflowTest(unittest.TestCase):
 
     def test_cancel_invalidates_filament_request_waiting_on_pause(self):
         controller = base_controller("printing")
-        controller.page = FEATHER.Page.PRINTING
+        controller.page = FEATHER.ScreenPage.PRINTING
         opened = []
         controller._open_filament = lambda from_pause: opened.append(from_pause)
         commands = []
@@ -569,15 +1250,16 @@ class PrintWorkflowTest(unittest.TestCase):
         def run(command):
             commands.append(command)
             if command == "PAUSE":
-                controller.page = FEATHER.Page.CANCEL_CONFIRM
-                controller._handle_print_action("print.cancel.confirm")
-            elif command == "CANCEL_PRINT":
+                controller._handle_print_action("print.cancel")
+                controller._handle_operation_cancel_action(
+                    "operation.cancel.confirm")
+            elif command == "_CONTEXT_CANCEL_POINT":
                 controller.print_stats.status["state"] = "cancelled"
 
         controller._run_script = run
         controller._handle_print_action("print.filament")
 
-        self.assertEqual(commands, ["PAUSE", "CANCEL_PRINT"])
+        self.assertEqual(commands, ["PAUSE", "_CONTEXT_CANCEL_POINT"])
         self.assertEqual(opened, [])
 
     def test_pause_resume_and_cancel_are_state_gated(self):
@@ -592,71 +1274,145 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, [])
 
         controller._handle_print_action("print.cancel")
-        self.assertEqual(controller.page, FEATHER.Page.CANCEL_CONFIRM)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
 
     def test_cancel_requires_confirmation_before_macro(self):
         controller = base_controller("paused")
         pages = []
         controller._show_page = pages.append
         controller._handle_print_action("print.cancel")
-        self.assertEqual(pages, [FEATHER.Page.CANCEL_CONFIRM])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CANCEL_CONFIRM])
         self.assertEqual(controller.gcode.commands, [])
-        controller._handle_print_action("print.cancel.confirm")
-        self.assertEqual(controller.gcode.commands, ["CANCEL_PRINT"])
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        self.assertEqual(
+            controller.gcode.commands, ["_CONTEXT_CANCEL_POINT"])
 
-    def test_started_print_uses_direct_cancel_even_with_active_flow(self):
+    def test_started_print_requests_cancel_then_queues_safe_point(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update(active=True, phase="PRINTING")
         controller.start_print_macro.variables["print_started"] = True
-        controller._handle_print_action("print.cancel.confirm")
-        self.assertEqual(controller.gcode.commands, ["CANCEL_PRINT"])
-        self.assertEqual(controller.cancel_mode, "direct")
 
-    def test_cancel_during_heat_uses_cooperative_abort_only(self):
+        controller._handle_print_action("print.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        self.assertEqual(controller.gcode.commands,
+                         ["_CONTEXT_CANCEL_POINT"])
+        self.assertTrue(
+            controller.operation_context.status["cancel_pending"])
+        self.assertEqual(controller.cancel_mode, "pending")
+
+    def test_accepted_cancel_is_painted_before_the_safe_point_dispatch(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update(active=True, phase="HEATING")
+        controller.start_print_macro.variables["print_started"] = True
+        controller._handle_print_action("print.cancel")
+        events = []
+        controller._render_cancel_confirm = lambda: events.append("render")
+        controller._run_script = lambda command, show_notice=True: (
+            events.append(command))
+
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+
+        self.assertEqual(events, ["render", "_CONTEXT_CANCEL_POINT"])
+
+    def test_delivered_cancellation_is_not_reported_as_an_action_failure(self):
+        controller = base_controller("printing")
+        controller.start_print_macro.variables["print_started"] = True
+        messages = []
+        controller._show_message = lambda message, page: messages.append(
+            message)
+
+        def deliver(command, show_notice=True):
+            raise RuntimeError("Operation cancelled: Print")
+
+        controller._run_script = deliver
+        controller._handle_print_action("print.cancel")
+
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+
+        self.assertEqual(messages, [])
+        self.assertEqual(controller.cancel_mode, "pending")
+
+    def test_continue_that_lost_the_race_reports_it_instead_of_doing_nothing(
+            self):
+        controller = base_controller("printing")
+        controller.start_print_macro.variables["print_started"] = True
+        controller._handle_print_action("print.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        # The safe point consumed the request before the tap arrived.
+        controller.operation_context.status["cancel_pending"] = False
+        toasts = []
+        controller._toast = toasts.append
+
+        controller._handle_operation_cancel_action(
+            "operation.cancel.continue")
+
+        self.assertEqual(toasts, ["CANCELLATION ALREADY STARTED"])
+        self.assertEqual(controller.cancel_mode, "pending")
+        self.assertTrue(controller.cancel_requested)
+
+    def test_cancel_during_preparation_wait_dispatches_immediate_m108(self):
+        controller = base_controller("printing")
         controller.start_print_macro.variables["print_started"] = False
         controller.temperature_wait = type("Wait", (), {
             "variables": {"active": True, "cancel": False}})()
         recorder = GCodeRecorder()
-        def run(command):
-            recorder.commands.append(command)
-            if command == "FEATHER_ABORT":
-                controller.print_flow.variables["cancel_requested"] = True
-                controller.temperature_wait.variables["cancel"] = True
-        controller.gcode.run_script_from_command = run
-        controller._handle_print_action("print.cancel.confirm")
-        self.assertEqual(recorder.commands, ["FEATHER_ABORT"])
+        controller.gcode = recorder
+        controller._handle_print_action("print.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        self.assertEqual(recorder.commands, ["M108"])
         self.assertTrue(controller.cancel_requested)
         self.assertTrue(controller.cancel_waiting_for_heat)
-        self.assertNotIn("CANCEL_PRINT", recorder.commands)
+        self.assertTrue(
+            controller.operation_context.status["cancel_pending"])
 
-    def test_unaccepted_cooperative_abort_never_dispatches_cancel_print(self):
+    def test_non_cancelable_operation_offers_abort_without_dispatching_it(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update(active=True, phase="HOMING")
-        controller.start_print_macro.variables["print_started"] = False
-        with self.assertRaisesRegex(RuntimeError, "did not accept"):
-            controller._handle_print_action("print.cancel.confirm")
-        self.assertEqual(controller.gcode.commands, ["FEATHER_ABORT"])
-        self.assertNotIn("CANCEL_PRINT", controller.gcode.commands)
+        controller.operation_context.status.update(
+            cancel_available=False, cancel_target_type=None,
+            cancel_target_name=None)
 
-    def test_cancel_during_homing_bypasses_mutex_runner(self):
+        controller._handle_print_action("print.cancel")
+
+        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(controller.cancel_mode, "not_cancelable")
+        self.assertFalse(controller.cancel_requested)
+
+    def test_non_cancelable_dialog_offers_continue_or_confirmed_m112(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update(active=True, phase="HOMING")
+        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.cancel_mode = "not_cancelable"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+
+        self.assertTrue(rendering.latest.has_action("operation.cancel.back"))
+        self.assertTrue(rendering.latest.has_action("operation.cancel.force"))
+
+        commands = []
+        controller._run_immediate_command = commands.append
+        controller._handle_touch_action("operation.cancel.force")
+        self.assertEqual(commands, ["M112"])
+
+    def test_cancel_during_atomic_homing_waits_for_next_context_point(self):
+        controller = base_controller("printing")
         controller.start_print_macro.variables["print_started"] = False
         calls = []
-
-        def immediate(command):
-            calls.append(("immediate", command))
-            controller.print_flow.variables["cancel_requested"] = True
 
         def serialized(command):
             calls.append(("serialized", command))
 
-        controller.gcode.run_script_from_command = immediate
         controller.gcode.run_script = serialized
-        controller._handle_print_action("print.cancel.confirm")
-        self.assertEqual(calls, [("immediate", "FEATHER_ABORT")])
+        controller._handle_print_action("print.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        self.assertEqual(calls, [])
+        self.assertTrue(
+            controller.operation_context.status["cancel_pending"])
         self.assertFalse(controller.cancel_waiting_for_heat)
 
     def test_normal_cancel_is_rejected_by_immediate_dispatch(self):
@@ -673,18 +1429,158 @@ class PrintWorkflowTest(unittest.TestCase):
         controller._run_script("G28")
         self.assertEqual(calls, [("serialized", "G28")])
 
-    def test_pending_cancel_page_keeps_only_global_abort_hitbox(self):
+    def test_pending_cancel_page_offers_continue_and_force_abort(self):
         controller = base_controller("paused")
         controller.pending_action = "print.cancel.confirm"
+        controller.cancel_mode = "pending"
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
-        controller.renderer.set_emergency_stop_visible(True)
+        rendering = RenderCapture(controller.renderer)
+        controller.renderer.set_header_action("global.abort", "ABORT")
         FEATHER.FeatherScreen._render_cancel_confirm(controller)
-        drawing = "\n".join(batches[0])
-        self.assertNotIn("print.cancel.confirm", drawing)
-        self.assertNotIn("nav.back", drawing)
-        self.assertIn("global.abort", drawing)
+        frame = rendering.latest
+        self.assertFalse(frame.has_action("print.cancel.confirm"))
+        self.assertFalse(frame.has_action("nav.back"))
+        self.assertTrue(frame.has_action("operation.cancel.continue"))
+        self.assertTrue(frame.has_action("operation.cancel.force"))
+        self.assertTrue(frame.has_action("global.abort"))
+
+    def test_force_abort_is_added_after_any_cancel_is_accepted(self):
+        controller = base_controller("paused")
+        controller.cancel_mode = "confirm"
+        controller.operation_cancel_target_name = "Cold Pull"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+        self.assertFalse(
+            rendering.latest.has_action("operation.cancel.force"))
+
+        controller.cancel_mode = "pending"
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+        self.assertTrue(
+            rendering.latest.has_action("operation.cancel.continue"))
+        self.assertTrue(
+            rendering.latest.has_action("operation.cancel.force"))
+
+    def test_interruptible_target_changes_the_confirmation_control(self):
+        controller = base_controller("paused")
+        controller.cancel_mode = "confirm"
+        controller.operation_cancel_target_name = "Nozzle Cleaning"
+        controller.operation_cancel_target_mode = "interruptible"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+        interrupt_label = rendering.latest.button(
+            "operation.cancel.confirm").label
+        controller.operation_cancel_target_mode = "cancelable"
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+
+        self.assertNotEqual(
+            interrupt_label,
+            rendering.latest.button("operation.cancel.confirm").label)
+
+    def test_continue_clears_pending_request_and_print_cancel_latch(self):
+        controller = base_controller("printing")
+        controller.start_print_macro.variables["print_started"] = False
+        controller._show_page = lambda page: setattr(controller, "page", page)
+
+        controller._handle_print_action("print.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        request_id = controller.operation_cancel_request_id
+        self.assertTrue(controller.cancel_requested)
+
+        controller._handle_operation_cancel_action(
+            "operation.cancel.continue")
+
+        self.assertIsNotNone(request_id)
+        self.assertFalse(
+            controller.operation_context.status["cancel_pending"])
+        self.assertFalse(controller.cancel_requested)
+        self.assertIsNone(controller.cancel_mode)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PRINTING)
+
+    def test_cancel_progress_uses_wait_state_before_contextual_stage(self):
+        controller = base_controller("printing")
+        controller.operation_context.status.update(
+            context_path=("Bed Mesh",), current_state="LEVELING",
+            revision=1)
+
+        self.assertEqual(controller._cancel_progress_label(),
+                         "WILL STOP AFTER LEVELING")
+
+        controller.temperature_wait.variables.update(active=True)
+        controller.operation_context.status.update(
+            context_path=("Calibration", "Cold Pull"),
+            current_state="HEATING NOZZLE", revision=2)
+        self.assertEqual(controller._cancel_progress_label(),
+                         "INTERRUPTING HEATING NOZZLE...")
+
+        controller.operation_context.status.update(
+            context_path=("Bed Mesh", "Heating Bed"), current_state=None,
+            revision=3)
+        self.assertEqual(controller._cancel_progress_label(),
+                         "INTERRUPTING HEATING BED...")
+
+        controller.operation_context.status.update(
+            context_path=(), current_state=None, revision=4)
+        self.assertEqual(controller._cancel_progress_label(),
+                         "INTERRUPTING TEMPERATURE WAIT...")
+
+    def test_operation_context_status_is_semantic_and_formatted_only_for_ui(self):
+        controller = base_controller("printing")
+        controller.operation_context.status.update(
+            context_path=("CALIBRATION", "NOZZLE CLEANING"),
+            current_state="HEATING NOZZLE", revision=7)
+        controller.renderer = FEATHER.FeatherRenderer()
+
+        status = controller.get_status(10.0)
+
+        self.assertEqual(
+            status["context_path"],
+            ("CALIBRATION", "NOZZLE CLEANING"))
+        self.assertEqual(status["current_state"], "HEATING NOZZLE")
+        self.assertEqual(status["operation_revision"], 7)
+        self.assertEqual(
+            controller._operation_context_text(10.0),
+            "CALIBRATION -> NOZZLE CLEANING -> HEATING NOZZLE")
+
+    def test_status_exposes_loaded_ui_test_without_loading_it(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        feature = type("Feature", (), {
+            "get_status": lambda self: {
+                "running": True, "suite": "UI", "phase": "render",
+                "step": "ui-home", "step_index": 4, "step_count": 10,
+            },
+        })()
+        controller.feature_manager = type("Features", (), {
+            "peek": lambda self, name: feature if name == "ui_test" else None,
+        })()
+
+        status = controller.get_status(10.0)
+
+        self.assertEqual(status["ui_test"]["step"], "ui-home")
+
+    def test_operation_revision_redraws_print_status_once(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.operation_context.status.update(
+            context_types=("print",), context_path=("PRINT PREP",),
+            current_state="HOMING",
+            revision=3)
+        drawn = []
+        controller._draw_print_status = drawn.append
+
+        controller._update_operation_context(10.0)
+        controller._update_operation_context(11.0)
+        controller.operation_context.status.update(
+            current_state="HEATING BED", revision=4)
+        controller._update_operation_context(12.0)
+
+        self.assertEqual(drawn, [
+            "PRINT PREP -> HOMING", "PRINT PREP -> HEATING BED"])
 
     def test_print_state_transition_selects_correct_page(self):
         controller = base_controller("idle")
@@ -694,13 +1590,13 @@ class PrintWorkflowTest(unittest.TestCase):
         controller._show_page = pages.append
         controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
         controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
-        self.assertEqual(pages, [FEATHER.Page.PRINTING, FEATHER.Page.PAUSED])
+        self.assertEqual(pages, [FEATHER.ScreenPage.PRINTING, FEATHER.ScreenPage.PAUSED])
         self.assertEqual(controller._progress_floor, 0.0)
         self.assertFalse(controller._m73_active)
 
     def test_dashboard_remains_visible_after_explicit_print_home(self):
         controller = base_controller("printing")
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.home_during_print = True
         pages = []
         controller._show_page = pages.append
@@ -710,9 +1606,31 @@ class PrintWorkflowTest(unittest.TestCase):
 
         self.assertEqual(pages, [])
 
+    def test_dashboard_uses_only_the_active_print_context_for_detail(self):
+        controller = base_controller("printing")
+        controller.last_job_name = "part.gcode"
+        controller._print_progress = lambda eventtime, stats: 0.25
+        controller._print_time_values = (
+            lambda eventtime, stats, progress: (60.0, 180.0))
+        controller.operation_context.status.update(
+            context_types=("pid_bed",), context_path=("Bed PID",),
+            current_state="COMPLETE", revision=2)
+
+        ordinary = controller._dashboard_job(1.0)
+
+        self.assertEqual(ordinary.detail, "PRINTING")
+
+        controller.operation_context.status.update(
+            context_types=("print",), context_path=("Print",),
+            current_state="HEATING BED", revision=3)
+
+        managed = controller._dashboard_job(2.0)
+
+        self.assertEqual(managed.detail, "PRINT -> HEATING BED")
+
     def test_filament_back_uses_live_terminal_state(self):
         controller = base_controller("paused")
-        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.page = FEATHER.ScreenPage.FILAMENT_MATERIAL
         controller.filament_from_pause = True
         controller.print_stats.status["state"] = "cancelled"
         pages = []
@@ -720,50 +1638,20 @@ class PrintWorkflowTest(unittest.TestCase):
 
         controller._go_back()
 
-        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.IDLE_HOME])
 
     def test_print_state_change_does_not_drop_accepted_cancel(self):
         controller = base_controller("printing")
         controller.pending_action = "print.cancel.confirm"
         controller.cancel_requested = True
-        controller.page = FEATHER.Page.CANCEL_CONFIRM
+        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
         controller._show_page = lambda page: None
         controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
         self.assertEqual(controller.pending_action, "print.cancel.confirm")
         self.assertTrue(controller.cancel_requested)
 
-    def test_start_print_macro_has_cooperative_checks_after_long_phases(self):
-        root = pathlib.Path(__file__).parents[1]
-        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
-        start = macros.split("[gcode_macro _START_PRINT]", 1)[1].split(
-            "[gcode_macro _WAIT_TEMPERATURE]", 1)[0]
-        self.assertIn("G28\n    _PRINT_FLOW_CHECK", start)
-        self.assertIn("_PRINT_FLOW_PHASE PHASE=HEATING", start)
-        self.assertIn("_PRINT_FLOW_PHASE PHASE=PRIMING", start)
-        self.assertGreaterEqual(start.count("_PRINT_FLOW_CHECK"), 5)
-        flow_check = macros.split("[gcode_macro _PRINT_FLOW_CHECK]", 1)[1].split(
-            "[gcode_macro _START_PRINT]", 1)[0]
-        self.assertEqual(flow_check.count("CANCEL_PRINT"), 1)
-
-    def test_feather_abort_is_an_immediate_gcode_command(self):
-        root = pathlib.Path(__file__).parents[1]
-        gcode = (root / ".py" / "klipper" / "patches" /
-                 "gcode.py").read_text(encoding="utf-8")
-        screen = (root / ".py" / "klipper" / "plugins" /
-                  "feather_screen.py").read_text(encoding="utf-8")
-        pages = (root / ".py" / "klipper" / "plugins" /
-                 "feather_screen_pages.py").read_text(encoding="utf-8")
-        self.assertNotIn("FEATHER_ABORT", gcode)
-        self.assertIn('register_immediate_command("FEATHER_ABORT")', screen)
-        self.assertIn("def cmd_FEATHER_ABORT", pages)
-        self.assertIn('flow.variables["cancel_requested"] = True', pages)
-
-    def test_feather_abort_sets_flow_and_temperature_wait_flags(self):
+    def test_feather_abort_requests_nearest_context_domain(self):
         controller = base_controller("printing")
-        controller.print_flow.variables.update({
-            "active": True, "cancel_requested": False})
-        controller.temperature_wait = type("Wait", (), {"variables": {
-            "active": True, "cancel": False}})()
         responses = []
         gcmd = type("GCmd", (), {
             "error": RuntimeError,
@@ -772,55 +1660,37 @@ class PrintWorkflowTest(unittest.TestCase):
 
         controller.cmd_FEATHER_ABORT(gcmd)
 
-        self.assertTrue(controller.print_flow.variables["cancel_requested"])
-        self.assertTrue(controller.temperature_wait.variables["cancel"])
-        self.assertEqual(responses, ["Feather cancellation requested"])
+        self.assertTrue(
+            controller.operation_context.status["cancel_pending"])
+        self.assertEqual(
+            responses, ["Feather cancellation requested: Print"])
 
-    def test_screw_tune_cleans_or_uses_cooldown_and_repeat_only_probes(self):
-        root = pathlib.Path(__file__).parents[1]
-        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
-        tune = macros.split("[gcode_macro BED_LEVEL_SCREWS_TUNE]", 1)[1].split(
-            "[gcode_macro BED_LEVEL_SCREWS_PROBE]", 1)[0]
-        probe = macros.split("[gcode_macro BED_LEVEL_SCREWS_PROBE]", 1)[1].split(
-            "[gcode_macro _CHECK_BED_MESH]", 1)[0]
-        self.assertIn(
-            "CLEAR_NOZZLE EXTRUDER_TEMP={extruder_temp} BED_TEMP={bed_temp}",
-            tune)
-        self.assertNotIn("M140", tune)
-        self.assertIn("M104 S{cooldown_t}", tune)
-        self.assertNotIn(
-            "_WAIT_TEMPERATURE CMD=M140 VALUE={bed_temp}", tune)
-        self.assertIn(
-            "_WAIT_TEMPERATURE CMD=M104 VALUE={cooldown_t} BELOW=2 ABOVE=3",
-            tune)
-        self.assertIn("BED_LEVEL_SCREWS_PROBE", tune)
-        self.assertIn("LOAD_CELL_TARE", probe)
-        self.assertIn("SCREWS_TILT_CALCULATE", probe)
-        self.assertNotIn("_WAIT_TEMPERATURE", probe)
-        self.assertNotIn("CLEAR_NOZZLE", probe)
-        self.assertNotIn("G28", probe)
+    def test_feather_abort_interrupts_an_active_managed_wait(self):
+        controller = base_controller("printing")
+        controller.temperature_wait.variables["active"] = True
+        immediate = []
+        controller._run_immediate_command = immediate.append
+        gcmd = type("GCmd", (), {
+            "error": RuntimeError,
+            "respond_raw": lambda self, message: None,
+        })()
 
-    def test_cancelled_temperature_wait_only_reports_abort(self):
-        root = pathlib.Path(__file__).parents[1]
-        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
-        final = macros.split(
-            "[gcode_macro _WAIT_TEMPERATURE_FINAL_CHECK]", 1)[1].split(
-                "[gcode_macro _RAISE_WITH_PRINT_CANCEL]", 1)[0]
-        self.assertIn("_RAISE_WITH_PRINT_CANCEL", final)
-        self.assertNotIn("TURN_OFF_HEATERS", final)
-        self.assertNotIn("M104 S0", final)
+        controller.cmd_FEATHER_ABORT(gcmd)
+
+        self.assertEqual(immediate, ["M108"])
+
 
 class MotionHeatSettingsTest(unittest.TestCase):
-    def test_manual_control_pages_cancel_delayed_tasks_on_entry(self):
+    def test_manual_control_page_navigation_cancels_delayed_tasks(self):
         cases = (
-            ("nav.move", FEATHER.Page.CONTROL_HOME,
-             FEATHER.Page.CONTROL_MOVE),
-            ("nav.move", FEATHER.Page.IDLE_HOME,
-             FEATHER.Page.CONTROL_MOVE),
-            ("nav.heat", FEATHER.Page.IDLE_HOME,
-             FEATHER.Page.CONTROL_HEAT),
-            ("nav.calibration", FEATHER.Page.CONTROL_HOME,
-             FEATHER.Page.CALIBRATION_HOME),
+            ("nav.move", FEATHER.ScreenPage.CONTROL_HOME,
+             FEATHER.ScreenPage.CONTROL_MOVE),
+            ("nav.move", FEATHER.ScreenPage.IDLE_HOME,
+             FEATHER.ScreenPage.CONTROL_MOVE),
+            ("nav.heat", FEATHER.ScreenPage.IDLE_HOME,
+             FEATHER.ScreenPage.CONTROL_HEAT),
+            ("nav.heat", FEATHER.ScreenPage.CONTROL_HOME,
+             FEATHER.ScreenPage.CONTROL_HEAT),
         )
         for action, source_page, target_page in cases:
             with self.subTest(action=action):
@@ -836,9 +1706,74 @@ class MotionHeatSettingsTest(unittest.TestCase):
                     controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
                 self.assertEqual(pages, [target_page])
 
+    def test_manual_control_navigation_bypasses_busy_gcode_queue(self):
+        class BusyGCode:
+            def __init__(self):
+                self.commands = []
+
+            def run_script(self, command):
+                raise AssertionError("navigation entered the busy G-code queue")
+
+            def run_script_from_command(self, command):
+                self.commands.append(command)
+
+        controller = base_controller()
+        controller.gcode = BusyGCode()
+        controller.page = FEATHER.ScreenPage.CONTROL_HOME
+        controller.last_action_time = -1.0
+        pages = []
+        controller._show_page = pages.append
+
+        controller._dispatch_action("nav.heat")
+
+        self.assertEqual(
+            controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CONTROL_HEAT])
+
+    def test_manual_control_navigation_is_rejected_locally_during_print(self):
+        cases = (
+            ("nav.move", FEATHER.ScreenPage.IDLE_HOME),
+            ("nav.heat", FEATHER.ScreenPage.IDLE_HOME),
+            ("nav.filament", FEATHER.ScreenPage.IDLE_HOME),
+            ("home.last_job", FEATHER.ScreenPage.IDLE_HOME),
+            ("nav.files", FEATHER.ScreenPage.MAIN_MENU),
+            ("nav.control", FEATHER.ScreenPage.MAIN_MENU),
+            ("nav.calibration", FEATHER.ScreenPage.CONTROL_HOME),
+            ("nav.settings", FEATHER.ScreenPage.CONTROL_HOME),
+        )
+        states = (
+            (FEATHER.PrintState.PREPARING, "printing"),
+            (FEATHER.PrintState.PRINTING, "printing"),
+            (FEATHER.PrintState.PAUSED, "paused"),
+        )
+        for print_state, stats_state in states:
+            for action, source_page in cases:
+                with self.subTest(state=print_state.name, action=action):
+                    controller = base_controller(stats_state)
+                    controller.print_state = print_state
+                    controller.page = source_page
+                    controller.last_action_time = -1.0
+                    pages = []
+                    notices = []
+                    controller._show_page = pages.append
+                    controller._toast = notices.append
+
+                    controller._dispatch_action(action)
+
+                    self.assertEqual(pages, [])
+                    self.assertEqual(controller.gcode.commands, [])
+                    self.assertEqual(notices, ["UNAVAILABLE DURING PRINT"])
+
+    def test_idle_requirement_includes_controller_preparing_state(self):
+        controller = base_controller("idle")
+        controller.print_state = FEATHER.PrintState.PREPARING
+
+        with self.assertRaisesRegex(RuntimeError, "only while idle"):
+            controller._require_idle()
+
     def test_dashboard_material_opens_filament_and_returns_home(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.last_action_time = -1.0
         pages = []
         controller._show_page = pages.append
@@ -847,28 +1782,28 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
         controller._dispatch_action("nav.filament")
 
-        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
-        self.assertEqual(controller.filament_return_page, FEATHER.Page.IDLE_HOME)
+        self.assertEqual(pages, [FEATHER.ScreenPage.FILAMENT_MATERIAL])
+        self.assertEqual(controller.filament_return_page, FEATHER.ScreenPage.IDLE_HOME)
 
-        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.page = FEATHER.ScreenPage.FILAMENT_MATERIAL
         controller.filament_from_pause = False
         controller._go_back()
-        self.assertEqual(pages[-1], FEATHER.Page.IDLE_HOME)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.IDLE_HOME)
 
     def test_dashboard_move_returns_home(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.last_action_time = -1.0
         pages = []
         controller._show_page = pages.append
 
         controller._dispatch_action("nav.move")
 
-        self.assertEqual(pages, [FEATHER.Page.CONTROL_MOVE])
-        self.assertEqual(controller.move_return_page, FEATHER.Page.IDLE_HOME)
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        self.assertEqual(pages, [FEATHER.ScreenPage.CONTROL_MOVE])
+        self.assertEqual(controller.move_return_page, FEATHER.ScreenPage.IDLE_HOME)
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller._go_back()
-        self.assertEqual(pages[-1], FEATHER.Page.IDLE_HOME)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.IDLE_HOME)
 
     def test_calibration_start_cancels_delayed_tasks_again(self):
         controller = base_controller()
@@ -881,11 +1816,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
         self.assertEqual(
             controller.gcode.commands, ["_CANCEL_DELAYED_COMMANDS"])
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
 
     def test_continuous_touch_updates_planner_and_release(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.command_depth = 0
         controller.dimmed = False
@@ -935,7 +1870,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
     def test_low_z_warning_blocks_new_xy_touch_without_interrupting_z(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.command_depth = 0
         controller.dimmed = False
@@ -989,7 +1924,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
     def test_dimmed_joystick_gesture_only_wakes_until_release(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.command_depth = 0
         controller.dimmed = True
@@ -1014,7 +1949,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
     def test_joystick_tick_queues_direct_motion_and_restores_toolhead_accel(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.print_state = FEATHER.PrintState.IDLE
         controller.joystick_action = "move.joy.xy"
@@ -1085,7 +2020,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
 
     def test_joystick_start_waits_for_short_toolhead_tail(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.joystick_action = "move.joy.xy"
         controller.joystick_timer_active = True
@@ -1138,7 +2073,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(len(notices), 1)
 
     def test_joystick_uses_feather_limits_and_actual_z_limits(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.reactor = Reactor()
 
         class Kinematics:
@@ -1173,8 +2108,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
     def test_heat_page_draws_values_immediately_and_refreshes_fan(self):
         controller = base_controller()
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        rendering = RenderCapture(controller.renderer)
         controller.extruder = StatusObject({"temperature": 21.5, "target": 220})
         controller.heater_bed = StatusObject({"temperature": 24.0, "target": 60})
         controller.fan = StatusObject({"speed": 0.25})
@@ -1190,15 +2124,14 @@ class MotionHeatSettingsTest(unittest.TestCase):
             set(controller.heating_materials))
         controller.fan.status["speed"] = 0.5
         controller._update_heat_status(101)
-        self.assertGreater(len(batches), 1)
+        self.assertGreater(len(rendering.frames), 1)
 
     def test_empty_heating_keeps_manual_heat_controls_without_preset_hitboxes(self):
         controller = base_controller()
         controller.heating_materials = ()
         controller.heating_profiles = {}
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        RenderCapture(controller.renderer)
         controller.extruder = StatusObject({"temperature": 21.5, "target": 0})
         controller.heater_bed = StatusObject({"temperature": 24.0, "target": 0})
         controller.fan = StatusObject({"speed": 0.0})
@@ -1213,7 +2146,7 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertNotIn(HEAT_UI.HeatCommand.PREHEAT, actions)
 
     def test_move_offers_only_combined_homing_commands(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller = ScenarioController.__new__(ScenarioController)
         controller.jog_step = 1.0
         controller._require_idle = lambda: None
         blocking = []
@@ -1227,11 +2160,46 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual([command for command, _message in blocking],
                          ["G28", "G28 X Y"])
 
+    def test_step_adjustment_uses_magnitude_bands_in_both_directions(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller._render_move = lambda: None
+        plus = Increment(MOVE_UI.MoveState.JOG_STEP, 1)
+        minus = Increment(MOVE_UI.MoveState.JOG_STEP, -1)
+
+        expected = (
+            (0.1, plus, 0.2),
+            (0.9, plus, 1.0),
+            (1.0, plus, 2.0),
+            (9.0, plus, 10.0),
+            (10.0, plus, 20.0),
+            (20.0, minus, 10.0),
+            (10.0, minus, 9.0),
+            (2.0, minus, 1.0),
+            (1.0, minus, 0.9),
+            (0.1, minus, 0.1),
+            (100.0, plus, 100.0),
+        )
+        for current, action, result in expected:
+            with self.subTest(current=current, amount=action.amount):
+                controller.jog_step = current
+                controller._dispatch_semantic_ui_action(action)
+                self.assertEqual(controller.jog_step, result)
+
+    def test_step_presets_follow_the_active_magnitude_band(self):
+        selected = MOVE_STEP_PAGE._step_preset_selected
+
+        self.assertEqual(selected(0.9, 0.1), "selected")
+        self.assertEqual(selected(2.0, 1.0), "selected")
+        self.assertEqual(selected(20.0, 10.0), "selected")
+        self.assertEqual(selected(2.0, 0.1), "enabled")
+
     def test_move_requires_homed_axis_and_uses_conservative_speed(self):
         controller = base_controller()
         controller.jog_step = 10.0
         controller.toolhead = StatusObject({
             "homed_axes": "y", "position": (0.0, 0.0, 0.0)})
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 0.0)})
         with self.assertRaisesRegex(RuntimeError, "Home X"):
             controller._handle_move_command(MOVE_UI.X_PLUS)
         controller.toolhead.status["homed_axes"] = "xyz"
@@ -1252,6 +2220,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 0.0),
             "axis_maximum": (120.0, 120.0, 220.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (95.0, -85.0, 205.0)})
 
         controller._handle_move_command(MOVE_UI.X_PLUS)
         controller._handle_move_command(MOVE_UI.Y_MINUS)
@@ -1274,11 +2244,13 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 5.0),
             "axis_maximum": (120.0, 120.0, 220.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 205.0)})
         notices = []
         controller._toast = notices.append
 
         controller._handle_move_command(MOVE_UI.Z_PLUS)
-        controller.toolhead.status["position"] = (0.0, 0.0, 210.0)
+        controller.gcode_move.status["gcode_position"] = (0.0, 0.0, 210.0)
         controller._handle_move_command(MOVE_UI.Z_PLUS)
 
         self.assertEqual(controller.gcode.commands,
@@ -1296,6 +2268,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "axis_minimum": (-120.0, -120.0, 0.0),
             "axis_maximum": (120.0, 120.0, 230.0),
         })
+        controller.gcode_move = StatusObject({
+            "gcode_position": (120.0, 0.0, 230.0)})
         notices = []
         controller._toast = notices.append
 
@@ -1309,12 +2283,31 @@ class MotionHeatSettingsTest(unittest.TestCase):
                           "MOVE_SAFE Z=220 ABSOLUTE=1 F=600"])
         self.assertEqual(len(notices), 4)
 
+    def test_step_jog_targets_gcode_coordinates_with_active_mesh(self):
+        controller = base_controller()
+        controller.jog_step = 1.0
+        controller.toolhead = StatusObject({
+            "homed_axes": "xyz",
+            "position": (105.0, 105.0, 60.056863)})
+        # A loaded bed mesh keeps the machine Z above the G-code Z; the jog
+        # must dispatch the G-code target or every move lands off by the
+        # mesh value at the current XY.
+        controller.gcode_move = StatusObject({
+            "gcode_position": (105.0, 105.0, 60.0)})
+
+        controller._handle_move_command(MOVE_UI.Z_PLUS)
+
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE Z=61 ABSOLUTE=1 F=600"])
+
     def test_low_z_warning_blocks_step_xy_but_keeps_step_z_available(self):
         controller = base_controller()
         controller.jog_step = 1.0
         controller.move_caution_signature = (True, "available")
         controller.toolhead = StatusObject({
             "homed_axes": "xyz", "position": (0.0, 0.0, 20.0)})
+        controller.gcode_move = StatusObject({
+            "gcode_position": (0.0, 0.0, 20.0)})
 
         controller._handle_move_command(MOVE_UI.X_PLUS)
         controller._handle_move_command(MOVE_UI.Y_PLUS)
@@ -1358,29 +2351,28 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, [
             "SET_MOD PARAM=backlight VALUE=100",
             "SET_MOD PARAM=sound VALUE=0",
-            "SET_LED LED=chamber_light WHITE=0.5 SYNC=0"])
+            "SET_MOD PARAM=chamber_light VALUE=50"])
         self.assertEqual(backlight, [100])
 
-    def test_settings_render_reflects_chamber_light_status(self):
+    def test_settings_render_exposes_chamber_light_value_and_controls(self):
         controller = base_controller()
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
         controller.params = type("Params", (), {
             "variables": {
                 "backlight": 50, "backlight_eco": 10, "sound": 1,
-                "chamber_light": 42}})()
+                "chamber_light": 42,
+                "chamber_light_mode": "AT_BOOT"}})()
         controller.chamber_light = StatusObject({
             "color_data": [(0.0, 0.0, 0.0, 0.0)]})
+        rendering = RenderCapture(controller.renderer)
 
         controller._render_settings()
 
-        drawing = "\n".join(batches[0])
-        self.assertIn('-t "42%"', drawing)
-        self.assertIn("settings.led.minus",
-                      dict(controller.renderer._buttons))
-        self.assertIn("settings.led.plus",
-                      dict(controller.renderer._buttons))
+        frame = rendering.latest
+        self.assertTrue(frame.has_text(
+            "%d%%" % controller.params.variables["chamber_light"]))
+        self.assertTrue(frame.has_action("settings.led.minus"))
+        self.assertTrue(frame.has_action("settings.led.plus"))
 
     def test_backlight_enable_is_separate_from_brightness(self):
         controller = base_controller()
@@ -1411,15 +2403,14 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
     def test_filament_page_uses_complete_shared_material_selector(self):
         controller = base_controller()
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        rendering = RenderCapture(controller.renderer)
         controller.extruder = type("Extruder", (), {
             "heater": type(
                 "Heater", (), {"min_temp": 0, "max_temp": 300})()})()
         controller.heater_bed = type(
             "Bed", (), {"min_temp": 0, "max_temp": 130})()
 
-        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_MATERIAL)
+        FilamentFeature(controller).render(FEATHER.ScreenPage.FILAMENT_MATERIAL)
 
         actions = tuple(
             action for action in FILAMENT_UI.get_material_page(
@@ -1429,24 +2420,23 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual(
             set(action.payload for action in actions),
             set(controller.heating_materials))
+        self.assertEqual(len(rendering.frames), 1)
 
     def test_empty_heating_filament_page_has_only_empty_state_and_back(self):
         controller = base_controller()
         controller.heating_materials = ()
         controller.heating_profiles = {}
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        rendering = RenderCapture(controller.renderer)
 
-        FilamentFeature(controller).render(FEATHER.Page.FILAMENT_MATERIAL)
+        FilamentFeature(controller).render(FEATHER.ScreenPage.FILAMENT_MATERIAL)
 
-        drawing = "\n".join(batches[-1])
-        self.assertIn("nav.back", drawing)
+        self.assertTrue(rendering.latest.has_action("nav.back"))
         self.assertFalse(FILAMENT_UI.get_material_page(()).actions)
 
     def test_filament_action_back_preserves_heat_and_returns_to_materials(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.FILAMENT_ACTION
+        controller.page = FEATHER.ScreenPage.FILAMENT_ACTION
         controller.filament_from_pause = False
         controller.filament_material = "PETG"
         controller.extruder = StatusObject({
@@ -1459,13 +2449,13 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._go_back()
 
-        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
+        self.assertEqual(pages, [FEATHER.ScreenPage.FILAMENT_MATERIAL])
         self.assertEqual(controller.gcode.commands, [])
         self.assertEqual(controller.extruder.status["target"], 250.0)
 
     def test_filament_cooling_fan_is_bounded_and_survives_action_back(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.page = FEATHER.ScreenPage.FILAMENT_MATERIAL
         controller.filament_from_pause = False
         controller.filament_material = "PETG"
         controller.extruder = StatusObject({
@@ -1481,23 +2471,49 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         feature.update(1.0)
         feature.update(2.0)
-        feature.back(FEATHER.Page.FILAMENT_ACTION)
+        feature.back(FEATHER.ScreenPage.FILAMENT_ACTION)
 
         self.assertEqual(commands, [
             "SET_FAN_SPEED FAN=fanM106 SPEED=1.00"])
         self.assertTrue(feature._cooling_fan_active)
-        self.assertEqual(pages, [FEATHER.Page.FILAMENT_MATERIAL])
+        self.assertEqual(pages, [FEATHER.ScreenPage.FILAMENT_MATERIAL])
 
-        feature.back(FEATHER.Page.FILAMENT_MATERIAL)
+        feature.back(FEATHER.ScreenPage.FILAMENT_MATERIAL)
 
         self.assertEqual(commands[-1],
                          "SET_FAN_SPEED FAN=fanM106 SPEED=0.00")
         self.assertFalse(feature._cooling_fan_active)
         self.assertIsNone(feature._selected_target)
 
+    def test_filament_action_paint_waits_for_a_loader_but_cooling_does_not(
+            self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILAMENT_ACTION
+        controller.filament_from_pause = False
+        controller.filament_material = "PETG"
+        controller.extruder = StatusObject({
+            "temperature": 260.0, "target": 250.0})
+        controller.extruder.min_extrude_temp = 170.0
+        controller.fan = StatusObject({"speed": 0.0})
+        controller.busy_message = "PURGING..."
+        commands = []
+        controller._run_script = commands.append
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        feature = FilamentFeature(controller)
+        feature._selected_target = 250.0
+
+        feature.update(1.0)
+
+        self.assertEqual(commands, [
+            "SET_FAN_SPEED FAN=fanM106 SPEED=1.00"])
+        self.assertEqual(rendering.frames, [])
+        # The value stays unconsumed, so it repaints once the loader is gone.
+        self.assertIsNone(feature._last_signature)
+
     def test_filament_cooling_fan_stops_at_five_degree_threshold(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.page = FEATHER.ScreenPage.FILAMENT_MATERIAL
         controller.filament_material = "PETG"
         controller.extruder = StatusObject({
             "temperature": 255.1, "target": 250.0})
@@ -1520,7 +2536,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_material_selection_arms_cooling_before_action_updates(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.FILAMENT_MATERIAL
+        controller.page = FEATHER.ScreenPage.FILAMENT_MATERIAL
         controller.filament_material = "PLA"
         controller.heating_materials = ("PETG",)
         controller.heating_profiles = {"PETG": (250, 80)}
@@ -1544,7 +2560,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         feature = FilamentFeature(controller)
 
         feature.handle_semantic_action(
-            FEATHER.Page.FILAMENT_MATERIAL, select_filament("PETG"))
+            FEATHER.ScreenPage.FILAMENT_MATERIAL, select_filament("PETG"))
 
         self.assertEqual(handled, ["filament.PETG"])
         self.assertEqual(commands, [
@@ -1556,7 +2572,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller = base_controller()
         controller.params = type("Params", (), {
             "variables": {"safe_z": 8.0}})()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False, safe_z=8.0)
         controller.probe = StatusObject({"last_z_result": -0.4})
@@ -1573,7 +2589,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_PROBE)
 
         self.assertEqual(moves, [
-            ("G28\n"
+            ("_HOME_IF_NEEDED\n"
              "MOVE_SAFE Z=16 ABSOLUTE=1 F=600\n"
              "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
              "LOAD_CELL_TARE",
@@ -1594,14 +2610,14 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "SET_MOD PARAM=safe_z VALUE=4.600",
         ])
         self.assertAlmostEqual(controller.z_calibration.safe_z, 4.6)
-        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_CALIBRATION,
-                                 FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+                                 FEATHER.ScreenPage.CALIBRATION_PROGRESS])
         self.assertEqual(callbacks,
                          [controller._run_z_calibration_preparation])
 
     def test_safe_z_stage_can_be_skipped_without_changing_setting(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False, safe_z=9.0)
         pages = []
@@ -1613,14 +2629,14 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertEqual(controller.z_calibration.safe_z, 9.0)
         self.assertEqual(controller.gcode.commands, [])
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_PROGRESS])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
         self.assertEqual(callbacks,
                          [controller._run_z_calibration_preparation])
 
     def test_zone_selection_back_returns_to_saved_safe_z_without_repreparing(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.Z_OFFSET_SUMMARY
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.page = FEATHER.ScreenPage.Z_OFFSET_SUMMARY
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False, safe_z=6.0)
         controller.z_calibration.prepared = True
@@ -1633,31 +2649,33 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._run_blocking_gcode = (
             lambda command, message: moves.append((command, message)))
         controller._show_page = pages.append
-        controller._render_safe_z = lambda: None
+        feature = ZCalibrationFeature(controller)
+        feature.z_calibration = controller.z_calibration
+        feature._render_safe_z = lambda: None
 
-        controller._go_back()
+        feature.back(FEATHER.ScreenPage.Z_OFFSET_SUMMARY)
 
         self.assertEqual(moves, [(
-            "G28\nMOVE_SAFE Z=12 ABSOLUTE=1 F=600\n"
+            "_HOME_IF_NEEDED\nMOVE_SAFE Z=12 ABSOLUTE=1 F=600\n"
             "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
             "LOAD_CELL_TARE\nMOVE_SAFE Z=6.000000 ABSOLUTE=1 F=300",
             "POSITIONING HEAD...")])
-        self.assertEqual(pages, [FEATHER.Page.SAFE_Z_CALIBRATION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_CALIBRATION])
         self.assertTrue(controller.z_calibration.safe_z_ready)
 
-        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
-        controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
+        feature._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
+        feature._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
 
         self.assertEqual(controller.gcode.commands[-2:], [
             "MOVE_SAFE Z=7.000000 ABSOLUTE=1 F=300",
             "SET_MOD PARAM=safe_z VALUE=7.000",
         ])
-        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_SUMMARY)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_SUMMARY)
         self.assertEqual(callbacks, [])
 
     def test_filament_page_cannot_replace_cancel_confirmation(self):
         controller = base_controller("paused")
-        controller.page = FEATHER.Page.CANCEL_CONFIRM
+        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
         pages = []
         controller._show_page = pages.append
 
@@ -1678,7 +2696,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_filament_action("filament.PETG")
         self.assertEqual(controller.gcode.commands,
                          ["SET_MATERIAL MATERIAL=PETG\nM104 S250"])
-        self.assertEqual(pages, [FEATHER.Page.FILAMENT_ACTION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.FILAMENT_ACTION])
 
     def test_paused_filament_done_restores_target_and_resumes(self):
         controller = base_controller("paused")
@@ -1688,7 +2706,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._show_page = pages.append
         controller._finish_filament(True)
         self.assertEqual(controller.gcode.commands, ["M104 S215", "RESUME"])
-        self.assertEqual(pages, [FEATHER.Page.PAUSED])
+        self.assertEqual(pages, [FEATHER.ScreenPage.PAUSED])
 
     def test_cancelled_filament_flow_does_not_reheat_or_return_to_print(self):
         controller = base_controller("paused")
@@ -1701,7 +2719,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._finish_filament(False)
 
         self.assertEqual(controller.gcode.commands, [])
-        self.assertEqual(pages, [FEATHER.Page.IDLE_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.IDLE_HOME])
         self.assertFalse(controller.filament_from_pause)
 
     def test_load_persists_selected_material(self):
@@ -1737,27 +2755,9 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             controller._handle_filament_action("filament.load")
         self.assertEqual(controller.gcode.commands, [])
 
-    def test_material_macros_support_fluidd_and_persist_through_mod_params(self):
-        root = pathlib.Path(__file__).parents[1]
-        macros = (root / "config" / "material.cfg").read_text(encoding="utf-8")
-        self.assertIn("[gcode_macro SET_MATERIAL]", macros)
-        self.assertIn("SET_MOD PARAM=current_material", macros)
-        self.assertIn("[gcode_macro PREHEAT_MATERIAL]", macros)
-        self.assertIn('SET_MATERIAL MATERIAL="{params.MATERIAL}"', macros)
-        self.assertIn("for slot in config.heating_slots", macros)
-        self.assertIn("_LOAD_MATERIAL_HEATUP MATERIAL={name}", macros)
-
-    def test_saved_z_adjust_uses_homing_origin_not_base_position(self):
-        root = pathlib.Path(__file__).parents[1]
-        macros = (root / "macros" / "base.cfg").read_text(encoding="utf-8")
-        wrapper = macros.split("[gcode_macro SET_GCODE_OFFSET]", 1)[1].split(
-            "[gcode_macro LOAD_GCODE_OFFSET]", 1)[0]
-        self.assertIn("printer.gcode_move.homing_origin.z + z_adj", wrapper)
-        self.assertNotIn("base_position", wrapper)
-
     def test_paper_closer_moves_to_smaller_local_z_without_loader(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("center")
         controller.z_calibration.set_trigger(-0.5)
@@ -1776,7 +2776,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_paper_farther_moves_to_larger_local_z(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("center")
         controller.z_calibration.set_trigger(-0.5)
@@ -1790,7 +2790,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_live_z_adjust_uses_original_macro_without_saving(self):
         controller = base_controller("printing")
-        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.page = FEATHER.ScreenPage.LIVE_Z_OFFSET
         controller.toolhead = StatusObject({"homed_axes": "xyz"})
         controller.gcode_move = StatusObject(
             {"homing_origin": (0.0, 0.0, 0.2)})
@@ -1814,7 +2814,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_live_z_warns_once_after_crossing_half_mm(self):
         controller = base_controller("printing")
-        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.page = FEATHER.ScreenPage.LIVE_Z_OFFSET
         controller.toolhead = StatusObject({"homed_axes": "xyz"})
         controller.gcode_move = StatusObject(
             {"homing_origin": (0.0, 0.0, 0.29)})
@@ -1841,7 +2841,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_live_z_save_can_enable_auto_load(self):
         controller = base_controller("paused")
-        controller.page = FEATHER.Page.LIVE_Z_OFFSET
+        controller.page = FEATHER.ScreenPage.LIVE_Z_OFFSET
         controller.toolhead = StatusObject({"homed_axes": "xyz"})
         controller.gcode_move = StatusObject(
             {"homing_origin": (0.0, 0.0, 0.235)})
@@ -1859,7 +2859,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_z_offset_entry_opens_preparation_without_moving_or_live_change(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.toolhead = StatusObject({
             "homed_axes": "", "position": (20.0, 30.0, 0.0, 0.0)})
         pages = []
@@ -1870,14 +2870,14 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertEqual(controller.gcode.commands, [])
         self.assertEqual(controller.calibration_material, "ABS-PC")
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_CONFIRM])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_CONFIRM])
         self.assertFalse(controller.z_calibration.active)
 
     def test_z_offset_bed_point_uses_configured_safe_z_before_xy_move(self):
         controller = base_controller()
         controller.params = type("Params", (), {
             "variables": {"safe_z": 12.5}})()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.2, None, "", -0.25, False, safe_z=12.5)
         controller.z_calibration.prepared = True
@@ -1890,7 +2890,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["rear_right"])
 
         self.assertEqual(moves, [])
-        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
+        self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING])
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
 
@@ -1898,12 +2898,12 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600\n"
             "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
             "POSITIONING HEAD...")])
-        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING,
-                                 FEATHER.Page.Z_OFFSET_PAPER])
+        self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+                                 FEATHER.ScreenPage.Z_OFFSET_PAPER])
 
     def test_zone_selection_opens_paper_briefing_for_each_zone(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         pages = []
         moves = []
@@ -1912,24 +2912,24 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             lambda x, y: moves.append((x, y)))
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["front_left"])
-        self.assertEqual(pages, [FEATHER.Page.Z_OFFSET_PAPER_BRIEFING])
+        self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING])
         self.assertEqual(moves, [])
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
         self.assertEqual(moves, [(-94.0, -94.0)])
-        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_PAPER)
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["center"])
         self.assertEqual(moves, [(-94.0, -94.0)])
-        self.assertEqual(pages[-1], FEATHER.Page.Z_OFFSET_PAPER_BRIEFING)
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING)
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
         self.assertEqual(moves[-1], (0.0, 0.0))
-        self.assertEqual(pages.count(FEATHER.Page.Z_OFFSET_PAPER_BRIEFING), 2)
+        self.assertEqual(pages.count(FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING), 2)
 
     def test_z_offset_reset_moves_to_zero_candidate_position(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("front_left")
         controller.z_calibration.set_trigger(-0.5)
@@ -1945,7 +2945,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_probe_uses_two_samples_records_trigger_and_retracts_half_mm(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("front_right")
         controller.probe = StatusObject({"last_z_result": -0.625})
@@ -1967,7 +2967,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_manual_paper_start_moves_to_half_safe_z_and_enables_controls(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("front_right")
         controller._render_z_paper = lambda: None
@@ -1988,7 +2988,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_manual_paper_start_tracks_custom_safe_z(self):
         controller = base_controller()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.2, None, "", -0.25, False, safe_z=7.5)
         controller.z_calibration.choose_zone("center")
@@ -2010,7 +3010,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "busy_notice": lambda self, label: notices.append(label),
             "clear_busy_notice": lambda self: notices.append("clear"),
         })()
-        controller.z_calibration = FEATHER.ZCalibrationSession()
+        controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         controller.z_calibration.choose_zone("center")
         controller.z_calibration.set_trigger(-0.5)
@@ -2026,158 +3026,685 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller = base_controller()
         controller.calibration_results = []
         controller.calibration_kind = "screws"
-        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller._handle_gcode_output(
             "rear : x=1, y=2, z=0.1 : adjust CW 00:05")
         self.assertEqual(controller.calibration_results[0]["turns"], "00:05")
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller._handle_gcode_output(
             "front : x=1, y=2, z=0.1 : adjust CCW 00:10")
         self.assertEqual(len(controller.calibration_results), 1)
 
 
 class NetworkWorkflowTest(unittest.TestCase):
-    def test_background_status_refresh_updates_dashboard_without_navigation(self):
+    """The page is a subscriber: netd decides, these tests feed its lines.
+
+    Nothing here fakes a helper process, a pidfile or a marker directory,
+    because the page no longer starts one. What is asserted is the contract at
+    the socket -- which commands go out, and what each published line does to
+    the screen.
+    """
+
+    def test_dashboard_network_card_uses_connection_aware_route(self):
         controller = base_controller()
-        controller.network_process = FinishedProcess(
-            "MODE=ETHERNET\nSSID=\nSIGNAL=\nIP=192.168.2.124\n")
-        controller.network_operation = "status-background"
-        controller.network_deadline = 200
-        controller.network_credentials = None
-        controller.network_status = {"mode": "OFFLINE", "ssid": "",
-                                     "signal": "", "ip": ""}
-        controller.page = FEATHER.Page.IDLE_HOME
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.network_status.update({
+            "mode": "WIFI", "state": "CONNECTING", "ssid": "Workshop",
+            "progress": "RECOVERY"})
+        pages = []
+        controller._show_page = pages.append
+
+        action = controller._resolve_semantic_ui_action("nav.network")
+        controller._dispatch_semantic_ui_action(action)
+
+        self.assertEqual(controller.network_parent_page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_PROGRESS])
+
+        controller.network_status["state"] = "DISCONNECTED"
+        pages.clear()
+        controller._dispatch_semantic_ui_action(action)
+
+        self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_HOME])
+
+    def test_network_home_explains_that_daemon_is_unavailable(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        controller._render_network_home()
+        unavailable_line_count = len(rendering.latest.texts)
+
+        attach_network(controller)
+        controller._render_network_home()
+
+        self.assertEqual(unavailable_line_count, len(rendering.latest.texts) + 1)
+
+    def test_pushed_snapshot_repaints_the_open_network_page(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.NETWORK_HOME
+        renders = []
+        controller._render_network_home = lambda: renders.append(True)
+        attach_network(controller, [
+            "MODE=WIFI\nSTATE=CONNECTED\nSIGNAL=-45\nIP=192.168.2.124\n"])
+
+        controller.network_client._on_readable(101)
+
+        self.assertEqual(controller.network_status["mode"], "WIFI")
+        self.assertEqual(controller.network_status["ip"], "192.168.2.124")
+        # One line per changed field, and the page is repainted for each: the
+        # daemon sends a snapshot as a burst, so this is a single read.
+        self.assertEqual(len(renders), 4)
+
+    def test_snapshot_updates_the_dashboard_without_navigating(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         updates = []
         controller._update_dashboard = updates.append
         controller._show_page = lambda page: self.fail(
-            "background status must not navigate")
-        controller._poll_network_process(101)
+            "a pushed snapshot must not navigate")
+        attach_network(controller, ["MODE=ETHERNET\nIP=192.168.2.124\n"])
+
+        controller.network_client._on_readable(101)
+
         self.assertEqual(controller.network_status["mode"], "ETHERNET")
-        self.assertEqual(controller.network_status["ip"], "192.168.2.124")
-        self.assertEqual(updates, [101])
+        self.assertEqual(updates, [101, 101])
 
-    def test_network_helper_uses_an_isolated_process_group(self):
+    def test_unchanged_field_does_not_repaint(self):
         controller = base_controller()
-        controller.network_process = None
-        process = FinishedProcess("")
-        with mock.patch("subprocess.Popen", return_value=process) as popen:
-            controller._show_page = lambda page: None
-            controller._start_network_process(
-                "status", ["znetwork.sh", "status"],
-                FEATHER.Page.NETWORK_HOME)
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        controller.page = FEATHER.ScreenPage.NETWORK_HOME
+        controller.network_status["mode"] = "WIFI"
+        renders = []
+        controller._render_network_home = lambda: renders.append(True)
+        attach_network(controller, ["MODE=WIFI\n"])
 
-    def test_stopping_network_helper_signals_its_whole_process_group(self):
-        controller = base_controller()
-        controller.network_stopping = []
-        process = FinishedProcess("")
-        process.pid = 123
-        with mock.patch("os.getpgid", return_value=456), \
-                mock.patch("os.killpg") as killpg:
-            controller._retire_network_process(process)
-        killpg.assert_called_once_with(456, FEATHER.signal.SIGTERM)
-        self.assertEqual(controller.network_stopping[0][2], 456)
+        controller.network_client._on_readable(101)
 
-    def test_scan_deduplicates_and_filters_unsupported_networks(self):
-        output = "\n".join([
-            "NETWORK\tShop\t-70\t[WPA2-PSK-CCMP][ESS]",
-            "NETWORK\tShop\t-45\t[WPA2-PSK-CCMP][ESS]",
-            "NETWORK\tOpen\t-20\t[ESS]",
-            "NETWORK\tLab\t-55\t[WPA-PSK-TKIP][ESS]",
-            "NETWORK\tBroken\tn/a\t[WPA2-PSK-CCMP][ESS]",
-        ])
+        self.assertEqual(renders, [])
+
+    def test_state_arrives_by_event_and_not_by_polling(self):
+        # The old page re-ran a status helper on a timer whose interval depended
+        # on the mode. A subscription has no interval: servicing an attached
+        # client sends nothing at all.
         controller = base_controller()
-        controller.network_process = FinishedProcess(output)
-        controller.network_operation = "scan"
-        controller.network_return_page = FEATHER.Page.NETWORK_HOME
+        sock = attach_network(controller)
+
+        for eventtime in (101, 102, 111, 200):
+            controller._service_network(eventtime)
+
+        self.assertEqual(sock.sent, [])
+
+    def test_network_home_disables_the_selected_ethernet_route(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        attach_network(controller)
+        controller.network_status.update({
+            "mode": "ETHERNET", "state": "CONNECTED",
+            "ip": "192.168.2.124"})
+
+        controller._render_network_home()
+
+        self.assertFalse(rendering.latest.has_action("net.retry"))
+        self.assertFalse(rendering.latest.has_action("net.ethernet"))
+
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        controller.network_status.update({
+            "mode": "WIFI", "state": "CONNECTED", "ssid": "Workshop"})
+
+        controller._render_network_home()
+
+        self.assertTrue(rendering.latest.has_action("net.ethernet"))
+
+    def test_boot_attempt_is_visible_as_state_not_as_a_marker_file(self):
+        # A connect started at boot or from the CLI is simply CONNECTING in the
+        # published snapshot. There is no directory to stat and so no window in
+        # which an attempt in flight looks like an idle printer.
+        controller = base_controller()
         pages = []
         controller._show_page = pages.append
-        controller._poll_network_process(100)
+        sock = attach_network(controller, ["STATE=CONNECTING\n"])
+        controller.network_client._on_readable(100)
+
+        controller._open_network_page()
+
+        self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_PROGRESS])
+        self.assertIsNone(controller.network_operation)
+        self.assertEqual(sock.sent, [])
+
+    def test_reconnect_replaces_disabled_home_with_cancelable_progress(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.NETWORK_HOME
+        controller._render_network_home = lambda: None
+        controller._render_network_progress = lambda: None
+        pages = []
+
+        def show_page(page):
+            controller.page = page
+            pages.append(page)
+
+        controller._show_page = show_page
+        sock = attach_network(controller, [
+            "MODE=WIFI\nSTATE=CONNECTING\nPROGRESS=RECOVERY\n"])
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_PROGRESS])
+        self.assertIsNone(controller.network_operation)
+
+        controller._handle_network_action("net.cancel")
+        self.assertEqual(sock.sent, ["CANCEL"])
+        self.assertTrue(controller.network_cancel_pending)
+
+        sock.pending.append(
+            "STATE=DISCONNECTED\nREASON=CANCELLED\nOK CANCELLED\n")
+        controller.network_client._on_readable(101)
+
+        self.assertEqual(pages, [
+            FEATHER.ScreenPage.NETWORK_PROGRESS, FEATHER.ScreenPage.NETWORK_HOME])
+        self.assertEqual(sock.sent, ["CANCEL"])
+        self.assertFalse(controller.network_cancel_pending)
+
+    def test_progress_page_names_the_phase_the_daemon_published(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        attach_network(controller, ["PROGRESS=FINDING_NETWORK\n"])
+        controller.network_client._on_readable(100)
+        controller._render_network_progress()
+
+        self.assertTrue(rendering.latest.has_text(
+            NETWORK_UI.NETWORK_PHASES["FINDING_NETWORK"]))
+
+    def test_progress_page_shows_the_fresh_connection_attempt(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        sock = attach_network(controller, ["PROGRESS=HANDSHAKE\n"])
+        controller.network_client._on_readable(100)
+        controller._render_network_progress()
+        without_attempt = len(rendering.latest.texts)
+
+        sock.pending.append("ATTEMPT=2/3\n")
+        controller.network_client._on_readable(101)
+        controller._render_network_progress()
+
+        self.assertTrue(rendering.latest.has_text(
+            NETWORK_UI.NETWORK_PHASES["HANDSHAKE"]))
+        self.assertEqual(len(rendering.latest.texts), without_attempt + 1)
+
+    def test_startup_progress_explains_existing_network_check(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        attach_network(controller, ["PROGRESS=STARTUP\n"])
+        controller.network_client._on_readable(100)
+
+        controller._render_network_progress()
+
+        self.assertTrue(rendering.latest.has_text(
+            NETWORK_UI.NETWORK_PHASES["STARTUP"]))
+
+    def test_cancelling_snapshot_keeps_ui_busy_until_terminal_verdict(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        attach_network(controller, [
+            "STATE=CONNECTING\nPROGRESS=CANCELLING\nREASON=CANCELLED\n"])
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(controller.network_operation, "wifi")
+        self.assertTrue(controller._network_busy())
+        self.assertEqual(NETWORK_UI.NETWORK_PHASES[
+            controller.network_status["progress"]],
+            "Cancelling network operation...")
+
+    def test_scan_rows_keep_only_passphrase_networks_and_sort_by_signal(self):
+        # Deduplication and hidden-name filtering are the daemon's; what the page
+        # still owns is that it has no keyboard for an open or enterprise network,
+        # and that the strongest signal is offered first.
+        def row(ssid, frequency, signal, security, saved=0):
+            return ("FREQUENCY=%s SIGNAL=%s SECURITY=%s SAVED=%d NETWORK=%s"
+                    % (frequency, signal, security, saved,
+                       NETWORK_PROTOCOL.encode_field(ssid)))
+
+        controller = base_controller()
+        controller.network_operation = "scan"
+        controller.network_return_page = FEATHER.ScreenPage.NETWORK_HOME
+        pages = []
+        controller._show_page = pages.append
+        attach_network(controller, ["\n".join([
+            row("Lab", 2462, -55, "[WPA-PSK-TKIP][ESS]"),
+            row("Shop", 5180, -45, "[WPA2-PSK-CCMP][ESS]", saved=1),
+            row("Open", 2412, -20, "[ESS]"),
+            row("Corp", 5200, -30, "[WPA2-EAP-CCMP][ESS]"),
+            "OK", ""])])
+
+        controller.network_client._on_readable(100)
+
         self.assertEqual([(item["ssid"], item["signal"])
                           for item in controller.networks],
                          [("Shop", -45), ("Lab", -55)])
-        self.assertEqual(pages, [FEATHER.Page.WIFI_SCAN])
+        self.assertEqual(controller.networks[0]["frequency"], 5180)
+        self.assertTrue(controller.networks[0]["saved"])
+        self.assertEqual(pages, [FEATHER.ScreenPage.WIFI_SCAN])
+        self.assertEqual(controller.network_page, 0)
 
-    def test_network_error_uses_helper_message(self):
+    def test_scan_row_with_a_spaced_name_survives_the_wire(self):
         controller = base_controller()
-        controller.network_process = FinishedProcess("ERROR=Wrong password\n", 1)
-        controller.network_operation = "wifi"
-        controller.network_return_page = FEATHER.Page.WIFI_SCAN
-        messages = []
-        controller._show_message = lambda message, page: messages.append((message, page))
-        controller._poll_network_process(100)
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.Page.WIFI_SCAN)
-
-    def test_cancel_terminates_process_and_returns_message(self):
-        controller = base_controller()
-        process = FinishedProcess("")
-        controller.network_process = process
         controller.network_operation = "scan"
-        controller.network_return_page = FEATHER.Page.NETWORK_HOME
-        messages = []
-        controller._show_message = lambda message, page: messages.append((message, page))
-        controller._cancel_network_process("Cancelled")
-        self.assertTrue(process.terminated)
-        self.assertIsNone(controller.network_process)
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0][1], FEATHER.Page.NETWORK_HOME)
+        controller._show_page = lambda page: None
+        attach_network(controller, [
+            "FREQUENCY=2437 SIGNAL=-40 SECURITY=[WPA2-PSK-CCMP][ESS] "
+            "SAVED=0 NETWORK=%s\nOK\n" % NETWORK_PROTOCOL.encode_field("my home network")])
 
-    def test_starting_print_stops_idle_only_network_operation(self):
+        controller.network_client._on_readable(100)
+
+        self.assertEqual([item["ssid"] for item in controller.networks],
+                         ["my home network"])
+
+    def test_error_reply_maps_a_closed_reason_to_its_message(self):
+        for reason, expected in (
+                ("WRONG_KEY", "Wrong Wi-Fi password"),
+                ("DHCP_TIMEOUT", "No address received from DHCP"),
+                ("BUSY", "Another network operation is already running"),
+                ("NO_PROFILE", "Saved Wi-Fi profile is unavailable"),
+                ("WPA_CONTROL_FAILED", "Wi-Fi service did not respond"),
+                ("WPA_CONFIG_FAILED",
+                 "Unable to configure the Wi-Fi connection"),
+                ("WPA_SELECT_FAILED",
+                 "Unable to select the Wi-Fi network")):
+            controller = base_controller()
+            controller.network_operation = "wifi"
+            controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+            messages = []
+            controller._show_message = (
+                lambda message, page: messages.append((message, page)))
+            attach_network(controller, ["ERR %s\n" % reason])
+
+            controller.network_client._on_readable(100)
+
+            self.assertEqual(messages, [(expected, FEATHER.ScreenPage.WIFI_SCAN)])
+            self.assertIsNone(controller.network_operation)
+            self.assertEqual(controller.network_deadline, 0.0)
+
+    def test_unrecognised_error_reason_still_reports(self):
         controller = base_controller()
-        controller.network_stopping = []
-        controller.network_credentials = None
-        process = FinishedProcess("")
-        controller.network_process = process
+        controller.network_operation = "ethernet"
+        controller.network_return_page = FEATHER.ScreenPage.NETWORK_HOME
+        messages = []
+        controller._show_message = (
+            lambda message, page: messages.append((message, page)))
+        attach_network(controller, ["ERR SOMETHING_NEW\n"])
+
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(messages,
+                         [("Network operation failed",
+                           FEATHER.ScreenPage.NETWORK_HOME)])
+
+    def test_connect_toast_is_raised_after_the_page_it_belongs_to(self):
+        # A full repaint clears the toast overlay. The previous supervisor set
+        # the toast from a poll callback that ran before _show_page, so it was
+        # always wiped; ordering the two the other way is the fix.
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        events = []
+        controller._show_page = lambda page: events.append(("page", page))
+        controller._toast = lambda message: events.append(("toast", message))
+        attach_network(controller, ["STATE=CONNECTED\nOK\n"])
+
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(events[-2:], [
+            ("page", FEATHER.ScreenPage.NETWORK_HOME),
+            ("toast", "Network connected"),
+        ])
+
+    def test_failed_connect_does_not_toast(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+        controller._show_message = lambda message, page: None
+        toasts = []
+        controller._toast = toasts.append
+        attach_network(controller, ["STATE=DISCONNECTED\nERR WRONG_KEY\n"])
+
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(toasts, [])
+
+    def test_rollback_is_the_daemons_and_the_page_only_sends_cancel(self):
+        # The incumbent netblock and the DHCP client belong to the process that
+        # installed them. This side has nothing to restore and issues no cleanup.
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.network_status.update(
+            {"mode": "WIFI", "state": "CONNECTING", "ssid": "Workshop"})
+        sock = attach_network(controller)
+
+        controller._cancel_network_operation()
+
+        self.assertEqual(sock.sent, ["CANCEL"])
+        # Still in flight: the operation ends when the daemon reports its verdict,
+        # not when the request to abandon it is written.
+        self.assertEqual(controller.network_operation, "wifi")
+
+    def test_cancel_verdict_reports_the_daemons_reason(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+        messages = []
+        controller._show_message = (
+            lambda message, page: messages.append((message, page)))
+        sock = attach_network(controller)
+        controller._cancel_network_operation()
+
+        sock.pending.append("STATE=DISCONNECTED\nERR CANCELLED\n")
+        controller.network_client._on_readable(101)
+
+        self.assertEqual(messages, [("Network operation cancelled",
+                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        self.assertIsNone(controller.network_operation)
+
+    def test_repeated_cancel_sends_one_pending_request(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller._show_message = lambda message, page: None
+        sock = attach_network(controller)
+
+        self.assertTrue(controller._cancel_network_operation())
+        self.assertTrue(controller._cancel_network_operation())
+
+        self.assertEqual(sock.sent, ["CANCEL"])
+        self.assertTrue(controller.network_cancel_pending)
+
+        sock.pending.append("STATE=DISCONNECTED\nERR CANCELLED\n")
+        controller.network_client._on_readable(101)
+        self.assertFalse(controller.network_cancel_pending)
+
+    def test_cancel_without_a_daemon_clears_the_operation_locally(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.network_deadline = 190
+
+        controller._cancel_network_operation()
+
+        self.assertIsNone(controller.network_operation)
+        self.assertEqual(controller.network_deadline, 0.0)
+
+    def test_second_operation_is_refused_while_one_is_in_flight(self):
+        controller = base_controller()
+        controller._show_page = lambda page: None
+        sock = attach_network(controller)
+        controller._start_scan()
+
+        with self.assertRaisesRegex(RuntimeError, "already running"):
+            controller._start_ethernet()
+
+        self.assertEqual(sock.sent, ["SCAN"])
+
+    def test_operation_is_refused_when_the_daemon_is_not_listening(self):
+        controller = base_controller()
+        controller._show_page = lambda page: None
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            controller._start_scan()
+
+        self.assertIsNone(controller.network_operation)
+
+    def test_an_attempt_started_elsewhere_blocks_a_new_one(self):
+        controller = base_controller()
+        attach_network(controller, ["STATE=CONNECTING\n"])
+        controller.network_client._on_readable(100)
+
+        self.assertTrue(controller._network_busy())
+        self.assertIsNone(controller.network_operation)
+
+    def test_starting_a_print_cancels_the_attempt_but_keeps_the_subscription(self):
+        controller = base_controller()
         controller.network_operation = "scan"
         controller.network_deadline = 115
+        sock = attach_network(controller)
 
         controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
 
-        self.assertTrue(process.terminated)
-        self.assertIsNone(controller.network_process)
+        self.assertEqual(sock.sent, ["CANCEL"])
+        # The link must keep rendering on the dashboard while printing.
+        self.assertTrue(controller._network_available())
+
+    def test_printing_without_an_attempt_sends_nothing(self):
+        controller = base_controller()
+        sock = attach_network(controller)
+
+        controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
+
+        self.assertEqual(sock.sent, [])
+
+    def test_shutdown_closes_only_the_subscription_socket(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        unregistered = []
+        controller.reactor.unregister_fd = unregistered.append
+        sock = attach_network(controller)
+
+        controller._stop_network_client()
+
+        self.assertTrue(sock.closed)
+        self.assertEqual(unregistered, ["netd-fd"])
+        self.assertFalse(controller.network_client.connected)
         self.assertIsNone(controller.network_operation)
 
-    def test_wifi_credentials_use_private_file_and_not_process_arguments(self):
+    def test_daemon_eof_fails_the_attempt_and_clears_the_snapshot(self):
+        controller = base_controller()
+        controller.network_operation = "wifi"
+        controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+        controller.network_status.update(
+            {"mode": "WIFI", "state": "CONNECTING", "ip": "192.168.2.124"})
+        messages = []
+        controller._show_message = (
+            lambda message, page: messages.append((message, page)))
+        controller.reactor.unregister_fd = lambda handle: None
+        attach_network(controller, [""])
+
+        controller.network_client._on_readable(101)
+
+        self.assertEqual(messages, [("Network service is unavailable",
+                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        self.assertEqual(controller.network_status, NETWORK_PROTOCOL.blank_status())
+        self.assertFalse(controller.network_client.connected)
+
+    def test_reattach_is_rate_limited_and_resubscribes(self):
+        controller = base_controller()
+        controller.reactor.register_fd = lambda fd, callback: "handle"
+        sockets = []
+
+        def opener():
+            sockets.append(FakeNetworkSocket())
+            return sockets[-1]
+
+        controller.network_client = NETWORK.NetworkClient(
+            controller.reactor, controller._on_network_event,
+            opener=opener)
+        controller.network_status = controller.network_client.status
+
+        controller._service_network(100)
+        self.assertEqual(sockets[0].sent, ["SUBSCRIBE"])
+
+        # Already attached: servicing again neither reconnects nor re-subscribes.
+        controller._service_network(101)
+        self.assertEqual(len(sockets), 1)
+
+        sockets[0].pending.append("")
+        controller.network_client._on_readable(101)
+        controller._service_network(101)
+        self.assertEqual(len(sockets), 1)
+
+        controller._service_network(105)
+        self.assertEqual(len(sockets), 2)
+        self.assertEqual(sockets[1].sent, ["SUBSCRIBE"])
+
+    def test_silent_daemon_ends_the_operation_without_retrying(self):
+        # A watchdog on the socket, not on the network: it stops the page waiting
+        # and never rolls anything back or starts a second attempt.
+        controller = base_controller()
+        controller._show_page = lambda page: None
+        sock = attach_network(controller)
+        controller.selected_network = {"ssid": "Workshop"}
+        controller._connect_saved_wifi()
+        messages = []
+        controller._show_message = (
+            lambda message, page: messages.append((message, page)))
+
+        controller._service_network(100 + NETWORK_UI.NETWORK_WATCHDOG - 1)
+        self.assertEqual(messages, [])
+
+        controller._service_network(100 + NETWORK_UI.NETWORK_WATCHDOG)
+        self.assertEqual(messages, [])
+
+        controller._service_network(
+            100 + NETWORK_UI.NETWORK_WATCHDOG
+            + NETWORK_UI.NETWORK_WATCHDOG_PROBE)
+
+        self.assertEqual(messages, [("Network service stopped responding",
+                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        self.assertEqual(sock.sent, [
+            "CONNECT_WIFI ssid=%s" % NETWORK_PROTOCOL.encode_field("Workshop"),
+            "GET",
+        ])
+        self.assertTrue(sock.closed)
+        self.assertFalse(controller.network_client.connected)
+        self.assertEqual(controller.network_status,
+                         NETWORK_PROTOCOL.blank_status())
+
+    def test_wifi_credentials_travel_on_the_socket_and_never_reach_argv(self):
         controller = base_controller()
         controller.selected_network = {"ssid": "Workshop"}
         controller.password = "secret123"
-        started = []
-        controller._start_network_process = (
-            lambda operation, args, page: started.append((operation, args, page)))
-        controller._connect_wifi()
-        operation, args, page = started[0]
-        credentials = args[-1]
-        try:
-            self.assertEqual(operation, "wifi")
-            self.assertEqual(page, FEATHER.Page.WIFI_SCAN)
-            self.assertNotIn("secret123", " ".join(args))
-            self.assertEqual(os.stat(credentials).st_mode & 0o777, 0o600)
-            self.assertEqual(pathlib.Path(credentials).read_text(encoding="utf-8"),
-                             "Workshop\nsecret123\n")
-            self.assertEqual(controller.password, "")
-        finally:
-            if os.path.exists(credentials):
-                os.unlink(credentials)
+        controller._show_page = lambda page: None
+        with mock.patch.object(PAGES.subprocess, "Popen") as popen:
+            sock = attach_network(controller)
+            controller._connect_wifi()
 
-    def test_wifi_credentials_are_removed_when_operation_is_cancelled(self):
+        popen.assert_not_called()
+        self.assertEqual(controller.network_operation, "wifi")
+        self.assertEqual(controller.network_return_page,
+                         FEATHER.ScreenPage.WIFI_SCAN)
+        self.assertEqual(len(sock.sent), 1)
+        self.assertNotIn("secret123", sock.sent[0])
+        self.assertNotIn("Workshop", sock.sent[0])
+        self.assertEqual(
+            sock.sent[0],
+            "CONNECT_WIFI ssid=%s psk=%s" % (
+                NETWORK_PROTOCOL.encode_field("Workshop"),
+                NETWORK_PROTOCOL.encode_field("secret123")))
+        # Dropped from memory here: there is no 0600 temp file left to clean up.
+        self.assertEqual(controller.password, "")
+
+    def test_weak_passphrase_is_rejected_before_it_reaches_the_socket(self):
         controller = base_controller()
-        controller.network_stopping = []
-        controller.network_credentials = None
         controller.selected_network = {"ssid": "Workshop"}
-        controller.password = "secret123"
-        controller._start_network_process = lambda operation, args, page: None
-        controller._connect_wifi()
-        credentials = controller.network_credentials
-        self.assertTrue(os.path.exists(credentials))
+        controller.password = "short"
+        sock = attach_network(controller)
 
-        controller.network_process = None
-        controller.network_return_page = FEATHER.Page.WIFI_SCAN
-        controller._show_message = lambda message, page: None
-        controller._cancel_network_process("Cancelled")
+        with self.assertRaisesRegex(RuntimeError, "8-63 ASCII"):
+            controller._connect_wifi()
 
-        self.assertFalse(os.path.exists(credentials))
-        self.assertIsNone(controller.network_credentials)
+        self.assertEqual(sock.sent, [])
+
+    def test_selecting_saved_wifi_reconnects_without_password_prompt(self):
+        controller = base_controller()
+        controller.networks = [{
+            "ssid": "Workshop", "signal": -45, "frequency": 5180,
+            "saved": True}]
+        controller._show_page = lambda page: None
+        sock = attach_network(controller)
+
+        controller._handle_network_action("net.item0")
+
+        self.assertEqual(sock.sent, [
+            "CONNECT_WIFI ssid=%s" % NETWORK_PROTOCOL.encode_field("Workshop")])
+        self.assertEqual(controller.network_operation, "wifi-saved")
+        self.assertEqual(controller.network_return_page,
+                         FEATHER.ScreenPage.WIFI_SCAN)
+
+    def test_wrong_saved_password_offers_reset_for_that_network(self):
+        controller = base_controller()
+        other = {
+            "ssid": "Other", "signal": -40, "frequency": 2412,
+            "saved": True}
+        failed = {
+            "ssid": "Workshop", "signal": -45, "frequency": 5180,
+            "saved": True}
+        controller.networks = [other, failed]
+        controller.selected_network = failed
+        controller.network_operation = "wifi-saved"
+        controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+        messages = []
+        controller._show_message = (
+            lambda message, page, actions=None:
+            messages.append((message, page, actions)))
+        attach_network(controller, ["ERR WRONG_KEY\n"])
+
+        controller.network_client._on_readable(100)
+
+        self.assertTrue(messages)
+        actions = messages[-1][2]
+        self.assertIn("net.reset.saved", [action[0] for action in actions])
+
+        pages = []
+        controller._show_page = pages.append
+        controller._handle_network_action("net.reset.saved")
+
+        self.assertIs(controller.selected_network, failed)
+        self.assertEqual(pages, [FEATHER.ScreenPage.WIFI_PASSWORD])
+
+    def test_wrong_unsaved_password_does_not_offer_reset(self):
+        controller = base_controller()
+        controller.selected_network = {
+            "ssid": "New", "signal": -45, "frequency": 5180,
+            "saved": False}
+        controller.network_operation = "wifi"
+        controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+        messages = []
+        controller._show_message = (
+            lambda message, page, actions=None:
+            messages.append((message, page, actions)))
+        attach_network(controller, ["ERR WRONG_KEY\n"])
+
+        controller.network_client._on_readable(100)
+
+        self.assertEqual(messages, [
+            ("Wrong Wi-Fi password", FEATHER.ScreenPage.WIFI_SCAN, None)])
+        with self.assertRaisesRegex(RuntimeError, "No saved Wi-Fi password"):
+            controller._handle_network_action("net.reset.saved")
+
+    def test_status_block_still_parses_for_the_shared_callers(self):
+        # The daemon snapshot is a version-tolerant wire contract: known keys
+        # retain their meaning while future fields remain ignorable.
+        status = PAGES.FeatherPagesMixin.parse_network_status(
+            "MODE=WIFI\n"
+            "STATE=CONNECTED\n"
+            "SSID=%s\n"
+            "SIGNAL=-52\n"
+            "IP=192.168.1.42\n"
+            "PROGRESS=ONLINE\n"
+            "FUTURE_FIELD=whatever\n"
+            "this line has no separator\n" % NETWORK_PROTOCOL.encode_field("Workshop"))
+
+        self.assertEqual(status["mode"], "WIFI")
+        self.assertEqual(status["state"], "CONNECTED")
+        self.assertEqual(status["ssid"], "Workshop")
+        self.assertEqual(status["ip"], "192.168.1.42")
+        self.assertEqual(status["progress"], "ONLINE")
+        self.assertEqual(status["attempt"], "")
+        self.assertNotIn("future_field", status)
+
+    def test_truncated_status_block_never_reads_as_online(self):
+        for text in ("", "MODE=\n", "garbage\n"):
+            status = PAGES.FeatherPagesMixin.parse_network_status(text)
+            self.assertEqual(status["state"], "DISCONNECTED")
+            self.assertEqual(status["ip"], "")
 
 
 class TouchEventBridgeTest(unittest.TestCase):
@@ -2192,7 +3719,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         controller._dispatch_action("print.cancel.confirm")
         controller._dispatch_action("nav.menu")
 
-        self.assertEqual(pages, [FEATHER.Page.MAIN_MENU])
+        self.assertEqual(pages, [FEATHER.ScreenPage.MAIN_MENU])
 
     def test_feedback_from_replaced_page_is_not_restored_or_dispatched(self):
         controller = base_controller()
@@ -2215,7 +3742,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         controller.touch_feedback_pending = False
         controller._dispatch_action = lambda action: events.append(("action", action))
         controller._handle_touch_action("nav.control")
-        controller.page = FEATHER.Page.CONTROL_HOME
+        controller.page = FEATHER.ScreenPage.CONTROL_HOME
         controller.renderer.generation = 4
 
         callbacks[0](controller.reactor.monotonic())
@@ -2237,16 +3764,16 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(len(notices), 1)
         controller._handle_touch_action("print.cancel")
         self.assertEqual(actions, ["print.cancel"])
-        controller.page = FEATHER.Page.CANCEL_CONFIRM
-        controller._handle_touch_action("print.cancel.back")
-        self.assertEqual(actions, ["print.cancel", "print.cancel.back"])
+        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller._handle_touch_action("operation.cancel.back")
+        self.assertEqual(actions, ["print.cancel", "operation.cancel.back"])
         controller._handle_touch_action("nav.back")
         self.assertEqual(actions, [
-            "print.cancel", "print.cancel.back", "nav.back"])
+            "print.cancel", "operation.cancel.back"])
 
     def test_blocking_loader_rejects_current_and_delayed_back(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.busy_message = "HOMING..."
         controller.command_depth = 0
         controller.touch_feedback_pending = False
@@ -2261,15 +3788,33 @@ class TouchEventBridgeTest(unittest.TestCase):
         # scheduled immediately before the loader appeared.
         controller.touch_feedback_pending = True
         controller._finish_touch_action(
-            0, "nav.back", source_page=FEATHER.Page.CONTROL_MOVE,
+            0, "nav.back", source_page=FEATHER.ScreenPage.CONTROL_MOVE,
             generation=4)
 
         self.assertEqual(pages, [])
         self.assertFalse(controller.touch_feedback_pending)
 
+    def test_blocking_loader_also_stops_periodic_page_painters(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        controller.busy_message = "HOMING..."
+        controller.operation_context.status["revision"] = 1
+
+        controller._update_operation_context(controller.reactor.monotonic())
+
+        self.assertEqual(rendering.frames, [])
+
+        controller.busy_message = None
+        controller.operation_context.status["revision"] = 2
+        controller._update_operation_context(controller.reactor.monotonic())
+
+        self.assertEqual(len(rendering.frames), 1)
+
     def test_calibration_progress_rejects_back_during_dispatcher_macro(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CALIBRATION_PROGRESS
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller.command_depth = 1
         controller.busy_message = None
         controller.renderer = type("Renderer", (), {
@@ -2310,11 +3855,11 @@ class TouchEventBridgeTest(unittest.TestCase):
 
     def test_blocking_gcode_owns_stable_abort_lease(self):
         controller = base_controller()
-        controller.page = FEATHER.Page.CONTROL_MOVE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.busy_message = None
         controller.toolhead = StatusObject({"homed_axes": ""})
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.send = lambda commands: None
+        RenderCapture(controller.renderer)
         controller._show_page = lambda page: None
         observed = []
 
@@ -2332,7 +3877,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         controller._run_blocking_gcode("G28", "HOMING...")
 
         self.assertEqual(observed, [("G28", 1, True, True)])
-        self.assertEqual(controller.page, FEATHER.Page.CONTROL_MOVE)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_MOVE)
         self.assertFalse(controller._blocking_operation_active())
         self.assertEqual(controller.safety.lease_count, 0)
         self.assertTrue(controller._safety_decision().visible)
@@ -2420,6 +3965,8 @@ class RecoveryRobustnessTest(unittest.TestCase):
             stream.flush()
             resurrector = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
             resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
+            resurrector._recovery_active = False
+            resurrector._checkpoint_cache_loaded = False
             resurrector.file_path = stream.name
             with self.assertLogs(level="ERROR"):
                 status = resurrector.get_status(0)
@@ -2436,6 +3983,35 @@ class RecoveryRobustnessTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, [
             "RESPOND TYPE=command MSG=action:prompt_end"])
 
+    def test_restore_uses_owned_recovery_state_while_print_stats_lags(self):
+        controller = base_controller(state="idle")
+        controller.resurrection = StatusObject({
+            "state": "printing", "available": False})
+        commands = []
+        messages = []
+        controller._run_script = commands.append
+        controller._show_message = lambda message, page: messages.append(
+            (message, page))
+
+        controller._run_recovery(0., "RESURRECT")
+
+        self.assertEqual(commands, ["RESURRECT"])
+        self.assertEqual(messages, [])
+
+    def test_restore_reports_recovery_rollback(self):
+        controller = base_controller(state="idle")
+        controller.resurrection = StatusObject({
+            "state": "resurrection", "available": True})
+        messages = []
+        controller._run_script = lambda command: None
+        controller._show_message = lambda message, page: messages.append(
+            (message, page))
+
+        controller._run_recovery(0., "RESURRECT")
+
+        self.assertEqual(messages, [
+            ("Restore did not start printing", FEATHER.ScreenPage.RECOVERY_PROMPT)])
+
 
 class ActionPromptProtocolTest(unittest.TestCase):
     @staticmethod
@@ -2443,7 +4019,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller = base_controller()
         controller.action_prompt = None
         controller.action_prompt_visible = False
-        controller.action_prompt_return_page = FEATHER.Page.IDLE_HOME
+        controller.action_prompt_return_page = FEATHER.ScreenPage.IDLE_HOME
         controller.action_prompt_page = 0
         controller.recovery_action = None
         controller.resurrection = None
@@ -2471,7 +4047,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
             "// action:prompt_show",
         ]))
 
-        self.assertEqual(shown, [FEATHER.Page.ACTION_PROMPT])
+        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
         self.assertTrue(controller.action_prompt_visible)
         self.assertEqual(controller.action_prompt["title"], "Choose material")
         self.assertEqual(len(controller.action_prompt["rows"]), 1)
@@ -2484,7 +4060,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
         controller._handle_gcode_output("// action:prompt_end")
 
-        self.assertEqual(shown[-1], FEATHER.Page.IDLE_HOME)
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
         self.assertFalse(controller.action_prompt_visible)
         self.assertIsNone(controller.action_prompt)
 
@@ -2511,19 +4087,163 @@ class ActionPromptProtocolTest(unittest.TestCase):
         self.assertEqual(commands, ["OPEN_NEXT"])
         self.assertEqual(controller.action_prompt["title"], "Second")
         self.assertEqual(
-            controller.action_prompt_return_page, FEATHER.Page.IDLE_HOME)
+            controller.action_prompt_return_page, FEATHER.ScreenPage.IDLE_HOME)
         self.assertEqual(shown, [
-            FEATHER.Page.ACTION_PROMPT, FEATHER.Page.ACTION_PROMPT])
+            FEATHER.ScreenPage.ACTION_PROMPT, FEATHER.ScreenPage.ACTION_PROMPT])
+
+    def test_cold_pull_prompt_uses_its_commands_and_shared_context(self):
+        controller, shown = self.controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        controller.extruder = StatusObject({
+            "temperature": 87.5, "target": 100.0})
+        commands = []
+        controller._run_script = commands.append
+
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Choose the material to clean the nozzle.",
+            "// action:prompt_button PLA|_COLDPULL_LOAD_MATERIAL "
+            "MATERIAL=PLA TEMP=220 COLD=100 PROMPT=1|primary",
+            "// action:prompt_footer_button Cancel|"
+            "_COLDPULL_LOAD_MATERIAL_END|secondary",
+            "// action:prompt_show",
+        ]))
+        controller._render_action_prompt()
+
+        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
+        self.assertTrue(controller.action_prompt_visible)
+        self.assertTrue(rendering.latest.has_action("prompt.button.0"))
+
+        controller._handle_action_prompt_action("prompt.button.0")
+        self.assertEqual(commands, [
+            "_COLDPULL_LOAD_MATERIAL MATERIAL=PLA TEMP=220 COLD=100 "
+            "PROMPT=1"])
+
+        controller.operation_context.status.update(
+            context_path=("Cold Pull",), context_types=("cold_pull",),
+            current_state="COOLING NOZZLE", cancel_available=True,
+            cancel_target_type="cold_pull", cancel_target_name="Cold Pull",
+            cancel_target_mode="cancelable", revision=1)
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Cold pull for PLA is in progress.",
+            "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
+            "// action:prompt_show",
+        ]))
+
+        frame = rendering.latest
+        self.assertTrue(controller.action_prompt_visible)
+        self.assertEqual(
+            controller.action_prompt_return_page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertTrue(frame.has_text(
+            controller.operation_context.status["current_state"]))
+        self.assertTrue(frame.has_action("coldpull.cancel"))
+        self.assertEqual(len(commands), 1)
+
+    def test_cold_pull_prompt_end_closes_native_cancel_overlay(self):
+        controller, shown = self.controller()
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Cold pull for PLA is in progress.",
+            "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
+            "// action:prompt_show",
+        ]))
+        controller.operation_context.status.update(
+            context_path=("Cold Pull",), context_types=("cold_pull",),
+            current_state="HEATING NOZZLE", cancel_available=True,
+            cancel_target_type="cold_pull", cancel_target_name="Cold Pull",
+            cancel_target_mode="cancelable", revision=1)
+
+        controller._handle_touch_action("coldpull.cancel")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+        self.assertEqual(controller.gcode.commands, [])
+
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+        self.assertTrue(controller.operation_context.status["cancel_pending"])
+
+        controller._handle_gcode_output("// action:prompt_end")
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
+        self.assertFalse(controller.action_prompt_visible)
+        self.assertIsNone(controller.action_prompt)
+        self.assertIsNone(controller.cancel_mode)
+
+    def test_cold_pull_prompt_end_during_m108_does_not_redraw_cancel(self):
+        controller, shown = self.controller()
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Cold pull for PLA is in progress.",
+            "// action:prompt_show",
+        ]))
+        controller.operation_context.status.update(
+            context_path=("Cold Pull",), context_types=("cold_pull",),
+            current_state="HEATING NOZZLE", cancel_available=True,
+            cancel_target_type="cold_pull", cancel_target_name="Cold Pull",
+            cancel_target_mode="cancelable", revision=1)
+        controller.temperature_wait.variables["active"] = True
+        renders = []
+        controller._render_cancel_confirm = lambda: renders.append("cancel")
+        controller._run_immediate_command = lambda command: (
+            controller._handle_gcode_output("// action:prompt_end"))
+
+        controller._handle_touch_action("coldpull.cancel")
+        controller._handle_operation_cancel_action(
+            "operation.cancel.confirm")
+
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
+        self.assertEqual(renders, [])
+        self.assertIsNone(controller.cancel_mode)
+
+    def test_fluidd_cold_pull_cancel_waits_for_prompt_end(self):
+        controller, shown = self.controller()
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Cold pull for PLA is in progress.",
+            "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
+            "// action:prompt_show",
+        ]))
+        controller.operation_context.status.update(
+            context_path=("Cold Pull",), context_types=("cold_pull",),
+            current_state="PULLING", cancel_available=True,
+            cancel_target_type="cold_pull", cancel_target_name="Cold Pull",
+            cancel_target_mode="cancelable", revision=1)
+
+        result = controller.operation_context.request_cancel()
+
+        self.assertTrue(result["accepted"])
+        self.assertTrue(controller.action_prompt_visible)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.ACTION_PROMPT)
+        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
+
+        controller._handle_gcode_output("// action:prompt_end")
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
+        self.assertFalse(controller.action_prompt_visible)
+
+    def test_cold_pull_error_overlay_also_waits_for_prompt_end(self):
+        controller, shown = self.controller()
+        controller._handle_gcode_output("\n".join([
+            "// action:prompt_begin Cold Pull",
+            "// action:prompt_text Cold pull for PLA is in progress.",
+            "// action:prompt_show",
+        ]))
+        controller.page = FEATHER.ScreenPage.MESSAGE
+        controller.message_return = FEATHER.ScreenPage.ACTION_PROMPT
+
+        controller._handle_gcode_output("// action:prompt_end")
+
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
+        self.assertFalse(controller.action_prompt_visible)
 
     def test_prompt_end_closes_recovery_page_without_prompt_buffer(self):
         controller, shown = self.controller()
-        controller.page = FEATHER.Page.RECOVERY_CONFIRM
+        controller.page = FEATHER.ScreenPage.RECOVERY_CONFIRM
         controller.recovery_action = "restore"
         controller.print_stats.status["state"] = "standby"
 
         controller._handle_gcode_output("// action:prompt_end")
 
-        self.assertEqual(shown, [FEATHER.Page.IDLE_HOME])
+        self.assertEqual(shown, [FEATHER.ScreenPage.IDLE_HOME])
         self.assertIsNone(controller.recovery_action)
 
     def test_resurrection_prompt_uses_specialized_recovery_page(self):
@@ -2537,7 +4257,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
             "// action:prompt_show",
         ]))
 
-        self.assertEqual(shown, [FEATHER.Page.RECOVERY_PROMPT])
+        self.assertEqual(shown, [FEATHER.ScreenPage.RECOVERY_PROMPT])
         self.assertTrue(controller.action_prompt_visible)
 
 

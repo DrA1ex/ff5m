@@ -4,10 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-try:
-    from .ui import ThemeColor
-except (ImportError, ValueError):
-    from ui import ThemeColor
+from ui import ThemeColor
 
 
 class Pagination:

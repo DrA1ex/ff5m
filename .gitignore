@@ -10,9 +10,6 @@ Makefile
 cmake_install.cmake
 cmake-build-*
 
-.bin/src/*/bin
-.bin/src/*/Testing
-
 __pycache__
 node_modules/
 playwright-report/
@@ -21,3 +18,4 @@ tests/artifacts/
 scripts/ui_preview/coverage/
 /feather-ui-designer/
 sql/version
+/.py/klipper/plugins/ui/themes/preview/

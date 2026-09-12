@@ -1,5 +1,6 @@
 ## Runtime facade for Z-offset page packages.
 
+from ui.lazy import resolve_lazy_export
 from .actions import (
     ACCEPT, CLOSER, DISCARD_CONFIRM, ENTER_ZONE, FARTHER, MOVE_SAFE_HALF,
     PROBE, RESET, SAFE_CALIBRATE, SAFE_HIGHER, SAFE_LOWER, SAFE_PROBE,
@@ -35,11 +36,5 @@ _LAZY_EXPORTS = {
 
 
 def __getattr__(name):
-    target = _LAZY_EXPORTS.get(name)
-    if target is None:
-        raise AttributeError("module %r has no attribute %r" % (__name__, name))
-    module = __import__("%s.%s" % (__package__, target[0]),
-                        fromlist=(target[1],))
-    value = getattr(module, target[1])
-    globals()[name] = value
-    return value
+    return resolve_lazy_export(
+        globals(), name, _LAZY_EXPORTS, __package__)

@@ -2,11 +2,13 @@
 
 import importlib
 
+from ui.lazy import resolve_lazy_export
 from .actions import HeatCommand, LEGACY_ACTIONS
 from .state import HeatState
 
 
 _PAGES = {}
+_LAZY_EXPORTS = {"HeatRef": "page"}
 
 
 def get_page(materials=()):
@@ -27,11 +29,8 @@ def update(renderer, materials, values):
 
 
 def __getattr__(name):
-    if name != "HeatRef":
-        raise AttributeError(name)
-    value = importlib.import_module("%s.page" % __package__).HeatRef
-    globals()[name] = value
-    return value
+    return resolve_lazy_export(
+        globals(), name, _LAZY_EXPORTS, __package__)
 
 
 __all__ = (

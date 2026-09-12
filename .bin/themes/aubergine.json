@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K https://github.com/drA1ex",
+  "license": "GNU GPLv3",
+  "name": "AUBERGINE",
+  "description": "Aubergine, warm gray and Ubuntu orange",
+  "colors": {
+    "background": "dedbd8",
+    "text": "5e2750",
+    "text_highlight": "772953",
+    "accent": "e95420",
+    "wire": "f4f2f0",
+    "shadow": "2c001e",
+    "beam": "f5a300",
+    "glitch_primary": "e95420",
+    "glitch_secondary": "5e2750",
+    "glitch_cut": "dedbd8",
+    "subtitle": "2c2c2c",
+    "debug": "67615f",
+    "info": "2c2c2c",
+    "warn": "f5a300",
+    "error": "c7162b",
+    "uptime": "5e2750"
+  }
+}

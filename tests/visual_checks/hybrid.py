@@ -20,28 +20,112 @@ import time
 SCHEMA_VERSION = 1
 CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
 UI_FINGERPRINT_FILES = (
+    "feather_extruder_calibration.py",
+    "feather_feature_benchmark.py",
+    "feather_feature_calibration.py",
+    "feather_feature_extruder.py",
+    "feather_feature_filament.py",
+    "feather_feature_manager.py",
+    "feather_feature_settings.py",
+    "feather_feature_z.py",
     "feather_screen.py",
+    "feather_screen_controls.py",
+    "feather_screen_pages.py",
+    "feather_network_ui.py",
+    "feather_update_notification.py",
     "feather_feature_ui_test.py",
+    "feather_keyboard.py",
+    "feather_mod_settings.py",
+    "feather_operation_context_fixtures.py",
+    "feather_pagination.py",
 )
+UI_FINGERPRINT_PACKAGES = ("ui", "ff5m_ui", "feather_ui_test")
 UI_SUITE_LABELS = frozenset((
     "baseline",
     "ui-home-filled",
     "ui-home",
     "ui-main-menu",
     "ui-files",
+    "ui-files-loading",
+    "ui-files-empty",
+    "ui-files-usb",
     "ui-file-confirm",
+    "ui-file-confirm-mesh",
+    "ui-file-confirm-mesh-save",
+    "ui-file-repeat-off",
+    "ui-file-repeat-both",
+    "ui-message-mesh-save",
     "ui-control",
     "ui-move",
     "ui-heat",
     "ui-calibration",
     "ui-calibration-variants",
+    "ui-calibration-guide-extruder",
+    "ui-calibration-guide-axes",
+    "ui-calibration-result-error",
+    "ui-calibration-result-cancelled",
+    "ui-calibration-result-tuning",
+    "ui-live-z-normal",
+    "ui-live-z-warning",
+    "ui-live-z-save",
+    "ui-extruder-intro",
+    "ui-extruder-material",
+    "ui-extruder-cold-pull",
+    "ui-extruder-cut",
+    "ui-extruder-cooling",
+    "ui-extruder-remove",
+    "ui-extruder-load",
+    "ui-extruder-mark-first",
+    "ui-extruder-mark-second",
+    "ui-extruder-measure-ready",
+    "ui-extruder-input",
+    "ui-extruder-warning",
+    "ui-extruder-result",
+    "ui-extruder-exit-warning",
+    "ui-extruder-saved",
     "ui-settings",
     "ui-mod-parameters",
+    "ui-mod-parameters-next",
+    "ui-parameter-options",
+    "ui-parameter-options-disabled",
+    "ui-mod-value-numeric",
+    "ui-mod-value-text",
+    "ui-applying-changes",
+    "ui-render-benchmark-populated",
     "ui-filament-materials",
     "ui-filament-action",
     "ui-filament-cooling",
     "ui-filament-back-materials",
     "ui-network",
+    "ui-network-offline",
+    "ui-network-unavailable",
+    "ui-wifi-scan",
+    "ui-wifi-scan-empty",
+    "ui-wifi-password-hidden",
+    "ui-wifi-password-valid",
+    "ui-network-progress-scan",
+    "ui-network-progress-connect",
+    "ui-network-progress-external",
+    "ui-network-progress-cancel",
+    "ui-message-two-actions",
+    "ui-print-preparing",
+    "ui-cancel-normal",
+    "ui-cancel-pending",
+    "ui-cancel-not-cancelable",
+    "ui-recovery-cleanup",
+    "ui-error-restart",
+    "ui-error-firmware-restart",
+    "ui-error-reconnecting",
+    "ui-update-short",
+    "ui-update-long",
+    "ui-update-progress",
+    "ui-update-restart",
+    "ui-lifecycle-startup",
+    "ui-lifecycle-restart",
+    "ui-lifecycle-shutdown",
+    "ui-touch-unavailable",
+    "ui-busy-notice",
+    "ui-toast",
 ))
 CAPTURE_PROGRESS_PREFIX = "FF5M_CAPTURE_PROGRESS "
 
@@ -428,6 +512,7 @@ def load_manifest(directory, source="printer"):
             "source": source,
             "path": image,
             "artifact_directory": directory,
+            "_explicit_case_id": bool(item.get("case_id")),
             "case_id": str(item.get("case_id") or (
                 "%s-%s" % (source, _slug(item.get("label") or index)))),
         })
@@ -460,6 +545,8 @@ def merge_hybrid(designer_records, printer_records, parity=False,
         candidates = (
             list(parity_records) if parity_records is not None else replaced)
         for printer in candidates:
+            if printer.get("_explicit_case_id", True) is False:
+                continue
             designer = by_case.get(printer.get("case_id"))
             if designer is None:
                 designer = defaults.get(printer.get("semantic_page_id"))
@@ -545,7 +632,7 @@ def ui_fingerprint(project_root):
         path = root / relative
         if path.is_file():
             files.append((relative, path))
-    for package in ("ui", "ff5m_ui"):
+    for package in UI_FINGERPRINT_PACKAGES:
         package_root = root / package
         if not package_root.is_dir():
             raise RegressionConfigurationError(

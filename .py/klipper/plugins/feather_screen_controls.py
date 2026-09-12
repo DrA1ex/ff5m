@@ -5,69 +5,39 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import logging
-import importlib
 import math
 import re
 import time
 
-try:
-    from .ui import (
-        Back, Command, Increment, Navigate, Page, PrintState, Replace,
-        SetValue, ThemeColor, Toggle, state_spec,
+from ui import (
+        Back, Command, Increment, Navigate, Replace, SetValue, ThemeColor,
+        Toggle,
     )
-    from .ff5m_ui.keys import AppPage
-    from .ff5m_ui.move.geometry import (
+from ui.lazy import LazyModule
+from ff5m_ui.keys import AppPage
+from ff5m_ui.print_state import PrintState
+from ff5m_ui.screen import ScreenPage
+from ff5m_ui.home.actions import HomeNavigate, HomeRoute
+from ff5m_ui.move.geometry import (
         JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
-    from .ff5m_ui.move import runtime as move_ui
-    from .ff5m_ui.heat import runtime as heat_ui
-    from .ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
-    from . import feather_joystick as joystick_ui
-    from . import feather_motion as joystick_motion
-    from .feather_pagination import Pagination, pagination_footer
-    from .feather_materials import (
-        adaptive_grid_columns, render_material_selector,
-    )
-except (ImportError, ValueError):
-    from ui import (
-        Back, Command, Increment, Navigate, Page, PrintState, Replace,
-        SetValue, ThemeColor, Toggle, state_spec,
-    )
-    from ff5m_ui.keys import AppPage
-    from ff5m_ui.move.geometry import (
-        JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
-        JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
-    )
-    from ff5m_ui.move import runtime as move_ui
-    from ff5m_ui.heat import runtime as heat_ui
-    from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
-    import feather_joystick as joystick_ui
-    import feather_motion as joystick_motion
-    from feather_pagination import Pagination, pagination_footer
-    from feather_materials import (
+from ff5m_ui.move import runtime as move_ui
+from ff5m_ui.heat import runtime as heat_ui
+from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
+import feather_joystick as joystick_ui
+import feather_motion as joystick_motion
+from feather_pagination import Pagination, pagination_footer
+from feather_materials import (
         adaptive_grid_columns, render_material_selector,
     )
 
 
-class _LazyZOffsetUI:
-    """Delay the product Z package until a Z feature page is used."""
-
-    _module = None
-
-    def _load(self):
-        if self._module is None:
-            name = ("%s.ff5m_ui.z_offset.runtime" % __package__
-                    if __package__ else "ff5m_ui.z_offset.runtime")
-            self._module = importlib.import_module(name)
-        return self._module
-
-    def __getattr__(self, name):
-        return getattr(self._load(), name)
-
-
-z_offset_ui = _LazyZOffsetUI()
+home_ui = LazyModule("ff5m_ui.home.page")
+z_offset_ui = LazyModule("ff5m_ui.z_offset.runtime")
 SAFE_Z_ADJUST_STEP = 1.0
+JOG_STEP_MINIMUM = 0.1
+JOG_STEP_MAXIMUM = 100.0
 
 
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
@@ -93,6 +63,29 @@ CALIBRATION_ITEMS = (
 
 class FeatherControlsMixin:
     @staticmethod
+    def _adjust_jog_step(value, amount):
+        result = float(value)
+        direction = 1 if amount > 0 else -1
+        for _index in range(abs(int(amount))):
+            if direction > 0:
+                if result < 1.0:
+                    result = min(1.0, result + 0.1)
+                elif result < 10.0:
+                    result = min(10.0, result + 1.0)
+                else:
+                    result = min(JOG_STEP_MAXIMUM, result + 10.0)
+            else:
+                if result <= 1.0:
+                    result = max(JOG_STEP_MINIMUM, result - 0.1)
+                elif result <= 10.0:
+                    result = max(1.0, result - 1.0)
+                else:
+                    result = max(10.0, result - 10.0)
+            result = round(result, 1)
+            result = max(JOG_STEP_MINIMUM, min(JOG_STEP_MAXIMUM, result))
+        return result
+
+    @staticmethod
     def _intersect_axis_limits(configured, restricted):
         lower = max(float(configured[0]), float(restricted[0]))
         upper = min(float(configured[1]), float(restricted[1]))
@@ -106,7 +99,9 @@ class FeatherControlsMixin:
         XY is intentionally expressed in Feather/MOVE_SAFE coordinates.  The
         printer's ToolHead XY limits use its parking convention and must not
         change this coordinate system.  Z additionally cannot exceed the
-        physical ToolHead range.
+        physical ToolHead range.  The bounds stay physical: step-jog targets
+        are G-code coordinates, so an active bed mesh or gcode offset shifts
+        the reachable boundary by its magnitude, well inside the Z margin.
         """
         x_limits, y_limits, z_limits = getattr(
             self, "joystick_limits",
@@ -203,7 +198,7 @@ class FeatherControlsMixin:
     def _joystick_tick(self, eventtime):
         try:
             planner = self.joystick
-            if (planner is None or self.page != Page.CONTROL_MOVE
+            if (planner is None or self.page != ScreenPage.CONTROL_MOVE
                     or self.move_mode != "joystick"
                     or self.print_state != PrintState.IDLE):
                 self._stop_joystick()
@@ -463,7 +458,7 @@ class FeatherControlsMixin:
         return round(sum(float(value) ** 2 for value in velocity) ** 0.5, 1)
 
     def _update_joystick_feedback(self, eventtime, position=None, force=False):
-        if (self.page != Page.CONTROL_MOVE
+        if (self.page != ScreenPage.CONTROL_MOVE
                 or getattr(self, "move_mode", "step") != "joystick"):
             return
         renderer = getattr(self, "renderer", None)
@@ -501,21 +496,23 @@ class FeatherControlsMixin:
                 self.renderer.send(commands)
 
     def _semantic_ui_page(self):
-        if self.page == Page.CONTROL_HEAT:
+        if self.page == ScreenPage.IDLE_HOME:
+            return home_ui.PAGE
+        if self.page == ScreenPage.CONTROL_HEAT:
             return heat_ui.get_page(self.heating_materials)
-        if self.page == Page.CONTROL_MOVE:
+        if self.page == ScreenPage.CONTROL_MOVE:
             return (move_ui.JOYSTICK_PAGE
                     if getattr(self, "move_mode", "step") == "joystick"
                     else move_ui.STEP_PAGE)
-        if self.page == Page.SAFE_Z_BRIEFING:
+        if self.page == ScreenPage.SAFE_Z_BRIEFING:
             return z_offset_ui.SAFE_BRIEFING_PAGE
-        if self.page == Page.SAFE_Z_CALIBRATION:
+        if self.page == ScreenPage.SAFE_Z_CALIBRATION:
             return z_offset_ui.SAFE_PAGE
-        if self.page == Page.Z_OFFSET_SUMMARY:
+        if self.page == ScreenPage.Z_OFFSET_SUMMARY:
             return z_offset_ui.SUMMARY_PAGE
-        if self.page == Page.Z_OFFSET_PAPER_BRIEFING:
+        if self.page == ScreenPage.Z_OFFSET_PAPER_BRIEFING:
             return z_offset_ui.PAPER_BRIEFING_PAGE
-        if self.page == Page.Z_OFFSET_PAPER:
+        if self.page == ScreenPage.Z_OFFSET_PAPER:
             return z_offset_ui.PAPER_PAGE
         return None
 
@@ -537,18 +534,59 @@ class FeatherControlsMixin:
             self.move_mode = "joystick"
             self._render_move()
             return
-        targets = {
-            AppPage.Z_OFFSET_SUMMARY: Page.Z_OFFSET_SUMMARY,
-            AppPage.Z_OFFSET_PAPER_BRIEFING: Page.Z_OFFSET_PAPER_BRIEFING,
-            AppPage.Z_OFFSET_PAPER: Page.Z_OFFSET_PAPER,
-            AppPage.SAFE_Z_BRIEFING: Page.SAFE_Z_BRIEFING,
-            AppPage.SAFE_Z_CALIBRATION: Page.SAFE_Z_CALIBRATION,
-        }
-        if target not in targets:
-            raise KeyError("Unknown application page: %s" % target)
-        self._show_page(targets[target])
+        raise KeyError("Unsupported application page navigation: %s" % target)
+
+    def _handle_home_navigation(self, route):
+        if route == HomeRoute.MENU:
+            self._show_page(ScreenPage.MAIN_MENU)
+            return
+        if route == HomeRoute.MOVE:
+            self._require_idle()
+            self.move_return_page = self.page
+            self._cancel_delayed_tasks()
+            self._show_page(ScreenPage.CONTROL_MOVE)
+            return
+        if route == HomeRoute.HEAT:
+            self.heat_return_page = self.page
+            self._cancel_delayed_tasks()
+            self._show_page(ScreenPage.CONTROL_HEAT)
+            return
+        if route == HomeRoute.FILAMENT:
+            self._open_filament(False)
+            return
+        if route == HomeRoute.NETWORK:
+            self.network_parent_page = self.page
+            self._open_network_page()
+            return
+        if route == HomeRoute.JOB:
+            stats = self.print_stats.get_status(
+                self.reactor.monotonic()).get("state")
+            if stats in ("printing", "paused"):
+                self.home_during_print = False
+                self._show_page(self.page_for_print_state())
+            else:
+                self.file_page = 0
+                self.file_source = "internal"
+                self._show_page(ScreenPage.FILE_BROWSER)
+            return
+        if route == HomeRoute.LAST_JOB:
+            stats = self.print_stats.get_status(
+                self.reactor.monotonic()).get("state")
+            print_state = getattr(self, "print_state", PrintState.IDLE)
+            if (print_state in (
+                    PrintState.PREPARING, PrintState.PRINTING,
+                    PrintState.PAUSED)
+                    or stats in ("printing", "paused")
+                    or self.virtual_sdcard.is_active()):
+                return
+            self._open_last_job()
+            return
+        raise KeyError("Unsupported home route: %s" % route)
 
     def _dispatch_semantic_ui_action(self, action):
+        if isinstance(action, HomeNavigate):
+            self._handle_home_navigation(action.route)
+            return
         if isinstance(action, Back):
             self._go_back()
             return
@@ -585,13 +623,8 @@ class FeatherControlsMixin:
             raise KeyError("Unsupported product toggle: %s" % action.key)
         if isinstance(action, Increment):
             if action.key == move_ui.MoveState.JOG_STEP:
-                choices = tuple(state_spec(action.key).choices)
-                index = choices.index(float(self.jog_step)) + int(action.amount)
-                if action.wrap:
-                    index %= len(choices)
-                else:
-                    index = max(0, min(len(choices) - 1, index))
-                self.jog_step = choices[index]
+                self.jog_step = self._adjust_jog_step(
+                    self.jog_step, action.amount)
                 self._render_move()
                 return
             raise KeyError("Unsupported product increment: %s" % action.key)
@@ -678,7 +711,12 @@ class FeatherControlsMixin:
             if axis not in homed:
                 raise RuntimeError("Home %s before moving" % axis.upper())
             axis_index = "xyz".index(axis)
-            current = float(status["position"][axis_index])
+            # MOVE_SAFE consumes G-code coordinates, so the jog baseline must
+            # be observed in the same space.  The toolhead position carries
+            # any loaded bed mesh or gcode offset on top of it and would
+            # shift every target by that transform.
+            current = float(self.gcode_move.get_status(
+                self.reactor.monotonic())["gcode_position"][axis_index])
             limits = self._feather_move_limits(status)[axis_index]
             if distance > 0.0:
                 target = min(limits[1], current + distance)
@@ -843,7 +881,7 @@ class FeatherControlsMixin:
             state = self.print_stats.get_status(
                 self.reactor.monotonic())["state"]
             if (state != "paused" or self.cancel_requested
-                    or self.page == Page.CANCEL_CONFIRM):
+                    or self.page == ScreenPage.CANCEL_CONFIRM):
                 logging.info(
                     "[feather_screen] filament page ignored in state=%s "
                     "page=%s cancel=%s",
@@ -852,7 +890,7 @@ class FeatherControlsMixin:
         now = self.reactor.monotonic()
         self.filament_from_pause = from_pause
         self.filament_original_target = self.extruder.get_status(now)["target"]
-        self._show_page(Page.FILAMENT_MATERIAL)
+        self._show_page(ScreenPage.FILAMENT_MATERIAL)
         return True
 
     def _filament_temperature_ready(self, status):
@@ -877,7 +915,7 @@ class FeatherControlsMixin:
             target = self._limited_preheat(self.filament_material)[0]
             self._run_script("SET_MATERIAL MATERIAL=%s\nM104 S%.0f" %
                              (self.filament_material, target))
-            self._show_page(Page.FILAMENT_ACTION)
+            self._show_page(ScreenPage.FILAMENT_ACTION)
             return
         now = self.reactor.monotonic()
         if action in ("filament.load", "filament.unload", "filament.purge"):
@@ -901,13 +939,13 @@ class FeatherControlsMixin:
     def _finish_filament(self, resume):
         if not self.filament_from_pause:
             self._run_script("M104 S%.0f" % self.filament_original_target)
-            self._show_page(Page.IDLE_HOME)
+            self._show_page(ScreenPage.IDLE_HOME)
             return
         state = self.print_stats.get_status(
             self.reactor.monotonic())["state"]
         if state not in ("printing", "paused"):
             self.filament_from_pause = False
-            self._show_page(Page.IDLE_HOME)
+            self._show_page(ScreenPage.IDLE_HOME)
             return
         target = self.filament_original_target
         if target > 0:
@@ -1099,13 +1137,13 @@ class FeatherControlsMixin:
                       if self.heating_materials else "n/a"))
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
-            self._show_page(Page.CALIBRATION_CONFIRM)
+            self._show_page(ScreenPage.CALIBRATION_CONFIRM)
         elif action == "cal.extruder":
             self._start_extruder_calibration()
         elif action == "cal.axes":
             self._require_idle()
             self.calibration_guide_kind = action.split(".", 1)[1]
-            self._show_page(Page.CALIBRATION_GUIDE)
+            self._show_page(ScreenPage.CALIBRATION_GUIDE)
         elif action.startswith("cal.material."):
             material = action.rsplit(".", 1)[1]
             if material not in self.heating_materials:
@@ -1132,28 +1170,32 @@ class FeatherControlsMixin:
                 self._start_z_calibration()
             else:
                 self._start_calibration(repeat_probe=False)
-        elif action == "cal.cancel.heat":
-            self._cancel_calibration_heat()
+        elif action == "cal.cancel":
+            self._open_calibration_cancel()
         elif action == "cal.repeat":
             if self.calibration_kind == "screws":
                 self._start_calibration(repeat_probe=True)
             else:
                 self.calibration_repeat_probe = False
-                self._show_page(Page.CALIBRATION_CONFIRM)
+                self._show_page(ScreenPage.CALIBRATION_CONFIRM)
         elif action == "cal.done":
-            self._show_page(Page.CALIBRATION_HOME)
+            self._show_page(ScreenPage.CALIBRATION_HOME)
         elif action == "cal.mesh.discard":
             if self._mesh_save_available():
-                self._show_page(Page.CALIBRATION_HOME)
+                self._show_page(ScreenPage.CALIBRATION_HOME)
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
                 self._restart_klipper("SAVE_CONFIG")
         elif action == "cal.tuning.discard":
             if self._tuning_save_available():
-                self._show_page(Page.CALIBRATION_HOME)
+                self._show_page(ScreenPage.CALIBRATION_HOME)
         elif action == "cal.tuning.save":
             if self._tuning_save_available():
                 self._restart_klipper("SAVE_CONFIG")
+
+    def _reset_calibration_progress(self):
+        self.calibration_progress_key = None
+        self.calibration_seen_phases = set()
 
     def _start_calibration(self, repeat_probe=False):
         self._require_idle()
@@ -1166,15 +1208,9 @@ class FeatherControlsMixin:
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False
         self.calibration_cancelled = False
-        if self.calibration_repeat_probe:
-            self.print_status_text = "BED SCREWS: PROBING"
-        else:
-            self.print_status_text = {
-                "pid_bed": "BED PID: STARTING",
-                "pid_extruder": "HOTEND PID: STARTING",
-                "shaper": "INPUT SHAPER: STARTING",
-            }.get(self.calibration_kind, "CALIBRATION: STARTING")
-        self._show_page(Page.CALIBRATION_PROGRESS)
+        self._reset_calibration_progress()
+        self.calibration_starting_text = "STARTING..."
+        self._show_page(ScreenPage.CALIBRATION_PROGRESS)
         self.reactor.register_callback(self._run_calibration)
 
     @staticmethod
@@ -1249,7 +1285,7 @@ class FeatherControlsMixin:
 
     def _update_z_weight_status(self, eventtime):
         gauge = self._update_z_weight_gauge(eventtime)
-        if getattr(self, "page", None) == Page.Z_OFFSET_PAPER:
+        if getattr(self, "page", None) == ScreenPage.Z_OFFSET_PAPER:
             self.renderer.send(z_offset_ui.update_paper_gauge(
                 self.renderer, None if gauge is None else dict(gauge)))
             self._check_z_pressure(eventtime)
@@ -1404,20 +1440,23 @@ class FeatherControlsMixin:
         self.renderer.send(commands)
 
     def _render_calibration_progress(self):
-        label = self.print_status_text or "Calibration running..."
+        operation = self._operation_context_status()
+        label = (self._operation_context_text(status=operation)
+                 or getattr(
+                     self, "calibration_starting_text", "STARTING..."))
         title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
         commands = self.renderer.begin_page(title)
         commands.append(self.renderer.text(
             400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt", "center",
             max_width=704, truncate=True))
-        commands += self._calibration_stage_commands(label)
-        cancel_visible = self._calibration_heat_cancel_visible()
+        commands += self._calibration_stage_commands(label, operation)
+        cancel_visible = self._calibration_cancel_visible()
         if cancel_visible:
             commands += self.renderer.button(
-                "cal.cancel.heat", 235, 335, 330, 72,
+                "cal.cancel", 235, 335, 330, 72,
                 "CANCELLING..." if getattr(
                     self, "calibration_cancel_requested", False)
-                else "CANCEL HEATING",
+                else "CANCEL",
                 state=("busy" if getattr(
                     self, "calibration_cancel_requested", False)
                        else "danger"),
@@ -1427,8 +1466,11 @@ class FeatherControlsMixin:
         self._last_calibration_cancel_visible = cancel_visible
 
     def _update_calibration_progress(self):
-        label = self.print_status_text or "Calibration running..."
-        cancel_visible = self._calibration_heat_cancel_visible()
+        operation = self._operation_context_status()
+        label = (self._operation_context_text(status=operation)
+                 or getattr(
+                     self, "calibration_starting_text", "STARTING..."))
+        cancel_visible = self._calibration_cancel_visible()
         if (label == self._last_calibration_label
                 and cancel_visible == getattr(
                     self, "_last_calibration_cancel_visible", False)):
@@ -1448,29 +1490,32 @@ class FeatherControlsMixin:
                     self.renderer.text(
                         400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt",
                         "center", max_width=704, truncate=True)]
-        commands += self._calibration_stage_commands(label)
+        commands += self._calibration_stage_commands(label, operation)
         self.renderer.send(commands)
 
-    def _calibration_heat_cancel_visible(self):
-        return (
-            self.calibration_kind in ("screws", "mesh", "z")
-            and (self._temperature_wait_active()
-                 or getattr(self, "calibration_cancel_requested", False)))
+    def _calibration_cancel_visible(self):
+        operation = self._operation_context_status()
+        return (self.calibration_kind in ("screws", "mesh", "z")
+                and (operation["cancel_available"]
+                     or getattr(self, "calibration_cancel_requested", False)))
 
-    def _cancel_calibration_heat(self):
+    def _open_calibration_cancel(self):
         if (self.calibration_kind not in ("screws", "mesh", "z")
-                or not self._temperature_wait_active()
                 or getattr(self, "calibration_cancel_requested", False)):
             return
+        self._open_operation_cancel(
+            ScreenPage.CALIBRATION_PROGRESS,
+            self._accept_calibration_cancel,
+            self._clear_calibration_cancel)
+
+    def _accept_calibration_cancel(self, result):
         self.calibration_cancel_requested = True
-        self.calibration_cancel_dispatched = True
-        self._render_calibration_progress()
-        try:
-            self._run_immediate_command("M108")
-        except Exception:
-            self.calibration_cancel_requested = False
-            self.calibration_cancel_dispatched = False
-            raise
+        self.calibration_cancel_dispatched = result["accepted"]
+
+    def _clear_calibration_cancel(self, result):
+        del result
+        self.calibration_cancel_requested = False
+        self.calibration_cancel_dispatched = False
 
     def _stop_cancelled_calibration_heating(self):
         command = (
@@ -1489,8 +1534,13 @@ class FeatherControlsMixin:
             return False
         return True
 
-    def _calibration_stage_commands(self, label):
-        text = str(label).upper()
+    def _calibration_stage_commands(self, label, operation=None):
+        # Context paths contain workflow names such as BED LEVEL and NOZZLE
+        # CLEANING. Only the trailing state describes the current phase.
+        if operation and operation.get("context_path"):
+            text = str(operation.get("current_state") or "").upper()
+        else:
+            text = str(label).upper().rsplit(" -> ", 1)[-1]
         if self.calibration_kind == "recovery":
             if getattr(self, "recovery_action", None) == "cleanup":
                 stages = ("PREP", "HEAT", "HOME", "CLEANUP")
@@ -1515,6 +1565,11 @@ class FeatherControlsMixin:
             stages = ("PREP", "HOME", "MEASURE", "PROCESS", "DONE")
         else:
             stages = ("PREP", "HOME", "HEAT", "CLEAN", "LEVEL")
+
+        progress_key = (self.calibration_kind, stages)
+        if getattr(self, "calibration_progress_key", None) != progress_key:
+            self.calibration_progress_key = progress_key
+            self.calibration_seen_phases = set()
 
         phase = stages[0]
         if self.calibration_kind == "recovery" and (
@@ -1542,7 +1597,9 @@ class FeatherControlsMixin:
             phase = "PROBE"
         elif "LEVEL" in text:
             phase = "LEVEL"
-        elif any(marker in text for marker in ("CLEAN", "COOL")):
+        elif "COOL" in text:
+            phase = "HEAT"
+        elif "CLEAN" in text:
             phase = "CLEAN"
         elif "DONE!" in text and "CLEAN" in stages:
             phase = "CLEAN"
@@ -1552,7 +1609,15 @@ class FeatherControlsMixin:
             phase = "HEAT"
         elif any(marker in text for marker in ("PREP", "START")):
             phase = "PREP"
-        current = stages.index(phase) if phase in stages else 0
+        if phase not in stages:
+            phase = stages[0]
+        # A temporary state may describe an earlier kind of work, such as
+        # post-clean cooling. The ordered progress cursor remains monotonic.
+        current = max(
+            [stages.index(phase)] + [
+                stages.index(seen) for seen in self.calibration_seen_phases])
+        phase = stages[current]
+        self.calibration_seen_phases.add(phase)
 
         left, right, gap = 55, 745, 12
         width = (right - left - gap * (len(stages) - 1)) // len(stages)
@@ -1560,15 +1625,26 @@ class FeatherControlsMixin:
         for position, stage in enumerate(stages):
             x = left + position * (width + gap)
             if position == current:
-                color = ThemeColor.SECONDARY
-            elif position < current:
+                border = ThemeColor.SECONDARY
+                background = ThemeColor.SECONDARY_DARK
+                color = ThemeColor.BRIGHT
+            elif stage in self.calibration_seen_phases:
+                border = ThemeColor.PRIMARY
+                background = ThemeColor.PANEL
                 color = ThemeColor.PRIMARY
+            elif position < current:
+                border = ThemeColor.DIM
+                background = ThemeColor.PANEL
+                color = ThemeColor.DIM
             else:
-                color = ThemeColor.MUTED
-            commands += [self.renderer.fill(x, 225, width, 38, ThemeColor.PANEL),
-                         self.renderer.stroke(x, 225, width, 38, color, 2),
-                         self.renderer.text(x + width // 2, 244, stage, color,
-                                            "JetBrainsMono 8pt", "center", "middle")]
+                border = ThemeColor.BORDER
+                background = ThemeColor.PANEL
+                color = ThemeColor.TEXT
+            commands += [self.renderer.fill(x, 225, width, 38, background),
+                         self.renderer.stroke(x, 225, width, 38, border, 2),
+                         self.renderer.text(
+                             x + width // 2, 244, stage, color,
+                             "JetBrainsMono 8pt", "center", "middle")]
         return commands
 
     def _run_calibration(self, eventtime):
@@ -1634,7 +1710,7 @@ class FeatherControlsMixin:
                     if not self.calibration_error:
                         self.calibration_error = (
                             "Unable to stop PID heating")
-        self._show_page(Page.CALIBRATION_RESULT)
+        self._show_page(ScreenPage.CALIBRATION_RESULT)
 
     @staticmethod
     def normalize_mesh_matrix(value):
@@ -1738,16 +1814,16 @@ class FeatherControlsMixin:
         title = str(title).strip()
         visible_prompt = (
             getattr(self, "action_prompt_visible", False)
-            and self.page == Page.ACTION_PROMPT)
+            and self.page == ScreenPage.ACTION_PROMPT)
         refresh_visible = (
             visible_prompt and self.action_prompt is not None
             and self.action_prompt.get("title") == title)
         if (getattr(self, "action_prompt_visible", False)
                 and self.page in (
-                    Page.ACTION_PROMPT, Page.RECOVERY_PROMPT,
-                    Page.RECOVERY_CONFIRM)):
+                    ScreenPage.ACTION_PROMPT, ScreenPage.RECOVERY_PROMPT,
+                    ScreenPage.RECOVERY_CONFIRM)):
             return_page = self.action_prompt_return_page
-        elif self.page in (Page.RECOVERY_PROMPT, Page.RECOVERY_CONFIRM):
+        elif self.page in (ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM):
             return_page = self.page_for_print_state()
         else:
             return_page = self.page
@@ -1788,6 +1864,10 @@ class FeatherControlsMixin:
         prompt = self.action_prompt or {}
         return prompt.get("title", "").strip().casefold() == "resurrection"
 
+    def _action_prompt_is_cold_pull(self):
+        prompt = self.action_prompt or {}
+        return prompt.get("title", "").strip().casefold() == "cold pull"
+
     def _show_action_prompt(self):
         if self.action_prompt is None:
             return
@@ -1802,14 +1882,14 @@ class FeatherControlsMixin:
                 self.action_prompt = None
                 self.action_prompt_visible = False
                 return
-            page = Page.RECOVERY_PROMPT
+            page = ScreenPage.RECOVERY_PROMPT
         else:
-            page = Page.ACTION_PROMPT
+            page = ScreenPage.ACTION_PROMPT
         already_visible = (
             self.action_prompt_visible and self.page == page)
         self.action_prompt_visible = True
         self.action_prompt_page = 0
-        if already_visible and page == Page.ACTION_PROMPT:
+        if already_visible and page == ScreenPage.ACTION_PROMPT:
             self._render_action_prompt()
         else:
             self._show_page(page)
@@ -1817,16 +1897,26 @@ class FeatherControlsMixin:
     def _end_action_prompt(self):
         current_page = self.page
         mirrored_recovery = (
-            current_page in (Page.RECOVERY_PROMPT, Page.RECOVERY_CONFIRM))
-        displayed = (
-            getattr(self, "action_prompt_visible", False)
-            and current_page == Page.ACTION_PROMPT)
+            current_page in (ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM))
+        prompt_cancel = (
+            current_page == ScreenPage.CANCEL_CONFIRM
+            and getattr(
+                self, "operation_cancel_return_page", None) == ScreenPage.ACTION_PROMPT)
+        prompt_error = (
+            current_page == ScreenPage.MESSAGE
+            and getattr(self, "message_return", None) == ScreenPage.ACTION_PROMPT)
+        displayed = (getattr(self, "action_prompt_visible", False)
+                     and current_page == ScreenPage.ACTION_PROMPT)
+        overlaid = (getattr(self, "action_prompt_visible", False)
+                    and (prompt_cancel or prompt_error))
         return_page = getattr(
-            self, "action_prompt_return_page", Page.IDLE_HOME)
+            self, "action_prompt_return_page", ScreenPage.IDLE_HOME)
         self.action_prompt = None
         self.action_prompt_visible = False
         self.action_prompt_page = 0
-        if mirrored_recovery or displayed:
+        if prompt_cancel:
+            self._reset_operation_cancel()
+        if mirrored_recovery or displayed or overlaid:
             self.recovery_action = None
             self._show_page(
                 self.page_for_print_state()
@@ -1855,13 +1945,24 @@ class FeatherControlsMixin:
             self._end_action_prompt()
 
     def _handle_gcode_output(self, message):
+        if any(line.strip() == "// action:forge_x_shutting_down"
+               for line in str(message).splitlines()):
+            self._begin_system_shutdown()
+            return
+        if any(line.strip() == "// action:forge_x_redraw"
+               for line in str(message).splitlines()):
+            if self._release_boot_screen():
+                return
+            self.renderer.invalidate_footer()
+            self._show_page(self.page)
+            return
         for line in self._prompt_response_lines(message):
             self._handle_action_prompt_response(line)
         manager = getattr(self, "feature_manager", None)
         if manager is not None:
             manager.notify("on_gcode_output", message)
         elif (getattr(self, "calibration_kind", None) == "screws"
-              and self.page == Page.CALIBRATION_PROGRESS):
+              and self.page == ScreenPage.CALIBRATION_PROGRESS):
             result = self.parse_screw_result(message)
             if result:
                 self.calibration_results.append(result)
@@ -1881,6 +1982,77 @@ class FeatherControlsMixin:
             if button is not None and button["command"]:
                 self._run_script(button["command"])
 
+    def _render_operation_cold_pull(self, title, cancel_action):
+        operation = self._operation_context_status(
+            self.reactor.monotonic())
+        stage = str(operation.get("current_state") or "").strip().upper()
+        status = self.extruder.get_status(self.reactor.monotonic())
+        temperature = float(status.get("temperature", 0.0))
+        target = float(status.get("target", 0.0))
+        hint = {
+            "HOMING": "HOMING AND POSITIONING THE TOOLHEAD",
+            "HEATING NOZZLE": "HEATING THE NOZZLE",
+            "EXTRUDING": "EXTRUDING FILAMENT",
+            "COOLING NOZZLE": "COOLING THE NOZZLE",
+            "PULLING": "PULLING FILAMENT BACK",
+        }.get(stage, "STARTING COLD PULL")
+        commands = self.renderer.begin_page(title, back=False)
+        commands += self.renderer.panel(
+            24, 72, 752, 276, border=ThemeColor.WARNING,
+            background=ThemeColor.PANEL)
+        commands += [
+            self.renderer.text(
+                400, 120, stage or "COLD PULL", ThemeColor.WARNING,
+                "JetBrainsMono Bold 12pt", "center", "middle",
+                max_width=690, truncate=True),
+            self.renderer.text(
+                400, 205, "%s\n\nNOZZLE %.1f / %.0f C" % (
+                    hint, temperature, target),
+                ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle",
+                max_width=680, max_height=150, wrap=True, truncate=True),
+        ]
+        if operation.get("cancel_available"):
+            commands += self.renderer.button(
+                cancel_action, 235, 372, 330, 56,
+                "CANCELLING..." if operation.get("cancel_pending") else "CANCEL",
+                state=("busy" if operation.get("cancel_pending") else "danger"),
+                font="JetBrainsMono Bold 8pt")
+        self.renderer.send(commands)
+
+    def _render_cold_pull_prompt(self):
+        operation = self._operation_context_status(
+            self.reactor.monotonic())
+        if "cold_pull" in operation.get("context_types", ()):
+            self._render_operation_cold_pull("Cold Pull", "coldpull.cancel")
+            return
+        prompt = self.action_prompt or {
+            "text": [], "rows": [], "footer": []}
+        buttons = [button for row in prompt["rows"] for button in row]
+        columns = adaptive_grid_columns(len(buttons)) if buttons else 1
+        gap = 20
+        width = min(295, (690 - gap * (columns - 1)) // columns)
+        commands = self.renderer.begin_page("Cold Pull")
+        commands.append(self.renderer.text(
+            400, 90, "\n".join(prompt["text"]), ThemeColor.TEXT,
+            "JetBrainsMono 8pt", "center", "middle", max_width=690,
+            max_height=70, wrap=True, truncate=True))
+        for row_start in range(0, len(buttons), columns):
+            row = buttons[row_start:row_start + columns]
+            row_width = len(row) * width + max(0, len(row) - 1) * gap
+            x = 55 + (690 - row_width) // 2
+            for column, button in enumerate(row):
+                commands += self.renderer.button(
+                    button["action"], x + column * (width + gap),
+                    145 + (row_start // columns) * 100, width, 72,
+                    button["label"], state=button["state"],
+                    font="JetBrainsMono Bold 12pt")
+        if prompt["footer"]:
+            button = prompt["footer"][0]
+            commands += self.renderer.button(
+                button["action"], 235, 372, 330, 56, button["label"],
+                state=button["state"], font="JetBrainsMono Bold 8pt")
+        self.renderer.send(commands)
+
     def _render_calibration_result(self):
         commands = self.renderer.begin_page("Calibration result")
         if self.calibration_error:
@@ -1890,10 +2062,10 @@ class FeatherControlsMixin:
         elif getattr(self, "calibration_cancelled", False):
             commands += [
                 self.renderer.text(
-                    400, 145, "HEATING CANCELLED", ThemeColor.WARNING,
+                    400, 145, "OPERATION CANCELLED", ThemeColor.WARNING,
                     "JetBrainsMono Bold 16pt", "center", "middle"),
                 self.renderer.text(
-                    400, 195, "Calibration was stopped before probing",
+                    400, 195, "Calibration stopped at a safe point",
                     ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle"),
             ]
         elif self.calibration_kind == "mesh" and self.calibration_mesh:

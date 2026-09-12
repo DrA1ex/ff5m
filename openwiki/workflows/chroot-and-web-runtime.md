@@ -8,7 +8,7 @@ Forge-X keeps the vendor root filesystem running, then mounts a second Buildroot
 
 ## How the second environment is assembled
 
-[`.shell/S00init`](../../.shell/S00init) initializes the normal boot path. Its `init_buildroot` function prepares the root at `/data/.mod/.forge-x` and mounts core kernel interfaces into it:
+[`.shell/init-main.sh`](../../.shell/init-main.sh) initializes the normal boot path after the early guard succeeds. Its `init_buildroot` function prepares the root at `/data/.mod/.forge-x` and mounts core kernel interfaces into it:
 
 | Chroot path | Source / purpose |
 |---|---|
@@ -41,10 +41,10 @@ It also links the vendored Moonraker application into the chroot Python environm
 
 | Service | Launcher | Role | Condition / notes |
 |---|---|---|---|
+| Interactive screen support | [`.root/S35tslib`](../../.root/S35tslib), [`.root/S80guppyscreen`](../../.root/S80guppyscreen) | Touch/input support for Feather and Guppy, plus the optional Guppy screen process. | `S35tslib` starts first for `FEATHER` and `GUPPY`; `S80guppyscreen` starts after the core services only for `GUPPY`. |
 | NTP | [`.root/S45ntpd`](../../.root/S45ntpd) | BusyBox `ntpd` syncs time with `pool.ntp.org` and runs `fake-hwclock` after sync. | Always started by the runtime script. |
 | Moonraker | [`.root/S65moonraker`](../../.root/S65moonraker) | Printer API, WebSocket/API bridge to Klipper, file/history/update management. | Skipped only when `disable_moonraker=1`; startup waits up to roughly 30 seconds for `http://localhost:7125`. |
 | Web server | [`.root/S70httpd`](../../.root/S70httpd) | BusyBox `httpd` serves static UI assets from `/root/www` on TCP port 80. | Skipped only when `disable_web=1`. |
-| Guppy screen support | [`.root/S35tslib`](../../.root/S35tslib), [`.root/S80guppyscreen`](../../.root/S80guppyscreen) | Touch/input support and the optional Guppy screen process. | Started only when the persisted `display` setting is `GUPPY`. |
 | User services | `/etc/init.d/S*` inside the chroot | Extension point for user-installed runtime service scripts. | Started after the core services; stop uses reverse lexical traversal. |
 
 The stock-side boot script separately chooses the display/network path and starts the MCU/Klipper path for non-stock display modes. In stock mode, restart logic normally asks the vendor application to restart Klipper; if that application is unavailable, [`.shell/restart_klipper.sh`](../../.shell/restart_klipper.sh) falls back to Moonraker’s printer-restart API. A `--hard` restart kills `klippy.py` and invokes the stock Klipper start script directly.
@@ -53,7 +53,7 @@ The stock-side boot script separately chooses the display/network path and start
 
 The chroot is a minimal appliance environment, not a general development workstation. Repository evidence establishes these useful interfaces:
 
-- **Shell/session environment:** `S00init` bind-mounts the repository’s Oh My Zsh setup and profile into the stock root for interactive sessions. The tracked profile uses `/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin`; it selects Zsh for SSH sessions. This config describes the interactive PATH, not a promise that every conventional Linux tool is installed.
+- **Shell/session environment:** `init-main.sh` bind-mounts the repository’s Oh My Zsh setup and profile into the stock root for interactive sessions. The tracked profile uses `/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin`; it selects Zsh for SSH sessions. This config describes the interactive PATH, not a promise that every conventional Linux tool is installed.
 - **Git:** the runtime start script explicitly sets `HOME=/root` so Git uses the chroot user’s `.gitconfig`. Forge-X version/update paths also use the repository at `/root/printer_data/config/mod/` (the bound `/opt/config/mod/`). Thus `git` is an available and intentional maintenance tool in this environment, particularly for Moonraker’s configured Forge-X updater.
 - **Python:** Moonraker is executed by `/root/moonraker-env/bin/python3`. The repository’s helper Python sources are exposed at `/root/printer_data/py`, but they are not a general package installation contract.
 - **BusyBox/process controls:** the tracked launchers rely on `httpd`, `ntpd`, `start-stop-daemon`, `curl`, `find`, `sed`, and standard shell utilities. Use the shipped scripts rather than assuming Debian/systemd tooling exists.
@@ -108,7 +108,7 @@ The default surface is two network listeners: static HTTP on port **80** and una
 
 ## Investigation entry points
 
-- **Mounts and first-run lifecycle:** [`.shell/S00init`](../../.shell/S00init), [`.shell/common.sh`](../../.shell/common.sh), and [`.shell/S99root`](../../.shell/S99root).
+- **Mounts and first-run lifecycle:** [`.shell/init-main.sh`](../../.shell/init-main.sh), [`.shell/common.sh`](../../.shell/common.sh), and [`.shell/S99root`](../../.shell/S99root).
 - **Runtime services:** [`.root/start.sh`](../../.root/start.sh), [`.root/stop.sh`](../../.root/stop.sh), and the numbered service launchers in [`.root/`](../../.root/).
 - **API/UI contract:** [`moonraker.conf`](../../moonraker.conf), [`.root/config.json`](../../.root/config.json), [`.root/S65moonraker`](../../.root/S65moonraker), and [`.root/S70httpd`](../../.root/S70httpd).
 - **Klipper control:** [`.shell/restart_klipper.sh`](../../.shell/restart_klipper.sh), [`.shell/commands/zmoon.sh`](../../.shell/commands/zmoon.sh), and [Built-in Klipper patching](klipper-patching.md).

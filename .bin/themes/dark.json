@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "DARK",
+  "description": "Neutral monochrome graphite and steel",
+  "colors": {
+    "background": "050505",
+    "text": "c4ccd4",
+    "text_highlight": "ffffff",
+    "accent": "8b98a5",
+    "wire": "d7dadd",
+    "shadow": "42494f",
+    "beam": "ffffff",
+    "glitch_primary": "8b98a5",
+    "glitch_secondary": "6d7378",
+    "glitch_cut": "020202",
+    "subtitle": "d7dadd",
+    "debug": "6d7378",
+    "info": "d7dadd",
+    "warn": "d0a85c",
+    "error": "d66767",
+    "uptime": "8b98a5"
+  }
+}

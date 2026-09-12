@@ -38,8 +38,11 @@ KEYBOARD_BACKSPACE = "keyboard.backspace"
 KEYBOARD_SHIFT = "keyboard.shift"
 KEYBOARD_SYMBOLS = "keyboard.symbols"
 KEYBOARD_SPACE = "keyboard.space"
+KEYBOARD_LEFT = "keyboard.left"
+KEYBOARD_RIGHT = "keyboard.right"
 KEYBOARD_CONTROL_ACTIONS = frozenset((
     KEYBOARD_BACKSPACE, KEYBOARD_SHIFT, KEYBOARD_SYMBOLS, KEYBOARD_SPACE,
+    KEYBOARD_LEFT, KEYBOARD_RIGHT,
 ))
 
 
@@ -112,30 +115,66 @@ class TextKeyboard:
                 x += key_width + gap
         controls_y = 328
         commands += renderer.button(
-            KEYBOARD_SHIFT, 25, controls_y, 120, 43, "SHIFT",
+            KEYBOARD_SHIFT, 25, controls_y, 110, 43, "SHIFT",
             state="selected" if shift else "enabled",
             font="JetBrainsMono 8pt")
         commands += renderer.button(
-            KEYBOARD_SYMBOLS, 155, controls_y, 100, 43,
+            KEYBOARD_SYMBOLS, 145, controls_y, 90, 43,
             "ABC" if symbols else "123",
             state="selected" if symbols else "enabled",
             font="JetBrainsMono 8pt")
         commands += renderer.button(
-            KEYBOARD_SPACE, 265, controls_y, 300, 43, "SPACE",
+            KEYBOARD_LEFT, 245, controls_y, 60, 43, "<",
+            font="JetBrainsMono 12pt")
+        commands += renderer.button(
+            KEYBOARD_SPACE, 315, controls_y, 200, 43, "SPACE",
             font="JetBrainsMono 8pt")
         commands += renderer.button(
-            KEYBOARD_BACKSPACE, 575, controls_y, 200, 43, "BACKSPACE",
+            KEYBOARD_RIGHT, 525, controls_y, 60, 43, ">",
+            font="JetBrainsMono 12pt")
+        commands += renderer.button(
+            KEYBOARD_BACKSPACE, 595, controls_y, 180, 43, "BACKSPACE",
             font="JetBrainsMono 8pt")
         return commands
 
-    def apply(self, value, action, shift=False, symbols=False,
+    def render_value(self, renderer, value, cursor, x, y, max_width, color,
+                     masked=False, font="JetBrainsMono 12pt"):
+        value = str(value)
+        cursor = max(0, min(int(cursor), len(value)))
+        displayed = "*" * len(value) if masked else value
+        font = renderer.normalize_font_for_text(font, displayed or " ")
+        advance = renderer.font_advance(font)
+        visible_characters = max(1, (int(max_width) - 2) // advance)
+        start = min(
+            max(0, cursor - visible_characters // 2),
+            max(0, len(displayed) - visible_characters))
+        visible = displayed[start:start + visible_characters]
+        commands = []
+        if visible:
+            commands.append(renderer.text(
+                x, y, visible, color, font, max_width=max_width,
+                truncate=True))
+        caret_x = min(
+            int(x) + int(max_width) - 2,
+            int(x) + (cursor - start) * advance)
+        commands.append(renderer.fill(caret_x, int(y) - 13, 2, 26, color))
+        return commands
+
+    def apply(self, value, cursor, action, shift=False, symbols=False,
               allowed_characters=None, max_length=None):
         value = str(value)
+        cursor = max(0, min(int(cursor), len(value)))
         allowed = (self.printable_ascii if allowed_characters is None
                    else allowed_characters)
         limit = self.max_length if max_length is None else int(max_length)
         if action == KEYBOARD_BACKSPACE:
-            value = value[:-1]
+            if cursor > 0:
+                value = value[:cursor - 1] + value[cursor:]
+                cursor -= 1
+        elif action == KEYBOARD_LEFT:
+            cursor = max(0, cursor - 1)
+        elif action == KEYBOARD_RIGHT:
+            cursor = min(len(value), cursor + 1)
         elif action == KEYBOARD_SHIFT:
             shift = not shift
         elif action == KEYBOARD_SYMBOLS:
@@ -145,7 +184,8 @@ class TextKeyboard:
             shift = False
         elif action == KEYBOARD_SPACE:
             if len(value) < limit and _character_allowed(" ", allowed):
-                value += " "
+                value = value[:cursor] + " " + value[cursor:]
+                cursor += 1
         elif action.startswith(KEY_ACTION_PREFIX):
             token = action[len(KEY_ACTION_PREFIX):]
             available = dict(
@@ -153,8 +193,9 @@ class TextKeyboard:
                 for key in row)
             character = available.get(token)
             if character is not None and len(value) < limit:
-                value += character
-        return value, shift, symbols
+                value = value[:cursor] + character + value[cursor:]
+                cursor += 1
+        return value, cursor, shift, symbols
 
 
 TEXT_KEYBOARD = TextKeyboard()

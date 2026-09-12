@@ -11,9 +11,11 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import urllib.error
@@ -1053,7 +1055,7 @@ class LMStudioBenchmarkTest(unittest.TestCase):
         self.assertNotIn("stdout", kwargs)
         self.assertNotIn("stderr", kwargs)
 
-    def test_verdict_validator_rejects_extra_fields_and_wrong_severity(self):
+    def test_verdict_validator_rejects_extra_fields_and_normalizes_severity(self):
         extra = verdict("pass")
         extra["extra"] = True
         with self.assertRaisesRegex(ValueError, "only verdict"):
@@ -1061,9 +1063,10 @@ class LMStudioBenchmarkTest(unittest.TestCase):
 
         mismatch = verdict("warn")
         mismatch["verdict"] = "pass"
-        with self.assertRaisesRegex(ValueError, "most severe"):
-            VISION.validate_verdict(
-                mismatch, allow_design_mismatch=True)
+        normalized = VISION.validate_verdict(
+            mismatch, allow_design_mismatch=True)
+
+        self.assertEqual(normalized["verdict"], "warn")
 
 
 class HostPipelineTest(unittest.TestCase):
@@ -1219,43 +1222,63 @@ class HostPipelineTest(unittest.TestCase):
             artifact = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(artifact["status"], "disabled")
 
-    def test_checker_is_absent_from_printer_runtime_and_sync_archive(self):
-        screen = (
-            ROOT / ".py" / "klipper" / "plugins" / "feather_screen.py"
-        ).read_text(encoding="utf-8")
-        runner = (
-            ROOT / ".py" / "klipper" / "plugins" /
-            "feather_feature_ui_test.py"
-        ).read_text(encoding="utf-8")
-        sync = (ROOT / "sync.sh").read_text(encoding="utf-8")
-        remote_sync = (ROOT / "sync_remote.sh").read_text(encoding="utf-8")
+    def test_sync_archive_excludes_local_paths_and_keeps_deployment_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            worktree = pathlib.Path(temporary) / "worktree"
+            fake_bin = pathlib.Path(temporary) / "bin"
+            archive = pathlib.Path(temporary) / "captured.tar.gz"
+            worktree.mkdir()
+            fake_bin.mkdir()
+            shutil.copy2(ROOT / "sync.sh", worktree / "sync.sh")
+            (worktree / "sync_remote.sh").write_text(
+                "#!/bin/sh\n", encoding="utf-8")
+            (worktree / ".gitignore").write_text(
+                "/local-only.txt\n", encoding="utf-8")
+            (worktree / ".env").write_text("local\n", encoding="utf-8")
+            (worktree / "local-only.txt").write_text(
+                "local\n", encoding="utf-8")
+            (worktree / "tests").mkdir()
+            (worktree / "tests" / "host-only.py").write_text(
+                "host only\n", encoding="utf-8")
+            (worktree / "deployment.txt").write_text(
+                "deploy me\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "init", "--quiet"], cwd=str(worktree), check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        self.assertNotIn("visual_checks", screen)
-        self.assertNotIn("openai_compatible", screen)
-        self.assertNotIn("visual_checks", runner)
-        self.assertNotIn("openai_compatible", runner)
-        self.assertIn('"./tests/"', sync)
-        self.assertIn('"./.env"', sync)
-        self.assertIn(
-            "git ls-files --others --ignored --exclude-standard", sync)
-        self.assertIn('".py/klipper/plugins/ui"', remote_sync)
-        self.assertIn('".py/klipper/plugins/ff5m_ui"', remote_sync)
-        self.assertIn("S00init reload", remote_sync)
-        self.assertIn("Removing obsolete file", remote_sync)
+            scp = fake_bin / "scp"
+            scp.write_text(
+                "#!/bin/sh\ncp \"$2\" \"$CAPTURE_ARCHIVE\"\n",
+                encoding="utf-8")
+            scp.chmod(0o755)
+            ssh = fake_bin / "ssh"
+            ssh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            ssh.chmod(0o755)
+            env = dict(os.environ)
+            env.update({
+                "CAPTURE_ARCHIVE": str(archive),
+                "PATH": "%s:%s" % (fake_bin, env["PATH"]),
+            })
 
-    def test_sync_keeps_nonignored_untracked_paths_archive_eligible(self):
-        sync = (ROOT / "sync.sh").read_text(encoding="utf-8")
-        with tempfile.NamedTemporaryFile(
-                dir=str(ROOT), prefix="ff5m-sync-untracked-") as candidate:
-            ignored = subprocess.check_output([
-                "git", "ls-files", "--others", "--ignored",
-                "--exclude-standard", "--directory",
-            ], cwd=str(ROOT), text=True).splitlines()
-            relative = pathlib.Path(candidate.name).relative_to(ROOT).as_posix()
+            result = subprocess.run(
+                ["bash", "sync.sh", "--host", "test.invalid",
+                 "--skip-restart"],
+                cwd=str(worktree), env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                check=False)
 
-        self.assertIn(
-            "Ordinary untracked paths remain eligible", sync)
-        self.assertNotIn(relative, ignored)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            with tarfile.open(archive, "r:gz") as packaged:
+                names = {
+                    name.removeprefix("./") for name in packaged.getnames()
+                }
+            self.assertIn("deployment.txt", names)
+            self.assertNotIn(".env", names)
+            self.assertNotIn("local-only.txt", names)
+            self.assertFalse(any(
+                name == ".git" or name.startswith(".git/") for name in names))
+            self.assertFalse(any(
+                name == "tests" or name.startswith("tests/") for name in names))
 
 
 class HybridCompositionTest(unittest.TestCase):
@@ -1409,6 +1432,41 @@ capture.mapConcurrent([40, 5, 20, 1], 2, async (delay, index) => {
         self.assertEqual(
             records[0]["semantic_page_id"], "ui.Pages.COMPONENT")
 
+    def test_parity_excludes_manifest_baseline_without_case_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            for name in ("baseline.bmp", "component.bmp"):
+                (directory / name).write_bytes(b"not-decoded")
+            (directory / "manifest.json").write_text(json.dumps([
+                {
+                    "file": "baseline.bmp",
+                    "label": "baseline",
+                    "semantic_page_id": "ui.Pages.HOME",
+                },
+                {
+                    "file": "component.bmp",
+                    "label": "component-default-home",
+                    "case_id": "default-home",
+                    "semantic_page_id": "ui.Pages.HOME",
+                },
+            ]), encoding="utf-8")
+            printer = HYBRID.load_manifest(directory)
+
+            designer = [{
+                "case_id": "default-home",
+                "label": "Home",
+                "semantic_page_id": "ui.Pages.HOME",
+                "source": "designer",
+                "path": pathlib.Path("/tmp/designer-home.png"),
+            }]
+            merged = HYBRID.merge_hybrid(
+                designer, [], parity=True, parity_records=printer)
+
+            self.assertEqual(len(merged["pairs"]), 1)
+            self.assertEqual(
+                merged["pairs"][0]["comparison_path"],
+                (directory / "component.bmp").resolve())
+
     def test_incomplete_printer_suite_is_an_infrastructure_failure(self):
         with self.assertRaisesRegex(
                 HYBRID.RegressionConfigurationError, "incomplete"):
@@ -1505,6 +1563,7 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
                 "extruder": {"target": 210},
                 "heater_bed": {"target": 0},
                 "virtual_sdcard": {"is_active": False},
+                "pause_resume": {"is_paused": False},
             }}})
 
         collector = PRINTER.PrinterCollector(
@@ -1892,8 +1951,12 @@ class RegressionOrchestratorTest(unittest.TestCase):
 
             self.assertEqual(report["status"], "disabled")
             self.assertEqual(report["coverage"]["designer"], 2)
-            self.assertEqual(report["coverage"]["printer_captured"], 20)
-            self.assertEqual(report["coverage"]["legacy_printer"], 17)
+            printer_frames = len(HYBRID.UI_SUITE_LABELS) + 2
+            self.assertEqual(
+                report["coverage"]["printer_captured"], printer_frames)
+            self.assertEqual(
+                report["coverage"]["legacy_printer"],
+                len(HYBRID.UI_SUITE_LABELS) - 1)
             self.assertEqual(report["coverage"]["replaced"], 1)
             self.assertEqual(report["coverage"]["parity_pairs"], 2)
             self.assertEqual(
@@ -1904,7 +1967,8 @@ class RegressionOrchestratorTest(unittest.TestCase):
                 [item["id"] for item in report["pipeline"]],
                 ["designer", "printer", "merge", "llm"])
             self.assertEqual(
-                report["pipeline"][1]["counts"]["captured_frames"], 20)
+                report["pipeline"][1]["counts"]["captured_frames"],
+                printer_frames)
             self.assertIn("Screenshot overview", page)
             self.assertIn("Designer ↔ real printer", page)
             self.assertIn(
@@ -1914,6 +1978,44 @@ class RegressionOrchestratorTest(unittest.TestCase):
             self.assertIn("printer/saved-02/frame.png", page)
             self.assertTrue(copied_ui.is_dir())
             self.assertTrue(copied_component.is_dir())
+
+
+class VisualChecksPackageResolutionTest(unittest.TestCase):
+    def test_local_tests_package_wins_over_environment_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shadow_root = pathlib.Path(temp_dir)
+            shadow_package = shadow_root / "tests"
+            shadow_package.mkdir()
+            (shadow_package / "__init__.py").write_text(
+                "SHADOW_PACKAGE = True\n", encoding="utf-8")
+
+            env = os.environ.copy()
+            existing = env.get("PYTHONPATH")
+            env["PYTHONPATH"] = str(shadow_root) + (
+                os.pathsep + existing if existing else "")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import pathlib, tests; "
+                        "import tests.visual_checks.regression; "
+                        "print(pathlib.Path(tests.__file__).resolve())"
+                    ),
+                ],
+                cwd=str(ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                pathlib.Path(result.stdout.strip()),
+                (ROOT / "tests" / "__init__.py").resolve(),
+            )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "CYBERDECK",
+  "description": "Navy cyberdeck with cyan face and magenta chromatic accents",
+  "colors": {
+    "background": "060913",
+    "text": "39d5ff",
+    "text_highlight": "f5fdff",
+    "accent": "ff5ab3",
+    "wire": "d8f8ff",
+    "shadow": "0d5770",
+    "beam": "f5fdff",
+    "glitch_primary": "39d5ff",
+    "glitch_secondary": "ff5ab3",
+    "glitch_cut": "03050b",
+    "subtitle": "d8f8ff",
+    "debug": "68839b",
+    "info": "d8f8ff",
+    "warn": "ffc857",
+    "error": "ff4d5a",
+    "uptime": "ff5ab3"
+  }
+}

@@ -26,7 +26,6 @@ REQUIRED_FILES = {
     "common.sh",
     "version.txt",
     "md5.list",
-    "install.img.xz",
     "xz/data.tar.xz",
     "xz/buildroot.tar.xz",
     "xz/entware.tar.xz",

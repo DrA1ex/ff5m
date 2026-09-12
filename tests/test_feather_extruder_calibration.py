@@ -9,6 +9,7 @@ import pathlib
 import stat
 import tempfile
 import threading
+import types
 import unittest
 from unittest import mock
 
@@ -32,6 +33,16 @@ HEATERS = importlib.util.module_from_spec(HEATER_SPEC)
 HEATER_SPEC.loader.exec_module(HEATERS)
 
 from tests.test_feather_screen import FEATHER, Reactor  # noqa: E402
+
+
+class ScenarioController(EXTRUDER_CAL.FeatherExtruderCalibrationMixin,
+                         FEATHER.FeatherScreen):
+    """Test harness for the extracted extruder scenario."""
+
+    boot_screen_held = False
+    touch_available = None
+    touch_warning_visible = False
+    system_shutdown_active = False
 
 
 class ExtruderCalculationTest(unittest.TestCase):
@@ -350,21 +361,34 @@ class FakeCalibrationExtruder:
 
 
 def calibration_controller(path=None):
-    controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+    controller = ScenarioController.__new__(ScenarioController)
     controller.renderer = FEATHER.FeatherRenderer()
     controller.renderer.send = lambda commands: None
     controller.reactor = Reactor()
     controller.extruder = FakeCalibrationExtruder()
-    controller.extruder_calibration = FEATHER.ExtruderCalibrationSession(
+    controller.extruder_calibration = EXTRUDER_CAL.ExtruderCalibrationSession(
         path or EXTRUDER_CAL.USER_CFG_PATH)
     controller.extruder_calibration.begin(4.38)
-    controller.page = FEATHER.Page.EXTRUDER_CALIBRATION
-    controller.previous_page = FEATHER.Page.CALIBRATION_HOME
+    controller.page = FEATHER.ScreenPage.EXTRUDER_CALIBRATION
+    controller.previous_page = FEATHER.ScreenPage.CALIBRATION_HOME
     controller.print_state = FEATHER.PrintState.IDLE
     controller.command_depth = 0
     controller.busy_message = None
     controller.toast_until = 0.0
     controller.toast_message = ""
+    controller.operation_context = types.SimpleNamespace(
+        get_status=lambda eventtime: {
+            "context_path": (), "current_state": None, "revision": 0,
+            "cancel_available": False, "cancel_pending": False,
+            "cancel_request_id": None, "cancel_target_name": None,
+            "cancel_target_mode": None, "cancel_blocker_name": None})
+    controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
+    controller.operation_cancel_on_accept = None
+    controller.operation_cancel_on_clear = None
+    controller.operation_cancel_request_id = None
+    controller.operation_cancel_target_name = None
+    controller.operation_cancel_target_mode = None
+    controller.cancel_mode = None
     return controller
 
 
@@ -384,6 +408,172 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "No cold-pull"):
             controller._handle_extruder_calibration_action(
                 "extruder.coldpull")
+
+    def test_cold_pull_page_offers_cancel_for_the_whole_operation(self):
+        controller = calibration_controller()
+        batches = []
+        controller.renderer.send = batches.append
+        session = controller.extruder_calibration
+        session.phase = "cold_pull"
+        session.cold_pull_material = "PLA"
+        controller.temperature_wait = types.SimpleNamespace(
+            variables={"active": False})
+
+        controller._render_extruder_calibration()
+
+        self.assertNotIn(
+            "extruder.coldpull.cancel", "\n".join(batches[-1]))
+        self.assertNotIn("nav.back", "\n".join(batches[-1]))
+
+        controller.temperature_wait.variables.update({
+            "active": True,
+        })
+        controller.operation_context = types.SimpleNamespace(
+            get_status=lambda eventtime: {
+                "context_path": ("COLD PULL",),
+                "current_state": "HEATING NOZZLE", "revision": 1,
+                "cancel_available": True, "cancel_pending": False,
+                "cancel_target_name": "Cold Pull",
+                "cancel_target_mode": "cancelable"})
+        controller._render_extruder_calibration()
+
+        drawing = "\n".join(batches[-1])
+        self.assertIn("extruder.coldpull.cancel", drawing)
+        self.assertIn("CANCEL", drawing)
+        self.assertIn("HEATING NOZZLE", drawing)
+        self.assertIn("HEATING THE NOZZLE", drawing)
+        self.assertNotIn("POSITIONING, EXTRUDING, OR FINISHING", drawing)
+
+    def test_cold_pull_cancel_uses_shared_operation_dialog(self):
+        controller = calibration_controller()
+        batches = []
+        commands = []
+        controller.renderer.send = batches.append
+        session = controller.extruder_calibration
+        session.phase = "cold_pull"
+        session.cold_pull_material = "PLA"
+        controller.temperature_wait = types.SimpleNamespace(
+            variables={"active": True})
+        controller.operation_context = types.SimpleNamespace(
+            get_status=lambda eventtime: {
+                "context_path": ("COLD PULL",),
+                "current_state": "COOLING NOZZLE", "revision": 2,
+                "cancel_available": True, "cancel_pending": False,
+                "cancel_target_name": "Cold Pull",
+                "cancel_target_mode": "cancelable"})
+        opened = []
+        controller._open_operation_cancel = (
+            lambda page, callback, clear: opened.append(
+                (page, callback, clear)))
+
+        controller._open_cold_pull_cancel()
+
+        self.assertEqual(opened[0][0], FEATHER.ScreenPage.EXTRUDER_CALIBRATION)
+        opened[0][1]({"accepted": True})
+        self.assertTrue(session.cold_pull_cancel_requested)
+        self.assertTrue(session.cold_pull_cancel_dispatched)
+        opened[0][2]({"cleared": True})
+        self.assertFalse(session.cold_pull_cancel_requested)
+        self.assertFalse(session.cold_pull_cancel_dispatched)
+        self.assertEqual(commands, [])
+
+    def test_cold_pull_poll_does_not_overwrite_cancel_dialog(self):
+        controller = calibration_controller()
+        batches = []
+        controller.renderer.send = batches.append
+        session = controller.extruder_calibration
+        session.phase = "cold_pull"
+        session.cold_pull_material = "PLA"
+        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.operation_context = types.SimpleNamespace(
+            get_status=lambda eventtime: {
+                "context_path": ("Cold Pull",),
+                "context_types": ("cold_pull",),
+                "current_state": "HEATING NOZZLE", "revision": 2,
+                "cancel_available": True, "cancel_pending": True,
+                "cancel_target_name": "Cold Pull",
+                "cancel_target_mode": "cancelable"})
+
+        controller._poll_cold_pull_progress(10.0, force=True)
+
+        self.assertEqual(batches, [])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+
+    def test_cold_pull_runs_on_its_feature_page_without_blocking_loader(self):
+        controller = calibration_controller()
+        batches = []
+        events = []
+        controller.renderer.send = batches.append
+        controller.temperature_wait = types.SimpleNamespace(
+            variables={"active": False})
+        lease = types.SimpleNamespace(
+            release=lambda: events.append("release"))
+        registry = types.SimpleNamespace(
+            activity=lambda reason: (
+                events.append(("activity", reason)) or lease))
+        controller._ensure_safety_registry = lambda: registry
+        controller._refresh_emergency_stop = (
+            lambda: events.append("refresh"))
+        controller._run_script = (
+            lambda command: events.append(("run", command)))
+
+        controller._run_cold_pull_material("PLA", 220, 100)
+
+        session = controller.extruder_calibration
+        self.assertEqual(session.phase, "cold_pull")
+        self.assertEqual(session.cold_pull_material, "PLA")
+        self.assertIsNone(controller.busy_message)
+        self.assertIn("COLD PULL", "\n".join(batches[-1]).upper())
+        self.assertIn(("activity", "cold-pull"), events)
+        self.assertIn(
+            ("run", "_COLDPULL_LOAD_MATERIAL TEMP=220 COLD=100"),
+            events)
+        self.assertIn("release", events)
+
+    def test_cancelled_cold_pull_returns_to_material_selection(self):
+        controller = calibration_controller()
+        controller.cold_pull_profiles = {"PLA": (220, 100)}
+        controller.cancel_mode = "pending"
+        controller.operation_cancel_request_id = 7
+        pages = []
+
+        def cancel_during_wait(material, hot, cold):
+            self.assertEqual((material, hot, cold), ("PLA", 220, 100))
+            session = controller.extruder_calibration
+            session.cold_pull_cancel_requested = True
+            session.cold_pull_cancel_dispatched = True
+            raise RuntimeError("Temperature waiting cancelled")
+
+        controller._run_cold_pull_material = cancel_during_wait
+        controller._show_page = pages.append
+
+        controller._handle_extruder_calibration_action(
+            "extruder.material.PLA")
+
+        session = controller.extruder_calibration
+        self.assertEqual(session.phase, "material")
+        self.assertFalse(session.cold_pull_cancel_requested)
+        self.assertFalse(session.cold_pull_cancel_dispatched)
+        self.assertIsNone(controller.cancel_mode)
+        self.assertIsNone(controller.operation_cancel_request_id)
+        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
+
+    def test_extruder_feature_routes_page_cancel_as_immediate_action(self):
+        from feather_feature_extruder import ExtruderCalibrationFeature
+
+        host = types.SimpleNamespace()
+        feature = ExtruderCalibrationFeature(host)
+        feature.extruder_calibration.phase = "cold_pull"
+        calls = []
+        feature._open_cold_pull_cancel = (
+            lambda: calls.append("cancel"))
+
+        handled = feature.handle_immediate_action(
+            FEATHER.ScreenPage.EXTRUDER_CALIBRATION,
+            "extruder.coldpull.cancel")
+
+        self.assertTrue(handled)
+        self.assertEqual(calls, ["cancel"])
 
     def test_cold_move_scopes_override_and_restores_gcode_state(self):
         controller = calibration_controller()
@@ -418,7 +608,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
         self.assertEqual(moves, [50])
         self.assertEqual(session.phase, "mark_first")
-        self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_unload_uses_safe_base_then_offers_optional_extra_retract(self):
         controller = calibration_controller()
@@ -437,8 +627,8 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(session.phase, "measure_ready")
         self.assertEqual(
             pages,
-            [FEATHER.Page.EXTRUDER_CALIBRATION,
-             FEATHER.Page.EXTRUDER_CALIBRATION])
+            [FEATHER.ScreenPage.EXTRUDER_CALIBRATION,
+             FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_measurement_input_opens_only_after_filament_is_free(self):
         controller = calibration_controller()
@@ -451,7 +641,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             "extruder.measure_ready")
 
         self.assertEqual(session.phase, "input")
-        self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_measurement_uses_shared_decimal_keypad_constraints(self):
         controller = calibration_controller()
@@ -503,7 +693,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertFalse(
             controller.extruder_calibration.cooling_fan_active)
         self.assertEqual(controller.extruder_calibration.phase, "remove")
-        self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_cooling_publishes_terminal_state_before_yielding_beep(self):
         controller = calibration_controller()
@@ -546,7 +736,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertTrue(controller.extruder_calibration.cooling_fan_active)
         self.assertEqual(controller.extruder_calibration.phase, "cooling")
         self.assertIn("M104 S0\nG28", blocking[0][0])
-        self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
+        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_cancel_stops_calibration_fan(self):
         controller = calibration_controller()
@@ -576,7 +766,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
         self.assertEqual(runtime, [4.38])
         self.assertFalse(session.active)
-        self.assertEqual(pages, [FEATHER.Page.CALIBRATION_HOME])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_HOME])
 
     def test_exit_warning_returns_to_the_exact_interrupted_step(self):
         controller = calibration_controller()
@@ -613,7 +803,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             self.assertEqual(runtime, [4.292])
             self.assertTrue(session.saved)
             self.assertEqual(session.phase, "saved")
-            self.assertEqual(pages, [FEATHER.Page.EXTRUDER_CALIBRATION])
+            self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
 
     def test_runtime_apply_failure_keeps_saved_file_and_shows_recovery(self):
         with tempfile.TemporaryDirectory() as directory:

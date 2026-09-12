@@ -79,6 +79,14 @@ def _position_border(homed_x, homed_y, homed_z):
     return ThemeColor.PRIMARY if homed_x and homed_y and homed_z else ThemeColor.WARNING
 
 
+def _position_value(value):
+    return "%6.1f" % value
+
+
+def _inertia_value(value):
+    return "%5.1f" % value
+
+
 def _position_card():
     border = derived(
         _position_border,
@@ -88,24 +96,21 @@ def _position_card():
     )
     metrics = Column(
         Metric(
-            "X", derived(lambda value: "%6.1f" % value,
-                         bind(ToolheadState.X)),
+            "X", derived(_position_value, bind(ToolheadState.X)),
             "mm", label_color=border,
         ).ref(JoystickRef.POSITION_X),
         Metric(
-            "Y", derived(lambda value: "%6.1f" % value,
-                         bind(ToolheadState.Y)),
+            "Y", derived(_position_value, bind(ToolheadState.Y)),
             "mm", label_color=border,
         ).ref(JoystickRef.POSITION_Y),
         Metric(
-            "Z", derived(lambda value: "%6.1f" % value,
-                         bind(ToolheadState.Z)),
+            "Z", derived(_position_value, bind(ToolheadState.Z)),
             "mm", label_color=border,
         ).ref(JoystickRef.POSITION_Z),
     ).padding(left=12, top=10, right=12, bottom=10) \
      .ref(JoystickRef.POSITION_METRICS)
     return Overlay(
-        Panel(border=border, line_width=1).ref(JoystickRef.POSITION_PANEL),
+        Panel(border=ThemeColor.WARNING, line_width=1).ref(JoystickRef.POSITION_PANEL),
         metrics,
     ).ref(JoystickRef.POSITION_CARD).repaint_boundary()
 
@@ -115,7 +120,7 @@ def _inertia_card():
         Panel(border=ThemeColor.BORDER, line_width=1).ref(JoystickRef.INERTIA_PANEL),
         Metric(
             "INERTIA",
-            derived(lambda value: "%5.1f" % value, bind(MoveState.INERTIA)),
+            derived(_inertia_value, bind(MoveState.INERTIA)),
         ).margin(left=12, right=12).ref(JoystickRef.INERTIA_METRIC),
     ).ref(JoystickRef.INERTIA_CARD).repaint_boundary()
 

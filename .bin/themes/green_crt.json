@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "GREEN_CRT",
+  "description": "Bright green phosphor CRT",
+  "colors": {
+    "background": "010702",
+    "text": "15eb18",
+    "text_highlight": "d4ffcc",
+    "accent": "78ff6a",
+    "wire": "8df58a",
+    "shadow": "075a09",
+    "beam": "d4ffcc",
+    "glitch_primary": "15eb18",
+    "glitch_secondary": "78ff6a",
+    "glitch_cut": "000301",
+    "subtitle": "8df58a",
+    "debug": "347e38",
+    "info": "8df58a",
+    "warn": "f2db4b",
+    "error": "ff5b45",
+    "uptime": "78ff6a"
+  }
+}

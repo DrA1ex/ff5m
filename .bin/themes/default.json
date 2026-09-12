@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "DEFAULT",
+  "description": "Forge-X cyan with violet accents",
+  "colors": {
+    "background": "030607",
+    "text": "35d9e6",
+    "text_highlight": "ffffff",
+    "accent": "b47aff",
+    "wire": "d9e4e8",
+    "shadow": "244c66",
+    "beam": "ffffff",
+    "glitch_primary": "35d9e6",
+    "glitch_secondary": "b47aff",
+    "glitch_cut": "010203",
+    "subtitle": "d9e4e8",
+    "debug": "56656c",
+    "info": "d9e4e8",
+    "warn": "f2c94c",
+    "error": "ff4d5a",
+    "uptime": "b47aff"
+  }
+}

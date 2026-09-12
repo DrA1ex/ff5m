@@ -28,7 +28,7 @@ class ToolheadState(StateKey):
 class MoveState(StateKey):
     __key_namespace__ = "ui.pages.move.state.MoveState"
     JOG_STEP = state(
-        float, default=1.0, choices=(0.1, 1.0, 10.0), unit="mm",
+        float, default=1.0, minimum=0.1, maximum=100.0, unit="mm",
         category="movement", simulation_role="movement.step")
     INERTIA = state(float, default=0.0, minimum=0.0,
                     category="movement", simulation_role="movement.inertia")

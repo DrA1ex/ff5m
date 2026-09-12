@@ -1,0 +1,50 @@
+## Product-owned imperative screen identities.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+from enum import Enum
+
+
+class ScreenPage(Enum):
+    IDLE_HOME = 1
+    MAIN_MENU = 25
+    CONTROL_HOME = 2
+    FILE_BROWSER = 3
+    FILE_CONFIRM = 4
+    PRINTING = 5
+    PAUSED = 6
+    CANCEL_CONFIRM = 7
+    CONTROL_MOVE = 8
+    CONTROL_HEAT = 9
+    FILAMENT_MATERIAL = 10
+    FILAMENT_ACTION = 11
+    CALIBRATION_HOME = 12
+    CALIBRATION_Z = 13
+    CALIBRATION_CONFIRM = 14
+    CALIBRATION_PROGRESS = 15
+    CALIBRATION_RESULT = 16
+    SETTINGS = 17
+    NETWORK_HOME = 18
+    WIFI_SCAN = 19
+    WIFI_PASSWORD = 20
+    NETWORK_PROGRESS = 21
+    RECOVERY_PROMPT = 22
+    RECOVERY_CONFIRM = 23
+    MESSAGE = 24
+    MOD_SETTINGS = 26
+    PARAMETER_OPTIONS = 27
+    MOD_VALUE = 28
+    ERROR = 29
+    LIVE_Z_OFFSET = 30
+    Z_OFFSET_SUMMARY = 31
+    Z_OFFSET_PAPER = 32
+    Z_OFFSET_PAPER_BRIEFING = 33
+    ACTION_PROMPT = 34
+    CALIBRATION_GUIDE = 35
+    SAFE_Z_BRIEFING = 36
+    SAFE_Z_CALIBRATION = 37
+    EXTRUDER_CALIBRATION = 38
+    RENDER_BENCHMARK = 39
+    UPDATE_NOTIFICATION = 40

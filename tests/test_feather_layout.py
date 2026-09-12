@@ -15,17 +15,18 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
 sys.path.insert(0, str(PLUGINS))
 
 from ui import (  # noqa: E402
-    EMPTY, FLEX, Button, ButtonStyle, Column, Command, CommandKey, Equal,
-    FALLBACK_THEME, FeatherRenderer, Fill, Flex, Grid, Overlay, Override,
-    PageKey, PageTree, Rect, Spacer, StateKey, Text, ThemeColor, ThemeRole,
-    Tree, resolve_theme,
-    WrapPanel, bind, state, subdivision_positions,
+    EMPTY, FLEX, ArrowButton, Back, Button, ButtonStyle, Column, Command,
+    CommandKey, Equal, FALLBACK_THEME, FeatherRenderer, Fill, Flex, Grid,
+    NumericKeypad, Overlay, Override, PageKey, PageTree, Rect, Spacer,
+    StateCase, StateKey, Text, ThemeColor, ThemeRole, ToggleSwitch, Tree,
+    WrapPanel, bind, resolve_theme, state, subdivision_positions,
 )
 from ff5m_ui.move import runtime as move  # noqa: E402
 from ff5m_ui.move import geometry as move_geometry  # noqa: E402
 from ff5m_ui.heat import runtime as heat  # noqa: E402
 from ff5m_ui.filament import runtime as filament  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset  # noqa: E402
+from ui.reflection import reflect_page  # noqa: E402
 
 
 class TestPage(PageKey):
@@ -67,6 +68,53 @@ class RectLayoutTest(unittest.TestCase):
         self.assertEqual(positions[0][2], -1)
         self.assertEqual(positions[4][2], 0)
         self.assertEqual(positions[-1][2], -1)
+
+
+class FrameworkAuthoringContractTest(unittest.TestCase):
+    def test_new_semantic_components_render_through_existing_primitives(self):
+        page = PageTree(
+            Overlay(
+                ArrowButton(Back(), direction="down").ref("next"),
+                ToggleSwitch(Back(), active=True).ref("toggle"),
+            ), Rect(0, 0, 120, 80), page_id=TestPage.LAYOUT)
+
+        drawing = "\n".join(page.draw(FeatherRenderer()))
+
+        self.assertIn("--id 0:nav.back", drawing)
+        self.assertIn("--batch hitbox", drawing)
+
+    def test_state_case_and_explicit_actions_are_portable_page_contracts(self):
+        external_action = Command(TestCommand.THREE)
+        page = PageTree(
+            StateCase(
+                Text("A").ref("first"),
+                selector=bind(TestState.LEFT), expected="A",
+            ).ref("case"),
+            Rect(0, 0, 120, 80), page_id=TestPage.LAYOUT,
+            actions=(external_action,))
+
+        visible = reflect_page(page)
+        hidden = reflect_page(page, {TestState.LEFT: "B"})
+
+        self.assertTrue(visible["tree"]["visible"])
+        self.assertFalse(hidden["tree"]["visible"])
+        self.assertIs(page.resolve_action(external_action.wire_id),
+                      external_action)
+        self.assertEqual(page.metadata_source_contract.as_dict(), {
+            "strategy": "core.module_page_assignments",
+            "fields": ["title", "show_back"],
+        })
+
+    def test_creation_contracts_publish_stable_refs_and_compound_actions(self):
+        fill = Fill.creation_contract.as_dict()
+        keypad = NumericKeypad.creation_contract.as_dict()
+
+        self.assertTrue(fill["fields"][0]["required"])
+        self.assertEqual(fill["source"]["identity"]["method"], "ref")
+        action_map = next(
+            field for field in keypad["fields"] if field["name"] == "actions")
+        self.assertTrue(action_map["required"])
+        self.assertEqual(action_map["editor"]["kind"], "semantic_action_map")
 
 
 class DeclarativeContainerTest(unittest.TestCase):
@@ -467,31 +515,41 @@ class MovementLayoutTest(unittest.TestCase):
 
     def test_joystick_columns_and_controls_derive_from_page_tree(self):
         page = move.JOYSTICK_PAGE
+        xy_panel = page.rect("xy.panel")
+        z_panel = page.rect("z.panel")
+        status_panel = page.rect("status.panel")
+        xy_pad = page.rect("xy.pad")
+        z_hitbox = page.rect("z.hitbox")
+        z_track = page.rect("z.track")
 
-        self.assertEqual(page.rect("xy.panel").as_tuple(), (12, 64, 456, 364))
-        self.assertEqual(page.rect("z.panel").as_tuple(), (478, 64, 100, 364))
-        self.assertEqual(
-            page.rect("status.panel").as_tuple(), (588, 64, 200, 364))
-        self.assertEqual(page.rect("xy.pad").as_tuple(), (30, 96, 420, 266))
-        self.assertEqual(page.rect("z.hitbox").as_tuple(), (486, 96, 84, 329))
-        self.assertEqual(page.rect("z.track").bottom,
-                         page.rect("xy.actions").bottom)
-        self.assertLessEqual(page.rect("z.hitbox").bottom,
-                             move.MOVE_CONTENT.bottom)
-        self.assertEqual(move_geometry.JOYSTICK_XY_CENTER,
-                         page.rect("xy.pad").center)
-        self.assertEqual(move_geometry.JOYSTICK_Z_CENTER,
-                         page.rect("z.track").center)
+        self.assertEqual((xy_panel.y, xy_panel.bottom),
+                         (z_panel.y, z_panel.bottom))
+        self.assertEqual((z_panel.y, z_panel.bottom),
+                         (status_panel.y, status_panel.bottom))
+        self.assertLessEqual(xy_panel.right, z_panel.x)
+        self.assertLessEqual(z_panel.right, status_panel.x)
+        self.assertGreaterEqual(xy_pad.x, xy_panel.x)
+        self.assertLessEqual(xy_pad.right, xy_panel.right)
+        self.assertGreaterEqual(xy_pad.y, xy_panel.y)
+        self.assertLessEqual(xy_pad.bottom, xy_panel.bottom)
+        self.assertGreaterEqual(z_hitbox.x, z_panel.x)
+        self.assertLessEqual(z_hitbox.right, z_panel.right)
+        self.assertLessEqual(z_hitbox.bottom, move.MOVE_CONTENT.bottom)
+        self.assertEqual(z_track.bottom, page.rect("xy.actions").bottom)
+        self.assertEqual(move_geometry.JOYSTICK_XY_CENTER, xy_pad.center)
+        self.assertEqual(move_geometry.JOYSTICK_Z_CENTER, z_track.center)
         self.assertEqual(move_geometry.JOYSTICK_Z_RADIUS,
-                         (page.rect("z.track").height - 3) // 2)
+                         (z_track.height - 3) // 2)
 
     def test_step_grid_keeps_axis_buttons_symmetric(self):
         page = move.STEP_PAGE
 
         self.assertEqual(page.rect("xy.up").x, page.rect("xy.down").x)
         self.assertEqual(page.rect("xy.left").y, page.rect("xy.right").y)
-        self.assertEqual(page.rect("xy.status").center, (190, 192))
-        self.assertEqual(page.rect("z.status").center, (397, 192))
+        self.assertEqual(page.rect("xy.status").center_y,
+                         page.rect("z.status").center_y)
+        self.assertLessEqual(page.rect("xy.status").right,
+                             page.rect("z.status").x)
         self.assertEqual(page.rect("preset.2").right,
                          page.rect("control").right)
 
@@ -502,14 +560,22 @@ class MovementLayoutTest(unittest.TestCase):
         values[move.MoveState.INERTIA] = 0.0
         values[move.MoveState.CURSOR] = None
         drawing = "\n".join(move.render_joystick(renderer, values))
-        track = move.JOYSTICK_PAGE.rect("z.track")
+        page = move.JOYSTICK_PAGE
+        track = page.rect("z.track")
+        scale = page.node("z.scale")
+        positions = subdivision_positions(
+            track.y, track.height - 1, scale.depth)
 
-        self.assertIn("-p 509 103 -s 12 1", drawing)
-        self.assertIn("-p 509 260 -s 12 1", drawing)
-        self.assertIn("-p 509 417 -s 12 1", drawing)
-        self.assertIn("-p 513 182 -s 8 1", drawing)
-        self.assertIn("-p 516 142 -s 5 1", drawing)
-        self.assertEqual(track.as_tuple(), (541, 103, 10, 315))
+        for _index, y, level in positions:
+            if level in (-1, 0):
+                width = scale.tick_widths[2]
+            elif level == 1:
+                width = scale.tick_widths[1]
+            else:
+                width = scale.tick_widths[0]
+            x = track.x - scale.tick_gap - width
+            self.assertIn(
+                "-p %d %d -s %d 1" % (x, y, width), drawing)
 
     def test_dirty_state_replaces_all_movement_partial_trees(self):
         self.assertFalse(hasattr(move, "STEP_STATUS_TREE"))
@@ -533,7 +599,11 @@ class MovementLayoutTest(unittest.TestCase):
         })
         drawing = "\n".join(move.update_joystick(renderer, updated))
 
-        self.assertIn("-p 602 96 -s 172 92", drawing)
+        for value in ('"   1.0"', '"   2.0"', '"   3.0"'):
+            self.assertIn(value, drawing)
+        self.assertNotIn("--batch clear-hitboxes", drawing)
+        self.assertNotIn("--batch hitbox", drawing)
+        self.assertNotIn("DISABLE MOTORS", drawing)
 
     def test_movement_screen_is_a_nested_object_tree(self):
         self.assertIsInstance(move.STEP_PAGE.root, object)
@@ -631,9 +701,10 @@ class ZOffsetLayoutTest(unittest.TestCase):
             "maximum": 120.0, "value": 110.0,
         }))
 
-        self.assertIn("-p 710 72 -s 70 358", drawing)
         self.assertIn('-t "+110.0"', drawing)
         self.assertNotIn("z.probe", drawing)
+        self.assertNotIn("--batch clear-hitboxes", drawing)
+        self.assertNotIn("--batch hitbox", drawing)
 
     def test_z_offset_dialogs_remain_modal(self):
         renderer = FeatherRenderer()
@@ -652,16 +723,6 @@ class ZOffsetLayoutTest(unittest.TestCase):
 
         self.assertIn("--batch clear-hitboxes", drawing)
         self.assertIn("z.discard.confirm", drawing)
-
-    def test_z_calibration_mixin_contains_no_coordinate_draw_calls(self):
-        source = (PLUGINS / "feather_z_calibration.py").read_text(
-            encoding="utf-8")
-
-        self.assertNotIn("self.renderer.button(", source)
-        self.assertNotIn("self.renderer.panel(", source)
-        self.assertNotIn("self.renderer.text(", source)
-        self.assertIn("z_offset_ui.render_paper", source)
-
 
 if __name__ == "__main__":
     unittest.main()

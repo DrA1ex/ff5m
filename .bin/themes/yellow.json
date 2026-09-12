@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "copyright": "Copyright (C) 2026, Alexander K <https://github.com/drA1ex>",
+  "license": "GNU GPLv3",
+  "name": "YELLOW",
+  "description": "Hazard yellow and orange on black with emergency red glitches",
+  "colors": {
+    "background": "080700",
+    "text": "ffe600",
+    "text_highlight": "fffde8",
+    "accent": "ff9f1c",
+    "wire": "fff8cc",
+    "shadow": "514900",
+    "beam": "fffde8",
+    "glitch_primary": "ffe600",
+    "glitch_secondary": "ff3b30",
+    "glitch_cut": "030300",
+    "subtitle": "fff8cc",
+    "debug": "8a8150",
+    "info": "fff8cc",
+    "warn": "ffd166",
+    "error": "ff3b30",
+    "uptime": "ff9f1c"
+  }
+}

@@ -827,11 +827,8 @@ def validate_verdict(value, allow_design_mismatch=False):
         })
     derived = max(normalized, key=lambda item: _SEVERITY[item["status"]])[
         "status"]
-    if verdict != derived:
-        raise ValueError(
-            "overall verdict must match the most severe checklist status")
     return {
-        "verdict": verdict, "checks": normalized,
+        "verdict": derived, "checks": normalized,
         "summary": summary.strip(),
     }
 

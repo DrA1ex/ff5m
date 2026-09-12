@@ -11,7 +11,10 @@ from .theme import ThemeColor, ThemeRole
 from .actions import Action, action_wire_id
 from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
-from .layout import CreationContract, Node, Rect, subdivision_positions
+from .layout import (
+    CreationContract, CreationIdentityContract, CreationSourceContract, Node, Rect,
+    subdivision_positions,
+)
 from .numeric_input import NumericInputSpec
 from .properties import (
     CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy, SourceSpec,
@@ -23,7 +26,8 @@ def _property(name, runtime_type=object, default=None, kind="auto",
               label=None, group="Component", choices=(), catalog=None,
               minimum=None, maximum=None, nullable=False, bindings=("direct",),
               invalidation=Invalidation.PAINT, live=True, source=None,
-              storage="attribute", source_index=None, runtime_name=None,
+              storage="attribute", source_position=None, source_index=None,
+              runtime_name=None,
               runtime_index=None, rewrite=True,
               maximum_items=None, **metadata):
     policy = (RewritePolicy.LITERAL_OR_BINDING if rewrite
@@ -38,7 +42,8 @@ def _property(name, runtime_type=object, default=None, kind="auto",
             group=group, choices=choices, catalog=catalog, **metadata),
         bindings=bindings, invalidation=invalidation, live=live,
         source=SourceSpec(
-            name=source or name, index=source_index, storage=storage,
+            name=source or name, position=source_position,
+            index=source_index, storage=storage,
             runtime_name=runtime_name, runtime_index=runtime_index,
             policy=policy),
     )
@@ -56,7 +61,7 @@ def _number(name, default=0, integer=True, **kwargs):
 
 def _color(name, default=ThemeColor.PRIMARY, **kwargs):
     return _property(
-        name, (ThemeColor, ThemeRole), default, kind="theme_color",
+        name, (ThemeColor, ThemeRole, str), default, kind="theme_color",
         catalog="theme_tokens", **kwargs)
 
 
@@ -221,7 +226,64 @@ class Button(Component):
             resolve(self.label, state), **kwargs)
 
 
+class ArrowButton(Component):
+    """Theme-aware vertical paging button rendered as geometry."""
+
+    covers_bounds = True
+    property_schema = property_schema(
+        _property(
+            "action", Action, None, kind="semantic_action",
+            group="Behavior", bindings=(), live=False),
+        _select("direction", ("up", "down"), "up", group="Content"),
+        _select(
+            "state", ("enabled", "disabled", "busy"), "enabled",
+            group="Behavior"))
+
+    def __init__(self, action, direction="up", state="enabled", key=None):
+        super().__init__(key=key)
+        if not isinstance(action, Action):
+            raise TypeError("ArrowButton action must be a semantic Action")
+        if direction not in ("up", "down"):
+            raise ValueError("ArrowButton direction must be 'up' or 'down'")
+        self.action = action
+        self.direction = direction
+        self.state = state
+
+    def draw(self, renderer, state, bounds):
+        return renderer.arrow_button(
+            resolve(self.action, state), *bounds,
+            direction=resolve(self.direction, state),
+            state=resolve(self.state, state))
+
+
+class ToggleSwitch(Component):
+    """Rectangular boolean switch with renderer-owned hitbox and animation."""
+
+    covers_bounds = True
+    property_schema = property_schema(
+        _property(
+            "action", Action, None, kind="semantic_action",
+            group="Behavior", bindings=(), live=False),
+        _property("active", bool, False, kind="checkbox", group="Behavior"),
+        _property("enabled", bool, True, kind="checkbox", group="Behavior"))
+
+    def __init__(self, action, active=False, enabled=True, key=None):
+        super().__init__(key=key)
+        if not isinstance(action, Action):
+            raise TypeError("ToggleSwitch action must be a semantic Action")
+        self.action = action
+        self.active = active
+        self.enabled = enabled
+
+    def draw(self, renderer, state, bounds):
+        return renderer.toggle(
+            resolve(self.action, state), *bounds,
+            active=resolve(self.active, state),
+            enabled=resolve(self.enabled, state))
+
+
 class Hitbox(Component):
+    canvas_selectable = False
     property_schema = property_schema(
         _property(
             "action", Action, None, kind="semantic_action",
@@ -293,11 +355,7 @@ class Text(Component):
         elif name == "text_color" and self.color is None:
             self.color = value
 
-    def preferred_extent(self, direction, cross_extent=None):
-        if direction != "vertical" or not self.auto_height:
-            return None
-        if not isinstance(self.value, str):
-            return None
+    def _content_height(self, cross_extent=None, dynamic_minimum=False):
         metrics = get_font_metrics()
         font = self.font if isinstance(self.font, str) else "JetBrainsMono 8pt"
         metric = metrics.metric(font)
@@ -306,17 +364,36 @@ class Text(Component):
         if wrap:
             width = self.kwargs.get("max_width")
             if width is None:
-                width = cross_extent
-            if width is None:
+                width = (self.layout_options.width
+                         if self.layout_options.width is not None
+                         else cross_extent)
+            if width is None and not dynamic_minimum:
                 return None
-            width = max(1, int(width) - self.layout_options.padding.horizontal)
+            if width is not None:
+                width = max(1, int(width) - self.layout_options.padding.horizontal)
         maximum = self.kwargs.get("max_height")
-        text_height = metrics.text_height(
-            self.value, font, max_width=width, wrap=wrap)
+        if isinstance(self.value, (str, int, float)):
+            text_height = metrics.text_height(
+                self.value, font, max_width=width, wrap=wrap and width is not None)
+        elif dynamic_minimum:
+            text_height = metric.glyph_height
+        else:
+            return None
         height = text_height + self.layout_options.padding.vertical
         if maximum is not None:
             height = min(height, int(maximum))
         return max(metric.glyph_height, height)
+
+    def preferred_extent(self, direction, cross_extent=None):
+        wrap = bool(self.kwargs.get("wrap", False))
+        if direction != "vertical" or not (self.auto_height or wrap):
+            return None
+        return self._content_height(cross_extent)
+
+    def content_extent(self, direction, cross_extent=None):
+        if direction != "vertical":
+            return None
+        return self._content_height(cross_extent, dynamic_minimum=True)
 
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)
@@ -851,6 +928,13 @@ def _creation_field(spec, required=False):
         invalidation=spec.invalidation, live=spec.live, source=spec.source)
 
 
+def _publish_property_source_positions(component, **positions):
+    """Declare the positional constructor grammar owned by the framework."""
+    specs = {item.name: item for item in component.property_schema}
+    for name, position in positions.items():
+        specs[name].source.position = int(position)
+
+
 def _action_creation(name="action", required=True):
     return CreationFieldSpec(
         name, Action, required=required, default=None,
@@ -859,22 +943,79 @@ def _action_creation(name="action", required=True):
             catalog="actions"), bindings=(), nullable=not required)
 
 
-def _publish_creation(component, names=(), extra=(), category="Components"):
+def _publish_creation(component, names=(), extra=(), category="Components",
+                      required=()):
     specs = {item.name: item for item in component.property_schema}
+    required = set(str(value) for value in required)
     component.creation_contract = CreationContract(
         category, fields=tuple(extra) + tuple(
-            _creation_field(specs[name]) for name in names))
+            _creation_field(specs[name], required=name in required)
+            for name in names),
+        source=CreationSourceContract(
+            "core.keyword_call", identity=CreationIdentityContract()))
 
 
-_publish_creation(Fill, ("color",))
+_publish_property_source_positions(Fill, color=0)
+_publish_property_source_positions(Stroke, color=0, line_width=1)
+_publish_property_source_positions(Panel, border=0, background=1, line_width=2)
+_publish_property_source_positions(Section, title=0, border=1)
+_publish_property_source_positions(Button, action=0, label=1, state=2)
+_publish_property_source_positions(
+    ArrowButton, action=0, direction=1, state=2)
+_publish_property_source_positions(
+    ToggleSwitch, action=0, active=1, enabled=2)
+_publish_property_source_positions(Hitbox, action=0, continuous=1)
+_publish_property_source_positions(
+    Text, value=0, color=1, font=2, horizontal=3, vertical=4, auto_height=6)
+_publish_property_source_positions(Metric, label=0, value=1, unit=2)
+_publish_property_source_positions(
+    NumericKeypad, title=0, value=1, subtitle=3, mode=4, minimum=5,
+    maximum=6, max_length=7, fraction_digits=8, confirm_label=9,
+    border=10, background=11, title_color=12, subtitle_color=13,
+    input_border=14, value_color=15)
+_publish_property_source_positions(DotGrid, columns=0, rows=1, color=2)
+_publish_property_source_positions(CornerMarks, length=0, color=1)
+_publish_property_source_positions(Crosshair, color=0)
+_publish_property_source_positions(
+    JoystickKnob, axis=0, edge_padding=4, size=5, color=6,
+    background=7, dirty_margin=8)
+_publish_property_source_positions(
+    VerticalScale, tick_gap=0, tick_width_small=1, tick_width_medium=1,
+    tick_width_large=1, depth=2, tick_color=3, center_color=4)
+_publish_property_source_positions(
+    VerticalGauge, title=1, unavailable_title=2, unavailable_value=3,
+    danger_above=4)
+_publish_property_source_positions(
+    Dialog, title=0, lines=1, buttons=2, tone=3, modal=4)
+
+
+_publish_creation(Fill, ("color",), required=("color",))
 _publish_creation(Stroke, ("color", "line_width"))
 _publish_creation(Panel, ("border", "background", "line_width"))
 _publish_creation(Section, ("title", "border"))
-_publish_creation(Button, ("label", "state", "font"), (_action_creation(),))
+_publish_creation(Button, (
+    "label", "subtitle", "font", "state", "accent", "button_layout"),
+    (_action_creation(),))
+_publish_creation(ArrowButton, ("direction", "state"), (_action_creation(),))
+_publish_creation(ToggleSwitch, ("active", "enabled"), (_action_creation(),))
 _publish_creation(Hitbox, ("continuous",), (_action_creation(),))
 _publish_creation(Text, (
-    "value", "font", "color", "horizontal", "vertical", "auto_height"))
+    "value", "font", "color", "horizontal", "vertical", "max_width",
+    "max_height", "wrap", "truncate", "auto_height"))
 _publish_creation(Metric, ("label", "value", "unit"))
+_publish_creation(NumericKeypad, (
+    "title", "value", "subtitle", "mode", "minimum", "maximum",
+    "max_length", "fraction_digits", "confirm_label", "border",
+    "background", "title_color", "subtitle_color", "input_border",
+    "value_color"), (
+        CreationFieldSpec(
+            "actions", dict, required=True,
+            editor=EditorSpec(
+                "semantic_action_map", label="Key actions", group="Behavior",
+                keys=tuple("0123456789") + (
+                    "decimal", "backspace", "confirm")),
+            bindings=()),
+    ), required=("title", "value"))
 _publish_creation(DotGrid, ("columns", "rows", "color"))
 _publish_creation(CornerMarks, ("length", "color"))
 _publish_creation(Crosshair, ("color",))

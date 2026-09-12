@@ -17,10 +17,11 @@ sys.path.insert(0, str(PLUGINS))
 
 from ui import (  # noqa: E402
     Back, Button, Command, CommandKey, Dialog, Hitbox, HomingHint,
-    Increment, JoystickKnob, Navigate, PageKey, PageTree, Rect, Replace,
+    EditText, Increment, JoystickKnob, Navigate, PageKey, PageTree, Rect, Replace,
     Router, SetValue, StateKey, Toggle, action_metadata,
-    reflect_page, state,
+    state,
 )
+from ui.reflection import reflect_page  # noqa: E402
 
 
 class TestPage(PageKey):
@@ -32,6 +33,7 @@ class TestState(StateKey):
     COUNT = state(int, default=1, minimum=0, maximum=3)
     FLAG = state(bool, default=False)
     MODE = state(str, default="one", choices=("one", "two", "three"))
+    TEXT = state(str, default="")
     READ_ONLY = state(str, default="fixed", mutable=False)
 
 
@@ -68,7 +70,8 @@ HOME_COMMAND = Command(
 def page(page_key, action):
     return PageTree(
         Button(action, "ACTION"), Rect(0, 0, 100, 40), page_id=page_key,
-        state_schema=(TestState.COUNT, TestState.FLAG, TestState.MODE))
+        state_schema=(
+            TestState.COUNT, TestState.FLAG, TestState.MODE, TestState.TEXT))
 
 
 class SemanticActionContractTest(unittest.TestCase):
@@ -93,6 +96,12 @@ class SemanticActionContractTest(unittest.TestCase):
             Increment(TestState.READ_ONLY)
         with self.assertRaisesRegex(TypeError, "boolean"):
             Toggle(TestState.COUNT)
+        with self.assertRaisesRegex(TypeError, "mutable string"):
+            EditText(TestState.COUNT)
+        with self.assertRaisesRegex(TypeError, "mutable string"):
+            EditText(TestState.READ_ONLY)
+        with self.assertRaisesRegex(ValueError, "Unknown EditText operation"):
+            EditText(TestState.TEXT, operation="replace")
 
     def test_command_metadata_is_portable_and_typed(self):
         metadata = action_metadata(HOME_COMMAND)
@@ -166,6 +175,36 @@ class RouterTest(unittest.TestCase):
         result = self.router.dispatch(
             Increment(TestState.MODE, 5, wrap=True), result.state)
         self.assertEqual(result.state[TestState.MODE], "one")
+
+        original = result.state
+        result = self.router.dispatch(EditText(TestState.TEXT, text="98"), original)
+        result = self.router.dispatch(
+            EditText(TestState.TEXT, operation="backspace"), result.state)
+        self.assertEqual(result.state[TestState.TEXT], "9")
+        self.assertEqual(original[TestState.TEXT], "")
+        result = self.router.dispatch(
+            EditText(TestState.TEXT, operation="clear"), result.state)
+        self.assertEqual(result.state[TestState.TEXT], "")
+
+    def test_command_returns_runtime_effect_and_applies_portable_state_effect(self):
+        command = Command(
+            TestCommand.CUSTOM, CustomRequest(1),
+            state_effect=Increment(TestState.COUNT, 5))
+        original = self.home.initial_state()
+
+        result = self.router.dispatch(command, original)
+
+        self.assertIs(result.command, command)
+        self.assertEqual(result.state[TestState.COUNT], 3)
+        self.assertEqual(original[TestState.COUNT], 1)
+        self.assertEqual(command.as_dict()["state_effect"], {
+            "kind": "increment",
+            "key": TestState.COUNT.symbol,
+            "amount": 5,
+            "wrap": False,
+        })
+        with self.assertRaisesRegex(TypeError, "portable state action"):
+            Command(TestCommand.CUSTOM, state_effect=Back())
 
     def test_commands_are_returned_without_fabricated_behavior(self):
         result = self.router.dispatch(HOME_COMMAND, self.home.initial_state())
