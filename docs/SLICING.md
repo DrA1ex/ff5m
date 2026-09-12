@@ -37,7 +37,9 @@ END_PRINT
 > `X100 Y100` to a machine move near `X210 Y210`, which Klipper rejects as out
 > of range. Files sliced with the old profile must be re-sliced after both
 > settings are corrected; editing the profile does not change G-code files
-> that were already generated.
+> that were already generated. Forge-X 1.4.2 blocks `G92` commands that reset
+> X, Y, or Z so a bad file stops before the shifted move; normal extruder-only
+> resets such as `G92 E0` remain supported.
 
 ### Configuring Moonraker / Klipper connection
 

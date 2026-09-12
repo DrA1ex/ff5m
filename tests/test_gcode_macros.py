@@ -558,6 +558,51 @@ class WorkflowMacroTest(unittest.TestCase):
                     'RESPOND PREFIX="info" MSG="All axes already parked."',
                     result.commands)
 
+    def test_g92_allows_extruder_reset_but_rejects_xyz_rebasing(self):
+        extruder = render_macro(
+            BASE, "G92",
+            printer={"virtual_sdcard": {"is_active": False}},
+            params={"E": 0}, rawparams="E0")
+        self.assertEqual(extruder.commands, ("G92.1 E0",))
+
+        unsafe_cases = (
+            ({"X": 0}, "X0"),
+            ({"Y": 0}, "Y0"),
+            ({"Z": 0}, "Z0"),
+            ({"X": 0, "Y": 0, "Z": 0}, "X0 Y0 Z0"),
+            ({}, ""),
+        )
+        for params, rawparams in unsafe_cases:
+            with self.subTest(rawparams=rawparams or "<empty>"):
+                with self.assertRaisesRegex(MacroActionError, "Unsafe G92"):
+                    render_macro(
+                        BASE, "G92",
+                        printer={"virtual_sdcard": {"is_active": False}},
+                        params=params, rawparams=rawparams)
+
+    def test_g92_aborts_an_active_file_before_unsafe_xyz_rebasing(self):
+        result = render_macro(
+            BASE, "G92",
+            printer={"virtual_sdcard": {"is_active": True}},
+            params={"X": 0, "Y": 0, "Z": 0},
+            rawparams="X0 Y0 Z0")
+
+        self.assertEqual(result.commands, (
+            '_ABORT_UNSAFE_G92 MSG="Unsafe G92 XYZ origin reset blocked. '
+            'Forge-X uses centered X/Y coordinates; remove G92 X/Y/Z and '
+            're-slice the file."',
+        ))
+
+        abort = render_macro(
+            BASE, "_ABORT_UNSAFE_G92",
+            params={"MSG": "Unsafe G92 XYZ origin reset blocked."})
+        self.assertEqual(abort.commands, (
+            "_STOP",
+            "CANCEL_PRINT_BASE",
+            'RESPOND PREFIX="!!" MSG="Unsafe G92 XYZ origin reset blocked."',
+            "_RAISE_ERROR",
+        ))
+
     def test_nozzle_cleaning_rejects_corrupted_saved_z_offset(self):
         cleaning_macro = macro_status(
             BASE, "_CLEAR_NOZZLE", left_pos_probe=0.2,
