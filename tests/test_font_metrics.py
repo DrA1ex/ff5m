@@ -80,9 +80,10 @@ class FontManifestTest(unittest.TestCase):
         self.assertTrue(loaded.metric("JetBrainsMono 12pt").monospaced)
         self.assertEqual(
             loaded.normalize_font("Roboto 16pt"),
-            "JetBrainsMono 16pt")
+            "Roboto 16pt")
         proportional = loaded.normalize_font(
             "Roboto 16pt", allow_proportional=True)
+        self.assertEqual(proportional, "Roboto 16pt")
         self.assertFalse(loaded.fonts[proportional].monospaced)
 
 

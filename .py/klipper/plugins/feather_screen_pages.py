@@ -402,9 +402,9 @@ class FeatherPagesMixin(FeatherNetworkPagesMixin):
         self._run_script("\n".join((
             'SDCARD_PRINT_FILE FILENAME="%s"' % escaped,
             "SET_GCODE_VARIABLE MACRO=START_PRINT "
-            "VARIABLE=feather_force_leveling VALUE=%s" % force_leveling,
+            "VARIABLE=one_print_force_leveling VALUE=%s" % force_leveling,
             "SET_GCODE_VARIABLE MACRO=START_PRINT "
-            "VARIABLE=feather_mesh_name VALUE=%s" % mesh_name,
+            "VARIABLE=one_print_mesh_name VALUE=%s" % mesh_name,
         )))
         self.file_confirm_rebuild_mesh = False
         self.file_confirm_auto_mesh = False

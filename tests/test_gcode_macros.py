@@ -177,7 +177,7 @@ def run_start_print(**state):
 
 def run_headless_start_print(
         params, *, profiles=("auto", "PLA_profile"), profile_name="auto",
-        feather_force_leveling=None, feather_mesh_name=None, **standing):
+        one_print_force_leveling=None, one_print_mesh_name=None, **standing):
     """Execute the headless START_PRINT wrapper through _START_PRINT.
 
     The wrapper stages the slicer request with SET_GCODE_VARIABLE
@@ -189,8 +189,8 @@ def run_headless_start_print(
     """
     wrapper_status = macro_status(
         HEADLESS, "START_PRINT", preparation_done=True,
-        feather_force_leveling=feather_force_leveling,
-        feather_mesh_name=feather_mesh_name)
+        one_print_force_leveling=one_print_force_leveling,
+        one_print_mesh_name=one_print_mesh_name)
     wrapper = render_macro(
         HEADLESS, "START_PRINT",
         printer={
@@ -315,8 +315,8 @@ class WorkflowMacroTest(unittest.TestCase):
 
     def test_feather_start_options_override_leveling_for_one_print(self):
         start = macro_status(
-            HEADLESS, "START_PRINT", feather_force_leveling=True,
-            feather_mesh_name=None)
+            HEADLESS, "START_PRINT", one_print_force_leveling=True,
+            one_print_mesh_name=None)
         temporary = render_macro(HEADLESS, "START_PRINT", printer={
             "gcode_macro START_PRINT": start,
             "mod_params": {"variables": {"filament_switch_sensor": False}},
@@ -334,7 +334,7 @@ class WorkflowMacroTest(unittest.TestCase):
             "SET_GCODE_VARIABLE MACRO=_START_PRINT "
             "VARIABLE=zmesh VALUE='\"\"'", temporary.commands)
 
-        start["feather_mesh_name"] = "auto"
+        start["one_print_mesh_name"] = "auto"
         persistent = render_macro(HEADLESS, "START_PRINT", printer={
             "gcode_macro START_PRINT": start,
             "mod_params": {"variables": {"filament_switch_sensor": False}},
@@ -480,8 +480,8 @@ class WorkflowMacroTest(unittest.TestCase):
         })
 
         for variable, value in (
-                ("feather_force_leveling", "None"),
-                ("feather_mesh_name", "None")):
+                ("one_print_force_leveling", "None"),
+                ("one_print_mesh_name", "None")):
             self.assertIn(
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
                 "VARIABLE=%s VALUE=%s" % (variable, value),
@@ -1593,7 +1593,7 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
     def test_feather_rebuild_override_drives_the_staged_request(self):
         wrapper, full = run_headless_start_print(
             {"EXTRUDER_TEMP": 230, "BED_TEMP": 65, "SKIP_LEVELING": 1},
-            feather_force_leveling=True, feather_mesh_name=None)
+            one_print_force_leveling=True, one_print_mesh_name=None)
 
         # The one-print Feather override clears the slicer's SKIP_LEVELING
         # and requests an unnamed full rebuild, preloaded auto included.
@@ -1615,7 +1615,7 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
 
         _, named = run_headless_start_print(
             {"EXTRUDER_TEMP": 230, "BED_TEMP": 65},
-            feather_force_leveling=True, feather_mesh_name="auto")
+            one_print_force_leveling=True, one_print_mesh_name="auto")
         self.assertEqual(mesh_actions(named), (
             "BED_MESH_PROFILE LOAD=auto",
             'BED_MESH_CALIBRATE PROFILE="auto"',

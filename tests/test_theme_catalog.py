@@ -104,15 +104,18 @@ class ThemeResolutionTest(unittest.TestCase):
         self.assertNotIn("abcdef", disabled)
         self.assertNotIn("--id ", disabled)
 
-    def test_renderer_requires_typed_tokens(self):
+    def test_renderer_requires_typed_tokens_but_accepts_custom_hex(self):
         renderer = ui.FeatherRenderer()
         self.assertRegex(renderer.color(ui.ThemeColor.PRIMARY), _HEX)
         self.assertRegex(
             renderer.color(ui.ThemeRole.TEMPERATURE_BED), _HEX)
-        with self.assertRaises(TypeError):
+        self.assertEqual(renderer.color("35d9e6"), "35d9e6")
+        with self.assertRaises(ValueError):
             renderer.color("primary")
+        with self.assertRaises(ValueError):
+            renderer.color("not-a-theme-token")
         with self.assertRaises(TypeError):
-            renderer.color("35d9e6")
+            renderer.color(object())
 
 
 class ThemeCatalogTest(unittest.TestCase):

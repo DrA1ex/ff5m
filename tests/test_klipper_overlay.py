@@ -5,12 +5,16 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import ast
+import importlib.util
 import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).parents[1]
