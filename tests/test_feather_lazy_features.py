@@ -346,6 +346,27 @@ class FeatureHostProxyTest(unittest.TestCase):
         self.assertEqual(feature.calibration_seen_phases, set())
         self.assertFalse(hasattr(host, "calibration_progress_key"))
 
+    def test_screw_result_actions_resolve_through_the_component_page(self):
+        from feather.features.calibration import CalibrationFeature
+        from ff5m_ui.calibration_screws import actions as calibration_screws
+
+        host = types.SimpleNamespace(heating_materials=())
+        feature = CalibrationFeature(host)
+        feature.calibration_kind = "screws"
+        feature.calibration_results = [
+            {"name": "rear left screw", "direction": "BASE", "turns": "-"},
+        ]
+        handled = []
+        feature._handle_calibration_action = handled.append
+
+        action = feature.resolve_semantic_action(
+            FEATHER.ScreenPage.CALIBRATION_RESULT, "cal.repeat")
+
+        self.assertIs(action, calibration_screws.REPEAT)
+        self.assertTrue(feature.handle_semantic_action(
+            FEATHER.ScreenPage.CALIBRATION_RESULT, action))
+        self.assertEqual(handled, ["cal.repeat"])
+
     def test_shared_controller_fields_are_explicit_properties(self):
         host = types.SimpleNamespace(page=1, previous_page=0)
         proxy = FeatureHostProxy(host)

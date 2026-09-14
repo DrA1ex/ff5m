@@ -159,6 +159,61 @@ product controllers. Both `UI` and
 record the renderer's passive `semantic_page_id`; imperative legacy screens
 record no semantic ID.
 
+The bed-screw result page is covered in three distinct ways. Automatic page
+discovery renders its Page State example in both Designer and `COMPONENT`.
+The checked-in `calibration-screws-adjustments` scenario renders one reference
+corner and three adjustments in both paths, protecting the physical
+front/rear mapping, side callouts, below-bed nuts, turn arrows, legend, and
+Repeat/Done controls. `SUITE=SCREWS` separately captures the result produced by
+a real screw calibration; it is a physical test and is not invoked by the
+automatic visual regression.
+
+The screw page opens with four example corners in Page State. Each corner has
+separate `*_NAME`, `*_DIRECTION` and `*_MINUTES` fields. The ordinary typed
+state contract supplies text, choice and numeric controls in Designer; no
+page-specific editor is required. Direction choices are empty (no result),
+`BASE`, `CW` and `CCW`. Minutes are nonnegative integers: 75 displays as
+`01:15`. Preview overrides can change each field independently; reset them to
+restore the example. Product `render()` converts Klipper strings once and
+replaces all twelve fields, so empty or partial results cannot retain examples.
+Malformed turn strings suppress the adjustment rather than display a false zero.
+
+Keep screw-result labels and legend in the ordinary `Text`/`Row`/`Column`
+tree, with `StateCase` branches for the reference and adjustment labels.
+Do not construct text trees inside a custom component's `draw()`; Designer
+cannot select or source-edit those hidden children. Each corner has separate
+text declarations so editing one corner does not change all four. The module-level
+tree in `ff5m_ui/calibration_screws/page.py` exposes source-editable constructors
+without helper factories or artificial zero offsets. State conversion, actions,
+and custom bed/hardware drawing live in adjacent modules. Free offsets apply to
+Overlay children; use container alignment, spacing, and margins in rows/columns.
+
+To exercise actual Designer Review/Apply and reopening, run
+`FEATHER_DESIGNER_ROOT=/path/to/feather-ui-designer .venv/bin/python -m pytest -q tests/test_designer_screw_authoring.py`.
+This optional integration test copies the plugin sources into a temporary project,
+adds/removes an instruction offset, and edits one legend label independently.
+It never edits the checkout or contacts the printer.
+
+Designer capture does not prove that a frame can enter the printer's bounded
+render queue. For command-heavy illustrations, also submit the complete frame
+(including its header and controls) through the real `FeatherRenderer.send()`
+in a local test and assert acceptance. The screw-result test covers this with
+and without a reference corner. A rejected oversized frame leaves the previous
+screen visible even though the calibration itself has finished.
+
+The screw page's schematic nut and clockwise/counterclockwise arrows
+are small raw FXI1 resources in `ff5m_ui/assets/calibration/`. Regenerate them locally with
+`.venv/bin/python -m tests.visual_checks.generate_screw_icons`. The generator
+owns the geometry and precomputes horizontal reflection. Runtime caches only
+the three immutable source blobs and replaces their palette before sending
+them with the existing binary `image` command. Nut palette slots are
+transparent/bright/dim/panel;
+arrow slots are transparent/current accent.
+No decoded image or per-theme cache is retained in Python. Designer decodes
+the same payload through its generic image renderer. Visual review must
+include a theme change, BASE without an arrow, and both turn directions.
+Both host and printer UI fingerprints include `.fxi1` resources.
+
 The harness validates live page generations and hitboxes before synthetic taps,
 blocks physical non-emergency input plus every persistent Save action during a
 run, and stops later hardware phases on the first unsafe failure. Before a new
@@ -471,7 +526,7 @@ Connection settings are host-local:
 A safe invocation shape, intentionally omitting endpoint and credentials, is:
 
 ```bash
-python3 -m tests.visual_checks.run \
+.venv/bin/python -m tests.visual_checks.run \
   /path/to/saved-ui-test-artifacts \
   --enable \
   --model loaded-vision-model \
@@ -504,10 +559,11 @@ validates the FF5M project with Feather UI Designer, automatically renders
 every discovered module-level `DeclarativePage`, and creates a default case
 for every discovered stable `PageKey`. The checked-in `scenarios.json` adds
 only meaningful non-default typed states; it is not a page registry.
-The current automatic/default plus explicit matrix contains 23 cases over
-seven discovered pages, including unhomed/homed movement, joystick feedback,
-fine/coarse steps, paper-test positioning/probing/ready states, Safe Z
-probing/result, measured summary results, warnings, and dialogs. Runtime
+The current automatic/default plus explicit matrix contains 28 cases over
+11 discovered pages, including the bed-screw result with all four corners,
+unhomed/homed movement, joystick feedback, fine/coarse steps, paper-test
+positioning/probing/ready states, Safe Z probing/result, measured summary
+results, warnings, and dialogs. Runtime
 read-only values are installed into an isolated Designer-host checkpoint for
 rendering; the product state declarations and controllers are not changed.
 
@@ -529,6 +585,12 @@ requested typed state. It then verifies every requested value against the
 rendered scene metadata. A silently ignored or normalized-away state fails
 before capture and before any model request.
 
+For the bed-screw result, confirm that the default and
+`calibration-screws-adjustments` cases are both present. In parity mode, the
+same explicit state must also appear as a `COMPONENT` capture and as a
+Designer/real-renderer pair. Missing textual expectations stop the run with
+`needs_baseline`; do not accept coverage based only on the default example.
+
 In `hybrid` and `parity`, the runner reads the active theme from the downloaded
 printer artifact and uses that exact theme for Designer capture. UI and
 COMPONENT artifacts must report the same theme. `--theme` remains an explicit
@@ -538,7 +600,7 @@ when no override is supplied.
 The default invocation shape is:
 
 ```bash
-python3 -m tests.visual_checks.regression \
+.venv/bin/python -m tests.visual_checks.regression \
   --mode hybrid \
   --designer-root /path/to/feather-ui-designer \
   --printer-host <printer-host> \
@@ -553,11 +615,18 @@ Start with the local-only Designer corpus. It does not contact the printer and
 is the normal first check after UI changes:
 
 ```bash
-python3 -m tests.visual_checks.regression \
+.venv/bin/python -m tests.visual_checks.regression \
   --mode designer \
   --designer-root /path/to/feather-ui-designer \
   --enable
 ```
+
+Before enabling model review, the same command without `--enable` is a quick
+deterministic coverage check. It still discovers every declarative page,
+applies all checked-in scenarios, renders the complete Designer corpus, and
+validates that every frame has a textual expectation. A successful run reports
+`disabled`; `needs_baseline` means a discovered default or explicit scenario
+is missing from `expectations.json`.
 
 The default local `.env` may provide the single selected model, base URL,
 timeout, and optional API key. Do not print, commit, or copy that file. An
@@ -703,7 +772,7 @@ Only one model is accepted in a run. To choose between local models, rerun the
 same saved corpus once per model, then compare reports without making requests:
 
 ```bash
-python3 -m tests.visual_checks.compare_reports \
+.venv/bin/python -m tests.visual_checks.compare_reports \
   /path/to/model-a/report.json \
   /path/to/model-b/report.json
 ```
@@ -719,7 +788,7 @@ each visual inference still uses the provider-neutral OpenAI-compatible
 pipeline:
 
 ```bash
-python3 -m tests.visual_checks.lmstudio_benchmark \
+.venv/bin/python -m tests.visual_checks.lmstudio_benchmark \
   --designer-root /path/to/feather-ui-designer \
   --printer-artifacts /path/to/saved-ui-artifacts \
   --printer-artifacts /path/to/saved-component-artifacts

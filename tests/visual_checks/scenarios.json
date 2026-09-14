@@ -136,6 +136,25 @@
       }
     },
     {
+      "id": "calibration-screws-adjustments",
+      "label": "Bed screw calibration / four-corner adjustments",
+      "page": "ui.pages.keys.AppPage.CALIBRATION_SCREWS_RESULT",
+      "state": {
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_LEFT_NAME": "FRONT LEFT",
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_LEFT_DIRECTION": "CW",
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_LEFT_MINUTES": 5,
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_RIGHT_NAME": "FRONT RIGHT",
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_RIGHT_DIRECTION": "CCW",
+        "ui.pages.calibration.screws.state.ScrewResultState.FRONT_RIGHT_MINUTES": 15,
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_LEFT_NAME": "REAR LEFT",
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_LEFT_DIRECTION": "BASE",
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_LEFT_MINUTES": 0,
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_RIGHT_NAME": "REAR RIGHT",
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_RIGHT_DIRECTION": "CCW",
+        "ui.pages.calibration.screws.state.ScrewResultState.REAR_RIGHT_MINUTES": 4
+      }
+    },
+    {
       "id": "z-summary-results",
       "label": "Z offset summary / measured results",
       "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",

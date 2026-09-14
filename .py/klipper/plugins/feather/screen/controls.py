@@ -37,6 +37,7 @@ from feather.materials import (
 home_ui = LazyModule("ff5m_ui.home.page")
 printing_ui = LazyModule("ff5m_ui.printing.runtime")
 z_offset_ui = LazyModule("ff5m_ui.z_offset.runtime")
+calibration_screws_ui = LazyModule("ff5m_ui.calibration_screws.runtime")
 SAFE_Z_ADJUST_STEP = 1.0
 JOG_STEP_MINIMUM = 0.1
 JOG_STEP_MAXIMUM = 100.0
@@ -1771,13 +1772,34 @@ class FeatherControlsMixin:
 
     @classmethod
     def parse_screw_result(cls, message):
-        match = cls.SCREW_RESULT.search(str(message).strip())
+        message = str(message).strip()
+        if message.startswith("//"):
+            message = message[2:].lstrip()
+        match = cls.SCREW_RESULT.search(message)
         if match:
             return {"name": match.group(1).strip(),
                     "direction": match.group(2).upper(), "turns": match.group(3)}
-        match = cls.SCREW_BASE.search(str(message).strip())
+        match = cls.SCREW_BASE.search(message)
         if match:
             return {"name": match.group(1).strip(), "direction": "BASE", "turns": "-"}
+        return None
+
+    def _screw_reference_name(self):
+        printer = getattr(self, "printer", None)
+        lookup = getattr(printer, "lookup_object", None)
+        if lookup is None:
+            return None
+        configfile = lookup("configfile", None)
+        if configfile is None:
+            return None
+        try:
+            status = configfile.get_status(0.)
+        except Exception:
+            return None
+        for source in ("settings", "config"):
+            section = status.get(source, {}).get("screws_tilt_adjust", {})
+            if section.get("screw1_name"):
+                return section["screw1_name"]
         return None
 
     @staticmethod
@@ -2106,13 +2128,11 @@ class FeatherControlsMixin:
                                    ThemeColor.DIM, "JetBrainsMono 8pt", "left", "middle"),
             ]
         elif self.calibration_kind == "screws" and self.calibration_results:
-            for index, result in enumerate(self.calibration_results[:5]):
-                commands.append(self.renderer.text(
-                    100, 75 + index * 48, result["name"], ThemeColor.BRIGHT, "Roboto 10pt"))
-                commands.append(self.renderer.text(
-                    700, 75 + index * 48, "%s %s" %
-                    (result["direction"], result["turns"]), ThemeColor.PRIMARY, "Roboto 10pt",
-                    "right"))
+            commands += calibration_screws_ui.render(
+                self.renderer, self.calibration_results,
+                self._screw_reference_name())
+            self.renderer.send(commands)
+            return
         else:
             commands.append(self.renderer.text(400, 150, "Calibration completed",
                                                ThemeColor.PRIMARY, "Roboto Bold 14pt", "center"))

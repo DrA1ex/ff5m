@@ -499,16 +499,23 @@ class WorkflowMacroTest(unittest.TestCase):
                 assert_order(self, result.commands, expected)
 
     def test_bed_screw_tune_selects_clean_or_cooldown_path(self):
-        printer = {"mod_params": {"variables": {
-            "clear_cooldown_temp": 150,
-        }}}
+        printer = {
+            "mod_params": {"variables": {
+                "clear_cooldown_temp": 150,
+            }},
+            "configfile": {"settings": {"screws_tilt_adjust": {
+                "screw1": [-91.5, 93.5],
+                "speed": 500,
+            }}},
+        }
         clean = render_macro(
             BASE, "BED_LEVEL_SCREWS_TUNE", printer=printer,
             params={"EXTRUDER_TEMP": 235, "BED_TEMP": 75, "CLEAN": 1})
         cooldown = render_macro(
             BASE, "BED_LEVEL_SCREWS_TUNE", printer=printer,
             params={"EXTRUDER_TEMP": 235, "BED_TEMP": 75, "CLEAN": 0})
-        probe = render_macro(BASE, "_BED_LEVEL_SCREWS_PROBE")
+        probe = render_macro(
+            BASE, "_BED_LEVEL_SCREWS_PROBE", printer=printer)
 
         self.assertIn(
             "CLEAR_NOZZLE EXTRUDER_TEMP=235.0 BED_TEMP=75.0",
@@ -520,8 +527,9 @@ class WorkflowMacroTest(unittest.TestCase):
             "_WAIT_TEMPERATURE CMD=M104 VALUE=150 BELOW=2 ABOVE=3",
             "_CONTEXT_STATE NAME=PROBING",
         ))
-        self.assertEqual(probe.commands[:2], (
-            "LOAD_CELL_TARE", "SCREWS_TILT_CALCULATE"))
+        assert_order(self, probe.commands, (
+            "LOAD_CELL_TARE", "SCREWS_TILT_CALCULATE",
+            "G0 X-91.5 Y93.5 F30000.0", "M400"))
 
     def test_workflow_macros_publish_their_owned_contexts(self):
         cases = (

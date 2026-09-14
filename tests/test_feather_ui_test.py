@@ -1028,6 +1028,8 @@ class RunnerContractTest(unittest.TestCase):
             len(captures), len(feature.scenarios._component_pages()) + 1)
         self.assertEqual(len(set(captures)), len(captures))
         self.assertIn("component-default-home", captures)
+        self.assertIn(
+            "component-default-calibration-screws-result", captures)
         self.assertIn("component-default-printing", captures)
         self.assertIn("component-default-render-benchmark", captures)
         self.assertTrue(all(
@@ -1097,6 +1099,24 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(
             UI_TEST.UITestRun._ui_fingerprint(),
             HYBRID.ui_fingerprint(ROOT))
+
+    def test_indexed_asset_changes_invalidate_both_ui_fingerprints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            plugins = root / ".py/klipper/plugins"
+            for package in HYBRID.UI_FINGERPRINT_PACKAGES:
+                (plugins / package).mkdir(parents=True)
+            resource = plugins / "ff5m_ui/icon.fxi1"
+            with mock.patch.object(UI_TEST, "__file__", str(plugins / "feather_ui_test/runner.py")):
+                before = HYBRID.ui_fingerprint(root)
+                resource.write_bytes(b"first image")
+                added = HYBRID.ui_fingerprint(root)
+                self.assertNotEqual(before, added)
+                self.assertEqual(UI_TEST.UITestRun._ui_fingerprint(), added)
+                resource.write_bytes(b"changed image")
+                changed = HYBRID.ui_fingerprint(root)
+                self.assertNotEqual(added, changed)
+                self.assertEqual(UI_TEST.UITestRun._ui_fingerprint(), changed)
 
     def test_ui_filament_back_preserves_target_before_leaving_materials(self):
         feature = UI_TEST.UITestRun(object())

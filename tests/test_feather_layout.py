@@ -28,7 +28,9 @@ from ff5m_ui.filament import runtime as filament  # noqa: E402
 from ff5m_ui.printing import runtime as printing  # noqa: E402
 from ff5m_ui.printing.page import create_page as create_printing_page  # noqa: E402
 from ff5m_ui.z_offset import runtime as z_offset  # noqa: E402
+from ff5m_ui.calibration_screws import runtime as screw_result  # noqa: E402
 from ui.reflection import reflect_page  # noqa: E402
+from tests.feather_render_test_helper import RenderFrame  # noqa: E402
 
 
 class TestPage(PageKey):
@@ -71,6 +73,261 @@ class RectLayoutTest(unittest.TestCase):
         self.assertEqual(positions[0][2], -1)
         self.assertEqual(positions[4][2], 0)
         self.assertEqual(positions[-1][2], -1)
+
+
+class ScrewResultLayoutTest(unittest.TestCase):
+    def setUp(self):
+        self.results = [
+            {"name": "rear right screw", "direction": "CCW", "turns": "00:04"},
+            {"name": "front left screw", "direction": "CW", "turns": "00:05"},
+            {"name": "rear left screw", "direction": "BASE", "turns": "-"},
+            {"name": "front right screw", "direction": "CCW", "turns": "00:15"},
+        ]
+
+    def test_complete_result_frame_is_accepted_by_render_queue(self):
+        for reference in (None, "rear left screw"):
+            with self.subTest(reference=reference):
+                renderer = FeatherRenderer()
+                results = [dict(result, direction="CCW", turns="12:59")
+                           for result in self.results]
+                commands = renderer.begin_page("Calibration result")
+                commands += screw_result.render(renderer, results, reference)
+                self.assertTrue(renderer.send(commands))
+
+    def test_page_state_example_is_replaced_by_real_empty_or_partial_results(self):
+        page = screw_result.create_page()
+        renderer = FeatherRenderer()
+        example = RenderFrame(page.draw(renderer), renderer)
+        self.assertTrue(example.has_text("BASE (REFERENCE)"))
+        self.assertTrue(example.has_text("FRONT LEFT"))
+        self.assertTrue(example.has_text("CW 00:05"))
+        for results in ([], [{"name": "front right screw", "direction": "CW", "turns": "00:02"}]):
+            frame = RenderFrame(page.draw(renderer, screw_result.result_values(results)), renderer)
+            self.assertFalse(frame.has_text("BASE (REFERENCE)"))
+            self.assertFalse(frame.has_text("FRONT LEFT"))
+            self.assertFalse(frame.has_text("CW 00:05"))
+            self.assertEqual(frame.has_text("CW 00:02"), bool(results))
+
+    def test_numeric_page_state_formats_turns_and_switches_reference(self):
+        page = screw_result.create_page()
+        renderer = FeatherRenderer()
+        keys = screw_result.ScrewResultState
+        frame = RenderFrame(page.draw(renderer, {
+            keys.FRONT_LEFT_NAME: "CUSTOM LEFT",
+            keys.FRONT_LEFT_DIRECTION: "CCW",
+            keys.FRONT_LEFT_MINUTES: 75,
+        }), renderer)
+        self.assertTrue(frame.has_text("CUSTOM LEFT"))
+        self.assertTrue(frame.has_text("CCW 01:15"))
+        self.assertTrue(frame.has_text("CCW 00:04"))
+        frame = RenderFrame(page.draw(renderer, {
+            keys.FRONT_LEFT_DIRECTION: "BASE",
+            keys.REAR_LEFT_DIRECTION: "",
+        }), renderer)
+        self.assertFalse(frame.has_text("CCW 01:15"))
+        self.assertTrue(frame.has_text("BASE (REFERENCE)"))
+
+    def test_turn_input_conversion_and_validation(self):
+        keys = screw_result.ScrewResultState
+        for turns, minutes, direction in (("01:15", 75, "CW"),
+                                           ("00:00", 0, "CW"),
+                                           ("01:60", 0, ""),
+                                           ("broken", 0, "")):
+            values = screw_result.result_values([
+                {"name": "front left screw", "direction": "CW", "turns": turns}])
+            self.assertEqual(values[keys.FRONT_LEFT_MINUTES], minutes)
+            self.assertEqual(values[keys.FRONT_LEFT_DIRECTION], direction)
+        for key, value in ((keys.FRONT_LEFT_MINUTES, -1),
+                           (keys.FRONT_LEFT_MINUTES, 1.5),
+                           (keys.FRONT_LEFT_MINUTES, True),
+                           (keys.FRONT_LEFT_DIRECTION, "invalid")):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises((ValueError, TypeError)):
+                    screw_result.create_page().draw(FeatherRenderer(), {key: value})
+
+    def test_legend_text_can_be_edited_and_moved_as_a_normal_node(self):
+        page = screw_result.create_page()
+        renderer = FeatherRenderer()
+        values = screw_result.result_values(self.results)
+        before = RenderFrame(page.draw(renderer, values), renderer)
+        label = next(node for node in page.root.walk()
+                     if isinstance(node, Text) and node.value == "CW = CLOCKWISE")
+        label.value = "CLOCKWISE"
+        label.offset(0, 4)
+        after = RenderFrame(page.draw(renderer, values), renderer)
+        self.assertFalse(after.has_text("CW = CLOCKWISE"))
+        self.assertGreater(after.text("CLOCKWISE").y,
+                           before.text("CW = CLOCKWISE").y)
+        self.assertTrue(after.has_text("CCW = COUNTERCLOCKWISE"))
+
+    def test_corner_condition_can_be_changed_without_affecting_other_corners(self):
+        page = screw_result.create_page()
+        renderer = FeatherRenderer()
+        values = screw_result.result_values(self.results)
+        page.draw(renderer, values)
+        reference = next(node for node in page.root.walk()
+                         if isinstance(node, StateCase) and node.expected == "BASE")
+        reference.expected = "CW"
+        frame = RenderFrame(page.draw(renderer, values), renderer)
+        self.assertFalse(frame.has_text("BASE (REFERENCE)"))
+        self.assertTrue(frame.has_text("CW 00:05"))
+        self.assertTrue(frame.has_text("CCW 00:15"))
+
+    def test_unordered_results_are_rendered_at_their_physical_corners(self):
+        renderer = FeatherRenderer()
+        commands = screw_result.render(renderer, self.results)
+        frame = RenderFrame(commands, renderer)
+
+        bed = screw_result.PAGE.rect(screw_result.ScrewResultRef.BED)
+        self.assertLess(frame.text("FRONT LEFT").x, bed.x)
+        front_right = frame.text("FRONT RIGHT")
+        self.assertGreater(front_right.x, bed.right)
+        self.assertLessEqual(
+            renderer.text_width(front_right.value, front_right.font),
+            front_right.max_width)
+        self.assertEqual(frame.text("CW 00:05").x, frame.text("FRONT LEFT").x)
+        self.assertEqual(frame.text("CCW 00:15").x, front_right.x)
+        self.assertEqual(frame.text("CCW 00:04").x, front_right.x)
+        self.assertEqual(frame.text("CW 00:05").font, "Roboto Bold 12pt")
+        self.assertEqual(
+            frame.text("FRONT LEFT").y, frame.text("FRONT RIGHT").y)
+        base = frame.text("BASE (REFERENCE)")
+        self.assertLessEqual(
+            renderer.text_width(base.value, base.font), base.max_width)
+        self.assertLess(frame.text("REAR LEFT").y, frame.text("FRONT LEFT").y)
+        self.assertLess(frame.text("REAR RIGHT").y, frame.text("FRONT RIGHT").y)
+        legend = screw_result.PAGE.rect(screw_result.ScrewResultRef.LEGEND)
+        self.assertLess(frame.text("CW 00:05").y, legend.y)
+        self.assertTrue(frame.has_text("BASE (REFERENCE)"))
+        self.assertTrue(frame.has_text("TURNS:CLOCK MINUTES"))
+        self.assertFalse(frame.has_text("DO NOT TURN"))
+        for left, right in (
+                (frame.text("CW = CLOCKWISE"),
+                 frame.text("CCW = COUNTERCLOCKWISE")),
+                (frame.text("CCW = COUNTERCLOCKWISE"),
+                 frame.text("TURNS:CLOCK MINUTES")),
+                (frame.text("00:15 = QUARTER TURN"),
+                 frame.text("00:30 = HALF TURN")),
+                (frame.text("00:30 = HALF TURN"),
+                 frame.text("01:00 = FULL TURN"))):
+            self.assertLess(
+                left.x + renderer.text_width(left.value, left.font), right.x)
+        for row in (
+                (frame.text("CW = CLOCKWISE"),
+                 frame.text("CCW = COUNTERCLOCKWISE"),
+                 frame.text("TURNS:CLOCK MINUTES")),
+                (frame.text("00:15 = QUARTER TURN"),
+                 frame.text("00:30 = HALF TURN"),
+                 frame.text("01:00 = FULL TURN"))):
+            left = row[0].x - renderer.text_width(row[0].value, row[0].font) // 2
+            right = row[2].x + renderer.text_width(row[2].value, row[2].font) // 2
+            self.assertAlmostEqual((left + right) / 2,
+                                   screw_result.PAGE_BOUNDS.center_x, delta=1)
+
+    def test_every_reference_corner_keeps_labels_clear_of_the_bed(self):
+        for reference in self.results:
+            with self.subTest(reference=reference["name"]):
+                renderer = FeatherRenderer()
+                frame = RenderFrame(screw_result.render(
+                    renderer, self.results, reference["name"]), renderer)
+                bed = screw_result.PAGE.rect(screw_result.ScrewResultRef.BED)
+                base = frame.text("BASE (REFERENCE)")
+                name = frame.text(reference["name"].removesuffix(" screw").upper())
+                self.assertEqual(base.x, name.x)
+                self.assertGreater(base.y, name.y)
+                for label in frame.texts:
+                    if label.max_width is None:
+                        continue
+                    width = renderer.text_width(label.value, label.font)
+                    self.assertLessEqual(width, label.max_width)
+                    if label.x < bed.x:
+                        self.assertLess(label.x + width, bed.x)
+                    elif label.x > bed.right:
+                        self.assertGreater(label.x - width, bed.right)
+                instruction = frame.text("ADJUST FROM BELOW")
+                self.assertLess(frame.text("REAR").y, instruction.y)
+                self.assertGreater(frame.text("FRONT").y, instruction.y)
+
+    def test_page_uses_typed_actions_and_keeps_controls_below_the_diagram(self):
+        page = screw_result.PAGE
+        page.draw(FeatherRenderer(), screw_result.result_values(self.results))
+
+        self.assertTrue(all(
+            isinstance(action, screw_result.ScrewResultAction)
+            for action in page.actions.values()))
+        diagram = page.rect(screw_result.ScrewResultRef.DIAGRAM)
+        bed = page.rect(screw_result.ScrewResultRef.BED)
+        legend = page.rect(screw_result.ScrewResultRef.LEGEND)
+        repeat = page.rect(screw_result.ScrewResultRef.REPEAT)
+        done = page.rect(screw_result.ScrewResultRef.DONE)
+        self.assertLess(diagram.x, bed.x)
+        self.assertLess(bed.right, diagram.right)
+        self.assertLessEqual(bed.bottom, legend.y)
+        self.assertLess(diagram.bottom, repeat.y)
+        self.assertLess(legend.bottom, repeat.y)
+        self.assertLessEqual(repeat.right, done.x)
+        self.assertEqual(repeat.x, diagram.x)
+        self.assertEqual(done.right, diagram.right)
+        self.assertEqual(repeat.y, done.y)
+
+    def test_page_reflows_inside_a_smaller_viewport(self):
+        bounds = Rect(10, 56, 700, 350)
+        page = screw_result.create_page(bounds)
+        renderer = FeatherRenderer()
+        commands = page.draw(renderer, screw_result.result_values(self.results))
+        frame = RenderFrame(commands, renderer)
+
+        diagram = page.rect(screw_result.ScrewResultRef.DIAGRAM)
+        bed = page.rect(screw_result.ScrewResultRef.BED)
+        repeat = page.rect(screw_result.ScrewResultRef.REPEAT)
+        done = page.rect(screw_result.ScrewResultRef.DONE)
+        self.assertEqual((diagram.x, diagram.right),
+                         (bounds.x + 20, bounds.right - 20))
+        self.assertEqual(bed.center_x, bounds.center_x)
+        self.assertEqual(repeat.width, done.width)
+        self.assertLess(diagram.bottom, repeat.y)
+        self.assertLess(frame.text("FRONT LEFT").x, bed.x)
+        self.assertGreater(frame.text("FRONT RIGHT").x, bed.right)
+        legend = page.rect(screw_result.ScrewResultRef.LEGEND)
+        for label in frame.texts:
+            if legend.y < label.y < legend.bottom:
+                self.assertEqual(label.x, bounds.center_x)
+                self.assertLessEqual(renderer.text_width(label.value, label.font), legend.width)
+
+    def test_empty_default_state_does_not_collapse_the_layout(self):
+        page = screw_result.create_page()
+        page.draw(FeatherRenderer(), {})
+
+        diagram = page.rect(screw_result.ScrewResultRef.DIAGRAM)
+        bed = page.rect(screw_result.ScrewResultRef.BED)
+        repeat = page.rect(screw_result.ScrewResultRef.REPEAT)
+        done = page.rect(screw_result.ScrewResultRef.DONE)
+        self.assertEqual(bed.center_x, diagram.center_x)
+        self.assertGreater(bed.width, diagram.width // 2)
+        self.assertEqual(repeat.x, diagram.x)
+        self.assertEqual(done.right, diagram.right)
+
+    def test_compact_adjustments_and_legend_remain_readable(self):
+        for width, height in ((640, 306), (700, 350)):
+            with self.subTest(width=width):
+                page = screw_result.create_page(Rect(0, 56, width, height))
+                renderer = FeatherRenderer()
+                frame = RenderFrame(page.draw(
+                    renderer, screw_result.result_values(self.results)), renderer)
+                legend = page.rect(screw_result.ScrewResultRef.LEGEND)
+                for value in ("CW 00:05", "CCW 00:15", "CCW 00:04"):
+                    text = frame.text(value)
+                    self.assertLessEqual(
+                        renderer.text_width(value, text.font), text.max_width)
+                self.assertEqual(frame.text("CW 00:05").font,
+                                 frame.text("CCW 00:15").font)
+                hints = [text for text in frame.texts
+                         if legend.y < text.y < legend.bottom]
+                self.assertEqual(len(hints), 3)
+                for text in hints:
+                    self.assertEqual(text.x, legend.center_x)
+                    self.assertLessEqual(
+                        renderer.text_width(text.value, text.font), legend.width - 30)
 
 
 class PrintingLayoutTest(unittest.TestCase):

@@ -21,4 +21,5 @@ class AppPage(PageKey):
     Z_OFFSET_PAPER = "z_offset.paper"
     SAFE_Z_BRIEFING = "z_offset.safe_briefing"
     SAFE_Z_CALIBRATION = "z_offset.safe"
+    CALIBRATION_SCREWS_RESULT = "calibration.screws.result"
     RENDER_BENCHMARK = "benchmark.render"

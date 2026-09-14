@@ -724,7 +724,7 @@ class UITestRun:
 
     @staticmethod
     def _ui_fingerprint():
-        """Hash the deployed UI/framework sources only when a test starts."""
+        """Hash deployed UI sources and indexed assets when a test starts."""
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         files = []
         for relative in UI_FINGERPRINT_FILES:
@@ -737,7 +737,7 @@ class UITestRun:
                 directories[:] = [
                     name for name in directories if name != "__pycache__"]
                 for name in names:
-                    if not name.endswith(".py"):
+                    if not name.endswith((".py", ".fxi1")):
                         continue
                     path = os.path.join(current, name)
                     relative = os.path.relpath(path, root)

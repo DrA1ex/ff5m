@@ -23,6 +23,78 @@
                 "font rasterization"
             ]
         },
+        "default-calibration-screws-result":
+        {
+            "description": "Bed-screw calibration result page with its editable Page State example before runtime values are supplied.",
+            "required":
+            [
+                "CALIBRATION RESULT title",
+                "raised bed diagram labelled REAR and FRONT with ADJUST FROM BELOW instruction",
+                "four labelled corners with rear-left BASE and three sample adjustments",
+                "clockwise, counterclockwise and clock-minute legend",
+                "REPEAT and DONE actions"
+            ],
+            "forbidden":
+            [
+                "rotation arrow on the BASE reference nut",
+                "FRONT shown above REAR",
+                "clipped or overlapping important content"
+            ],
+            "allowed_variations":
+            [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "default-printing":
+        {
+            "description": "Default declarative active-print page before live job details and a preview are available.",
+            "required":
+            [
+                "PRINTING title with HOME action",
+                "Unknown filename and empty status area",
+                "zero progress with elapsed, remaining, layer and height metrics",
+                "NO PREVIEW state",
+                "pause, filament, Z-adjust and cancel controls"
+            ],
+            "forbidden":
+            [
+                "fabricated print progress or preview image",
+                "blank frame",
+                "clipped or overlapping important content"
+            ],
+            "allowed_variations":
+            [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "calibration-screws-adjustments":
+        {
+            "description": "Bed-screw calibration result with one reference corner and three adjustments shown as nuts below the bed.",
+            "required":
+            [
+                "CALIBRATION RESULT title and centered ADJUST FROM BELOW instruction",
+                "REAR LEFT and REAR RIGHT above FRONT LEFT and FRONT RIGHT",
+                "rear-left BASE reference without a turn arrow",
+                "CW 00:05 at front left, CCW 00:15 at front right and CCW 00:04 at rear right",
+                "four circular mounting markers on the bed connected sideways and downward to separate schematic hex nuts with visible holes below the plate",
+                "rotation arrows around the three adjustable nuts without covering the nuts",
+                "clock-minute legend plus REPEAT and DONE actions"
+            ],
+            "forbidden":
+            [
+                "FRONT and REAR positions swapped",
+                "lower nuts shown as solid screw heads or with protruding bolt shafts",
+                "rotation arrow on the BASE reference nut",
+                "clipped, crossed or overlapping labels, arrows, fasteners or controls"
+            ],
+            "allowed_variations":
+            [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
         "parity-default-home":
         {
             "description": "Designer and real-printer views of the default declarative home dashboard in its idle state.",

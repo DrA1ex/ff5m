@@ -6,6 +6,7 @@
 
 import logging
 
+from ui.lazy import LazyModule
 from ff5m_ui.screen import ScreenPage
 from feather.features.manager import FeatureHostProxy
 from feather.screen.controls import FeatherControlsMixin
@@ -16,6 +17,7 @@ PAGES = frozenset((
     ScreenPage.CALIBRATION_CONFIRM, ScreenPage.CALIBRATION_PROGRESS,
     ScreenPage.CALIBRATION_RESULT,
 ))
+calibration_screws_ui = LazyModule("ff5m_ui.calibration_screws.runtime")
 
 
 class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
@@ -72,6 +74,20 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         if not action.startswith("cal."):
             return False
         self._handle_calibration_action(action)
+        return True
+
+    def resolve_semantic_action(self, page, wire_id):
+        if (page != ScreenPage.CALIBRATION_RESULT
+                or self.calibration_kind != "screws"
+                or not self.calibration_results):
+            return None
+        return calibration_screws_ui.PAGE.resolve_action(wire_id)
+
+    def handle_semantic_action(self, page, action):
+        del page
+        if not isinstance(action, calibration_screws_ui.ScrewResultAction):
+            return False
+        self._handle_calibration_action(action.wire_id)
         return True
 
     def _start_z_calibration(self):

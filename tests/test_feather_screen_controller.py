@@ -37,6 +37,7 @@ from feather.features.filament import FilamentFeature
 from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
 from feather.calibration.extruder import FeatherExtruderCalibrationMixin
+from tests.feather_render_test_helper import RenderCapture
 
 
 class ScenarioController(FeatherZCalibrationMixin,
@@ -2776,6 +2777,80 @@ class ControllerSafetyTest(unittest.TestCase):
         drawing = "\n".join(batches[-1])
         self.assertIn("cal.done", drawing)
         self.assertNotIn("cal.repeat", drawing)
+
+    def test_screw_result_response_prefix_is_not_part_of_name(self):
+        for prefix in ("", "// ", "  //  "):
+            for response, expected in (
+                ("rear left screw (base) : x=20, y=20, z=0.10000",
+                 {"name": "rear left screw", "direction": "BASE", "turns": "-"}),
+                ("front right screw : x=20, y=20, z=0.20000 : adjust CCW 01:15",
+                 {"name": "front right screw", "direction": "CCW", "turns": "01:15"}),
+            ):
+                with self.subTest(prefix=prefix, response=response):
+                    self.assertEqual(ScenarioController.parse_screw_result(prefix + response), expected)
+
+    def test_screw_result_maps_adjustments_to_bed_corners_and_explains_turns(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.calibration_kind = "screws"
+        controller.calibration_results = [controller.parse_screw_result(message) for message in (
+            "// rear right screw : x=20, y=20, z=0.2 : adjust CCW 00:04",
+            "// front left screw : x=20, y=20, z=0.2 : adjust CW 00:05",
+            "// rear left screw (base) : x=20, y=20, z=0.1",
+            "// front right screw : x=20, y=20, z=0.1 : adjust CCW 00:00",
+        )]
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+        capture = RenderCapture(controller.renderer)
+
+        controller._render_calibration_result()
+
+        frame = capture.latest
+        self.assertTrue(frame.has_text("ADJUST FROM BELOW"))
+        self.assertTrue(frame.has_text("BASE (REFERENCE)"))
+        self.assertFalse(frame.has_text("DO NOT TURN"))
+        self.assertTrue(frame.has_text("CCW 00:04"))
+        self.assertTrue(frame.has_text("CW 00:05"))
+        self.assertTrue(frame.has_text("TURNS:CLOCK MINUTES"))
+        self.assertTrue(frame.has_text("00:15 = QUARTER TURN"))
+        self.assertTrue(frame.has_text("00:30 = HALF TURN"))
+        self.assertTrue(frame.has_text("01:00 = FULL TURN"))
+        self.assertLess(frame.text("FRONT LEFT").x, frame.text("FRONT RIGHT").x)
+        self.assertLess(frame.text("REAR LEFT").y, frame.text("FRONT LEFT").y)
+        self.assertTrue(frame.has_action("cal.repeat"))
+        self.assertTrue(frame.has_action("cal.done"))
+
+    def test_screw_result_uses_configured_reference_corner(self):
+        class ConfigFile:
+            def get_status(self, eventtime):
+                del eventtime
+                return {"settings": {"screws_tilt_adjust": {
+                    "screw1_name": "rear left screw",
+                }}}
+
+        class Printer:
+            def lookup_object(self, name, default=None):
+                return ConfigFile() if name == "configfile" else default
+
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.printer = Printer()
+        controller.calibration_kind = "screws"
+        controller.calibration_results = [
+            {"name": "front left screw", "direction": "BASE", "turns": "-"},
+            {"name": "front right screw", "direction": "CW", "turns": "00:02"},
+            {"name": "rear right screw", "direction": "CCW", "turns": "00:04"},
+            {"name": "rear left screw", "direction": "CW", "turns": "00:05"},
+        ]
+        controller.calibration_error = None
+        controller.calibration_cancelled = False
+        capture = RenderCapture(controller.renderer)
+
+        controller._render_calibration_result()
+
+        reference = capture.latest.text("BASE (REFERENCE)")
+        self.assertGreater(reference.y, capture.latest.text("REAR LEFT").y)
+        self.assertLess(reference.y, capture.latest.text("FRONT LEFT").y)
 
     def test_mesh_result_offers_repeat_discard_and_save(self):
         controller = ScenarioController.__new__(ScenarioController)

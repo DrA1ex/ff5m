@@ -18,6 +18,7 @@ sys.path.insert(0, str(PLUGINS))
 
 import ui  # noqa: E402
 from ff5m_ui.keys import AppPage  # noqa: E402
+from ff5m_ui.calibration_screws.state import ScrewResultState  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
 from ff5m_ui.filament.actions import FilamentCommand  # noqa: E402
 from ff5m_ui.filament.state import FilamentState  # noqa: E402
@@ -151,6 +152,8 @@ assert "ui.source" in sys.modules
     def test_product_key_wire_namespaces_survive_package_move(self):
         namespaces = {
             AppPage: "ui.pages.keys.AppPage",
+            ScrewResultState:
+                "ui.pages.calibration.screws.state.ScrewResultState",
             FilamentCommand: "ui.pages.filament.actions.FilamentCommand",
             FilamentState: "ui.pages.filament.state.FilamentState",
             HeatCommand: "ui.pages.heat.actions.HeatCommand",

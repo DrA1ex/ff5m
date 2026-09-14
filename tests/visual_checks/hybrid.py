@@ -647,8 +647,8 @@ def ui_fingerprint(project_root):
         if not package_root.is_dir():
             raise RegressionConfigurationError(
                 "UI fingerprint package is missing: %s" % package)
-        for path in package_root.rglob("*.py"):
-            if "__pycache__" not in path.parts:
+        for path in package_root.rglob("*"):
+            if path.suffix in (".py", ".fxi1") and "__pycache__" not in path.parts:
                 files.append((path.relative_to(root).as_posix(), path))
     digest = hashlib.sha256()
     for relative, path in sorted(files, key=lambda item: item[0]):
