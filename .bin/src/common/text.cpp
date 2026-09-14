@@ -8,6 +8,7 @@
 #include "text.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <limits>
 #include <ranges>
@@ -78,16 +79,24 @@ void TextDrawer::setDoubleBuffered(bool enable, uint32_t *externalBuffer) {
         return;
     }
 
+    const auto width = static_cast<std::size_t>(_width);
+    const auto height = static_cast<std::size_t>(_height);
+    if (height != 0 &&
+        width > std::numeric_limits<std::size_t>::max() / height) {
+        throw std::overflow_error("Text buffer dimensions overflow size_t");
+    }
+    const auto pixelCount = width * height;
+
     flush();
     if (externalBuffer != nullptr) {
         _ownedBackBuffer.reset();
         _backBuffer = externalBuffer;
     } else {
-        _ownedBackBuffer = std::make_unique<uint32_t[]>(_width * _height);
+        _ownedBackBuffer = std::make_unique<uint32_t[]>(pixelCount);
         _backBuffer = _ownedBackBuffer.get();
     }
 
-    std::copy(_screen, _screen + _width * _height, _backBuffer);
+    std::copy(_screen, _screen + pixelCount, _backBuffer);
 }
 
 void TextDrawer::setBlending(bool enable) {

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 # Run the native C++ test suites (host CMake builds + CTest).
 #
@@ -55,7 +55,9 @@ fail() {
 }
 
 host_ctest() {
-    local name=$1 target=$2 build_dir="$ROOT/.bin/src/$name/cmake-build-host"
+    local name=$1
+    local target=$2
+    local build_dir="$ROOT/.bin/src/$name/cmake-build-host"
     echo "==> host tests: $name"
     if [ "$DO_CLEAN" = 1 ] || [ ! -f "$build_dir/CMakeCache.txt" ]; then
         cmake \

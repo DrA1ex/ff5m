@@ -112,7 +112,8 @@ void feather_protocol_fixture() {
         typer::batch::tokenize(frame));
     TYPER_CHECK(commands.size() == 7);
     TYPER_CHECK(commands[0] ==
-                std::vector<std::string>({"--batch", "clear-hitboxes"}));
+                std::vector<std::string>({
+                    "--batch", "clear-hitboxes", "--layer", "base"}));
     TYPER_CHECK(commands[4].back() == "file \"one\" \\ Привет");
     TYPER_CHECK(commands[5][1] == "hitbox");
     TYPER_CHECK(commands[5][3] == "print.pause");
