@@ -23,7 +23,9 @@ from feather_ui_test import scenarios as SCENARIOS  # noqa: E402
 from feather_ui_test import context_fixtures as CONTEXT_FIXTURES  # noqa: E402
 from feather_ui_test import resources as RESOURCES  # noqa: E402
 import feather_screen as FEATHER  # noqa: E402
+from feather.files import FileEntry  # noqa: E402
 from feather.features.manager import LazyFeatureManager  # noqa: E402
+from ff5m_ui.home import page as HOME_PAGE  # noqa: E402
 from tests.visual_checks import hybrid as HYBRID  # noqa: E402
 
 
@@ -851,9 +853,89 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(
             (steps[returned + 1]["action"], steps[returned + 1]["page"]),
             ("nav.back", FEATHER.ScreenPage.IDLE_HOME))
+        self.assertEqual(steps[returned + 2]["label"],
+                         "ui-home-last-job-prepare")
+
+    def test_ui_suite_taps_every_home_action_and_checks_destination(self):
+        steps = UI_TEST.UITestRun(object()).scenarios.build_steps("UI")
+        home_actions = set(
+            action.wire_id for action in HOME_PAGE.PAGE.actions.values())
+        home_steps = tuple(
+            step for step in steps
+            if step["kind"] == "tap"
+            and step["label"].startswith("ui-home-")
+            and not step["label"].endswith("-back"))
+
         self.assertEqual(
-            (steps[returned + 2]["action"], steps[returned + 2]["page"]),
-            ("nav.menu", FEATHER.ScreenPage.MAIN_MENU))
+            set(step["action"] for step in home_steps), home_actions)
+        self.assertTrue(all(step["page"] is not None for step in home_steps))
+        for step in home_steps:
+            if step["action"] == "nav.menu":
+                self.assertEqual(step["page"], FEATHER.ScreenPage.MAIN_MENU)
+                continue
+            index = next(
+                index for index, candidate in enumerate(steps)
+                if candidate is step)
+            self.assertEqual(
+                (steps[index + 1]["action"], steps[index + 1]["page"]),
+                ("nav.back", FEATHER.ScreenPage.IDLE_HOME))
+
+        destinations = dict(
+            (step["action"], step["page"])
+            for step in home_steps)
+        self.assertEqual(destinations, {
+            "home.last_job": FEATHER.ScreenPage.FILE_CONFIRM,
+            "nav.heat": FEATHER.ScreenPage.CONTROL_HEAT,
+            "nav.network": FEATHER.ScreenPage.NETWORK_HOME,
+            "nav.job": FEATHER.ScreenPage.FILE_BROWSER,
+            "nav.filament": FEATHER.ScreenPage.FILAMENT_MATERIAL,
+            "nav.move": FEATHER.ScreenPage.CONTROL_MOVE,
+            "nav.menu": FEATHER.ScreenPage.MAIN_MENU,
+        })
+
+    def test_ui_last_job_uses_browser_entry_and_restores_host_state(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = pathlib.Path(root) / "models" / "part.gcode"
+            path.parent.mkdir()
+            path.write_text("G28\n", encoding="utf-8")
+
+            class Host:
+                page = FEATHER.ScreenPage.FILE_BROWSER
+                file_entries = [FileEntry("part.gcode", str(path))]
+                renderer = type("Renderer", (), {
+                    "_buttons": {"file.item0": object()},
+                })()
+                virtual_sdcard = type("VirtualSD", (), {
+                    "sdcard_dirname": root,
+                })()
+
+                def _show_page(self, page):
+                    self.page = page
+
+            host = Host()
+            host.last_job_path = "previous.gcode"
+            host.last_job_name = "previous.gcode"
+
+            def tap(action):
+                self.assertEqual(action, "file.item0")
+                host.selected_file = host.file_entries[0]
+                host.page = FEATHER.ScreenPage.FILE_CONFIRM
+
+            run = type("Run", (), {"host": host})()
+            run._tap = tap
+            scenarios = SCENARIOS.ScenarioCatalog(run)
+
+            scenarios._open_safe_file_confirm()
+            scenarios._prepare_ui_last_job()
+
+            self.assertEqual(host.page, FEATHER.ScreenPage.IDLE_HOME)
+            self.assertEqual(host.last_job_path, "models/part.gcode")
+            self.assertEqual(host.last_job_name, "part.gcode")
+
+            scenarios.restore_synthetic_state()
+
+            self.assertEqual(host.last_job_path, "previous.gcode")
+            self.assertEqual(host.last_job_name, "previous.gcode")
 
     def test_ui_suite_capture_contract_matches_hybrid_coverage(self):
         feature = UI_TEST.UITestRun(object())

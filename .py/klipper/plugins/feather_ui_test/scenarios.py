@@ -76,6 +76,7 @@ class ScenarioCatalog:
         self.heat_stable_since = None
         self._mesh_snapshot = None
         self.ui_filament_target = None
+        self._ui_last_job_original = None
         self.z_probe_local = None
         self._update_maybe_present = None
 
@@ -217,11 +218,9 @@ class ScenarioCatalog:
             steps, "ui-home-filled", self._render_filled_home)
         self._add_call(steps, "ui-home", lambda: self._show(ScreenPage.IDLE_HOME))
         self._add_capture(steps, "ui-home")
-        self._add_tap(steps, "nav.filament", ScreenPage.FILAMENT_MATERIAL)
-        self._add_tap(steps, "nav.back", ScreenPage.IDLE_HOME)
-        self._add_tap(steps, "nav.move", ScreenPage.CONTROL_MOVE)
-        self._add_tap(steps, "nav.back", ScreenPage.IDLE_HOME)
-        self._add_tap(steps, "nav.menu", ScreenPage.MAIN_MENU)
+        self._add_tap(
+            steps, "nav.menu", ScreenPage.MAIN_MENU,
+            label="ui-open-main-menu")
         self._add_capture(steps, "ui-main-menu")
         self._add_tap(steps, "nav.files", ScreenPage.FILE_BROWSER)
         self._add_capture(steps, "ui-files")
@@ -252,7 +251,23 @@ class ScenarioCatalog:
         # The internal file browser belongs to the home screen, so its Back
         # action returns there rather than to the menu used to open it.
         self._add_tap(steps, "nav.back", ScreenPage.IDLE_HOME)
-        self._add_tap(steps, "nav.menu", ScreenPage.MAIN_MENU)
+        self._add_call(
+            steps, "ui-home-last-job-prepare", self._prepare_ui_last_job)
+        for label, action, page in (
+                ("last-job", "home.last_job", ScreenPage.FILE_CONFIRM),
+                ("heat", "nav.heat", ScreenPage.CONTROL_HEAT),
+                ("network", "nav.network", ScreenPage.NETWORK_HOME),
+                ("job", "nav.job", ScreenPage.FILE_BROWSER),
+                ("filament", "nav.filament", ScreenPage.FILAMENT_MATERIAL),
+                ("move", "nav.move", ScreenPage.CONTROL_MOVE)):
+            self._add_tap(
+                steps, action, page, label="ui-home-" + label)
+            self._add_tap(
+                steps, "nav.back", ScreenPage.IDLE_HOME,
+                label="ui-home-%s-back" % label)
+        self._add_tap(
+            steps, "nav.menu", ScreenPage.MAIN_MENU,
+            label="ui-home-menu")
         self._add_tap(steps, "nav.control", ScreenPage.CONTROL_HOME)
         self._add_capture(steps, "ui-control")
         self._add_tap(steps, "nav.move", ScreenPage.CONTROL_MOVE)
@@ -1458,8 +1473,27 @@ class ScenarioCatalog:
             action = "file.item%d" % index
             if action not in self.host.renderer._buttons:
                 continue
+            if not entry["path"]:
+                raise RuntimeError("Selected UI test file has no path")
             self.run._tap(action)
+            if self.host.page != ScreenPage.FILE_CONFIRM:
+                raise RuntimeError(
+                    "Selected UI test file did not open confirmation")
             return
+        raise RuntimeError("No G-code file is available for UI navigation")
+
+    def _prepare_ui_last_job(self):
+        entry = getattr(self.host, "selected_file", None)
+        path = os.path.realpath(str(entry["path"] if entry else ""))
+        root = os.path.realpath(self.host.virtual_sdcard.sdcard_dirname)
+        if not os.path.isfile(path) or not path.startswith(root + os.sep):
+            raise RuntimeError("UI navigation file is no longer available")
+        if self._ui_last_job_original is None:
+            self._ui_last_job_original = (
+                self.host.last_job_path, self.host.last_job_name)
+        self.host.last_job_path = os.path.relpath(path, root).replace(os.sep, "/")
+        self.host.last_job_name = os.path.basename(path)
+        self._show(ScreenPage.IDLE_HOME)
 
     def _render_repeat_file_confirm(self, options_enabled):
         if (self.host.page != ScreenPage.FILE_CONFIRM
@@ -1501,6 +1535,11 @@ class ScenarioCatalog:
             self.host._update, self.reactor.NOW)
 
     def restore_synthetic_state(self):
+        if self._ui_last_job_original is not None:
+            original_path, original_name = self._ui_last_job_original
+            self.host.last_job_path = original_path
+            self.host.last_job_name = original_name
+        self._ui_last_job_original = None
         notification = getattr(self.host, "update_notification", None)
         saved = self._update_maybe_present
         if notification is not None and saved is not None:

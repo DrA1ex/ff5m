@@ -137,7 +137,13 @@ older stable framebuffer.
 `SUITE=UI` is also non-physical. In addition to the normal page traversal it
 renders a temporary worst-case home dashboard (maximum temperatures, long
 network/job/material strings, full progress and long durations) and captures it
-before restoring the live state. The filament trace renders a synthetic
+before restoring the live state. It synthetically taps every Home dashboard
+action (menu, heat, network, job browser, last job, filament, and move), checks
+the concrete destination page after each tap, and returns from every card
+through the real Back action. The last-job check reuses the harmless G-code
+entry already opened by the file-browser traversal and restores the previous
+in-memory last-job fields during cleanup. It neither starts nor modifies that
+file. The filament trace renders a synthetic
 `130.4 / 250C` heating and `260.4 / 250C` cooling states without changing the
 heater target or fan, captures the declarative action layout, follows the real Back hitbox to material selection,
 and fails if that navigation changes the live nozzle target. Synthetic taps are resolved from the
