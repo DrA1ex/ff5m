@@ -17,6 +17,7 @@ ROOT = pathlib.Path(__file__).parents[1]
 BASE = ROOT / "macros" / "base.cfg"
 HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
+STOCK = ROOT / "config" / "stock.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
 SMART_PARK = ROOT / "KAMP" / "Smart_Park.cfg"
 MOTION_MACROS = (
@@ -1123,6 +1124,11 @@ class StartPrintExecutionTest(unittest.TestCase):
     """Executes the full _START_PRINT chain to fixate its mesh contract."""
 
     def test_leveling_branch_selects_exactly_one_mesh_action(self):
+        # Every branch ends in exactly one calibration or load. Recalibrating
+        # the persistent 'auto' profile first preserves the standing mesh as
+        # 'auto_prev', so those branches carry the preservation handoff too.
+        preservation = ("BED_MESH_PROFILE LOAD=auto",
+                        "BED_MESH_PROFILE SAVE=auto_prev")
         cases = (
             ("skipped leveling", {"zskip_leveling": True}, (), ""),
             ("skipped leveling with standing kamp policy",
@@ -1147,13 +1153,13 @@ class StartPrintExecutionTest(unittest.TestCase):
              ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
             ("forced leveling with a profile name",
              {"zforce_leveling": True, "mesh": "auto"},
-             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+             preservation + ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
             ("forced leveling rebuilds a requested saved profile",
              {"zforce_leveling": True, "mesh": "PLA_profile"},
              ('BED_MESH_CALIBRATE PROFILE="PLA_profile"',), "PLA_profile"),
             ("standing print_leveling policy with a profile name",
              {"print_leveling": True, "mesh": "auto"},
-             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+             preservation + ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
             ("standing print_leveling policy without a profile name",
              {"print_leveling": True},
              ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
@@ -1162,9 +1168,13 @@ class StartPrintExecutionTest(unittest.TestCase):
             ("requested missing profile is regenerated under its name",
              {"mesh": "missing"},
              ('BED_MESH_CALIBRATE PROFILE="missing"',), "missing"),
+            ("requested missing auto profile is regenerated without "
+             "preservation",
+             {"mesh": "auto", "profiles": (), "profile_name": ""},
+             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
             ("no request and nothing loaded rebuilds persistent auto",
              {"profile_name": ""},
-             ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
+             preservation + ('BED_MESH_CALIBRATE PROFILE="auto"',), "auto"),
             ("no request and nothing loaded keeps stock default profile",
              {"profile_name": "", "display": 0},
              ('BED_MESH_CALIBRATE PROFILE="default"',), "default"),
@@ -1497,8 +1507,13 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
         _, named = run_headless_start_print(
             {"EXTRUDER_TEMP": 230, "BED_TEMP": 65},
             feather_force_leveling=True, feather_mesh_name="auto")
+        # The wrapper preload and the pre-calibration preservation both load
+        # the standing profile; the rebuild then overwrites 'auto' while
+        # 'auto_prev' keeps the previous mesh.
         self.assertEqual(mesh_actions(named), (
             "BED_MESH_PROFILE LOAD=auto",
+            "BED_MESH_PROFILE LOAD=auto",
+            "BED_MESH_PROFILE SAVE=auto_prev",
             'BED_MESH_CALIBRATE PROFILE="auto"',
         ))
 
@@ -1618,6 +1633,92 @@ class LevelingPreparationMacroTest(unittest.TestCase):
         self.assertIn("BED_MESH_CLEAR", bare.commands)
         self.assertFalse(any(command.startswith("BED_MESH_PROFILE")
                              for command in bare.commands))
+
+
+class FullBedLevelMacroTest(unittest.TestCase):
+    """Preservation of the persistent auto mesh around recalibration."""
+
+    @staticmethod
+    def _printer(profiles=("auto",), display=1):
+        return {
+            "mod_params": {"variables": {"safe_z": 10, "display": display}},
+            "bed_mesh": {"profile_name": "",
+                         "profiles": {name: {} for name in profiles}},
+        }
+
+    def test_every_non_stock_display_preserves_the_previous_auto_mesh(self):
+        # The copy must exist before the calibration overwrites 'auto'.
+        for display in (1, 2, 3):
+            with self.subTest(display=display):
+                result = render_macro(
+                    BASE, "_FULL_BED_LEVEL",
+                    printer=self._printer(display=display),
+                    params={"EXTRUDER_TEMP": 230, "BED_TEMP": 60,
+                            "PROFILE": "auto"})
+
+                assert_order(self, result.commands, (
+                    "BED_MESH_PROFILE LOAD=auto",
+                    "BED_MESH_PROFILE SAVE=auto_prev",
+                    'BED_MESH_CALIBRATE PROFILE="auto"',
+                ))
+
+    def test_public_auto_level_commands_keep_their_display_profiles(self):
+        chain = (
+            (BASE, "_AUTO_FULL_BED_LEVEL"),
+            (BASE, "_FULL_BED_LEVEL"),
+        )
+        alternative = execute_macro_chain(
+            ((BASE, "AUTO_FULL_BED_LEVEL"),) + chain,
+            "AUTO_FULL_BED_LEVEL", printer=self._printer())
+        stock = execute_macro_chain(
+            ((STOCK, "AUTO_FULL_BED_LEVEL"),) + chain,
+            "AUTO_FULL_BED_LEVEL", printer=self._printer(display=0))
+
+        self.assertEqual(mesh_actions(alternative), (
+            "BED_MESH_PROFILE LOAD=auto",
+            "BED_MESH_PROFILE SAVE=auto_prev",
+            'BED_MESH_CALIBRATE PROFILE="auto"',
+        ))
+        self.assertEqual(mesh_actions(stock), (
+            'BED_MESH_CALIBRATE PROFILE="MESH_DATA"',
+        ))
+
+    def test_missing_auto_profile_does_not_touch_an_older_backup(self):
+        for profiles in ((), ("auto_prev",)):
+            with self.subTest(profiles=profiles):
+                result = render_macro(
+                    BASE, "_FULL_BED_LEVEL",
+                    printer=self._printer(profiles=profiles),
+                    params={"EXTRUDER_TEMP": 230, "BED_TEMP": 60,
+                            "PROFILE": "auto"})
+
+                self.assertFalse(any(command.startswith("BED_MESH_PROFILE")
+                                     for command in result.commands))
+                self.assertIn(
+                    'BED_MESH_CALIBRATE PROFILE="auto"', result.commands)
+
+    def test_stock_display_and_other_profiles_are_not_preserved(self):
+        # The 'auto' profile belongs to the alternative screens; the Stock
+        # workflow (MESH_DATA/default) and any other profile name must keep
+        # their existing behavior.
+        cases = (
+            ("stock display", {"display": 0}, "auto"),
+            ("temporary default profile", {}, "default"),
+            ("named material profile", {}, "PLA_profile"),
+            ("stock mesh data profile", {"display": 0}, "MESH_DATA"),
+        )
+        for label, overrides, profile in cases:
+            with self.subTest(label=label):
+                result = render_macro(
+                    BASE, "_FULL_BED_LEVEL",
+                    printer=self._printer(**overrides),
+                    params={"EXTRUDER_TEMP": 230, "BED_TEMP": 60,
+                            "PROFILE": profile})
+
+                self.assertFalse(any(command.startswith("BED_MESH_PROFILE")
+                                     for command in result.commands))
+                self.assertIn('BED_MESH_CALIBRATE PROFILE="%s"' % profile,
+                              result.commands)
 
 
 class BedMeshValidationMacroTest(unittest.TestCase):
