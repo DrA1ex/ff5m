@@ -218,7 +218,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.touch_warning_restore_frozen = False
         self.last_touch_time = self.reactor.monotonic()
         self.last_action_time = -1.0
-        self.touch_feedback_pending = False
         self.dimmed = False
         self.pending_action = None
         self.pending_until = 0.0
@@ -644,7 +643,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.operation_cancel_request_id = None
         self.operation_cancel_target_name = None
         self.operation_cancel_target_mode = None
-        self.touch_feedback_pending = False
         self.busy_message = None
         self.toast_until = 0.0
         self.toast_message = ""
@@ -760,6 +758,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     line[:MAX_TOUCH_EVENT])
             elif line.startswith("touch "):
                 self._handle_continuous_touch(line)
+            elif line.startswith("button "):
+                self._handle_button_feedback(line)
             elif line.startswith("tap "):
                 now = self.reactor.monotonic()
                 idle_for = max(0.0, now - self.last_touch_time)
@@ -898,6 +898,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._start_joystick_timer()
         self._update_joystick_feedback(now, force=phase in ("begin", "end"))
 
+    def _handle_button_feedback(self, line):
+        fields = line.split()
+        if len(fields) != 3 or fields[2] not in ("down", "up"):
+            logging.warning("[feather_screen] invalid button event: %r", line[:MAX_TOUCH_EVENT])
+            return
+        action = self.renderer.decode_action(fields[1])
+        if action is None:
+            return
+        if fields[2] == "down":
+            self.last_touch_time = self.reactor.monotonic()
+            self._wake_if_dimmed()
+            self.renderer.flash_button(action)
+        else:
+            self.renderer.restore_button(action)
+
     def _handle_touch_action(self, action):
         # The renderer's background hitbox makes empty-area taps observable.
         # _process_touch_events() has already refreshed last_touch_time and
@@ -963,7 +978,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._start_touch_action(action)
 
     def _start_touch_action(self, action):
-        """Apply normal button feedback, then dispatch one UI action."""
+        """Dispatch a released button after the normal safety gates."""
         if self._blocking_operation_active():
             logging.info(
                 "[feather_screen] touch ignored while blocking operation "
@@ -984,40 +999,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             if notice is not None:
                 notice("PLEASE WAIT")
             return
-        if getattr(self, "touch_feedback_pending", False):
-            logging.info("[feather_screen] touch ignored during visual feedback: %s",
-                         action)
-            return
-        flash = getattr(self.renderer, "flash_button", None)
-        if flash is None or not flash(action):
-            self._dispatch_action(action)
-            return
-        self.touch_feedback_pending = True
-        page = self.page
-        generation = getattr(self.renderer, "generation", None)
-        self.reactor.register_callback(
-            lambda eventtime, tap=action, source_page=page, token=generation:
-            self._finish_touch_action(eventtime, tap, source_page, token),
-            self.reactor.monotonic() + 0.08)
-
-    def _finish_touch_action(self, eventtime, action, source_page=None,
-                             generation=None):
-        current_generation = getattr(self.renderer, "generation", None)
-        if source_page is not None and self.page != source_page:
-            self.touch_feedback_pending = False
-            return
-        # A redraw of the same page may legitimately occur while the 80 ms
-        # pressed-state flash is visible (status, temperature, or phase
-        # update).  Do not paint the stale button over the new generation, but
-        # never discard the user's action merely because that redraw happened.
-        if generation is None or current_generation == generation:
-            restore = getattr(self.renderer, "restore_button", None)
-            if restore is not None:
-                restore(action)
-        # Release the visual-feedback lock before dispatch. G-code is already
-        # serialized through run_script(), while generation-tagged hitboxes
-        # reject bounce events belonging to a page that has been replaced.
-        self.touch_feedback_pending = False
         self._dispatch_action(action)
 
     def _wake_if_dimmed(self):
@@ -1047,12 +1028,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _dispatch_action(self, action):
         if self.print_state == PrintState.DESTROYED:
             return
-        # Recheck here as well as in _handle_touch_action(). A button may have
-        # entered its 80 ms feedback delay immediately before a blocking
-        # operation replaced the page with a loader.
+        # Direct callers (including UI tests) must obey the same loader lock
+        # as the touch entry point.
         if self._blocking_operation_active():
             logging.info(
-                "[feather_screen] delayed action ignored while blocking "
+                "[feather_screen] action ignored while blocking "
                 "operation is active: action=%s operation=%s",
                 action, self.busy_message)
             return

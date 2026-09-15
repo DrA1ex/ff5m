@@ -1236,7 +1236,7 @@ class RunnerContractTest(unittest.TestCase):
         # additional controller fixture is needed for this safety check.
         controller._dispatch_action("cal.mesh.save")
 
-    def test_test_action_keeps_feedback_timing_and_reports_failure(self):
+    def test_test_action_dispatches_immediately_and_reports_failure(self):
         class FailingOwner:
             name = "failing"
 
@@ -1271,7 +1271,6 @@ class RunnerContractTest(unittest.TestCase):
         controller.previous_page = FEATHER.ScreenPage.IDLE_HOME
         controller.last_action_time = -1.0
         controller.pending_action = None
-        controller.touch_feedback_pending = False
         controller.reactor = type("Reactor", (), {
             "monotonic": lambda self: 1.0,
             "register_callback": lambda self, callback, waketime=None:
@@ -1306,10 +1305,8 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(feedback, [])
 
         feature._tap("synthetic.action")
-        self.assertEqual(feedback, [("down", "synthetic.action")])
-
-        callbacks.pop()(1.08)
-        self.assertEqual(feedback[-1], ("up", "synthetic.action"))
+        self.assertEqual(feedback, [])
+        self.assertEqual(callbacks, [])
         self.assertEqual(messages, [("synthetic command failed",
                                      FEATHER.ScreenPage.IDLE_HOME)])
 

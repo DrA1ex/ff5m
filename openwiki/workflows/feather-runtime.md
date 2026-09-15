@@ -45,7 +45,13 @@ page where possible and falls back safely to a heap buffer.
 Interactive mode uses `--touch-device /dev/input/guppy` and
 `--event-pipe /tmp/feather-events`. A `hitbox` maps a rectangle to an opaque,
 restricted action ID; `clear-hitboxes` replaces the previous page's regions.
-Regular hitboxes emit `tap <id>`. A `--continuous` hitbox emits
+Regular hitboxes emit `button <id> down` at press and `button <id> up` at
+release, swipe cancellation, or device disconnect. A valid release also emits
+`tap <id>`; it never retargets a held finger onto a replacement page. Feather
+draws feedback immediately and dispatches the tap without an artificial delay.
+Generation-tagged IDs prevent stale feedback from painting a new page. Deploy
+Typer and Feather together for press feedback; old tap-only Typer still activates
+buttons, but cannot supply press feedback. A `--continuous` hitbox emits
 `touch <id> begin|move|end <x> <y>` plus stationary heartbeats. Typer never
 interprets these IDs or executes printer actions: the Klipper plugin must
 revalidate state and own all motion/safety policy.
@@ -67,7 +73,7 @@ display=FEATHER
 
 `feather_safety.py` composes named Klipper activity providers, bounded reference-counted operation leases, and armed-page reasons. Active printing, explicitly owned long-running G-code, motion, heating, temperature waits, joystick motion, and loaded-feature activity expose `global.abort` on every live page except Home. Direct heat and material controls expose it before an operation begins; movement controls do so only after at least one usable axis has been homed. Short bookkeeping G-code never toggles the emergency action, which prevents transient header redraws. Provider failures are fail-safe and cannot silently remove the M112 path; the renderer only receives the final visibility boolean.
 
-`_run_blocking_gcode()` owns a controller-level interaction lock for homing, probing, positioning, filament moves, Live Z saves, and similar loader operations. The loader is a new renderer generation, clears the entire page header and all previous hitboxes, and exposes only the global emergency action when safety policy requires it. The controller rechecks the lock both when a touch arrives and after delayed button feedback, so a queued Back event cannot escape the workflow underneath the loader. Calibration and recovery progress pages have no Back action and retain the command-depth gate for their long dispatcher-owned macros.
+`_run_blocking_gcode()` owns a controller-level interaction lock for homing, probing, positioning, filament moves, Live Z saves, and similar loader operations. The loader is a new renderer generation, clears the entire page header and all previous hitboxes, and exposes only the global emergency action when safety policy requires it. The controller rechecks the lock both when a touch arrives and at action dispatch, so a queued Back event cannot escape the workflow underneath the loader. Calibration and recovery progress pages have no Back action and retain the command-depth gate for their long dispatcher-owned macros.
 
 Entering the idle Move or Heat page cancels the pending motor-stop, automatic-reboot, and SSH keepalive delayed G-code timers. This fixed timer-only macro uses Feather's immediate command path, so page navigation never waits for the normal G-code mutex even when another command owns it.
 

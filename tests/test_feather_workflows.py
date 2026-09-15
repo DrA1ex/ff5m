@@ -3768,7 +3768,7 @@ class TouchEventBridgeTest(unittest.TestCase):
 
         self.assertEqual(pages, [FEATHER.ScreenPage.MAIN_MENU])
 
-    def test_feedback_from_replaced_page_is_not_restored_or_dispatched(self):
+    def test_released_button_dispatches_without_flash_or_delayed_callback(self):
         controller = base_controller()
         callbacks = []
         controller.reactor.register_callback = (
@@ -3786,16 +3786,11 @@ class TouchEventBridgeTest(unittest.TestCase):
                 events.append(("up", action))
 
         controller.renderer = Renderer()
-        controller.touch_feedback_pending = False
         controller._dispatch_action = lambda action: events.append(("action", action))
         controller._handle_touch_action("nav.control")
-        controller.page = FEATHER.ScreenPage.CONTROL_HOME
-        controller.renderer.generation = 4
+        self.assertEqual(events, [("action", "nav.control")])
+        self.assertEqual(callbacks, [])
 
-        callbacks[0](controller.reactor.monotonic())
-
-        self.assertEqual(events, [("down", "nav.control")])
-        self.assertFalse(controller.touch_feedback_pending)
     def test_busy_klipper_rejects_normal_tap_but_keeps_cancel_interruptible(self):
         controller = base_controller("printing")
         notices = []
@@ -3818,12 +3813,11 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(actions, [
             "print.cancel", "operation.cancel.back"])
 
-    def test_blocking_loader_rejects_current_and_delayed_back(self):
+    def test_blocking_loader_rejects_touch_and_direct_dispatch(self):
         controller = base_controller()
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.busy_message = "HOMING..."
         controller.command_depth = 0
-        controller.touch_feedback_pending = False
         controller.renderer = type("Renderer", (), {"generation": 4})()
         pages = []
         controller._go_back = lambda: pages.append("back")
@@ -3831,15 +3825,10 @@ class TouchEventBridgeTest(unittest.TestCase):
         # The direct touch gate protects raw/stale events which bypass Typer's
         # now-cleared loader hitboxes.
         controller._handle_touch_action("nav.back")
-        # The dispatch gate protects an action whose 80 ms button feedback was
-        # scheduled immediately before the loader appeared.
-        controller.touch_feedback_pending = True
-        controller._finish_touch_action(
-            0, "nav.back", source_page=FEATHER.ScreenPage.CONTROL_MOVE,
-            generation=4)
+        # Direct dispatch must retain the same safety gate.
+        controller._dispatch_action("nav.back")
 
         self.assertEqual(pages, [])
-        self.assertFalse(controller.touch_feedback_pending)
 
     def test_blocking_loader_also_stops_periodic_page_painters(self):
         controller = base_controller("printing")
@@ -3972,37 +3961,40 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(backlight, [65])
         self.assertEqual(actions, ["nav.files"])
 
-    def test_touch_feedback_precedes_deferred_action(self):
+    def test_touch_packets_draw_on_press_and_dispatch_on_release(self):
         controller = base_controller()
         callbacks = []
         controller.reactor.register_callback = (
             lambda callback, waketime=None: callbacks.append(callback))
         rendered = []
         controller.renderer = type("Renderer", (), {
+            "event_fd": 7,
+            "decode_action": lambda self, action: action,
             "flash_button": lambda self, action: rendered.append(("down", action)) or True,
             "restore_button": lambda self, action: rendered.append(("up", action)) or True,
         })()
-        controller.touch_feedback_pending = False
         actions = []
         def dispatch(action):
             actions.append(action)
         controller._dispatch_action = dispatch
-        controller._handle_touch_action("nav.control")
-        controller._handle_touch_action("nav.files")
+        controller.event_partial = ""
+        controller.dimmed = False
+        with mock.patch("os.read", return_value=b"button nav.control down\n"):
+            controller._process_touch_events(1)
         self.assertEqual(rendered, [("down", "nav.control")])
         self.assertEqual(actions, [])
-        callbacks[0](controller.reactor.monotonic())
+        with mock.patch("os.read", return_value=b"button nav.control up\ntap nav.control\n"):
+            controller._process_touch_events(2)
         self.assertEqual(rendered, [("down", "nav.control"),
                                     ("up", "nav.control")])
         self.assertEqual(actions, ["nav.control"])
-        self.assertEqual(len(callbacks), 1)
-        self.assertFalse(controller.touch_feedback_pending)
+        self.assertEqual(callbacks, [])
         # A valid tap on the newly rendered page is accepted immediately;
         # stale taps are rejected by the renderer generation instead of a
         # global 350 ms dead period.
         controller._handle_touch_action("nav.files")
-        self.assertEqual(len(callbacks), 2)
-        self.assertEqual(rendered[-1], ("down", "nav.files"))
+        self.assertEqual(actions, ["nav.control", "nav.files"])
+        self.assertEqual(callbacks, [])
 
 
 class RecoveryRobustnessTest(unittest.TestCase):

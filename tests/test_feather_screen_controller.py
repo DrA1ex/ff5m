@@ -1403,7 +1403,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_kind = "mesh"
         controller.command_depth = 1
         controller.mod_update_pending = False
-        controller.touch_feedback_pending = False
         controller.renderer = type("Renderer", (), {
             "flash_button": lambda self, action: True,
             "generation": 1,
@@ -1414,42 +1413,29 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_touch_action("cal.cancel")
 
         self.assertEqual(cancelled, [True])
-        self.assertFalse(controller.touch_feedback_pending)
 
-    def test_same_page_redraw_does_not_discard_delayed_button_action(self):
+    def test_button_feedback_is_immediate_and_does_not_dispatch(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.SETTINGS
-        controller.touch_feedback_pending = True
-        restored = []
+        events = []
+        controller.reactor = type("Reactor", (), {"monotonic": lambda self: 10.0})()
+        controller.dimmed = False
         controller.renderer = type("Renderer", (), {
-            "generation": 2,
-            "restore_button": lambda self, action: restored.append(action),
+            "decode_action": lambda self, action: "nav.control",
+            "flash_button": lambda self, action: events.append(("down", action)),
+            "restore_button": lambda self, action: events.append(("up", action)),
         })()
-        dispatched = []
-        controller._dispatch_action = dispatched.append
+        controller._dispatch_action = lambda action: self.fail("feedback dispatched an action")
+        controller._handle_button_feedback("button 1:nav.control down")
+        self.assertEqual(events, [("down", "nav.control")])
+        self.assertEqual(controller.last_touch_time, 10.0)
+        controller._handle_button_feedback("button 1:nav.control up")
+        self.assertEqual(events, [("down", "nav.control"), ("up", "nav.control")])
 
-        controller._finish_touch_action(
-            0, "settings.theme.next",
-            source_page=FEATHER.ScreenPage.SETTINGS, generation=1)
-
-        self.assertEqual(restored, [])
-        self.assertEqual(dispatched, ["settings.theme.next"])
-        self.assertFalse(controller.touch_feedback_pending)
-
-    def test_page_change_discards_delayed_button_action(self):
+    def test_stale_or_malformed_button_feedback_is_ignored(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.IDLE_HOME
-        controller.touch_feedback_pending = True
-        controller.renderer = type("Renderer", (), {"generation": 2})()
-        dispatched = []
-        controller._dispatch_action = dispatched.append
-
-        controller._finish_touch_action(
-            0, "settings.theme.next",
-            source_page=FEATHER.ScreenPage.SETTINGS, generation=1)
-
-        self.assertEqual(dispatched, [])
-        self.assertFalse(controller.touch_feedback_pending)
+        controller.renderer = type("Renderer", (), {"decode_action": lambda self, action: None})()
+        for line in ("button stale down", "button stale up", "button", "button x invalid"):
+            controller._handle_button_feedback(line)
 
     def test_homing_progress_keeps_global_abort_registered(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -1489,7 +1475,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_state = FEATHER.PrintState.IDLE
         controller.command_depth = 1
         controller.mod_update_pending = False
-        controller.touch_feedback_pending = True
         immediate = []
         controller._run_immediate_command = immediate.append
         lease = controller._ensure_safety_registry().activity("test-operation")
