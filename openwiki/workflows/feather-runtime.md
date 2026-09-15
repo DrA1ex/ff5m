@@ -100,6 +100,9 @@ publishes these boundaries; nested calibration inside a print, recovery, or
 another operation cannot claim the screen. Outcomes are `completed`,
 `cancelled`, and `interrupted` (including context reset and G-code errors).
 The context stack remains authoritative for phase text and cancellation.
+Feather also reconciles each new root frame from the normal status snapshot,
+so an active operation is still adopted if its one-shot begin event was missed.
+Each root frame is considered only once.
 
 Feather adopts bed screws, bed mesh, PID, input shaper, Z-offset, and recovery
 operations from idle browsing pages; recovery may also replace its own prompt

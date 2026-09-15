@@ -151,6 +151,16 @@ renderer’s button, toggle, and declarative action-hitbox registries, so clicka
 text/panels are covered without importing development-only page modules into
 Feather’s normal startup path.
 
+The same UI suite also walks every visible state of every registered
+`operation_context` type. It feeds read-only context snapshots into the real
+printing, paused, calibration, filament, and cold-pull render paths, including
+the normal nested paths such as Print -> KAMP and Bed Level -> Bed Mesh ->
+Nozzle Cleaning. Before the first frame, the suite compares the runtime
+registry with the visual matrix; a new or removed context therefore fails the
+run until its visible states are deliberately covered. The final
+`ui-context-coverage-complete` frame is written only after every context frame
+has succeeded, so a truncated artifact cannot satisfy host-side coverage.
+
 `SUITE=COMPONENT` is a second non-physical, cold test path used only by the
 extended parity regression. It discovers module-level declarative pages after
 the explicitly requested test has started, renders their default typed state
@@ -579,7 +589,9 @@ The modes are:
   result is reported as `partial`, not as a complete release gate.
 - `hybrid`: Designer frames plus every frame from the existing printer
 `SUITE=UI` whose `semantic_page_id` was not rendered by Designer. A printer
-  frame with no semantic ID, or an unknown ID, stays in the corpus.
+  frame with no semantic ID, or an unknown ID, stays in the corpus. Explicit
+  `ui-context-*` runtime-state frames also stay: a Designer default frame does
+  not replace the live renderer's operation-state variant.
 - `parity`: the hybrid corpus plus paired Designer/real-renderer checks for
   the same default and additional typed-state cases captured by the cold
   `SUITE=COMPONENT` harness.

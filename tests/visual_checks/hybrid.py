@@ -119,6 +119,7 @@ UI_SUITE_LABELS = frozenset((
     "ui-network-progress-cancel",
     "ui-message-two-actions",
     "ui-print-preparing",
+    "ui-context-coverage-complete",
     "ui-cancel-normal",
     "ui-cancel-pending",
     "ui-cancel-not-cancelable",
@@ -537,10 +538,18 @@ def merge_hybrid(designer_records, printer_records, parity=False,
     discovered = set(
         item.get("semantic_page_id") for item in designer_records
         if item.get("semantic_page_id"))
+    designer_case_ids = set(
+        item.get("case_id") for item in designer_records
+        if item.get("case_id"))
     legacy = []
     replaced = []
     for item in printer_records:
-        if item.get("semantic_page_id") in discovered:
+        explicit_runtime_state = (
+            item.get("_explicit_case_id", False)
+            and str(item.get("label", "")).startswith("ui-context-")
+            and item.get("case_id") not in designer_case_ids)
+        if (item.get("semantic_page_id") in discovered
+                and not explicit_runtime_state):
             replaced.append(item)
         else:
             legacy.append(item)
@@ -593,6 +602,10 @@ def attach_expectations(records, expectations):
         if expectation is None and value["source"] == "printer":
             expectation = expectations.get(
                 "printer:" + str(value.get("label", "")))
+            if (expectation is None and
+                    str(value.get("label", "")).startswith("ui-context-")):
+                expectation = expectations.get(
+                    "printer:ui-operation-context")
         if expectation is None and value["source"] == "parity":
             expectation = expectations.get(value.get("designer_case_id"))
         if expectation is None:

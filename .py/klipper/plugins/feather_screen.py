@@ -235,6 +235,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._last_cancel_label = None
         self.operation_context = None
         self._last_operation_revision = -1
+        self._observed_external_frame_id = None
         self.home_during_print = False
         self.busy_message = None
         self.busy_phase = 0
@@ -538,6 +539,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.operation_context = self.printer.lookup_object(
             "operation_context", None)
         self._last_operation_revision = -1
+        self._observed_external_frame_id = None
         self.start_print_macro = self.printer.lookup_object(
             "gcode_macro _START_PRINT", None)
         self.cancel_print_macro = self.printer.lookup_object(
@@ -1378,6 +1380,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _handle_operation_begin(self, frame_id, context_type):
         # Only top-level contexts publish this event. An idle browsing page
         # may follow them; an existing workflow always keeps the screen.
+        self._adopt_external_operation(frame_id, context_type)
+
+    def _adopt_external_operation(self, frame_id, context_type):
         kinds = {
             "bed_screws": "screws", "auto_bed_level": "mesh",
             "bed_level": "mesh", "pid_bed": "pid_bed",
@@ -1385,7 +1390,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "z_offset": "z", "recovery": "recovery",
         }
         kind = kinds.get(context_type)
-        if kind is None or self.print_state != PrintState.IDLE:
+        if kind is None or frame_id == getattr(
+                self, "_observed_external_frame_id", None):
+            return
+        # A context rejected because another workflow owns the screen stays
+        # rejected. State revisions inside that same operation must not make
+        # an old launch unexpectedly replace a page later.
+        self._observed_external_frame_id = frame_id
+        if self.print_state != PrintState.IDLE:
             return
         pages = (
             ScreenPage.IDLE_HOME, ScreenPage.MAIN_MENU,
@@ -1408,6 +1420,19 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         except Exception:
             # A display failure must never abort the externally run macro.
             logging.exception("[feather_screen] unable to show external operation")
+
+    def _reconcile_external_operation(self, status):
+        contexts = status.get("contexts", ())
+        if not contexts:
+            return
+        root = contexts[0]
+        if not isinstance(root, dict):
+            return
+        frame_id = root.get("id")
+        context_type = root.get("type")
+        if frame_id is None or context_type is None:
+            return
+        self._adopt_external_operation(frame_id, context_type)
 
     def _handle_operation_end(self, frame_id, outcome):
         try:

@@ -19,6 +19,9 @@ from ff5m_ui.screen import ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
+from .context_fixtures import (
+    CONTEXT_TYPES, VISUAL_CONTEXTS, visual_context_cases,
+)
 
 
 MOTION_STEP_TIMEOUT = 10.0
@@ -378,6 +381,7 @@ class ScenarioCatalog:
         self._add_tap(steps, "nav.back", ScreenPage.IDLE_HOME)
         self._add_render_capture(
             steps, "ui-print-preparing", self._render_preparing_print)
+        self._add_operation_context_visuals(steps)
         for kind in ("normal", "pending", "not-cancelable"):
             self._add_render_capture(
                 steps, "ui-cancel-" + kind,
@@ -411,6 +415,49 @@ class ScenarioCatalog:
         self._add_call(steps, "ui-busy-clear", self._clear_busy_notice)
         self._add_render_capture(steps, "ui-toast", self._render_toast)
         self._add_call(steps, "ui-resume-timer", self._resume_ui_timer)
+
+    def _add_operation_context_visuals(self, steps):
+        self._add_call(
+            steps, "ui-context-validate",
+            self._validate_operation_context_visuals, delay=0.0)
+        for specification, state, label in visual_context_cases():
+            states = specification["states"]
+            previous_states = states[:states.index(state)]
+            self._add_call(
+                steps, label,
+                lambda item=specification, value=state,
+                previous=previous_states:
+                self._render_operation_context(item, value, previous))
+            self._add_case_capture(steps, label, label)
+        self._add_call(
+            steps, "ui-context-coverage-complete",
+            lambda: self._show(ScreenPage.IDLE_HOME))
+        self._add_capture(steps, "ui-context-coverage-complete")
+
+    def _validate_operation_context_visuals(self):
+        expected = set(CONTEXT_TYPES)
+        described = set(item["type"] for item in VISUAL_CONTEXTS)
+        manager = getattr(self.host, "operation_context", None)
+        definitions = getattr(manager, "context_types", {})
+        registered = set(definitions)
+        if described != expected:
+            raise RuntimeError(
+                "Operation-context visual specification is incomplete: "
+                "expected=%s described=%s" % (
+                    sorted(expected), sorted(described)))
+        if registered != expected:
+            raise RuntimeError(
+                "Registered operation contexts changed without visual "
+                "coverage: expected=%s registered=%s" % (
+                    sorted(expected), sorted(registered)))
+        registered_contract = dict(
+            (type_id, (definition.name, definition.cancel_mode))
+            for type_id, definition in definitions.items())
+        if registered_contract != CONTEXT_TYPES:
+            raise RuntimeError(
+                "Registered operation-context presentation changed without "
+                "visual coverage: expected=%s registered=%s" % (
+                    CONTEXT_TYPES, registered_contract))
 
     @staticmethod
     def _component_pages():
@@ -914,6 +961,194 @@ class ScenarioCatalog:
                 "_operation_context_status": lambda eventtime=None: operation,
         }):
             self._show(ScreenPage.PRINTING)
+
+    @staticmethod
+    def _operation_context_snapshot(specification, state):
+        contexts = []
+        for index, type_id in enumerate(specification["path"]):
+            name, cancel_mode = CONTEXT_TYPES[type_id]
+            contexts.append({
+                "id": index + 1,
+                "type": type_id,
+                "name": name,
+                "current_state": (
+                    state if index == len(specification["path"]) - 1
+                    else None),
+                "cancel_mode": cancel_mode,
+            })
+        target = None
+        blocker = None
+        for frame in reversed(contexts):
+            if frame["cancel_mode"] == "cancelable":
+                target = frame
+                break
+            if frame["cancel_mode"] == "non_interruptible":
+                blocker = frame
+                break
+        if target is None and blocker is None and contexts:
+            target = contexts[0]
+        return {
+            "contexts": tuple(contexts),
+            "context_path": tuple(frame["name"] for frame in contexts),
+            "context_types": tuple(frame["type"] for frame in contexts),
+            "current_state": state,
+            "cancel_available": target is not None,
+            "cancel_pending": False,
+            "cancel_request_id": None,
+            "cancel_target_type": target["type"] if target else None,
+            "cancel_target_name": target["name"] if target else None,
+            "cancel_target_mode": (
+                target["cancel_mode"] if target else None),
+            "cancel_blocker_type": blocker["type"] if blocker else None,
+            "cancel_blocker_name": blocker["name"] if blocker else None,
+            "revision": 1,
+        }
+
+    def _render_operation_context(self, specification, state,
+                                  previous_states):
+        operation = self._operation_context_snapshot(specification, state)
+        surface = specification["surface"]
+        if surface in ("printing", "paused"):
+            self._render_operation_print(operation, surface, state)
+        elif surface == "calibration":
+            self._render_operation_calibration(
+                operation, specification["kind"], previous_states)
+        elif surface == "filament":
+            self._render_operation_filament(operation, state)
+        elif surface == "cold_pull":
+            self._render_operation_cold_pull_snapshot(operation, state)
+        else:
+            raise RuntimeError(
+                "Unknown operation-context visual surface: %s" % surface)
+
+    def _render_operation_print(self, operation, surface, state):
+        class Status:
+            def __init__(self, values):
+                self.values = values
+
+            def get_status(self, _eventtime):
+                return dict(self.values)
+
+        class VirtualSD:
+            def file_path(self):
+                return "/data/OPERATION_CONTEXT_VISUAL_TEST.gcode"
+
+            def get_status(self, _eventtime):
+                return {"progress": 0.42, "estimate_print_time": 1800.0}
+
+            def is_active(self):
+                return True
+
+        print_state = (
+            PrintState.PAUSED if surface == "paused" else
+            PrintState.PRINTING if state == "PRINTING" else
+            PrintState.PREPARING)
+        page = (ScreenPage.PAUSED if print_state == PrintState.PAUSED
+                else ScreenPage.PRINTING)
+        with _temporary_attributes(self.host, {
+                "print_state": print_state,
+                "print_stats": Status({
+                    "state": "paused" if print_state == PrintState.PAUSED
+                    else "printing",
+                    "print_duration": 420.0,
+                    "info": {"current_layer": 12, "total_layer": 80},
+                }),
+                "virtual_sdcard": VirtualSD(),
+                "toolhead": Status({
+                    "homed_axes": "xyz",
+                    "position": (110.0, 110.0, 2.4, 0.0),
+                }),
+                "motion_report": None,
+                "_operation_context_status":
+                    lambda eventtime=None: operation,
+        }):
+            self._show(page)
+
+    def _render_operation_calibration(self, operation, kind,
+                                      previous_states):
+        feature = self.host.feature_manager.get("calibration")
+        values = {
+            "calibration_kind": kind,
+            "calibration_repeat_probe": False,
+            "calibration_clean_nozzle": True,
+            "calibration_cancel_requested": False,
+            "calibration_progress_key": None,
+            "calibration_seen_phases": set(),
+            "_last_calibration_label": None,
+            "_last_calibration_cancel_visible": False,
+            "recovery_action": None,
+        }
+        with _temporary_attributes(feature, values), _temporary_attributes(
+                self.host, {
+                    "_operation_context_status":
+                        lambda eventtime=None: operation,
+                }):
+            for previous in previous_states:
+                previous_operation = dict(operation)
+                previous_operation["current_state"] = previous
+                feature._calibration_stage_commands(
+                    str(previous or "STARTING"), previous_operation)
+            self._show(ScreenPage.CALIBRATION_PROGRESS)
+
+    def _render_operation_filament(self, operation, state):
+        extruder = self.host.extruder
+
+        class SnapshotExtruder:
+            heater = extruder.heater
+            min_extrude_temp = getattr(extruder, "min_extrude_temp", 170.0)
+
+            def get_status(self, eventtime):
+                status = dict(extruder.get_status(eventtime))
+                if state == "HEATING NOZZLE":
+                    status.update({"temperature": 130.0, "target": 250.0})
+                elif state == "COOLING NOZZLE":
+                    status.update({"temperature": 270.0, "target": 250.0})
+                else:
+                    status.update({"temperature": 250.0, "target": 250.0})
+                return status
+
+        page = (ScreenPage.FILAMENT_MATERIAL
+                if state in (None, "SELECTING MATERIAL")
+                else ScreenPage.FILAMENT_ACTION)
+        materials = tuple(self.host.heating_materials)
+        material = self.material or (materials[0] if materials else "PLA")
+        with _temporary_attributes(self.host, {
+                "extruder": SnapshotExtruder(),
+                "filament_material": material,
+                "_operation_context_status":
+                    lambda eventtime=None: operation,
+        }):
+            self._show(page)
+
+    def _render_operation_cold_pull_snapshot(self, operation, state):
+        extruder = self.host.extruder
+
+        class SnapshotExtruder:
+            heater = extruder.heater
+            min_extrude_temp = getattr(extruder, "min_extrude_temp", 170.0)
+
+            def get_status(self, eventtime):
+                status = dict(extruder.get_status(eventtime))
+                if state in ("HEATING", "HEATING NOZZLE"):
+                    status.update({"temperature": 130.0, "target": 250.0})
+                elif state == "COOLING NOZZLE":
+                    status.update({"temperature": 120.0, "target": 80.0})
+                else:
+                    status.update({"temperature": 80.0, "target": 80.0})
+                return status
+
+        with _temporary_attributes(self.host, {
+                "extruder": SnapshotExtruder(),
+                "action_prompt": {
+                    "title": "Cold Pull", "text": [], "rows": [],
+                    "footer": [], "buttons": {}, "group": None,
+                },
+                "action_prompt_page": 0,
+                "action_prompt_visible": True,
+                "_operation_context_status":
+                    lambda eventtime=None: operation,
+        }):
+            self._show(ScreenPage.ACTION_PROMPT)
 
     def _render_cancel_snapshot(self, kind):
         mode = "not_cancelable" if kind == "not-cancelable" else kind

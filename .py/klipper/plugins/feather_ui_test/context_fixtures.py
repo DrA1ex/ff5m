@@ -20,7 +20,137 @@ CONTEXT_TYPES = {
     "resume": ("Resume", "interruptible"),
     "z_offset": ("Z Offset", "cancelable"),
     "recovery": ("Recovery", "non_interruptible"),
+    "pid_bed": ("Bed PID", "non_interruptible"),
+    "pid_extruder": ("Hotend PID", "non_interruptible"),
+    "input_shaper": ("Input Shaper", "non_interruptible"),
 }
+
+# Each entry describes the real visible states published by one registered
+# operation type and the existing Feather surface responsible for showing it.
+# A nested path is intentional: these operations normally run inside the
+# parent workflow shown here, and the full breadcrumb is part of the UI.
+VISUAL_CONTEXTS = (
+    {
+        "type": "print", "path": ("print",), "surface": "printing",
+        "states": (
+            None, "CHECKING FILE", "HOMING", "LEVELING",
+            "SKIPPING LEVELING", "LOADING PROFILE",
+            "USING LOADED PROFILE", "PARKING", "HEATING BED",
+            "HEATING NOZZLE", "RESUMING HEAT", "PRIMING", "PRINTING",
+        ),
+    },
+    {
+        "type": "auto_bed_level", "path": ("auto_bed_level",),
+        "surface": "calibration", "kind": "mesh",
+        "states": (None, "FINISHING"),
+    },
+    {
+        "type": "bed_screws", "path": ("bed_screws",),
+        "surface": "calibration", "kind": "screws",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING NOZZLE",
+            "COOLING NOZZLE", "PROBING",
+        ),
+    },
+    {
+        "type": "bed_level", "path": ("auto_bed_level", "bed_level"),
+        "surface": "calibration", "kind": "mesh",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING BED", "COOLING BED",
+            "HEATING NOZZLE", "COOLING NOZZLE", "LEVELING", "FINISHING",
+        ),
+    },
+    {
+        "type": "kamp", "path": ("print", "kamp"),
+        "surface": "printing",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING BED", "COOLING BED",
+            "HEATING NOZZLE", "COOLING NOZZLE", "LEVELING",
+        ),
+    },
+    {
+        "type": "mesh_validation",
+        "path": ("print", "mesh_validation"), "surface": "printing",
+        "states": (None, "HOMING", "CHECKING MESH"),
+    },
+    {
+        "type": "nozzle_clean",
+        "path": ("auto_bed_level", "bed_level", "nozzle_clean"),
+        "surface": "calibration", "kind": "mesh",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING BED", "COOLING BED",
+            "HEATING NOZZLE", "COOLING NOZZLE", "PREPARING TO CLEAN",
+            "CLEANING", "FINISHING",
+        ),
+    },
+    {
+        "type": "filament", "path": ("filament",),
+        "surface": "filament",
+        "states": (
+            None, "SELECTING MATERIAL", "HEATING NOZZLE",
+            "COOLING NOZZLE", "SELECT ACTION", "EXECUTING ACTION",
+        ),
+    },
+    {
+        "type": "cold_pull", "path": ("cold_pull",),
+        "surface": "cold_pull",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING NOZZLE", "EXTRUDING",
+            "COOLING NOZZLE", "PULLING",
+        ),
+    },
+    {
+        "type": "resume", "path": ("print", "resume"),
+        "surface": "paused",
+        "states": (None, "HEATING NOZZLE", "COOLING NOZZLE"),
+    },
+    {
+        "type": "z_offset", "path": ("z_offset",),
+        "surface": "calibration", "kind": "z",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING NOZZLE",
+            "COOLING NOZZLE", "TARING",
+        ),
+    },
+    {
+        "type": "recovery", "path": ("recovery",),
+        "surface": "calibration", "kind": "recovery",
+        "states": (
+            None, "LOADING STATE", "PREPARING", "HEATING BED",
+            "COOLING BED", "HEATING NOZZLE", "COOLING NOZZLE", "HOMING",
+            "POSITIONING", "RESTORING STATE", "FINISHING",
+        ),
+    },
+    {
+        "type": "pid_bed", "path": ("pid_bed",),
+        "surface": "calibration", "kind": "pid_bed",
+        "states": (None, "HOMING", "TUNING", "COMPLETE"),
+    },
+    {
+        "type": "pid_extruder", "path": ("pid_extruder",),
+        "surface": "calibration", "kind": "pid_extruder",
+        "states": (None, "HOMING", "TUNING", "COMPLETE"),
+    },
+    {
+        "type": "input_shaper", "path": ("input_shaper",),
+        "surface": "calibration", "kind": "shaper",
+        "states": (
+            None, "PREPARING", "HOMING", "MEASURING", "PROCESSING",
+            "COMPLETE",
+        ),
+    },
+)
+
+
+def visual_context_cases():
+    for specification in VISUAL_CONTEXTS:
+        for state in specification["states"]:
+            state_slug = ("starting" if state is None else
+                          str(state).lower().replace(
+                              "_", "-").replace(" ", "-"))
+            label = "ui-context-%s-%s" % (
+                specification["type"].replace("_", "-"), state_slug)
+            yield specification, state, label
 
 WAIT_VARIANTS = ("HEATING", "COOLING", "NONE")
 

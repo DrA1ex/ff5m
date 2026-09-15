@@ -719,6 +719,7 @@ class PrintingPagesMixin:
         if revision == getattr(self, "_last_operation_revision", -1):
             return
         self._last_operation_revision = revision
+        self._reconcile_external_operation(operation)
         if self._page_paint_allowed(ScreenPage.PRINTING, ScreenPage.PAUSED):
             self._draw_print_status(
                 self._display_status_text(status=operation))

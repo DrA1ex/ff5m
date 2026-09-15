@@ -759,7 +759,9 @@ class RunnerContractTest(unittest.TestCase):
             actions.count(UI_TEST.z_actions.CLOSER.wire_id), 10)
         self.assertIn(UI_TEST.z_actions.DISCARD_CONFIRM.wire_id, actions)
         self.assertNotIn(UI_TEST.z_actions.SAVE.wire_id, actions)
-        self.assertFalse(any("pid" in label.lower() for label in labels))
+        self.assertFalse(any(
+            "pid" in step["label"].lower()
+            for step in steps if step.get("phase") != "ui"))
 
     def test_periodic_capture_waits_for_every_probing_operation_state(self):
         class Toolhead:
@@ -945,7 +947,15 @@ class RunnerContractTest(unittest.TestCase):
             if step["kind"] == "capture"
         }
 
-        self.assertEqual(captures, HYBRID.UI_SUITE_LABELS)
+        context_captures = set(
+            label for _specification, _state, label
+            in CONTEXT_FIXTURES.visual_context_cases())
+        self.assertEqual(
+            captures - context_captures, HYBRID.UI_SUITE_LABELS)
+        self.assertEqual(
+            {label for label in captures if label.startswith("ui-context-")}
+            - {"ui-context-coverage-complete"},
+            context_captures)
         self.assertIn("ui-update-short", captures)
         self.assertIn("ui-update-long", captures)
         self.assertIn("ui-update-progress", captures)
@@ -957,6 +967,60 @@ class RunnerContractTest(unittest.TestCase):
                 "measure-ready", "input", "warning", "result",
                 "exit-warning", "saved")},
             {label for label in captures if label.startswith("ui-extruder-")})
+
+    def test_operation_context_visuals_cover_registered_contract_and_states(self):
+        specifications = CONTEXT_FIXTURES.VISUAL_CONTEXTS
+        described = [item["type"] for item in specifications]
+
+        self.assertEqual(set(described), set(CONTEXT_FIXTURES.CONTEXT_TYPES))
+        self.assertEqual(len(described), len(set(described)))
+        for item in specifications:
+            self.assertEqual(item["path"][-1], item["type"])
+            self.assertEqual(len(item["states"]), len(set(item["states"])))
+            self.assertIn(None, item["states"])
+            self.assertIn(
+                item["surface"],
+                ("printing", "paused", "calibration", "filament",
+                 "cold_pull"))
+            for type_id in item["path"]:
+                self.assertIn(type_id, CONTEXT_FIXTURES.CONTEXT_TYPES)
+
+    def test_operation_context_visual_validation_uses_runtime_registry(self):
+        registered = dict(
+            (type_id, type("Definition", (), {
+                "name": name, "cancel_mode": cancel_mode,
+            })())
+            for type_id, (name, cancel_mode)
+            in CONTEXT_FIXTURES.CONTEXT_TYPES.items())
+        host = type("Host", (), {
+            "operation_context": type("Manager", (), {
+                "context_types": registered,
+            })(),
+        })()
+        scenarios = SCENARIOS.ScenarioCatalog(
+            type("Run", (), {"host": host})())
+
+        scenarios._validate_operation_context_visuals()
+        del registered["bed_screws"]
+        with self.assertRaisesRegex(
+                RuntimeError, "without visual coverage"):
+            scenarios._validate_operation_context_visuals()
+
+    def test_operation_context_snapshot_preserves_path_and_cancel_domain(self):
+        specification = next(
+            item for item in CONTEXT_FIXTURES.VISUAL_CONTEXTS
+            if item["type"] == "nozzle_clean")
+
+        status = SCENARIOS.ScenarioCatalog._operation_context_snapshot(
+            specification, "CLEANING")
+
+        self.assertEqual(status["context_types"], (
+            "auto_bed_level", "bed_level", "nozzle_clean"))
+        self.assertEqual(status["context_path"], (
+            "Bed Level", "Bed Mesh", "Nozzle Cleaning"))
+        self.assertEqual(status["current_state"], "CLEANING")
+        self.assertTrue(status["cancel_available"])
+        self.assertEqual(status["cancel_target_type"], "auto_bed_level")
 
     def test_repeat_file_confirmation_snapshots_cover_both_option_states(self):
         rendered = []
@@ -1267,6 +1331,65 @@ class RunnerContractTest(unittest.TestCase):
             ("show", {"temperature": 130.4, "target": 250.0}, 170.0),
             ("update", {"temperature": 260.4, "target": 250.0}, 170.0),
         ])
+
+    def test_context_material_visuals_select_pages_and_restore_inputs(self):
+        class Extruder:
+            heater = object()
+
+            def get_status(self, _eventtime):
+                return {"temperature": 31.0, "target": 0.0}
+
+        original = Extruder()
+        host = type("Host", (), {})()
+        host.heating_materials = ("PETG",)
+        host.filament_material = "before"
+        host.extruder = original
+        feature = UI_TEST.UITestRun(host)
+        feature.material = "PETG"
+        seen = []
+
+        def show(page):
+            operation = host._operation_context_status()
+            seen.append((
+                page, operation["current_state"],
+                host.extruder.get_status(0.0),
+                getattr(host, "action_prompt", {}).get("title"),
+            ))
+
+        feature.scenarios._show = show
+        filament = next(
+            item for item in CONTEXT_FIXTURES.VISUAL_CONTEXTS
+            if item["type"] == "filament")
+        cold_pull = next(
+            item for item in CONTEXT_FIXTURES.VISUAL_CONTEXTS
+            if item["type"] == "cold_pull")
+
+        feature.scenarios._render_operation_filament(
+            feature.scenarios._operation_context_snapshot(
+                filament, "SELECTING MATERIAL"),
+            "SELECTING MATERIAL")
+        feature.scenarios._render_operation_filament(
+            feature.scenarios._operation_context_snapshot(
+                filament, "HEATING NOZZLE"),
+            "HEATING NOZZLE")
+        feature.scenarios._render_operation_cold_pull_snapshot(
+            feature.scenarios._operation_context_snapshot(
+                cold_pull, "PULLING"),
+            "PULLING")
+
+        self.assertEqual(
+            [item[0] for item in seen], [
+                FEATHER.ScreenPage.FILAMENT_MATERIAL,
+                FEATHER.ScreenPage.FILAMENT_ACTION,
+                FEATHER.ScreenPage.ACTION_PROMPT,
+            ])
+        self.assertEqual(seen[1][2], {
+            "temperature": 130.0, "target": 250.0})
+        self.assertEqual(seen[2][3], "Cold Pull")
+        self.assertIs(host.extruder, original)
+        self.assertEqual(host.filament_material, "before")
+        self.assertFalse(hasattr(host, "action_prompt"))
+        self.assertFalse(hasattr(host, "_operation_context_status"))
 
     def test_hardware_calibration_open_resets_ui_catalog_page(self):
         calibration = type("Calibration", (), {"calibration_page": 2})()

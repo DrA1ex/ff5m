@@ -1417,6 +1417,50 @@ capture.mapConcurrent([40, 5, 20, 1], 2, async (delay, index) => {
         self.assertEqual(
             parity["pairs"][0]["comparison_path"], matching["path"])
 
+    def test_hybrid_keeps_explicit_runtime_state_without_designer_case(self):
+        designer = [{
+            "case_id": "default-printing",
+            "label": "Printing",
+            "semantic_page_id": "ui.Pages.PRINTING",
+            "source": "designer",
+            "path": pathlib.Path("/tmp/designer.png"),
+        }]
+        runtime = {
+            "case_id": "ui-context-print-homing",
+            "label": "ui-context-print-homing",
+            "semantic_page_id": "ui.Pages.PRINTING",
+            "source": "printer",
+            "path": pathlib.Path("/tmp/printer.bmp"),
+            "_explicit_case_id": True,
+        }
+
+        merged = HYBRID.merge_hybrid(designer, [runtime])
+
+        self.assertEqual(merged["legacy"], [runtime])
+        self.assertEqual(merged["replaced"], [])
+        self.assertIn(runtime, merged["records"])
+
+    def test_operation_context_frames_share_runtime_visual_expectation(self):
+        record = {
+            "case_id": "ui-context-print-homing",
+            "label": "ui-context-print-homing",
+            "semantic_page_id": "ui.Pages.PRINTING",
+            "source": "printer",
+            "path": pathlib.Path("/tmp/printer.bmp"),
+        }
+        expectation = {
+            "description": "Operation progress",
+            "required": ["current operation"],
+            "forbidden": ["blank frame"],
+            "allowed_variations": ["state"],
+        }
+
+        ready, missing = HYBRID.attach_expectations(
+            [record], {"printer:ui-operation-context": expectation})
+
+        self.assertEqual(missing, [])
+        self.assertEqual(ready[0]["expectation"], expectation)
+
     def test_manifest_preserves_semantic_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = pathlib.Path(temporary)

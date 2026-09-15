@@ -77,6 +77,43 @@ class ExternalWorkflowTest(unittest.TestCase):
                 self.assertIsNone(self.feature().calibration_error)
         self.host._run_script.assert_not_called()
 
+    def test_active_bed_screws_is_adopted_from_operation_context_snapshot(self):
+        begin_handlers = self.printer.events["operation_context:begin"]
+        self.printer.events["operation_context:begin"] = []
+        try:
+            self.begin("bed_screws")
+        finally:
+            self.printer.events["operation_context:begin"] = begin_handlers
+        self.assertIsNone(self.feature())
+
+        self.host._update_operation_context(100.0)
+
+        self.assertEqual(self.host.page, Page.CALIBRATION_PROGRESS)
+        self.assertEqual(self.feature().calibration_kind, "screws")
+        self.assertEqual(
+            self.feature().external_context_id,
+            self.context.get_status(100.0)["contexts"][0]["id"])
+        self.finish()
+        self.flush()
+        self.assertEqual(self.host.page, Page.CALIBRATION_RESULT)
+        self.assertIsNone(self.feature().external_context_id)
+        self.host._run_script.assert_not_called()
+
+    def test_rejected_context_is_not_adopted_on_a_later_state_revision(self):
+        self.host.page = Page.ERROR
+        self.begin("bed_screws")
+        self.assertIsNone(self.feature())
+
+        self.host.page = Page.IDLE_HOME
+        self.context.cmd_CONTEXT_STATE(FakeCommand(NAME="PROBING"))
+        self.host._update_operation_context(100.0)
+
+        self.assertEqual(self.host.page, Page.IDLE_HOME)
+        self.assertIsNone(self.feature())
+        self.finish()
+        self.flush()
+        self.assertEqual(self.host.page, Page.IDLE_HOME)
+
     def test_nested_calibration_keeps_outer_workflow_and_finishes_only_with_root(self):
         self.begin("bed_screws")
         self.begin("pid_bed")
