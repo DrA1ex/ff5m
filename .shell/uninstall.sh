@@ -132,7 +132,7 @@ uninstall() {
         rm -rf /opt/.netd-private
         
         echo "// Removing root access..."
-        rm -rf /etc/init.d/S50sshd /etc/init.d/S55date /bin/dropbearmulti /bin/dropbear /bin/dropbearkey /bin/scp /etc/dropbear /etc/init.d/S60dropbear
+        rm -rf /etc/init.d/S50sshd /etc/init.d/S55date /bin/dropbearmulti /bin/dropbear /bin/dropbearkey /bin/dbclient /bin/scp /usr/libexec/sftp-server /etc/dropbear /etc/init.d/S60dropbear
         
         echo "// Removing Beep util..."
         rm -f /usr/bin/audio /usr/lib/python3.7/site-packages/audio.py /usr/bin/audio_midi.sh /opt/klipper/klippy/extras/gcode_shell_command.py
@@ -147,6 +147,11 @@ uninstall() {
     rm -rf /opt/config/mod/
     rm -rf /root/printer_data
     rm -rf /data/.mod
+
+    rm -rf /data/.feather
+    rm -rf /data/.firmware
+    rm -rf /data/.firmware-runner
+    rm -rf /data/forge-x-recovery
     
     echo "// Done!"
     
