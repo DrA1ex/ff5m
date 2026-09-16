@@ -10,7 +10,7 @@ from ui import ThemeColor
 from ui.bindings import bind, derived, resolve
 from ui.components import Button, Component, Fill, Panel, Text
 from ui.layout import (
-    FLEX, Column, Equal, Flex, Grid, Overlay, PageTree, Rect, Row, Spacer,
+    FLEX, Column, Equal, Flex, Grid, Overlay, PageTree, Rect, Spacer,
     StateCase,
 )
 
@@ -96,11 +96,11 @@ def _enabled(value):
 def _metric(label, value, ref):
     return Column(
         Text(label, color=ThemeColor.PRIMARY, font=FONT,
-             horizontal="left"),
+             horizontal="left").height("content"),
         Text(value, color=ThemeColor.TEXT, font=VALUE_FONT,
-             horizontal="left").ref(ref),
+             horizontal="left").height("content").ref(ref),
         gap=0,
-    )
+    ).height("content")
 
 
 def _detail_metrics(first, second, divider=True):
@@ -116,7 +116,7 @@ def _detail_metrics(first, second, divider=True):
         matrix = ((first, second),)
         columns = Equal(2)
         gap = (11, 0)
-    return Grid(matrix=matrix, columns=columns, rows=Equal(1), gap=gap)
+    return Grid(matrix=matrix, columns=columns, rows=Equal(1), gap=gap).height("content")
 
 
 def _details():
@@ -125,15 +125,15 @@ def _details():
             bind(PrintingState.FILENAME), color=ThemeColor.PRIMARY,
             font="JetBrainsMono Bold 12pt", horizontal="left",
             vertical="top", truncate=True,
-        ).height(24).ref(PrintingRef.FILENAME),
+        ).height("content").ref(PrintingRef.FILENAME),
         Text(
             bind(PrintingState.STATUS), color=ThemeColor.TEXT,
             font=FONT, horizontal="left", vertical="top", truncate=True,
-        ).height(24).ref(PrintingRef.STATUS),
-        gap=8,
-    ).padding(top=4)
+        ).height("content").ref(PrintingRef.STATUS),
+        gap=4,
+    ).padding(top=4).height("content")
     progress = Column(
-        Row(
+        Grid(matrix=((
             Text("PROGRESS", color=ThemeColor.PRIMARY, font=FONT,
                  horizontal="left"),
             Text(
@@ -141,12 +141,11 @@ def _details():
                         bind(PrintingState.PROGRESS)),
                 color=ThemeColor.PRIMARY,
                 font=VALUE_FONT, horizontal="right"),
-            gap=0,
-        ).height(16),
+        ),), columns=Equal(2), rows=Equal(1), gap=0).height("content"),
         PrintProgress(bind(PrintingState.PROGRESS)).height(34)
         .ref(PrintingRef.PROGRESS),
-        gap=12,
-    )
+        gap=8,
+    ).height("content")
     timing = _detail_metrics(
         _metric("ELAPSED", bind(PrintingState.ELAPSED), PrintingRef.ELAPSED),
         _metric("REMAINING", bind(PrintingState.REMAINING),
@@ -157,19 +156,15 @@ def _details():
         _metric("HEIGHT", bind(PrintingState.HEIGHT), PrintingRef.HEIGHT),
         divider=False,
     )
-    return Grid(
-        matrix=(
-            (information,),
-            (progress,),
-            (Spacer(),),
-            (Fill(ThemeColor.BORDER),),
-            (timing,),
-            (Spacer(),),
-            (Fill(ThemeColor.BORDER),),
-            (position,),
-        ),
-        columns=(FLEX,),
-        rows=(60, 62, FLEX, 1, Flex(4), 8, 1, Flex(4)),
+    return Column(
+        information,
+        progress,
+        Spacer(),
+        Fill(ThemeColor.BORDER).height(1),
+        timing,
+        Spacer(),
+        Fill(ThemeColor.BORDER).height(1),
+        position,
         gap=0,
     ).ref(PrintingRef.DETAILS)
 
@@ -189,8 +184,8 @@ def _preview():
         Column(
             Column(
                 Text("PREVIEW", color=ThemeColor.PRIMARY, font=FONT,
-                     horizontal="left"),
-            ).height(38).padding(left=18, top=4),
+                     horizontal="left").height("content"),
+            ).height("content").padding(left=18, top=4, bottom=12),
             no_preview,
             gap=0,
         ),
@@ -216,37 +211,34 @@ def _buttons():
         matrix=((
             pause,
             Button(FILAMENT, "FILAMENT", state=filament_state,
-                   font=BUTTON_FONT).ref(PrintingRef.FILAMENT),
+                   font=BUTTON_FONT).height("content").ref(PrintingRef.FILAMENT),
             Button(Z_ADJUST, "Z ADJUST", state=z_state,
-                   font=BUTTON_FONT).ref(PrintingRef.Z_ADJUST),
+                   font=BUTTON_FONT).height("content").ref(PrintingRef.Z_ADJUST),
             Button(CANCEL, "CANCEL", state="danger", font=BUTTON_FONT)
-            .ref(PrintingRef.CANCEL),
+            .height("content").ref(PrintingRef.CANCEL),
         ),),
         columns=Equal(4), rows=Equal(1), gap=(8, 0),
     ).margin(left=20, right=20).ref(PrintingRef.BUTTONS)
 
 
 def create_page(bounds=PAGE_BOUNDS):
-    header = Row(
-        Button(HOME, "HOME", font=BUTTON_FONT).width(146)
-        .ref(PrintingRef.HOME),
-        Spacer(),
-        gap=0,
-    ).padding(left=14, top=7, right=14, bottom=7).ref(PrintingRef.HEADER)
-    content = Grid(
-        matrix=(
-            (Grid(
-                matrix=((_details(), _preview()),),
-                columns=(Flex(2), FLEX), rows=Equal(1), gap=(24, 0),
-            ).margin(left=25, right=24).ref(PrintingRef.BODY),
-            ),
-            (_buttons().height(72),),
-        ),
-        columns=(FLEX,), rows=(FLEX, 72), gap=(0, 18),
+    header = Grid(
+        matrix=((
+            Button(HOME, "HOME", font=BUTTON_FONT).height("content").ref(PrintingRef.HOME),
+            Spacer(),
+        ),),
+        columns=(146, FLEX), rows=Equal(1), gap=0,
+    ).padding(left=14, top=7, right=14, bottom=7).height("content").ref(PrintingRef.HEADER)
+    content = Column(
+        Grid(
+            matrix=((_details(), _preview()),),
+            columns=(Flex(2), FLEX), rows=Equal(1), gap=(24, 0),
+        ).margin(left=25, right=24).ref(PrintingRef.BODY),
+        _buttons().height("content"),
+        gap=18,
     )
-    root = Grid(
-        matrix=((header,), (content,)),
-        columns=(FLEX,), rows=(60, FLEX), gap=(0, 14),
+    root = Column(
+        header, content, gap=12,
     ).padding(bottom=15).ref(PrintingRef.ROOT)
     return PageTree(root, bounds, page_id=AppPage.PRINTING)
 

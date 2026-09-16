@@ -475,7 +475,7 @@ class Text(Component):
         if direction == "horizontal":
             return self._content_width()
         if direction == "vertical":
-            return self._content_height(cross_extent)
+            return self._content_height(cross_extent, dynamic_minimum=True)
         return None
 
     def content_extent(self, direction, cross_extent=None):
@@ -493,6 +493,11 @@ class Text(Component):
 
     def update(self, state, initialize=False):
         previous = self._measurement
+        content_width = self.layout_options.width == "content"
+        content_height = self.layout_options.height == "content"
+        previous_size = (
+            self._content_width() if content_width else None,
+            self._content_height() if content_height else None)
         self._measurement_state = state
         # Intrinsic containers may still request a fill-sized leaf's natural
         # size during layout; resolve it lazily if no text-driven layout runs.
@@ -503,7 +508,15 @@ class Text(Component):
         self._measurement = self._resolve_measurement(state) if measure else None
         super().update(state, initialize)
         if not initialize and measure and previous != self._measurement:
-            self.invalidate(Dirty.LAYOUT)
+            current_size = (
+                self._content_width() if content_width else None,
+                self._content_height() if content_height else None)
+            # A content-height label changing digits still has the same size.
+            # Keep it a local repaint; wrapping also depends on assigned width.
+            wrapped = ((previous is not None and previous[4])
+                       or (self._measurement is not None and self._measurement[4]))
+            if previous_size != current_size or wrapped:
+                self.invalidate(Dirty.LAYOUT)
 
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)

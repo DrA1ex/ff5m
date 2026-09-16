@@ -13,7 +13,7 @@ from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.print_state import PrintState
 from feather.previews import (
-    PREVIEW_EXECUTABLE, PREVIEW_TIMEOUT, PreviewCancelled,
+    PREVIEW_EXECUTABLE, PREVIEW_MASK_SIZE, PREVIEW_TIMEOUT, PreviewCancelled,
     colorize_preview, layer_progress, load_preview,
 )
 
@@ -27,9 +27,11 @@ GCODE_PREVIEW_LOADER_DIAMETER = 72
 def _gcode_preview_image_rect():
     box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
     padding = max(0, printing_ui.PREVIEW_IMAGE_PADDING)
-    width = max(1, box.width - 2 * padding)
-    height = max(1, box.height - 2 * padding)
-    return box.x + padding, box.y + padding, width, height
+    # Keep the raster/cache contract shared with file tiles as containers grow.
+    width = min(PREVIEW_MASK_SIZE[0], max(1, box.width - 2 * padding))
+    height = min(PREVIEW_MASK_SIZE[1], max(1, box.height - 2 * padding))
+    return (box.x + (box.width - width) // 2,
+            box.y + (box.height - height) // 2, width, height)
 
 
 def _render_gcode_preview(path, cancel=None):

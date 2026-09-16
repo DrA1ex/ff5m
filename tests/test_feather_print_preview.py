@@ -420,9 +420,9 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
         image = next(command for command in commands
                      if command.startswith("--batch image "))
         box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
-        padding = printing_ui.PREVIEW_IMAGE_PADDING
         self.assertIn("-p %d %d" % (
-            box.x + padding, box.y + padding), image)
+            box.x + (box.width - width) // 2,
+            box.y + (box.height - height) // 2), image)
         self.assertEqual(image.payload[:4], b"FXI1")
         found, cached = controller.preview_cache.lookup(cache_key)
         self.assertTrue(found)

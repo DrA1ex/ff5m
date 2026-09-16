@@ -158,6 +158,17 @@ Choose Guppy for its broader independent UI. Choose Feather when the priority is
 
 ## Change guidance
 
+Feather pages use content-sized containers for text and control groups. Text
+height comes from the active font metrics, group height comes from its children,
+and flexible space belongs between groups. Page declarations specify padding,
+margins, gaps, and alignment rather than fixed text heights or manually summed
+row sizes. Fixed dimensions need a concrete reason, such as a separator stroke,
+a progress-track thickness, or the shared preview raster/cache resolution.
+Content-sized text that changes without changing its measured dimensions must
+remain a local repaint, including background restoration; it must not trigger a
+page-wide layout pass merely because its string changed. The Designer consumes
+the same measurement and reflection contracts.
+
 - Preserve the one-root-config invariant: every new mode must have a matching `config` root and `.cfg/init.display.*.cfg` selection delta that removes incompatible roots.
 - Treat `zdisplay.sh`, `boot.sh`, active Klipper config, and documentation as one change surface. A mode is broken if any one of selection, startup, remote control, or recovery is missing.
 - Feather code runs in Klippy’s process and accesses shared screen/runtime resources. Keep refresh work bounded, run network work asynchronously, avoid full redraws in the one-second status timer, and validate RSS/swap on the constrained target hardware.

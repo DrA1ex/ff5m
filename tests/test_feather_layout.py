@@ -414,6 +414,47 @@ class PrintingLayoutTest(unittest.TestCase):
             smaller.rect(printing.PrintingRef.PAUSE).width,
             reference.rect(printing.PrintingRef.PAUSE).width)
 
+    def test_printing_text_fits_natural_boxes_without_overlapping_controls(self):
+        from ui.font_metrics import get_font_metrics
+
+        for bounds in (Rect(0, 0, 800, 442), Rect(0, 0, 640, 400)):
+            page = create_printing_page(bounds)
+            page.draw(FeatherRenderer())
+            for node in page.root.walk():
+                if not isinstance(node, Text):
+                    continue
+                area = page.layout.rect(node)
+                self.assertGreaterEqual(
+                    area.height, get_font_metrics().metric(node.font).glyph_height)
+                self.assertTrue(bounds.contains(area))
+                self.assertLessEqual(area.bottom, page.rect(printing.PrintingRef.BUTTONS).y)
+
+    def test_progress_digits_fit_and_updates_erase_previous_text(self):
+        from ui.font_metrics import get_font_metrics
+        from ui.bindings import resolve
+
+        for bounds in (Rect(0, 0, 800, 442), Rect(0, 0, 640, 400)):
+            page = create_printing_page(bounds)
+            renderer = FeatherRenderer()
+            page.draw(renderer, {printing.PrintingState.PROGRESS: 9})
+            percentage = next(
+                node for node in page.root.walk()
+                if isinstance(node, Text) and resolve(node.value, page.state) == "9%")
+            area = page.layout.rect(percentage)
+            self.assertGreaterEqual(
+                area.height, get_font_metrics().metric(percentage.font).glyph_height)
+            self.assertLessEqual(area.bottom, page.rect(printing.PrintingRef.PROGRESS).y)
+            for value in (10, 99, 100, 0):
+                commands = page.update(renderer, {printing.PrintingState.PROGRESS: value})
+                frame = RenderFrame(commands, renderer)
+                text = frame.text("%d%%" % value)
+                self.assertLessEqual(renderer.text_width(text.value, text.font), area.width)
+                clear = renderer.fill(*area, color=ThemeColor.BACKGROUND)
+                self.assertIn(clear, commands)
+                text_index = next(i for i, command in enumerate(commands)
+                                  if '-t "%d%%"' % value in command)
+                self.assertLess(commands.index(clear), text_index)
+
     def test_dynamic_status_update_restores_its_component_surface(self):
         page = create_printing_page(Rect(0, 0, 640, 400))
         renderer = FeatherRenderer()
