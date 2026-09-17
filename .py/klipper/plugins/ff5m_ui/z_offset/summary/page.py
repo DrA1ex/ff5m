@@ -13,10 +13,11 @@ from ui.layout import (
     FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Spacer, When,
 )
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import DISCARD_CONFIRM, SAVE, SELECTION_NEXT, ZONE_ACTIONS
-from ..common import CONTENT, FONT, compact
+from ..common import CONTENT
 from .state import SummaryState
-from ui import ThemeColor, ThemeRole
+from ui import ThemeColor
 
 
 PAGE_ID = AppPage.Z_OFFSET_SUMMARY
@@ -100,8 +101,7 @@ def _zone_button(key):
         state=derived(
             lambda results, zone=key: _zone_state(results, zone),
             bind(SummaryState.RESULTS)),
-        font=FONT,
-    ).ref(_ZONE_REFS[key])
+    ).style(UiStyle.BUTTON).ref(_ZONE_REFS[key])
 
 
 def _content():
@@ -127,12 +127,11 @@ def _content():
             _status_color,
             bind(SummaryState.SPREAD),
             bind(SummaryState.POSITIONAL_WARNING)),
-        font=FONT,
-    ).height(30).margin(left=20, right=20) \
+    ).style(UiStyle.TEXT).height(30).margin(left=20, right=20) \
      .ref(SummaryRef.STATUS).repaint_boundary()
     selection_state = derived(
         _selection_state, bind(SummaryState.RESULTS))
-    choices = compact(Grid(
+    choices = Grid(
         matrix=((
             Button(
                 SELECTION_NEXT,
@@ -143,7 +142,7 @@ def _content():
                     bind(SummaryState.ZONE_LABELS),
                     bind(SummaryState.RESULTS)),
                 state=selection_state,
-            ).ref(SummaryRef.SELECTION),
+            ).style(UiStyle.BUTTON).ref(SummaryRef.SELECTION),
             Button(
                 Toggle(SummaryState.LOAD_ZOFFSET),
                 derived(
@@ -153,15 +152,15 @@ def _content():
                 state=derived(
                     lambda enabled: "selected" if enabled else "enabled",
                     bind(SummaryState.LOAD_ZOFFSET)),
-            ).ref(SummaryRef.LOAD),
+            ).style(UiStyle.BUTTON).ref(SummaryRef.LOAD),
         ),),
         columns=(FLEX, 200), rows=Equal(1), gap=(15, 0),
-    )).padding(left=65, right=65).ref(SummaryRef.CHOICES)
+    ).padding(left=65, right=65).ref(SummaryRef.CHOICES)
     save = Grid(
-        matrix=((Button(
-            SAVE, "SAVE SELECTED Z OFFSET",
-            state=selection_state, font="JetBrainsMono Bold 12pt",
-        ).ref(SummaryRef.SAVE),),),
+        matrix=((
+            Button(SAVE, "SAVE SELECTED Z OFFSET", state=selection_state)
+            .style(UiStyle.BUTTON_BOLD_12).ref(SummaryRef.SAVE),
+        ),),
         columns=Equal(1), rows=Equal(1),
     ).height(82).padding(left=65, right=65).ref(SummaryRef.SAVE_LAYOUT)
     content = Column(
@@ -196,7 +195,7 @@ def _content():
     return Overlay(content, discard).ref(SummaryRef.ROOT)
 
 
-PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
+PAGE = Page(_content(), CONTENT, page_id=PAGE_ID, styles=UI_STYLES)
 
 
 def render(renderer, values):

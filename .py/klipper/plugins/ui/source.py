@@ -58,6 +58,7 @@ def source_capture(provider):
     return _SourceCapture(provider)
 
 
+
 def capture_enabled():
     return _provider() is not None
 
@@ -133,11 +134,81 @@ def _unavailable(reason="Source capture is unavailable"):
 
 
 def property_provenance(node, property_name, spec=None, value=None):
+    instance = getattr(node, "_component_template_instance", None)
+    if instance and instance.get("root"):
+        parameter = component_property_parameter(node, property_name)
+        if parameter is None:
+            return _unavailable("Property belongs to the component definition and is not an exposed parameter")
+        return component_parameter_provenance(node, parameter.name, value)
     provider = _node_provider(node)
     if provider is None:
         return _unavailable()
     return provider.property_provenance(
         node, property_name, spec=spec, value=value)
+
+
+def component_property_parameter(node, property_name):
+    """Map only explicit root ParamRef fields; never infer constructor aliases."""
+    instance = getattr(node, "_component_template_instance", None)
+    template = getattr(node, "_component_template", None)
+    if template is None or not instance or not instance.get("root"):
+        return None
+    from .layout import ParamRef
+    spec = next((value for value in template.root.property_schema
+                 if value.name == property_name), None)
+    value = None if spec is None else spec.value_from(template.root)
+    if isinstance(value, ParamRef):
+        return next((parameter for parameter in template.parameters
+                     if parameter.name == value.parameter.name and parameter.field is not None), None)
+    return None
+
+
+def style_provenance(node):
+    """Return source-edit provenance for one ``Node.style(...)`` modifier."""
+    provider = _node_provider(node)
+    if provider is None:
+        return _unavailable("Style assignment source capture is unavailable")
+    hook = getattr(provider, "style_provenance", None)
+    if hook is not None:
+        return hook(node, value=getattr(node, "_style_id", None))
+    return _unavailable(
+        "Source provider does not support style assignment editing")
+
+
+def style_property_provenance(style, property_name, value=None):
+    """Return source-edit provenance for one Style keyword/property."""
+    provider = _node_provider(style)
+    if provider is None:
+        return _unavailable("Style property source capture is unavailable")
+    hook = getattr(provider, "style_property_provenance", None)
+    if hook is None:
+        return _unavailable(
+            "Source provider does not support style property editing")
+    return hook(style, property_name, value=value)
+
+
+def component_parameter_provenance(node, parameter_name, value=None):
+    """Return source-edit provenance for a ComponentTemplate instance argument."""
+    provider = _node_provider(node)
+    if provider is None:
+        return _unavailable("Component parameter source capture is unavailable")
+    hook = getattr(provider, "component_parameter_provenance", None)
+    if hook is None:
+        return _unavailable(
+            "Source provider does not support component parameter editing")
+    return hook(node, parameter_name, value=value)
+
+
+def structure_provenance(node):
+    """Return structural source-form provenance for bounded Designer adapters."""
+    provider = _node_provider(node)
+    if provider is None:
+        return _unavailable("Structural source capture is unavailable")
+    hook = getattr(provider, "structure_provenance", None)
+    if hook is None:
+        return _unavailable(
+            "Source provider does not support structural rewriting")
+    return hook(node)
 
 
 def layout_provenance(node):

@@ -518,6 +518,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_recovery = None
         self.renderer.thaw_output()
         self.params = self.printer.lookup_object("mod_params")
+        self.file_view = self._configured_file_view()
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
         catalog = load_material_catalog(

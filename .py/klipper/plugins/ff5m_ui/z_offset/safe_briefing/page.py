@@ -6,10 +6,11 @@ from ui.bindings import bind, derived
 from ui.components import Button, Text
 from ui.layout import Column, Equal, Grid, PageTree as Page, Spacer
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import SAFE_CALIBRATE, SAFE_SKIP
-from ..common import CONTENT, FONT
+from ..common import CONTENT
 from .state import SafeBriefingState
-from ui import ThemeColor, ThemeRole
+from ui import ThemeColor
 
 
 PAGE_ID = AppPage.SAFE_Z_BRIEFING
@@ -28,16 +29,16 @@ def _content():
     text = Column(
         Text(
             "SAFE Z DEFINES HOW HIGH THE TOOLHEAD MOVES BEFORE PARKING OR MAKING XY MOVES.",
-            color=ThemeColor.PRIMARY, font=FONT, wrap=True, auto_height=True),
+            wrap=True, auto_height=True).style(UiStyle.PRIMARY),
         Text(
             "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",
-            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
+            wrap=True, auto_height=True).style(UiStyle.TEXT),
         Text(
             "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF CLEARANCE.",
-            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
+            wrap=True, auto_height=True).style(UiStyle.TEXT),
         Text(
             "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
-            color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True),
+            wrap=True, auto_height=True).style(UiStyle.TEXT),
         gap=20,
     ).height("content").ref(SafeBriefingRef.TEXT)
     current = Text(
@@ -50,11 +51,10 @@ def _content():
     ).height(28).align(horizontal="center").ref(SafeBriefingRef.CURRENT)
     actions = Grid(
         matrix=((
-            Button(SAFE_SKIP, "SKIP", font="JetBrainsMono Bold 12pt")
+            Button(SAFE_SKIP, "SKIP").style(UiStyle.BUTTON_BOLD_12)
             .ref(SafeBriefingRef.SKIP),
-            Button(SAFE_CALIBRATE, "CALIBRATE SAFE Z",
-                   state="warning", font="JetBrainsMono Bold 12pt")
-            .ref(SafeBriefingRef.CALIBRATE),
+            Button(SAFE_CALIBRATE, "CALIBRATE SAFE Z", state="warning")
+            .style(UiStyle.BUTTON_BOLD_12).ref(SafeBriefingRef.CALIBRATE),
         ),),
         columns=Equal(2), rows=Equal(1), gap=(20, 0),
     ).height(74).ref(SafeBriefingRef.ACTIONS)
@@ -68,7 +68,7 @@ def _content():
      .ref(SafeBriefingRef.ROOT)
 
 
-PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
+PAGE = Page(_content(), CONTENT, page_id=PAGE_ID, styles=UI_STYLES)
 
 
 def render(renderer, values):

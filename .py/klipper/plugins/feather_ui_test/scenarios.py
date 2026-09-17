@@ -19,6 +19,7 @@ from ff5m_ui.screen import ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
+from feather.files import FileEntry
 from .context_fixtures import (
     CONTEXT_TYPES, VISUAL_CONTEXTS, visual_context_cases,
 )
@@ -80,6 +81,7 @@ class ScenarioCatalog:
         self._mesh_snapshot = None
         self.ui_filament_target = None
         self._ui_last_job_original = None
+        self._ui_file_view_original = None
         self.z_probe_local = None
         self._update_maybe_present = None
 
@@ -226,7 +228,10 @@ class ScenarioCatalog:
             label="ui-open-main-menu")
         self._add_capture(steps, "ui-main-menu")
         self._add_tap(steps, "nav.files", ScreenPage.FILE_BROWSER)
-        self._add_capture(steps, "ui-files")
+        self._add_render_capture(
+            steps, "ui-files", lambda: self._render_file_view("list"))
+        self._add_render_capture(
+            steps, "ui-files-previews", lambda: self._render_file_view("tiles"))
         for label, callback in (
                 ("ui-files-loading", self._render_file_loading_snapshot),
                 ("ui-files-empty", self._render_empty_file_browser),
@@ -656,21 +661,28 @@ class ScenarioCatalog:
         }):
             self.host._render_file_loading("internal")
 
+    def _render_file_view(self, view):
+        if self._ui_file_view_original is None:
+            self._ui_file_view_original = self.host.file_view
+        self.host.file_view = view
+        self.host.file_page = 0
+        self.host._render_file_entries()
+
     def _render_empty_file_browser(self):
         with _temporary_attributes(self.host, {
                 "file_entries": [], "file_page": 0,
-                "file_source": "internal",
+                "file_source": "internal", "file_view": "list",
         }):
             self.host._render_file_entries()
 
     def _render_usb_file_browser(self):
         entries = [
-            {"name": "USB_BENCHY.gcode", "directory": False},
-            {"name": "CALIBRATION", "directory": True},
+            FileEntry("USB_BENCHY.gcode", "/mnt/usb/USB_BENCHY.gcode"),
+            FileEntry("CALIBRATION", "/mnt/usb/CALIBRATION", directory=True),
         ]
         with _temporary_attributes(self.host, {
                 "file_entries": entries, "file_page": 0,
-                "file_source": "usb",
+                "file_source": "usb", "file_view": "list",
         }):
             self.host._render_file_entries()
 
@@ -1770,6 +1782,9 @@ class ScenarioCatalog:
             self.host._update, self.reactor.NOW)
 
     def restore_synthetic_state(self):
+        if self._ui_file_view_original is not None:
+            self.host.file_view = self._ui_file_view_original
+        self._ui_file_view_original = None
         if self._ui_last_job_original is not None:
             original_path, original_name = self._ui_last_job_original
             self.host.last_job_path = original_path

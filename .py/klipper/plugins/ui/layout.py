@@ -5,7 +5,9 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import copy
+import inspect
 import itertools
+import uuid
 from enum import Enum, IntEnum
 
 from .bindings import Binding, ItemScope, StateStore, derived, page_state_keys, resolve
@@ -412,7 +414,7 @@ class LayoutOptions:
 
 def _layout_property(name, runtime_type, default, kind="number", choices=(),
                      minimum=None, maximum=None, nullable=False,
-                     source=None, **editor_metadata):
+                     source=None, styleable=False, **editor_metadata):
     return PropertySpec(
         name, runtime_type, default=default, nullable=nullable,
         validation=ValidationSpec(
@@ -422,6 +424,7 @@ def _layout_property(name, runtime_type, default, kind="number", choices=(),
             choices=choices, **editor_metadata),
         bindings=(), invalidation=Invalidation.LAYOUT,
         source=SourceSpec(name=source or name, storage="layout"),
+        styleable=styleable,
     )
 
 
@@ -444,21 +447,21 @@ def _size_property(name):
             choices=("fill", "content", "fixed"), wire_codec="size",
             fixed_minimum=1, fixed_maximum=4000),
         bindings=(), invalidation=Invalidation.LAYOUT,
-        source=SourceSpec(name=name, storage="layout"))
+        source=SourceSpec(name=name, storage="layout"), styleable=True)
 
 
 LAYOUT_SCHEMA = property_schema(
     _size_property("width"),
     _size_property("height"),
     _layout_property(
-        "grow", int, 1, minimum=0, maximum=100, wire_codec="integer",
+        "grow", int, 1, minimum=0, maximum=100, wire_codec="integer", styleable=True,
         help="Used only when this axis is Fill in the parent flow."),
     _layout_property(
-        "margin", (tuple, list), (0, 0, 0, 0), kind="insets",
+        "margin", (tuple, list), (0, 0, 0, 0), kind="insets", styleable=True,
         wire_codec="insets", vector_labels=("Left", "Top", "Right", "Bottom"),
         item_minimum=0, item_maximum=2000),
     _layout_property(
-        "padding", (tuple, list), (0, 0, 0, 0), kind="insets",
+        "padding", (tuple, list), (0, 0, 0, 0), kind="insets", styleable=True,
         wire_codec="insets", vector_labels=("Left", "Top", "Right", "Bottom"),
         item_minimum=0, item_maximum=2000),
     _layout_property(
@@ -600,6 +603,13 @@ class CreationContract:
                 "CreationContract source must be a CreationSourceContract")
         self.source = source
 
+    def field(self, name):
+        """Return an explicitly declared field for typed reusable parameters."""
+        for value in self.fields:
+            if value.name == name:
+                return value
+        raise ValueError("Unknown creation field: %s" % name)
+
     def as_dict(self):
         return {
             "category": self.category,
@@ -631,12 +641,12 @@ class StructureContract:
 
     __slots__ = (
         "kind", "source", "operations", "minimum_children",
-        "supports_spans", "placement", "reorder", "canvas",
+        "maximum_children", "supports_spans", "placement", "reorder", "canvas",
     )
 
     def __init__(self, kind, source, operations=("insert", "move", "delete",
                  "extract", "duplicate", "clipboard_insert", "move_many"),
-                 minimum_children=0, supports_spans=False,
+                 minimum_children=0, maximum_children=None, supports_spans=False,
                  placement="flow", reorder=True, canvas=()):
         self.kind = str(kind)
         if not isinstance(source, StructureSourceContract):
@@ -645,6 +655,8 @@ class StructureContract:
         self.source = source
         self.operations = tuple(str(value) for value in operations)
         self.minimum_children = int(minimum_children)
+        self.maximum_children = (None if maximum_children is None
+                                 else int(maximum_children))
         self.supports_spans = bool(supports_spans)
         self.placement = str(placement)
         self.reorder = bool(reorder)
@@ -656,6 +668,7 @@ class StructureContract:
             "source": self.source.as_dict(),
             "operations": list(self.operations),
             "minimum_children": self.minimum_children,
+            "maximum_children": self.maximum_children,
             "supports_spans": self.supports_spans,
             "placement": self.placement,
             "reorder": self.reorder,
@@ -669,11 +682,17 @@ _SEQUENCE_STRUCTURE = StructureContract(
         ("inline_arguments", "named_local_collection")),
     minimum_children=0, placement="flow",
     canvas=("flow_reorder", "resize", "multi_select"))
-_GRID_STRUCTURE = StructureContract(
+_GRID_MATRIX_STRUCTURE = StructureContract(
     "grid", StructureSourceContract(
         "core.grid_matrix", ("inline_matrix", "named_local_matrix")),
     minimum_children=0, supports_spans=True,
     placement="grid", canvas=("grid_drop", "grid_span", "resize", "multi_select"))
+_GRID_CELLS_STRUCTURE = StructureContract(
+    "grid", StructureSourceContract(
+        "core.grid_cells", ("inline_cells", "named_local_cells")),
+    minimum_children=0, supports_spans=True,
+    placement="grid", canvas=("grid_drop", "grid_span", "resize", "multi_select"))
+_GRID_STRUCTURE = _GRID_MATRIX_STRUCTURE
 _OVERLAY_STRUCTURE = StructureContract(
     "sequence", StructureSourceContract(
         "core.variadic_children",
@@ -683,11 +702,17 @@ _OVERLAY_STRUCTURE = StructureContract(
         "absolute_move", "absolute_resize", "align", "distribute",
         "snapping", "multi_select"))
 
+_SINGLE_CHILD_STRUCTURE = StructureContract(
+    "single_child", StructureSourceContract(
+        "core.single_child", ("positional_child", "keyword_child", "empty_child")),
+    minimum_children=0, maximum_children=1, placement="content", reorder=False,
+    canvas=("resize", "multi_select"))
+
 _STABLE_CREATION_IDENTITY = CreationIdentityContract()
 _KEYWORD_CREATION_SOURCE = CreationSourceContract(
     "core.keyword_call", identity=_STABLE_CREATION_IDENTITY)
 _GRID_CREATION_SOURCE = CreationSourceContract(
-    "core.grid_matrix", identity=_STABLE_CREATION_IDENTITY)
+    "core.grid_cells", identity=_STABLE_CREATION_IDENTITY)
 _LIST_VIEW_CREATION_SOURCE = CreationSourceContract(
     "core.list_view", identity=_STABLE_CREATION_IDENTITY)
 
@@ -795,11 +820,116 @@ def _validate_template_item(value, path="ListView item"):
     return value
 
 
-class Node:
+
+class _NodeMeta(type):
+    """Capture explicit args and defer ParamRef coercion centrally."""
+
+    @staticmethod
+    def _param_ref(value):
+        param_type = globals().get("ParamRef")
+        return param_type is not None and isinstance(value, param_type)
+
+    @staticmethod
+    def _source_specs(cls):
+        result = {}
+        for spec in getattr(cls, "property_schema", ()):
+            result.setdefault(spec.source.name or spec.name, []).append(spec)
+        return result
+
+    @classmethod
+    def _placeholder(mcls, parameter, specs):
+        if parameter is not None and parameter.default is not inspect.Parameter.empty:
+            return copy.deepcopy(parameter.default)
+        for spec in specs:
+            if spec.has_default:
+                return copy.deepcopy(spec.default)
+        return inspect.Parameter.empty
+
+    def __call__(cls, *args, **kwargs):
+        explicit = set()
+        deferred = {}
+        call_args = args
+        call_kwargs = kwargs
+        try:
+            signature = inspect.signature(cls.__init__)
+            parameters = tuple(signature.parameters.values())
+            if parameters and parameters[0].name == "self":
+                signature = signature.replace(parameters=parameters[1:])
+            bound = signature.bind_partial(*args, **kwargs)
+            source_specs = _NodeMeta._source_specs(cls)
+
+            var_keywords_name = None
+            for parameter in signature.parameters.values():
+                if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                    var_keywords_name = parameter.name
+                    break
+            var_keywords = ({} if var_keywords_name is None else
+                            dict(bound.arguments.get(var_keywords_name, {}) or {}))
+
+            for spec in getattr(cls, "property_schema", ()):
+                source_name = spec.source.name or spec.name
+                if source_name in bound.arguments or source_name in var_keywords:
+                    explicit.add(spec.name)
+
+            for name, value in tuple(bound.arguments.items()):
+                parameter = signature.parameters[name]
+                if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                    values = dict(value or {})
+                    changed = False
+                    for key, item in tuple(values.items()):
+                        if not _NodeMeta._param_ref(item):
+                            continue
+                        placeholder = _NodeMeta._placeholder(
+                            None, source_specs.get(key, ()))
+                        if placeholder is inspect.Parameter.empty:
+                            continue
+                        deferred[key] = item
+                        values[key] = placeholder
+                        changed = True
+                    if changed:
+                        bound.arguments[name] = values
+                    continue
+                if not _NodeMeta._param_ref(value):
+                    continue
+                placeholder = _NodeMeta._placeholder(
+                    parameter, source_specs.get(name, ()))
+                if placeholder is inspect.Parameter.empty:
+                    continue
+                deferred[name] = value
+                bound.arguments[name] = placeholder
+
+            call_args = bound.args
+            call_kwargs = bound.kwargs
+        except (TypeError, ValueError):
+            # Opaque custom signatures remain runtime-valid; they simply do not
+            # get central explicit/deferred authoring metadata.
+            pass
+
+        node = super().__call__(*call_args, **call_kwargs)
+        node._explicit_properties.update(explicit)
+        if deferred:
+            node._template_constructor_params = dict(deferred)
+            source_specs = _NodeMeta._source_specs(cls)
+            for source_name, value in deferred.items():
+                if hasattr(node, source_name):
+                    setattr(node, source_name, value)
+                    continue
+                specs = source_specs.get(source_name, ())
+                if len(specs) == 1 and specs[0].source.runtime_index is None:
+                    specs[0].set_on(node, value)
+        node._authoring_property_defaults = dict(
+            (spec.name, copy.deepcopy(spec.value_from(node)))
+            for spec in getattr(node, "property_schema", ()))
+        node._authoring_layout_defaults = node._snapshot_layout_options()
+        return node
+
+
+class Node(metaclass=_NodeMeta):
     """Base object for layout containers and renderable components."""
 
     covers_bounds = False
     restores_background = False
+    paints_pixels = False
     canvas_selectable = True
     property_schema = ()
     structure_contract = None
@@ -812,10 +942,42 @@ class Node:
         self.parent = None
         self._dirty = Dirty.CLEAN
         self._actions_dirty = True
+        self._blocks_input = False
         self._last_signature = _UNSET
         self._repaint_boundary = False
         self._source_mutations = {}
+        self._explicit_properties = set()
+        self._explicit_layout = set()
+        self._authoring_property_defaults = {}
+        self._authoring_layout_defaults = None
+        self._style_id = None
+        self._computed_property_origins = {}
+        self._computed_layout_origins = {}
+        self._template_constructor_params = {}
         self._source = _capture_construction(self)
+
+    def _snapshot_layout_options(self):
+        value = self.layout_options
+        return {
+            "width": value.width,
+            "height": value.height,
+            "grow": value.grow,
+            "margin": Insets(value.margin.left, value.margin.top,
+                             value.margin.right, value.margin.bottom),
+            "padding": Insets(value.padding.left, value.padding.top,
+                              value.padding.right, value.padding.bottom),
+            "horizontal": value.horizontal,
+            "vertical": value.vertical,
+            "offset": (value.offset_x, value.offset_y),
+            "allow_overflow": value.allow_overflow,
+        }
+
+    def style(self, style_id):
+        if not isinstance(style_id, Enum):
+            raise TypeError("Node.style requires an Enum member")
+        _capture_modifier(self, "style", (("style", 0),))
+        self._style_id = style_id
+        return self
 
     # Shared layout modifiers. They deliberately mutate the declaration node
     # so page construction stays compact and does not allocate wrapper trees.
@@ -826,49 +988,68 @@ class Node:
 
     def width(self, value):
         _capture_modifier(self, "width", (("width", 0),))
+        self._explicit_layout.add("width")
         self.layout_options.width = self._size_value(value)
         return self
 
     def height(self, value):
         _capture_modifier(self, "height", (("height", 0),))
+        self._explicit_layout.add("height")
         self.layout_options.height = self._size_value(value)
         return self
 
     def size(self, width, height):
         _capture_modifier(self, "size", (("width", 0), ("height", 1)))
+        self._explicit_layout.update(("width", "height"))
         self.layout_options.width = self._size_value(width)
         self.layout_options.height = self._size_value(height)
         return self
 
     @staticmethod
     def _size_value(value):
+        if isinstance(value, ParamRef):
+            return value
         if value in (None, "fill"):
             return None
         return _validate_size(value)
 
     def grow(self, value=1):
         _capture_modifier(self, "grow", (("grow", 0),))
-        self.layout_options.grow = int(value)
-        if self.layout_options.grow < 0:
-            raise ValueError("Element grow must be non-negative")
+        self._explicit_layout.add("grow")
+        if isinstance(value, ParamRef):
+            self.layout_options.grow = value
+        else:
+            self.layout_options.grow = int(value)
+            if self.layout_options.grow < 0:
+                raise ValueError("Element grow must be non-negative")
         return self
 
     def margin(self, value=0, **kwargs):
         _capture_modifier(self, "margin", (("margin", 0),))
-        self.layout_options.margin = Insets.from_values(value, **kwargs)
+        self._explicit_layout.add("margin")
+        if isinstance(value, ParamRef) and not kwargs:
+            self.layout_options.margin = value
+        else:
+            self.layout_options.margin = Insets.from_values(value, **kwargs)
         return self
 
     def padding(self, value=0, **kwargs):
         _capture_modifier(self, "padding", (("padding", 0),))
-        self.layout_options.padding = Insets.from_values(value, **kwargs)
+        self._explicit_layout.add("padding")
+        if isinstance(value, ParamRef) and not kwargs:
+            self.layout_options.padding = value
+        else:
+            self.layout_options.padding = Insets.from_values(value, **kwargs)
         return self
 
     def align(self, horizontal=None, vertical=None):
         _capture_modifier(
             self, "align", (("horizontal", 0), ("vertical", 1)))
         if horizontal is not None:
+            self._explicit_layout.add("horizontal")
             self.layout_options.horizontal = horizontal
         if vertical is not None:
+            self._explicit_layout.add("vertical")
             self.layout_options.vertical = vertical
         return self
 
@@ -880,14 +1061,17 @@ class Node:
         when moving the element cannot silently rewrite Grid/List structure.
         """
         _capture_modifier(self, "offset", (("offset", 0),))
-        self.layout_options.offset_x = int(x)
-        self.layout_options.offset_y = int(y)
+        self._explicit_layout.add("offset")
+        self.layout_options.offset_x = x if isinstance(x, ParamRef) else int(x)
+        self.layout_options.offset_y = y if isinstance(y, ParamRef) else int(y)
         return self
 
     def allow_overflow(self, value=True):
         _capture_modifier(
             self, "allow_overflow", (("allow_overflow", 0),))
-        self.layout_options.allow_overflow = bool(value)
+        self._explicit_layout.add("allow_overflow")
+        self.layout_options.allow_overflow = (
+            value if isinstance(value, ParamRef) else bool(value))
         return self
 
     def repaint_boundary(self):
@@ -1045,6 +1229,9 @@ class Node:
         del state
         return self.render_children()
 
+    def blocks_input(self, state):
+        return False
+
     def opaque_background(self, state, bounds, target):
         """Return the uniform color this node paints across target, if any."""
         del state
@@ -1077,6 +1264,11 @@ class Node:
                 self.invalidate(Dirty.PAINT)
         for child in self.render_children():
             child.update(state, initialize)
+        self._update_input_blocking(state)
+
+    def _update_input_blocking(self, state):
+        self._blocks_input = self.blocks_input(state) or any(
+            child._blocks_input for child in self.paint_children(state))
 
     def clear_dirty(self):
         if self._dirty == Dirty.CLEAN:
@@ -1090,6 +1282,12 @@ class Node:
         for child in self.render_children():
             for descendant in child.walk():
                 yield descendant
+
+    def walk_declarations(self):
+        """Include template dependencies even before any items exist."""
+        yield self
+        for child in self.render_children():
+            yield from child.walk_declarations()
 
     def apply_override(self, name, value):
         for child in self.render_children():
@@ -1110,6 +1308,234 @@ class Template:
         self.root = root
         self.sample = None if sample is None else copy.deepcopy(dict(sample))
         self._source = _capture_construction(self, names=("Template",))
+
+
+
+class Param:
+    """Named parameter declared by a ComponentTemplate."""
+
+    __slots__ = ("name", "field")
+
+    def __init__(self, name, field=None):
+        if not isinstance(name, str) or not name.strip():
+            raise TypeError("Param name must be a non-empty string")
+        self.name = name.strip()
+        if field is not None and not isinstance(field, CreationFieldSpec):
+            raise TypeError("Param field must be an explicit CreationFieldSpec")
+        self.field = field
+
+    def __repr__(self):
+        return "Param(%r)" % self.name
+
+
+class ParamRef:
+    """Framework expression referring to one ComponentTemplate parameter."""
+
+    __slots__ = ("parameter",)
+
+    def __init__(self, parameter):
+        if not isinstance(parameter, Param):
+            raise TypeError("param() requires a Param")
+        self.parameter = parameter
+
+
+def param(parameter):
+    return ParamRef(parameter)
+
+
+def _template_id(value):
+    if not isinstance(value, Enum):
+        raise TypeError("ComponentTemplate identity must be an Enum member")
+    return value.value
+
+
+def _substitute_param_value(value, arguments):
+    if isinstance(value, ParamRef):
+        return arguments[value.parameter.name]
+    if isinstance(value, Node):
+        return value
+    if isinstance(value, tuple):
+        return tuple(_substitute_param_value(item, arguments) for item in value)
+    if isinstance(value, list):
+        return [_substitute_param_value(item, arguments) for item in value]
+    if isinstance(value, dict):
+        return dict((key, _substitute_param_value(item, arguments))
+                    for key, item in value.items())
+    return value
+
+
+def _materialize_insets(value):
+    if isinstance(value, Insets):
+        return value
+    if isinstance(value, (tuple, list)):
+        if len(value) != 4:
+            raise ValueError("Template margin/padding requires four inset values")
+        return Insets(*value)
+    return Insets.all(value)
+
+
+def _substitute_layout_params(node, arguments):
+    options = node.layout_options
+    width = _substitute_param_value(options.width, arguments)
+    height = _substitute_param_value(options.height, arguments)
+    grow = _substitute_param_value(options.grow, arguments)
+    margin = _substitute_param_value(options.margin, arguments)
+    padding = _substitute_param_value(options.padding, arguments)
+    horizontal = _substitute_param_value(options.horizontal, arguments)
+    vertical = _substitute_param_value(options.vertical, arguments)
+    offset_x = _substitute_param_value(options.offset_x, arguments)
+    offset_y = _substitute_param_value(options.offset_y, arguments)
+    allow_overflow = _substitute_param_value(options.allow_overflow, arguments)
+
+    options.width = node._size_value(width)
+    options.height = node._size_value(height)
+    options.grow = int(grow)
+    if options.grow < 0:
+        raise ValueError("Element grow must be non-negative")
+    options.margin = _materialize_insets(margin)
+    options.padding = _materialize_insets(padding)
+    options.horizontal = horizontal
+    options.vertical = vertical
+    options.offset_x = int(offset_x)
+    options.offset_y = int(offset_y)
+    options.allow_overflow = bool(allow_overflow)
+
+
+def _finalize_template_node(node):
+    """Apply deferred constructor semantics after ParamRef substitution."""
+    deferred = dict(getattr(node, "_template_constructor_params", {}) or {})
+
+    if isinstance(node, StateCase):
+        node.predicate = node._binding_predicate()
+
+    if isinstance(node, Grid):
+        if "gap" in deferred:
+            node.column_gap, node.row_gap = node._gaps(deferred["gap"])
+        if "columns" in deferred:
+            node.columns = _normalize_tracks(node.columns)
+        if "rows" in deferred:
+            node.rows = _normalize_tracks(node.rows)
+        if (len(node.columns) != node._grid_column_count
+                or len(node.rows) != node._grid_row_count):
+            raise ValueError("Grid tracks must match the visual extent")
+
+    source_specs = {}
+    for spec in getattr(node, "property_schema", ()):
+        source_specs.setdefault(spec.source.name or spec.name, []).append(spec)
+    for source_name, raw_value in deferred.items():
+        specs = source_specs.get(source_name, ())
+        if not specs:
+            continue
+        if (len(specs) > 1 and source_name != "gap"
+                and any(spec.source.index is not None for spec in specs)):
+            indexes = [spec.source.index for spec in specs
+                       if spec.source.index is not None]
+            if (not isinstance(raw_value, (tuple, list))
+                    or (indexes and max(indexes) >= len(raw_value))):
+                raise ValueError(
+                    "Template parameter %s does not match its source shape" %
+                    source_name)
+        for spec in specs:
+            value = spec.value_from(node)
+            if isinstance(value, Binding):
+                if not spec.bindings:
+                    raise ValueError(
+                        "%s does not accept bindings" % spec.name)
+                continue
+            spec.validate(value)
+
+    node._template_constructor_params = {}
+    if hasattr(node, "_measurement"):
+        node._measurement = None
+
+
+class ComponentTemplate:
+    """Declarative reusable subtree with explicit framework parameters."""
+
+    def __deepcopy__(self, memo):
+        # Runtime subtrees are copied, but their source declaration remains a
+        # shared identity (including when ListView materializes its items).
+        memo[id(self)] = self
+        return self
+
+    def __init__(self, template_id, parameters, root):
+        _template_id(template_id)
+        parameters = tuple(parameters or ())
+        if not all(isinstance(value, Param) for value in parameters):
+            raise TypeError("ComponentTemplate parameters must contain Param values")
+        names = [value.name for value in parameters]
+        if len(names) != len(set(names)):
+            raise ValueError("ComponentTemplate parameter names must be unique")
+        if "instance_key" in names:
+            raise ValueError("instance_key is reserved for component instance identity")
+        if not isinstance(root, Node):
+            raise TypeError("ComponentTemplate root must be a Node")
+        self.id = template_id
+        self.parameters = parameters
+        self.root = root
+        self._source = _capture_construction(self, names=("ComponentTemplate",))
+
+    def __call__(self, *, instance_key=None, **kwargs):
+        expected = tuple(value.name for value in self.parameters)
+        missing = [name for name in expected if name not in kwargs]
+        extra = [name for name in kwargs if name not in expected]
+        if missing:
+            raise TypeError("Missing component parameter(s): %s" % ", ".join(missing))
+        if extra:
+            raise TypeError("Unknown component parameter(s): %s" % ", ".join(extra))
+        arguments = dict((name, kwargs[name]) for name in expected)
+        root = copy.deepcopy(self.root)
+        definition_root_source = getattr(root, "_source", None)
+
+        instance_source = _capture_construction(
+            root, names=(self.id.name, "ComponentTemplate"))
+        if instance_key is not None:
+            if isinstance(instance_key, Enum):
+                instance_token = "enum:" + serialize_key(instance_key)
+            elif type(instance_key) in (str, int):
+                instance_token = "%s:%r" % (type(instance_key).__name__, instance_key)
+            else:
+                raise TypeError("Component instance_key must be a string, integer or Enum")
+        else:
+            # Unkeyed instances have runtime-only identity. In particular, a
+            # source-site occurrence must never become a persistent ref.
+            instance_token = "runtime:" + uuid.uuid4().hex
+        scope = "%s[%s]" % (_template_id(self.id), instance_token)
+
+        for node in root.walk():
+            _substitute_layout_params(node, arguments)
+            original_key = node.key
+            if isinstance(original_key, ParamRef):
+                node.key = arguments[original_key.parameter.name]
+            elif original_key is not None:
+                local = original_key.value if isinstance(original_key, Enum) else original_key
+                node.key = "%s::%s" % (scope, local)
+            elif node is root and instance_key is not None:
+                node.key = scope
+
+            for name, value in tuple(node.__dict__.items()):
+                if name in ("parent", "key", "_source"):
+                    continue
+                replaced = _substitute_param_value(value, arguments)
+                if replaced is not value:
+                    setattr(node, name, replaced)
+            _finalize_template_node(node)
+
+            metadata = {
+                "template": _template_id(self.id),
+                "symbol": "%s.%s" % (self.id.__class__.__name__, self.id.name),
+                "root": node is root,
+                "instance_key": instance_key,
+                "instance_scope": scope,
+                "parameters": dict(arguments) if node is root else None,
+            }
+            node._component_template_instance = metadata
+            node._component_template = self
+
+        if instance_source is not None:
+            root._source = instance_source
+        root._component_template_definition_root_source = definition_root_source
+        return root
 
 
 class SingleChild(Node):
@@ -1189,10 +1615,11 @@ class List(Node):
     def vertical(cls, *children, **kwargs):
         return cls("vertical", *children, **kwargs)
 
-    def _main_extent(self, child, cross_extent=None):
+    def _main_track(self, child, cross_extent=None):
         options = child.layout_options
         margin = options.margin
         size = options.width if self.direction == "horizontal" else options.height
+        declared_size = size
         preferred_cross = cross_extent
         if preferred_cross is not None:
             preferred_cross = max(
@@ -1205,17 +1632,26 @@ class List(Node):
             if preferred is not None:
                 size = preferred
         minimum = child.minimum_extent(self.direction, preferred_cross)
+        intrinsic = (minimum is not None
+                     and (declared_size in (None, "content")
+                          or int(minimum) > int(declared_size)))
         if minimum is not None:
             size = max(
                 0 if size in (None, "content") else int(size), int(minimum))
         if size == "content":
-            return None
+            return None, intrinsic
         if size is None and self.gap is None:
             size = child.auto_gap_extent(self.direction, preferred_cross)
+            intrinsic = size is not None
         if size is None:
-            return None
-        return int(size) + (margin.horizontal if self.direction == "horizontal"
-                            else margin.vertical)
+            return None, intrinsic
+        extent = int(size) + (
+            margin.horizontal if self.direction == "horizontal"
+            else margin.vertical)
+        return extent, intrinsic
+
+    def _main_extent(self, child, cross_extent=None):
+        return self._main_track(child, cross_extent)[0]
 
     def preferred_extent(self, direction, cross_extent=None):
         if direction != self.direction or not self.items:
@@ -1237,8 +1673,9 @@ class List(Node):
         tracks = []
         fixed = 0
         flexible = []
+        intrinsic = []
         for child in self.items:
-            extent = self._main_extent(child, cross_extent)
+            extent, grew_to_minimum = self._main_track(child, cross_extent)
             if extent is None:
                 weight = max(1, child.layout_options.grow)
                 flexible.append(Flex(weight))
@@ -1246,7 +1683,10 @@ class List(Node):
             else:
                 fixed += extent
                 tracks.append(extent)
-        if fixed > available and flexible:
+                intrinsic.append(grew_to_minimum)
+        if (fixed > available
+                and (self.layout_options.allow_overflow
+                     or (flexible and any(intrinsic)))):
             sizes = [0 if isinstance(track, Flex) else int(track)
                      for track in tracks]
             areas = _split_sizes(bounds, self.direction, sizes, gap)
@@ -1416,7 +1856,7 @@ class ListView(List):
         self.fallback_template = fallback_template
         self.items = ()
         self._item_scopes = ()
-        self._materialized_values = None
+        self._materialized_signature = None
         self._update_state = None
         self._update_keys = frozenset()
         self._designer_mode = False
@@ -1490,20 +1930,16 @@ class ListView(List):
                         for key, item in value.items())
         return value
 
-    def _materialize(self, state, values):
+    def _materialize(self, state, scopes, selectors):
         templates = dict((value.name, value) for value in self.templates)
         children = []
-        scopes = []
         seen = set()
-        for index, current in enumerate(values):
-            scope = ItemScope(state, current)
-            item_key = self._selector_value(self.item_key_binding, scope)
+        for index, (scope, (item_key, selected)) in enumerate(zip(scopes, selectors)):
             if item_key is None or isinstance(item_key, (list, tuple, dict)):
                 raise TypeError("ListView item_key must resolve to a scalar")
             if item_key in seen:
                 raise ValueError("Duplicate ListView item key: %s" % item_key)
             seen.add(item_key)
-            selected = self._selector_value(self.template_key_binding, scope)
             selected = str(selected)
             template = templates.get(selected)
             if template is None and self.fallback_template is not None:
@@ -1518,9 +1954,8 @@ class ListView(List):
             root = self._prepare_tree(
                 copy.deepcopy(template.root), scope, metadata)
             children.append(root)
-            scopes.append(scope)
         self.items = tuple(children)
-        self._item_scopes = tuple(scopes)
+        self._item_scopes = scopes
         self._adopt(*self.items)
         self._template_samples = self._materialize_samples(state)
 
@@ -1561,16 +1996,21 @@ class ListView(List):
         refresh_keys = (initialize or self._dirty != Dirty.CLEAN
                         or self._update_state is None)
         values = self._resolved_items(state)
-        if (self._materialized_values is None
-                or values != self._materialized_values
+        scopes = tuple(ItemScope(state, value) for value in values)
+        selectors = tuple((
+            self._selector_value(self.item_key_binding, scope),
+            self._selector_value(self.template_key_binding, scope),
+        ) for scope in scopes)
+        signature = (values, selectors)
+        if (signature != self._materialized_signature
                 or (self._designer_mode and not self._template_samples)):
-            self._materialize(state, values)
-            self._materialized_values = copy.deepcopy(values)
+            self._materialize(state, scopes, selectors)
+            self._materialized_signature = copy.deepcopy(signature)
             refresh_keys = True
             if not initialize:
                 self.invalidate(Dirty.LAYOUT)
         else:
-            self._item_scopes = tuple(ItemScope(state, value) for value in values)
+            self._item_scopes = scopes
             for child, template in zip(
                     self._template_samples,
                     (value for value in self.templates if value.sample is not None)):
@@ -1583,6 +2023,7 @@ class ListView(List):
         if refresh_keys:
             self._update_keys = frozenset(page_state_keys(self))
         self._update_state = state
+        self._update_input_blocking(state)
 
     def _arrange(self, bounds, result):
         rendered = self._designer_render_items()
@@ -1605,6 +2046,13 @@ class ListView(List):
 
     def render_children(self):
         return self.items + self._template_samples
+
+    def walk_declarations(self):
+        yield self
+        for template in self.templates:
+            yield from template.root.walk_declarations()
+        for child in self.render_children():
+            yield from child.walk_declarations()
 
     def paint_children(self, state):
         del state
@@ -1638,6 +2086,17 @@ class GridCell:
         self.row = int(row)
         self.column_span = int(column_span)
         self.row_span = int(row_span)
+
+
+class Cell(GridCell):
+    """Declarative coordinate-based Grid source value."""
+
+    def __init__(self, child, column, row, column_span=1, row_span=1):
+        super().__init__(child, column, row, column_span, row_span)
+        if self.column < 0 or self.row < 0:
+            raise ValueError("Grid cell coordinates must be non-negative")
+        if self.column_span <= 0 or self.row_span <= 0:
+            raise ValueError("Grid cell spans must be positive")
 
 
 class Span:
@@ -1688,18 +2147,38 @@ class Grid(Node):
             editor=EditorSpec("number", label="Row gap", group="Grid"),
             bindings=(), invalidation=Invalidation.LAYOUT,
             source=SourceSpec(name="gap", position=3, index=1)))
-    structure_contract = _GRID_STRUCTURE
+    structure_contract = _GRID_MATRIX_STRUCTURE
 
-    def __init__(self, matrix, columns=None, rows=None, gap=0, key=None):
+    def __init__(self, matrix=None, columns=None, rows=None, gap=0, key=None, *,
+                 cells=None):
         super().__init__(key=key)
+        if (matrix is None) == (cells is None):
+            raise ValueError("Grid requires exactly one of matrix or cells")
         self.column_gap, self.row_gap = self._gaps(gap)
-        self.cells, column_count, row_count = self._matrix_cells(matrix)
+        if cells is not None:
+            self.cells, column_count, row_count = self._coordinate_cells(cells)
+            self._grid_source_form = "cells"
+            self.structure_contract = _GRID_CELLS_STRUCTURE
+        else:
+            self.cells, column_count, row_count = self._matrix_cells(matrix)
+            self._grid_source_form = "matrix"
+            self.structure_contract = _GRID_MATRIX_STRUCTURE
+        self._grid_column_count = column_count
+        self._grid_row_count = row_count
         self.columns = _normalize_tracks(
             EqualTracks(column_count) if columns is None else columns)
         self.rows = _normalize_tracks(
             EqualTracks(row_count) if rows is None else rows)
+        if cells is not None:
+            if len(self.columns) < column_count or len(self.rows) < row_count:
+                raise ValueError("Grid cells exceed the declared tracks")
+            column_count, row_count = len(self.columns), len(self.rows)
+            if not column_count or not row_count:
+                raise ValueError("Empty Grid cells require explicit non-empty tracks")
+            self._grid_column_count = column_count
+            self._grid_row_count = row_count
         if len(self.columns) != column_count or len(self.rows) != row_count:
-            raise ValueError("Grid tracks must match the visual matrix")
+            raise ValueError("Grid tracks must match the visual extent")
         self._adopt(*(item.child for item in self.cells))
 
     @staticmethod
@@ -1744,6 +2223,37 @@ class Grid(Node):
                 cells.append(GridCell(
                     child, column_index, row_index, column_span, row_span))
         return tuple(cells), columns, len(rows)
+
+    @staticmethod
+    def _coordinate_cells(cells):
+        declared = tuple(cells)
+        occupied = set()
+        normalized = []
+        column_count = 0
+        row_count = 0
+        for value in declared:
+            if not isinstance(value, GridCell):
+                raise TypeError("Grid cells must contain Cell values")
+            if not isinstance(value.child, Node):
+                raise TypeError("Grid cell child must be a Node")
+            if value.column < 0 or value.row < 0:
+                raise ValueError("Grid cell coordinates must be non-negative")
+            if value.column_span <= 0 or value.row_span <= 0:
+                raise ValueError("Grid cell spans must be positive")
+            for occupied_row in range(value.row, value.row + value.row_span):
+                for occupied_column in range(
+                        value.column, value.column + value.column_span):
+                    coordinate = (occupied_column, occupied_row)
+                    if coordinate in occupied:
+                        raise ValueError("Grid cells overlap")
+                    occupied.add(coordinate)
+            normalized.append(GridCell(
+                value.child, value.column, value.row,
+                value.column_span, value.row_span))
+            column_count = max(
+                column_count, value.column + value.column_span)
+            row_count = max(row_count, value.row + value.row_span)
+        return tuple(normalized), column_count, row_count
 
     @staticmethod
     def _span(rects, start, count):
@@ -1866,10 +2376,14 @@ class Grid(Node):
         placements = tuple(placements or ())
         if len(children) != len(placements):
             raise ValueError("Grid preview children need explicit placements")
-        self.cells = tuple(GridCell(
+        cells = tuple(GridCell(
             child, value.get("column", 0), value.get("row", 0),
             value.get("column_span", 1), value.get("row_span", 1))
             for child, value in zip(children, placements))
+        cells, column_count, row_count = self._coordinate_cells(cells)
+        if column_count > len(self.columns) or row_count > len(self.rows):
+            raise ValueError("Grid preview cells exceed the declared tracks")
+        self.cells = cells
         self._adopt(*tuple(children))
 
     def preview_child_placements(self):
@@ -1978,13 +2492,26 @@ class When(SingleChild):
     def __init__(self, predicate, child, key=None):
         super().__init__(child, key=key)
         self.predicate = predicate
-        self._visible = _UNSET
 
     def _arrange(self, bounds, result):
         self.child.arrange(bounds, result)
 
     def state_signature(self, state):
         return bool(resolve(self.predicate, state))
+
+    def update(self, state, initialize=False):
+        previous = self._last_signature
+        # Hidden branches catch up when shown; evaluating their bindings on
+        # every telemetry sample adds work without changing any pixels.
+        if not initialize and previous is False and not self.state_signature(state):
+            return
+        super().update(state, initialize)
+        if (not initialize and previous is not _UNSET
+                and previous and not self._last_signature
+                and collect_actions(self.child)):
+            # Showing a branch registers its controls normally. Hiding must
+            # remove old regions, which Typer only supports per whole layer.
+            self.invalidate_actions()
 
     def render(self, renderer, state, layout):
         if resolve(self.predicate, state):
@@ -2014,10 +2541,17 @@ class StateCase(When):
         if kwargs.keys() - {"key"}:
             raise TypeError("Unknown StateCase arguments: %s" %
                             ", ".join(sorted(kwargs)))
-        predicate = derived(
+        # Parameter declarations are materialized before a template can render.
+        # derived() deliberately accepts only concrete Binding inputs.
+        predicate = (False if isinstance(self.selector, ParamRef)
+                     or isinstance(self.expected, ParamRef)
+                     else self._binding_predicate())
+        super().__init__(predicate, Overlay(*children), key=kwargs.get("key"))
+
+    def _binding_predicate(self):
+        return derived(
             lambda current, expected=self.expected: current == expected,
             self.selector)
-        super().__init__(predicate, Overlay(*children), key=kwargs.get("key"))
 
     def state_signature(self, state):
         return resolve(self.selector, state) == resolve(self.expected, state)
@@ -2125,6 +2659,32 @@ PAGE_METADATA_SOURCE_CONTRACT = PageMetadataSourceContract(
     "core.module_page_assignments", ("title", "show_back"))
 
 
+def _validate_component_template_definitions(root, registered):
+    """Reject one wire id referring to different template definitions."""
+    definitions = {}
+    instance_scopes = set()
+    for template in tuple(registered or ()):
+        definitions[_template_id(template.id)] = template
+    for node in root.walk():
+        template = getattr(node, "_component_template", None)
+        if template is None:
+            continue
+        key = _template_id(template.id)
+        existing = definitions.get(key)
+        if existing is not None and existing is not template:
+            raise ValueError(
+                "ComponentTemplate identity %s refers to multiple definitions" %
+                key)
+        definitions[key] = template
+        metadata = getattr(node, "_component_template_instance", {})
+        if metadata.get("root") and metadata.get("instance_key") is not None:
+            scope = metadata["instance_scope"]
+            if scope in instance_scopes:
+                raise ValueError("Duplicate ComponentTemplate instance_key: %r" %
+                                 metadata["instance_key"])
+            instance_scopes.add(scope)
+
+
 class DeclarativePage(Tree):
     """An arranged page that discovers and redraws dirty subtrees."""
 
@@ -2132,17 +2692,36 @@ class DeclarativePage(Tree):
     metadata_source_contract = PAGE_METADATA_SOURCE_CONTRACT
 
     def __init__(self, content, bounds, state=None, page_id=None,
-                 state_schema=(), actions=()):
+                 state_schema=(), actions=(), styles=None,
+                 component_templates=()):
         if not isinstance(page_id, PageKey):
             raise TypeError("DeclarativePage page_id must be a PageKey member")
         self._source = _capture_construction(
             self, names=("Page", "PageTree", "DeclarativePage"))
         self.page_key = page_id
         self.page_id = serialize_key(page_id)
+        if styles is not None:
+            from .styles import StyleSheet
+            if not isinstance(styles, StyleSheet):
+                raise TypeError("DeclarativePage styles must be a StyleSheet")
+        self.styles = styles
+        component_templates = tuple(component_templates or ())
+        if not all(isinstance(value, ComponentTemplate)
+                   for value in component_templates):
+            raise TypeError(
+                "DeclarativePage component_templates must contain ComponentTemplate values")
+        template_ids = [_template_id(value.id) for value in component_templates]
+        if len(template_ids) != len(set(template_ids)):
+            raise ValueError("ComponentTemplate page identities must be unique")
+        self.component_templates = component_templates
         self.state_schema = page_state_keys(content, state_schema)
         self.state = StateStore(self.state_schema, state)
         if state is not None:
             content.update(self.state, initialize=True)
+        _validate_component_template_definitions(
+            content, self.component_templates)
+        if self.styles is not None:
+            self.styles.apply(content)
         super().__init__(content, bounds)
         self._declared_actions = tuple(actions or ())
         self.actions = {}
@@ -2187,6 +2766,8 @@ class DeclarativePage(Tree):
     def draw(self, renderer, state=None):
         self.state = self._fresh_state(state)
         self.root.update(self.state, initialize=True)
+        if self.styles is not None:
+            self.styles.apply(self.root)
         self.layout = LayoutResult()
         self.root.arrange(self.bounds, self.layout)
         self._refresh_actions()
@@ -2205,10 +2786,12 @@ class DeclarativePage(Tree):
         if not self.initialized:
             return self.draw(renderer, self.state)
         self.root.update(self.state)
-        if self.root._dirty >= Dirty.LAYOUT:
-            return self.draw(renderer, self.state)
-        if self.root._actions_dirty:
-            self._refresh_actions()
+        if self.styles is not None:
+            self.styles.apply(self.root)
+        if self.root._actions_dirty or self.root._dirty >= Dirty.LAYOUT:
+            commands = renderer.redraw_page()
+            commands.extend(self.draw(renderer, self.state))
+            return commands
         roots = self._dirty_roots()
         commands = []
         for root in roots:
@@ -2225,6 +2808,10 @@ class DeclarativePage(Tree):
         self.node(key).invalidate(dirty)
 
     def _dirty_roots(self):
+        if self.root._dirty != Dirty.CLEAN and self._subtree_blocks_input(self.root, self.state):
+            # Modal input covers the whole page, including controls outside
+            # its visual bounds. Replay paint order so its reset remains last.
+            return [self.root]
         roots = []
         pending = [self.root]
         while pending:
@@ -2245,19 +2832,22 @@ class DeclarativePage(Tree):
             roots.append(candidate)
         return roots
 
+    def _subtree_blocks_input(self, node, state):
+        del state
+        return node._blocks_input
+
     def _paint_root(self, node):
         current = node
         while current is not None:
             if current._repaint_boundary:
-                return current
+                node = current
+                break
             current = current.parent
-
-        if node.covers_bounds or node.restores_background:
-            return node
 
         repaint = node
         target = self.layout.rect(node)
-        background_found = False
+        background_found = (node.restores_background
+                            or self._subtree_covers(node, target, self._paint_state(node)))
         branch = node
         parent = node.parent
         while parent is not None:
@@ -2278,7 +2868,7 @@ class DeclarativePage(Tree):
                     continue
 
                 foreground = any(
-                    self.layout.rect(child).overlaps(target)
+                    self._subtree_overlaps(child, target, self._paint_state(parent))
                     for child in children[index + 1:])
                 if foreground:
                     repaint = parent
@@ -2288,7 +2878,8 @@ class DeclarativePage(Tree):
                 elif not background_found:
                     for sibling in reversed(children[:index]):
                         bounds = self.layout.rect(sibling)
-                        if not bounds.overlaps(target):
+                        if not self._subtree_overlaps(
+                                sibling, target, self._paint_state(parent)):
                             continue
                         background = (
                             sibling.opaque_background(
@@ -2306,6 +2897,21 @@ class DeclarativePage(Tree):
             branch = parent
             parent = parent.parent
         return repaint
+
+    def _subtree_overlaps(self, node, target, state):
+        state = getattr(node, "_item_scope", state)
+        if node.paints_pixels and self.layout.rect(node).overlaps(target):
+            return True
+        return any(self._subtree_overlaps(child, target, state)
+                   for child in node.paint_children(state))
+
+    def _subtree_covers(self, node, target, state):
+        """Opaque compositions need no repair, even with nonuniform borders."""
+        state = getattr(node, "_item_scope", state)
+        if node.covers_bounds and self.layout.rect(node).contains(target):
+            return True
+        return any(self._subtree_covers(child, target, state)
+                   for child in node.paint_children(state))
 
     def _subtree_background(self, node, target, state):
         bounds = self.layout.rect(node)
@@ -2355,9 +2961,7 @@ class DeclarativePage(Tree):
         if root.covers_bounds or root.restores_background:
             return []
         target = self.layout.rect(root)
-        internal = self._subtree_background(
-            root, target, self._paint_state(root))
-        if internal is not _UNSET:
+        if self._subtree_covers(root, target, self._paint_state(root)):
             return []
         background = self._background_under(root, target)
         if background is _UNSET:

@@ -473,6 +473,15 @@
       "order": 50005
     },
     {
+      "key": "feather_file_view",
+      "type": "str",
+      "default": "list",
+      "label": "Feather file view",
+      "description": "Last selected Feather file-browser view.",
+      "hidden": true,
+      "order": 50006
+    },
+    {
       "key": "midi_on",
       "type": "str",
       "default": "",

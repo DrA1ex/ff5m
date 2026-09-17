@@ -1,14 +1,19 @@
 """Declarative filament load, unload, and purge page."""
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
 from ui.bindings import bind, derived
-from ui.components import Button, Fill, Metric, Panel, Text
-from ui.layout import Column, Overlay, PageTree, Rect, Row, Spacer
+from ui.components import Button, Fill, Frame, Metric, Text
+from ui.layout import Column, PageTree, Rect, Row, Spacer
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import DONE, LOAD, PURGE, RESUME, UNLOAD
 from ..state import FilamentState
-from ui import ThemeColor, ThemeRole
+from ui import ThemeColor
 
 
 CONTENT = Rect(12, 64, 776, 364)
@@ -63,8 +68,7 @@ def _status_card():
     cooling = bind(FilamentState.COOLING)
     color = derived(_status_color, ready, cooling)
     content = Column(
-        Text("NOZZLE", color=ThemeColor.DIM, font=FONT,
-             horizontal="left").height(22),
+        Text("NOZZLE").style(UiStyle.DIM_LEFT).height(22),
         Text(
             derived(
                 _temperature, bind(FilamentState.TEMPERATURE),
@@ -84,18 +88,13 @@ def _status_card():
         ).height(38).ref(ActionRef.STATE),
         Spacer(),
         Column(
-            Text(derived(_instruction_top, ready, cooling),
-                 color=ThemeColor.DIM, font=FONT,
-                 horizontal="left"),
-            Text(derived(_instruction_bottom, ready, cooling),
-                 color=ThemeColor.DIM, font=FONT,
-                 horizontal="left"),
+            Text(derived(_instruction_top, ready, cooling)).style(UiStyle.DIM_LEFT),
+            Text(derived(_instruction_bottom, ready, cooling)).style(UiStyle.DIM_LEFT),
             gap=4,
         ).height(54),
     ).padding(left=20, top=18, right=20, bottom=18)
-    return Overlay(
-        Panel(border=color, background=ThemeColor.PANEL, line_width=2),
-        content,
+    return Frame(
+        content, border=color, background=ThemeColor.PANEL, line_width=2,
     ).ref(ActionRef.STATUS).repaint_boundary()
 
 
@@ -103,9 +102,9 @@ def _action_button(action, label, subtitle, ref):
     return Button(
         action, label,
         state=derived(_button_state, bind(FilamentState.READY)),
-        font="JetBrainsMono Bold 12pt", subtitle=subtitle,
+        subtitle=subtitle,
         layout="row", subtitle_font=FONT,
-    ).height(76).ref(ref)
+    ).style(UiStyle.BUTTON_BOLD_12).height(76).ref(ref)
 
 
 def create_page(from_pause=False):
@@ -120,10 +119,14 @@ def create_page(from_pause=False):
     finish = Button(
         RESUME if from_pause else DONE,
         "CONTINUE PRINT" if from_pause else "DONE",
-        state="selected", font="JetBrainsMono Bold 12pt",
-    ).height(54).ref(ActionRef.FINISH)
+        state="selected",
+    ).style(UiStyle.BUTTON_BOLD_12).height(54).ref(ActionRef.FINISH)
     right = Column(actions, Spacer(), finish)
     root = Row(
         _status_card().width(280), right, gap=20,
     ).padding(8).ref(ActionRef.ROOT)
-    return PageTree(root, CONTENT, page_id=AppPage.FILAMENT_ACTION)
+    return PageTree(root, CONTENT, page_id=AppPage.FILAMENT_ACTION, styles=UI_STYLES)
+
+
+# Default declaration for framework page discovery; runtime factories retain their inputs.
+PAGE = create_page()

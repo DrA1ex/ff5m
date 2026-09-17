@@ -57,6 +57,7 @@ UI_SUITE_LABELS = frozenset((
     "ui-home",
     "ui-main-menu",
     "ui-files",
+    "ui-files-previews",
     "ui-files-loading",
     "ui-files-empty",
     "ui-files-usb",

@@ -3,6 +3,8 @@
 from enum import Enum
 import re
 
+from .theme import ThemeColor, ThemeRole
+
 
 class Invalidation(str, Enum):
     PAINT = "paint"
@@ -175,11 +177,13 @@ class PropertySpec:
     __slots__ = (
         "name", "runtime_type", "default", "nullable", "validation",
         "editor", "bindings", "invalidation", "live", "source",
+        "styleable", "inheritable",
     )
 
     def __init__(self, name, runtime_type=object, default=_MISSING,
                  nullable=False, validation=None, editor=None, bindings=("direct",),
-                 invalidation=Invalidation.PAINT, live=True, source=None):
+                 invalidation=Invalidation.PAINT, live=True, source=None,
+                 styleable=False, inheritable=False):
         self.name = str(name)
         self.runtime_type = runtime_type
         self.default = default
@@ -204,6 +208,10 @@ class PropertySpec:
         elif not isinstance(source, SourceSpec):
             source = SourceSpec(**dict(source))
         self.source = source
+        self.styleable = bool(styleable)
+        self.inheritable = bool(inheritable)
+        if self.inheritable and not self.styleable:
+            raise ValueError("Inheritable properties must be styleable")
 
     @property
     def has_default(self):
@@ -284,6 +292,8 @@ class PropertySpec:
             "live_preview": self.live,
             "live": self.live,
             "source": source,
+            "styleable": self.styleable,
+            "inheritable": self.inheritable,
             # Flat aliases keep the wire DTO convenient while metadata still
             # has one framework-owned definition.
             "kind": editor["kind"],
@@ -321,13 +331,99 @@ class CreationFieldSpec(PropertySpec):
         return value
 
 
+def _runtime_types(value):
+    if value is object or isinstance(value, str):
+        return None
+    return value if isinstance(value, tuple) else (value,)
+
+
+def _accepts_semantic_property(consumer, semantic):
+    """Whether ``consumer`` can safely receive every semantic style value."""
+    if semantic.nullable and not consumer.nullable:
+        return False
+    accepted = _runtime_types(consumer.runtime_type)
+    supplied = _runtime_types(semantic.runtime_type)
+    if accepted is None or supplied is None:
+        return True
+    for source_type in supplied:
+        compatible = False
+        for target_type in accepted:
+            try:
+                compatible = issubclass(source_type, target_type)
+            except TypeError:
+                compatible = source_type == target_type
+            if compatible:
+                break
+        if not compatible:
+            return False
+    return True
+
+
 def property_schema(*specs):
     if not all(isinstance(value, PropertySpec) for value in specs):
         raise TypeError("property_schema v2 accepts only PropertySpec values")
     names = [value.name for value in specs]
     if len(names) != len(set(names)):
         raise ValueError("Property names must be unique")
+    registry = globals().get("_INHERITABLE_STYLE_REGISTRY", {})
+    consumers = globals().get("_INHERITABLE_STYLE_CONSUMERS")
+    for spec in specs:
+        if not spec.inheritable:
+            continue
+        semantic = registry.get(spec.name)
+        if semantic is not None and not _accepts_semantic_property(spec, semantic):
+            raise ValueError(
+                "Inheritable property %s is incompatible with the registered "
+                "semantic style property" % spec.name)
+        if consumers is not None:
+            consumers.setdefault(spec.name, []).append(spec)
     return tuple(specs)
+
+
+_INHERITABLE_STYLE_REGISTRY = {}
+_INHERITABLE_STYLE_CONSUMERS = {}
+
+
+def register_inheritable_style_property(spec):
+    """Register one framework-owned semantic property for context styles.
+
+    The registry is independent from loaded Node subclasses so valid context
+    styles never depend on component import order. Component schemas still
+    decide whether a particular node consumes/inherits the semantic property.
+    """
+    if not isinstance(spec, PropertySpec):
+        raise TypeError("Inheritable style registry requires PropertySpec values")
+    if not spec.styleable or not spec.inheritable:
+        raise ValueError("Registered style properties must be styleable and inheritable")
+    existing = _INHERITABLE_STYLE_REGISTRY.get(spec.name)
+    if existing is not None:
+        if (existing.runtime_type != spec.runtime_type
+                or existing.nullable != spec.nullable):
+            raise ValueError("Conflicting inheritable style property: %s" % spec.name)
+        return existing
+    for consumer in _INHERITABLE_STYLE_CONSUMERS.get(spec.name, ()):
+        if not _accepts_semantic_property(consumer, spec):
+            raise ValueError(
+                "Registered semantic style property %s is incompatible with "
+                "an existing inheritable consumer" % spec.name)
+    _INHERITABLE_STYLE_REGISTRY[spec.name] = spec
+    return spec
+
+
+def inheritable_style_properties():
+    """Return a copy of the stable semantic context-style registry."""
+    return dict(_INHERITABLE_STYLE_REGISTRY)
+
+
+# Context-style semantics are framework-owned rather than discovered from
+# whichever component modules happen to be imported. Keep this initial set
+# intentionally small, matching the RFC.
+register_inheritable_style_property(PropertySpec(
+    "color", (ThemeColor, ThemeRole, str), default=ThemeColor.PRIMARY,
+    styleable=True, inheritable=True))
+register_inheritable_style_property(PropertySpec(
+    "font", str, default="JetBrainsMono 8pt",
+    styleable=True, inheritable=True))
 
 
 def property_names(node_or_type):

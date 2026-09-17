@@ -1,4 +1,8 @@
 ## Declarative Z-offset paper briefing page for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
@@ -6,10 +10,11 @@ from ui.bindings import bind, derived
 from ui.components import Button, Text
 from ui.layout import Column, Equal, Grid, PageTree as Page, Spacer
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import ENTER_ZONE
-from ..common import CONTENT, FONT
+from ..common import CONTENT
 from .state import PaperBriefingState
-from ui import ThemeColor, ThemeRole
+from ui import ThemeColor
 
 
 PAGE_ID = AppPage.Z_OFFSET_PAPER_BRIEFING
@@ -34,33 +39,22 @@ class PaperBriefingRef(Enum):
 
 def _content():
     text = Column(
-        Text(
-            "PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.",
-            color=ThemeColor.PRIMARY, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_1),
-        Text(
-            "PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.",
-            color=ThemeColor.TEXT, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_2),
+        Text("PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.")
+        .style(UiStyle.PRIMARY).height(16).allow_overflow().ref(PaperBriefingRef.LINE_1),
+        Text("PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.")
+        .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_2),
         Text(
             derived(lambda height:
                     "MOVE TO %.3f MM USES HALF OF SAFE Z AS REFERENCE, SO YOU" %
                     height,
                     bind(PaperBriefingState.MANUAL_START)),
-            color=ThemeColor.TEXT, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_3),
-        Text(
-            "CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.",
-            color=ThemeColor.TEXT, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_4),
-        Text(
-            "SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.",
-            color=ThemeColor.TEXT, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_5),
-        Text(
-            "WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.",
-            color=ThemeColor.TEXT, font=FONT,
-        ).height(16).allow_overflow().ref(PaperBriefingRef.LINE_6),
+        ).style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_3),
+        Text("CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.")
+        .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_4),
+        Text("SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.")
+        .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_5),
+        Text("WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.")
+        .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_6),
         gap=20,
     ).height(196).ref(PaperBriefingRef.TEXT)
     zone = Grid(
@@ -77,15 +71,12 @@ def _content():
         Spacer().height(21).ref(PaperBriefingRef.SPACER_AFTER_TEXT),
         zone,
         Spacer().ref(PaperBriefingRef.SPACER_ACTION),
-        Button(
-            ENTER_ZONE, "POSITION HEAD",
-            font="JetBrainsMono Bold 12pt",
-        ).size(460, 74).align(horizontal="center")
+        Button(ENTER_ZONE, "POSITION HEAD").style(UiStyle.BUTTON_BOLD_12).size(460, 74).align(horizontal="center")
          .ref(PaperBriefingRef.CONTINUE),
     ).padding(left=10, right=10, bottom=28).ref(PaperBriefingRef.ROOT)
 
 
-PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
+PAGE = Page(_content(), CONTENT, page_id=PAGE_ID, styles=UI_STYLES)
 
 
 def render(renderer, values):

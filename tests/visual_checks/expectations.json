@@ -845,10 +845,10 @@
         },
         "printer:ui-files":
         {
-            "description": "Real-printer file browser.",
+            "description": "Real-printer file browser in list view.",
             "required":
             [
-                "file browser content",
+                "file browser list content",
                 "back navigation"
             ],
             "forbidden":
@@ -860,6 +860,27 @@
             "allowed_variations":
             [
                 "available files",
+                "timestamps"
+            ]
+        },
+        "printer:ui-files-previews":
+        {
+            "description": "Real-printer file browser with preview tiles.",
+            "required":
+            [
+                "file preview tiles",
+                "back navigation"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "available files",
+                "generated previews",
                 "timestamps"
             ]
         },

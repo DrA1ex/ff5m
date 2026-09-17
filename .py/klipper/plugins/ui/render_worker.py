@@ -46,6 +46,7 @@ class RenderBatchQueue:
         self._condition = threading.Condition()
         self._closed = False
         self._latest_generation = -1
+        self._needs_redraw = False
         self._metrics = {
             "submitted_batches": 0,
             "rendered_batches": 0,
@@ -73,6 +74,8 @@ class RenderBatchQueue:
         for index, item in enumerate(self._items):
             if item.kind in kinds:
                 del self._items[index]
+                if item.kind == "state":
+                    self._needs_redraw = True
                 metric = ("coalesced_batches" if coalesced
                           else "dropped_batches")
                 self._metrics[metric] += 1
@@ -137,14 +140,23 @@ class RenderBatchQueue:
                     if self._evict_one(("state",)):
                         continue
                 self._metrics["dropped_batches"] += 1
+                if batch.kind == "state":
+                    self._needs_redraw = True
                 return False
 
             self._items.append(batch)
+            if batch.kind in ("surface", "critical"):
+                self._needs_redraw = False
             depth = len(self._items)
             self._metrics["queue_high_watermark"] = max(
                 self._metrics["queue_high_watermark"], depth)
             self._condition.notify()
             return True
+
+    @property
+    def needs_redraw(self):
+        with self._condition:
+            return self._needs_redraw
 
     def reject_submission(self):
         """Account for a batch rejected before an immutable item exists."""

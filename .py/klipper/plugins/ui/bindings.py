@@ -1,4 +1,8 @@
 ## Typed state declarations and bindings for the Feather UI framework.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 import copy
 import inspect
@@ -323,10 +327,10 @@ class StateStore:
         return self._values.keys()
 
     def values(self):
-        return self._values.values()
+        return self.as_dict().values()
 
     def items(self):
-        return self._values.items()
+        return self.as_dict().items()
 
     def get(self, key, default=None):
         try:
@@ -728,7 +732,7 @@ def binding_keys(value):
 def page_state_keys(root, explicit=()):
     result = list(_unique_keys(explicit))
     seen = set(result)
-    for node in root.walk():
+    for node in root.walk_declarations():
         for name, value in node.__dict__.items():
             if name.startswith("_") or name in ("parent", "layout_options"):
                 continue

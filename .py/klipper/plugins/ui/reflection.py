@@ -8,10 +8,12 @@ from .bindings import (
 )
 from .identity import FrameworkKey, serialize_key
 from .layout import Grid, LAYOUT_SCHEMA, List, ListView, Overlay, When, WrapPanel
+from .components import Frame
 from .properties import property_names
 from .source import (
-    annotate_affected, construction_metadata, layout_provenance,
-    property_provenance,
+    annotate_affected, component_parameter_provenance, component_property_parameter, construction_metadata,
+    layout_provenance, property_provenance, structure_provenance,
+    style_provenance,
 )
 from . import REFLECTION_SCHEMA_VERSION
 
@@ -43,6 +45,19 @@ def _resolve(value, state):
     return _json_value(resolve_deep(value, state))
 
 
+def _parameter_value(value, state):
+    if isinstance(value, Binding):
+        return {"binding": binding_metadata(value, state)}
+    if isinstance(value, tuple):
+        return [_parameter_value(item, state) for item in value]
+    if isinstance(value, list):
+        return [_parameter_value(item, state) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _parameter_value(item, state)
+                for key, item in value.items()}
+    return _json_value(value)
+
+
 def _layout(node):
     value = node.layout_options
     return {
@@ -63,6 +78,35 @@ def _layout(node):
 def _layout_source_contract(node):
     contract = getattr(node, "layout_source_contract", None)
     return None if contract is None else contract.as_dict()
+
+
+def _property_schema(node):
+    result = []
+    for spec in node.property_schema:
+        value = spec.as_dict()
+        fallbacks = getattr(node, "_computed_property_fallbacks", {})
+        if spec.name in fallbacks:
+            value["default"] = fallbacks[spec.name]
+            value["has_default"] = True
+        parameter = component_property_parameter(node, spec.name)
+        if parameter is not None:
+            value["has_default"] = False
+            value["source"] = dict(value["source"], name=parameter.name, position=None, index=None)
+            value["source_name"] = parameter.name
+        result.append(value)
+    return result
+
+
+def _layout_schema(node):
+    fallbacks = getattr(node, "_computed_layout_fallbacks", {})
+    result = []
+    for spec in LAYOUT_SCHEMA:
+        value = spec.as_dict()
+        if spec.name in fallbacks:
+            value["default"] = fallbacks[spec.name]
+            value["has_default"] = True
+        result.append(value)
+    return result
 
 
 def _properties(node, state):
@@ -89,6 +133,9 @@ def _structure(node, children):
     if contract is None:
         return None
     result = contract.as_dict()
+    result["provenance"] = structure_provenance(node)
+    if isinstance(node, Grid):
+        result["source_form"] = getattr(node, "_grid_source_form", "matrix")
     slots = []
     if isinstance(node, Grid):
         by_child = dict((id(item.child), item) for item in node.cells)
@@ -192,17 +239,34 @@ def _node(node, page, state, path, inherited_visible=True):
     source = construction_metadata(node)
     template_instance = getattr(node, "_template_instance", None)
     template_definition = getattr(node, "_template_definition", None)
-    if source is not None and (template_instance or template_definition):
+    component_template_instance = getattr(
+        node, "_component_template_instance", None)
+    sharing_template = (template_instance or template_definition
+                        or component_template_instance)
+    if source is not None and sharing_template:
         source = dict(source)
         source["sharing"] = {
             "reason": "template",
-            "template": (template_instance or template_definition)["template"],
+            "template": sharing_template["template"],
         }
     anchor = (source or {}).get("anchor") or {}
     fingerprint = anchor.get("fingerprint")
     stable_id = ref or ("source:%s:%s" % (fingerprint, path)
                         if fingerprint else "path:%s" % path)
     parent_contract = getattr(node.parent, "structure_contract", None)
+    component_template_metadata = None
+    if component_template_instance is not None:
+        component_template_metadata = dict(
+            (name, (_parameter_value(value, node_state)
+                    if name == "parameters" and value is not None
+                    else _json_value(value)))
+            for name, value in component_template_instance.items())
+        parameters = component_template_instance.get("parameters") or {}
+        component_template_metadata["parameter_sources"] = (
+            {} if not component_template_instance.get("root")
+            else dict((
+                name, component_parameter_provenance(node, name, value))
+                for name, value in parameters.items()))
     return {
         "id": stable_id,
         "ref": ref,
@@ -218,8 +282,8 @@ def _node(node, page, state, path, inherited_visible=True):
         "condition": condition,
         "layout": _layout(node),
         "layout_source_contract": _layout_source_contract(node),
-        "property_schema": [item.as_dict() for item in node.property_schema],
-        "layout_schema": [item.as_dict() for item in LAYOUT_SCHEMA],
+        "property_schema": _property_schema(node),
+        "layout_schema": _layout_schema(node),
         "properties": properties,
         "bindings": bindings,
         "source": source,
@@ -232,13 +296,24 @@ def _node(node, page, state, path, inherited_visible=True):
             name, property_provenance(node, name, value=value))
             for name, value in node.__dict__.items()
             if isinstance(value, Action)),
-        "container": isinstance(node, (Grid, List, Overlay, WrapPanel)),
+        "container": isinstance(node, (Grid, List, Overlay, WrapPanel, Frame)),
+        "style": None if node._style_id is None else _value(node._style_id),
+        "style_source": (None if node._style_id is None
+                         else style_provenance(node)),
+        "property_origins": _json_value(
+            getattr(node, "_computed_property_origins", {})),
+        "layout_origins": _json_value(
+            getattr(node, "_computed_layout_origins", {})),
         "list_view": (_list_view_metadata(node, state)
                       if isinstance(node, ListView) else None),
         "template_instance": (None if template_instance is None
                               else dict(template_instance)),
         "template_definition": (None if template_definition is None
                                 else dict(template_definition)),
+        "component_template_instance": component_template_metadata,
+        "definition_owned": bool(
+            component_template_instance is not None
+            and not component_template_instance.get("root")),
         "canvas": {
             "capabilities": (
                 [] if parent_contract is None else list(parent_contract.canvas)),
@@ -311,6 +386,44 @@ def _dependency_indexes(tree, state_schema):
     return {"states": states, "conditions": conditions}
 
 
+
+def _component_template_catalog(page):
+    result = {}
+
+    definitions = {}
+
+    def add(template, registered):
+        key = _value(template.id)
+        definition = definitions.get(key)
+        if definition is not None and definition is not template:
+            raise ValueError(
+                "ComponentTemplate identity %s refers to multiple definitions" %
+                key)
+        definitions[key] = template
+        existing = result.get(key)
+        if existing is not None:
+            if registered:
+                existing["registered"] = True
+            return
+        result[key] = {
+            "id": key,
+            "symbol": "%s.%s" % (
+                template.id.__class__.__name__, template.id.name),
+            "parameters": [value.name for value in template.parameters],
+            "source": construction_metadata(template),
+            "root_source": construction_metadata(template.root),
+            "registered": bool(registered),
+        }
+
+    for template in getattr(page, "component_templates", ()):
+        add(template, True)
+    for node in page.root.walk():
+        template = getattr(node, "_component_template", None)
+        if template is not None:
+            add(template, False)
+    return list(result.values())
+
+
 def reflect_page(page, state=None):
     """Return a Designer-neutral description of one arranged page."""
     if state is None:
@@ -347,5 +460,9 @@ def reflect_page(page, state=None):
         "selection": {"ids": [], "primary": None},
         "clipboard": {"available": False, "nodes": []},
         "diagnostics": [],
+        "styles": (None if getattr(page, "styles", None) is None
+                   else _json_value(page.styles.as_dict())),
+        "component_templates": _json_value(
+            _component_template_catalog(page)),
         "tree": tree,
     }

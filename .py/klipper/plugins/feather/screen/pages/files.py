@@ -31,6 +31,10 @@ FILE_TILE_IMAGE_Y = 78
 
 
 class FileBrowserPagesMixin:
+    def _configured_file_view(self):
+        view = str(self._setting("feather_file_view", "list")).strip().lower()
+        return view if view in ("list", "tiles") else "list"
+
     def _file_page_size(self):
         return FILE_TILES if self.file_view == "tiles" else FILE_ROWS
 
@@ -482,6 +486,7 @@ class FileBrowserPagesMixin:
             view = action.rsplit(".", 1)[-1]
             if view == self.file_view:
                 return
+            self.params.set_value("feather_file_view", view)
             self.file_view = view
             self.file_page = 0
             self._render_file_browser()

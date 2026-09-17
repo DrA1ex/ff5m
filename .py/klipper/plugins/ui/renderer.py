@@ -132,6 +132,8 @@ class FeatherRenderer:
         self._async_scheduler = None
         self._event_fd_handler = None
         self._restart_handler = None
+        self._redraw_handler = None
+        self._recovering_output = False
         self._last_submitted_generation = -1
         self._next_batch_kind = None
         self._next_batch_key = None
@@ -143,13 +145,16 @@ class FeatherRenderer:
         self._output_held = False
         self._font_manifest_loaded = False
         self._semantic_page_id = None
+        self._page_title = ""
+        self._page_back = False
 
     def configure_worker(self, async_scheduler, event_fd_handler,
-                         restart_handler=None):
+                         restart_handler=None, redraw_handler=None):
         """Connect worker callbacks before its deferred reactor start."""
         self._async_scheduler = async_scheduler
         self._event_fd_handler = event_fd_handler
         self._restart_handler = restart_handler
+        self._redraw_handler = redraw_handler
 
     @property
     def active(self):
@@ -296,6 +301,17 @@ class FeatherRenderer:
         if accepted:
             self._last_submitted_generation = max(
                 self._last_submitted_generation, batch_generation)
+        if (self._batch_queue.needs_redraw and self._redraw_handler is not None
+                and not self._recovering_output):
+            # A discarded delta breaks later damage restoration. Rebuild from
+            # current product state, even when this was the gesture's final frame.
+            self._recovering_output = True
+            self._last_submitted_generation = -1
+            self.invalidate_footer()
+            try:
+                self._redraw_handler()
+            finally:
+                self._recovering_output = False
         return accepted
 
     def prioritize_next_batch(self, kind, key=None):
@@ -1220,10 +1236,18 @@ class FeatherRenderer:
         return self.button(
             action, 648, 7, 132, 46, label, state=state, font=font)
 
+    def redraw_page(self):
+        """Rebuild interactions and pixels through the normal page lifecycle."""
+        return self.begin_page(self._page_title, back=self._page_back)
+
     def begin_page(self, title, back=False):
+        self._page_title = title
+        self._page_back = back
         self._loader_active = False
         self._semantic_page_id = None
-        self._generation += 1
+        # Pressure recovery keeps the same page and its active touch gesture.
+        if not self._recovering_output:
+            self._generation += 1
         self._reset_interactions()
         self._menu_suppressed = False
         show_header_action = self._header_action is not None

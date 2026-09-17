@@ -1,8 +1,8 @@
 ## Public Feather UI package.
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 FRAMEWORK_API_VERSION = 2
-REFLECTION_SCHEMA_VERSION = "2.2.0"
+REFLECTION_SCHEMA_VERSION = "2.3.0"
 FRAMEWORK_CAPABILITIES = (
     "typed-identities",
     "stable-key-namespaces",
@@ -16,6 +16,11 @@ FRAMEWORK_CAPABILITIES = (
     "package-relative-themes",
     "typed-theme-tokens",
     "data-driven-list-templates",
+    "painted-content-frame",
+    "typed-styles",
+    "style-inheritance",
+    "component-templates",
+    "grid-cell-source",
 )
 
 
@@ -30,6 +35,7 @@ def framework_manifest():
     }
 
 _EXPORT_GROUPS = (
+    ("authoring", ("REUSABLE_SOURCE_CONTRACT", "ReusableSourceContract")),
     ("theme", (
         "ThemeColor", "ThemeRole", "ResolvedTheme",
         "DEFAULT_THEME_ROLES", "normalize_theme_token", "resolve_theme",
@@ -78,24 +84,26 @@ _EXPORT_GROUPS = (
     ("numeric_input", ("NumericInputSpec",)),
     ("properties", (
         "CreationFieldSpec", "EditorSpec", "Invalidation", "PropertySpec",
-        "RewritePolicy", "SourceSpec", "ValidationSpec", "property_names",
-        "property_schema",
+        "RewritePolicy", "SourceSpec", "ValidationSpec",
+        "inheritable_style_properties", "property_names", "property_schema",
+        "register_inheritable_style_property",
     )),
+    ("styles", ("Style", "StyleSheet")),
     ("layout", (
-        "EMPTY", "FLEX", "Column", "CreationContract",
+        "EMPTY", "FLEX", "Cell", "Column", "ComponentTemplate", "CreationContract",
         "CreationIdentityContract", "CreationSourceContract",
         "DeclarativePage",
         "Dirty", "Equal", "EqualTracks", "Flex", "Grid", "Insets",
         "LAYOUT_SCHEMA", "LayoutModifierSpec", "LayoutResult", "LayoutSourceContract",
-        "List", "ListView", "Node", "Overlay", "Template",
+        "List", "ListView", "Node", "Overlay", "Param", "ParamRef", "Template",
         "Override", "PAGE_DISCOVERY_CONTRACT", "PageDiscoveryContract",
         "PageTree", "Rect", "Row", "Spacer", "Span",
         "StateCase", "StructureContract", "StructureSourceContract", "Tree", "When", "WrapPanel", "split",
-        "subdivision_positions",
+        "param", "subdivision_positions",
     )),
     ("components", (
         "ArrowButton", "Button", "ButtonStyle", "CornerMarks", "Crosshair", "Dialog",
-        "DotGrid", "Fill", "Hitbox", "JoystickKnob", "Metric", "Panel",
+        "DotGrid", "Fill", "Frame", "Hitbox", "JoystickKnob", "Metric", "Panel",
         "NumericKeypad", "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge",
         "VerticalScale",
     )),
@@ -120,6 +128,7 @@ def __dir__():
     return sorted(set(globals()).union(_EXPORTS))
 
 __all__ = (
+    "REUSABLE_SOURCE_CONTRACT", "ReusableSourceContract",
     "__version__", "FRAMEWORK_API_VERSION", "REFLECTION_SCHEMA_VERSION",
     "FRAMEWORK_CAPABILITIES", "framework_manifest",
     "ThemeColor", "ThemeRole", "ResolvedTheme",
@@ -151,18 +160,19 @@ __all__ = (
     "StateSpec", "StateStore", "state", "state_spec", "bind", "derived", "item",
     "NumericInputSpec",
     "Invalidation", "RewritePolicy", "EditorSpec", "SourceSpec",
-    "ValidationSpec", "CreationFieldSpec", "PropertySpec", "property_names",
-    "property_schema",
-    "EMPTY", "FLEX", "Column", "CreationContract",
+    "ValidationSpec", "CreationFieldSpec", "PropertySpec",
+    "inheritable_style_properties", "property_names", "property_schema",
+    "register_inheritable_style_property", "Style", "StyleSheet",
+    "EMPTY", "FLEX", "Cell", "Column", "ComponentTemplate", "CreationContract",
     "CreationIdentityContract", "CreationSourceContract", "DeclarativePage",
     "Dirty", "Equal", "EqualTracks", "Flex", "Grid", "Insets",
     "LAYOUT_SCHEMA", "LayoutModifierSpec", "LayoutResult",
     "LayoutSourceContract", "List", "ListView",
-    "Node", "Overlay", "Override", "PAGE_DISCOVERY_CONTRACT", "Template",
+    "Node", "Overlay", "Override", "Param", "ParamRef", "param", "PAGE_DISCOVERY_CONTRACT", "Template",
     "PageDiscoveryContract", "PageTree", "Rect", "Row",
     "Spacer", "Span", "StateCase", "StructureContract", "StructureSourceContract", "Tree", "When", "WrapPanel", "split",
     "subdivision_positions", "ArrowButton", "Button",
     "ButtonStyle", "CornerMarks", "Crosshair", "Dialog", "DotGrid",
-    "Fill", "Hitbox", "JoystickKnob", "Metric", "NumericKeypad", "Panel",
+    "Fill", "Frame", "Hitbox", "JoystickKnob", "Metric", "NumericKeypad", "Panel",
     "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge", "VerticalScale",
 )

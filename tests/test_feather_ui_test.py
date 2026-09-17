@@ -939,6 +939,55 @@ class RunnerContractTest(unittest.TestCase):
             self.assertEqual(host.last_job_path, "previous.gcode")
             self.assertEqual(host.last_job_name, "previous.gcode")
 
+    def test_usb_browser_snapshot_uses_file_entries_and_restores_state(self):
+        rendered = []
+        original_entries = [FileEntry("original.gcode", "/data/original.gcode")]
+
+        class Host:
+            file_entries = original_entries
+            file_page = 3
+            file_source = "internal"
+
+            def _render_file_entries(self):
+                rendered.append((
+                    list(self.file_entries), self.file_page, self.file_source))
+
+        host = Host()
+        scenarios = SCENARIOS.ScenarioCatalog(
+            type("Run", (), {"host": host})())
+
+        scenarios._render_usb_file_browser()
+
+        entries, page, source = rendered[0]
+        self.assertTrue(all(isinstance(entry, FileEntry) for entry in entries))
+        self.assertEqual(
+            [(entry.name, entry.path, entry.directory) for entry in entries],
+            [
+                ("USB_BENCHY.gcode", "/mnt/usb/USB_BENCHY.gcode", False),
+                ("CALIBRATION", "/mnt/usb/CALIBRATION", True),
+            ])
+        self.assertEqual((page, source), (0, "usb"))
+        self.assertIs(host.file_entries, original_entries)
+        self.assertEqual((host.file_page, host.file_source), (3, "internal"))
+
+    def test_file_browser_visuals_render_list_and_previews_then_restore_view(self):
+        rendered = []
+        host = type("Host", (), {
+            "file_view": "tiles",
+            "file_page": 2,
+            "_render_file_entries": lambda self: rendered.append(
+                (self.file_view, self.file_page)),
+        })()
+        scenarios = SCENARIOS.ScenarioCatalog(
+            type("Run", (), {"host": host})())
+
+        scenarios._render_file_view("list")
+        scenarios._render_file_view("tiles")
+        scenarios.restore_synthetic_state()
+
+        self.assertEqual(rendered, [("list", 0), ("tiles", 0)])
+        self.assertEqual(host.file_view, "tiles")
+
     def test_ui_suite_capture_contract_matches_hybrid_coverage(self):
         feature = UI_TEST.UITestRun(object())
 

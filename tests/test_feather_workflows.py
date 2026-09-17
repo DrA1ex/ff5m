@@ -851,6 +851,16 @@ class FileWorkflowTest(unittest.TestCase):
     def test_file_view_changes_page_size_without_changing_entry_actions(self):
         controller = base_controller()
         controller.file_view = "list"
+        saved = []
+
+        class Params:
+            variables = {"feather_file_view": "list"}
+
+            def set_value(self, key, value):
+                self.variables[key] = value
+                saved.append((key, value))
+
+        controller.params = Params()
         controller.file_page = 2
         controller.file_entries = [
             FILES.FileEntry(
@@ -864,6 +874,9 @@ class FileWorkflowTest(unittest.TestCase):
         controller._handle_file_action("file.view.tiles")
 
         self.assertEqual(controller.file_view, "tiles")
+        self.assertEqual(
+            controller.params.variables["feather_file_view"], "tiles")
+        self.assertEqual(saved, [("feather_file_view", "tiles")])
         self.assertEqual(controller.file_page, 0)
         self.assertEqual(rendered, [("tiles", 0)])
 
@@ -874,6 +887,35 @@ class FileWorkflowTest(unittest.TestCase):
 
         self.assertIs(controller.selected_file, controller.file_entries[3])
         self.assertEqual(shown, [FEATHER.ScreenPage.FILE_CONFIRM])
+
+    def test_configured_file_view_accepts_only_supported_values(self):
+        controller = base_controller()
+        controller.params = type("Params", (), {
+            "variables": {"feather_file_view": "tiles"},
+        })()
+        self.assertEqual(controller._configured_file_view(), "tiles")
+
+        controller.params.variables["feather_file_view"] = "broken"
+        self.assertEqual(controller._configured_file_view(), "list")
+
+    def test_file_view_stays_unchanged_when_persistence_fails(self):
+        controller = base_controller()
+        controller.file_view = "list"
+        controller.file_page = 2
+
+        class Params:
+            def set_value(self, key, value):
+                raise RuntimeError("save failed")
+
+        controller.params = Params()
+        rendered = []
+        controller._render_file_browser = lambda: rendered.append(True)
+
+        with self.assertRaisesRegex(RuntimeError, "save failed"):
+            controller._handle_file_action("file.view.tiles")
+
+        self.assertEqual((controller.file_view, controller.file_page), ("list", 2))
+        self.assertEqual(rendered, [])
 
     def test_file_cache_ttl_applies_when_browser_is_reopened(self):
         controller = base_controller()

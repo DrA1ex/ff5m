@@ -8,16 +8,17 @@ from enum import Enum
 
 from ui.actions import SetValue
 from ui.bindings import bind, derived
-from ui.components import Button, Dialog, Panel, Text, VerticalGauge
+from ui.components import Button, Dialog, VerticalGauge
 from ui.layout import (
     FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Spacer, When,
 )
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import ACCEPT, CLOSER, FARTHER, MOVE_SAFE_HALF, PROBE, RESET
-from ..common import CONTENT, FONT, compact
+from ..common import CONTENT
 from ..constants import PAPER_STEPS, Z_WEIGHT_DANGER
+from .components import VALUE_CARD
 from .state import PaperState
-from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.Z_OFFSET_PAPER
@@ -64,37 +65,29 @@ def _step_ref(step):
     return "paper.step.%03d" % round(float(step) * 1000.0)
 
 
-def _value_card(label, value_binding, refs):
-    return Overlay(
-        Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL, line_width=2)
-        .ref(refs[1]),
-        Text(label, color=ThemeColor.PRIMARY, font=FONT)
-        .height(20).margin(top=8).align(vertical="top").ref(refs[2]),
-        Text(
-            derived(lambda value: "%s MM" % value, value_binding),
-            color=ThemeColor.BRIGHT, font="JetBrainsMono Bold 12pt",
-        ).height(20).margin(top=39).align(vertical="top").ref(refs[3]),
-    ).ref(refs[0]).repaint_boundary()
-
-
 def _cards():
     return Grid(
         matrix=((
-            _value_card(
-                derived(
+            VALUE_CARD(
+                instance_key=PaperRef.REFERENCE,
+                label=derived(
                     lambda manual: "REFERENCE Z" if manual else "TRIGGER Z",
                     bind(PaperState.MANUAL)),
-                bind(PaperState.REFERENCE),
-                (PaperRef.REFERENCE, PaperRef.REFERENCE_PANEL,
-                 PaperRef.REFERENCE_LABEL, PaperRef.REFERENCE_VALUE)),
-            _value_card(
-                "NOZZLE Z", bind(PaperState.NOZZLE),
-                (PaperRef.NOZZLE, PaperRef.NOZZLE_PANEL,
-                 PaperRef.NOZZLE_LABEL, PaperRef.NOZZLE_VALUE)),
-            _value_card(
-                "Z OFFSET", bind(PaperState.CANDIDATE),
-                (PaperRef.CANDIDATE, PaperRef.CANDIDATE_PANEL,
-                 PaperRef.CANDIDATE_LABEL, PaperRef.CANDIDATE_VALUE)),
+                value=derived(lambda value: "%s MM" % value, bind(PaperState.REFERENCE)),
+                card_ref=PaperRef.REFERENCE, panel_ref=PaperRef.REFERENCE_PANEL,
+                label_ref=PaperRef.REFERENCE_LABEL, value_ref=PaperRef.REFERENCE_VALUE),
+            VALUE_CARD(
+                instance_key=PaperRef.NOZZLE,
+                label="NOZZLE Z",
+                value=derived(lambda value: "%s MM" % value, bind(PaperState.NOZZLE)),
+                card_ref=PaperRef.NOZZLE, panel_ref=PaperRef.NOZZLE_PANEL,
+                label_ref=PaperRef.NOZZLE_LABEL, value_ref=PaperRef.NOZZLE_VALUE),
+            VALUE_CARD(
+                instance_key=PaperRef.CANDIDATE,
+                label="Z OFFSET",
+                value=derived(lambda value: "%s MM" % value, bind(PaperState.CANDIDATE)),
+                card_ref=PaperRef.CANDIDATE, panel_ref=PaperRef.CANDIDATE_PANEL,
+                label_ref=PaperRef.CANDIDATE_LABEL, value_ref=PaperRef.CANDIDATE_VALUE),
         ),),
         columns=Equal(3), rows=Equal(1), gap=(15, 0),
     ).padding(right=10).ref(PaperRef.CARDS)
@@ -117,8 +110,7 @@ def _start():
                     _probe_state,
                     bind(PaperState.PROBING),
                     bind(PaperState.MOVING_TO_START)),
-                font="JetBrainsMono Bold 12pt",
-            ).ref(PaperRef.PROBE),
+            ).style(UiStyle.BUTTON_BOLD_12).ref(PaperRef.PROBE),
             Button(
                 MOVE_SAFE_HALF,
                 derived(lambda height: "MOVE TO %.3f MM" % height,
@@ -127,15 +119,14 @@ def _start():
                     _move_state,
                     bind(PaperState.PROBING),
                     bind(PaperState.MOVING_TO_START)),
-                font="JetBrainsMono Bold 12pt",
-            ).ref(PaperRef.MOVE_SAFE_HALF),
+            ).style(UiStyle.BUTTON_BOLD_12).ref(PaperRef.MOVE_SAFE_HALF),
         ),),
         columns=Equal(2), rows=Equal(1), gap=(20, 0),
     ).ref(PaperRef.START)
 
 
 def _steps():
-    return compact(Grid(
+    return Grid(
         matrix=(tuple(
             Button(
                 SetValue(PaperState.STEP, step), "%.3f MM" % step,
@@ -143,10 +134,10 @@ def _steps():
                     lambda current, expected=step:
                     "selected" if current == expected else "enabled",
                     bind(PaperState.STEP)),
-            ).ref(_step_ref(step))
+            ).style(UiStyle.BUTTON).ref(_step_ref(step))
             for step in PAPER_STEPS),),
         columns=Equal(len(PAPER_STEPS)), rows=Equal(1), gap=(8, 0),
-    )).padding(right=8).ref(PaperRef.STEPS)
+    ).padding(right=8).ref(PaperRef.STEPS)
 
 
 def _ready_state(ready):
@@ -161,14 +152,14 @@ def _adjust():
                 CLOSER,
                 derived(lambda step: "CLOSER  -%.3f" % step,
                         bind(PaperState.STEP)),
-                state=adjust_state, font="JetBrainsMono Bold 12pt",
-            ).ref(PaperRef.CLOSER),
+                state=adjust_state,
+            ).style(UiStyle.BUTTON_BOLD_12).ref(PaperRef.CLOSER),
             Button(
                 FARTHER,
                 derived(lambda step: "FARTHER  +%.3f" % step,
                         bind(PaperState.STEP)),
-                state=adjust_state, font="JetBrainsMono Bold 12pt",
-            ).ref(PaperRef.FARTHER),
+                state=adjust_state,
+            ).style(UiStyle.BUTTON_BOLD_12).ref(PaperRef.FARTHER),
         ),),
         columns=Equal(2), rows=Equal(1), gap=(20, 0),
     ).ref(PaperRef.ADJUST)
@@ -178,14 +169,8 @@ def _finish():
     adjust_state = derived(_ready_state, bind(PaperState.READY))
     return Grid(
         matrix=((
-            Button(
-                RESET, "RESET TO 0.000",
-                state=adjust_state, font=FONT,
-            ).ref(PaperRef.RESET),
-            Button(
-                ACCEPT, "ACCEPT ZONE",
-                state=adjust_state, font="JetBrainsMono Bold 10pt",
-            ).ref(PaperRef.ACCEPT),
+            Button(RESET, "RESET TO 0.000", state=adjust_state).style(UiStyle.BUTTON).ref(PaperRef.RESET),
+            Button(ACCEPT, "ACCEPT ZONE", state=adjust_state, font="JetBrainsMono Bold 10pt").ref(PaperRef.ACCEPT),
         ),),
         columns=(205, FLEX), rows=Equal(1), gap=(20, 0),
     ).ref(PaperRef.FINISH)
@@ -232,7 +217,9 @@ def _content():
     return Overlay(layout, pressure).ref(PaperRef.ROOT)
 
 
-PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
+PAGE = Page(
+    _content(), CONTENT, page_id=PAGE_ID, styles=UI_STYLES,
+    component_templates=(VALUE_CARD,))
 
 
 def render(renderer, values):

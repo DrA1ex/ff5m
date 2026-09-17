@@ -8,19 +8,19 @@ from enum import Enum
 
 from ui import ThemeColor, ThemeRole
 from ui.bindings import bind, derived
-from ui.components import Button, Fill, Hitbox, Panel, Text
+from ui.components import Button, Fill, Frame, Hitbox, Text
 from ui.layout import Overlay, PageTree, Rect
 
 from ..keys import AppPage
 from ..screen import ScreenPage
+from ..styles import UI_STYLES, UiStyle
 from .actions import FILAMENT, HEAT, JOB, LAST_JOB, MENU, MOVE, NETWORK
+from .components import BOTTOM_VALUE, NETWORK_CARD, TEMPERATURE_CARD
 from .state import HomeState, collect_dashboard, dashboard_values
 
 
 PAGE_TITLE = "FORGE-X // FEATHER"
 PAGE_BOUNDS = Rect(0, 0, 800, 442)
-FONT = "JetBrainsMono 8pt"
-VALUE_FONT = "JetBrainsMono 12pt"
 CLOCK_FONT = "Roboto 16pt"
 
 
@@ -35,10 +35,6 @@ class HomeRef(Enum):
     LAST_JOB = "home.last_job"
     MATERIAL = "home.material"
     TOOLHEAD = "home.toolhead"
-
-
-def _placed(node, x, y, width, height):
-    return node.size(width, height).offset(x, y)
 
 
 def _temperature(current, target):
@@ -87,144 +83,106 @@ def _homed_color(value):
     return ThemeColor.PRIMARY if value == "XYZ" else ThemeColor.WARNING
 
 
-def _card(x, width, label, border, dynamic, key):
-    return _placed(
-        Overlay(
-            Panel(border=border, background=ThemeColor.PANEL, line_width=2),
-            _placed(Text(label, color=border, font=FONT),
-                    0, 8, width, 40),
-            _placed(dynamic, 3, 40, width - 6, 87),
-        ).ref(key), x, 72, width, 132)
-
-
-def _temperature_value(value, target, status_color):
-    return Overlay(
-        Fill(ThemeColor.PANEL),
-        _placed(Text(
-            derived(_temperature, bind(value), bind(target)),
-            color=ThemeColor.TEXT, font=VALUE_FONT), 0, 10, 229, 34),
-        _placed(Text(
-            derived(_heat_status, bind(target)),
-            color=derived(status_color, bind(target)), font=FONT),
-            0, 52, 229, 34),
-    ).repaint_boundary()
-
-
-def _network_value():
-    return Overlay(
-        Fill(ThemeColor.PANEL),
-        _placed(Text(
-            bind(HomeState.NETWORK_NAME), color=ThemeColor.TEXT, font=FONT,
-            max_width=210, truncate=True), 0, 10, 230, 34),
-        _placed(Text(
-            bind(HomeState.NETWORK_ADDRESS), color=ThemeColor.PRIMARY,
-            font=FONT, max_width=210, truncate=True), 0, 52, 230, 34),
-    ).repaint_boundary()
-
-
 def _job_panel():
     active = bind(HomeState.JOB_ACTIVE)
     state = bind(HomeState.JOB_STATE)
-    dynamic = _placed(
+    dynamic = Overlay(
+        Fill(ThemeColor.PANEL),
+        Text(
+            derived(_job_filename, active, bind(HomeState.JOB_FILENAME)),
+            color=derived(_job_title_color, active),
+            font="JetBrainsMono Bold 8pt", horizontal="left",
+            max_width=560, truncate=True,
+        ).size(560, 24).offset(15, 6),
+        Text(
+            derived(_job_state, active, state),
+            color=derived(_job_state_color, state),
+            horizontal="right",
+        ).style(UiStyle.TEXT).size(137, 24).offset(590, 6),
+        Text(
+            derived(_job_detail, active, bind(HomeState.JOB_DETAIL)),
+            max_width=330, truncate=True,
+        ).style(UiStyle.DIM_LEFT).size(330, 24).offset(15, 43),
+        Text(
+            derived(
+                _job_progress, active, bind(HomeState.JOB_PROGRESS),
+                bind(HomeState.JOB_ELAPSED), bind(HomeState.JOB_REMAINING)),
+            horizontal="right",
+            max_width=350, truncate=True,
+        ).style(UiStyle.TEXT).size(350, 24).offset(377, 43),
+    ).size(742, 76).offset(4, 32).repaint_boundary()
+
+    return Frame(
         Overlay(
-            Fill(ThemeColor.PANEL),
-            _placed(Text(
-                derived(_job_filename, active, bind(HomeState.JOB_FILENAME)),
-                color=derived(_job_title_color, active),
-                font="JetBrainsMono Bold 8pt", horizontal="left",
-                max_width=560, truncate=True), 15, 6, 560, 24),
-            _placed(Text(
-                derived(_job_state, active, state),
-                color=derived(_job_state_color, state), font=FONT,
-                horizontal="right"), 590, 6, 137, 24),
-            _placed(Text(
-                derived(_job_detail, active, bind(HomeState.JOB_DETAIL)),
-                color=ThemeColor.DIM, font=FONT, horizontal="left",
-                max_width=330, truncate=True), 15, 43, 330, 24),
-            _placed(Text(
-                derived(
-                    _job_progress, active, bind(HomeState.JOB_PROGRESS),
-                    bind(HomeState.JOB_ELAPSED),
-                    bind(HomeState.JOB_REMAINING)),
-                color=ThemeColor.TEXT, font=FONT, horizontal="right",
-                max_width=350, truncate=True), 377, 43, 350, 24),
-        ).repaint_boundary(), 4, 32, 742, 76)
-    return _placed(
-        Overlay(
-            Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL,
-                  line_width=2),
-            _placed(Text(
-                "JOB STATUS", color=ThemeColor.PRIMARY, font=FONT,
-                horizontal="left"), 19, 8, 200, 24),
+            Text("JOB STATUS").style(UiStyle.PRIMARY_LEFT).size(200, 24).offset(19, 8),
             dynamic,
-        ).ref(HomeRef.JOB), 25, 220, 750, 112)
-
-
-def _bottom_value(value, color, x, width, text_x, max_width, key):
-    return _placed(
-        Overlay(
-            Fill(ThemeColor.BACKGROUND),
-            _placed(Text(
-                value, color=color, font=FONT, horizontal="left",
-                max_width=max_width, truncate=True),
-                text_x, 5, max_width, 24),
-        ).repaint_boundary().ref(key), x, 393, width, 34)
+        ),
+        border=ThemeColor.BORDER, background=ThemeColor.PANEL, line_width=2,
+    ).size(750, 112).offset(25, 220).ref(HomeRef.JOB)
 
 
 def create_page():
-    nozzle = _temperature_value(
-        HomeState.NOZZLE, HomeState.NOZZLE_TARGET, _nozzle_color)
-    bed = _temperature_value(
-        HomeState.BED, HomeState.BED_TARGET, _bed_color)
+    nozzle_target = bind(HomeState.NOZZLE_TARGET)
+    bed_target = bind(HomeState.BED_TARGET)
     root = Overlay(
-        _placed(
-            Overlay(
-                Fill(ThemeRole.HEADER_BACKGROUND),
-                _placed(Text(
-                    bind(HomeState.CLOCK), color=ThemeRole.HEADER_TEXT,
-                    font=CLOCK_FONT, horizontal="left",
-                    max_width=132, truncate=True), 10, 0, 132, 44),
-            ).repaint_boundary().ref(HomeRef.CLOCK), 18, 8, 142, 46),
-        _placed(Button(
-            MENU, "MENU", font="JetBrainsMono Bold 8pt").ref(HomeRef.MENU),
-            650, 11, 132, 38),
-        _card(25, 235, "NOZZLE", ThemeRole.TEMPERATURE_NOZZLE,
-              nozzle, HomeRef.NOZZLE),
-        _card(282, 235, "BED", ThemeRole.TEMPERATURE_BED,
-              bed, HomeRef.BED),
-        _card(539, 236, "NETWORK", ThemeColor.PRIMARY,
-              _network_value(), HomeRef.NETWORK),
+        Overlay(
+            Fill(ThemeRole.HEADER_BACKGROUND),
+            Text(
+                bind(HomeState.CLOCK), color=ThemeRole.HEADER_TEXT,
+                font=CLOCK_FONT, horizontal="left", max_width=132, truncate=True,
+            ).size(132, 44).offset(10, 0),
+        ).size(142, 46).offset(18, 8).repaint_boundary().ref(HomeRef.CLOCK),
+        Button(MENU, "MENU").style(UiStyle.BUTTON_BOLD_8)
+        .size(132, 38).offset(650, 11).ref(HomeRef.MENU),
+        TEMPERATURE_CARD(
+            instance_key=HomeRef.NOZZLE,
+            x=25, title="NOZZLE", border=ThemeRole.TEMPERATURE_NOZZLE,
+            value=derived(_temperature, bind(HomeState.NOZZLE), nozzle_target),
+            status=derived(_heat_status, nozzle_target),
+            status_color=derived(_nozzle_color, nozzle_target), ref=HomeRef.NOZZLE),
+        TEMPERATURE_CARD(
+            instance_key=HomeRef.BED,
+            x=282, title="BED", border=ThemeRole.TEMPERATURE_BED,
+            value=derived(_temperature, bind(HomeState.BED), bed_target),
+            status=derived(_heat_status, bed_target),
+            status_color=derived(_bed_color, bed_target), ref=HomeRef.BED),
+        NETWORK_CARD(
+            instance_key=HomeRef.NETWORK,
+            name=bind(HomeState.NETWORK_NAME),
+            address=bind(HomeState.NETWORK_ADDRESS), ref=HomeRef.NETWORK),
         _job_panel(),
-        _placed(Fill(ThemeColor.BORDER), 25, 345, 750, 1),
-        _placed(Text(
-            "LAST JOB", color=ThemeColor.DIM, font=FONT,
-            horizontal="left"), 28, 353, 240, 24),
-        _placed(Text(
-            "MATERIAL", color=ThemeColor.DIM, font=FONT,
-            horizontal="left"), 300, 353, 220, 24),
-        _placed(Text(
-            "TOOLHEAD", color=ThemeColor.DIM, font=FONT,
-            horizontal="left"), 570, 353, 180, 24),
-        _placed(Fill(ThemeColor.BORDER), 282, 353, 1, 74),
-        _placed(Fill(ThemeColor.BORDER), 542, 353, 1, 74),
-        _bottom_value(
-            bind(HomeState.LAST_JOB), ThemeColor.TEXT,
-            25, 257, 3, 240, HomeRef.LAST_JOB),
-        _bottom_value(
-            bind(HomeState.MATERIAL), ThemeColor.TEXT,
-            283, 259, 17, 220, HomeRef.MATERIAL),
-        _bottom_value(
-            bind(HomeState.HOMED_AXES),
-            derived(_homed_color, bind(HomeState.HOMED_AXES)),
-            543, 232, 27, 160, HomeRef.TOOLHEAD),
-        _placed(Hitbox(HEAT), 25, 72, 492, 132),
-        _placed(Hitbox(NETWORK), 539, 72, 236, 132),
-        _placed(Hitbox(JOB), 25, 220, 750, 112),
-        _placed(Hitbox(LAST_JOB), 25, 345, 257, 97),
-        _placed(Hitbox(FILAMENT), 283, 345, 259, 97),
-        _placed(Hitbox(MOVE), 543, 345, 232, 97),
+        Fill(ThemeColor.BORDER).size(750, 1).offset(25, 345),
+        Text("LAST JOB").style(UiStyle.DIM_LEFT)
+        .size(240, 24).offset(28, 353),
+        Text("MATERIAL").style(UiStyle.DIM_LEFT)
+        .size(220, 24).offset(300, 353),
+        Text("TOOLHEAD").style(UiStyle.DIM_LEFT)
+        .size(180, 24).offset(570, 353),
+        Fill(ThemeColor.BORDER).size(1, 74).offset(282, 353),
+        Fill(ThemeColor.BORDER).size(1, 74).offset(542, 353),
+        BOTTOM_VALUE(
+            instance_key=HomeRef.LAST_JOB,
+            value=bind(HomeState.LAST_JOB), color=ThemeColor.TEXT,
+            x=25, width=257, text_x=3, max_width=240, ref=HomeRef.LAST_JOB),
+        BOTTOM_VALUE(
+            instance_key=HomeRef.MATERIAL,
+            value=bind(HomeState.MATERIAL), color=ThemeColor.TEXT,
+            x=283, width=259, text_x=17, max_width=220, ref=HomeRef.MATERIAL),
+        BOTTOM_VALUE(
+            instance_key=HomeRef.TOOLHEAD,
+            value=bind(HomeState.HOMED_AXES),
+            color=derived(_homed_color, bind(HomeState.HOMED_AXES)),
+            x=543, width=232, text_x=27, max_width=160, ref=HomeRef.TOOLHEAD),
+        Hitbox(HEAT).size(492, 132).offset(25, 72),
+        Hitbox(NETWORK).size(236, 132).offset(539, 72),
+        Hitbox(JOB).size(750, 112).offset(25, 220),
+        Hitbox(LAST_JOB).size(257, 97).offset(25, 345),
+        Hitbox(FILAMENT).size(259, 97).offset(283, 345),
+        Hitbox(MOVE).size(232, 97).offset(543, 345),
     ).ref(HomeRef.ROOT)
-    page = PageTree(root, PAGE_BOUNDS, page_id=AppPage.HOME)
+    page = PageTree(
+        root, PAGE_BOUNDS, page_id=AppPage.HOME, styles=UI_STYLES,
+        component_templates=(TEMPERATURE_CARD, NETWORK_CARD, BOTTOM_VALUE,))
     page.title = PAGE_TITLE
     page.show_back = False
     return page

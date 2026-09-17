@@ -14,7 +14,7 @@ from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
 from .layout import (
     CreationContract, CreationIdentityContract, CreationSourceContract, Dirty,
-    Node, Rect, subdivision_positions,
+    Node, Rect, _SINGLE_CHILD_STRUCTURE, subdivision_positions,
 )
 from .numeric_input import NumericInputSpec
 from .properties import (
@@ -31,7 +31,7 @@ def _property(name, runtime_type=object, default=None, kind="auto",
               storage="attribute", source_position=None, source_index=None,
               runtime_name=None,
               runtime_index=None, rewrite=True,
-              maximum_items=None, **metadata):
+              maximum_items=None, styleable=False, inheritable=False, **metadata):
     policy = (RewritePolicy.LITERAL_OR_BINDING if rewrite
               else RewritePolicy.LOCKED)
     return PropertySpec(
@@ -48,6 +48,7 @@ def _property(name, runtime_type=object, default=None, kind="auto",
             index=source_index, storage=storage,
             runtime_name=runtime_name, runtime_index=runtime_index,
             policy=policy),
+        styleable=styleable, inheritable=inheritable,
     )
 
 
@@ -94,6 +95,19 @@ class ButtonStyle:
 class Component(Node):
     """Renderable leaf with automatic state-binding change detection."""
 
+    paints_pixels = True
+
+    def interaction_signature(self, state):
+        return None
+
+    def update(self, state, initialize=False):
+        previous = getattr(self, "_last_interaction_signature", None)
+        current = self.interaction_signature(state)
+        super().update(state, initialize)
+        self._last_interaction_signature = current
+        if not initialize and previous != current:
+            self.invalidate_actions()
+
     def _replace_actions(self, name, value):
         previous = self.__dict__.get(name)
         if name in self.__dict__ and previous == value:
@@ -123,6 +137,9 @@ class Component(Node):
         if value is not None:
             validate_action(value)
         self._replace_actions("active_action", value)
+        # Validated actions are immutable; avoid hashing the invocation on
+        # every cursor sample and again when painting the same sample.
+        self._active_action_wire_id = None if value is None else action_wire_id(value)
 
     def state_signature(self, state):
         values = []
@@ -170,8 +187,9 @@ class Stroke(Component):
 class Panel(Component):
     covers_bounds = True
     property_schema = property_schema(
-        _color("border"), _color("background", ThemeColor.PANEL),
-        _number("line_width", 2, minimum=0, maximum=12))
+        _color("border", styleable=True),
+        _color("background", ThemeColor.PANEL, styleable=True),
+        _number("line_width", 2, minimum=0, maximum=12, styleable=True))
 
     def __init__(self, border=ThemeColor.PRIMARY, background=ThemeColor.PANEL,
                  line_width=2, key=None):
@@ -179,6 +197,66 @@ class Panel(Component):
         self.border = border
         self.background = background
         self.line_width = line_width
+
+    def draw(self, renderer, state, bounds):
+        return renderer.panel(
+            *bounds, border=resolve(self.border, state),
+            background=resolve(self.background, state),
+            line_width=resolve(self.line_width, state))
+
+    def opaque_background(self, state, bounds, target):
+        border = resolve(self.border, state)
+        line_width = int(resolve(self.line_width, state))
+        if (border is not None and line_width > 0
+                and (bounds.width < line_width * 2
+                     or bounds.height < line_width * 2)):
+            return None
+        interior = (bounds if border is None or line_width <= 0 else
+                    bounds.inset(line_width))
+        if interior.contains(target):
+            return resolve(self.background, state)
+        return None
+
+
+class Frame(Component):
+    """Painted single-child container with ordinary Node padding."""
+
+    covers_bounds = True
+    creation_contract = CreationContract(
+        "Layout", "single_child", children=True,
+        source=CreationSourceContract(
+            "core.keyword_call", identity=CreationIdentityContract()))
+    structure_contract = _SINGLE_CHILD_STRUCTURE
+    property_schema = property_schema(
+        _color("border", ThemeColor.PRIMARY, styleable=True),
+        _color("background", ThemeColor.PANEL, styleable=True),
+        _number("line_width", 2, minimum=0, maximum=12, styleable=True))
+
+    def __init__(self, child=None, border=ThemeColor.PRIMARY,
+                 background=ThemeColor.PANEL, line_width=2, key=None):
+        super().__init__(key=key)
+        if child is not None and not isinstance(child, Node):
+            raise TypeError("Frame child must be a Node or None")
+        self.child = child
+        self.border = border
+        self.background = background
+        self.line_width = line_width
+        self._adopt(child)
+
+    def _arrange(self, bounds, result):
+        if self.child is not None:
+            self.child.arrange(bounds, result)
+
+    def render_children(self):
+        return () if self.child is None else (self.child,)
+
+    def replace_preview_children(self, children, placements=None):
+        del placements
+        children = tuple(children)
+        if len(children) > 1:
+            raise ValueError("Frame accepts at most one direct child")
+        self.child = children[0] if children else None
+        self._adopt(self.child)
 
     def draw(self, renderer, state, bounds):
         return renderer.panel(
@@ -230,7 +308,8 @@ class Button(Component):
             nullable=True),
         _property(
             "font", str, "JetBrainsMono 8pt", kind="select",
-            group="Typography", catalog="fonts"),
+            group="Typography", catalog="fonts",
+            styleable=True, inheritable=True, invalidation=Invalidation.LAYOUT),
         _select(
             "state", ("enabled", "disabled", "selected", "warning",
                       "danger", "busy"), "enabled", group="Behavior"),
@@ -262,11 +341,14 @@ class Button(Component):
             return 48 + self.layout_options.padding.vertical
         return None
 
-    def auto_gap_extent(self, direction, cross_extent=None):
-        return self.preferred_extent(direction, cross_extent)
-
     def content_extent(self, direction, cross_extent=None):
         return None
+
+    def interaction_signature(self, state):
+        active = resolve(self.kwargs.get("active"), state)
+        if active is not None:
+            return bool(active)
+        return resolve(self.state, state) not in ("disabled", "busy")
 
     def draw(self, renderer, state, bounds):
         kwargs = dict(
@@ -301,6 +383,9 @@ class ArrowButton(Component):
         self.direction = direction
         self.state = state
 
+    def interaction_signature(self, state):
+        return resolve(self.state, state) not in ("disabled", "busy")
+
     def draw(self, renderer, state, bounds):
         return renderer.arrow_button(
             resolve(self.action, state), *bounds,
@@ -325,6 +410,9 @@ class ToggleSwitch(Component):
         self.active = active
         self.enabled = enabled
 
+    def interaction_signature(self, state):
+        return bool(resolve(self.enabled, state))
+
     def draw(self, renderer, state, bounds):
         return renderer.toggle(
             resolve(self.action, state), *bounds,
@@ -333,6 +421,7 @@ class ToggleSwitch(Component):
 
 
 class Hitbox(Component):
+    paints_pixels = False
     canvas_selectable = False
     property_schema = property_schema(
         _property(
@@ -359,14 +448,15 @@ class Text(Component):
             group="Content", multiline=True, live=True),
         _property(
             "font", str, "JetBrainsMono 8pt", kind="select",
-            group="Typography", catalog="fonts"),
-        _color("color", group="Appearance"),
+            group="Typography", catalog="fonts",
+            styleable=True, inheritable=True, invalidation=Invalidation.LAYOUT),
+        _color("color", group="Appearance", styleable=True, inheritable=True),
         _select(
             "horizontal", ("left", "center", "right"), "center",
-            group="Typography"),
+            group="Typography", styleable=True),
         _select(
             "vertical", ("top", "center", "bottom"), "center",
-            group="Typography"),
+            group="Typography", styleable=True),
         _number(
             "max_width", None, minimum=1, maximum=4000, nullable=True,
             group="Text layout", storage="kwargs",
@@ -383,7 +473,7 @@ class Text(Component):
             storage="kwargs"),
     )
 
-    def __init__(self, value, color=ThemeColor.PRIMARY, font=None,
+    def __init__(self, value="", color=ThemeColor.PRIMARY, font=None,
                  horizontal="center", vertical="center", key=None, **kwargs):
         super().__init__(key=key)
         # Source compatibility only; these aliases are not component fields.
@@ -647,16 +737,25 @@ class NumericKeypad(Component):
         self.input_border = input_border
         self.value_color = value_color
 
+    def _input_spec(self, state):
+        mode = resolve(self.mode, state)
+        if isinstance(mode, NumericInputSpec):
+            return mode
+        return NumericInputSpec(
+            mode, resolve(self.minimum, state), resolve(self.maximum, state),
+            resolve(self.max_length, state), resolve(self.fraction_digits, state))
+
+    def interaction_signature(self, state):
+        spec = self._input_spec(state)
+        return (spec.allows_decimal, spec.allows_negative,
+                spec.is_valid(resolve(self.value, state)))
+
     def draw(self, renderer, state, bounds):
         return renderer.numeric_keypad(
             *bounds, resolve(self.title, state), resolve(self.value, state),
             resolve_deep(self.actions, state),
             subtitle=resolve(self.subtitle, state),
-            mode=resolve(self.mode, state),
-            minimum=resolve(self.minimum, state),
-            maximum=resolve(self.maximum, state),
-            max_length=resolve(self.max_length, state),
-            fraction_digits=resolve(self.fraction_digits, state),
+            mode=self._input_spec(state),
             confirm_label=resolve(self.confirm_label, state),
             border=resolve(self.border, state),
             background=resolve(self.background, state),
@@ -768,9 +867,7 @@ class JoystickKnob(Component):
         if position is None or self.active_action is None:
             return position
         action, x, y = position
-        expected = resolve(self.active_action, state)
-        expected = action_wire_id(expected) if isinstance(expected, Action) else (
-            expected.value if isinstance(expected, Enum) else expected)
+        expected = self._active_action_wire_id
         action = action_wire_id(action) if isinstance(action, Action) else (
             action.value if isinstance(action, Enum) else action)
         return (x, y) if action == expected else None
@@ -1062,6 +1159,14 @@ class VerticalGauge(Component):
 
 
 class Dialog(Component):
+    def blocks_input(self, state):
+        return bool(resolve(self.modal, state))
+
+    def interaction_signature(self, state):
+        return (self.blocks_input(state), tuple(
+            button[2] not in ("disabled", "busy")
+            for button in resolve_deep(self.buttons, state)))
+
     @property
     def buttons(self):
         return copy.deepcopy(self.__dict__["buttons"])
@@ -1142,11 +1247,11 @@ def _action_creation(name="action", required=True):
 
 
 def _publish_creation(component, names=(), extra=(), category="Components",
-                      required=()):
+                      required=(), kind="component", children=False):
     specs = {item.name: item for item in component.property_schema}
     required = set(str(value) for value in required)
     component.creation_contract = CreationContract(
-        category, fields=tuple(extra) + tuple(
+        category, kind=kind, children=children, fields=tuple(extra) + tuple(
             _creation_field(specs[name], required=name in required)
             for name in names),
         source=CreationSourceContract(
@@ -1156,6 +1261,7 @@ def _publish_creation(component, names=(), extra=(), category="Components",
 _publish_property_source_positions(Fill, color=0)
 _publish_property_source_positions(Stroke, color=0, line_width=1)
 _publish_property_source_positions(Panel, border=0, background=1, line_width=2)
+_publish_property_source_positions(Frame, border=1, background=2, line_width=3)
 _publish_property_source_positions(Section, title=0, border=1)
 _publish_property_source_positions(Button, action=0, label=1, state=2)
 _publish_property_source_positions(
@@ -1193,6 +1299,8 @@ _publish_property_source_positions(
 _publish_creation(Fill, ("color",), required=("color",))
 _publish_creation(Stroke, ("color", "line_width"))
 _publish_creation(Panel, ("border", "background", "line_width"))
+_publish_creation(Frame, ("border", "background", "line_width"),
+                  category="Layout", kind="single_child", children=True)
 _publish_creation(Section, ("title", "border"))
 _publish_creation(Button, (
     "label", "subtitle", "font", "state", "accent", "button_layout"),

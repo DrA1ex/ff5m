@@ -12,7 +12,7 @@ from ui.actions import Increment, Navigate, SetValue
 from ui.bindings import bind, derived
 from ui.components import Button, Fill, Stroke, Text
 from ui.layout import (
-    EMPTY, FLEX, Column, Equal, Flex, Grid, Overlay,
+    FLEX, Cell, Column, Equal, Flex, Grid, Overlay,
     PageTree as Page, Row, WrapPanel,
 )
 from ...keys import AppPage
@@ -158,15 +158,19 @@ def _axis_layout():
         bind(ToolheadState.HOMED_X), bind(ToolheadState.HOMED_Y))
     z_homed = bind(ToolheadState.HOMED_Z)
     xy_grid = Grid(
-        matrix=(
-            (EMPTY, Button(Y_PLUS, "Y+").ref(StepRef.XY_UP), EMPTY),
-            (Button(X_MINUS, "X-").ref(StepRef.XY_LEFT),
-             _axis_status("X / Y", xy_homed, (
-                 StepRef.XY_STATUS_BACKGROUND, StepRef.XY_STATUS_BORDER,
-                 StepRef.XY_STATUS_LABEL, StepRef.XY_STATUS_STATE,
-                 StepRef.XY_STATUS)),
-             Button(X_PLUS, "X+").ref(StepRef.XY_RIGHT)),
-            (EMPTY, Button(Y_MINUS, "Y-").ref(StepRef.XY_DOWN), EMPTY),
+        cells=(
+            Cell(Button(Y_PLUS, "Y+").ref(StepRef.XY_UP), 1, 0),
+            Cell(Button(X_MINUS, "X-").ref(StepRef.XY_LEFT), 0, 1),
+            Cell(
+                _axis_status("X / Y", xy_homed, (
+                    StepRef.XY_STATUS_BACKGROUND, StepRef.XY_STATUS_BORDER,
+                    StepRef.XY_STATUS_LABEL, StepRef.XY_STATUS_STATE,
+                    StepRef.XY_STATUS,
+                )),
+                1, 1,
+            ),
+            Cell(Button(X_PLUS, "X+").ref(StepRef.XY_RIGHT), 2, 1),
+            Cell(Button(Y_MINUS, "Y-").ref(StepRef.XY_DOWN), 1, 2),
         ),
         columns=Equal(3), rows=Equal(3), gap=(10, 12),
     ).ref(StepRef.XY_GRID)
@@ -232,26 +236,21 @@ def _control_layout():
         item_width=95, item_height=50, horizontal_gap=10,
     )).ref(StepRef.PRESETS)
     step_layout = Grid(
-        matrix=(
-            (Text("STEP SIZE").ref(StepRef.STEP_TITLE),),
-            (EMPTY,),
-            (step_adjust,),
-            (EMPTY,),
-            (Text("PRESET STEPS").ref(StepRef.PRESET_TITLE),),
-            (EMPTY,),
-            (presets,),
+        cells=(
+            Cell(Text("STEP SIZE").ref(StepRef.STEP_TITLE), 0, 0),
+            Cell(step_adjust, 0, 2),
+            Cell(Text("PRESET STEPS").ref(StepRef.PRESET_TITLE), 0, 4),
+            Cell(presets, 0, 6),
         ),
         columns=Equal(1),
         rows=(28, Flex(2), 48, Flex(7), 26, Flex(7), 50),
     ).ref(StepRef.STEP_LAYOUT)
 
     return Grid(
-        matrix=(
-            (home_layout,),
-            (EMPTY,),
-            (Fill(ThemeColor.BORDER).ref(StepRef.DIVIDER),),
-            (EMPTY,),
-            (step_layout,),
+        cells=(
+            Cell(home_layout, 0, 0),
+            Cell(Fill(ThemeColor.BORDER).ref(StepRef.DIVIDER), 0, 2),
+            Cell(step_layout, 0, 4),
         ),
         columns=Equal(1), rows=(155, 15, 1, 4, FLEX),
     ).padding(bottom=17).ref(StepRef.CONTROL)
@@ -268,7 +267,7 @@ def _content():
         .allow_overflow()
     axis = Overlay(axis_content, warning).ref(StepRef.AXIS)
     separator = Grid(
-        matrix=((EMPTY, Fill(ThemeColor.BORDER).ref(StepRef.SEPARATOR), EMPTY),),
+        matrix=((None, Fill(ThemeColor.BORDER).ref(StepRef.SEPARATOR), None),),
         columns=(15, 1, 19), rows=Equal(1),
     ).ref(StepRef.SEPARATOR_LAYOUT)
     return Grid(

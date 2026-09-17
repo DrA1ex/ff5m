@@ -3,20 +3,21 @@
 from enum import Enum
 
 from ui import ThemeColor, ThemeRole
-
 from ui.bindings import bind, derived
-from ui.components import Button, Fill, Text
-from ui.layout import FLEX, Column, Equal, Grid, Overlay, PageTree, Rect, Row
+from ui.components import Button, Text
+from ui.layout import FLEX, Column, Equal, Grid, PageTree, Rect, Row
+
 from ..keys import AppPage
+from ..styles import UI_STYLES, UiStyle
 from .actions import (
     BED_MINUS, BED_OFF, BED_PLUS, COOLDOWN, FAN_0, FAN_100, FAN_50,
     NOZZLE_MINUS, NOZZLE_OFF, NOZZLE_PLUS, preheat,
 )
+from .components import VALUE
 from .state import HeatState
 
 
 CONTENT = Rect(12, 64, 776, 364)
-FONT = "JetBrainsMono 8pt"
 
 
 class HeatRef(Enum):
@@ -64,47 +65,42 @@ def _fan_state(available):
     return "enabled" if available else "disabled"
 
 
-def _value(value, color=ThemeColor.TEXT, key=None):
-    return Overlay(
-        Fill(ThemeColor.BACKGROUND),
-        Text(value, color=color, font="JetBrainsMono 12pt"),
-    ).ref(key).repaint_boundary()
-
-
 def _heaters():
     return Grid(
         matrix=(
             (
-                Text("NOZZLE", color=ThemeRole.TEMPERATURE_NOZZLE, font=FONT,
-                     horizontal="left").ref(HeatRef.NOZZLE_LABEL),
-                _value(derived(
-                    _temperature, bind(HeatState.NOZZLE),
-                    bind(HeatState.NOZZLE_TARGET)), key=HeatRef.NOZZLE_VALUE),
-                Button(NOZZLE_MINUS, "-5", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_NOZZLE)
-                .ref(HeatRef.NOZZLE_MINUS),
-                Button(NOZZLE_PLUS, "+5", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_NOZZLE)
-                .ref(HeatRef.NOZZLE_PLUS),
-                Button(NOZZLE_OFF, "OFF", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_NOZZLE)
-                .ref(HeatRef.NOZZLE_OFF),
+                Text("NOZZLE", color=ThemeRole.TEMPERATURE_NOZZLE)
+                .style(UiStyle.TEXT_LEFT).ref(HeatRef.NOZZLE_LABEL),
+                VALUE(
+                    instance_key=HeatRef.NOZZLE_VALUE,
+                    value=derived(
+                        _temperature, bind(HeatState.NOZZLE),
+                        bind(HeatState.NOZZLE_TARGET)),
+                    color=ThemeColor.TEXT,
+                ).ref(HeatRef.NOZZLE_VALUE),
+                Button(NOZZLE_MINUS, "-5", accent=ThemeRole.TEMPERATURE_NOZZLE)
+                .style(UiStyle.BUTTON).ref(HeatRef.NOZZLE_MINUS),
+                Button(NOZZLE_PLUS, "+5", accent=ThemeRole.TEMPERATURE_NOZZLE)
+                .style(UiStyle.BUTTON).ref(HeatRef.NOZZLE_PLUS),
+                Button(NOZZLE_OFF, "OFF", accent=ThemeRole.TEMPERATURE_NOZZLE)
+                .style(UiStyle.BUTTON).ref(HeatRef.NOZZLE_OFF),
             ),
             (
-                Text("BED", color=ThemeRole.TEMPERATURE_BED, font=FONT,
-                     horizontal="left").ref(HeatRef.BED_LABEL),
-                _value(derived(
-                    _temperature, bind(HeatState.BED),
-                    bind(HeatState.BED_TARGET)), key=HeatRef.BED_VALUE),
-                Button(BED_MINUS, "-5", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_BED)
-                .ref(HeatRef.BED_MINUS),
-                Button(BED_PLUS, "+5", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_BED)
-                .ref(HeatRef.BED_PLUS),
-                Button(BED_OFF, "OFF", state="enabled", font=FONT,
-                       accent=ThemeRole.TEMPERATURE_BED)
-                .ref(HeatRef.BED_OFF),
+                Text("BED", color=ThemeRole.TEMPERATURE_BED)
+                .style(UiStyle.TEXT_LEFT).ref(HeatRef.BED_LABEL),
+                VALUE(
+                    instance_key=HeatRef.BED_VALUE,
+                    value=derived(
+                        _temperature, bind(HeatState.BED),
+                        bind(HeatState.BED_TARGET)),
+                    color=ThemeColor.TEXT,
+                ).ref(HeatRef.BED_VALUE),
+                Button(BED_MINUS, "-5", accent=ThemeRole.TEMPERATURE_BED)
+                .style(UiStyle.BUTTON).ref(HeatRef.BED_MINUS),
+                Button(BED_PLUS, "+5", accent=ThemeRole.TEMPERATURE_BED)
+                .style(UiStyle.BUTTON).ref(HeatRef.BED_PLUS),
+                Button(BED_OFF, "OFF", accent=ThemeRole.TEMPERATURE_BED)
+                .style(UiStyle.BUTTON).ref(HeatRef.BED_OFF),
             ),
         ),
         columns=(150, FLEX, 92, 92, 92), rows=Equal(2), gap=(10, 8),
@@ -116,19 +112,19 @@ def _fan():
     state = derived(_fan_state, available)
     return Grid(
         matrix=((
-            Text("PART FAN", color=ThemeRole.TEMPERATURE_FAN, font=FONT,
-                 horizontal="left").ref(HeatRef.FAN_LABEL),
-            _value(
-                derived(_fan_value, bind(HeatState.FAN), available),
-                color=derived(_fan_color, available), key=HeatRef.FAN_VALUE),
-            Button(FAN_0, "0%", state=state, font=FONT,
-                   accent=ThemeRole.TEMPERATURE_FAN).ref(HeatRef.FAN_0),
-            Button(FAN_50, "50%", state=state, font=FONT,
-                   accent=ThemeRole.TEMPERATURE_FAN)
-            .ref(HeatRef.FAN_50),
-            Button(FAN_100, "100%", state=state, font=FONT,
-                   accent=ThemeRole.TEMPERATURE_FAN)
-            .ref(HeatRef.FAN_100),
+            Text("PART FAN", color=ThemeRole.TEMPERATURE_FAN)
+            .style(UiStyle.TEXT_LEFT).ref(HeatRef.FAN_LABEL),
+            VALUE(
+                instance_key=HeatRef.FAN_VALUE,
+                value=derived(_fan_value, bind(HeatState.FAN), available),
+                color=derived(_fan_color, available),
+            ).ref(HeatRef.FAN_VALUE),
+            Button(FAN_0, "0%", state=state, accent=ThemeRole.TEMPERATURE_FAN)
+            .style(UiStyle.BUTTON).ref(HeatRef.FAN_0),
+            Button(FAN_50, "50%", state=state, accent=ThemeRole.TEMPERATURE_FAN)
+            .style(UiStyle.BUTTON).ref(HeatRef.FAN_50),
+            Button(FAN_100, "100%", state=state, accent=ThemeRole.TEMPERATURE_FAN)
+            .style(UiStyle.BUTTON).ref(HeatRef.FAN_100),
         ),),
         columns=(150, FLEX, 92, 92, 92), rows=Equal(1), gap=(10, 0),
     ).ref(HeatRef.FAN_ROW)
@@ -136,23 +132,21 @@ def _fan():
 
 def _presets(materials):
     if not materials:
-        choices = Text(
-            "NO MATERIALS ENABLED", color=ThemeColor.DIM, font=FONT,
-        ).height(38).ref(HeatRef.EMPTY)
+        choices = Text("NO MATERIALS ENABLED").style(UiStyle.DIM) \
+            .height(38).ref(HeatRef.EMPTY)
     else:
         gap = 10
         width = min(140, (740 - gap * (len(materials) - 1)) // len(materials))
         row_width = len(materials) * width + (len(materials) - 1) * gap
         choices = Row(
-            *tuple(
-                Button(preheat(material), material, font=FONT).width(width)
-                .ref(_PRESET_REFS[index])
-                for index, material in enumerate(materials)),
+            *(Button(preheat(material), material).style(UiStyle.BUTTON)
+              .width(width).ref(_PRESET_REFS[index])
+              for index, material in enumerate(materials)),
             gap=gap,
-        ).size(row_width, 38).align(horizontal="center") \
-         .ref(HeatRef.PRESET_ROW)
+        ).size(row_width, 38).align(horizontal="center").ref(HeatRef.PRESET_ROW)
+
     return Column(
-        Text("PREHEAT PRESETS", color=ThemeColor.PRIMARY, font=FONT)
+        Text("PREHEAT PRESETS").style(UiStyle.PRIMARY)
         .height(18).ref(HeatRef.PRESET_TITLE),
         choices,
         gap=6,
@@ -160,13 +154,19 @@ def _presets(materials):
 
 
 def create_page(materials=()):
-    materials = tuple(materials)
     root = Column(
         _heaters().height(132),
         _fan().height(54),
-        _presets(materials).height(62),
-        Button(COOLDOWN, "COOLDOWN", state="danger",
-               font="JetBrainsMono 12pt").height(48).ref(HeatRef.COOLDOWN),
+        _presets(tuple(materials)).height(62),
+        Button(COOLDOWN, "COOLDOWN", state="danger", font="JetBrainsMono 12pt")
+        .height(48).ref(HeatRef.COOLDOWN),
         gap=None,
     ).padding(left=18, top=6, right=18, bottom=6).ref(HeatRef.ROOT)
-    return PageTree(root, CONTENT, page_id=AppPage.HEAT)
+
+    return PageTree(
+        root, CONTENT, page_id=AppPage.HEAT,
+        styles=UI_STYLES, component_templates=(VALUE,))
+
+
+# Default declaration for framework page discovery; runtime factories retain their inputs.
+PAGE = create_page()

@@ -5,14 +5,15 @@
 from enum import Enum
 
 from ui import (
-    EMPTY, FLEX, Column, Equal, Flex, Grid, Overlay, PageTree, Panel, Rect,
-    Row, Spacer, Span, StateCase, Stroke, Text, ThemeColor,
+    FLEX, Cell, Column, Equal, Flex, Frame, Grid, Overlay, PageTree, Rect,
+    Row, Spacer, StateCase, Stroke, Text, ThemeColor,
 )
 from ui.bindings import bind, derived
 from ui.components import Button
 
 from ..keys import AppPage
 from .actions import REPEAT, DONE
+from .components import BOTTOM_SCREW, TOP_SCREW
 from .graphics import BedHardware
 from .state import ScrewResultState, adjustment
 
@@ -20,8 +21,6 @@ from .state import ScrewResultState, adjustment
 PAGE_TITLE = "Calibration result"
 PAGE_BOUNDS = Rect(0, 56, 800, 386)
 FONT = "JetBrainsMono 7pt"
-LABEL_FONT = "Roboto 8pt"
-VALUE_FONT = "Roboto Bold 12pt"
 
 
 class ScrewResultRef(Enum):
@@ -87,138 +86,89 @@ legend_rows = Column(
 ).padding(top=5)
 
 
-rear_left = Column(
-    Column(
-        Text(bind(ScrewResultState.REAR_LEFT_NAME),
-             color=ThemeColor.BRIGHT, font=LABEL_FONT, horizontal="left",
-             truncate=True).height(20),
-        Overlay(
-            StateCase(
-                Text("BASE (REFERENCE)", color=ThemeColor.DIM,
-                     font=LABEL_FONT, horizontal="left", truncate=True),
-                selector=bind(ScrewResultState.REAR_LEFT_DIRECTION),
-                expected="BASE"),
-            StateCase(
-                Text(derived(adjustment, bind(ScrewResultState.REAR_LEFT_DIRECTION),
-                             bind(ScrewResultState.REAR_LEFT_MINUTES)),
-                     color=ThemeColor.PRIMARY,
-                     font=VALUE_FONT,
-                     horizontal="left", truncate=True).ref(ScrewResultRef.REAR_LEFT_VALUE),
-                selector=derived(lambda direction: direction == "BASE",
-                                 bind(ScrewResultState.REAR_LEFT_DIRECTION)),
-                expected=False),
-        ).height(30),
-        gap=0,
-    ).height(50),
-    Spacer(),
-    gap=0,
-).padding(top=22).ref(ScrewResultRef.REAR_LEFT)
 
-rear_right = Column(
-    Column(
-        Text(bind(ScrewResultState.REAR_RIGHT_NAME),
-             color=ThemeColor.BRIGHT, font=LABEL_FONT, horizontal="right",
-             truncate=True).height(20),
-        Overlay(
-            StateCase(
-                Text("BASE (REFERENCE)", color=ThemeColor.DIM,
-                     font=LABEL_FONT, horizontal="right", truncate=True),
-                selector=bind(ScrewResultState.REAR_RIGHT_DIRECTION),
-                expected="BASE"),
-            StateCase(
-                Text(derived(adjustment, bind(ScrewResultState.REAR_RIGHT_DIRECTION),
-                             bind(ScrewResultState.REAR_RIGHT_MINUTES)),
-                     color=ThemeColor.PRIMARY,
-                     font=VALUE_FONT,
-                     horizontal="right", truncate=True).ref(ScrewResultRef.REAR_RIGHT_VALUE),
-                selector=derived(lambda direction: direction == "BASE",
-                                 bind(ScrewResultState.REAR_RIGHT_DIRECTION)),
-                expected=False),
-        ).height(30),
-        gap=0,
-    ).height(50),
-    Spacer(),
-    gap=0,
-).padding(top=22).ref(ScrewResultRef.REAR_RIGHT)
+rear_left_direction = bind(ScrewResultState.REAR_LEFT_DIRECTION)
+rear_left_base = derived(lambda value: value == "BASE", rear_left_direction)
+rear_left = TOP_SCREW(
+    instance_key=ScrewResultRef.REAR_LEFT,
+    name=bind(ScrewResultState.REAR_LEFT_NAME),
+    direction=rear_left_direction,
+    not_base=derived(lambda value: not value, rear_left_base),
+    adjustment=derived(
+        adjustment, rear_left_direction, bind(ScrewResultState.REAR_LEFT_MINUTES)),
+    align="left",
+    card_ref=ScrewResultRef.REAR_LEFT,
+    value_ref=ScrewResultRef.REAR_LEFT_VALUE,
+)
 
-front_left = Column(
-    Spacer(),
-    Column(
-        Text(bind(ScrewResultState.FRONT_LEFT_NAME),
-             color=ThemeColor.BRIGHT, font=LABEL_FONT, horizontal="left",
-             truncate=True).height(20),
-        Overlay(
-            StateCase(
-                Text("BASE (REFERENCE)", color=ThemeColor.DIM,
-                     font=LABEL_FONT, horizontal="left", truncate=True),
-                selector=bind(ScrewResultState.FRONT_LEFT_DIRECTION),
-                expected="BASE"),
-            StateCase(
-                Text(derived(adjustment, bind(ScrewResultState.FRONT_LEFT_DIRECTION),
-                             bind(ScrewResultState.FRONT_LEFT_MINUTES)),
-                     color=ThemeColor.PRIMARY,
-                     font=VALUE_FONT,
-                     horizontal="left", truncate=True).ref(ScrewResultRef.FRONT_LEFT_VALUE),
-                selector=derived(lambda direction: direction == "BASE",
-                                 bind(ScrewResultState.FRONT_LEFT_DIRECTION)),
-                expected=False),
-        ).height(30),
-        gap=0,
-    ).height(50),
-    gap=0,
-).padding(bottom=19).ref(ScrewResultRef.FRONT_LEFT)
+rear_right_direction = bind(ScrewResultState.REAR_RIGHT_DIRECTION)
+rear_right_base = derived(lambda value: value == "BASE", rear_right_direction)
+rear_right = TOP_SCREW(
+    instance_key=ScrewResultRef.REAR_RIGHT,
+    name=bind(ScrewResultState.REAR_RIGHT_NAME),
+    direction=rear_right_direction,
+    not_base=derived(lambda value: not value, rear_right_base),
+    adjustment=derived(
+        adjustment, rear_right_direction, bind(ScrewResultState.REAR_RIGHT_MINUTES)),
+    align="right",
+    card_ref=ScrewResultRef.REAR_RIGHT,
+    value_ref=ScrewResultRef.REAR_RIGHT_VALUE,
+)
 
-front_right = Column(
-    Spacer(),
-    Column(
-        Text(bind(ScrewResultState.FRONT_RIGHT_NAME),
-             color=ThemeColor.BRIGHT, font=LABEL_FONT, horizontal="right",
-             truncate=True).height(20),
-        Overlay(
-            StateCase(
-                Text("BASE (REFERENCE)", color=ThemeColor.DIM,
-                     font=LABEL_FONT, horizontal="right", truncate=True),
-                selector=bind(ScrewResultState.FRONT_RIGHT_DIRECTION),
-                expected="BASE"),
-            StateCase(
-                Text(derived(adjustment, bind(ScrewResultState.FRONT_RIGHT_DIRECTION),
-                             bind(ScrewResultState.FRONT_RIGHT_MINUTES)),
-                     color=ThemeColor.PRIMARY,
-                     font=VALUE_FONT,
-                     horizontal="right", truncate=True).ref(ScrewResultRef.FRONT_RIGHT_VALUE),
-                selector=derived(lambda direction: direction == "BASE",
-                                 bind(ScrewResultState.FRONT_RIGHT_DIRECTION)),
-                expected=False),
-        ).height(30),
-        gap=0,
-    ).height(50),
-    gap=0,
-).padding(bottom=19).ref(ScrewResultRef.FRONT_RIGHT)
+front_left_direction = bind(ScrewResultState.FRONT_LEFT_DIRECTION)
+front_left_base = derived(lambda value: value == "BASE", front_left_direction)
+front_left = BOTTOM_SCREW(
+    instance_key=ScrewResultRef.FRONT_LEFT,
+    name=bind(ScrewResultState.FRONT_LEFT_NAME),
+    direction=front_left_direction,
+    not_base=derived(lambda value: not value, front_left_base),
+    adjustment=derived(
+        adjustment, front_left_direction, bind(ScrewResultState.FRONT_LEFT_MINUTES)),
+    align="left",
+    card_ref=ScrewResultRef.FRONT_LEFT,
+    value_ref=ScrewResultRef.FRONT_LEFT_VALUE,
+)
+
+front_right_direction = bind(ScrewResultState.FRONT_RIGHT_DIRECTION)
+front_right_base = derived(lambda value: value == "BASE", front_right_direction)
+front_right = BOTTOM_SCREW(
+    instance_key=ScrewResultRef.FRONT_RIGHT,
+    name=bind(ScrewResultState.FRONT_RIGHT_NAME),
+    direction=front_right_direction,
+    not_base=derived(lambda value: not value, front_right_base),
+    adjustment=derived(
+        adjustment, front_right_direction, bind(ScrewResultState.FRONT_RIGHT_MINUTES)),
+    align="right",
+    card_ref=ScrewResultRef.FRONT_RIGHT,
+    value_ref=ScrewResultRef.FRONT_RIGHT_VALUE,
+)
+
 
 visual = Grid(
-    matrix=(
-        (rear_left,
-         Span(bed, rows=2),
-         rear_right),
-        (front_left,
-         EMPTY,
-         front_right),
+    cells=(
+        Cell(rear_left, 0, 0),
+        Cell(bed, 1, 0, row_span=2),
+        Cell(rear_right, 2, 0),
+        Cell(front_left, 0, 1),
+        Cell(front_right, 2, 1),
     ),
-    columns=(Flex(5), Flex(12), Flex(5)), rows=Equal(2), gap=0,
+    columns=(Flex(5), Flex(12), Flex(5)),
+    rows=Equal(2),
+    gap=0,
 ).padding(left=13, right=13)
 legend = Column(
     Stroke(ThemeColor.BORDER, line_width=1).height(1),
     legend_rows,
     gap=0,
 ).height(63).padding(left=15, right=15).ref(ScrewResultRef.LEGEND)
-diagram = Overlay(
-    Panel(
-        border=ThemeColor.BORDER, background=ThemeColor.BACKGROUND,
-        line_width=1),
+diagram = Frame(
     Grid(
         matrix=((visual,), (legend,)),
         columns=(FLEX,), rows=(FLEX, 63), gap=0,
     ),
+    border=ThemeColor.BORDER,
+    background=ThemeColor.BACKGROUND,
+    line_width=1,
 ).ref(ScrewResultRef.DIAGRAM)
 
 
@@ -238,6 +188,8 @@ root = Grid(
     columns=(FLEX,), rows=(FLEX, 48), gap=(0, 10),
 ).padding(left=20, top=4, right=20, bottom=6) \
     .ref(ScrewResultRef.ROOT)
-PAGE = PageTree(root, PAGE_BOUNDS, page_id=AppPage.CALIBRATION_SCREWS_RESULT)
+PAGE = PageTree(
+    root, PAGE_BOUNDS, page_id=AppPage.CALIBRATION_SCREWS_RESULT,
+    component_templates=(TOP_SCREW, BOTTOM_SCREW,))
 PAGE.title = PAGE_TITLE
 PAGE.show_back = False

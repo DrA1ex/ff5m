@@ -1,15 +1,21 @@
 ## Declarative Safe Z calibration page for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
 from ui.bindings import bind, derived
-from ui.components import Button, Panel, Text
-from ui.layout import Column, Equal, Grid, Overlay, PageTree as Page, Spacer
+from ui.components import Button, Text
+from ui.layout import Column, Equal, Grid, PageTree as Page, Spacer
+
 from ...keys import AppPage
+from ...styles import UI_STYLES, UiStyle
 from ..actions import SAFE_HIGHER, SAFE_LOWER, SAFE_PROBE, SAFE_SAVE
-from ..common import CONTENT, FONT
+from ..common import CONTENT
+from .components import VALUE_CARD
 from .state import SafeState
-from ui import ThemeColor, ThemeRole
 
 
 PAGE_ID = AppPage.SAFE_Z_CALIBRATION
@@ -33,63 +39,59 @@ def _format(value):
     return "--" if value is None else "%.3f MM" % value
 
 
-def _card(label, value, ref):
-    return Overlay(
-        Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL, line_width=2),
-        Text(label, color=ThemeColor.PRIMARY, font=FONT)
-        .height(20).margin(top=10).align(vertical="top"),
-        Text(derived(_format, value), color=ThemeColor.BRIGHT,
-             font="JetBrainsMono Bold 12pt")
-        .height(20).margin(top=43).align(vertical="top"),
-    ).ref(ref).repaint_boundary()
-
-
 def _content():
-    help_text = Text(
-        "PROBE FINDS THE CLEAN BED TRIGGER AT CENTER. THE INITIAL SAFE Z IS TRIGGER + 5 MM.",
-        color=ThemeColor.TEXT, font=FONT, wrap=True, auto_height=True,
-    ).ref(SafeRef.HELP)
     cards = Grid(
         matrix=((
-            _card("CURRENT SAFE Z", bind(SafeState.CURRENT), SafeRef.CURRENT),
-            _card("TRIGGER Z", bind(SafeState.TRIGGER), SafeRef.TRIGGER),
-            _card("NEW SAFE Z", bind(SafeState.CANDIDATE), SafeRef.CANDIDATE),
-        ),), columns=Equal(3), rows=Equal(1), gap=(15, 0),
+            VALUE_CARD(
+                instance_key=SafeRef.CURRENT,
+                label="CURRENT SAFE Z", value=derived(_format, bind(SafeState.CURRENT)),
+                ref=SafeRef.CURRENT),
+            VALUE_CARD(
+                instance_key=SafeRef.TRIGGER,
+                label="TRIGGER Z", value=derived(_format, bind(SafeState.TRIGGER)),
+                ref=SafeRef.TRIGGER),
+            VALUE_CARD(
+                instance_key=SafeRef.CANDIDATE,
+                label="NEW SAFE Z", value=derived(_format, bind(SafeState.CANDIDATE)),
+                ref=SafeRef.CANDIDATE),
+        ),),
+        columns=Equal(3), rows=Equal(1), gap=(15, 0),
     ).height(82).ref(SafeRef.CARDS)
-    probe = Button(
-        SAFE_PROBE, "PROBE BED CENTER",
-        state=derived(lambda busy: "busy" if busy else "danger",
-                      bind(SafeState.PROBING)),
-        font="JetBrainsMono Bold 12pt",
-    ).height(66).ref(SafeRef.PROBE)
-    ready = derived(lambda value: "enabled" if value else "disabled",
-                    bind(SafeState.READY))
-    adjust = Grid(
-        matrix=((
-            Button(SAFE_LOWER, "LOWER  -1 MM", state=ready,
-                   font="JetBrainsMono Bold 11pt").ref(SafeRef.LOWER),
-            Button(SAFE_HIGHER, "HIGHER  +1 MM", state=ready,
-                   font="JetBrainsMono Bold 11pt").ref(SafeRef.HIGHER),
-        ),), columns=Equal(2), rows=Equal(1), gap=(20, 0),
-    ).height(64).ref(SafeRef.ADJUST)
-    save = Button(
-        SAFE_SAVE, "SAVE SAFE Z AND CONTINUE", state=ready,
-        font="JetBrainsMono Bold 12pt",
-    ).height(68).ref(SafeRef.SAVE)
+    ready = derived(
+        lambda value: "enabled" if value else "disabled",
+        bind(SafeState.READY))
+
     return Column(
-        help_text,
+        Text(
+            "PROBE FINDS THE CLEAN BED TRIGGER AT CENTER. THE INITIAL SAFE Z IS TRIGGER + 5 MM.",
+            wrap=True, auto_height=True,
+        ).style(UiStyle.TEXT).ref(SafeRef.HELP),
         Spacer().grow(12),
         cards,
         Spacer().grow(14),
-        probe,
+        Button(
+            SAFE_PROBE, "PROBE BED CENTER",
+            state=derived(
+                lambda busy: "busy" if busy else "danger",
+                bind(SafeState.PROBING)),
+        ).style(UiStyle.BUTTON_BOLD_12).height(66).ref(SafeRef.PROBE),
         Spacer().grow(14),
-        adjust,
+        Grid(
+            matrix=((
+                Button(SAFE_LOWER, "LOWER  -1 MM", state=ready).style(UiStyle.BUTTON_BOLD_11).ref(SafeRef.LOWER),
+                Button(SAFE_HIGHER, "HIGHER  +1 MM", state=ready).style(UiStyle.BUTTON_BOLD_11).ref(SafeRef.HIGHER),
+            ),),
+            columns=Equal(2), rows=Equal(1), gap=(20, 0),
+        ).height(64).ref(SafeRef.ADJUST),
         Spacer().grow(14),
-        save,
+        Button(SAFE_SAVE, "SAVE SAFE Z AND CONTINUE", state=ready)
+        .style(UiStyle.BUTTON_BOLD_12).height(68).ref(SafeRef.SAVE),
     ).padding(left=24, top=14, right=24, bottom=20).ref(SafeRef.ROOT)
 
 
-PAGE = Page(_content(), CONTENT, page_id=PAGE_ID)
+PAGE = Page(
+    _content(), CONTENT, page_id=PAGE_ID,
+    styles=UI_STYLES, component_templates=(VALUE_CARD,))
 
 
 def render(renderer, values):

@@ -55,3 +55,6 @@ def create_page(profiles=()):
         left=23, top=16, right=23, bottom=16).ref(MaterialRef.ROOT)
     return PageTree(root, CONTENT, page_id=AppPage.FILAMENT_MATERIAL)
 
+
+# Default declaration for framework page discovery; runtime factories retain their inputs.
+PAGE = create_page()

@@ -700,7 +700,7 @@ class DirtyRenderingTest(unittest.TestCase):
             Overlay(
                 Fill(ThemeColor.PRIMARY),
                 Text(bind(TestState.LEFT)),
-            ).ref("left").repaint_boundary(),
+            ).width(60).ref("left").repaint_boundary(),
             Overlay(
                 Fill(ThemeColor.SECONDARY),
                 Text(bind(TestState.RIGHT)),
@@ -714,7 +714,7 @@ class DirtyRenderingTest(unittest.TestCase):
         drawing = "\n".join(page.update(renderer, {TestState.LEFT: "C"}))
 
         self.assertIn(
-            "-p 0 0 -s 100 20 -c %s" %
+            "-p 0 0 -s 60 20 -c %s" %
             renderer.color(ThemeColor.PRIMARY), drawing)
         self.assertIn('-t "C"', drawing)
         self.assertNotIn(
