@@ -28,6 +28,7 @@ class SettingsFeature(
         self.mod_return_page = ScreenPage.MOD_SETTINGS
         self.mod_edit_value = ""
         self.selected_parameter_option = None
+        self.mod_theme_original = None
         self._parameter_options_snapshot = ()
         self.parameter_options_page_index = 0
         self.mod_keyboard_shift = False
@@ -129,6 +130,7 @@ class SettingsFeature(
         elif page == ScreenPage.MOD_SETTINGS:
             self._show_page(ScreenPage.SETTINGS)
         elif page in (ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE):
+            self._restore_theme_preview()
             self.mod_parameter = None
             self._show_page(self.mod_return_page)
         else:
@@ -141,10 +143,15 @@ class SettingsFeature(
 
     @property
     def theme_update_blocked(self):
-        return bool(self.mod_update_pending)
+        param = getattr(self, "mod_parameter", None)
+        previewing_theme = (
+            self.page == ScreenPage.PARAMETER_OPTIONS
+            and param is not None and param.key == "feather_theme")
+        return bool(self.mod_update_pending or previewing_theme)
 
     def deactivate(self):
         self._reset_benchmark_taps()
+        self._restore_theme_preview()
         self.mod_update_pending = False
         self.mod_update_modal_visible = False
         self.mod_update_complete = None

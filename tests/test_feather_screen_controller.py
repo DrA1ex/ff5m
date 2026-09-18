@@ -1853,18 +1853,28 @@ class ControllerSafetyTest(unittest.TestCase):
                 wraps=controller.renderer.reload_user_themes) as refresh:
             controller._handle_mod_action("mod.item.0")
             options = tuple(controller.parameter_options)
-            page_count = (len(options) + 3) // 4
+            page_count = (len(options) + 5) // 6
             first = "\n".join(controller.draw_batches[-1])
             self.assertEqual(controller.page, FEATHER.ScreenPage.PARAMETER_OPTIONS)
             self.assertIn("1/%d" % page_count, first)
+            self.assertIn('-t "SAVE"', first)
+            self.assertNotIn("Choose the Feather color palette", first)
+            self.assertIn("--batch button -p 25 390 -s 90 47", first)
+            self.assertIn("--batch button -p 205 390 -s 90 47", first)
             self.assertEqual(refresh.call_count, 1)
+            self.assertTrue(controller.theme_update_blocked)
 
             synth_index = options.index("SYNTH")
-            for _ in range(synth_index // 4):
+            for _ in range(synth_index // 6):
                 controller._handle_mod_action("mod.options.next")
             controller._handle_mod_action("mod.option.%d" % synth_index)
             self.assertEqual(refresh.call_count, 1)
             self.assertEqual(tuple(controller.parameter_options), options)
+            self.assertEqual(controller.params.updated, [])
+            self.assertEqual(controller.renderer.theme_name, "SYNTH")
+            preview = "\n".join(controller.draw_batches[-1])
+            self.assertIn('-t "PRINT READY"', preview)
+            self.assertIn('-t "SELECTED"', preview)
             controller._handle_mod_action("mod.apply")
 
         self.assertEqual(controller.params.updated,
@@ -1928,14 +1938,14 @@ class ControllerSafetyTest(unittest.TestCase):
             issue_index = next(
                 index for index, option in enumerate(entries)
                 if not option.enabled and option.label == "BROKEN_USER")
-            target_page = issue_index // 4
+            target_page = issue_index // 6
             while controller.parameter_options_page_index < target_page:
                 controller._handle_mod_action("mod.options.next")
 
             drawing = "\n".join(controller.draw_batches[-1])
             issue_command = next(
                 line for line in drawing.splitlines()
-                if "BROKEN_USER // SCHEMA MISMATCH" in line)
+                if '-t "BROKEN_USER"' in line)
             self.assertNotIn("--id ", issue_command)
 
             selected = controller.selected_parameter_option
@@ -1959,6 +1969,33 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_mod_action("mod.option.%d" % dark_index)
         controller._handle_mod_action("mod.apply")
         self.assertEqual(controller.page, FEATHER.ScreenPage.SETTINGS)
+
+    def test_theme_preview_cancel_and_back_restore_opening_theme(self):
+        theme = mod_param("feather_theme", str, "DEFAULT",
+                          "Feather color theme")
+        controller = mod_controller([theme], {"feather_theme": "DEFAULT"})
+        controller.page = FEATHER.ScreenPage.SETTINGS
+
+        controller._handle_settings_action("settings.theme")
+        options = tuple(controller.parameter_options)
+        dark_index = options.index("DARK")
+        for _ in range(dark_index // 6):
+            controller._handle_mod_action("mod.options.next")
+        controller._handle_mod_action("mod.option.%d" % dark_index)
+        self.assertEqual(controller.renderer.theme_name, "DARK")
+
+        controller._handle_mod_action("mod.cancel")
+        self.assertEqual(controller.renderer.theme_name, "DEFAULT")
+        self.assertEqual(controller.params.updated, [])
+
+        controller._handle_settings_action("settings.theme")
+        for _ in range(dark_index // 6):
+            controller._handle_mod_action("mod.options.next")
+        controller._handle_mod_action("mod.option.%d" % dark_index)
+        controller.back(FEATHER.ScreenPage.PARAMETER_OPTIONS)
+
+        self.assertEqual(controller.renderer.theme_name, "DEFAULT")
+        self.assertEqual(controller.params.updated, [])
 
     def test_toggle_thumb_is_centered_and_animates_between_halves(self):
         renderer = FEATHER.FeatherRenderer()

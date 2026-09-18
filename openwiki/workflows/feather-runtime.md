@@ -351,9 +351,13 @@ value.
 The complete bundled and user catalog is loaded when the renderer is created
 and reloaded on `klippy:ready`, which covers Klipper restarts. Opening the color
 theme picker refreshes only `/opt/config/mod_data/themes` once and stores a
-stable option snapshot. Paging, selecting, and applying use that snapshot and
-do not rescan either directory. Bundled files are treated as immutable during a
-Klipper process lifetime.
+stable option snapshot. The picker shows compact names beside a component
+preview. Selecting a name temporarily recolors the whole Feather surface;
+`Save` persists that selection, while `Cancel` or header `Back` restores the
+theme that was active when the picker opened. Periodic configuration refresh is
+paused only while that preview is active. Paging, selecting, and saving use the
+stable snapshot and do not rescan either directory. Bundled files are treated
+as immutable during a Klipper process lifetime.
 
 Every theme file is validated against `ui/themes/theme.schema.json`. Version 2
 keeps required physical values under `colors` and optional contextual overrides

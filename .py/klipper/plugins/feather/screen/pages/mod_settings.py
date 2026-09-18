@@ -215,6 +215,7 @@ class ModSettingsPagesMixin:
                     (name, self.renderer.theme_description(name))
                     for name in options)
                 disabled = self.renderer.user_theme_issues()
+                self.mod_theme_original = self.renderer.theme_name
             else:
                 options = mod_ui.enum_names(param)
                 descriptions = dict(
@@ -337,6 +338,7 @@ class ModSettingsPagesMixin:
                 int(action.rsplit(".", 1)[1]), ScreenPage.MOD_SETTINGS)
             return
         if action == "mod.cancel":
+            self._restore_theme_preview()
             self.mod_parameter = None
             self._show_page(getattr(
                 self, "mod_return_page", ScreenPage.MOD_SETTINGS))
@@ -353,6 +355,8 @@ class ModSettingsPagesMixin:
             option = entries[index]
             if not option.enabled:
                 return
+            if param.key == "feather_theme":
+                self.renderer.set_theme(option.value)
             self.selected_parameter_option = option.value
             self._render_parameter_options()
             return
@@ -371,6 +375,7 @@ class ModSettingsPagesMixin:
             def complete():
                 if param.key == "feather_theme":
                     self.renderer.set_theme(value)
+                    self.mod_theme_original = None
                 return_page = getattr(
                     self, "mod_return_page", ScreenPage.MOD_SETTINGS)
                 self.mod_parameter = None
@@ -408,3 +413,10 @@ class ModSettingsPagesMixin:
                 self.mod_keyboard_shift, self.mod_keyboard_symbols,
                 max_length=mod_ui.MAX_VALUE_LENGTH)
         self._render_mod_value()
+
+    def _restore_theme_preview(self):
+        param = getattr(self, "mod_parameter", None)
+        original = getattr(self, "mod_theme_original", None)
+        if param is not None and param.key == "feather_theme" and original:
+            self.renderer.set_theme(original)
+        self.mod_theme_original = None

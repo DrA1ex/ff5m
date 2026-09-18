@@ -204,11 +204,12 @@ without helper factories or artificial zero offsets. State conversion, actions,
 and custom bed/hardware drawing live in adjacent modules. Free offsets apply to
 Overlay children; use container alignment, spacing, and margins in rows/columns.
 
-To exercise actual Designer Review/Apply and reopening, run
-`FEATHER_DESIGNER_ROOT=/path/to/feather-ui-designer .venv/bin/python -m pytest -q tests/test_designer_screw_authoring.py`.
-This optional integration test copies the plugin sources into a temporary project,
-adds/removes an instruction offset, and edits one legend label independently.
-It never edits the checkout or contacts the printer.
+Designer owns the portable Review/Apply regression for adding and removing a
+component offset, reopening the page, and editing neighboring text values
+independently. Run
+`.venv/bin/python -m unittest tests.test_new_framework_authoring` in the
+Feather UI Designer checkout. The test builds a temporary generic project and
+does not depend on FF5M page names or repository structure.
 
 Designer capture does not prove that a frame can enter the printer's bounded
 render queue. For command-heavy illustrations, also submit the complete frame
