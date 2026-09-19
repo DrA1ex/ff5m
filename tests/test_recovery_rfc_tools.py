@@ -427,7 +427,7 @@ class RecoveryRFCToolsTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "changed"):
                 RECOVERY.delete_cleanup_entry(by_path[str(folder)])
 
-        self.assertTrue(replacement.exists())
+        self.assertTrue((folder / "new.gcode").exists())
 
     def test_cleanup_delete_refuses_disallowed_targets(self):
         data = self.root / "data"
