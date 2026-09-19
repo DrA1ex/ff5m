@@ -164,8 +164,13 @@ class ArtifactWorkerTest(unittest.TestCase):
             active = root / "active.json"
             active.write_text("{}\n", encoding="utf-8")
 
+            pan = root / "pan"
+            pan.write_text("0,0\n", encoding="ascii")
+            stride = root / "stride"
+            stride.write_text("3200\n", encoding="ascii")
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(run), str(framebuffer), str(printer_log))
+                AsyncReactor(), str(run), str(framebuffer), str(printer_log),
+                str(pan), str(stride))
             printer_log.write_text("before\nafter\n", encoding="utf-8")
             captured = []
             captured_event = threading.Event()
