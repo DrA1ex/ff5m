@@ -19,7 +19,8 @@ cd "$SCRIPT_DIR" || exit 1
 REMOTE_HOST=""
 REMOTE_USER="root"
 REMOTE_DIR="/opt/config/"
-ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$.tar.gz"\nARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE_NAME}"
+ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$$.tar.gz"
+ARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE_NAME}"
 
 SKIP_HEAVY=0
 
