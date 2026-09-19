@@ -975,8 +975,10 @@ class FileManager:
                 dest_path = upload_info['dest_path']
                 if upload_info["is_link"]:
                     dest_path = os.path.realpath(dest_path)
+                eventloop = self.server.get_event_loop()
                 try:
-                    gcode_3mf.extract_gcode_3mf(
+                    await eventloop.run_in_thread(
+                        gcode_3mf.extract_gcode_3mf,
                         tmp_path,
                         dest_path,
                         upload_info['plate_index']
