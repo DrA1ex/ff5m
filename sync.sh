@@ -19,7 +19,7 @@ cd "$SCRIPT_DIR" || exit 1
 REMOTE_HOST=""
 REMOTE_USER="root"
 REMOTE_DIR="/opt/config/"
-ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$$.tar.gz"
+ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$.tar.gz"\nARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE_NAME}"
 
 SKIP_HEAVY=0
 
@@ -240,7 +240,7 @@ fi
 
 
 cleanup() {
-    rm -f "./${ARCHIVE_NAME}"
+    rm -f "${ARCHIVE_PATH}"
 }
 
 abort() {
@@ -305,7 +305,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     TAR_ARGS+=(--disable-copyfile)
 fi
 
-tar "${TAR_ARGS[@]}" -czf "${ARCHIVE_NAME}" .
+tar "${TAR_ARGS[@]}" -czf "${ARCHIVE_PATH}" .
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to create sync archive.${NC}"
     
@@ -314,7 +314,7 @@ if [ $? -ne 0 ]; then
 fi
 
 print_label "Uploading archive to ${REMOTE_HOST}..."
-scp -O "./${ARCHIVE_NAME}" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
+scp -O "${ARCHIVE_PATH}" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
 
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to upload sync archive to the printer at ${REMOTE_HOST}.${NC}"
