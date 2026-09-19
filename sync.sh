@@ -20,6 +20,7 @@ REMOTE_HOST=""
 REMOTE_USER="root"
 REMOTE_DIR="/opt/config/"
 ARCHIVE_NAME="sync_$(date +%Y%m%d_%H%M%S)_$$.tar.gz"
+ARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE_NAME}"
 
 SKIP_HEAVY=0
 
@@ -240,7 +241,7 @@ fi
 
 
 cleanup() {
-    rm -f "./${ARCHIVE_NAME}"
+    rm -f "${ARCHIVE_PATH}"
 }
 
 abort() {
@@ -266,19 +267,19 @@ declare -a EXCLUDES=(
     "./sync.sh"
     "*/__pycache__"
     "./sync_remote.sh"
-    "./tests/"
-    "./.bin/src/"
-    "./.bin/lib/"
+    "./tests"
+    "./.bin/src"
+    "./.bin/lib"
 )
 
 if [ "$SKIP_HEAVY" -eq 1 ]; then
     EXCLUDES+=(
-        "./.root/docs/"
-        "./.root/config/"
-        "./.root/klippy/"
-        "./.root/moonraker/"
-        "./.zsh/.oh-my-zsh/"
-        "./.bin/"
+        "./.root/docs"
+        "./.root/config"
+        "./.root/klippy"
+        "./.root/moonraker"
+        "./.zsh/.oh-my-zsh"
+        "./.bin"
     )
 fi
 
@@ -300,7 +301,12 @@ for e in "${EXCLUDES[@]}"; do
     if [ "$VERBOSE" -eq 1 ]; then echo "► Excluding: \"$e\""; fi
 done
 
-tar "${EXCLUDE_ARGS[@]}" --disable-copyfile -czf "${ARCHIVE_NAME}" .
+TAR_ARGS=("${EXCLUDE_ARGS[@]}")
+if [ "$(uname -s)" = "Darwin" ]; then
+    TAR_ARGS+=(--disable-copyfile)
+fi
+
+tar "${TAR_ARGS[@]}" -czf "${ARCHIVE_PATH}" .
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to create sync archive.${NC}"
     
@@ -309,7 +315,7 @@ if [ $? -ne 0 ]; then
 fi
 
 print_label "Uploading archive to ${REMOTE_HOST}..."
-scp -O "./${ARCHIVE_NAME}" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
+scp -O "${ARCHIVE_PATH}" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
 
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to upload sync archive to the printer at ${REMOTE_HOST}.${NC}"

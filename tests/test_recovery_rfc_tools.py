@@ -411,19 +411,23 @@ class RecoveryRFCToolsTest(unittest.TestCase):
             self.assertFalse(first.exists())
             self.assertTrue(second.exists())
 
+            replacement_folder = data / "replacement"
+            replacement_folder.mkdir()
+            replacement = replacement_folder / "new.gcode"
+            replacement.write_bytes(b"n" * 10)
+
             RECOVERY.delete_cleanup_entry(by_path[str(folder)])
             self.assertFalse(folder.exists())
             self.assertTrue(data.exists())
 
             # A target replaced after the scan is refused, and the replacement
-            # content stays untouched.
-            folder.mkdir()
-            replacement = folder / "new.gcode"
-            replacement.write_bytes(b"n" * 10)
+            # content stays untouched. Create it before deleting the original
+            # directory so its inode cannot be reused by the host filesystem.
+            replacement_folder.rename(folder)
             with self.assertRaisesRegex(RuntimeError, "changed"):
                 RECOVERY.delete_cleanup_entry(by_path[str(folder)])
 
-        self.assertTrue(replacement.exists())
+        self.assertTrue((folder / "new.gcode").exists())
 
     def test_cleanup_delete_refuses_disallowed_targets(self):
         data = self.root / "data"
