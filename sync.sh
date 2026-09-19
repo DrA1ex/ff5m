@@ -300,7 +300,12 @@ for e in "${EXCLUDES[@]}"; do
     if [ "$VERBOSE" -eq 1 ]; then echo "► Excluding: \"$e\""; fi
 done
 
-tar "${EXCLUDE_ARGS[@]}" --disable-copyfile -czf "${ARCHIVE_NAME}" .
+TAR_ARGS=("${EXCLUDE_ARGS[@]}")
+if [ "$(uname -s)" = "Darwin" ]; then
+    TAR_ARGS+=(--disable-copyfile)
+fi
+
+tar "${TAR_ARGS[@]}" -czf "${ARCHIVE_NAME}" .
 if [ $? -ne 0 ]; then
     echo -e "\n${RED}Unable to create sync archive.${NC}"
     
