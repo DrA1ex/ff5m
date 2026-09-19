@@ -25,6 +25,25 @@ handle_special_boot_mode() {
     return "$status"
 }
 
+cleanup_failed_init() {
+    echo "// Cleaning up failed initialization..."
+
+    "$SCRIPTS/screen.sh" splash_stop >/dev/null 2>&1 || true
+    killall splash >/dev/null 2>&1 || true
+
+    # S99root has not run yet, so Forge-X services have not been started.
+    # Only release mounts created by init-main before handing boot to stock.
+    umount -lf /root/.oh-my-zsh >/dev/null 2>&1 || true
+    umount -lf "$MOD/root/printer_data" >/dev/null 2>&1 || true
+    umount -lf "$MOD/opt/klipper" >/dev/null 2>&1 || true
+    umount -lf "$MOD/opt/config" >/dev/null 2>&1 || true
+    umount -lf "$MOD/data" >/dev/null 2>&1 || true
+    umount -lf "$MOD/dev/pts" >/dev/null 2>&1 || true
+    dispose_chroot >/dev/null 2>&1 || true
+
+    rm -f "$SPLASH_CONTROL_FIFO" "$FORGE_X_SCREEN_BUSY_F" "$SCREEN_FOLLOW_UP_LOG"
+}
+
 initialize() {
     local special_boot_status
 
@@ -409,18 +428,6 @@ fix_config() {
         }," >> $BATCH_FILE
     fi
 
-    # 7. Restore printer.base.cfg if a backup exists
-    if [ -f /opt/config/printer.base.cfg.bak ]; then
-        echo "
-        {
-            \"mode\": \"restore\",
-            \"config\": \"/opt/config/printer.base.cfg\",
-            \"params\": \"/opt/config/mod_data/backup.params.cfg\",
-            \"data\": \"/opt/config/printer.base.cfg.bak\",
-            \"avoid_writes\": true
-        }," >> $BATCH_FILE
-    fi
-
     # Finalize the batch file (remove last comma and close array)
     sed -i '$s/,$//' $BATCH_FILE
     echo "]" >> $BATCH_FILE
@@ -431,6 +438,18 @@ fix_config() {
 
     # Clean up the temporary files
     rm -f $BATCH_FILE $TMP_CFG_PATH
+
+    # Restore optional legacy backup without blocking initialization.
+    if [ -f /opt/config/printer.base.cfg.bak ]; then
+        chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
+            --mode restore \
+            --avoid_writes \
+            --config /opt/config/printer.base.cfg \
+            --params /opt/config/mod_data/backup.params.cfg \
+            --data /opt/config/printer.base.cfg.bak \
+            || true
+        sync
+    fi
 }
 
 rotate_logs() {
@@ -476,12 +495,16 @@ init_main() {
             return "${PIPESTATUS[0]}"
         ;;
 
+        cleanup)
+            cleanup_failed_init
+        ;;
+
         log)
             cat /opt/config/mod_data/log/init.log
         ;;
 
         *)
-            echo "Usage: $0 (start|reload|log)"
+            echo "Usage: $0 (start|reload|cleanup|log)"
             return 1
         ;;
     esac

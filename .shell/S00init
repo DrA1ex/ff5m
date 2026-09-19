@@ -212,6 +212,7 @@ start_normal_boot() {
         ;;
 
         *)
+            "$INIT_MAIN_SCRIPT" cleanup || true
             fail_boot "Forge-X initialization failed."
 
             echo "Forge-X initialization failed."
