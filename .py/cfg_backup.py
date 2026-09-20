@@ -19,7 +19,6 @@ from typing import Optional, Dict, Self, Iterable, Tuple, Set, Callable, Any
 MAX_BLANK_LINES = 2
 PARAM_WILDCARD = "*"
 
-AVOID_WRITES = False
 DRY_RUN = False
 VERBOSE = False
 
@@ -388,7 +387,7 @@ def parse_cmd_configuration(file_path) -> Configuration:
 def backup(file_path: str, dst_path: str, cfg: Configuration, dry=False):
     print(f"Parsing config \"{file_path}\"...")
 
-    tmp_path = dst_path + ".tmp"
+    tmp_path = f"{dst_path}.tmp.{os.getpid()}"
     with (open(tmp_path, "w") as out_f):
         empty = True
         section_key = None
@@ -505,7 +504,7 @@ def load_backup(file_path: str, cfg: Configuration) -> SavedData:
         elif token == CfgToken.PARAMETER and section_name and cfg.is_saving(section_name, param_name=kwargs["key"]):
             section[kwargs["key"]] = kwargs["value"]
             if VERBOSE: print(f"  - Load Parameter {kwargs['key']}")
-        elif token in {CfgToken.BREAK or CfgToken.SECTION}:
+        elif token in {CfgToken.BREAK, CfgToken.SECTION}:
             section = None
             section_name = None
 
@@ -520,7 +519,7 @@ def load_backup(file_path: str, cfg: Configuration) -> SavedData:
 def restore(file_path: str, saved_data: SavedData, cfg: Configuration, dry=False):
     print(f"Restoring config \"{file_path}\"...\n")
 
-    tmp_path = file_path + ".tmp"
+    tmp_path = f"{file_path}.tmp.{os.getpid()}"
     state = RestoreState(
         cfg=cfg,
         data=deepcopy(saved_data),
@@ -699,6 +698,7 @@ def restore(file_path: str, saved_data: SavedData, cfg: Configuration, dry=False
         iterate_printer_config_tokens(file_path, callback=_parse_config)
 
     if not state.is_changed:
+        os.remove(tmp_path)
         print("Config doesn't contains changed properties!")
         return
 
@@ -836,6 +836,7 @@ class ProcessingParams:
     params_path: str
     mode: str
     no_data: bool
+    avoid_writes: bool
 
 
 def load_params_from_args(values):
@@ -845,16 +846,18 @@ def load_params_from_args(values):
         params_path=values.params,
         mode=values.mode,
         no_data=values.no_data,
+        avoid_writes=values.avoid_writes,
     )
 
 
-def load_params_from_dict(values):
+def load_params_from_dict(values, avoid_writes=False):
     return ProcessingParams(
         config_path=values["config"],
         mode=values["mode"],
         data_path=values.get("data", None),
         params_path=values.get("params", None),
         no_data=values.get("no_data", False),
+        avoid_writes=values.get("avoid_writes", False) or avoid_writes,
     )
 
 
@@ -902,7 +905,7 @@ def process(p: ProcessingParams):
         else:
             backup_data = dict()
 
-        if not AVOID_WRITES or has_changes(p.config_path, backup_data, cfg, logging=_no_logging):
+        if not p.avoid_writes or has_changes(p.config_path, backup_data, cfg, logging=_no_logging):
             restore(p.config_path, backup_data, cfg, DRY_RUN)
         else:
             print("Config doesn't contains changed properties!")
@@ -967,14 +970,13 @@ if __name__ == "__main__":
             exit(4)
 
         try:
-            processing_params = [load_params_from_dict(entry) for entry in batch_data]
+            processing_params = [load_params_from_dict(entry, args.avoid_writes) for entry in batch_data]
         except Exception as e:
             print("Unable to parse batch file:", repr(e), file=sys.stderr)
             exit(5)
     else:
         processing_params = [load_params_from_args(args)]
 
-    AVOID_WRITES = args.avoid_writes
     DRY_RUN = args.dry
     VERBOSE = args.verbose
 
