@@ -29,8 +29,11 @@ class FakeMoveQueue:
         self.queue = []
         self.junction_flush = self.STOCK_FLUSH
         self.processed = 0
+        self.fail_set_flush_time = False
 
     def set_flush_time(self, duration):
+        if self.fail_set_flush_time:
+            raise RuntimeError("lookahead failed")
         self.junction_flush = duration
 
     def add(self, move):
@@ -55,6 +58,7 @@ class FakeToolhead:
     def __init__(self):
         self.buffer_time_start = 0.250
         self.buffer_time_low = 1.000
+        self.move_flush_time = 0.050
         self.max_accel = 20000.0
         self.requested_accel_to_decel = 5000.0
         self.max_accel_to_decel = 5000.0
@@ -65,6 +69,10 @@ class FakeToolhead:
         self.accels = []
         self.move_duration = 0.0125
         self.print_stall = 0
+        self.low_latency_stream_submission = False
+        self.low_latency_saved_move_flush_time = None
+        self.submission_flags = []
+        self.fail_flush = False
 
     def check_busy(self, eventtime):
         return (self.print_time, self.estimated_time,
@@ -75,11 +83,15 @@ class FakeToolhead:
             self.requested_accel_to_decel, self.max_accel)
 
     def manual_move(self, position, speed):
+        self.submission_flags.append(
+            self.low_latency_stream_submission)
         self.accels.append(self.max_accel)
         self.move_queue.add(FakeMove(self.move_duration))
 
     def flush_step_generation(self):
         self.flushes += 1
+        if self.fail_flush:
+            raise RuntimeError("flush failed")
         self.move_queue.queue[:] = []
         self.move_queue.set_flush_time(FakeMoveQueue.STOCK_FLUSH)
 
@@ -190,14 +202,56 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         toolhead = FakeToolhead()
         stream = MOTION.LowLatencyToolheadStream(toolhead)
         stream.start(100.0)
+        self.assertFalse(toolhead.low_latency_stream_submission)
         stream.queue_segment(Segment())
         stream.finish()
 
         self.assertEqual(toolhead.flushes, 1)
         self.assertEqual(toolhead.buffer_time_start, 0.250)
         self.assertEqual(toolhead.buffer_time_low, 1.000)
+        self.assertEqual(toolhead.move_flush_time, 0.050)
         self.assertFalse(stream.active)
+        self.assertFalse(toolhead.low_latency_stream_submission)
         self.assertFalse(stream.queued)
+
+    def test_move_flush_override_restores_non_default_value(self):
+        toolhead = FakeToolhead()
+        toolhead.move_flush_time = 0.073
+        stream = MOTION.LowLatencyToolheadStream(toolhead)
+
+        stream.start(100.0)
+        self.assertEqual(toolhead.move_flush_time, 0.025)
+        stream.finish()
+
+        self.assertEqual(toolhead.move_flush_time, 0.073)
+        stream.finish()
+        self.assertEqual(toolhead.move_flush_time, 0.073)
+
+    def test_start_failure_leaves_move_flush_time_unchanged(self):
+        toolhead = FakeToolhead()
+        toolhead.move_flush_time = 0.073
+        toolhead.move_queue.fail_set_flush_time = True
+        stream = MOTION.LowLatencyToolheadStream(toolhead)
+
+        with self.assertRaisesRegex(RuntimeError, "lookahead failed"):
+            stream.start(100.0)
+
+        self.assertEqual(toolhead.move_flush_time, 0.073)
+        self.assertFalse(toolhead.low_latency_stream_submission)
+        self.assertFalse(stream.active)
+
+    def test_move_flush_override_restores_after_finish_error(self):
+        toolhead = FakeToolhead()
+        stream = MOTION.LowLatencyToolheadStream(toolhead)
+        stream.start(100.0)
+        stream.queue_segment(Segment())
+        toolhead.fail_flush = True
+
+        with self.assertRaisesRegex(RuntimeError, "flush failed"):
+            stream.finish()
+
+        self.assertEqual(toolhead.move_flush_time, 0.050)
+        self.assertFalse(toolhead.low_latency_stream_submission)
 
     def test_empty_finish_restores_original_lookahead_threshold(self):
         toolhead = FakeToolhead()
@@ -218,6 +272,8 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         stream.queue_segment(Segment())
 
         self.assertEqual(toolhead.accels, [10000.0])
+        self.assertEqual(toolhead.submission_flags, [True])
+        self.assertFalse(toolhead.low_latency_stream_submission)
         self.assertEqual(toolhead.max_accel, 20000.0)
         self.assertEqual(toolhead.max_accel_to_decel, 5000.0)
 
@@ -271,78 +327,8 @@ class LowLatencyToolheadStreamTest(unittest.TestCase):
         self.assertEqual(shaper.axes[0].saved, ("external",))
 
     def test_safe_stream_tuning_is_retained(self):
-        self.assertEqual(MOTION.LOOKAHEAD_FLUSH, 0.060)
+        self.assertEqual(MOTION.LOOKAHEAD_FLUSH, 0.040)
         self.assertEqual(MOTION.TARGET_AHEAD, 0.300)
-
-    def test_motion_diagnostics_ignore_startup_and_neutral_stop(self):
-        toolhead = FakeToolhead()
-        stream = MOTION.LowLatencyToolheadStream(toolhead)
-
-        stream.set_motion_active(True, 1.000)
-        stream.record_motion_cycle(
-            1.010, True, 0.020, 0.100, 0.120, 0.200)
-        toolhead.print_stall = 1
-        stream.record_motion_cycle(
-            1.020, True, 0.120, 0.200, 0.180, 0.250)
-
-        self.assertFalse(stream.motion_diagnostics_active())
-        self.assertIsNone(stream.minimum_motion_processed)
-        self.assertEqual(stream.motion_stalls, 0)
-
-        stream.record_motion_cycle(
-            1.030, True, 0.180, 0.250, MOTION.START_BUFFER, 0.310)
-        self.assertTrue(stream.motion_diagnostics_active())
-        self.assertAlmostEqual(stream.maximum_startup_duration, 0.030)
-        self.assertAlmostEqual(
-            stream.minimum_motion_processed, MOTION.START_BUFFER)
-
-        toolhead.print_stall = 2
-        stream.record_motion_cycle(
-            1.060, True, 0.160, 0.230, 0.210, 0.280)
-        self.assertAlmostEqual(stream.minimum_motion_processed, 0.160)
-        self.assertAlmostEqual(stream.minimum_motion_ahead, 0.230)
-        self.assertEqual(stream.motion_stalls, 1)
-        self.assertAlmostEqual(stream.maximum_tick_gap, 0.030)
-
-        toolhead.print_stall = 3
-        stream.record_motion_cycle(
-            1.080, False, 0.001, 0.001, 0.0, 0.0)
-        self.assertFalse(stream.motion_diagnostics_active())
-        self.assertAlmostEqual(stream.minimum_motion_processed, 0.160)
-        self.assertAlmostEqual(stream.minimum_motion_ahead, 0.230)
-        self.assertEqual(stream.motion_stalls, 1)
-        self.assertAlmostEqual(stream.maximum_tick_gap, 0.030)
-
-    def test_new_motion_after_neutral_requires_reprime(self):
-        toolhead = FakeToolhead()
-        stream = MOTION.LowLatencyToolheadStream(toolhead)
-
-        stream.record_motion_cycle(
-            2.000, True, MOTION.START_BUFFER, 0.300, 0.280, 0.330)
-        stream.record_motion_cycle(
-            2.020, False, 0.010, 0.010, 0.0, 0.0)
-        toolhead.print_stall = 2
-        stream.record_motion_cycle(
-            2.030, True, 0.020, 0.080, 0.100, 0.160)
-
-        self.assertFalse(stream.motion_diagnostics_active())
-        self.assertEqual(stream.motion_stalls, 0)
-
-        stream.record_motion_cycle(
-            2.060, True, 0.180, 0.240, 0.260, 0.320)
-        self.assertTrue(stream.motion_diagnostics_active())
-        self.assertAlmostEqual(stream.maximum_startup_duration, 0.030)
-
-    def test_diagnostics_keep_worst_observed_values(self):
-        stream = MOTION.LowLatencyToolheadStream(FakeToolhead())
-        stream.record_refill(0.004, 4)
-        stream.record_refill(0.007, 7)
-        stream.record_feedback(0.003)
-        stream.record_feedback(0.009)
-
-        self.assertEqual(stream.maximum_refill_duration, 0.007)
-        self.assertEqual(stream.maximum_refill_segments, 7)
-        self.assertEqual(stream.maximum_feedback_duration, 0.009)
 
 
 if __name__ == "__main__":

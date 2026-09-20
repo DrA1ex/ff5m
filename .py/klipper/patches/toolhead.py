@@ -274,6 +274,8 @@ class ToolHead:
         self.move_queue.set_flush_time(self.buffer_time_high)
         self.idle_flush_print_time = 0.
         self.print_stall = 0
+        self.low_latency_stream_submission = False
+        self.low_latency_saved_move_flush_time = None
         self.drip_completion = None
         # Kinematic step generation scan window time tracking
         self.kin_flush_delay = SDS_CHECK_TIME
@@ -424,14 +426,15 @@ class ToolHead:
         if not self.special_queuing_state:
             # In main state - recheck after the next print-time advance.
             self.need_check_stall = self.print_time
-        if not did_pause:
+        if not did_pause and not getattr(
+                self, 'low_latency_stream_submission', False):
             # May be falling behind - yield to avoid starving other tasks.
             self.reactor.pause(self.reactor.NOW)
     def _flush_handler(self, eventtime):
         try:
             print_time = self.print_time
             est_print_time = self.mcu.estimated_print_time(eventtime)
-            buffer_time = print_time - self.mcu.estimated_print_time(eventtime)
+            buffer_time = print_time - est_print_time
             if buffer_time > self.buffer_time_low:
                 # Running normally - reschedule check
                 return eventtime + buffer_time - self.buffer_time_low
@@ -570,6 +573,10 @@ class ToolHead:
         return res
     def _handle_shutdown(self):
         self.can_pause = False
+        self.low_latency_stream_submission = False
+        if self.low_latency_saved_move_flush_time is not None:
+            self.move_flush_time = self.low_latency_saved_move_flush_time
+            self.low_latency_saved_move_flush_time = None
         self.move_queue.reset()
     def get_kinematics(self):
         return self.kin

@@ -65,6 +65,37 @@ class BedMeshState(StatusObject):
 
 
 class ControllerSafetyTest(unittest.TestCase):
+    def test_pressure_redraw_keeps_active_joystick_and_current_cursor(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
+        controller.move_mode = "joystick"
+        controller._require_idle = lambda: None
+        controller.toolhead = StatusObject({
+            "position": (1., 2., 30., 0.), "homed_axes": "xyz"})
+        controller.joystick = mock.Mock()
+        controller.joystick.inertia.return_value = {"velocity": (10., 0., 0.)}
+        controller.joystick_cursor = (MOVE_UI.JOYSTICK_XY.wire_id, 150, 200)
+        controller.joystick_action = MOVE_UI.JOYSTICK_XY.wire_id
+        controller.joystick_timer_active = True
+        controller._stop_joystick = mock.Mock()
+        controller._show_page = mock.Mock()
+        controller._render_move()
+        controller.renderer._batch_queue.get(timeout=0)
+
+        controller._redraw_after_dropped_frame()
+
+        batch = controller.renderer._batch_queue.get(timeout=0)
+        self.assertIn(controller.renderer.joystick_knob(150, 200)[1], batch.commands)
+        self.assertEqual(MOVE_UI.JOYSTICK_PAGE.state[MOVE_UI.MoveState.CURSOR],
+                         controller.joystick_cursor)
+        self.assertTrue(controller.joystick_timer_active)
+        self.assertEqual(controller.joystick_action, MOVE_UI.JOYSTICK_XY.wire_id)
+        controller._stop_joystick.assert_not_called()
+        controller._show_page.assert_not_called()
+
     def test_home_dashboard_is_a_discoverable_declarative_page(self):
         self.assertIsInstance(HOME_PAGE.PAGE, UI.DeclarativePage)
         self.assertEqual(HOME_PAGE.PAGE.page_key, AppPage.HOME)

@@ -2553,6 +2553,8 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 self.max_accel_to_decel = 5000.0
                 self.buffer_time_start = 0.250
                 self.buffer_time_low = 1.000
+                self.move_flush_time = 0.050
+                self.low_latency_saved_move_flush_time = None
                 self.position = [0.0, 0.0, 100.0, 0.0]
                 self.moves = []
                 self.flushes = 0

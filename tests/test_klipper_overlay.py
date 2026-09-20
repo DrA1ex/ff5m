@@ -520,6 +520,43 @@ class ToolheadTuningTest(unittest.TestCase):
         reactor.pause.assert_called_once_with(reactor.NOW)
         self.assertEqual(toolhead.need_check_stall, toolhead.print_time)
 
+    def test_low_latency_stream_skips_only_fallback_stall_yield(self):
+        reactor = mock.Mock()
+        reactor.NOW = object()
+        reactor.NEVER = object()
+        reactor.monotonic.return_value = 10.0
+        mcu = mock.Mock()
+        mcu.estimated_print_time.return_value = 10.0
+        toolhead = object.__new__(self.ToolHead)
+        toolhead.reactor = reactor
+        toolhead.mcu = mcu
+        toolhead.special_queuing_state = ""
+        toolhead.print_time = 10.0
+        toolhead.buffer_time_high = 2.0
+        toolhead.can_pause = True
+        toolhead.need_check_stall = -1.0
+        toolhead.low_latency_stream_submission = True
+
+        toolhead._check_stall()
+
+        reactor.pause.assert_not_called()
+        self.assertEqual(toolhead.need_check_stall, toolhead.print_time)
+
+    def test_shutdown_restores_low_latency_move_flush_time(self):
+        toolhead = object.__new__(self.ToolHead)
+        toolhead.can_pause = True
+        toolhead.move_flush_time = 0.025
+        toolhead.low_latency_saved_move_flush_time = 0.073
+        toolhead.low_latency_stream_submission = True
+        toolhead.move_queue = mock.Mock()
+
+        toolhead._handle_shutdown()
+
+        self.assertEqual(toolhead.move_flush_time, 0.073)
+        self.assertIsNone(toolhead.low_latency_saved_move_flush_time)
+        self.assertFalse(toolhead.low_latency_stream_submission)
+        toolhead.move_queue.reset.assert_called_once_with()
+
     def test_stall_pause_has_minimum_delay_without_duplicate_yield(self):
         class Reactor:
             NOW = object()
@@ -546,6 +583,7 @@ class ToolheadTuningTest(unittest.TestCase):
         toolhead.buffer_time_high = 2.0
         toolhead.can_pause = True
         toolhead.need_check_stall = -1.0
+        toolhead.low_latency_stream_submission = True
 
         toolhead._check_stall()
 

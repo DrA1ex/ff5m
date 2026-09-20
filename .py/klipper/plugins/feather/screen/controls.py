@@ -7,8 +7,6 @@
 import logging
 import math
 import re
-import time
-
 from ui import (
         Back, Command, Increment, Navigate, Replace, SetValue, ThemeColor,
         Toggle,
@@ -184,20 +182,6 @@ class FeatherControlsMixin:
         self._get_joystick_stream().queue_segment(segment)
         self.joystick_queued = True
 
-    def _record_joystick_refill(self, stream, planner, started,
-                                segment_count, processed_before,
-                                ahead_before):
-        finished = self.reactor.monotonic()
-        stream.ahead(finished)
-        stream.record_refill(finished - started, segment_count)
-        active = (planner.motion_active()
-                  and (segment_count > 0
-                       or stream.last_ahead
-                       > joystick_motion.BUSY_TOLERANCE))
-        stream.record_motion_cycle(
-            finished, active, processed_before, ahead_before,
-            stream.last_processed, stream.last_ahead)
-
     def _joystick_tick(self, eventtime):
         try:
             planner = self.joystick
@@ -240,7 +224,7 @@ class FeatherControlsMixin:
                     if (eventtime - self.joystick_busy_since
                             < joystick_motion.START_BUSY_GRACE):
                         self._update_joystick_feedback(eventtime)
-                        return eventtime + joystick_ui.QUEUE_RETRY
+                        return self.reactor.monotonic() + joystick_ui.QUEUE_RETRY
                     planner.release()
                     self.joystick_action = None
                     self.joystick_cursor = None
@@ -258,61 +242,37 @@ class FeatherControlsMixin:
                     self._render_move()
                     return self.reactor.NEVER
             self.joystick_busy_since = None
-            tick_eventtime = self.reactor.monotonic()
-            stream.set_motion_active(
-                planner.motion_active(), tick_eventtime)
             queue_eventtime = self.reactor.monotonic()
-            ahead_before = stream.ahead(queue_eventtime)
-            processed_before = stream.last_processed
-            if ahead_before >= joystick_motion.MAX_AHEAD:
-                finished = self.reactor.monotonic()
-                stream.ahead(finished)
-                stream.record_motion_cycle(
-                    finished, planner.motion_active(),
-                    processed_before, ahead_before,
-                    stream.last_processed, stream.last_ahead)
+            if stream.ahead(queue_eventtime) >= joystick_motion.MAX_AHEAD:
                 self._update_joystick_feedback(eventtime)
-                return eventtime + joystick_ui.QUEUE_RETRY
+                return self.reactor.monotonic() + joystick_ui.QUEUE_RETRY
 
             position = self.toolhead.get_position()
             queued_position = None
-            refill_started = self.reactor.monotonic()
-            stream.ahead(refill_started)
-            processed_before = stream.last_processed
-            ahead_before = stream.last_ahead
-            refill_segments = 0
             for _index in range(joystick_motion.MAX_REFILL_SEGMENTS):
                 refill_eventtime = self.reactor.monotonic()
                 if not stream.wants_segment(refill_eventtime):
                     break
                 segment = planner.advance(position, joystick_ui.PERIOD)
                 if segment is None:
-                    self._record_joystick_refill(
-                        stream, planner, refill_started, refill_segments,
-                        processed_before, ahead_before)
                     if planner.held:
                         self._update_joystick_feedback(
                             eventtime, position=queued_position)
-                        return eventtime + joystick_ui.PERIOD
+                        return self.reactor.monotonic() + joystick_ui.PERIOD
                     stream.finish()
                     self.joystick_queued = False
                     self.joystick_timer_active = False
                     self._update_joystick_feedback(eventtime, force=True)
                     return self.reactor.NEVER
                 self._queue_joystick_segment(segment)
-                refill_segments += 1
                 position = segment.position
                 queued_position = position
-            self._record_joystick_refill(
-                stream, planner, refill_started, refill_segments,
-                processed_before, ahead_before)
             self._update_joystick_feedback(eventtime, position=queued_position)
-            return eventtime + joystick_ui.PERIOD
+            return self.reactor.monotonic() + joystick_ui.PERIOD
         except Exception:
             logging.exception("[feather_screen] joystick motion failed")
             self._stop_joystick()
             return self.reactor.NEVER
-
     def _render_move(self, snapshot=None, caution=None):
         self._require_idle()
         now = self.reactor.monotonic()
@@ -354,7 +314,7 @@ class FeatherControlsMixin:
         values = self._move_ui_state(snapshot, caution)
         values[move_ui.MoveState.INERTIA] = float(
             self._joystick_inertia_snapshot())
-        values[move_ui.MoveState.CURSOR] = None
+        values[move_ui.MoveState.CURSOR] = getattr(self, "joystick_cursor", None)
         return move_ui.render_joystick(self.renderer, values)
 
     def _move_status_snapshot(self, eventtime, position=None):
@@ -487,16 +447,7 @@ class FeatherControlsMixin:
         self._last_move = values
         self.joystick_feedback_at = eventtime + joystick_ui.FEEDBACK_PERIOD
         if commands:
-            stream = getattr(self, "joystick_stream", None)
-            if stream is not None and getattr(stream, "active", False):
-                reactor = getattr(self, "reactor", None)
-                clock = (reactor.monotonic if reactor is not None
-                         else time.monotonic)
-                feedback_started = clock()
-                self.renderer.send(commands)
-                stream.record_feedback(clock() - feedback_started)
-            else:
-                self.renderer.send(commands)
+            self.renderer.send(commands)
 
     def _semantic_ui_page(self):
         if self.page == ScreenPage.IDLE_HOME:

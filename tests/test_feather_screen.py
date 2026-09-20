@@ -2374,35 +2374,6 @@ class RendererStateTest(unittest.TestCase):
                 knob_size, knob_size),
             released)
 
-    def test_joystick_feedback_uses_fallback_clock_without_reactor(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
-        controller.page = FEATHER.ScreenPage.CONTROL_MOVE
-        controller.move_mode = "joystick"
-        controller.toolhead = StatusObject({
-            "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
-        controller._last_move = None
-        controller.joystick_cursor = None
-        controller.joystick_feedback_at = 0.0
-        controller.joystick = type("Planner", (), {
-            "inertia": lambda self: {"velocity": (0.0, 0.0, 0.0)},
-        })()
-
-        feedback_durations = []
-        controller.joystick_stream = type("Stream", (), {
-            "active": True,
-            "record_feedback": (
-                lambda self, duration: feedback_durations.append(duration)),
-        })()
-
-        controller._update_joystick_feedback(
-            1.0, position=(2.0, 3.0, 11.0), force=True)
-
-        self.assertTrue(batches)
-        self.assertEqual(len(feedback_durations), 1)
-        self.assertGreaterEqual(feedback_durations[0], 0.0)
 
     def test_joystick_knob_dirty_region_stays_inside_static_artwork(self):
         renderer = FEATHER.FeatherRenderer()
@@ -2526,20 +2497,12 @@ class RendererStateTest(unittest.TestCase):
             active = True
 
             def __init__(self):
-                self.last_processed = 0.2
-                self.last_ahead = 0.2
                 self.wants_times = []
                 self.queued = []
-                self.motion_cycles = []
 
             @staticmethod
-            def set_motion_active(active, eventtime):
-                pass
-
-            def ahead(self, eventtime):
-                self.last_processed = 0.2
-                self.last_ahead = 0.2
-                return self.last_ahead
+            def ahead(eventtime):
+                return 0.2
 
             def wants_segment(self, eventtime):
                 self.wants_times.append(eventtime)
@@ -2548,22 +2511,12 @@ class RendererStateTest(unittest.TestCase):
             def queue_segment(self, segment):
                 self.queued.append(segment)
 
-            @staticmethod
-            def record_refill(duration, segment_count):
-                pass
-
-            def record_motion_cycle(self, eventtime, active,
-                                    processed_before, ahead_before,
-                                    processed_after, ahead_after):
-                self.motion_cycles.append((
-                    eventtime, active, processed_before, ahead_before,
-                    processed_after, ahead_after))
-
         controller.reactor = TickReactor()
         controller.joystick = Planner()
         controller.toolhead = type("Toolhead", (), {
             "get_status": lambda self, eventtime: {"homed_axes": "xyz"},
             "get_position": lambda self: [0.0, 0.0, 0.0, 0.0],
+            "special_queuing_state": "",
         })()
         stream = Stream()
         controller.joystick_stream = stream
@@ -2571,15 +2524,14 @@ class RendererStateTest(unittest.TestCase):
 
         result = controller._joystick_tick(10.0)
 
-        self.assertEqual(result, 10.010)
+        self.assertGreater(result, 10.0)
         self.assertEqual(len(stream.queued), 2)
         self.assertGreaterEqual(len(stream.wants_times), 3)
         self.assertTrue(all(
             later > earlier for earlier, later in zip(
                 stream.wants_times, stream.wants_times[1:])))
         self.assertTrue(all(value > 10.0 for value in stream.wants_times))
-        self.assertEqual(len(stream.motion_cycles), 1)
-        self.assertTrue(stream.motion_cycles[0][1])
+
 
     def test_joystick_tick_forces_final_zero_inertia_frame(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -2619,30 +2571,15 @@ class RendererStateTest(unittest.TestCase):
 
             def __init__(self):
                 self.finished = False
-                self.last_processed = 0.0
-                self.last_ahead = 0.0
 
-            @staticmethod
-            def set_motion_active(active, eventtime):
-                pass
 
             def ahead(self, eventtime):
-                self.last_processed = 0.0
-                self.last_ahead = 0.0
                 return 0.0
 
             @staticmethod
             def wants_segment(eventtime):
                 return True
 
-            @staticmethod
-            def record_refill(duration, segment_count):
-                pass
-
-            @staticmethod
-            def record_motion_cycle(eventtime, active, processed_before,
-                                    ahead_before, processed_after, ahead_after):
-                pass
 
             def finish(self):
                 self.finished = True

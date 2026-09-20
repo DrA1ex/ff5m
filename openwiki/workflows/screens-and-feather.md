@@ -169,6 +169,20 @@ remain a local repaint, including background restoration; it must not trigger a
 page-wide layout pass merely because its string changed. The Designer consumes
 the same measurement and reflection contracts.
 
+Joystick feedback uses local damage restoration. An opaque repaint boundary
+(including a bordered panel inside an overlay) must restore its own pixels
+without promoting an ordinary telemetry update to the enclosing section.
+Overlapping foreground content still requires composition repaint. Hidden
+conditional branches defer binding evaluation until they become visible.
+
+Render-queue capacity eviction of a state batch invalidates later deltas. The
+renderer immediately asks the screen owner for a complete current surface and
+footer, replacing queued partial updates. This bounded recovery runs on the
+submitting reactor thread, preserves the current touch generation, and redraws
+the Move page directly so an active joystick gesture and cursor survive. Normal
+page navigation and worker restart retain their existing lifecycle. Animation
+and same-key state replacement do not require this recovery.
+
 - Preserve the one-root-config invariant: every new mode must have a matching `config` root and `.cfg/init.display.*.cfg` selection delta that removes incompatible roots.
 - Treat `zdisplay.sh`, `boot.sh`, active Klipper config, and documentation as one change surface. A mode is broken if any one of selection, startup, remote control, or recovery is missing.
 - Feather code runs in Klippy’s process and accesses shared screen/runtime resources. Keep refresh work bounded, run network work asynchronously, avoid full redraws in the one-second status timer, and validate RSS/swap on the constrained target hardware.

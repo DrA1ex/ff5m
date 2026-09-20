@@ -1138,6 +1138,29 @@ class MovementLayoutTest(unittest.TestCase):
             self.assertIn(
                 "-p %d %d -s %d 1" % (x, y, width), drawing)
 
+    def test_joystick_feedback_only_repaints_changed_cards(self):
+        for key, value, card in (
+                (move.ToolheadState.X, 12.0, "position.card"),
+                (move.MoveState.INERTIA, 12.0, "inertia.card")):
+            with self.subTest(card=card):
+                renderer = FeatherRenderer()
+                initial = move.snapshot_values(
+                    (0.0, 0.0, 30.0, "HOMED: XYZ", True, True))
+                initial.update({move.MoveState.INERTIA: 0.0,
+                                move.MoveState.CURSOR: None})
+                move.render_joystick(renderer, initial)
+                commands = move.update_joystick(renderer, {key: value})
+                frame = RenderFrame(commands, renderer)
+                bounds = move.JOYSTICK_PAGE.rect(card)
+
+                self.assertFalse(any("--batch button" in command for command in commands))
+                self.assertTrue(frame.shapes)
+                for shape in frame.shapes:
+                    self.assertGreaterEqual(shape.bounds.x, bounds.x)
+                    self.assertGreaterEqual(shape.bounds.y, bounds.y)
+                    self.assertLessEqual(shape.bounds.right, bounds.right)
+                    self.assertLessEqual(shape.bounds.bottom, bounds.bottom)
+
     def test_dirty_state_replaces_all_movement_partial_trees(self):
         self.assertFalse(hasattr(move, "STEP_STATUS_TREE"))
         self.assertFalse(hasattr(move, "JOYSTICK_POSITION_TREE"))

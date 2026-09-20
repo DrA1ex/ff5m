@@ -200,7 +200,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.file_worker_schedule_async = register_async
         self.renderer.configure_worker(
             register_async, self._renderer_event_fd_changed,
-            self._renderer_restarted)
+            self._renderer_restarted, self._redraw_after_dropped_frame)
         self.boot_screen_held = os.path.exists(FORGE_X_SCREEN_BUSY_PATH)
         if self.boot_screen_held:
             self.renderer.hold_output()
@@ -428,6 +428,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         except Exception:
             logging.exception(
                 "[feather_screen] unable to redraw after typer restart")
+
+    def _redraw_after_dropped_frame(self):
+        if self.renderer.output_frozen:
+            return
+        if self.print_state == PrintState.INACTIVE:
+            self._render_startup_modal()
+        elif self.page == ScreenPage.CONTROL_MOVE:
+            # Re-entering _show_page would release an active joystick gesture.
+            self._render_move()
+        else:
+            self._show_page(self.page)
 
     def _ensure_renderer_started(self):
         if self.renderer.active:
