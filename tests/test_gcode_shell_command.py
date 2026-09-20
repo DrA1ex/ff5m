@@ -450,5 +450,72 @@ class GcodeShellCommandTest(unittest.TestCase):
             "// action:prompt_show",
         ])
 
+    @unittest.skipUnless(hasattr(os, "killpg"), "process groups require POSIX")
+    def test_sync_timeout_terminates_child_process_group(self):
+        class SyncReactor:
+            @staticmethod
+            def monotonic():
+                return time.monotonic()
+
+            @staticmethod
+            def pause(waketime):
+                time.sleep(max(0., waketime - time.monotonic()))
+                return time.monotonic()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir = pathlib.Path(temp_dir)
+            marker = temp_dir / "child-term"
+            pid_file = temp_dir / "child-pid"
+            child_script = "\n".join([
+                "import pathlib, signal, sys, time",
+                "marker = pathlib.Path(%r)" % str(marker),
+                "def stop(signum, frame):",
+                "    marker.write_text('TERM')",
+                "    sys.exit(0)",
+                "signal.signal(signal.SIGTERM, stop)",
+                "while True: time.sleep(1)",
+            ])
+            parent_script = "\n".join([
+                "import pathlib, subprocess, sys, time",
+                "child = %r" % child_script,
+                "proc = subprocess.Popen([sys.executable, '-c', child])",
+                "pathlib.Path(%r).write_text(str(proc.pid))" % str(pid_file),
+                "while True: time.sleep(1)",
+            ])
+
+            messages = []
+            command = PLUGIN.ShellCommand.__new__(PLUGIN.ShellCommand)
+            command.name = "sync-test"
+            command.printer = types.SimpleNamespace(
+                get_reactor=lambda: SyncReactor())
+            command.gcode = types.SimpleNamespace(
+                respond_info=messages.append)
+            command.command = [sys.executable, "-c", parent_script]
+            command.timeout = .2
+            command.mode = PLUGIN.ShellMode.SYNC
+            command.verbose = False
+            command.debug = False
+            command.proc_fd = None
+            command.partial_output = ""
+
+            child_pid = None
+            try:
+                command.cmd_RUN_SHELL_COMMAND({})
+
+                self.assertTrue(self._wait_until(pid_file.exists, 1.))
+                child_pid = int(pid_file.read_text())
+                self.assertTrue(self._wait_until(marker.exists, 1.))
+                self.assertEqual(marker.read_text(), "TERM")
+                self.assertIn("Command {sync-test} timed out", messages)
+            finally:
+                if child_pid is None and pid_file.exists():
+                    child_pid = int(pid_file.read_text())
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+
 if __name__ == "__main__":
     unittest.main()
