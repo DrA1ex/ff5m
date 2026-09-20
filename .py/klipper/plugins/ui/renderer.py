@@ -9,6 +9,7 @@
 
 import logging
 import math
+from collections import namedtuple
 
 from .actions import Action, DismissToast, action_wire_id
 from .font_metrics import (
@@ -51,6 +52,13 @@ MAX_PENDING_DRAW = MAX_BATCH_BYTES
 # 8 KiB may exceed PIPE_BUF.  Correctness depends on TyperRenderWorker being
 # the sole draw-FIFO writer and completing partial writes in _write_frame().
 MAX_ATOMIC_DRAW = 8 * 1024
+
+_ButtonSpec = namedtuple(
+    "ButtonSpec",
+    ("x", "y", "width", "height", "label", "state", "font",
+     "subtitle", "layout", "subtitle_font", "subtitle_color", "accent",
+     "surfaces"),
+)
 
 
 class BinaryCommand(str):
@@ -117,9 +125,7 @@ class FeatherRenderer:
         self._last_footer = None
         self._footer_values = None
         self._footer_drawn = False
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         self._generation = 0
         self._batch_queue = RenderBatchQueue(MAX_BATCHES, MAX_BATCH_BYTES)
         self._worker = None
@@ -899,14 +905,18 @@ class FeatherRenderer:
         return True
 
     def block_input(self):
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         self.send([
             self.clear_hitboxes("base"),
             self.clear_hitboxes("overlay"),
             self._wake_hitbox(),
         ])
+
+    def _reset_interactions(self):
+        self._buttons = {}
+        self._toggles = {}
+        self._hitboxes = {}
+        self._pressed_buttons = set()
 
     def _wake_hitbox(self):
         # Typer gives later overlapping hitboxes precedence.  Register the
@@ -1030,6 +1040,7 @@ class FeatherRenderer:
                layout="center", subtitle_font="JetBrainsMono 8pt",
                subtitle_color=ThemeColor.DIM, accent=None):
         logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
+        self._pressed_buttons.discard(logical_action)
         # active is retained for compatibility with the first Feather release.
         if active is not None:
             state = "enabled" if active else "disabled"
@@ -1038,9 +1049,9 @@ class FeatherRenderer:
         if layout == "center":
             font = self.normalize_font_for_text(font, label)
         if state not in ("disabled", "busy"):
-            self._buttons[logical_action] = (
+            self._buttons[logical_action] = _ButtonSpec(
                 x, y, width, height, label, state, font, subtitle, layout,
-                subtitle_font, subtitle_color, accent)
+                subtitle_font, subtitle_color, accent, None)
         if (logical_action == "nav.menu"
                 and (self._busy_label is not None
                      or self._header_action is not None)):
@@ -1053,11 +1064,26 @@ class FeatherRenderer:
                                      True, layout, subtitle_font,
                                      subtitle_color, accent)
 
+    def button_surface(self, action, x, y, width, height,
+                       normal_commands, pressed_commands):
+        """Register complete normal and pressed surfaces for a rich button."""
+        logical_action = (
+            action_wire_id(action) if isinstance(action, Action) else str(action))
+        normal = tuple(normal_commands)
+        pressed = tuple(pressed_commands)
+        self._buttons[logical_action] = _ButtonSpec(
+            x, y, width, height, "", "enabled", None,
+            None, "surface", None, None, None, (normal, pressed))
+        surface = pressed if logical_action in self._pressed_buttons else normal
+        return list(surface) + [
+            self.action_hitbox(action, x, y, width, height)]
+
     def arrow_button(self, action, x, y, width, height, direction,
                      active=None, state="enabled"):
         """Build an up/down button with a geometric, theme-aware arrow."""
         logical_action = (action_wire_id(action)
                           if isinstance(action, Action) else str(action))
+        self._pressed_buttons.discard(logical_action)
         if active is not None:
             state = "enabled" if active else "disabled"
         if state not in self.BUTTON_COLORS:
@@ -1066,9 +1092,9 @@ class FeatherRenderer:
         if direction not in ("up", "down"):
             raise ValueError("Arrow direction must be 'up' or 'down'")
         if state not in ("disabled", "busy"):
-            self._buttons[logical_action] = (
+            self._buttons[logical_action] = _ButtonSpec(
                 x, y, width, height, direction, state, None, None,
-                "arrow-" + direction, None, None, None)
+                "arrow-" + direction, None, None, None, None)
         return self._arrow_button_commands(
             self._wire_action(action), x, y, width, height, direction, state)
 
@@ -1094,9 +1120,7 @@ class FeatherRenderer:
         show_header_action = (
             preserve_header_action and self._header_action is not None)
         if modal:
-            self._buttons = {}
-            self._toggles = {}
-            self._hitboxes = {}
+            self._reset_interactions()
             commands += [
                 self.clear_hitboxes("base"),
                 self.clear_hitboxes("overlay"),
@@ -1135,33 +1159,41 @@ class FeatherRenderer:
         spec = self._buttons.get(action)
         if spec is None:
             return False
-        (x, y, width, height, label, _state, font, subtitle, layout,
-         subtitle_font, subtitle_color, accent) = spec
+        self._pressed_buttons.add(action)
         self.prioritize_next_batch("animation", "button:%s" % action)
-        if layout in ("arrow-up", "arrow-down"):
+        if spec.layout == "surface":
+            self.send(spec.surfaces[1])
+        elif spec.layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
-                action, x, y, width, height, layout[6:], "pressed", False))
+                action, spec.x, spec.y, spec.width, spec.height,
+                spec.layout[6:], "pressed", False))
         else:
             self.send(self._button_commands(
-                action, x, y, width, height, label, "pressed", font,
-                subtitle, False, layout, subtitle_font, subtitle_color,
-                accent))
+                action, spec.x, spec.y, spec.width, spec.height,
+                spec.label, "pressed", spec.font, spec.subtitle, False,
+                spec.layout, spec.subtitle_font, spec.subtitle_color,
+                spec.accent))
         return True
 
     def restore_button(self, action):
         spec = self._buttons.get(action)
         if spec is None:
+            self._pressed_buttons.discard(action)
             return False
-        (x, y, width, height, label, state, font, subtitle, layout,
-         subtitle_font, subtitle_color, accent) = spec
+        self._pressed_buttons.discard(action)
         self.prioritize_next_batch("state", "button:%s" % action)
-        if layout in ("arrow-up", "arrow-down"):
+        if spec.layout == "surface":
+            self.send(spec.surfaces[0])
+        elif spec.layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
-                action, x, y, width, height, layout[6:], state, False))
+                action, spec.x, spec.y, spec.width, spec.height,
+                spec.layout[6:], spec.state, False))
         else:
             self.send(self._button_commands(
-                action, x, y, width, height, label, state, font, subtitle,
-                False, layout, subtitle_font, subtitle_color, accent))
+                action, spec.x, spec.y, spec.width, spec.height,
+                spec.label, spec.state, spec.font, spec.subtitle, False,
+                spec.layout, spec.subtitle_font, spec.subtitle_color,
+                spec.accent))
         return True
 
     def set_header_action(self, action=None, label="", state="danger",
@@ -1178,6 +1210,7 @@ class FeatherRenderer:
                            if isinstance(old_action, Action)
                            else str(old_action))
             self._buttons.pop(old_wire_id, None)
+            self._pressed_buttons.discard(old_wire_id)
         return True
 
     def _header_action_commands(self):
@@ -1191,9 +1224,7 @@ class FeatherRenderer:
         self._loader_active = False
         self._semantic_page_id = None
         self._generation += 1
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         self._menu_suppressed = False
         show_header_action = self._header_action is not None
         commands = [
@@ -1333,12 +1364,11 @@ class FeatherRenderer:
                       ThemeRole.HEADER_BACKGROUND)]
         menu = self._buttons.get("nav.menu")
         if menu is not None:
-            (x, y, width, height, label, state, font, subtitle, layout,
-             subtitle_font, subtitle_color, accent) = menu
             commands += self._button_commands(
-                "nav.menu", x, y, width, height, label, state, font,
-                subtitle, self._menu_suppressed, layout, subtitle_font,
-                subtitle_color, accent)
+                "nav.menu", menu.x, menu.y, menu.width, menu.height,
+                menu.label, menu.state, menu.font, menu.subtitle,
+                self._menu_suppressed, menu.layout, menu.subtitle_font,
+                menu.subtitle_color, menu.accent)
             self._menu_suppressed = False
         self.send(commands)
 
@@ -1352,9 +1382,7 @@ class FeatherRenderer:
             self._generation += 1
             self._loader_active = True
         preserve_header_action = self._header_action is not None
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         commands = [
             self.clear_hitboxes("base"),
             self.clear_hitboxes("overlay"),
@@ -1394,9 +1422,7 @@ class FeatherRenderer:
         # toggle/button frame cannot be painted over the restart screen.
         self._generation += 1
         self._loader_active = True
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         commands = [
             self.clear_hitboxes("base"),
             self.clear_hitboxes("overlay"),
@@ -1452,9 +1478,7 @@ class FeatherRenderer:
         """Dim the page and draw a non-interactive modal progress panel."""
         self._generation += 1
         self._loader_active = True
-        self._buttons = {}
-        self._toggles = {}
-        self._hitboxes = {}
+        self._reset_interactions()
         commands = [
             self.clear_hitboxes("base"),
             self.clear_hitboxes("overlay"),

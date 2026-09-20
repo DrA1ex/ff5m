@@ -245,9 +245,20 @@ the FIFO is full; no encoding, write retry, or backpressure loop is scheduled
 on the reactor. Typer also locks the draw FIFO to reject a competing daemon.
 
 Print-preview extraction, FXI1 decoding, mask scanning, and PackBits color
-generation run through the existing background task worker. Reactor callbacks
-only capture the current layer/palette decision and enqueue that work; the
-completed immutable blobs are then published through the render queue. The
+generation run through one file worker rather than the Klipper reactor. Reactor callbacks
+publish completed immutable blobs through the render queue and into a bounded
+in-memory LRU cache owned by the controller. `[feather_screen]` configures its
+approximate retained-memory budget with `preview_cache_kb` (256 KiB by default,
+64 KiB minimum). Entries are keyed by path, file size, mtime, and dimensions,
+so changed files miss the old entry. The active print observes size and mtime
+once when its preview state is created, including for jobs started outside
+Feather. A theme change queues recoloring of the cached neutral mask without
+invoking the preview helper again. The cache lasts for the Klippy
+process lifetime and performs no filesystem I/O.
+
+File tiles and the active-print page use the same `186x177` mask validation,
+cache, and coloring helpers. A preview loaded from either page is available to
+the other while its file metadata still matches. The print-page
 loading animation keeps its 80 ms cadence because each tick only constructs a
 small keyed command batch. Layer recolors use latest observed state and are
 submitted at most once per five seconds; while one is pending, fast layer
@@ -362,6 +373,7 @@ still render a usable interface.
 | `feather_screen_pages.py` | Dashboard, files, USB browser presentation, print status, settings, themes, mod parameters, bounded network helpers, and recovery pages | Klipper lifecycle, USB mount ownership, motion planning, and direct display access |
 | `ui/theme_catalog.py` | Theme schema, fallback palette, bundled/user catalogs, validation, override order, and refresh policy | Drawing commands, page state, or Klipper lifecycle events |
 | `feather_files.py` | Compact file entries, print recency history, bounded USB discovery/helper lifecycle | Page rendering, destructive formatting, or direct block-device mounting |
+| `feather/previews.py` | FXI1 validation, bounded runtime cache, preview-helper lifecycle, and mask recoloring | File-page selection, print progress policy, or reactor scheduling |
 | `feather_screen_controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
 | `feather_feature_ui_test.py`, `feather_ui_test/` | Lazy command facade plus one-run lifecycle, page/action sequencing, reversible printer/context fixtures, exact operation-context traces, framebuffer artifact worker, stale-run cleanup, and bounded `/data` retention | Normal Feather startup, Headless, persistent calibration saves, or renderer ownership |
 | `feather_z_calibration.py` | Idle Z-calibration state, formula, zone aggregation, pressure hysteresis, pages, motion, and exact mesh/runtime restoration | Live-print Z adjustment or unrestricted G-code |
@@ -430,15 +442,33 @@ libc and libstdc++ text. Typer's attributed PSS and private working set are both
 below the 2 MiB budget. Its heap is about 104 KiB; the framebuffer-backed second
 page is a device mapping and does not allocate a 1.5 MiB heap backbuffer.
 
-The complete repository Feather Python source set is about 364 KiB
-(372,412 bytes), below the 500 KiB source budget. Splitting it adds a few module
-headers but does not duplicate controller state. The file browser uses compact
+The budgeted Feather Python source set remains below the 500 KiB source budget.
+Splitting it adds a few module headers but does not duplicate controller state.
+The file browser uses compact
 slot-backed entries so a directory with many G-code files does not retain one
-Python dictionary per row. It presents one flat list, scans at most two visible
-subdirectory levels, and orders files by the newer of their upload/modification
-time and Feather's persisted last-print time. The latter is stored in
-`/opt/config/mod_data/feather_print_history.json` by default and is also updated
-when a print is started outside the local screen.
+Python dictionary per row. It can present the same flat data as five list rows
+or three large preview tiles; a segmented `LIST` / `GRID` control retains a
+46-pixel touch target and changes only page presentation. Tile labels omit the
+known G-code extension and use two proportional-font lines. Tile placeholders
+are painted before any preview work starts. One file worker performs scans,
+print previews, visible tile previews, and then preloads the first 15 files.
+Leaving or refreshing the browser cancels its current preview. The helper
+checks cancellation while waiting for output, at intervals of at most 100 ms;
+it kills and reaps the child before the worker starts another task. Cancelled
+queued previews never launch a helper. Cancellation is not a file failure.
+Each completion is cached and queued for display independently. Returning to a
+cached page needs no background work. A confirmed missing preview is cached for
+the same file version. Stale callbacks cannot publish results after cancellation.
+Helper failures are shown as
+`NO PREVIEW` until an explicit `SCAN` allows another attempt. Each tile
+registers complete normal and pressed surfaces,
+including its cached binary image, so touch feedback and release redraw the
+content instead of replacing it with an empty generic button. Discovery still
+scans at most two
+visible subdirectory levels and orders files by the newer of their
+upload/modification time and Feather's persisted last-print time. The latter is
+stored in `/opt/config/mod_data/feather_print_history.json` by default and is
+also updated when a print is started outside the local screen.
 
 List pagination is centralized in `feather_pagination.py`; file, Wi-Fi, prompt,
 and calibration pages reuse its clamping and visible-row mapping. Mod parameters

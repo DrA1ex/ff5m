@@ -5,23 +5,23 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import logging
-import math
 import os
-import struct
-import subprocess
+import threading
 
 from ui import ThemeColor
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.print_state import PrintState
+from feather.previews import (
+    PREVIEW_EXECUTABLE, PREVIEW_TIMEOUT, PreviewCancelled,
+    colorize_preview, layer_progress, load_preview,
+)
 
 
 GCODE_PREVIEW_LOADER_PERIOD = 0.08
 GCODE_PREVIEW_REDRAW_PERIOD = 5.0
 GCODE_PREVIEW_LOADER_RADII = (7, 10, 13, 10)
 GCODE_PREVIEW_LOADER_DIAMETER = 72
-PREVIEW_EXECUTABLE = "/opt/config/mod/.bin/exec/preview"
-PREVIEW_TIMEOUT = 15.0
 
 
 def _gcode_preview_image_rect():
@@ -32,259 +32,11 @@ def _gcode_preview_image_rect():
     return box.x + padding, box.y + padding, width, height
 
 
-def _decode_packbits(payload, expected_size):
-    output = bytearray()
-    index = 0
-
-    while index < len(payload):
-        header = struct.unpack_from("<b", payload, index)[0]
-        index += 1
-
-        if header >= 0:
-            count = header + 1
-            end = index + count
-
-            if end > len(payload):
-                raise RuntimeError("preview helper returned truncated PackBits data")
-
-            output.extend(payload[index:end])
-            index = end
-        elif header != -128:
-            count = 1 - header
-
-            if index >= len(payload):
-                raise RuntimeError("preview helper returned truncated PackBits repeat")
-
-            output.extend(payload[index:index + 1] * count)
-            index += 1
-
-        if len(output) > expected_size:
-            raise RuntimeError("preview helper returned oversized PackBits output")
-
-    if len(output) != expected_size:
-        raise RuntimeError("preview helper returned invalid PackBits output size")
-
-    return bytes(output)
-
-
-def _decode_fxi1(blob):
-    if len(blob) < 20 or blob[:4] != b"FXI1":
-        raise RuntimeError("preview helper returned invalid FXI1 header")
-
-    version, compression, palette_size, bpp = struct.unpack_from("<BBBB", blob, 4)
-    width, height, unpacked_size, payload_size = struct.unpack_from("<HHII", blob, 8)
-
-    if version != 1:
-        raise RuntimeError("preview helper returned unsupported FXI1 version")
-
-    if palette_size < 1 or palette_size > 8:
-        raise RuntimeError("preview helper returned invalid FXI1 palette size")
-
-    expected_bpp = 1 if palette_size <= 2 else 2 if palette_size <= 4 else 4
-
-    if bpp != expected_bpp:
-        raise RuntimeError("preview helper returned invalid FXI1 bits-per-pixel")
-
-    expected_unpacked_size = (width * height * bpp + 7) // 8
-
-    if unpacked_size != expected_unpacked_size:
-        raise RuntimeError("preview helper returned invalid FXI1 unpacked size")
-
-    palette_offset = 20
-    palette_end = palette_offset + palette_size * 4
-    payload_end = palette_end + payload_size
-
-    if len(blob) != payload_end:
-        raise RuntimeError("preview helper returned truncated FXI1 payload")
-
-    palette = struct.unpack_from("<%dI" % palette_size, blob, palette_offset)
-    payload = blob[palette_end:payload_end]
-
-    if compression == 0:
-        packed = payload
-    elif compression == 1:
-        packed = _decode_packbits(payload, unpacked_size)
-    else:
-        raise RuntimeError("preview helper returned unknown FXI1 compression")
-
-    if len(packed) != unpacked_size:
-        raise RuntimeError("preview helper returned malformed FXI1 payload")
-
-    return {
-        "blob": blob,
-        "width": width,
-        "height": height,
-        "palette": palette,
-        "packed": packed,
-        "bpp": bpp,
-    }
-
-
-def _encode_packbits(payload):
-    output = bytearray()
-    index = 0
-
-    while index < len(payload):
-        repeat = 1
-        while (index + repeat < len(payload) and repeat < 128
-               and payload[index + repeat] == payload[index]):
-            repeat += 1
-
-        if repeat >= 3:
-            output.extend((257 - repeat, payload[index]))
-            index += repeat
-            continue
-
-        literal_start = index
-        literal_count = 0
-        while index < len(payload) and literal_count < 128:
-            repeat = 1
-            while (index + repeat < len(payload) and repeat < 128
-                   and payload[index + repeat] == payload[index]):
-                repeat += 1
-            if repeat >= 3:
-                break
-            take = min(repeat, 128 - literal_count)
-            index += take
-            literal_count += take
-
-        output.append(literal_count - 1)
-        output.extend(payload[literal_start:index])
-
-    return bytes(output)
-
-
-def _parse_argb(value):
-    value = str(value).strip().lstrip("#")
-    if not value or len(value) > 8:
-        raise ValueError("invalid preview color: %s" % value)
-    color = int(value, 16)
-    return color if len(value) > 6 else 0xff000000 | color
-
-
-def _mask_y_bounds(image):
-    width = image["width"]
-    packed = image["packed"]
-    first = None
-    last = None
-
-    for y in range(image["height"]):
-        row_start = y * width
-        present = False
-        for x in range(width):
-            bit = row_start + x
-            if packed[bit // 8] & (1 << (7 - bit % 8)):
-                present = True
-                break
-        if present:
-            if first is None:
-                first = y
-            last = y
-
-    return None if first is None else (first, last)
-
-
-def _fxi1_mask_blob(image, color, first_row=0):
-    if image["bpp"] != 1:
-        raise RuntimeError("preview helper returned a non-mask FXI1 image")
-
-    width = image["width"]
-    height = image["height"]
-    packed = bytearray(image["packed"])
-    first_bit = max(0, min(height, int(first_row))) * width
-    full_bytes, remaining_bits = divmod(first_bit, 8)
-
-    if full_bytes:
-        packed[:full_bytes] = b"\x00" * full_bytes
-    if remaining_bits and full_bytes < len(packed):
-        packed[full_bytes] &= (1 << (8 - remaining_bits)) - 1
-
-    compressed = _encode_packbits(packed)
-    use_compression = len(compressed) < len(packed)
-    payload = compressed if use_compression else bytes(packed)
-    palette = struct.pack("<II", 0, _parse_argb(color))
-    header = struct.pack(
-        "<4sBBBBHHII", b"FXI1", 1, int(use_compression), 2, 1,
-        width, height, len(packed), len(payload))
-    return header + palette + payload
-
-
-def _layer_progress(stats):
-    info = stats.get("info", {})
-    current = info.get("current_layer")
-    total = info.get("total_layer")
-    try:
-        current_value = float(current)
-        total_value = float(total)
-    except (TypeError, ValueError):
-        return None
-    if total_value <= 0:
-        return None
-    ratio = max(0.0, min(1.0, current_value / total_value))
-    return current, total, ratio
-
-
-def _colorize_gcode_preview(image, layer_state, pending, printed):
-    cache = image.setdefault("full_mask_blobs", {})
-
-    def full_mask(color):
-        blob = cache.get(color)
-        if blob is None:
-            blob = _fxi1_mask_blob(image, color)
-            cache[color] = blob
-        return blob
-
-    bounds = image.get("bounds")
-    if bounds is None or layer_state is None:
-        return (full_mask(printed),)
-
-    _current, _total, ratio = layer_state
-    first_y, last_y = bounds
-    row_count = last_y - first_y + 1
-    printed_rows = min(row_count, max(0, int(math.ceil(row_count * ratio))))
-
-    if printed_rows <= 0:
-        return (full_mask(pending),)
-    if printed_rows >= row_count:
-        return (full_mask(printed),)
-
-    cutoff = last_y + 1 - printed_rows
-    return (
-        full_mask(pending),
-        _fxi1_mask_blob(image, printed, cutoff),
-    )
-
-
-def _render_gcode_preview(path):
+def _render_gcode_preview(path, cancel=None):
     _box_x, _box_y, width, height = _gcode_preview_image_rect()
-    args = [
-        PREVIEW_EXECUTABLE,
-        path,
-        "--size", str(width), str(height),
-    ]
-    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    try:
-        stdout, stderr = process.communicate(timeout=PREVIEW_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        raise RuntimeError("preview helper timed out")
-
-    if process.returncode == 2:
-        return None
-
-    if process.returncode != 0:
-        detail = (stderr.decode("utf-8", "replace").strip() or "no error output")[:400]
-        raise RuntimeError("preview helper failed (%d): %s" % (process.returncode, detail))
-
-    image = _decode_fxi1(stdout)
-
-    if image["width"] != width or image["height"] != height:
-        raise RuntimeError("preview helper returned an unexpected FXI1 size")
-
-    image["bounds"] = _mask_y_bounds(image)
-    return image
+    return load_preview(
+        path, width, height, executable=PREVIEW_EXECUTABLE,
+        timeout=PREVIEW_TIMEOUT, cancel=cancel)
 
 
 class PrintingPagesMixin:
@@ -341,7 +93,15 @@ class PrintingPagesMixin:
         self._last_time = values
 
     def _gcode_preview_render_spec(self, stats=None):
-        layer_state = _layer_progress(stats) if stats is not None else None
+        layer_state = None
+        if stats is not None and self._print_controls_ready():
+            layer_state = layer_progress(stats)
+            eventtime = self.reactor.monotonic()
+            if layer_state is None and self._restored_print_active(eventtime):
+                # Recovery seeks past the file header, so layer metadata may
+                # be unavailable. Use the same estimate as the progress bar.
+                progress = self._print_progress(eventtime, stats)
+                layer_state = (progress, 1.0, progress)
         pending = self.renderer.color(ThemeColor.SECONDARY)
         printed = self.renderer.color(ThemeColor.PRIMARY)
         layer_key = (None if layer_state is None
@@ -349,9 +109,11 @@ class PrintingPagesMixin:
         return (layer_key, pending, printed), layer_state, pending, printed
 
     def _prepare_gcode_preview(self, stats=None):
+        self._cancel_file_preview()
         path = self.virtual_sdcard.file_path()
         key = self._gcode_preview_key_for(path)
         if key is None:
+            self._cancel_gcode_preview()
             self._stop_gcode_preview_loader()
             return None
 
@@ -361,8 +123,11 @@ class PrintingPagesMixin:
                 self._start_gcode_preview_loader()
             return preview
 
+        self._cancel_gcode_preview()
         preview = {
             "key": key,
+            "cancel": threading.Event(),
+            "cache_key": self._gcode_preview_cache_key(path),
             "status": "loading",
             "image": None,
             "painted_render_key": None,
@@ -376,30 +141,71 @@ class PrintingPagesMixin:
 
         render_spec = self._gcode_preview_render_spec(stats)
         render_key, layer_state, pending, printed = render_spec
+        cached_image = self._cached_gcode_preview_image(
+            preview["cache_key"])
 
         def task():
-            image = _render_gcode_preview(path)
+            if preview["cancel"].is_set():
+                raise PreviewCancelled()
+            image = cached_image
+            if image is None:
+                image = _render_gcode_preview(path, preview["cancel"])
             if image is None:
                 return None
-            blobs = _colorize_gcode_preview(
+            blobs = colorize_preview(
                 image, layer_state, pending, printed)
-            return image, render_key, blobs
+            cache_blob = colorize_preview(
+                image, None, printed, printed)[0]
+            return image, render_key, blobs, printed, cache_blob
 
-        worker = getattr(self, "file_scan_worker", None)
+        worker = self.file_worker
         if worker is None:
             preview["status"] = "failed"
             self._stop_gcode_preview_loader()
             return preview
 
         submitted = worker.submit(
-            task, lambda value, error: self._gcode_preview_ready(
-                key, value, error))
+            task, lambda value, error:
+            self._gcode_preview_ready(preview, value, error))
         if submitted:
             self._start_gcode_preview_loader()
         else:
             preview["status"] = "failed"
             self._stop_gcode_preview_loader()
         return preview
+
+    def _cancel_gcode_preview(self):
+        preview = getattr(self, "_gcode_preview", None)
+        if preview is not None:
+            preview["cancel"].set()
+        self._gcode_preview = None
+
+    def _gcode_preview_cache_key(self, path):
+        try:
+            file_stat = os.stat(path)
+        except OSError:
+            return None
+        _x, _y, width, height = _gcode_preview_image_rect()
+        return path, file_stat.st_size, file_stat.st_mtime, width, height
+
+    def _cached_gcode_preview_image(self, cache_key):
+        if cache_key is None:
+            return None
+        found, value = self.preview_cache.lookup(cache_key)
+        if not found or value is None:
+            return None
+        image = dict(value["image"])
+        image["full_mask_blobs"] = {}
+        return image
+
+    def _cache_gcode_preview_image(self, cache_key, image, color, blob):
+        if cache_key is None:
+            return
+        cached_image = dict(image)
+        cached_image["full_mask_blobs"] = {color: blob}
+        self.preview_cache.store(
+            cache_key,
+            {"image": cached_image, "color": color, "blob": blob})
 
     def _gcode_preview_image_commands(self, preview):
         if preview.get("image") is None:
@@ -416,11 +222,11 @@ class PrintingPagesMixin:
             return None
         return path, _gcode_preview_image_rect()
 
-    def _gcode_preview_ready(self, key, value, error):
-        preview = getattr(self, "_gcode_preview", None)
-        if preview is None or preview["key"] != key:
+    def _gcode_preview_ready(self, preview, value, error):
+        if getattr(self, "_gcode_preview", None) is not preview:
             return
 
+        key = preview["key"]
         self._stop_gcode_preview_loader()
         if error is not None or value is None:
             logging.info(
@@ -429,10 +235,12 @@ class PrintingPagesMixin:
             preview["image"] = None
         else:
             preview["status"] = "ready"
-            image, render_key, render_blobs = value
+            image, render_key, render_blobs, color, cache_blob = value
             preview["image"] = image
             preview["render_key"] = render_key
             preview["render_blobs"] = render_blobs
+            self._cache_gcode_preview_image(
+                preview["cache_key"], image, color, cache_blob)
 
         if (self._page_paint_allowed(ScreenPage.PRINTING, ScreenPage.PAUSED)
                 and self._gcode_preview_key_for(
@@ -450,7 +258,7 @@ class PrintingPagesMixin:
             return False
         if preview.get("recolor_pending"):
             return False
-        worker = getattr(self, "file_scan_worker", None)
+        worker = self.file_worker
         if worker is None:
             return False
 
@@ -459,7 +267,7 @@ class PrintingPagesMixin:
         preview["redraw_after"] = eventtime + GCODE_PREVIEW_REDRAW_PERIOD
 
         def task():
-            return _colorize_gcode_preview(
+            return colorize_preview(
                 image, layer_state, pending, printed)
 
         def ready(value, error):

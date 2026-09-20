@@ -29,11 +29,16 @@ NETLINK_KOBJECT_UEVENT = 15
 AF_NETLINK = getattr(socket, "AF_NETLINK", 16)
 
 
-class FileScanWorker:
-    """Run filesystem scans away from Klipper's reactor thread.
+class FileTaskSuperseded(RuntimeError):
+    """A queued worker task replaced by a newer request."""
 
-    Only the newest queued request is retained.  A scan already in progress is
-    allowed to finish, but its controller token can discard the stale result.
+
+class FileWorker:
+    """Run file I/O and preview work away from Klipper's reactor thread.
+
+    Only the newest queued request is retained. A displaced queued request is
+    completed with FileTaskSuperseded. A task already in progress is allowed
+    to finish, but its controller token can discard the stale result.
     """
 
     _STOP = object()
@@ -44,24 +49,31 @@ class FileScanWorker:
         self._lock = threading.Lock()
         self._stopped = False
         self._thread = threading.Thread(
-            target=self._work, name="feather-file-scan")
+            target=self._work, name="feather-file-worker")
         self._thread.daemon = True
         self._thread.start()
 
     def submit(self, task, callback):
         request = (task, callback)
+        superseded = None
         with self._lock:
             if self._stopped:
                 return False
             while True:
                 try:
                     self._tasks.put_nowait(request)
-                    return True
+                    break
                 except queue.Full:
                     try:
-                        self._tasks.get_nowait()
+                        superseded = self._tasks.get_nowait()
                     except queue.Empty:
                         pass
+        if superseded is not None and superseded is not self._STOP:
+            _, dropped_callback = superseded
+            self._deliver(
+                dropped_callback, None,
+                FileTaskSuperseded("Replaced by a newer worker task"))
+        return True
 
     def stop(self):
         with self._lock:
@@ -92,19 +104,21 @@ class FileScanWorker:
                 if self._stopped:
                     continue
 
-            def deliver(_eventtime, value=result, failure=error,
-                        done=callback):
-                done(value, failure)
+            self._deliver(callback, result, error)
 
-            try:
-                self._schedule_async(deliver)
-            except (OSError, TypeError):
-                logging.exception(
-                    "[feather_screen] unable to deliver file scan result")
+    def _deliver(self, callback, result, error):
+        def deliver(_eventtime, value=result, failure=error, done=callback):
+            done(value, failure)
+
+        try:
+            self._schedule_async(deliver)
+        except (OSError, TypeError):
+            logging.exception(
+                "[feather_screen] unable to deliver file worker result")
 
 
 class FileEntry:
-    """Compact mapping-compatible record for one flattened browser row."""
+    """Compact record for one flattened browser row."""
 
     __slots__ = ("name", "path", "directory", "size", "mtime")
 
@@ -114,12 +128,6 @@ class FileEntry:
         self.directory = bool(directory)
         self.size = size
         self.mtime = mtime
-
-    def __getitem__(self, key):
-        if key not in self.__slots__:
-            raise KeyError(key)
-        return getattr(self, key)
-
 
 def _relative_path(root, path):
     root = os.path.realpath(root)

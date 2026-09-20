@@ -25,6 +25,7 @@ except ImportError:
     from feather_render_test_helper import RenderCapture
 
 from ui import CONTENT_BOTTOM, Increment
+from ui.font_metrics import get_font_metrics
 from ff5m_ui.move import runtime as MOVE_UI
 from ff5m_ui.move.step import page as MOVE_STEP_PAGE
 from ff5m_ui.heat import runtime as HEAT_UI
@@ -50,6 +51,7 @@ class ScenarioController(FeatherZCalibrationMixin,
 
 
 from feather import files as FILES
+from feather.previews import PreviewCache
 from feather.screen import pages as PAGES
 from feather.screen.pages import files as FILE_PAGES
 from feather.network import client as NETWORK
@@ -224,6 +226,25 @@ def base_controller(state="idle"):
     controller._toast = lambda message: None
     controller._render_print_page = lambda: None
     controller._render_cancel_confirm = lambda: None
+    controller.file_page = 0
+    controller.file_view = "list"
+    controller.file_entries = []
+    controller.file_entry_cache = {}
+    controller.file_entry_loaded_at = {}
+    controller.file_scan_loading = False
+    controller.file_scan_source = None
+    controller.file_scan_phase = 0
+    controller.file_scan_token = 0
+    controller.file_worker = None
+    controller.preview_cache = PreviewCache(256 * 1024)
+    controller.file_preview_request = None
+    controller.file_preview_failures = set()
+    controller.file_preview_preload_signature = ()
+    controller.file_preview_preload_attempted = set()
+    controller.file_preview_visible_attempted = set()
+    controller.selected_file = None
+    controller.file_source = "internal"
+    controller.usb_storage = None
     controller.network_client = None
     controller.network_operation = None
     controller.network_return_page = FEATHER.ScreenPage.NETWORK_HOME
@@ -295,10 +316,10 @@ def attach_network(controller, replies=(), sock=None):
 
 
 class FileWorkflowTest(unittest.TestCase):
-    def test_file_scan_worker_keeps_io_off_caller_and_delivers_on_scheduler(self):
+    def test_file_worker_keeps_io_off_caller_and_delivers_on_scheduler(self):
         callbacks = queue.Queue()
         delivered = []
-        worker = FILES.FileScanWorker(callbacks.put)
+        worker = FILES.FileWorker(callbacks.put)
         try:
             self.assertTrue(worker.submit(
                 lambda: threading.current_thread().name,
@@ -306,10 +327,41 @@ class FileWorkflowTest(unittest.TestCase):
             callback = callbacks.get(timeout=1.0)
             self.assertEqual(delivered, [])
             callback(0.0)
-            self.assertEqual(delivered, [("feather-file-scan", None)])
+            self.assertEqual(delivered, [("feather-file-worker", None)])
         finally:
             worker.stop()
         self.assertFalse(worker.submit(lambda: None, lambda value, error: None))
+
+    def test_file_worker_reports_a_superseded_queued_task(self):
+        callbacks = queue.Queue()
+        started = threading.Event()
+        release = threading.Event()
+        delivered = []
+        worker = FILES.FileWorker(callbacks.put)
+        try:
+            def blocking_task():
+                started.set()
+                release.wait(1.0)
+                return "first"
+
+            self.assertTrue(worker.submit(
+                blocking_task,
+                lambda value, error: delivered.append(("first", error))))
+            self.assertTrue(started.wait(1.0))
+            self.assertTrue(worker.submit(
+                lambda: "second",
+                lambda value, error: delivered.append(("second", error))))
+            self.assertTrue(worker.submit(
+                lambda: "third",
+                lambda value, error: delivered.append(("third", error))))
+
+            callbacks.get(timeout=1.0)(0.0)
+            self.assertEqual(delivered[0][0], "second")
+            self.assertIsInstance(
+                delivered[0][1], FILES.FileTaskSuperseded)
+        finally:
+            release.set()
+            worker.stop()
 
     def test_file_browser_loads_in_background_and_pages_use_cached_scan(self):
         class PendingWorker:
@@ -332,7 +384,7 @@ class FileWorkflowTest(unittest.TestCase):
         controller.file_scan_phase = 0
         controller.file_scan_token = 0
         controller.usb_storage = None
-        controller.file_scan_worker = PendingWorker()
+        controller.file_worker = PendingWorker()
         controller.renderer = FEATHER.FeatherRenderer()
         rendering = RenderCapture(controller.renderer)
 
@@ -346,17 +398,17 @@ class FileWorkflowTest(unittest.TestCase):
 
         controller._render_file_browser()
 
-        self.assertEqual(len(controller.file_scan_worker.requests), 1)
+        self.assertEqual(len(controller.file_worker.requests), 1)
         self.assertTrue(controller.file_scan_loading)
 
         # A newer request supersedes an in-flight result. This covers USB
         # changes and explicit refreshes racing a slow flash scan.
-        first_callback = controller.file_scan_worker.requests[0][1]
+        first_callback = controller.file_worker.requests[0][1]
         controller._invalidate_file_entries("internal")
         controller.file_scan_loading = False
         controller._build_file_scan_task = lambda source: lambda: new_entries
         controller._start_file_scan("internal")
-        second_callback = controller.file_scan_worker.requests[1][1]
+        second_callback = controller.file_worker.requests[1][1]
         first_callback(old_entries, None)
         self.assertNotIn("internal", controller.file_entry_cache)
         second_callback(new_entries, None)
@@ -365,7 +417,7 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertIs(controller.file_entry_cache["internal"], new_entries)
         self.assertTrue(rendering.latest.has_action("file.refresh"))
         requests_before_page_change = len(
-            controller.file_scan_worker.requests)
+            controller.file_worker.requests)
 
         # A browser left open keeps its snapshot even after the reopen TTL.
         controller.reactor.now += FILE_PAGES.FILE_CACHE_TTL + 1.0
@@ -373,7 +425,7 @@ class FileWorkflowTest(unittest.TestCase):
 
         self.assertEqual(controller.file_page, 1)
         self.assertEqual(
-            len(controller.file_scan_worker.requests),
+            len(controller.file_worker.requests),
             requests_before_page_change)
 
         controller._build_file_scan_task = lambda source: lambda: new_entries
@@ -382,8 +434,446 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(controller.file_source, "internal")
         self.assertEqual(controller.file_page, 0)
         self.assertEqual(
-            len(controller.file_scan_worker.requests),
+            len(controller.file_worker.requests),
             requests_before_page_change + 1)
+
+    def test_file_scan_drops_failures_for_changed_non_preloaded_files(self):
+        controller = base_controller()
+        entries = [
+            FILES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index,
+                size=100 + index, mtime=10 + index)
+            for index in range(16)
+        ]
+        stale_key = controller._file_preview_key(entries[-1])
+        usb_entry = FILES.FileEntry(
+            "usb.gcode", "/data/USB/usb.gcode", size=10, mtime=5)
+        usb_key = controller._file_preview_key(usb_entry)
+        controller.file_entry_cache["usb"] = [usb_entry]
+        controller.file_preview_failures.update((stale_key, usb_key))
+        controller.file_preview_preload_signature = tuple(
+            controller._file_preview_key(entry) for entry in entries[:15])
+        entries[-1] = FILES.FileEntry(
+            "part-15.gcode", "/data/part-15.gcode", size=999, mtime=99)
+
+        controller._finish_file_scan(0, "internal", entries, None)
+
+        self.assertNotIn(stale_key, controller.file_preview_failures)
+        self.assertIn(usb_key, controller.file_preview_failures)
+
+    def test_file_tiles_defer_preview_work_and_show_large_placeholders(self):
+        class PendingWorker:
+            def __init__(self):
+                self.requests = []
+
+            def submit(self, task, callback):
+                self.requests.append((task, callback))
+                return True
+
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        controller.file_entries = [
+            FILES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index,
+                size=100 + index, mtime=10 + index)
+            for index in range(4)
+        ]
+        controller.file_worker = PendingWorker()
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+
+        with mock.patch.object(
+                FILE_PAGES, "load_preview",
+                side_effect=AssertionError("preview ran in reactor")):
+            controller._render_file_entries()
+
+        self.assertEqual(len(controller.file_worker.requests), 1)
+        self.assertTrue(rendering.latest.has_text("LOADING..."))
+        self.assertEqual(
+            rendering.latest.button("file.view.tiles").state, "selected")
+        self.assertEqual(
+            rendering.latest.button("file.view.list").bounds.height, 46)
+        for action in (
+                "file.view.list", "file.view.tiles", "file.refresh"):
+            button = rendering.latest.button(action)
+            self.assertLessEqual(
+                get_font_metrics().text_width(button.label, button.font),
+                button.bounds.width
+                - 2 * FEATHER.FeatherRenderer.BUTTON_TEXT_PADDING)
+        for index in range(3):
+            tile = rendering.latest.button("file.item%d" % index).bounds
+            self.assertGreaterEqual(tile.width, 200)
+            self.assertGreaterEqual(tile.height, 200)
+
+    def test_file_tiles_preload_first_fifteen_files_one_at_a_time(self):
+        class PendingWorker:
+            def __init__(self):
+                self.requests = []
+
+            def submit(self, task, callback):
+                self.requests.append((task, callback))
+                return True
+
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        controller.file_entries = [
+            FILES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index,
+                size=100 + index, mtime=10 + index)
+            for index in range(18)
+        ]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = PendingWorker()
+        controller.preview_cache = PreviewCache(64 * 1024)
+        controller._render_file_entries()
+
+        loaded = []
+        foreground_index = 0
+        while controller.file_preview_request is not None:
+            loaded.append(controller.file_preview_request["key"][0])
+            callback = controller.file_worker.requests[
+                foreground_index][1]
+            foreground_index += 1
+            blob = bytes((foreground_index,)) * 20000
+            callback({
+                "image": {},
+                "color": controller.renderer.color(FEATHER.ThemeColor.PRIMARY),
+                "blob": blob,
+            }, None)
+        self.assertEqual(
+            loaded, ["/data/part-%d.gcode" % index for index in range(15)])
+        self.assertIsNone(controller.file_preview_request)
+        self.assertLess(len(controller.preview_cache), 15)
+        self.assertGreater(len(controller.preview_cache), 0)
+        self.assertEqual(len(controller.file_worker.requests), 15)
+
+    def test_scan_cancels_visible_or_preloaded_preview(self):
+        for cached_visible in (False, True):
+            with self.subTest(cached_visible=cached_visible):
+                controller = base_controller()
+                controller.page = FEATHER.ScreenPage.FILE_BROWSER
+                controller.file_view = "tiles"
+                controller.file_entries = [
+                    FILES.FileEntry(str(i), "/data/%d.gcode" % i)
+                    for i in range(5)]
+                controller.renderer = FEATHER.FeatherRenderer()
+                RenderCapture(controller.renderer)
+                controller.file_worker = mock.Mock()
+                if cached_visible:
+                    for entry in controller.file_entries[:3]:
+                        controller.preview_cache.store(
+                            controller._file_preview_key(entry), None)
+                controller._render_file_entries()
+                request = controller.file_preview_request
+                task, callback = controller.file_worker.submit.call_args.args
+                controller._build_file_scan_task = lambda source: lambda: []
+                controller._start_file_scan("internal")
+
+                with mock.patch.object(FILE_PAGES, "load_preview") as load:
+                    with self.assertRaises(FILE_PAGES.PreviewCancelled):
+                        task()
+                load.assert_not_called()
+                callback(None, RuntimeError("late failure"))
+                self.assertNotIn(request["key"], controller.file_preview_failures)
+                self.assertTrue(controller.file_scan_loading)
+
+    def test_page_change_cancels_old_preview_and_ignores_its_result(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_entries = [
+            FILES.FileEntry(str(i), "/data/%d.gcode" % i)
+            for i in range(6)]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        controller._render_file_entries()
+        old_request = controller.file_preview_request
+        old_callback = controller.file_worker.submit.call_args.args[1]
+        controller.file_page = 1
+        controller._render_file_entries()
+        current = controller.file_preview_request
+
+        self.assertTrue(old_request["cancel"].is_set())
+        self.assertEqual(current["key"][0], "/data/3.gcode")
+        old_callback(None, RuntimeError("late failure"))
+        self.assertIs(controller.file_preview_request, current)
+        self.assertEqual(controller.file_preview_failures, set())
+
+    def test_theme_recolor_is_submitted_to_the_worker(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        entry = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=100, mtime=10)
+        key = controller._file_preview_key(entry)
+        controller.preview_cache.store(key, {
+            "image": {}, "color": "old-theme", "blob": b"old",
+        })
+        controller.file_worker = mock.Mock()
+
+        with mock.patch.object(
+                FILE_PAGES, "colorize_preview",
+                side_effect=AssertionError("recolor ran in reactor")):
+            found, blob = controller._cached_file_preview(entry)
+
+        self.assertFalse(found)
+        self.assertIsNone(blob)
+        task, callback = controller.file_worker.submit.call_args.args
+        with mock.patch.object(
+                FILE_PAGES, "colorize_preview",
+                return_value=(b"recolored",)) as colorize:
+            value = task()
+        colorize.assert_called_once()
+        callback(value, None)
+        found, blob = controller._cached_file_preview(entry)
+        self.assertTrue(found)
+        self.assertEqual(blob, b"recolored")
+
+    def test_theme_recolor_failure_waits_for_explicit_scan(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        entry = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=100, mtime=10)
+        key = controller._file_preview_key(entry)
+        controller.preview_cache.store(key, {
+            "image": {}, "color": "old-theme", "blob": b"old",
+        })
+        controller.file_worker = mock.Mock()
+
+        self.assertEqual(controller._cached_file_preview(entry), (False, None))
+        callback = controller.file_worker.submit.call_args.args[1]
+        callback(None, RuntimeError("recolor failed"))
+
+        self.assertEqual(controller._cached_file_preview(entry), (True, None))
+        self.assertEqual(controller.file_worker.submit.call_count, 1)
+
+    def test_preload_candidate_collection_stops_after_fifteen_files(self):
+        class LargeEntries:
+            def __init__(self):
+                self.visited = 0
+
+            def __iter__(self):
+                for index in range(100):
+                    self.visited += 1
+                    if self.visited > FILE_PAGES.FILE_PRELOAD_LIMIT:
+                        raise AssertionError("walked past preload limit")
+                    yield FILES.FileEntry(
+                        "part-%d.gcode" % index,
+                        "/data/part-%d.gcode" % index)
+
+        controller = base_controller()
+        entries = LargeEntries()
+        controller.file_entries = entries
+
+        _visible, preload = controller._file_preview_candidates([])
+
+        self.assertEqual(len(preload), FILE_PAGES.FILE_PRELOAD_LIMIT)
+        self.assertEqual(entries.visited, FILE_PAGES.FILE_PRELOAD_LIMIT)
+
+    def test_visible_page_takes_priority_over_background_preload(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        controller.file_entries = [
+            FILES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index,
+                size=100 + index, mtime=10 + index)
+            for index in range(18)
+        ]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        controller._render_file_entries()
+        first_callback = controller.file_worker.submit.call_args.args[1]
+
+        controller.file_page = 5
+        controller._render_file_entries()
+        first_callback({
+            "image": {},
+            "color": controller.renderer.color(FEATHER.ThemeColor.PRIMARY),
+            "blob": b"first",
+        }, None)
+
+        self.assertEqual(
+            controller.file_preview_request["key"][0],
+            "/data/part-15.gcode")
+
+    def test_file_tile_cache_survives_navigation_and_invalidates_by_metadata(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        entry = FILES.FileEntry(
+            "a-very-long-print-filename.gcode", "/data/part.gcode",
+            size=100, mtime=10)
+        controller.file_entries = [entry, FILES.FileEntry(
+            "second.gcode", "/data/second.gcode", size=200, mtime=20)]
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        key = controller._file_preview_key(entry)
+        controller.preview_cache.store(key, {
+            "image": {},
+            "color": controller.renderer.color(FEATHER.ThemeColor.PRIMARY),
+            "blob": b"cached",
+        })
+
+        controller._render_file_entries()
+
+        self.assertTrue(rendering.latest.has_text(
+            "a-very-long-print-filename"))
+        label = rendering.latest.text("a-very-long-print-filename")
+        self.assertEqual(label.font, "Roboto Bold 12pt")
+        self.assertEqual(label.max_height, 68)
+        self.assertEqual(
+            controller.file_preview_request["key"][0], "/data/second.gcode")
+
+        feedback = []
+        controller.renderer.send = lambda commands: feedback.append(
+            list(commands))
+        self.assertTrue(controller.renderer.flash_button("file.item0"))
+        self.assertTrue(controller.renderer.restore_button("file.item0"))
+        self.assertEqual(len(feedback), 2)
+        for batch in feedback:
+            self.assertTrue(any(
+                getattr(command, "payload", None) == b"cached"
+                for command in batch))
+            self.assertTrue(any(
+                "a-very-long-print-filename" in command
+                for command in batch))
+
+        second_callback = controller.file_worker.submit.call_args.args[1]
+        generation = controller.renderer._generation
+        self.assertTrue(controller.renderer.flash_button("file.item1"))
+        entry.mtime = 30
+        second_callback({
+            "image": {},
+            "color": controller.renderer.color(FEATHER.ThemeColor.PRIMARY),
+            "blob": b"second",
+        }, None)
+        self.assertEqual(controller.renderer._generation, generation)
+        self.assertTrue(any(
+            getattr(command, "payload", None) == b"second"
+            for command in feedback[-1]))
+        self.assertTrue(controller.renderer.restore_button("file.item1"))
+        self.assertTrue(any(
+            getattr(command, "payload", None) == b"second"
+            for command in feedback[-1]))
+        self.assertEqual(
+            controller.file_preview_request["key"],
+            controller._file_preview_key(entry))
+
+    def test_preview_failure_retries_only_after_explicit_scan(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        entry = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=100, mtime=10)
+        controller.file_entries = [entry]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        controller._render_file_entries()
+        callback = controller.file_worker.submit.call_args.args[1]
+
+        callback(None, RuntimeError("temporary helper failure"))
+
+        self.assertIsNone(controller.file_preview_request)
+        self.assertFalse(
+            controller.preview_cache.contains(
+                controller._file_preview_key(entry)))
+        self.assertIn(
+            controller._file_preview_key(entry),
+            controller.file_preview_failures)
+
+        controller._render_file_browser = controller._render_file_entries
+        controller._handle_file_action("file.refresh")
+
+        self.assertEqual(controller.file_preview_failures, set())
+        self.assertEqual(controller.file_worker.submit.call_count, 2)
+        self.assertEqual(
+            controller.file_preview_request["key"],
+            controller._file_preview_key(entry))
+
+    def test_scan_ignores_the_previous_preview_result(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        entry = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=100, mtime=10)
+        controller.file_entries = [entry]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        controller._render_file_entries()
+        old_request = controller.file_preview_request
+        old_callback = controller.file_worker.submit.call_args.args[1]
+        controller._render_file_browser = controller._render_file_entries
+
+        controller._handle_file_action("file.refresh")
+        new_request = controller.file_preview_request
+        old_callback(None, RuntimeError("old helper failure"))
+
+        self.assertIsNot(new_request, old_request)
+        self.assertIs(controller.file_preview_request, new_request)
+        self.assertEqual(controller.file_preview_failures, set())
+
+    def test_missing_preview_is_cached_without_repeated_helper_calls(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.FILE_BROWSER
+        controller.file_view = "tiles"
+        controller.file_page = 0
+        entry = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode", size=100, mtime=10)
+        controller.file_entries = [entry]
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.file_worker = mock.Mock()
+        controller._render_file_entries()
+        callback = controller.file_worker.submit.call_args.args[1]
+
+        callback(None, None)
+        controller._render_file_entries()
+
+        self.assertTrue(
+            controller.preview_cache.contains(
+                controller._file_preview_key(entry)))
+        self.assertEqual(controller.file_worker.submit.call_count, 1)
+
+    def test_file_view_changes_page_size_without_changing_entry_actions(self):
+        controller = base_controller()
+        controller.file_view = "list"
+        controller.file_page = 2
+        controller.file_entries = [
+            FILES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index)
+            for index in range(4)
+        ]
+        rendered = []
+        controller._render_file_browser = lambda: rendered.append(
+            (controller.file_view, controller.file_page))
+
+        controller._handle_file_action("file.view.tiles")
+
+        self.assertEqual(controller.file_view, "tiles")
+        self.assertEqual(controller.file_page, 0)
+        self.assertEqual(rendered, [("tiles", 0)])
+
+        shown = []
+        controller.file_page = 1
+        controller._show_page = shown.append
+        controller._handle_file_action("file.item0")
+
+        self.assertIs(controller.selected_file, controller.file_entries[3])
+        self.assertEqual(shown, [FEATHER.ScreenPage.FILE_CONFIRM])
 
     def test_file_cache_ttl_applies_when_browser_is_reopened(self):
         controller = base_controller()
@@ -430,11 +920,11 @@ class FileWorkflowTest(unittest.TestCase):
             controller.virtual_sdcard = VirtualSD(root)
             controller._load_file_entries()
             self.assertEqual(
-                {entry["name"] for entry in controller.file_entries},
+                {entry.name for entry in controller.file_entries},
                 {"root.gcode", "models/level-one.gco",
                  "models/project/level-two.g"})
             self.assertTrue(all(
-                not entry["directory"] for entry in controller.file_entries))
+                not entry.directory for entry in controller.file_entries))
 
     def test_file_browser_uses_newest_of_print_and_file_times(self):
         with tempfile.TemporaryDirectory() as root:
@@ -456,7 +946,7 @@ class FileWorkflowTest(unittest.TestCase):
             controller._load_file_entries()
 
             self.assertEqual(
-                [entry["name"] for entry in controller.file_entries],
+                [entry.name for entry in controller.file_entries],
                 ["old-printed.gcode", "recently-added.gcode"])
 
     def test_real_print_transition_persists_history(self):
@@ -500,8 +990,8 @@ class FileWorkflowTest(unittest.TestCase):
 
             self.assertEqual(shown, [FEATHER.ScreenPage.FILE_CONFIRM])
             self.assertEqual(
-                controller.selected_file["path"], os.path.realpath(path))
-            self.assertEqual(controller.selected_file["name"], "part.gcode")
+                controller.selected_file.path, os.path.realpath(path))
+            self.assertEqual(controller.selected_file.name, "part.gcode")
             self.assertEqual(
                 controller.file_confirm_return_page, FEATHER.ScreenPage.IDLE_HOME)
             self.assertTrue(controller.file_confirm_repeat)
@@ -537,7 +1027,8 @@ class FileWorkflowTest(unittest.TestCase):
     def test_repeat_confirmation_returns_to_dashboard(self):
         controller = base_controller()
         controller.page = FEATHER.ScreenPage.FILE_CONFIRM
-        controller.selected_file = {"path": "/data/part.gcode"}
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode")
         controller.file_confirm_return_page = FEATHER.ScreenPage.IDLE_HOME
         controller.file_confirm_repeat = True
         shown = []
@@ -650,8 +1141,8 @@ class FileWorkflowTest(unittest.TestCase):
         controller._render_file_confirm()
 
         frame = rendering.latest
-        filename = frame.text(controller.selected_file["name"])
-        size = frame.text(controller._format_size(controller.selected_file["size"]))
+        filename = frame.text(controller.selected_file.name)
+        size = frame.text(controller._format_size(controller.selected_file.size))
         first_toggle = frame.toggle("file.mesh.rebuild").bounds
         start = frame.button("file.start").bounds
         full_width_option_panels = [
@@ -672,7 +1163,8 @@ class FileWorkflowTest(unittest.TestCase):
     def test_back_from_file_confirmation_discards_mesh_options(self):
         controller = base_controller()
         controller.page = FEATHER.ScreenPage.FILE_CONFIRM
-        controller.selected_file = {"path": "/data/part.gcode"}
+        controller.selected_file = FILES.FileEntry(
+            "part.gcode", "/data/part.gcode")
         controller.file_confirm_rebuild_mesh = True
         controller.file_confirm_auto_mesh = True
         shown = []
@@ -690,8 +1182,10 @@ class FileWorkflowTest(unittest.TestCase):
             pathlib.Path(path).write_text("G28\n", encoding="utf-8")
             controller = base_controller()
             controller.virtual_sdcard = VirtualSD(root)
-            controller.selected_file = {"path": path}
+            controller.selected_file = FILES.FileEntry(
+                os.path.basename(path), path, size=1, mtime=1)
             controller._start_selected_file()
+            file_stat = os.stat(path)
             self.assertEqual(
                 controller.gcode.commands[0].splitlines(), [
                     'SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"',
@@ -701,6 +1195,9 @@ class FileWorkflowTest(unittest.TestCase):
                     "VARIABLE=feather_mesh_name VALUE=None",
                 ])
             self.assertEqual(controller.last_job_path, 'part "one".gcode')
+            self.assertEqual(controller.selected_file.size, file_stat.st_size)
+            self.assertEqual(
+                controller.selected_file.mtime, file_stat.st_mtime)
             os.unlink(path)
             with self.assertRaisesRegex(RuntimeError, "no longer available"):
                 controller._start_selected_file()
@@ -711,7 +1208,8 @@ class FileWorkflowTest(unittest.TestCase):
             pathlib.Path(path).write_text("G28\n", encoding="utf-8")
             controller = base_controller()
             controller.virtual_sdcard = VirtualSD(root)
-            controller.selected_file = {"path": path}
+            controller.selected_file = FILES.FileEntry(
+                "part.gcode", path)
             controller.file_confirm_rebuild_mesh = True
             controller.file_confirm_auto_mesh = True
 
@@ -748,7 +1246,8 @@ class FileWorkflowTest(unittest.TestCase):
             controller = base_controller()
             controller.gcode = LiteralParsingGCode()
             controller.virtual_sdcard = VirtualSD(root)
-            controller.selected_file = {"path": path}
+            controller.selected_file = FILES.FileEntry(
+                "part.gcode", path)
             controller.file_confirm_rebuild_mesh = True
             controller.file_confirm_auto_mesh = True
 
@@ -957,10 +1456,10 @@ class FileWorkflowTest(unittest.TestCase):
 
             controller._load_file_entries()
 
-            self.assertEqual(controller.file_entries[0]["name"], "USB")
-            self.assertTrue(controller.file_entries[0]["directory"])
+            self.assertEqual(controller.file_entries[0].name, "USB")
+            self.assertTrue(controller.file_entries[0].directory)
             self.assertEqual(
-                [entry["name"] for entry in controller.file_entries[1:]],
+                [entry.name for entry in controller.file_entries[1:]],
                 ["internal.gcode"])
 
     def test_usb_files_use_flat_recency_sort_and_virtual_sd_path(self):
@@ -986,7 +1485,7 @@ class FileWorkflowTest(unittest.TestCase):
             controller._load_file_entries()
 
             self.assertEqual(
-                [entry["name"] for entry in controller.file_entries],
+                [entry.name for entry in controller.file_entries],
                 ["models/old.gcode", "new.gcode"])
             controller.selected_file = controller.file_entries[0]
             controller._start_selected_file()
@@ -1057,7 +1556,8 @@ class FileWorkflowTest(unittest.TestCase):
         controller = base_controller()
         controller.file_source = "usb"
         controller.page = FEATHER.ScreenPage.FILE_CONFIRM
-        controller.selected_file = {"path": "/data/USB/job.gcode"}
+        controller.selected_file = FILES.FileEntry(
+            "job.gcode", "/data/USB/job.gcode")
         controller.usb_storage = type("USB", (), {
             "available": False,
             "resume": lambda self, eventtime: None,

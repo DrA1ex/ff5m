@@ -149,10 +149,12 @@ class Printer:
         pass
 
 class Config:
-    def __init__(self, blending=None, raster_acceleration=None):
+    def __init__(self, blending=None, raster_acceleration=None,
+                 preview_cache_kb=None):
         self.printer = Printer()
         self.blending = blending
         self.raster_acceleration = raster_acceleration
+        self.preview_cache_kb = preview_cache_kb
     def get_printer(self):
         return self.printer
     def getboolean(self, name, default=False):
@@ -160,6 +162,8 @@ class Config:
             return self.blending
         return default
     def getfloat(self, name, default=None, minval=None):
+        if name == 'preview_cache_kb' and self.preview_cache_kb is not None:
+            return float(self.preview_cache_kb)
         return default
     def get(self, name, default=None):
         if name == 'raster_acceleration' and self.raster_acceleration is not None:
@@ -176,6 +180,9 @@ assert controller.blending is True
 assert controller.renderer.blending is True
 assert controller.raster_acceleration == 'scalar'
 assert controller.renderer.raster_acceleration == 'scalar'
+assert controller.preview_cache.budget_bytes == 256 * 1024
+custom_cache = feather_screen.FeatherScreen(Config(preview_cache_kb=96))
+assert custom_cache.preview_cache.budget_bytes == 96 * 1024
 disabled = feather_screen.FeatherScreen(Config(False))
 assert disabled.blending is False
 assert disabled.renderer.blending is False

@@ -10,6 +10,8 @@ import math
 import os
 import re
 
+from feather.files import FileEntry
+
 
 _MISSING = object()
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -341,11 +343,9 @@ class ContextTestFixture:
                 "source": getattr(self.host, "file_source", "internal"),
                 "page": getattr(self.host, "file_page", 0),
             }
-        entry = {
-            "name": os.path.basename(path), "path": path,
-            "directory": False, "size": stat.st_size,
-            "mtime": stat.st_mtime,
-        }
+        entry = FileEntry(
+            os.path.basename(path), path,
+            size=stat.st_size, mtime=stat.st_mtime)
         if cache is not None and loaded_at is not None:
             self.host.file_scan_token = getattr(
                 self.host, "file_scan_token", 0) + 1

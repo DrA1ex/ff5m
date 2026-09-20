@@ -33,6 +33,7 @@ from ff5m_ui.filament import actions as FILAMENT_ACTIONS
 from ff5m_ui.home import page as HOME_PAGE
 from ff5m_ui.home import state as HOME_STATE
 from ff5m_ui.keys import AppPage
+from feather.previews import PreviewCache
 from feather.features.filament import FilamentFeature
 from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
@@ -2241,6 +2242,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.operation_context = None
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
+        controller.selected_file = None
+        controller.preview_cache = PreviewCache(256 * 1024)
+        controller.file_worker = None
         controller._live_z_adjust_allowed = lambda eventtime: False
         controller._current_print_progress_commands = (
             lambda eventtime: ([], 0, None))
@@ -2267,6 +2271,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.operation_context = None
         controller.virtual_sdcard = type("SD", (), {
             "file_path": lambda self: "/data/test.gcode"})()
+        controller.selected_file = None
+        controller.preview_cache = PreviewCache(256 * 1024)
+        controller.file_worker = None
         controller.print_flow = type("Flow", (), {"variables": {
             "active": False, "phase": "PREPARING"}})()
         controller.start_print_macro = type("Start", (), {"variables": {

@@ -22,6 +22,9 @@ from feather.screen.pages import printing as PAGES  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.printing import runtime as printing_ui  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
+from feather.previews import (  # noqa: E402
+    PREVIEW_MASK_SIZE, PreviewCache, colorize_preview, decode_fxi1)
+from feather.files import FileEntry  # noqa: E402
 from ui.font_metrics import get_font_metrics  # noqa: E402
 
 from tests.test_feather_screen import Reactor, StatusObject  # noqa: E402
@@ -108,7 +111,7 @@ def _preview_fixture_blob():
 
 
 def _foreground_rows(blob):
-    image = PAGES._decode_fxi1(blob)
+    image = decode_fxi1(blob)
     width = image["width"]
     packed = image["packed"]
     return {
@@ -183,12 +186,30 @@ def _controller(file_path, worker=None):
     controller.motion_report = None
     controller._live_z_adjust_allowed = lambda _eventtime: True
     controller.renderer.set_header_action("global.abort", "ABORT")
-    controller.file_scan_worker = worker
+    controller.file_worker = worker
+    controller.selected_file = None
+    controller.preview_cache = PreviewCache(256 * 1024)
+    controller.file_preview_failures = set()
+    controller.file_preview_preload_signature = ()
+    controller.file_preview_preload_attempted = set()
+    controller.file_preview_visible_attempted = set()
     controller._gcode_preview = None
     return controller
 
 
 class PreviewProcessTest(unittest.TestCase):
+    def test_print_page_uses_shared_preview_loader(self):
+        width, height = PAGES._gcode_preview_image_rect()[2:]
+        with mock.patch.object(
+                PAGES, "load_preview", return_value=None) as load:
+            self.assertIsNone(
+                PAGES._render_gcode_preview("/data/part.gcode"))
+
+        load.assert_called_once_with(
+            "/data/part.gcode", width, height,
+            executable=PAGES.PREVIEW_EXECUTABLE,
+            timeout=PAGES.PREVIEW_TIMEOUT, cancel=None)
+
     def test_exit_contract_and_command_validation(self):
         with PreviewHelper():
             ready = _write_gcode()
@@ -249,6 +270,10 @@ class PrintPreviewLayoutTest(unittest.TestCase):
             r"--max-width (\d+)", filename).group(1)) + details.x,
             panel_x - 12)
 
+    def test_file_tiles_and_print_page_share_one_preview_resolution(self):
+        self.assertEqual(
+            PAGES._gcode_preview_image_rect()[2:], PREVIEW_MASK_SIZE)
+
     def test_progress_updates_never_paint_over_the_preview_panel(self):
         controller = _controller("/data/missing.gcode")
         controller._last_print_controls_ready = True
@@ -274,6 +299,76 @@ class PrintPreviewLayoutTest(unittest.TestCase):
 
 
 class PrintPreviewLifecycleTest(unittest.TestCase):
+    def test_print_reuses_a_browser_preview_with_current_metadata(self):
+        path = _write_gcode()
+        try:
+            file_stat = pathlib.Path(path).stat()
+            controller = _controller(path, SynchronousPreviewWorker())
+            controller.selected_file = FileEntry(
+                pathlib.Path(path).name, path,
+                size=file_stat.st_size, mtime=file_stat.st_mtime)
+            controller.preview_cache = PreviewCache(256 * 1024)
+            width, height = PAGES._gcode_preview_image_rect()[2:]
+            image = decode_fxi1(_preview_fixture_blob())
+            image["bounds"] = (18, 20)
+            color = controller.renderer.color(PAGES.ThemeColor.PRIMARY)
+            blob = colorize_preview(
+                image, None, color, color)[0]
+            controller.preview_cache.store(
+                (path, file_stat.st_size, file_stat.st_mtime, width, height),
+                {"image": image, "color": color, "blob": blob})
+
+            with mock.patch.object(
+                    PAGES, "_render_gcode_preview",
+                    side_effect=AssertionError("preview helper was called")):
+                controller._render_print_page()
+        finally:
+            pathlib.Path(path).unlink()
+
+        self.assertEqual(controller._gcode_preview["status"], "ready")
+        self.assertEqual(
+            len(controller.file_worker.submitted), 1)
+
+    def test_external_print_does_not_reuse_stale_selected_file_metadata(self):
+        path = _write_gcode()
+        try:
+            old_stat = pathlib.Path(path).stat()
+            controller = _controller(path, SynchronousPreviewWorker())
+            controller.selected_file = FileEntry(
+                pathlib.Path(path).name, path,
+                size=old_stat.st_size, mtime=old_stat.st_mtime)
+            width, height = PAGES._gcode_preview_image_rect()[2:]
+            image = decode_fxi1(_preview_fixture_blob())
+            image["bounds"] = (18, 20)
+            color = controller.renderer.color(PAGES.ThemeColor.PRIMARY)
+            old_key = (
+                path, old_stat.st_size, old_stat.st_mtime, width, height)
+            controller.preview_cache.store(old_key, {
+                "image": image,
+                "color": color,
+                "blob": colorize_preview(image, None, color, color)[0],
+            })
+
+            pathlib.Path(path).write_text(
+                "G28\nG1 X10 Y10\n", encoding="ascii")
+            current_stat = pathlib.Path(path).stat()
+            current_key = (
+                path, current_stat.st_size, current_stat.st_mtime,
+                width, height)
+            with mock.patch.object(
+                    PAGES, "_render_gcode_preview",
+                    return_value=decode_fxi1(
+                        _preview_fixture_blob())) as render_preview:
+                controller._render_print_page()
+        finally:
+            pathlib.Path(path).unlink()
+
+        render_preview.assert_called_once_with(
+            path, controller._gcode_preview["cancel"])
+        self.assertNotEqual(old_key, current_key)
+        self.assertTrue(controller.preview_cache.contains(current_key))
+        self.assertFalse(controller.preview_cache.contains(old_key))
+
     def test_preview_identity_does_not_read_the_filesystem(self):
         controller = _controller("/data/current.gcode")
 
@@ -300,12 +395,20 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
 
         self.assertFalse(controller._gcode_preview_loading_active())
 
-    def test_ready_result_is_painted_inside_the_box_and_cached(self):
+    def test_ready_result_is_painted_and_shared_with_the_browser(self):
         with PreviewHelper():
             path = _write_gcode()
             try:
                 worker = SynchronousPreviewWorker()
                 controller = _controller(path, worker)
+                file_stat = pathlib.Path(path).stat()
+                controller.selected_file = FileEntry(
+                    pathlib.Path(path).name, path,
+                    size=file_stat.st_size, mtime=file_stat.st_mtime)
+                width, height = PAGES._gcode_preview_image_rect()[2:]
+                cache_key = (
+                    path, file_stat.st_size, file_stat.st_mtime,
+                    width, height)
                 controller._render_print_page()
                 controller._render_print_page()
             finally:
@@ -321,6 +424,13 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
         self.assertIn("-p %d %d" % (
             box.x + padding, box.y + padding), image)
         self.assertEqual(image.payload[:4], b"FXI1")
+        found, cached = controller.preview_cache.lookup(cache_key)
+        self.assertTrue(found)
+        self.assertEqual(cached["blob"][:4], b"FXI1")
+        found, browser_blob = controller._cached_file_preview(
+            controller.selected_file)
+        self.assertTrue(found)
+        self.assertEqual(browser_blob, cached["blob"])
 
     def test_preview_uses_theme_colors_and_fills_from_bottom(self):
         with PreviewHelper():
@@ -343,8 +453,8 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
         # both that build and its completion redraw carry the cached pair.
         self.assertEqual(len(images), 4)
         images = images[-2:]
-        pending = PAGES._decode_fxi1(images[0].payload)
-        printed = PAGES._decode_fxi1(images[1].payload)
+        pending = decode_fxi1(images[0].payload)
+        printed = decode_fxi1(images[1].payload)
         self.assertEqual(
             pending["palette"],
             (0, 0xff000000 | int(controller.renderer.color(
@@ -355,6 +465,54 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 PAGES.ThemeColor.PRIMARY), 16)))
         self.assertEqual(_foreground_rows(images[0].payload), {18, 19, 20})
         self.assertEqual(_foreground_rows(images[1].payload), {19, 20})
+
+    def test_preparation_keeps_full_preview_until_print_started(self):
+        controller = _controller("/data/model.gcode")
+        controller.start_print_macro = type("StartMacro", (), {
+            "variables": {"print_started": False}})()
+        controller.print_stats.status["info"] = {
+            "current_layer": 0, "total_layer": 100}
+        image = decode_fxi1(_preview_fixture_blob())
+        image["bounds"] = (18, 20)
+        for state in (PrintState.PREPARING, PrintState.PRINTING):
+            controller.print_state = state
+            _key, layers, pending, printed = controller._gcode_preview_render_spec(
+                controller.print_stats.status)
+            self.assertIsNone(layers)
+            self.assertEqual(colorize_preview(image, layers, pending, printed),
+                             colorize_preview(image, None, printed, printed))
+
+        controller.start_print_macro.variables["print_started"] = True
+        _key, layers, pending, printed = controller._gcode_preview_render_spec(
+            controller.print_stats.status)
+        self.assertEqual(layers[2], 0.0)
+        self.assertEqual(colorize_preview(image, layers, pending, printed),
+                         colorize_preview(image, None, pending, pending))
+
+    def test_restored_preview_uses_existing_progress_until_layers_available(self):
+        controller = _controller("/data/model.gcode")
+        controller.resurrection = StatusObject({"restored": True})
+        controller._progress_start = (0.0, 0.0)
+        controller.print_stats.status["info"] = {}
+        image = decode_fxi1(_preview_fixture_blob())
+        image["bounds"] = (18, 20)
+        for state in (PrintState.PRINTING, PrintState.PAUSED):
+            controller.print_state = state
+            _key, layers, pending, printed = controller._gcode_preview_render_spec(
+                controller.print_stats.status)
+            self.assertEqual(layers[2], 0.25)
+            blobs = colorize_preview(image, layers, pending, printed)
+            self.assertEqual(_foreground_rows(blobs[-1]), {20})
+
+        controller.print_stats.status["info"] = {
+            "current_layer": 1, "total_layer": 2}
+        self.assertEqual(controller._gcode_preview_render_spec(
+            controller.print_stats.status)[1][2], 0.5)
+
+        controller.resurrection.status["restored"] = False
+        controller.print_stats.status["info"] = {}
+        self.assertIsNone(controller._gcode_preview_render_spec(
+            controller.print_stats.status)[1])
 
     def test_layer_change_recolors_cached_mask_once(self):
         with PreviewHelper():
@@ -367,14 +525,14 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 }
                 controller._render_print_page()
                 worker = DeferredPreviewWorker()
-                controller.file_scan_worker = worker
+                controller.file_worker = worker
                 before = len(controller.batches)
                 controller.print_stats.status["info"] = {
                     "current_layer": 2, "total_layer": 2,
                 }
                 with mock.patch.object(
-                        PAGES, "_colorize_gcode_preview",
-                        wraps=PAGES._colorize_gcode_preview) as colorize:
+                        PAGES, "colorize_preview",
+                        wraps=PAGES.colorize_preview) as colorize:
                     controller._update_print_progress(104)
                     self.assertEqual(worker.submitted, [])
 
@@ -434,6 +592,26 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
 
         self.assertEqual(controller._gcode_preview["key"], second_key)
         self.assertEqual(controller._gcode_preview["status"], "loading")
+
+    def test_previous_run_callback_cannot_replace_same_path_request(self):
+        with PreviewHelper():
+            path = _write_gcode()
+            try:
+                worker = DeferredPreviewWorker()
+                controller = _controller(path, worker)
+                controller._prepare_gcode_preview()
+                first_preview = controller._gcode_preview
+                controller._cancel_gcode_preview()
+                controller._prepare_gcode_preview()
+                current_preview = controller._gcode_preview
+                worker.finish(0)
+            finally:
+                pathlib.Path(path).unlink()
+
+        self.assertIsNot(first_preview, current_preview)
+        self.assertTrue(first_preview["cancel"].is_set())
+        self.assertIs(controller._gcode_preview, current_preview)
+        self.assertEqual(current_preview["status"], "loading")
 
 
 if __name__ == "__main__":

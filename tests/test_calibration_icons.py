@@ -15,13 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".py/klipper/plugin
 
 from ff5m_ui import calibration_icons as icons
 from ff5m_ui.calibration_screws import runtime as screws
-from feather.screen.pages.printing import _decode_fxi1
+from feather.previews import decode_fxi1
 from ui import ThemeColor
 from ui.renderer import BinaryCommand, FeatherRenderer
 
 
 def pixels(blob):
-    image = _decode_fxi1(blob)
+    image = decode_fxi1(blob)
     bpp = image["bpp"]
     mask = (1 << bpp) - 1
     return [
@@ -56,11 +56,11 @@ class CalibrationIconsTest(unittest.TestCase):
         renderer = FeatherRenderer()
         right = icons.turn_arrow(renderer, 100, 100, "CW", ThemeColor.PRIMARY).payload
         left = icons.turn_arrow(renderer, 100, 100, "CCW", ThemeColor.PRIMARY).payload
-        width = _decode_fxi1(right)["width"]
+        width = decode_fxi1(right)["width"]
         right_pixels, left_pixels = pixels(right), pixels(left)
         self.assertIn(0, right_pixels)
         self.assertIn(0xff000000 | int(renderer.color(ThemeColor.PRIMARY), 16), right_pixels)
-        for row in range(_decode_fxi1(right)["height"]):
+        for row in range(decode_fxi1(right)["height"]):
             self.assertEqual(left_pixels[row * width:(row + 1) * width],
                              right_pixels[row * width:(row + 1) * width][::-1])
 

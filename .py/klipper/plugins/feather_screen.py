@@ -35,8 +35,10 @@ from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.print_state import PrintState
 from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
 from feather.files import (
-        DEFAULT_HISTORY_PATH, FileScanWorker, PrintHistory,
+        DEFAULT_HISTORY_PATH, FileWorker, PrintHistory,
         UsbStorageMonitor)
+from feather.previews import (
+        DEFAULT_PREVIEW_CACHE_KB, MIN_PREVIEW_CACHE_KB, PreviewCache)
 from feather.screen.controls import (
         FeatherControlsMixin,
         joystick_ui, joystick_motion,
@@ -68,7 +70,8 @@ EXACT_ACTIONS = {
     ScreenPage.CONTROL_HOME: ("nav.back", "nav.move", "nav.heat", "nav.calibration",
                         "nav.settings"),
     ScreenPage.FILE_BROWSER: (
-        "nav.back", "file.prev", "file.next", "file.refresh"),
+        "nav.back", "file.prev", "file.next", "file.refresh",
+        "file.view.list", "file.view.tiles"),
     ScreenPage.FILE_CONFIRM: (
         "nav.back", "file.start", "file.mesh.rebuild", "file.mesh.auto"),
     ScreenPage.PRINTING: ("nav.home", "print.pause", "print.filament",
@@ -168,6 +171,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "z_adjust_warning_threshold", 0.3, minval=0.05)
         self.print_history = PrintHistory(
             config.get("print_history_path", DEFAULT_HISTORY_PATH))
+        self.preview_cache_kb = config.getfloat(
+            "preview_cache_kb", DEFAULT_PREVIEW_CACHE_KB,
+            minval=MIN_PREVIEW_CACHE_KB)
         self.joystick_limits = (
             (config.getfloat("joystick_x_min", -110.0),
              config.getfloat("joystick_x_max", 110.0)),
@@ -191,14 +197,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if register_async is None:
             raise config.error(
                 "feather_screen requires reactor.register_async_callback")
-        self.file_scan_schedule_async = register_async
+        self.file_worker_schedule_async = register_async
         self.renderer.configure_worker(
             register_async, self._renderer_event_fd_changed,
             self._renderer_restarted)
         self.boot_screen_held = os.path.exists(FORGE_X_SCREEN_BUSY_PATH)
         if self.boot_screen_held:
             self.renderer.hold_output()
-        self.file_scan_worker = FileScanWorker(register_async)
+        self.file_worker = FileWorker(register_async)
         self.feature_manager = LazyFeatureManager(self, FEATURE_SPECS)
         self.safety = self._build_safety_registry()
         self.update_notification = ForgeXUpdateNotification(
@@ -243,6 +249,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.toast_message = ""
 
         self.file_page = 0
+        self.file_view = "list"
         self.file_entries = []
         self.file_entry_cache = {}
         self.file_entry_loaded_at = {}
@@ -250,6 +257,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.file_scan_source = None
         self.file_scan_phase = 0
         self.file_scan_token = 0
+        self.preview_cache = PreviewCache(int(self.preview_cache_kb * 1024))
+        self.file_preview_request = None
+        self.file_preview_failures = set()
+        self.file_preview_preload_signature = ()
+        self.file_preview_preload_attempted = set()
+        self.file_preview_visible_attempted = set()
         self.selected_file = None
         self.file_confirm_return_page = ScreenPage.FILE_BROWSER
         self.file_confirm_repeat = False
@@ -490,9 +503,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.startup_timer = None
 
     def _init(self):
-        if getattr(self, "file_scan_worker", None) is None:
-            self.file_scan_worker = FileScanWorker(
-                self.file_scan_schedule_async)
+        if getattr(self, "file_worker", None) is None:
+            self.file_worker = FileWorker(self.file_worker_schedule_async)
         self.file_entry_cache.clear()
         self.file_entry_loaded_at.clear()
         self.file_scan_loading = False
@@ -630,12 +642,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if self.usb_storage is not None:
             self.usb_storage.stop()
             self.usb_storage = None
-        file_scan_worker = getattr(self, "file_scan_worker", None)
-        if file_scan_worker is not None:
-            self.file_scan_token = getattr(self, "file_scan_token", 0) + 1
-            self.file_scan_loading = False
-            file_scan_worker.stop()
-            self.file_scan_worker = None
+        self.file_scan_token = getattr(self, "file_scan_token", 0) + 1
+        self.file_scan_loading = False
+        self._cancel_file_preview()
+        self._cancel_gcode_preview()
+        file_worker = getattr(self, "file_worker", None)
+        if file_worker is not None:
+            file_worker.stop()
+            self.file_worker = None
         self.pending_action = None
         self.cancel_requested = False
         self.cancel_waiting_for_heat = False
@@ -1197,6 +1211,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     getattr(self, "renderer", None),
                     "output_frozen", False)):
             return
+        self._cancel_file_preview()
         # A complete surface repaint removes every visual toast and commits a
         # cleared overlay hitbox layer, so its controller state must not outlive
         # that surface generation.
@@ -2108,10 +2123,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if (old_state == PrintState.IDLE
                 and new_state in (PrintState.PREPARING, PrintState.PRINTING,
                                   PrintState.PAUSED)):
-            # Preview identity is scoped to one print. This avoids filesystem
-            # metadata reads in reactor callbacks while still reloading a file
-            # that was replaced between two print runs under the same path.
-            self._gcode_preview = None
+            # Preview identity is scoped to one print. The new preview state
+            # observes file metadata once, rather than on periodic callbacks,
+            # so a replaced file under the same path misses the old cache.
+            self._cancel_gcode_preview()
             self.cancel_requested = False
             self._progress_floor = 0.0
             self._progress_source = None

@@ -1027,7 +1027,8 @@ class RunnerContractTest(unittest.TestCase):
         shown = []
         host = type("Host", (), {
             "page": FEATHER.ScreenPage.FILE_CONFIRM,
-            "selected_file": {"name": "part.gcode"},
+            "selected_file": FileEntry(
+                "part.gcode", "/data/part.gcode"),
             "_render_file_confirm": lambda self: rendered.append((
                 self.file_confirm_repeat,
                 self.file_confirm_rebuild_mesh,
@@ -2137,7 +2138,7 @@ class RunnerContractTest(unittest.TestCase):
             feature.scenarios._open_context_file(str(path))
 
             entry = host.file_entry_cache["internal"][0]
-            self.assertEqual(entry["path"], str(path.resolve()))
+            self.assertEqual(entry.path, str(path.resolve()))
             self.assertEqual(host.file_entries, [entry])
             self.assertEqual(host.page, FEATHER.ScreenPage.FILE_BROWSER)
             self.assertEqual(host.file_scan_token, 4)

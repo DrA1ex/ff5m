@@ -1703,12 +1703,12 @@ class ScenarioCatalog:
     def _open_safe_file_confirm(self):
         entries = list(getattr(self.host, "file_entries", ()))
         for index, entry in enumerate(entries[:5]):
-            if entry["directory"]:
+            if entry.directory:
                 continue
             action = "file.item%d" % index
             if action not in self.host.renderer._buttons:
                 continue
-            if not entry["path"]:
+            if not entry.path:
                 raise RuntimeError("Selected UI test file has no path")
             self.run._tap(action)
             if self.host.page != ScreenPage.FILE_CONFIRM:
@@ -1719,7 +1719,7 @@ class ScenarioCatalog:
 
     def _prepare_ui_last_job(self):
         entry = getattr(self.host, "selected_file", None)
-        path = os.path.realpath(str(entry["path"] if entry else ""))
+        path = os.path.realpath(str(entry.path if entry else ""))
         root = os.path.realpath(self.host.virtual_sdcard.sdcard_dirname)
         if not os.path.isfile(path) or not path.startswith(root + os.sep):
             raise RuntimeError("UI navigation file is no longer available")

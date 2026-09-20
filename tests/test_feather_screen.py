@@ -218,15 +218,13 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(pagination.absolute_index(1), 7)
         self.assertIsNone(pagination.absolute_index(2))
 
-    def test_file_entries_use_compact_slots_and_keep_mapping_access(self):
+    def test_file_entries_use_compact_slots_and_attributes(self):
         entry = FILE_PAGES.FileEntry(
             "part.gcode", "/data/gcodes/part.gcode", False, 1024, 42)
 
         self.assertFalse(hasattr(entry, "__dict__"))
-        self.assertEqual(entry["name"], "part.gcode")
-        self.assertEqual(entry["size"], 1024)
-        with self.assertRaises(KeyError):
-            _value = entry["unknown"]
+        self.assertEqual(entry.name, "part.gcode")
+        self.assertEqual(entry.size, 1024)
 
     def test_renderer_escapes_untrusted_text(self):
         value = 'file "one"\\two\nnext'
@@ -1993,11 +1991,14 @@ class RendererStateTest(unittest.TestCase):
         controller.renderer.send = lambda commands: None
 
         controller.file_entries = [
-            {"name": "part-%d.gcode" % index, "directory": False}
+            FILE_PAGES.FileEntry(
+                "part-%d.gcode" % index, "/data/part-%d.gcode" % index)
             for index in range(5)]
         controller.file_page = 0
-        controller._load_file_entries = lambda: None
-        controller._render_file_browser()
+        controller.file_view = "list"
+        controller.file_source = "internal"
+        controller.file_preview_visible_attempted = set()
+        controller._render_file_entries()
         file_buttons = dict(controller.renderer._buttons)
 
         controller.networks = [
@@ -2020,7 +2021,9 @@ class RendererStateTest(unittest.TestCase):
         for page_buttons in (file_buttons, wifi_buttons, keyboard_buttons):
             rectangles = []
             for action, spec in page_buttons.items():
-                if action in ("nav.back", "file.refresh"):
+                if action in (
+                        "nav.back", "file.refresh", "file.view.list",
+                        "file.view.tiles"):
                     continue
                 rectangle = spec[:4]
                 self.assertGreaterEqual(rectangle[1], UI.HEADER_BOTTOM + 1,
