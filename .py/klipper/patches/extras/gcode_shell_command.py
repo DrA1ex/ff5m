@@ -395,7 +395,9 @@ class ShellCommand:
 
         try:
             proc = subprocess.Popen(
-                self.command + gcode_params, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.command + gcode_params,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                start_new_session=True)
         except Exception:
             logging.exception(
                 "shell_command: Command {%s} failed" % (self.name))
@@ -419,7 +421,7 @@ class ShellCommand:
                 break
 
         if not complete:
-            proc.terminate()
+            AsyncRunHelper._terminate_process(proc)
 
         if self.verbose:
             if self.partial_output:
