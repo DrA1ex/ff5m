@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import ast
 import importlib.util
 import os
 import pathlib
@@ -399,18 +400,16 @@ class KlipperOverlayTest(unittest.TestCase):
 class McuTuningTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        dependencies = {
-            name: types.ModuleType(name)
-            for name in ("serialhdl", "msgproto", "pins", "chelper",
-                         "clocksync")
-        }
-        dependencies["serialhdl"].error = RuntimeError
-        spec = importlib.util.spec_from_file_location(
-            "ff5m_mcu_patch_test", MCU)
-        module = importlib.util.module_from_spec(spec)
-        with mock.patch.dict(sys.modules, dependencies):
-            spec.loader.exec_module(module)
-        cls.load_timeout = staticmethod(module._load_trsync_timeout)
+        source = MCU.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_load_trsync_timeout")
+        module = ast.Module(body=[function], type_ignores=[])
+        namespace = {}
+        exec(compile(module, str(MCU), "exec"), namespace)
+        cls.load_timeout = staticmethod(namespace["_load_trsync_timeout"])
 
     def test_enabled_value_uses_relaxed_timeout(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -64,6 +64,14 @@ class TimezoneHelperTest(unittest.TestCase):
             self.assertEqual(localtime.read_bytes(), b"keep")
             self.assertIn("ERROR=Invalid timezone name", result.stdout)
 
+    def test_macro_uses_validating_helper_instead_of_rm_then_ln(self):
+        macro = (ROOT / "macros" / "base.cfg").read_text(encoding="utf-8")
+        block = macro.split("[gcode_macro SET_TIMEZONE]", 1)[1].split(
+            "[gcode_macro KAMP]", 1)[0]
+        self.assertIn("RUN_SHELL_COMMAND CMD=ztimezone", block)
+        self.assertNotIn("CMD=rm", block)
+        self.assertNotIn("CMD=ln", block)
+
 
 if __name__ == "__main__":
     unittest.main()

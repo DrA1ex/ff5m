@@ -5,7 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-import ast, configparser, logging, threading
+import ast, configparser, logging, math, os, threading
 import json
 
 from dataclasses import dataclass
@@ -294,25 +294,38 @@ class ModParamManagement:
             if not parser.has_section("Variables"):
                 parser.add_section("Variables")
 
+            # Stored values are parsed explicitly below. Disable ConfigParser
+            # interpolation so a damaged value containing "%" cannot prevent
+            # unrelated safety settings from loading.
+            items = list(parser.items("Variables", raw=True))
+            current_keys = set(
+                key for key, _value in items if key in self.params_map)
             parsed = dict()
-            for key, value in parser.items("Variables"):
-                if key in self.params_map:
-                    parsed[key] = ast.literal_eval(value)
-                elif key in self.migration_map:
-                    migration = self.migration_map[key]
+            for key, value in items:
+                try:
+                    if key in self.params_map:
+                        parsed[key] = ast.literal_eval(value)
+                    elif key in self.migration_map:
+                        migration = self.migration_map[key]
 
-                    if migration.new_key in parsed:
-                        logging.info(f'[mod_params]: Ignoring deprecated "{key}"; "{migration.new_key}" is already set.')
-                        continue
+                        if migration.new_key in current_keys:
+                            logging.info(f'[mod_params]: Ignoring deprecated "{key}"; "{migration.new_key}" is already set.')
+                            continue
 
-                    literal = migration.mapping.get(value, value if migration.carry_over else None)
-                    if literal is not None:
-                        parsed[migration.new_key] = ast.literal_eval(literal)
-                        logging.info(f'[mod_params]: Migrated "{key}" -> "{migration.new_key}": {parsed[migration.new_key]}')
+                        literal = migration.mapping.get(value, value if migration.carry_over else None)
+                        if literal is not None:
+                            parsed[migration.new_key] = ast.literal_eval(literal)
+                            logging.info(f'[mod_params]: Migrated "{key}" -> "{migration.new_key}": {parsed[migration.new_key]}')
+                        else:
+                            logging.error(f'[mod_params]: Unable to migrate deprecated parameter: "{key}"')
                     else:
-                        logging.error(f'[mod_params]: Unable to migrate deprecated parameter: "{key}"')
-                else:
-                    logging.error(f'[mod_params]: Read unknown parameter while parsing: "{key}"')
+                        logging.error(f'[mod_params]: Read unknown parameter while parsing: "{key}"')
+                except (SyntaxError, TypeError, ValueError):
+                    # A single damaged value must not prevent every parameter
+                    # (including motion-safety settings) from loading. The
+                    # conversion pass below restores this key's safe default.
+                    logging.error(
+                        f'[mod_params]: Unable to parse stored {key} value: "{value}"')
 
             for param in self.params:
                 key = param.key
@@ -320,7 +333,7 @@ class ModParamManagement:
 
                 try:
                     result[key] = self._load_param(param, value)
-                except:
+                except Exception:
                     logging.error(f'[mod_params]: Unable to parse {key} value: "{value}"; Expected type: {param.type}')
                     result[key] = self._load_param(param, param.default)
 
@@ -332,15 +345,28 @@ class ModParamManagement:
         self.variables = result
 
     def _load_param(self, param: Parameter, value: Optional[str]):
+        source = param.default if value is None else value
         if issubclass(param.type, Enum):
             # Defaults and persisted enum values both use member names.
-            name = value if value is not None else param.default
+            name = source
             return param.type[name.strip()].value
 
         if param.type == bool:
-            return param.type(int(value)) if value is not None else param.default
+            return param.type(int(source))
 
-        return param.type(value) if value is not None else param.default
+        loaded = param.type(source)
+        if param.type in (int, float):
+            numeric = float(loaded)
+            if not math.isfinite(numeric):
+                raise ValueError('%s must be finite' % param.key)
+            if param.minimum is not None and numeric < float(param.minimum):
+                raise ValueError(
+                    '%s must be at least %s' % (param.key, param.minimum))
+            if param.maximum is not None and numeric > float(param.maximum):
+                raise ValueError(
+                    '%s must be at most %s' % (param.key, param.maximum))
+
+        return loaded
 
     def _transform(self, param: Parameter, value: Optional[Any]):
         if issubclass(param.type, Enum):
@@ -360,10 +386,18 @@ class ModParamManagement:
             value_to_save = self._transform(param, value)
             parser.set("Variables", param.key, repr(value_to_save))
 
+        temporary_filename = self.filename + ".tmp"
         try:
-            with open(self.filename, "w") as f:
+            with open(temporary_filename, "w") as f:
                 parser.write(f)
-        except:
+            # Replace only after a complete write so a process interruption
+            # cannot leave half a variables file behind.
+            os.replace(temporary_filename, self.filename)
+        except Exception:
+            try:
+                os.unlink(temporary_filename)
+            except OSError:
+                pass
             msg = "Unable to save variable"
             logging.exception(msg)
             raise self.gcode.error(msg)

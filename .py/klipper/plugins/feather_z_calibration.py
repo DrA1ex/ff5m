@@ -7,11 +7,18 @@
 from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 import logging
+import math
 
-from ff5m_ui.screen import ScreenPage
-from ff5m_ui.print_state import PrintState
-from ff5m_ui.z_offset import runtime as z_offset_ui
-from ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
+try:
+    from .ff5m_ui.screen import ScreenPage as Page
+    from .ff5m_ui.print_state import PrintState
+    from .ff5m_ui.z_offset import runtime as z_offset_ui
+    from .ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
+except (ImportError, ValueError):
+    from ff5m_ui.screen import ScreenPage as Page
+    from ff5m_ui.print_state import PrintState
+    from ff5m_ui.z_offset import runtime as z_offset_ui
+    from ff5m_ui.z_offset.constants import PAPER_DEFAULT_STEP
 
 
 ZONE_POINTS = (
@@ -27,6 +34,16 @@ PRESSURE_WARN = 800.0
 PRESSURE_REARM = 600.0
 SAFE_Z_CLEARANCE = 5.0
 SAFE_Z_ADJUST_STEP = 1.0
+SAFE_Z_MINIMUM = 1.0
+SAFE_Z_MAXIMUM = 220.0
+
+
+def validate_safe_z(value):
+    value = float(value)
+    if (not math.isfinite(value) or value < SAFE_Z_MINIMUM
+            or value > SAFE_Z_MAXIMUM):
+        raise ValueError("Safe Z must be from 1 to 220 mm")
+    return value
 
 
 def calculate_z_offset(paper_contact_z, probe_trigger_z,
@@ -109,7 +126,7 @@ class ZCalibrationSession:
         self.original_mesh_profile = str(mesh_profile or "")
         self.probe_z_offset = float(probe_z_offset)
         self.load_zoffset = bool(load_zoffset)
-        self.safe_z = abs(float(safe_z))
+        self.safe_z = validate_safe_z(safe_z)
 
     def clear(self):
         self.__init__()
@@ -122,21 +139,29 @@ class ZCalibrationSession:
 
     def set_safe_z_trigger(self, trigger_z, clearance=SAFE_Z_CLEARANCE):
         self.safe_z_trigger = float(trigger_z)
-        self.safe_z_candidate = self.safe_z_trigger + abs(float(clearance))
+        if not math.isfinite(self.safe_z_trigger):
+            raise ValueError("Probe trigger height must be finite")
+        candidate = self.safe_z_trigger + abs(float(clearance))
+        self.safe_z_candidate = validate_safe_z(max(SAFE_Z_MINIMUM, candidate))
         return self.safe_z_candidate
 
     def adjust_safe_z(self, delta):
         if self.safe_z_candidate is None:
             raise ValueError("Probe the bed before adjusting Safe Z")
-        minimum = self.safe_z_trigger + SAFE_Z_ADJUST_STEP
-        self.safe_z_candidate = max(
-            minimum, self.safe_z_candidate + float(delta))
+        delta = float(delta)
+        if not math.isfinite(delta):
+            raise ValueError("Safe Z adjustment must be finite")
+        minimum = max(
+            SAFE_Z_MINIMUM, self.safe_z_trigger + SAFE_Z_ADJUST_STEP)
+        self.safe_z_candidate = min(
+            SAFE_Z_MAXIMUM,
+            max(minimum, self.safe_z_candidate + delta))
         return self.safe_z_candidate
 
     def accept_safe_z(self):
         if self.safe_z_candidate is None:
             raise ValueError("Probe the bed before saving Safe Z")
-        self.safe_z = round_mm(self.safe_z_candidate)
+        self.safe_z = round_mm(validate_safe_z(self.safe_z_candidate))
         return self.safe_z
 
     def choose_zone(self, key):
@@ -257,8 +282,8 @@ class FeatherZCalibrationMixin:
     def _safe_z(self):
         session = getattr(self, "z_calibration", None)
         if session is not None and session.active:
-            return abs(float(session.safe_z))
-        return abs(float(self._setting("safe_z", 10.0)))
+            return validate_safe_z(session.safe_z)
+        return validate_safe_z(self._setting("safe_z", 10.0))
 
     def _safe_z_preparation_height(self):
         return self._safe_z() * 2.0
@@ -435,12 +460,11 @@ class FeatherZCalibrationMixin:
                 self._restore_z_mesh(mesh_object, mesh_profile)
                 self.z_calibration.clear()
             raise
-        self._show_page(ScreenPage.SAFE_Z_BRIEFING)
+        self._show_page(Page.SAFE_Z_BRIEFING)
 
     def _start_z_calibration_preparation(self):
-        self.calibration_starting_text = "STARTING..."
-        self._reset_calibration_progress()
-        self._show_page(ScreenPage.CALIBRATION_PROGRESS)
+        self.print_status_text = "Z OFFSET: PREP"
+        self._show_page(Page.CALIBRATION_PROGRESS)
         self.reactor.register_callback(self._run_z_calibration_preparation)
 
     def _z_preparation_command(self):
@@ -460,7 +484,7 @@ class FeatherZCalibrationMixin:
         return "\n".join((
             '_CONTEXT_BEGIN TYPE=z_offset',
             "M104 S%.0f" % cooldown,
-            '_HOME_IF_NEEDED',
+            "_HOME_IF_NEEDED",
             '_CONTEXT_STATE NAME=HEATING',
             "_WAIT_TEMPERATURE CMD=M104 VALUE=%.0f BELOW=2 ABOVE=3" %
             cooldown,
@@ -476,7 +500,7 @@ class FeatherZCalibrationMixin:
             self._run_script(self._z_preparation_command())
             self.z_calibration.prepared = True
             self._begin_z_weight_gauge()
-            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+            self._show_page(Page.Z_OFFSET_SUMMARY)
             return
         except Exception as exc:
             if getattr(self, "shutdown_active", False):
@@ -495,17 +519,17 @@ class FeatherZCalibrationMixin:
                 if cancelled:
                     self._show_message(
                         "Z-offset heating cancelled",
-                        ScreenPage.CALIBRATION_HOME)
+                        Page.CALIBRATION_HOME)
                 else:
                     self._show_message(
                         self.calibration_error or
                         "Z-offset preparation failed",
-                        ScreenPage.CALIBRATION_HOME)
+                        Page.CALIBRATION_HOME)
 
     def _choose_z_zone(self, key):
         self._require_idle()
         self.z_calibration.choose_zone(key)
-        self._show_page(ScreenPage.Z_OFFSET_PAPER_BRIEFING)
+        self._show_page(Page.Z_OFFSET_PAPER_BRIEFING)
 
     def _begin_safe_z_calibration(self, preserve_result=False):
         self._require_idle()
@@ -527,11 +551,11 @@ class FeatherZCalibrationMixin:
                 session.safe_z_candidate)
         self._run_blocking_gcode(
             "\n".join(commands), "POSITIONING HEAD...")
-        self._show_page(ScreenPage.SAFE_Z_CALIBRATION)
+        self._show_page(Page.SAFE_Z_CALIBRATION)
 
     def _continue_after_safe_z(self):
         if self.z_calibration.prepared:
-            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+            self._show_page(Page.Z_OFFSET_SUMMARY)
             return
         self._start_z_calibration_preparation()
 
@@ -578,7 +602,7 @@ class FeatherZCalibrationMixin:
     def _enter_z_zone(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
         self._move_z_offset_head(point[2], point[3])
-        self._show_page(ScreenPage.Z_OFFSET_PAPER)
+        self._show_page(Page.Z_OFFSET_PAPER)
 
     def _probe_z_zone(self):
         session = self.z_calibration
@@ -645,7 +669,7 @@ class FeatherZCalibrationMixin:
         result = self.z_calibration.accept()
         self._run_blocking_gcode(
             self._safe_z_move_command(), "LIFTING Z...")
-        self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+        self._show_page(Page.Z_OFFSET_SUMMARY)
         self._toast("Zone accepted %+.3f mm" % result)
 
     def _finish_z_calibration(self, saved_offset):
@@ -694,9 +718,9 @@ class FeatherZCalibrationMixin:
         if value is None:
             raise RuntimeError("Measure and select a Z-offset result first")
         self._finish_z_calibration(value)
-        self._show_page(ScreenPage.CALIBRATION_HOME)
+        self._show_page(Page.CALIBRATION_HOME)
         self._toast("Z offset saved %+.3f mm" % value)
 
     def _cancel_z_calibration(self):
         self._finish_z_calibration(None)
-        self._show_page(ScreenPage.CALIBRATION_HOME)
+        self._show_page(Page.CALIBRATION_HOME)

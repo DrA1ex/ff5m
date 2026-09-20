@@ -72,6 +72,9 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 1. Uninstall any other installed mods first (⚠️ make a backup!).   
 2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
 3. Update slicer [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
+   The AD5M bed is **220 × 220 mm**; Forge-X expresses that full span with
+   centered corners from `-110,-110` to `110,110`. Re-slice existing files
+   after correcting the profile—editing OrcaSlicer does not repair old G-code.
 4. Update slicer [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
 5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod)
 6. Enable [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.

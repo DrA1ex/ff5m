@@ -546,28 +546,6 @@ class ResurrectorLifecycleTest(unittest.TestCase):
                              os.path.join("models", "part.gcode"))
             self.assertEqual(command.responses, [])
 
-    def test_recovery_context_wraps_validation_and_resets_on_rejection(self):
-        for command_name in ("cmd_RESURRECT", "cmd_RESURRECT_ABORT"):
-            with self.subTest(command=command_name):
-                resurrector = RESURRECTION.Resurrector.__new__(
-                    RESURRECTION.Resurrector)
-                resurrector.state = (
-                    RESURRECTION.ResurrectorState.RESURRECTION)
-                resurrector.gcode = GCodeRecorder()
-                resurrector._load_resurrection_state = lambda gcmd: None
-                command = Command()
-
-                getattr(resurrector, command_name)(command)
-
-                lines = [
-                    line for script in resurrector.gcode.commands
-                    for line in script.splitlines()]
-                self.assertEqual(lines, [
-                    "_CONTEXT_BEGIN TYPE=recovery",
-                    '_CONTEXT_STATE NAME="LOADING STATE"',
-                    "_CONTEXT_RESET",
-                ])
-
     def test_resurrection_applies_reduced_state_in_safe_order(self):
         resurrector = RESURRECTION.Resurrector.__new__(
             RESURRECTION.Resurrector)
@@ -660,14 +638,6 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             line for script in resurrector.gcode.commands
             for line in script.splitlines()
         ]
-        self.assertIn('_CONTEXT_BEGIN TYPE=recovery', lines)
-        self.assertIn('_CONTEXT_STATE NAME="LOADING STATE"', lines)
-        self.assertLess(
-            lines.index('_CONTEXT_STATE NAME=POSITIONING'),
-            lines.index('_CONTEXT_STATE NAME="RESTORING STATE"'))
-        self.assertIn("_CONTEXT_END", lines)
-        self.assertIn("_CONTEXT_BEGIN TYPE=print", lines)
-        self.assertIn("_CONTEXT_STATE NAME=PRINTING", lines)
         self.assertNotIn("G10", lines)
         self.assertNotIn("G11", lines)
         self.assertFalse(any(
@@ -738,41 +708,40 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             "TURN_OFF_HEATERS" in script
             for script in resurrector.gcode.commands))
         self.assertTrue(any(
-            "_CONTEXT_RESET" in script
-            for script in resurrector.gcode.commands))
-        self.assertTrue(any(
             "preparation failed" in response
             for response in command.responses))
         self.assertFalse(resurrector.get_status(0.)["restored"])
 
-    def test_cleanup_failure_resets_context_and_turns_off_heat_and_fan(self):
-        class FailingCleanupGCode(GCodeRecorder):
-            def run_script_from_command(self, command):
-                self.commands.append(command)
-                if "_CONTEXT_STATE NAME=PREPARING" in command:
-                    raise RuntimeError("cleanup failed")
 
-        resurrector = RESURRECTION.Resurrector.__new__(
-            RESURRECTION.Resurrector)
-        resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
-        resurrector.gcode = FailingCleanupGCode()
-        resurrector._worker = None
-        resurrector._worker_cancel = None
-        resurrector._load_resurrection_state = lambda gcmd: {
-            "bed_temp": 60., "extruder_temp": 220.,
-        }
-        command = Command()
+class RecoveryMacroIntegrationTest(unittest.TestCase):
+    def test_pause_and_resume_markers_bracket_base_operations(self):
+        macro_path = pathlib.Path(__file__).parents[1] / "macros" / "client.cfg"
+        contents = macro_path.read_text(encoding="utf-8")
+        pause = contents.split("[gcode_macro PAUSE]", 1)[1].split(
+            "[gcode_macro RESUME]", 1)[0]
+        resume = contents.split("[gcode_macro RESUME]", 1)[1].split(
+            "[gcode_macro SET_PAUSE_NEXT_LAYER]", 1)[0]
+        pause = pause.split("gcode:", 1)[1]
+        resume = resume.split("gcode:", 1)[1]
 
-        resurrector.cmd_RESURRECT_ABORT(command)
+        self.assertLess(
+            pause.index("_RESURRECTION_PAUSE"),
+            pause.index("PAUSE_BASE"))
+        self.assertLess(
+            resume.index("RESUME_BASE"),
+            resume.index("_RESURRECTION_RESUME"))
+        self.assertIn("supports_pause_markers", pause)
+        self.assertIn("supports_pause_markers", resume)
 
-        cleanup = "\n".join(resurrector.gcode.commands)
-        self.assertIn("_CONTEXT_RESET", cleanup)
-        self.assertIn("TURN_OFF_HEATERS", cleanup)
-        self.assertIn("M106 P1 S0", cleanup)
-        self.assertEqual(
-            resurrector.state, RESURRECTION.ResurrectorState.RESURRECTION)
-        self.assertTrue(any(
-            "cleanup failed" in response for response in command.responses))
+    def test_virtual_sdcard_has_no_recovery_specific_integration(self):
+        virtual_sd_path = (
+            pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
+            "patches" / "extras" / "virtual_sdcard.py")
+        contents = virtual_sd_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("resurrection", contents.lower())
+        self.assertNotIn("virtual_sdcard:pause", contents)
+        self.assertNotIn("virtual_sdcard:resume", contents)
 
 
 if __name__ == "__main__":

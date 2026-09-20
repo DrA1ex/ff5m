@@ -56,6 +56,31 @@ def base64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data)
 
 
+def _is_valid_hostname(value: str) -> bool:
+    """Validate trusted-client hostnames without regex backtracking."""
+    if len(value) < 3 or not all("a" <= char <= "z" for char in value[-2:]):
+        return False
+
+    # Preserve the old expression's requirement that at least one valid
+    # hostname character precede its final two-letter suffix.
+    prefix = value[:-2]
+    if prefix.endswith("."):
+        prefix = prefix[:-1]
+    if not prefix:
+        return False
+
+    for label in prefix.split("."):
+        for component in label.split("-"):
+            if not component:
+                return False
+            if any(
+                not ("a" <= char <= "z" or "0" <= char <= "9")
+                for char in component
+            ):
+                return False
+    return True
+
+
 ONESHOT_TIMEOUT = 5
 TRUSTED_CONNECTION_TIMEOUT = 3600
 FQDN_CACHE_TIMEOUT = 84000
@@ -204,8 +229,7 @@ class Authorization:
                 self.trusted_ranges.append(tn)
                 continue
             # Check hostname
-            match = re.match(r"([a-z0-9]+(-[a-z0-9]+)*\.?)+[a-z]{2,}$", val)
-            if match is not None:
+            if _is_valid_hostname(val):
                 self.trusted_domains.append(val.lower())
             else:
                 self.server.add_warning(

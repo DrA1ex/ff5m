@@ -104,7 +104,7 @@ Use `PROFILE=MESH_DATA` for the Stock screen. Inspect the resulting mesh in Flui
 
 `safe_z` is the absolute Z height used before lateral parking, cleaning, and calibration moves. It is not the same as Z offset or `park_dz`.
 
-The default is 10 mm, but the real nozzle-to-bed clearance can be smaller after bed leveling or when a longer nozzle is installed. A value that exceeds the printer's real clearance can make a supposedly safe lateral move unsafe.
+The default is 10 mm and Forge-X accepts values from 1 to 220 mm. Values outside that range, including a corrupted or non-finite saved value, are rejected before homing, cleaning, or Feather calibration motion. The real nozzle-to-bed clearance can be smaller after bed leveling or when a longer nozzle is installed. A value that exceeds the printer's real clearance can make a supposedly safe lateral move unsafe.
 
 In Feather, **Control → Calibration → Z Offset** includes the guided Safe Z step. It probes the current geometry, lets you review the calculated clearance, and saves the selected value. Re-run it after changing the nozzle or bed setup.
 
@@ -141,6 +141,8 @@ For Fluidd or Mainsail:
 4. Print another small first-layer test to confirm the result.
 
 Optional: enable `load_zoffset_cleaning` if applying the saved offset during nozzle cleaning is necessary to prevent contact with your bed setup. Make sure the nozzle is clean before later probing.
+
+The saved `z_offset` must be finite and between -2 and 2 mm. Nozzle cleaning validates it before heating, homing, probing, or wiping; an invalid persisted value falls back to `0` during parameter loading and cannot be applied by `LOAD_GCODE_OFFSET` or `_CLEAR_NOZZLE`.
 
 ## Extruder Calibration
 

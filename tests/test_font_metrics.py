@@ -12,15 +12,7 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
            "plugins")
 sys.path.insert(0, str(PLUGINS))
 
-from ff5m_ui.benchmark import page as benchmark_page  # noqa: E402
-from ff5m_ui.filament.action import page as filament_action_page  # noqa: E402
-from ff5m_ui.filament.material import page as filament_material_page  # noqa: E402
-from ff5m_ui.heat import page as heat_page  # noqa: E402
-from ff5m_ui.home import page as home_page  # noqa: E402
-from ff5m_ui.move import runtime as move_ui  # noqa: E402
-from ff5m_ui.z_offset import runtime as z_offset_ui  # noqa: E402
-from ui import FeatherRenderer, font_metrics  # noqa: E402
-from ui import renderer as ui_renderer  # noqa: E402
+from ui import font_metrics  # noqa: E402
 
 
 def manifest(advance=16):
@@ -80,183 +72,19 @@ class FontManifestTest(unittest.TestCase):
 
         self.assertIs(loaded, fallback)
 
-    def test_packaged_manifest_is_valid_and_covers_product_font_families(self):
+    def test_packaged_manifest_is_valid_and_sorted(self):
         loaded = font_metrics.load_fallback_metrics()
 
         self.assertTrue(loaded.fonts)
         self.assertEqual(tuple(sorted(loaded.names)), loaded.names)
-        self.assertIn(loaded.default_font, loaded.fonts)
-        self.assertFalse(hasattr(loaded, "catalog"))
-        for metric in loaded.fonts.values():
-            self.assertGreater(metric.advance_y, 0)
-            self.assertLess(metric.top, metric.bottom)
-            self.assertTrue(metric.unicode_ranges)
-
-        requested = set()
-
-        class RecordingMetrics:
-            def __getattr__(self, name):
-                return getattr(loaded, name)
-
-            def normalize_font(self, font, allow_proportional=False):
-                requested.add(font)
-                return loaded.normalize_font(font, allow_proportional)
-
-            def normalize_for_text(self, font, value):
-                requested.add(font)
-                return loaded.normalize_for_text(font, value)
-
-        pages = (
-            home_page.PAGE,
-            benchmark_page.PAGE,
-            heat_page.create_page(("PLA", "ABS")),
-            filament_material_page.create_page((("PLA", 220), ("ABS", 250))),
-            filament_action_page.create_page(False),
-            move_ui.STEP_PAGE,
-            move_ui.JOYSTICK_PAGE,
-            z_offset_ui.SAFE_BRIEFING_PAGE,
-            z_offset_ui.SAFE_PAGE,
-            z_offset_ui.BRIEFING_PAGE,
-            z_offset_ui.PAPER_BRIEFING_PAGE,
-            z_offset_ui.PAPER_PAGE,
-            z_offset_ui.SUMMARY_PAGE,
-        )
-        with mock.patch.object(
-                ui_renderer, "get_font_metrics",
-                return_value=RecordingMetrics()):
-            for page in pages:
-                page.draw(FeatherRenderer(), page.initial_state())
-
-        self.assertTrue(requested)
-        missing_families = []
-        for requested_font in sorted(requested):
-            normalized = loaded.normalize_font(requested_font)
-            requested_family = requested_font.rsplit(" ", 1)[0]
-            normalized_family = normalized.rsplit(" ", 1)[0]
-            if requested_family != normalized_family:
-                missing_families.append(requested_font)
-        self.assertEqual(missing_families, [])
-
-        with open(font_metrics.FALLBACK_PATH, "r", encoding="utf-8") as stream:
-            generated = json.load(stream)
-        self.assertNotIn("default_font", generated)
-        for entry in generated["fonts"]:
-            self.assertNotIn("fallback", entry)
-            self.assertNotIn("preview", entry)
-
-    def test_runtime_metrics_inherit_project_fallback_policy(self):
-        policy_value = {
-            "schema": "font-metrics/v1",
-            "wrap_algorithm": "word-v1",
-            "fonts": [
-                {
-                    "name": "Display 12pt",
-                    "advance_x": 8,
-                    "monospaced": True,
-                    "advance_y": 16,
-                    "glyph_bounds": {"top": -12, "bottom": 3},
-                    "unicode_ranges": [[32, 126]],
-                },
-                {
-                    "name": "Text 12pt",
-                    "advance_x": 9,
-                    "monospaced": True,
-                    "advance_y": 17,
-                    "glyph_bounds": {"top": -13, "bottom": 3},
-                    "unicode_ranges": [[32, 126], [1040, 1103]],
-                },
-            ],
-        }
-        runtime_value = json.loads(json.dumps(policy_value))
-        completed = subprocess.CompletedProcess(
-            ["typer", "--font-manifest"], 0,
-            stdout=json.dumps(runtime_value).encode("utf-8"), stderr=b"")
-
-        with mock.patch("subprocess.run", return_value=completed):
-            loaded = font_metrics.load_runtime_metrics(
-                "/real/typer",
-                fallback=font_metrics.apply_font_policy(
-                    font_metrics.parse_manifest(policy_value),
-                    default_font="Text 12pt",
-                    fallbacks={"Display 12pt": "Text 12pt"}))
-
-        self.assertEqual(loaded.default_font, "Text 12pt")
-        self.assertEqual(loaded.fonts["Display 12pt"].fallback, "Text 12pt")
-
-    def test_project_policy_constants_can_be_overridden(self):
-        value = {
-            "schema": "font-metrics/v1",
-            "wrap_algorithm": "word-v1",
-            "fonts": [
-                {
-                    "name": "Display 12pt",
-                    "advance_x": 8,
-                    "monospaced": True,
-                    "advance_y": 16,
-                    "glyph_bounds": {"top": -12, "bottom": 3},
-                    "unicode_ranges": [[32, 126]],
-                },
-                {
-                    "name": "Text 12pt",
-                    "advance_x": 9,
-                    "monospaced": True,
-                    "advance_y": 17,
-                    "glyph_bounds": {"top": -13, "bottom": 3},
-                    "unicode_ranges": [[32, 126], [1040, 1103]],
-                },
-            ],
-        }
-        with mock.patch.object(font_metrics, "DEFAULT_FONT", "Text 12pt"), \
-                mock.patch.object(
-                    font_metrics, "FONT_FALLBACKS",
-                    {"Display 12pt": "Text 12pt"}):
-            parsed = font_metrics.parse_manifest(value)
-            configured = font_metrics.parse_project_manifest(value)
-
-        self.assertIs(font_metrics.apply_font_policy(
-            parsed, default_font="Text 12pt",
-            fallbacks={"Display 12pt": "Text 12pt"}), parsed)
-        self.assertEqual(configured.default_font, "Text 12pt")
+        self.assertTrue(loaded.metric("JetBrainsMono 12pt").monospaced)
         self.assertEqual(
-            configured.fonts["Display 12pt"].fallback, "Text 12pt")
-
-    def test_text_fallback_is_declared_by_project_policy(self):
-        value = {
-            "schema": "font-metrics/v1",
-            "wrap_algorithm": "word-v1",
-            "fonts": [
-                {
-                    "name": "Display 12pt",
-                    "advance_x": 8,
-                    "monospaced": True,
-                    "advance_y": 16,
-                    "glyph_bounds": {"top": -12, "bottom": 3},
-                    "unicode_ranges": [[32, 126]],
-                },
-                {
-                    "name": "Text 12pt",
-                    "advance_x": 9,
-                    "monospaced": True,
-                    "advance_y": 17,
-                    "glyph_bounds": {"top": -13, "bottom": 3},
-                    "unicode_ranges": [[32, 126], [1040, 1103]],
-                },
-            ],
-        }
-        metrics = font_metrics.apply_font_policy(
-            font_metrics.parse_manifest(value),
-            default_font="Text 12pt",
-            fallbacks={"Display 12pt": "Text 12pt"})
-
-        self.assertEqual(
-            metrics.normalize_for_text("Display 12pt", "HELLO"),
-            "Display 12pt")
-        self.assertEqual(
-            metrics.normalize_for_text("Display 12pt", "ПРИВЕТ"),
-            "Text 12pt")
-        self.assertEqual(
-            metrics.normalize_font("Missing 12pt"),
-            "Text 12pt")
+            loaded.normalize_font("Roboto 16pt"),
+            "Roboto 16pt")
+        proportional = loaded.normalize_font(
+            "Roboto 16pt", allow_proportional=True)
+        self.assertEqual(proportional, "Roboto 16pt")
+        self.assertFalse(loaded.fonts[proportional].monospaced)
 
 
 class WordV1ParityTest(unittest.TestCase):

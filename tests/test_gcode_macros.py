@@ -15,6 +15,7 @@ from tests.gcode_macro_harness import (
 
 ROOT = pathlib.Path(__file__).parents[1]
 BASE = ROOT / "macros" / "base.cfg"
+STOCK = ROOT / "config" / "stock.cfg"
 HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
@@ -176,7 +177,7 @@ def run_start_print(**state):
 
 def run_headless_start_print(
         params, *, profiles=("auto", "PLA_profile"), profile_name="auto",
-        feather_force_leveling=None, feather_mesh_name=None, **standing):
+        one_print_force_leveling=None, one_print_mesh_name=None, **standing):
     """Execute the headless START_PRINT wrapper through _START_PRINT.
 
     The wrapper stages the slicer request with SET_GCODE_VARIABLE
@@ -188,8 +189,8 @@ def run_headless_start_print(
     """
     wrapper_status = macro_status(
         HEADLESS, "START_PRINT", preparation_done=True,
-        feather_force_leveling=feather_force_leveling,
-        feather_mesh_name=feather_mesh_name)
+        one_print_force_leveling=one_print_force_leveling,
+        one_print_mesh_name=one_print_mesh_name)
     wrapper = render_macro(
         HEADLESS, "START_PRINT",
         printer={
@@ -314,8 +315,8 @@ class WorkflowMacroTest(unittest.TestCase):
 
     def test_feather_start_options_override_leveling_for_one_print(self):
         start = macro_status(
-            HEADLESS, "START_PRINT", feather_force_leveling=True,
-            feather_mesh_name=None)
+            HEADLESS, "START_PRINT", one_print_force_leveling=True,
+            one_print_mesh_name=None)
         temporary = render_macro(HEADLESS, "START_PRINT", printer={
             "gcode_macro START_PRINT": start,
             "mod_params": {"variables": {"filament_switch_sensor": False}},
@@ -333,7 +334,7 @@ class WorkflowMacroTest(unittest.TestCase):
             "SET_GCODE_VARIABLE MACRO=_START_PRINT "
             "VARIABLE=zmesh VALUE='\"\"'", temporary.commands)
 
-        start["feather_mesh_name"] = "auto"
+        start["one_print_mesh_name"] = "auto"
         persistent = render_macro(HEADLESS, "START_PRINT", printer={
             "gcode_macro START_PRINT": start,
             "mod_params": {"variables": {"filament_switch_sensor": False}},
@@ -363,6 +364,33 @@ class WorkflowMacroTest(unittest.TestCase):
         self.assertIn(
             "SET_GCODE_VARIABLE MACRO=_START_PRINT "
             "VARIABLE=zmesh VALUE='\"slicer\"'", result.commands)
+
+    def test_start_print_entry_points_reject_invalid_z_offset(self):
+        for path in (STOCK, HEADLESS):
+            start = macro_status(path, "START_PRINT")
+            printer = {
+                "gcode_macro START_PRINT": start,
+                "mod_params": {"variables": {
+                    "filament_switch_sensor": False}},
+                "bed_mesh": {"profiles": {}},
+            }
+            for value in (-2.001, 2.001, float("nan"), float("inf"),
+                          "broken"):
+                with self.subTest(path=path.name, value=value):
+                    result = render_macro(path, "START_PRINT", printer=printer,
+                                          params={"EXTRUDER_TEMP": 230,
+                                                  "BED_TEMP": 65,
+                                                  "Z_OFFSET": value})
+                    assert_order(self, result.commands, (
+                        "CANCEL_PRINT", "M400", "_RAISE_ERROR"))
+
+            for value in (-2.0, 0.0, 2.0):
+                with self.subTest(path=path.name, value=value):
+                    result = render_macro(path, "START_PRINT", printer=printer,
+                                          params={"EXTRUDER_TEMP": 230,
+                                                  "BED_TEMP": 65,
+                                                  "Z_OFFSET": value})
+                    self.assertNotIn("_RAISE_ERROR", result.commands)
 
     def test_feather_rebuild_uses_full_mesh_even_when_kamp_is_enabled(self):
         start = macro_status(
@@ -452,8 +480,8 @@ class WorkflowMacroTest(unittest.TestCase):
         })
 
         for variable, value in (
-                ("feather_force_leveling", "None"),
-                ("feather_mesh_name", "None")):
+                ("one_print_force_leveling", "None"),
+                ("one_print_mesh_name", "None")):
             self.assertIn(
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
                 "VARIABLE=%s VALUE=%s" % (variable, value),
@@ -508,6 +536,112 @@ class WorkflowMacroTest(unittest.TestCase):
         ))
         self.assertEqual(probe.commands[:2], (
             "LOAD_CELL_TARE", "SCREWS_TILT_CALCULATE"))
+
+    def test_motion_macros_reject_unsafe_or_nonfinite_safe_z(self):
+        for value in (0.999, 220.001, float("nan"), float("inf"), "broken"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(MacroActionError, "Invalid safe_z"):
+                    render_macro(BASE, "G28", printer={
+                        "mod_params": {"variables": {"safe_z": value}},
+                        "toolhead": {
+                            "homed_axes": "xyz", "position": {"z": 10}},
+                    })
+
+        for value in (1.0, 10.0, 220.0):
+            with self.subTest(value=value):
+                result = render_macro(BASE, "G28", printer={
+                    "mod_params": {"variables": {"safe_z": value}},
+                    "toolhead": {
+                        "homed_axes": "xyz", "position": {"z": 10}},
+                })
+                self.assertIn(
+                    'RESPOND PREFIX="info" MSG="All axes already parked."',
+                    result.commands)
+
+    def test_g92_allows_extruder_reset_but_rejects_xyz_rebasing(self):
+        extruder = render_macro(
+            BASE, "G92",
+            printer={"virtual_sdcard": {"is_active": False}},
+            params={"E": 0}, rawparams="E0")
+        self.assertEqual(extruder.commands, ("G92.1 E0",))
+
+        unsafe_cases = (
+            ({"X": 0}, "X0"),
+            ({"Y": 0}, "Y0"),
+            ({"Z": 0}, "Z0"),
+            ({"X": 0, "Y": 0, "Z": 0}, "X0 Y0 Z0"),
+            ({}, ""),
+        )
+        for params, rawparams in unsafe_cases:
+            with self.subTest(rawparams=rawparams or "<empty>"):
+                with self.assertRaisesRegex(MacroActionError, "Unsafe G92"):
+                    render_macro(
+                        BASE, "G92",
+                        printer={"virtual_sdcard": {"is_active": False}},
+                        params=params, rawparams=rawparams)
+
+    def test_g92_aborts_an_active_file_before_unsafe_xyz_rebasing(self):
+        result = render_macro(
+            BASE, "G92",
+            printer={"virtual_sdcard": {"is_active": True}},
+            params={"X": 0, "Y": 0, "Z": 0},
+            rawparams="X0 Y0 Z0")
+
+        self.assertEqual(result.commands, (
+            '_ABORT_UNSAFE_G92 MSG="Unsafe G92 XYZ origin reset blocked. '
+            'Forge-X uses centered X/Y coordinates; remove G92 X/Y/Z and '
+            're-slice the file."',
+        ))
+
+        abort = render_macro(
+            BASE, "_ABORT_UNSAFE_G92",
+            params={"MSG": "Unsafe G92 XYZ origin reset blocked."})
+        self.assertEqual(abort.commands, (
+            "_STOP",
+            "CANCEL_PRINT_BASE",
+            'RESPOND PREFIX="!!" MSG="Unsafe G92 XYZ origin reset blocked."',
+            "_RAISE_ERROR",
+        ))
+
+    def test_nozzle_cleaning_rejects_corrupted_saved_z_offset(self):
+        cleaning_macro = macro_status(
+            BASE, "_CLEAR_NOZZLE", left_pos_probe=0.2,
+            right_pos_probe=0.25)
+        for value in (-2.001, 2.001, float("nan"), float("inf"), "broken"):
+            with self.subTest(value=value):
+                printer = {
+                    "mod_params": {"variables": {
+                        "safe_z": 10.0,
+                        "load_zoffset_cleaning": True,
+                        "z_offset": value,
+                    }},
+                    "gcode_macro _CLEAR_NOZZLE": cleaning_macro,
+                }
+                with self.assertRaisesRegex(
+                        MacroActionError, "Invalid saved z_offset"):
+                    render_macro(BASE, "_CLEAR_NOZZLE", printer=printer)
+
+        for value in (-2.0, 0.0, 2.0):
+            with self.subTest(value=value):
+                result = render_macro(BASE, "_CLEAR_NOZZLE", printer={
+                    "mod_params": {"variables": {
+                        "safe_z": 10.0,
+                        "load_zoffset_cleaning": True,
+                        "z_offset": value,
+                    }},
+                    "gcode_macro _CLEAR_NOZZLE": cleaning_macro,
+                })
+                self.assertTrue(any(
+                    command.startswith("G1 Z") for command in result.commands))
+
+    def test_load_gcode_offset_rejects_corrupted_saved_value(self):
+        for value in (-2.001, 2.001, float("nan"), float("inf"), "broken"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                        MacroActionError, "Invalid saved z_offset"):
+                    render_macro(BASE, "LOAD_GCODE_OFFSET", printer={
+                        "mod_params": {"variables": {"z_offset": value}},
+                    })
 
     def test_workflow_macros_publish_their_owned_contexts(self):
         cases = (
@@ -1459,7 +1593,7 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
     def test_feather_rebuild_override_drives_the_staged_request(self):
         wrapper, full = run_headless_start_print(
             {"EXTRUDER_TEMP": 230, "BED_TEMP": 65, "SKIP_LEVELING": 1},
-            feather_force_leveling=True, feather_mesh_name=None)
+            one_print_force_leveling=True, one_print_mesh_name=None)
 
         # The one-print Feather override clears the slicer's SKIP_LEVELING
         # and requests an unnamed full rebuild, preloaded auto included.
@@ -1481,7 +1615,7 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
 
         _, named = run_headless_start_print(
             {"EXTRUDER_TEMP": 230, "BED_TEMP": 65},
-            feather_force_leveling=True, feather_mesh_name="auto")
+            one_print_force_leveling=True, one_print_mesh_name="auto")
         self.assertEqual(mesh_actions(named), (
             "BED_MESH_PROFILE LOAD=auto",
             'BED_MESH_CALIBRATE PROFILE="auto"',

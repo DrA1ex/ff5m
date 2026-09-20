@@ -45,7 +45,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`zram_algo`**: Selects the compression algorithm used when `use_swap=ZRAM`. `zstd` provides the best compression ratio, while `lzo-rle` and `lzo` reduce compression CPU cost.  
 
-- **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. The default is `10` mm.
+- **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. The default is `10` mm and the accepted range is `1`–`220` mm. Non-finite and out-of-range persisted values are rejected and the safe default is loaded instead.
 
   > [!WARNING]
   > The real nozzle-to-bed clearance can be smaller than this value because bed leveling changes the effective bed position, and a non-standard nozzle can extend farther toward the bed. Choose a height that safely clears the bed on your printer, and verify Z-offset calibration after changing the bed setup or nozzle.
@@ -55,6 +55,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
   ```
 
   Feather can calculate this value from the bed position in **Control → Calibration → Z Offset**. Re-run the Safe Z step after changing the nozzle or bed setup.
+
+- **`z_offset`**: Stores the global nozzle-to-bed offset. Values must be finite and within `-2`–`2` mm. Forge-X validates both newly entered and persisted values before applying them, including the optional nozzle-cleaning path.
 
 - **`pause_z_min`**: Sets the minimum absolute Z position used when parking for a pause (`PAUSE`, `M600`, layer pauses). The default is `50` mm. The bed is never raised: a print that already sits lower keeps its height and only gets the normal pause lift. The final target is capped 10 mm below the configured Klipper Z maximum. This setting replaces `m600_z_min` and keeps its default, so a height you had tuned there stays in effect under the new name.
 

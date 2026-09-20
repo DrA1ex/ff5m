@@ -6,6 +6,7 @@
 
 import importlib.util
 import pathlib
+import re
 import unittest
 
 
@@ -67,6 +68,32 @@ class ImmediateCommandDispatchTest(unittest.TestCase):
                          ["M108", "BEEP", "TONE S=1"])
         self.assertEqual(dispatch.normal, ["G28"])
         self.assertEqual(dispatch.mutex.entries, 1)
+
+
+class ProductIsolationTest(unittest.TestCase):
+    def test_klipper_patches_do_not_contain_feather_specific_code(self):
+        patches = MODULE_PATH.parent
+        offenders = []
+        for path in patches.rglob("*.py"):
+            if re.search(r"feather", path.read_text(encoding="utf-8"), re.I):
+                offenders.append(str(path.relative_to(patches)))
+        self.assertEqual(offenders, [])
+
+    def test_shared_macro_configs_do_not_contain_feather_specific_code(self):
+        root = pathlib.Path(__file__).parents[1]
+        shared = (
+            root / "macros" / "base.cfg",
+            root / "macros" / "client.cfg",
+            root / "macros" / "headless.cfg",
+            root / "config" / "guppy.cfg",
+            root / "config" / "headless.cfg",
+            root / "config" / "stock.cfg",
+        )
+        offenders = [
+            str(path.relative_to(root)) for path in shared
+            if re.search(r"feather", path.read_text(encoding="utf-8"), re.I)
+        ]
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

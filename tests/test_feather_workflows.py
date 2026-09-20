@@ -695,9 +695,9 @@ class FileWorkflowTest(unittest.TestCase):
                 controller.gcode.commands[0].splitlines(), [
                     'SDCARD_PRINT_FILE FILENAME="part \\"one\\".gcode"',
                     "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                    "VARIABLE=feather_force_leveling VALUE=None",
+                    "VARIABLE=one_print_force_leveling VALUE=None",
                     "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                    "VARIABLE=feather_mesh_name VALUE=None",
+                    "VARIABLE=one_print_mesh_name VALUE=None",
                 ])
             self.assertEqual(controller.last_job_path, 'part "one".gcode')
             os.unlink(path)
@@ -719,9 +719,9 @@ class FileWorkflowTest(unittest.TestCase):
             self.assertEqual(controller.gcode.commands[0].splitlines(), [
                 'SDCARD_PRINT_FILE FILENAME="part.gcode"',
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                "VARIABLE=feather_force_leveling VALUE=True",
+                "VARIABLE=one_print_force_leveling VALUE=True",
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                "VARIABLE=feather_mesh_name VALUE='\"auto\"'",
+                "VARIABLE=one_print_mesh_name VALUE='\"auto\"'",
             ])
             self.assertFalse(controller.file_confirm_rebuild_mesh)
             self.assertFalse(controller.file_confirm_auto_mesh)
@@ -754,8 +754,8 @@ class FileWorkflowTest(unittest.TestCase):
             controller._start_selected_file()
 
             self.assertEqual(controller.gcode.variables, {
-                "feather_force_leveling": True,
-                "feather_mesh_name": "auto",
+                "one_print_force_leveling": True,
+                "one_print_mesh_name": "auto",
             })
 
     def test_completed_forced_auto_mesh_offers_save(self):
@@ -992,9 +992,9 @@ class FileWorkflowTest(unittest.TestCase):
             self.assertEqual(controller.gcode.commands[0].splitlines(), [
                 'SDCARD_PRINT_FILE FILENAME="USB/models/old.gcode"',
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                "VARIABLE=feather_force_leveling VALUE=None",
+                "VARIABLE=one_print_force_leveling VALUE=None",
                 "SET_GCODE_VARIABLE MACRO=START_PRINT "
-                "VARIABLE=feather_mesh_name VALUE=None",
+                "VARIABLE=one_print_mesh_name VALUE=None",
             ])
 
     def test_usb_directory_navigation_and_removal_return_to_root(self):
