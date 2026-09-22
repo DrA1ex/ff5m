@@ -295,6 +295,16 @@ class ZipDeploy(AppDeploy):
     def _extract_release(
         self, persist_dir: pathlib.Path, release_file: pathlib.Path
     ) -> None:
+        # Validate the download before removing the installed application.
+        # A stale release URL can return an error page instead of a ZIP.
+        with zipfile.ZipFile(release_file) as zf:
+            if not zf.infolist():
+                raise zipfile.BadZipFile("Release archive is empty")
+            bad_file = zf.testzip()
+            if bad_file is not None:
+                raise zipfile.BadZipFile(
+                    f"Corrupt file in release archive: {bad_file}"
+                )
         if not persist_dir.exists():
             persist_dir.mkdir()
         if self.path.is_dir():
