@@ -61,6 +61,7 @@ def start_print_printer(display, bed_mesh, mesh="", zforce_leveling=False,
             "print_leveling": print_leveling,
             "use_kamp": use_kamp,
             "bed_mesh_validation": False,
+            "clear_cooldown_temp": 150,
             "midi_start": "",
             "weight_check": False,
             "disable_priming": True,
@@ -293,6 +294,7 @@ class WorkflowMacroTest(unittest.TestCase):
                 "print_leveling": False,
                 "use_kamp": False,
                 "bed_mesh_validation": False,
+                "clear_cooldown_temp": 150,
                 "midi_start": "",
                 "weight_check": False,
                 "disable_priming": True,
@@ -380,6 +382,7 @@ class WorkflowMacroTest(unittest.TestCase):
                 "print_leveling": False,
                 "use_kamp": True,
                 "bed_mesh_validation": False,
+                "clear_cooldown_temp": 150,
                 "midi_start": "",
                 "weight_check": False,
                 "disable_priming": True,
@@ -1358,12 +1361,13 @@ class StartPrintExecutionTest(unittest.TestCase):
         self.assertNotIn("LINE_PURGE", disabled)
         self.assertNotIn("_CLEAR1", disabled)
 
-    def test_lifecycle_publishes_flags_and_preheats_without_wasting_heat(self):
+    def test_lifecycle_publishes_flags_and_sets_cooldown_target(self):
         cold = run_start_print()
         assert_order(self, cold, (
             "_CONTEXT_BEGIN TYPE=print",
             "SET_GCODE_VARIABLE MACRO=_START_PRINT "
             "VARIABLE=print_active VALUE=True",
+            "M104 S150",
             "M140 S80.0",
             "G1 X110 Y110 F6000",
             "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
@@ -1372,15 +1376,14 @@ class StartPrintExecutionTest(unittest.TestCase):
             "VARIABLE=print_started VALUE=True",
             "_CONTEXT_STATE NAME=PRINTING",
         ))
-        self.assertFalse(
-            any(command.startswith("M104 ") for command in cold))
-
-        hold = run_start_print(extruder_temperature=200.0)
-        self.assertIn("M104 S200.0", hold)
-        self.assertNotIn("M104 S245.0", hold)
-
-        hot = run_start_print(extruder_temperature=245.0)
-        self.assertIn("M104 S245.0", hot)
+        for temperature in (25.0, 200.0, 245.0):
+            with self.subTest(extruder_temperature=temperature):
+                rendered_commands = run_start_print(
+                    extruder_temperature=temperature)
+                nozzle_commands = tuple(
+                    command for command in rendered_commands
+                    if command.partition(" ")[0] == "M104")
+                self.assertEqual(nozzle_commands, ("M104 S150",))
 
     def test_environment_options_react_during_start(self):
         run = run_start_print(
