@@ -1865,6 +1865,60 @@ class PrintWorkflowTest(unittest.TestCase):
         controller._handle_print_action("print.cancel")
         self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
 
+    def test_resume_rejection_is_shown_on_feather(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.last_action_time = -100
+        controller._resolve_semantic_ui_action = lambda action: None
+        controller._action_allowed = lambda page, action: True
+        messages = []
+        controller._show_message = lambda message, page: messages.append(
+            (message, page))
+
+        def reject(command):
+            self.assertEqual(command, "RESUME")
+            raise RuntimeError(
+                "No filament detected. Load filament and press Resume.")
+
+        controller._run_script = reject
+        with mock.patch("feather_screen.logging.exception"):
+            controller._dispatch_action("print.resume")
+
+        self.assertEqual(messages, [(
+            "No filament detected. Load filament and press Resume.",
+            FEATHER.ScreenPage.PAUSED)])
+        self.assertEqual(controller.print_stats.status["state"], "paused")
+        self.assertIsNone(controller.pending_action)
+
+    def test_resume_shows_blocking_wait_with_emergency_abort(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.busy_message = None
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller._show_page = lambda page: None
+        immediate = []
+        controller._run_immediate_command = lambda command: immediate.append(
+            command)
+        observed = []
+
+        def run(command):
+            observed.append((
+                command, controller.busy_message,
+                controller._blocking_operation_active(),
+                controller._safety_decision().visible,
+                controller.renderer._loader_active,
+            ))
+            controller._handle_touch_action("global.abort")
+
+        controller.gcode.run_script = run
+        controller._handle_print_action("print.resume")
+
+        self.assertEqual(observed, [
+            ("RESUME", "RESUMING PRINT...", True, True, True)])
+        self.assertEqual(immediate, ["M112"])
+        self.assertIsNone(controller.busy_message)
+
     def test_cancel_requires_confirmation_before_macro(self):
         controller = base_controller("paused")
         pages = []
@@ -3296,8 +3350,33 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         pages = []
         controller._show_page = pages.append
         controller._finish_filament(True)
-        self.assertEqual(controller.gcode.commands, ["M104 S215", "RESUME"])
+        self.assertEqual(controller.gcode.commands, ["RESUME"])
         self.assertEqual(pages, [FEATHER.ScreenPage.PAUSED])
+
+    def test_paused_filament_resume_uses_blocking_wait(self):
+        controller = base_controller("paused")
+        controller.filament_from_pause = True
+        controller.filament_original_target = 215
+        calls = []
+        controller._run_blocking_gcode = lambda command, message: calls.append(
+            (command, message))
+        controller._show_page = lambda page: None
+
+        controller._finish_filament(True)
+
+        self.assertEqual(calls, [("RESUME", "RESUMING PRINT...")])
+
+    def test_filament_workflow_restores_target_when_print_resumed_externally(self):
+        controller = base_controller("printing")
+        controller.filament_from_pause = True
+        controller.filament_original_target = 215
+        pages = []
+        controller._show_page = pages.append
+
+        controller._finish_filament(True)
+
+        self.assertEqual(controller.gcode.commands, ["M104 S215"])
+        self.assertEqual(pages, [FEATHER.ScreenPage.PRINTING])
 
     def test_cancelled_filament_flow_does_not_reheat_or_return_to_print(self):
         controller = base_controller("paused")

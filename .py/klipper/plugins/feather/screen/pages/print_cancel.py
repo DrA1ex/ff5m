@@ -41,7 +41,11 @@ class PrintCancelPagesMixin:
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
             self._render_print_page()
-            self._run_script("RESUME")
+            try:
+                self._run_blocking_gcode("RESUME", "RESUMING PRINT...")
+            except Exception:
+                self.pending_action = None
+                raise
         elif action == "print.filament" and stats in ("printing", "paused"):
             if stats == "printing":
                 self._filament_request_token = getattr(

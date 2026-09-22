@@ -1049,6 +1049,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             "gcode_macro _CLIENT_VARIABLE": {},
             "toolhead": {"extruder": "extruder"},
             "extruder": {"target": 215, "can_extrude": True},
+            "heater_bed": {"target": 65},
             "mod_params": {"variables": {"pause_z_min": 50}},
             "pause_resume": {"is_paused": False},
         })
@@ -1059,25 +1060,31 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                 "pause_resume": {"recover_velocity": 50},
             }},
             "mod_params": {"variables": {"filament_switch_sensor": False}},
-            "toolhead": {"extruder": "extruder"},
+            "toolhead": {"extruder": "extruder", "homed_axes": "xyz"},
             "extruder": {"can_extrude": True},
             "idle_timeout": {"state": "READY"},
+            "pause_resume": {"is_paused": True},
         })
 
         assert_order(self, pause.commands, (
             "_RESURRECTION_PAUSE", "PAUSE_BASE",
             "_TOOLHEAD_PARK_PAUSE_CANCEL   Z_MIN=50.0",
         ))
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=RESUME VARIABLE=last_bed_temp "
+            "VALUE=\"{'restore': True, 'temp': 65}\"", pause.commands)
         assert_order(self, resume.commands, (
             "_CLIENT_EXTRUDE", "RESUME_BASE VELOCITY=50",
             "_RESURRECTION_RESUME",
         ))
 
-    def test_idle_resume_restores_temperature_through_managed_wait(self):
+    def test_idle_resume_restores_bed_homes_then_restores_nozzle(self):
         result = render_macro(
             CLIENT, "RESUME",
             variables={
                 "last_extruder_temp": {"restore": True, "temp": 215},
+                "last_bed_temp": {"restore": True, "temp": 65},
+                "restore_idle_timeout": 600,
             },
             printer={
                 "resurrection": {"supports_pause_markers": False},
@@ -1088,18 +1095,105 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                 "mod_params": {"variables": {
                     "filament_switch_sensor": False,
                 }},
-                "toolhead": {"extruder": "extruder"},
+                "toolhead": {"extruder": "extruder", "homed_axes": ""},
                 "extruder": {"can_extrude": False},
                 "idle_timeout": {"state": "IDLE"},
+                "pause_resume": {"is_paused": True},
             })
 
         assert_order(self, result.commands, (
             "_CONTEXT_BEGIN TYPE=resume",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=65 MINIMUM=63.0",
+            "_CONTEXT_STATE NAME=HOMING",
+            "G28",
             "_WAIT_TEMPERATURE CMD=M104 VALUE=215 MINIMUM=215",
             "_CONTEXT_END",
+            "SET_IDLE_TIMEOUT TIMEOUT=600",
             "_CLIENT_EXTRUDE",
             "RESUME_BASE VELOCITY=50",
         ))
+
+    def test_homed_resume_restores_cooled_bed_and_nozzle(self):
+        result = render_macro(
+            CLIENT, "RESUME",
+            variables={
+                "last_extruder_temp": {"restore": True, "temp": 230},
+                "last_bed_temp": {"restore": True, "temp": 80},
+            },
+            printer={
+                "gcode_macro _CLIENT_VARIABLE": {},
+                "configfile": {"settings": {
+                    "pause_resume": {"recover_velocity": 50}}},
+                "mod_params": {"variables": {
+                    "filament_switch_sensor": False}},
+                "toolhead": {"extruder": "extruder", "homed_axes": "xyz"},
+                "extruder": {"can_extrude": False},
+                "pause_resume": {"is_paused": True},
+            })
+
+        assert_order(self, result.commands, (
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80 MINIMUM=78.0",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=230 MINIMUM=230",
+            "RESUME_BASE VELOCITY=50",
+        ))
+        self.assertNotIn("G28", result.commands)
+
+    def test_resume_without_filament_reports_error_before_recovery(self):
+        result = render_macro(
+            CLIENT, "RESUME",
+            variables={
+                "last_extruder_temp": {"restore": True, "temp": 230},
+                "last_bed_temp": {"restore": True, "temp": 80},
+            },
+            printer={
+                "gcode_macro _CLIENT_VARIABLE": {
+                    "runout_sensor": "filament_switch_sensor e0_sensor"},
+                "configfile": {"settings": {
+                    "pause_resume": {"recover_velocity": 50}}},
+                "mod_params": {"variables": {
+                    "filament_switch_sensor": True}},
+                "filament_switch_sensor e0_sensor": {
+                    "enabled": True, "filament_detected": False},
+                "toolhead": {"extruder": "extruder", "homed_axes": ""},
+                "extruder": {"can_extrude": False},
+                "pause_resume": {"is_paused": True},
+            })
+
+        self.assertIn(
+            '_RESUME_REJECTED MSG="No filament detected. '
+            'Load filament and press Resume."', result.commands)
+        self.assertFalse(any(command.startswith((
+            "_WAIT_TEMPERATURE", "G28", "RESUME_BASE", "SET_IDLE_TIMEOUT"))
+            for command in result.commands))
+        with self.assertRaisesRegex(MacroActionError,
+                                    "No filament detected"):
+            render_macro(CLIENT, "_RESUME_REJECTED", params={
+                "MSG": "No filament detected. Load filament and press Resume."})
+
+    def test_resume_without_saved_nozzle_target_stays_paused_when_cold(self):
+        result = render_macro(
+            CLIENT, "RESUME",
+            variables={
+                "last_extruder_temp": {"restore": False, "temp": 0},
+                "last_bed_temp": {"restore": False, "temp": 0},
+            },
+            printer={
+                "gcode_macro _CLIENT_VARIABLE": {},
+                "configfile": {"settings": {
+                    "pause_resume": {"recover_velocity": 50}}},
+                "mod_params": {"variables": {
+                    "filament_switch_sensor": False}},
+                "toolhead": {"extruder": "extruder", "homed_axes": ""},
+                "extruder": {"can_extrude": False},
+                "pause_resume": {"is_paused": True},
+            })
+
+        self.assertIn(
+            '_RESUME_REJECTED MSG="Extruder is not hot enough. '
+            'Heat it and press Resume."', result.commands)
+        self.assertNotIn("G28", result.commands)
+        self.assertFalse(any(command.startswith("_WAIT_TEMPERATURE")
+                             for command in result.commands))
 
     def test_m600_inherits_pause_minimum_without_overriding_it(self):
         result = render_macro(BASE, "M600", params={"X": 10, "Y": 20})

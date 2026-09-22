@@ -4,6 +4,8 @@ Forge-X uses the normal print macros: `START_PRINT` starts a job, `END_PRINT` fi
 
 Forge-X routes controllable nozzle/bed waits—including loading, Cold Pull, and resume reheating—through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.
 
+In Feather, Guppy, and Headless modes, `PAUSE` saves the current bed and nozzle targets. On `RESUME`, Forge-X checks the filament sensor before heating, restores the bed temperature, runs the normal `G28` macro if the axes are no longer homed, then restores the nozzle temperature before continuing the paused print. A missing filament produces an error and leaves the print paused. Feather shows a blocking wait view during resume, with emergency `ABORT` available. The Stock screen uses its own pause/resume path.
+
 For the required slicer start/end G-code and upload configuration, see [Slicing](SLICING.md).
 
 > [!WARNING]

@@ -2019,7 +2019,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     self._show_message("Print cancelled", ScreenPage.IDLE_HOME)
                 elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                     self._show_page(self.page)
-            elif eventtime >= self.pending_until:
+            elif (eventtime >= self.pending_until
+                  and not self._blocking_operation_active()):
                 if self.pending_action == "print.cancel.confirm":
                     # A long G28/mesh/prime operation is expected to finish at
                     # its next cooperative boundary. Keep the accepted request

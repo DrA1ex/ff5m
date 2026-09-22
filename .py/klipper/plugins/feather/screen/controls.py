@@ -913,10 +913,10 @@ class FeatherControlsMixin:
             self._show_page(ScreenPage.IDLE_HOME)
             return
         target = self.filament_original_target
-        if target > 0:
+        if target > 0 and (not resume or state != "paused"):
             self._run_script("M104 S%.0f" % target)
         if resume and state == "paused":
-            self._run_script("RESUME")
+            self._run_blocking_gcode("RESUME", "RESUMING PRINT...")
         self._show_page(self.page_for_print_state())
 
     def _render_calibration_home(self):
