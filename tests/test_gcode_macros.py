@@ -176,7 +176,8 @@ def run_start_print(**state):
 
 def run_headless_start_print(
         params, *, profiles=("auto", "PLA_profile"), profile_name="auto",
-        feather_force_leveling=None, feather_mesh_name=None, **standing):
+        feather_force_leveling=None, feather_mesh_name=None, display=1,
+        **standing):
     """Execute the headless START_PRINT wrapper through _START_PRINT.
 
     The wrapper stages the slicer request with SET_GCODE_VARIABLE
@@ -194,7 +195,8 @@ def run_headless_start_print(
         HEADLESS, "START_PRINT",
         printer={
             "gcode_macro START_PRINT": wrapper_status,
-            "mod_params": {"variables": {"filament_switch_sensor": False}},
+            "mod_params": {"variables": {
+                "filament_switch_sensor": False, "display": display}},
             "bed_mesh": {"profiles": {name: {} for name in profiles}},
         }, params=params)
 
@@ -1437,13 +1439,23 @@ class StartPrintDefaultMeshTest(unittest.TestCase):
             "SET_FILAMENT_SENSOR SENSOR=e0_sensor ENABLE=0",
             "BED_MESH_CLEAR",
             "BED_MESH_PROFILE LOAD=auto",
-            "_BACKLIGHT",
             "_START_PRINT",
         ))
+        self.assertNotIn("_BACKLIGHT", wrapper)
         # The pre-loaded persistent profile is the only mesh action in the
         # whole flow; _START_PRINT reuses it without calibrating.
         self.assertEqual(mesh_actions(full), ("BED_MESH_PROFILE LOAD=auto",))
         self.assertIn(mesh_generated_publish(""), full)
+
+    def test_start_print_keeps_feather_eco_and_wakes_other_displays(self):
+        params = {"EXTRUDER_TEMP": 230, "BED_TEMP": 65}
+        feather, _ = run_headless_start_print(params, display=1)
+        self.assertNotIn("_BACKLIGHT", feather)
+
+        for display in (0, 2, 3):
+            with self.subTest(display=display):
+                wrapper, _ = run_headless_start_print(params, display=display)
+                assert_order(self, wrapper, ("_BACKLIGHT", "_START_PRINT"))
 
     def test_first_print_without_auto_generates_the_persistent_profile(self):
         wrapper, full = run_headless_start_print(
