@@ -10,6 +10,10 @@ While the stock camera remains available, the mod's camera is optimized for mini
 
 If you still want to use stock camera functionality, read the next section.
 
+On boot with Feather, Guppy, or Headless, Forge-X enables the mod camera if
+`camera` has never been set and a working video device is found. An explicit
+`camera=0` is respected. The normal boot log records whether a device was found.
+
 ### Using the Stock Camera
 
 If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. However, be aware that the stock camera consumes significantly more resources, which may impact overall printer performance and could lead to print failures, such as unexpected print stoppages. You have been warned. Proceed at your own risk.

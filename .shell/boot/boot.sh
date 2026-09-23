@@ -27,6 +27,26 @@ suppress_slicer_nag() {
     sed -i 's/\("CheckAppFrist"[ ]*:[ ]*\)true/\1false/' "$config_file"
 }
 
+auto_enable_camera() {
+    [ -f "$VAR_PATH" ] || return 0
+    [ "$("$CFG_SCRIPT" "$VAR_PATH" --get camera MISSING)" = MISSING ] || return 0
+
+    local device
+    for device in /dev/video*; do
+        [ -e "$device" ] || continue
+        if v4l2-ctl -d "$device" -V > /dev/null 2>&1; then
+            if "$CFG_SCRIPT" "$VAR_PATH" --set camera=1; then
+                echo "// Camera auto-enabled: $device (setting was missing)"
+            else
+                echo "@@ Camera found at $device, but could not save camera=1"
+            fi
+            return 0
+        fi
+    done
+
+    echo "// Camera auto-enable: no usable video device found (setting is still missing)"
+}
+
 DISPLAY_MODE="$("$CMDS"/zdisplay.sh test)"
 DISPLAY_OFF=0
 [ "$DISPLAY_MODE" != "STOCK" ] && DISPLAY_OFF=1
@@ -86,6 +106,8 @@ if [ "$DISPLAY_OFF" -eq 1 ]; then
     echo "// MCU booting..."
     /opt/config/mod/.bin/exec/boot_mcu 2>&1
     
+    auto_enable_camera
+
     echo "// Start klipper."
     [ "$DISPLAY_MODE" = "FEATHER" ] && touch "$FORGE_X_SCREEN_BUSY_F"
     /opt/config/mod/.shell/commands/zstart_klipper.sh &> /dev/null
