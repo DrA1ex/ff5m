@@ -1463,6 +1463,36 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_button_feedback("button 1:nav.control up")
         self.assertEqual(events, [("down", "nav.control"), ("up", "nav.control")])
 
+    def test_frozen_error_button_shows_pressed_feedback(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.page = FEATHER.ScreenPage.ERROR
+        controller.reactor = Reactor()
+        controller.dimmed = False
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.dialog(
+            "MCU restart required", (),
+            (("error.firmware_restart", "FIRMWARE RESTART", "danger"),))
+        controller.renderer.freeze_output()
+
+        controller._handle_button_feedback(
+            "button 0:error.firmware_restart down")
+
+        self.assertTrue(controller.renderer.output_frozen)
+        pressed = controller.renderer._batch_queue.get(timeout=0)
+        self.assertIsNotNone(pressed)
+        self.assertIn(
+            "--background " + controller.renderer.color(
+                UI.ThemeColor.PRESSED_BACKGROUND), pressed.commands[0])
+        self.assertFalse(any("--id " in command for command in pressed.commands))
+
+        controller._handle_button_feedback(
+            "button 0:error.firmware_restart up")
+
+        self.assertTrue(controller.renderer.output_frozen)
+        restored = controller.renderer._batch_queue.get(timeout=0)
+        self.assertIsNotNone(restored)
+        self.assertNotEqual(pressed.commands, restored.commands)
+
     def test_stale_or_malformed_button_feedback_is_ignored(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = type("Renderer", (), {"decode_action": lambda self, action: None})()
@@ -3491,7 +3521,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         self.assertEqual(transitions, [False, True])
 
-    def test_shutdown_message_is_wrapped_by_typer_inside_dialog(self):
+    def test_shutdown_message_is_wrapped_inside_dialog(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
@@ -3503,22 +3533,61 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_error()
 
-        command = next(
-            line for line in batches[0]
-            if controller.error_message in line)
-        self.assertIn("--wrap", command)
-        self.assertIn("--truncate", command)
-        width = re.search(r"--max-width ([0-9]+)", command)
-        height = re.search(r"--max-height ([0-9]+)", command)
-        self.assertIsNotNone(width)
-        self.assertIsNotNone(height)
-        self.assertGreater(int(width.group(1)), 0)
-        self.assertGreater(int(height.group(1)), 0)
-        self.assertEqual(int(height.group(1)), 110)
-        self.assertLessEqual(int(width.group(1)), UI.SCREEN_WIDTH)
-        self.assertLessEqual(int(height.group(1)), UI.SCREEN_HEIGHT)
-        self.assertIn("-p 400 200", command)
-        self.assertNotIn("communication time...", command)
+        text_commands = [line for line in batches[0]
+                         if ('--batch text ' in line
+                             and '-f "JetBrainsMono 8pt"' in line
+                             and '--max-width 584' in line)]
+        fragments = [re.search(r'-t "([^"]+)"', line).group(1)
+                     for line in text_commands]
+        self.assertGreater(len(fragments), 1)
+        self.assertEqual(' '.join(fragments[:-1]), controller.error_message)
+        self.assertEqual(fragments[-1],
+                         "Check the printer, then restart the MCU.")
+
+    def test_long_shutdown_message_reflows_and_pages_inside_content(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.error_message = (
+            "MCU 'mcu' shutdown: Timer too close\n"
+            + ("Once the underlying issue is corrected, reload the\n"
+               "config and restart the host software. " * 5)
+            + "\nPrinter is shutdown")
+        controller.error_recovery = "firmware_restart"
+        controller.error_page = 0
+
+        from ui.layout_helpers import layout_dialog_text
+        normalized = " ".join(controller.error_message.split())
+        page_count = layout_dialog_text(
+            (normalized, "Check the printer, then restart the MCU."),
+            85, 640, 325, True)[-1]
+        self.assertGreater(page_count, 1)
+
+        fragments = []
+        for page in range(page_count):
+            controller.error_page = page
+            controller._render_error()
+            drawing = "\n".join(batches[-1])
+            panel = re.search(r"--batch fill -p 80 (\d+) -s 640 (\d+)", drawing)
+            self.assertIsNotNone(panel)
+            self.assertGreaterEqual(int(panel.group(1)), 74)
+            self.assertLessEqual(int(panel.group(1)) + int(panel.group(2)), 422)
+            self.assertIn("error.firmware_restart", controller.renderer._buttons)
+            if page + 1 < page_count:
+                self.assertIn("error.next", controller.renderer._buttons)
+            if page:
+                self.assertIn("error.prev", controller.renderer._buttons)
+            fragments.extend(
+                re.search(r'-t "([^"]+)"', command).group(1)
+                for command in batches[-1]
+                if ('--batch text ' in command
+                    and '-f "JetBrainsMono 8pt"' in command
+                    and '--max-width 584' in command))
+
+        self.assertEqual(" ".join(fragments[:-1]), normalized)
+        self.assertEqual(fragments[-1],
+                         "Check the printer, then restart the MCU.")
 
     def test_recovery_confirmation_is_wrapped_by_typer(self):
         controller = ScenarioController.__new__(ScenarioController)

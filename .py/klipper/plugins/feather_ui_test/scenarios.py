@@ -376,6 +376,14 @@ class ScenarioCatalog:
                 steps, "ui-network-progress-" + kind,
                 lambda value=kind: self._render_network_progress_snapshot(value))
         self._add_render_capture(
+            steps, "ui-message-ok", self._render_single_action_message)
+        for kind in ("short", "five-lines", "six-lines", "wrapped", "long-action", "paged-first", "paged-second"):
+            self._add_render_capture(
+                steps, "ui-dialog-" + kind,
+                lambda value=kind: self._render_dialog_variant(value))
+        self._add_render_capture(
+            steps, "ui-action-prompt-footer", self._render_action_prompt_footer)
+        self._add_render_capture(
             steps, "ui-message-two-actions", self._render_two_action_message)
         self._add_render_capture(
             steps, "ui-message-mesh-save", self._render_mesh_save_message)
@@ -906,6 +914,69 @@ class ScenarioCatalog:
                 "network_status": status,
         }):
             self._show(ScreenPage.NETWORK_PROGRESS)
+
+    def _render_single_action_message(self):
+        with _temporary_attributes(self.host, {
+                "message": "Moonraker returned an error. Check the printer connection.",
+                "message_return": ScreenPage.NETWORK_HOME,
+                "message_actions": (("message.ok", "OK", "enabled"),),
+        }):
+            self._show(ScreenPage.MESSAGE)
+
+    def _render_dialog_variant(self, kind):
+        title, lines, label = {
+            "short": ("Short message", ("READY TO CONTINUE.",), "OK"),
+            "five-lines": (
+                "Five line message",
+                ("FIRST LINE OF THE MESSAGE.",
+                 "SECOND LINE WITH MORE DETAIL.",
+                 "THIRD LINE EXPLAINS THE STATE.",
+                 "FOURTH LINE SUGGESTS AN ACTION.",
+                 "FIFTH LINE MUST STAY ABOVE THE BUTTON."),
+                "CONTINUE"),
+            "six-lines": (
+                "Six line message",
+                tuple("LINE %d REMAINS VISIBLE." % index for index in range(1, 7)),
+                "CONTINUE"),
+            "wrapped": (
+                "Wrapped message",
+                ("A long sentence wraps naturally across the available width " * 4,),
+                "OK"),
+            "paged-first": (
+                "Paged message",
+                tuple("MESSAGE LINE %d." % index for index in range(1, 19)),
+                "OK"),
+            "paged-second": (
+                "Paged message",
+                tuple("MESSAGE LINE %d." % index for index in range(1, 19)),
+                "OK"),
+            "long-action": (
+                "Long action label",
+                ("SETTINGS HAVE CHANGED.",
+                 "RESTART KLIPPER TO APPLY THEM."),
+                "SAVE SETTINGS AND RESTART"),
+        }[kind]
+        renderer = self.host.renderer
+        commands = renderer.begin_page("Dialog layout")
+        commands += renderer.dialog(
+            title, lines, (("dialog.test.ok", label, "warning"),),
+            x=160, y=130, width=480, height=220, tone="info",
+            page=1 if kind == "paged-second" else 0,
+            page_actions=("dialog.test.prev", "dialog.test.next"))
+        renderer.send(commands)
+
+    def _render_action_prompt_footer(self):
+        with _temporary_attributes(self.host, {
+                "action_prompt": {
+                    "title": "Printer command", "text": ["Action completed."],
+                    "rows": [], "footer": [
+                        {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
+                    ], "buttons": {}, "group": None,
+                },
+                "action_prompt_page": 0,
+                "action_prompt_visible": True,
+        }):
+            self._show(ScreenPage.ACTION_PROMPT)
 
     def _render_two_action_message(self):
         with _temporary_attributes(self.host, {

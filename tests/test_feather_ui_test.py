@@ -1006,6 +1006,11 @@ class RunnerContractTest(unittest.TestCase):
             - {"ui-context-coverage-complete"},
             context_captures)
         self.assertIn("ui-update-short", captures)
+        self.assertIn("ui-message-ok", captures)
+        self.assertIn("ui-dialog-short", captures)
+        self.assertIn("ui-dialog-five-lines", captures)
+        self.assertIn("ui-dialog-long-action", captures)
+        self.assertIn("ui-action-prompt-footer", captures)
         self.assertIn("ui-update-long", captures)
         self.assertIn("ui-update-progress", captures)
         self.assertIn("ui-update-restart", captures)

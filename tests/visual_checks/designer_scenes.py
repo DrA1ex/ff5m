@@ -11,6 +11,7 @@ import json
 import pathlib
 import pickle
 import sys
+from types import SimpleNamespace
 
 
 def _state_metadata(scene):
@@ -31,6 +32,51 @@ def _assert_requested_state(case, scene):
             raise ValueError(
                 "Designer scene did not apply requested state key: %s"
                 % key)
+
+
+def _render_dialog_fixture(scene, fixture, project_root, theme):
+    plugins = project_root / ".py" / "klipper" / "plugins"
+    sys.path.insert(0, str(plugins.resolve()))
+    from feather_preview.ui import PreviewRenderer
+
+    renderer = PreviewRenderer(width=800, height=480)
+    renderer.set_theme(theme)
+    commands = renderer.begin_page("Dialog layout")
+    commands += renderer.dialog(
+        fixture["title"], fixture["lines"], fixture["buttons"],
+        x=160, y=130, width=480, height=220, tone="info",
+        page=fixture.get("page", 0),
+        page_actions=("dialog.test.prev", "dialog.test.next"))
+    scene["operations"] = commands
+    scene["title"] = "Dialog layout / " + fixture["title"]
+    scene["palette"] = renderer.palette
+    scene["diagnostics"] = []
+    return scene
+
+
+def _render_ota_fixture(scene, fixture, project_root, theme):
+    """Render the product's actual update dialog through Designer primitives."""
+    plugins = project_root / ".py" / "klipper" / "plugins"
+    sys.path.insert(0, str(plugins.resolve()))
+    from feather_preview.ui import PreviewRenderer
+    from feather.update_notification import ForgeXUpdateNotification
+
+    renderer = PreviewRenderer(width=800, height=480)
+    renderer.set_theme(theme)
+    captured = []
+    renderer.send = lambda commands: captured.extend(commands)
+    notification = ForgeXUpdateNotification(
+        SimpleNamespace(renderer=renderer, reactor=None), None)
+    notification.installed_version = fixture["installed_version"]
+    notification.available_version = fixture["available_version"]
+    notification.changes = tuple(fixture["changes"])
+    notification.change_page = fixture.get("page", 0)
+    notification.render()
+    scene["operations"] = captured
+    scene["title"] = "OTA update / " + fixture["available_version"]
+    scene["palette"] = renderer.palette
+    scene["diagnostics"] = []
+    return scene
 
 
 def main(argv=None):
@@ -102,6 +148,14 @@ def main(argv=None):
                 "viewport": viewport,
             })
             _assert_requested_state(case, case["scene"])
+            if case.get("dialog_fixture") is not None:
+                case["scene"] = _render_dialog_fixture(
+                    case["scene"], case["dialog_fixture"],
+                    project_root, case["theme"])
+            if case.get("ota_fixture") is not None:
+                case["scene"] = _render_ota_fixture(
+                    case["scene"], case["ota_fixture"],
+                    project_root, case["theme"])
     finally:
         client.close()
     plan_path.write_text(

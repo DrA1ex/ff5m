@@ -91,8 +91,9 @@ EXACT_ACTIONS = {
         "recovery.restore", "recovery.cleanup", "recovery.later"),
     ScreenPage.RECOVERY_CONFIRM: ("nav.back", "recovery.confirm"),
     ScreenPage.ACTION_PROMPT: ("prompt.prev", "prompt.next"),
-    ScreenPage.MESSAGE: ("message.ok",),
-    ScreenPage.ERROR: ("error.restart", "error.firmware_restart"),
+    ScreenPage.MESSAGE: ("message.ok", "message.prev", "message.next"),
+    ScreenPage.ERROR: ("error.restart", "error.firmware_restart",
+                       "error.prev", "error.next"),
     ScreenPage.UPDATE_NOTIFICATION: (
         "update.install", "update.later", "update.prev", "update.next",
         "update.reset", "update.reset.back", "update.reset.confirm"),
@@ -1179,6 +1180,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._handle_recovery_action(action)
             elif action.startswith("prompt."):
                 self._handle_action_prompt_action(action)
+            elif action in ("message.prev", "message.next"):
+                self.message_page = max(0, getattr(self, "message_page", 0)
+                                        + (-1 if action.endswith("prev") else 1))
+                self._show_page(ScreenPage.MESSAGE)
             elif action.startswith("error."):
                 self._handle_error_action(action)
             elif action.startswith("update."):
@@ -1202,7 +1207,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._show_message(str(exc), self.page)
 
     def _action_allowed(self, page, action):
-        if page == ScreenPage.MESSAGE and action != "message.ok":
+        if page == ScreenPage.MESSAGE and action not in (
+                "message.ok", "message.prev", "message.next") :
             return any(
                 item[0] == action
                 for item in getattr(self, "message_actions", ()))
@@ -1814,6 +1820,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._show_error(message, "runtime", recovery)
             return
         self.message = str(message)
+        self.message_page = 0
         self.message_return = return_page
         self.message_actions = (
             actions if actions is not None
@@ -1827,13 +1834,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         title = "Save bed mesh?" if save_mesh else "Message"
         commands = self.renderer.begin_page(title)
         commands += self.renderer.dialog(
-            title, (),
-            self.message_actions,
-            x=90, y=95, width=620, height=300, tone="info")
-        commands.append(self.renderer.text(
-            400, 215, self.message, ThemeColor.TEXT, "JetBrainsMono 12pt", "center",
-            "middle", max_width=584, max_height=108, wrap=True,
-            truncate=True))
+            title, (self.message,), self.message_actions,
+            x=90, y=95, width=620, height=300, tone="info",
+            page=getattr(self, "message_page", 0),
+            page_actions=("message.prev", "message.next"))
         self.renderer.send(commands)
 
     @staticmethod
@@ -1863,7 +1867,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 "[feather_screen] duplicate error ignored while error "
                 "screen is frozen")
             return
-        self.error_message = str(message).replace("\n", " ")
+        self.error_message = str(message)
+        self.error_page = 0
         self.error_category = str(category or "")
         self.error_recovery = (
             recovery if recovery is not None
@@ -1886,21 +1891,24 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             buttons = ()
             title = "KLIPPER IS NOT READY"
         commands += self.renderer.dialog(
-            title, (), buttons,
-            x=80, y=85, width=640, height=325, tone="danger")
-        commands += [
-            self.renderer.text(
-                400, 200, self.error_message, ThemeColor.TEXT, "JetBrainsMono 8pt",
-                "center", "middle", max_width=584, max_height=110, wrap=True,
-                truncate=True),
-            self.renderer.text(
-                400, 285, advice, ThemeColor.TEXT, "JetBrainsMono 8pt", "center",
-                "middle", max_width=584, truncate=True),
-        ]
+            title, (" ".join(self.error_message.split()), advice), buttons,
+            x=80, y=85, width=640, height=325, tone="danger",
+            page=getattr(self, "error_page", 0),
+            page_actions=("error.prev", "error.next"))
         self.renderer.prioritize_next_batch("critical", "error-screen")
         self.renderer.send(commands)
 
     def _handle_error_action(self, action):
+        if action in ("error.prev", "error.next"):
+            self.error_page = max(0, getattr(self, "error_page", 0)
+                                  + (-1 if action.endswith("prev") else 1))
+            was_frozen = self.renderer.output_frozen
+            if was_frozen:
+                self.renderer.thaw_output()
+            self._render_error()
+            if was_frozen:
+                self.renderer.freeze_output()
+            return
         commands = {
             "error.restart": "RESTART",
             "error.firmware_restart": "FIRMWARE_RESTART",

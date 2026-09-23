@@ -735,7 +735,7 @@ class FileWorkflowTest(unittest.TestCase):
             controller.file_preview_request["key"][0], "/data/second.gcode")
 
         feedback = []
-        controller.renderer.send = lambda commands: feedback.append(
+        controller.renderer.send = lambda commands, **kwargs: feedback.append(
             list(commands))
         self.assertTrue(controller.renderer.flash_button("file.item0"))
         self.assertTrue(controller.renderer.restore_button("file.item0"))

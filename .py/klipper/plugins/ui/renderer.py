@@ -15,6 +15,9 @@ from .actions import Action, DismissToast, action_wire_id
 from .font_metrics import (
     get_font_metrics, load_runtime_metrics, set_font_metrics,
 )
+from .layout_helpers import (
+    centered_button_row, dialog_pager_bounds, layout_dialog_text,
+)
 from .numeric_input import NumericInputSpec
 from .render_receipts import validate_render_receipt_token
 from .theme import ThemeColor, ThemeRole, resolve_theme
@@ -264,13 +267,13 @@ class FeatherRenderer:
         return False
 
     def send(self, commands, kind=None, key=None, generation=None,
-             receipt=None):
-        """Publish one immutable batch; never perform IO or lifecycle work."""
+             receipt=None, button_feedback=False):
+        """Publish one immutable batch; registered buttons can respond while frozen."""
         if self._output_held:
             self._next_batch_kind = None
             self._next_batch_key = None
             return False
-        if self._output_frozen or not commands:
+        if (self._output_frozen and not button_feedback) or not commands:
             return False
         immutable = tuple(
             command if isinstance(command, BinaryCommand) else str(command)
@@ -1116,7 +1119,7 @@ class FeatherRenderer:
 
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
                height=220, tone="warning", modal=True,
-               preserve_header_action=True):
+               preserve_header_action=True, page=0, page_actions=None):
         """Build a modal dialog from standard panel, text, and button primitives.
 
         ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
@@ -1132,6 +1135,12 @@ class FeatherRenderer:
             "info": ThemeColor.PRIMARY,
         }
         border = tones.get(tone, ThemeColor.PRIMARY)
+        button_specs = tuple(buttons)
+        y, height, visible_lines, page, page_count = layout_dialog_text(
+            lines, y, width, height, bool(button_specs), page=page,
+            text_padding=self.DIALOG_TEXT_PADDING, screen_height=SCREEN_HEIGHT)
+        if page_count > 1 and (page_actions is None or len(page_actions) != 2):
+            raise ValueError("Overflowing dialog requires previous and next actions")
         commands = []
         show_header_action = (
             preserve_header_action and self._header_action is not None)
@@ -1148,25 +1157,33 @@ class FeatherRenderer:
             x + width // 2, y + 34, str(title).upper(), border,
             "JetBrainsMono Bold 16pt", "center", "middle",
             max_width=width - 2 * self.DIALOG_TEXT_PADDING, truncate=True))
-        for index, line in enumerate(tuple(lines)[:5]):
+        for index, line in enumerate(visible_lines):
             commands.append(self.text(
                 x + width // 2, y + 86 + index * 24, str(line), ThemeColor.TEXT,
                 "JetBrainsMono 8pt", "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING,
                 truncate=True))
-        button_specs = tuple(buttons)
-        if button_specs:
-            gap = 12
-            margin = 18
-            button_width = max(
-                1, (width - 2 * margin - gap * (len(button_specs) - 1))
-                // len(button_specs))
-            button_y = y + height - 58
-            for index, (action, label, state) in enumerate(button_specs):
-                commands += self.button(
-                    action, x + margin + index * (button_width + gap),
-                    button_y, button_width, 42, label, state=state,
-                    font="JetBrainsMono 8pt")
+        if page_count > 1:
+            previous, following = page_actions
+            prev_bounds, next_bounds, counter = dialog_pager_bounds(
+                x, y, width, height, bool(button_specs))
+            commands += self.button(
+                previous, *prev_bounds, "<",
+                state="enabled" if page > 0 else "disabled", font="JetBrainsMono 8pt")
+            commands += self.button(
+                following, *next_bounds, ">",
+                state="enabled" if page + 1 < page_count else "disabled",
+                font="JetBrainsMono 8pt")
+            commands.append(self.text(
+                *counter, "%d / %d" % (page + 1, page_count), ThemeColor.DIM,
+                "JetBrainsMono 8pt", "center", "middle"))
+        for (action, label, state), bounds in zip(
+                button_specs, centered_button_row(
+                    (item[1] for item in button_specs),
+                    x, y + height - 66, width, measure_text=self.text_width,
+                    padding=self.BUTTON_TEXT_PADDING)):
+            commands += self.button(
+                action, *bounds, label, state=state, font="JetBrainsMono 8pt")
         if modal and show_header_action:
             commands += self._header_action_commands()
         return commands
@@ -1178,17 +1195,17 @@ class FeatherRenderer:
         self._pressed_buttons.add(action)
         self.prioritize_next_batch("animation", "button:%s" % action)
         if spec.layout == "surface":
-            self.send(spec.surfaces[1])
+            self.send(spec.surfaces[1], button_feedback=True)
         elif spec.layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
                 action, spec.x, spec.y, spec.width, spec.height,
-                spec.layout[6:], "pressed", False))
+                spec.layout[6:], "pressed", False), button_feedback=True)
         else:
             self.send(self._button_commands(
                 action, spec.x, spec.y, spec.width, spec.height,
                 spec.label, "pressed", spec.font, spec.subtitle, False,
                 spec.layout, spec.subtitle_font, spec.subtitle_color,
-                spec.accent))
+                spec.accent), button_feedback=True)
         return True
 
     def restore_button(self, action):
@@ -1199,17 +1216,17 @@ class FeatherRenderer:
         self._pressed_buttons.discard(action)
         self.prioritize_next_batch("state", "button:%s" % action)
         if spec.layout == "surface":
-            self.send(spec.surfaces[0])
+            self.send(spec.surfaces[0], button_feedback=True)
         elif spec.layout in ("arrow-up", "arrow-down"):
             self.send(self._arrow_button_commands(
                 action, spec.x, spec.y, spec.width, spec.height,
-                spec.layout[6:], spec.state, False))
+                spec.layout[6:], spec.state, False), button_feedback=True)
         else:
             self.send(self._button_commands(
                 action, spec.x, spec.y, spec.width, spec.height,
                 spec.label, spec.state, spec.font, spec.subtitle, False,
                 spec.layout, spec.subtitle_font, spec.subtitle_color,
-                spec.accent))
+                spec.accent), button_feedback=True)
         return True
 
     def set_header_action(self, action=None, label="", state="danger",

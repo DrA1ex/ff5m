@@ -46,6 +46,56 @@
                 "font rasterization"
             ]
         },
+        "default-filament-action":
+        {
+            "description": "Default filament action page while nozzle heating is pending.",
+            "required":
+            [
+                "FILAMENT / ACTION title",
+                "nozzle temperature and HEATING status panel",
+                "LOAD, UNLOAD and PURGE actions with a DONE action"
+            ],
+            "forbidden":
+            [
+                "blank frame",
+                "clipped or overlapping important content"
+            ],
+            "allowed_variations": ["theme colors", "font rasterization"]
+        },
+        "default-filament-material":
+        {
+            "description": "Default filament material page with no enabled materials.",
+            "required":
+            [
+                "FILAMENT / MATERIAL title",
+                "centered NO MATERIALS ENABLED empty state"
+            ],
+            "forbidden":
+            [
+                "fabricated material choices",
+                "blank frame",
+                "clipped important content"
+            ],
+            "allowed_variations": ["theme colors", "font rasterization"]
+        },
+        "default-heat":
+        {
+            "description": "Default heat control page with idle heaters and no enabled material presets.",
+            "required":
+            [
+                "HEAT / CONTROL title",
+                "NOZZLE and BED temperature rows with -5, +5 and OFF controls",
+                "PART FAN row with 0%, 50% and 100% controls",
+                "NO MATERIALS ENABLED preset state and COOLDOWN action"
+            ],
+            "forbidden":
+            [
+                "fabricated temperature or material preset",
+                "blank frame",
+                "clipped or overlapping important content"
+            ],
+            "allowed_variations": ["theme colors", "font rasterization"]
+        },
         "default-printing":
         {
             "description": "Default declarative active-print page before live job details and a preview are available.",
@@ -560,6 +610,15 @@
                 "font rasterization"
             ]
         },
+        "ota-update-short": {"description": "Actual Forge-X OTA availability dialog with one release note.", "required": ["FORGE-X 1.4.1-244 AVAILABLE heading", "CHANGES SINCE 1.4.1-243 heading", "Fix Wi-Fi password screen subtitle release note", "LATER and UPDATE buttons"], "forbidden": ["title overlapping changelog", "clipped release note", "overlapping buttons"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "ota-update-long": {"description": "Actual Forge-X OTA availability dialog with paged release notes.", "required": ["FORGE-X 1.4.1-244 AVAILABLE heading", "CHANGES SINCE 1.4.1-243 heading", "page 2 / 3", "release notes and page arrows", "LATER and UPDATE buttons"], "forbidden": ["title overlapping changelog", "clipped release notes", "overlapping buttons"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-short": {"description": "Generic dialog with one line and OK.", "required": ["SHORT MESSAGE title", "READY TO CONTINUE line", "small centered OK button"], "forbidden": ["full-width OK button", "text overlapping the button", "dialog outside screen"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-five-lines": {"description": "Generic dialog with five message lines and one action.", "required": ["FIVE LINE MESSAGE title", "all five separate message lines", "CONTINUE button below the fifth line", "dialog panel within the screen"], "forbidden": ["hidden fifth line", "line overlapping the button", "dialog outside screen"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-six-lines": {"description": "Six line dialog with every line visible.", "required": ["SIX LINE MESSAGE title", "all six message lines", "CONTINUE below the text"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-wrapped": {"description": "Long sentence wrapping across several lines.", "required": ["WRAPPED MESSAGE title", "multiple readable wrapped text lines", "OK action below the text"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-paged-first": {"description": "First page of a long dialog.", "required": ["PAGED MESSAGE title", "1 / 2 page indicator", "previous and next navigation", "first message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-paged-second": {"description": "Second page of a long dialog.", "required": ["PAGED MESSAGE title", "2 / 2 page indicator", "previous and next navigation", "remaining message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "dialog-long-action": {"description": "Generic dialog with a long action label.", "required": ["LONG ACTION LABEL title", "two message lines", "full SAVE SETTINGS AND RESTART label", "centered action wider than a short OK button"], "forbidden": ["truncated action label", "text overlapping the button", "dialog outside screen"], "allowed_variations": ["theme colors", "font rasterization"]},
         "z-summary-load":
         {
             "description": "Z-offset summary with center selected and auto-load enabled.",
@@ -1172,7 +1231,16 @@
         "printer:ui-network-progress-connect": {"description": "Foreground Wi-Fi connection progress.", "required": ["password handshake progress", "attempt counter", "single CANCEL action"], "forbidden": ["scan-results rows", "overlapping controls", "clipped important content"], "allowed_variations": ["attempt number", "theme colors"]},
         "printer:ui-network-progress-external": {"description": "Externally-owned network operation progress.", "required": ["current network progress", "KEEP WAITING action", "CANCEL action"], "forbidden": ["missing ownership choice", "overlapping controls", "clipped important content"], "allowed_variations": ["progress wording", "theme colors"]},
         "printer:ui-network-progress-cancel": {"description": "Network cancellation pending.", "required": ["Cancelling network operation state", "disabled cancellation action", "KEEP WAITING action"], "forbidden": ["second active cancel request", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-message-two-actions": {"description": "Message dialog with a recovery choice.", "required": ["Wi-Fi password rejection message", "CANCEL action", "RESET PASSWORD warning action"], "forbidden": ["single-action-only dialog", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-message-ok": {"description": "Single-action Moonraker error message.", "required": ["Moonraker connection error message", "centered OK action with compact width and comfortable touch height"], "forbidden": ["full-width OK action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-dialog-short": {"description": "Generic dialog with one message line and a short action.", "required": ["SHORT MESSAGE title", "one message line", "centered compact OK button"], "forbidden": ["full-width OK button", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-dialog-five-lines": {"description": "Generic dialog with the maximum five visible message lines.", "required": ["FIVE LINE MESSAGE title", "five separate visible message lines", "CONTINUE button below the fifth line with clear spacing", "dialog panel fully within the screen"], "forbidden": ["fifth line hidden behind the button", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-dialog-six-lines": {"description": "Six line dialog with every line visible.", "required": ["SIX LINE MESSAGE title", "all six message lines", "CONTINUE below the text"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-wrapped": {"description": "Long sentence wrapping across several lines.", "required": ["WRAPPED MESSAGE title", "multiple readable wrapped text lines", "OK action below the text"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-paged-first": {"description": "First page of a long dialog.", "required": ["PAGED MESSAGE title", "1 / 2 page indicator", "previous and next navigation", "first message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-paged-second": {"description": "Second page of a long dialog.", "required": ["PAGED MESSAGE title", "2 / 2 page indicator", "previous and next navigation", "remaining message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-long-action": {"description": "Generic dialog with a long action label.", "required": ["LONG ACTION LABEL title", "two message lines", "SAVE SETTINGS AND RESTART button whose full label is visible", "centered button wider than a short OK button"], "forbidden": ["truncated action label", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-action-prompt-footer": {"description": "Printer action prompt with one footer action.", "required": ["PRINTER COMMAND title", "Action completed message", "centered OK footer action with compact width and comfortable touch height"], "forbidden": ["full-width OK footer", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-message-two-actions": {"description": "Message dialog with a recovery choice.", "required": ["Wi-Fi password rejection message", "centered CANCEL and RESET PASSWORD actions with comfortable touch height"], "forbidden": ["full-width actions", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-print-preparing": {"description": "Print page while startup preparation is still active.", "required": ["PRINTING title and preparation status", "zero initial progress", "disabled pause, filament and Z controls"], "forbidden": ["enabled unsafe controls", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-operation-context": {"description": "Runtime operation-context state rendered on its owning Feather workflow surface.", "required": ["readable workflow title or operation stage", "screen appropriate to the active operation", "clear current progress or available action"], "forbidden": ["blank frame", "stale unrelated workflow", "overlapping controls", "clipped important content"], "allowed_variations": ["operation and stage text", "progress state", "available safe controls", "theme colors"]},
         "printer:ui-context-coverage-complete": {"description": "Idle home page proving the complete operation-context visual sequence finished.", "required": ["complete idle home dashboard", "main navigation and persistent footer"], "forbidden": ["operation progress left open", "blank frame", "overlapping controls", "clipped important content"], "allowed_variations": ["live status values", "theme colors"]},
@@ -1180,8 +1248,8 @@
         "printer:ui-cancel-pending": {"description": "Cooperative cancellation waiting for a safe point.", "required": ["CANCELLING BED MESH title", "next-safe-step progress", "continue and emergency abort actions"], "forbidden": ["initial confirmation question", "overlapping controls", "clipped important content"], "allowed_variations": ["progress phase", "theme colors"]},
         "printer:ui-cancel-not-cancelable": {"description": "Operation with no safe cancellation point.", "required": ["CANNOT CANCEL SAFELY title", "M112 consequence warning", "CONTINUE and ABORT NOW actions"], "forbidden": ["ordinary safe cancel claim", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-recovery-cleanup": {"description": "Power-loss recovery cleanup confirmation.", "required": ["cleanup permanence warning", "CLEANUP danger action", "back navigation"], "forbidden": ["RESTORE confirmation label", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-error-restart": {"description": "Recoverable Klipper host error.", "required": ["KLIPPER ERROR dialog", "configuration failure message", "RESTART danger action"], "forbidden": ["firmware restart action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-error-firmware-restart": {"description": "MCU shutdown requiring firmware restart.", "required": ["MCU RESTART REQUIRED dialog", "shutdown reason", "FIRMWARE RESTART danger action"], "forbidden": ["ordinary restart action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-error-restart": {"description": "Recoverable Klipper host error.", "required": ["KLIPPER ERROR dialog", "configuration failure message", "centered RESTART danger action with compact width and comfortable touch height"], "forbidden": ["firmware restart action", "full-width restart action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-error-firmware-restart": {"description": "MCU shutdown requiring firmware restart.", "required": ["MCU RESTART REQUIRED dialog", "shutdown reason", "centered FIRMWARE RESTART danger action with compact width and comfortable touch height"], "forbidden": ["ordinary restart action", "full-width firmware restart action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-error-reconnecting": {"description": "Disconnected Klipper reconnecting state.", "required": ["KLIPPER IS NOT READY dialog", "reconnection message", "no unavailable recovery button"], "forbidden": ["active restart action", "overlapping content", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-update-short": {"description": "Forge-X update dialog with a short changelog.", "required": ["available version heading", "changes-since heading with spacing below it", "LATER and UPDATE actions"], "forbidden": ["title overlapping changelog", "missing release note", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
         "printer:ui-update-long": {"description": "Forge-X update dialog with paginated release notes.", "required": ["available version heading", "multiple changelog rows", "page indicator and arrow controls"], "forbidden": ["release notes overlapping actions", "missing pagination", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},

@@ -206,6 +206,197 @@
       "state": {
         "ui.pages.z_offset.summary.state.SummaryState.DIALOG": "discard"
       }
+    },
+    {
+      "id": "dialog-short",
+      "label": "Dialog layout / one line and OK",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Short message",
+        "lines": ["READY TO CONTINUE."],
+        "buttons": [["dialog.test.ok", "OK", "warning"]]
+      }
+    },
+    {
+      "id": "dialog-five-lines",
+      "label": "Dialog layout / five lines",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Five line message",
+        "lines": [
+          "FIRST LINE OF THE MESSAGE.",
+          "SECOND LINE WITH MORE DETAIL.",
+          "THIRD LINE EXPLAINS THE STATE.",
+          "FOURTH LINE SUGGESTS AN ACTION.",
+          "FIFTH LINE MUST STAY ABOVE THE BUTTON."
+        ],
+        "buttons": [["dialog.test.ok", "CONTINUE", "warning"]]
+      }
+    },
+    {
+      "id": "dialog-six-lines",
+      "label": "Dialog layout / six lines",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Six line message",
+        "lines": [
+          "LINE 1 REMAINS VISIBLE.",
+          "LINE 2 REMAINS VISIBLE.",
+          "LINE 3 REMAINS VISIBLE.",
+          "LINE 4 REMAINS VISIBLE.",
+          "LINE 5 REMAINS VISIBLE.",
+          "LINE 6 REMAINS VISIBLE."
+        ],
+        "buttons": [
+          [
+            "dialog.test.ok",
+            "CONTINUE",
+            "warning"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "dialog-wrapped",
+      "label": "Dialog layout / wrapped text",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Wrapped message",
+        "lines": [
+          "A long sentence wraps naturally across the available width A long sentence wraps naturally across the available width A long sentence wraps naturally across the available width A long sentence wraps naturally across the available width "
+        ],
+        "buttons": [
+          [
+            "dialog.test.ok",
+            "OK",
+            "warning"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "dialog-paged-first",
+      "label": "Dialog layout / first text page",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Paged message",
+        "lines": [
+          "MESSAGE LINE 1.",
+          "MESSAGE LINE 2.",
+          "MESSAGE LINE 3.",
+          "MESSAGE LINE 4.",
+          "MESSAGE LINE 5.",
+          "MESSAGE LINE 6.",
+          "MESSAGE LINE 7.",
+          "MESSAGE LINE 8.",
+          "MESSAGE LINE 9.",
+          "MESSAGE LINE 10.",
+          "MESSAGE LINE 11.",
+          "MESSAGE LINE 12.",
+          "MESSAGE LINE 13.",
+          "MESSAGE LINE 14.",
+          "MESSAGE LINE 15.",
+          "MESSAGE LINE 16.",
+          "MESSAGE LINE 17.",
+          "MESSAGE LINE 18."
+        ],
+        "buttons": [
+          [
+            "dialog.test.ok",
+            "OK",
+            "warning"
+          ]
+        ],
+        "page": 0
+      }
+    },
+    {
+      "id": "dialog-paged-second",
+      "label": "Dialog layout / second text page",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Paged message",
+        "lines": [
+          "MESSAGE LINE 1.",
+          "MESSAGE LINE 2.",
+          "MESSAGE LINE 3.",
+          "MESSAGE LINE 4.",
+          "MESSAGE LINE 5.",
+          "MESSAGE LINE 6.",
+          "MESSAGE LINE 7.",
+          "MESSAGE LINE 8.",
+          "MESSAGE LINE 9.",
+          "MESSAGE LINE 10.",
+          "MESSAGE LINE 11.",
+          "MESSAGE LINE 12.",
+          "MESSAGE LINE 13.",
+          "MESSAGE LINE 14.",
+          "MESSAGE LINE 15.",
+          "MESSAGE LINE 16.",
+          "MESSAGE LINE 17.",
+          "MESSAGE LINE 18."
+        ],
+        "buttons": [
+          [
+            "dialog.test.ok",
+            "OK",
+            "warning"
+          ]
+        ],
+        "page": 1
+      }
+    },
+        {
+      "id": "dialog-long-action",
+      "label": "Dialog layout / long action label",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Long action label",
+        "lines": [
+          "SETTINGS HAVE CHANGED.",
+          "RESTART KLIPPER TO APPLY THEM."
+        ],
+        "buttons": [["dialog.test.ok", "SAVE SETTINGS AND RESTART", "warning"]]
+      }
+    },
+    {
+      "id": "ota-update-short",
+      "label": "OTA update / short changelog",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "ota_fixture": {
+        "installed_version": "1.4.1-243",
+        "available_version": "1.4.1-244",
+        "changes": [
+          "Fix Wi-Fi password screen subtitle"
+        ],
+        "page": 0
+      }
+    },
+    {
+      "id": "ota-update-long",
+      "label": "OTA update / paged changelog",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "ota_fixture": {
+        "installed_version": "1.4.1-243",
+        "available_version": "1.4.1-244",
+        "changes": [
+          "CHANGE 01: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 02: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 03: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 04: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 05: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 06: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 07: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 08: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 09: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 10: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 11: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 12: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 13: EXERCISE PAGINATED RELEASE NOTES",
+          "CHANGE 14: EXERCISE PAGINATED RELEASE NOTES"
+        ],
+        "page": 1
+      }
     }
   ]
 }

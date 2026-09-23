@@ -35,6 +35,10 @@ def framework_manifest():
     }
 
 _EXPORT_GROUPS = (
+    ("layout_helpers", (
+        "centered_button_row", "dialog_pager_bounds",
+        "dialog_vertical_bounds", "layout_dialog_text",
+    )),
     ("authoring", ("REUSABLE_SOURCE_CONTRACT", "ReusableSourceContract")),
     ("theme", (
         "ThemeColor", "ThemeRole", "ResolvedTheme",

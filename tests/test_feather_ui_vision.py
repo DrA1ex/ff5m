@@ -1282,6 +1282,38 @@ class HostPipelineTest(unittest.TestCase):
 
 
 class HybridCompositionTest(unittest.TestCase):
+    def test_ota_update_scenarios_render_actual_notification(self):
+        scenarios = HYBRID.load_scenarios(
+            ROOT / "tests" / "visual_checks" / "scenarios.json")
+        fixtures = {
+            item["id"]: item["ota_fixture"]
+            for item in scenarios if "ota_fixture" in item
+        }
+
+        self.assertEqual(set(fixtures),
+                         {"ota-update-short", "ota-update-long"})
+        self.assertEqual(fixtures["ota-update-short"]["page"], 0)
+        self.assertEqual(fixtures["ota-update-long"]["page"], 1)
+        self.assertEqual(len(fixtures["ota-update-long"]["changes"]), 14)
+
+    def test_dialog_layout_scenarios_reach_designer_capture(self):
+        scenarios = HYBRID.load_scenarios(
+            ROOT / "tests" / "visual_checks" / "scenarios.json")
+        fixtures = {
+            item["id"]: item["dialog_fixture"]
+            for item in scenarios if "dialog_fixture" in item
+        }
+
+        self.assertEqual(
+            set(fixtures),
+            {"dialog-short", "dialog-five-lines", "dialog-six-lines",
+             "dialog-wrapped", "dialog-paged-first", "dialog-paged-second",
+             "dialog-long-action"})
+        self.assertEqual(len(fixtures["dialog-five-lines"]["lines"]), 5)
+        self.assertEqual(
+            fixtures["dialog-long-action"]["buttons"][0][1],
+            "SAVE SETTINGS AND RESTART")
+
     def test_designer_capture_worker_pool_is_bounded_and_ordered(self):
         script = pathlib.Path(
             HYBRID.__file__).with_name("designer_capture.cjs")

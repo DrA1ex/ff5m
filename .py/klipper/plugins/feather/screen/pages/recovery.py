@@ -7,6 +7,7 @@
 import logging
 
 from ui import ThemeColor
+from ui.layout_helpers import centered_button_row
 from ff5m_ui.screen import ScreenPage
 
 from feather.screen.pagination import Pagination
@@ -102,16 +103,14 @@ class RecoveryPagesMixin:
 
         footer = prompt["footer"]
         if footer:
-            gap = 10
-            margin = 48
-            width = max(
-                1, (704 - gap * (len(footer) - 1))
-                // max(1, len(footer)))
-            for column, button in enumerate(footer):
+            for button, bounds in zip(
+                    footer, centered_button_row(
+                        (item["label"] for item in footer), 30, 380, 740,
+                        measure_text=self.renderer.text_width,
+                        padding=self.renderer.BUTTON_TEXT_PADDING)):
                 commands += self.renderer.button(
-                    button["action"], margin + column * (width + gap), 374,
-                    width, 42, button["label"], state=button["state"],
-                    font="JetBrainsMono 8pt")
+                    button["action"], *bounds, button["label"],
+                    state=button["state"], font="JetBrainsMono 8pt")
         self.renderer.send(commands)
 
     def _handle_recovery_action(self, action):

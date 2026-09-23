@@ -1165,7 +1165,22 @@ class Dialog(Component):
     def interaction_signature(self, state):
         return (self.blocks_input(state), tuple(
             button[2] not in ("disabled", "busy")
-            for button in resolve_deep(self.buttons, state)))
+            for button in resolve_deep(self.buttons, state)),
+            resolve(self.page, state))
+
+    @property
+    def page_actions(self):
+        return copy.deepcopy(self.__dict__["page_actions"])
+
+    @page_actions.setter
+    def page_actions(self, value):
+        actions = tuple(value or ())
+        if actions and (len(actions) != 2 or not all(
+                isinstance(action, Action) for action in actions)):
+            raise TypeError("Dialog page_actions must be two semantic Actions")
+        for action in actions:
+            validate_action(action)
+        self._replace_actions("page_actions", actions)
 
     @property
     def buttons(self):
@@ -1188,7 +1203,7 @@ class Dialog(Component):
         _text("title", group="Content", live=True),
         _property(
             "lines", (tuple, list), (), kind="text_lines", group="Content",
-            maximum_items=4, live=True),
+            live=True),
         _property(
             "buttons", (tuple, list), (), kind="dialog_buttons",
             group="Actions", rewrite=False, live=False,
@@ -1197,16 +1212,21 @@ class Dialog(Component):
             "tone", ("info", "warning", "danger"), "warning",
             group="Appearance"),
         _property(
-            "modal", bool, False, kind="checkbox", group="Behavior"))
+            "modal", bool, False, kind="checkbox", group="Behavior"),
+        _number("page", 0, minimum=0, group="Behavior"),
+        _property("page_actions", (tuple, list), (), kind="semantic_actions",
+                  group="Actions", rewrite=False, live=False))
 
     def __init__(self, title, lines, buttons, tone="warning", modal=False,
-                 key=None, **kwargs):
+                 page=0, page_actions=(), key=None, **kwargs):
         super().__init__(key=key)
         self.title = title
         self.lines = lines
         self.buttons = buttons
         self.tone = tone
         self.modal = modal
+        self.page = page
+        self.page_actions = page_actions
         self.kwargs = kwargs
 
     def draw(self, renderer, state, bounds):
@@ -1218,7 +1238,8 @@ class Dialog(Component):
             resolve_deep(self.buttons, state),
             x=bounds.x, y=bounds.y, width=bounds.width,
             height=bounds.height, tone=resolve(self.tone, state),
-            modal=resolve(self.modal, state), **kwargs)
+            modal=resolve(self.modal, state), page=resolve(self.page, state),
+            page_actions=self.page_actions or None, **kwargs)
 
 
 def _creation_field(spec, required=False):
@@ -1293,7 +1314,8 @@ _publish_property_source_positions(
     VerticalGauge, title=1, unavailable_title=2, unavailable_value=3,
     danger_above=4)
 _publish_property_source_positions(
-    Dialog, title=0, lines=1, buttons=2, tone=3, modal=4)
+    Dialog, title=0, lines=1, buttons=2, tone=3, modal=4, page=5,
+    page_actions=6)
 
 
 _publish_creation(Fill, ("color",), required=("color",))

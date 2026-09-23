@@ -24,6 +24,7 @@ SPEC = importlib.util.spec_from_file_location("feather_screen", MODULE_PATH)
 FEATHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FEATHER)
 UI = __import__("ui")
+from ui.layout_helpers import dialog_vertical_bounds
 from feather.network import protocol as NETWORK_PROTOCOL
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
@@ -1352,6 +1353,86 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(
             set(renderer._buttons), {"dialog.close", "dialog.apply"})
 
+    def test_dialog_buttons_fit_labels_and_center_with_larger_touch_targets(self):
+        renderer = FEATHER.FeatherRenderer()
+
+        renderer.dialog("Notice", (), (("ok", "OK", "enabled"),),
+                        x=90, y=95, width=620, height=300)
+        ok = renderer._buttons["ok"]
+        self.assertEqual(ok[:4], (328, 329, 144, 50))
+
+        renderer.dialog("Error", (),
+                        (("back", "BACK", "enabled"),
+                         ("restart", "FIRMWARE RESTART", "danger")),
+                        x=80, y=85, width=640, height=325)
+        back = renderer._buttons["back"]
+        restart = renderer._buttons["restart"]
+        self.assertEqual(back.width, restart.width)
+        self.assertLessEqual(back.width, 240)
+        self.assertGreaterEqual(back.width - 2 * renderer.BUTTON_TEXT_PADDING,
+                                renderer.text_width("FIRMWARE RESTART", "JetBrainsMono 8pt"))
+        self.assertEqual(back.x + back.width + 12, restart.x)
+        self.assertEqual(back.x + restart.x + restart.width, 800)
+        self.assertEqual((back.y, back.height), (344, 50))
+
+        renderer.dialog("Small", (),
+                        (("one", "ONE", "enabled"),
+                         ("two", "TWO", "enabled")),
+                        x=25, y=75, width=300, height=220)
+        one = renderer._buttons["one"]
+        two = renderer._buttons["two"]
+        self.assertEqual((one.width, two.width), (126, 126))
+        self.assertEqual(one.x + one.width + 12, two.x)
+        self.assertEqual(one.y + one.height, 279)
+
+    def test_printer_action_prompt_footer_uses_dialog_button_geometry(self):
+        screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        screen.renderer = FEATHER.FeatherRenderer()
+        screen.renderer.send = lambda commands: None
+        screen._action_prompt_is_cold_pull = lambda: False
+        screen.action_prompt = {
+            "title": "Printer command", "text": ["Action completed."],
+            "rows": [], "footer": [
+                {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
+            ],
+        }
+        screen.action_prompt_page = 0
+
+        screen._render_action_prompt()
+
+        self.assertEqual(
+            screen.renderer._buttons["prompt.dismiss"][:4],
+            (328, 380, 144, 50))
+
+    def test_dialog_expands_for_five_lines_and_a_button(self):
+        renderer = FEATHER.FeatherRenderer()
+        lines = tuple("LINE %d" % index for index in range(1, 6))
+
+        drawing = "\n".join(renderer.dialog(
+            "Full dialog", lines, (("continue", "CONTINUE", "enabled"),),
+            x=160, y=130, width=480, height=220))
+
+        self.assertIn("--batch fill -p 160 102 -s 480 276", drawing)
+        self.assertIn("-p 400 284", drawing)
+        self.assertEqual(renderer._buttons["continue"].y, 312)
+        self.assertEqual(dialog_vertical_bounds(350, 220, 5, True),
+                         (146, 276))
+
+    def test_dialog_allows_a_wider_button_for_a_long_label(self):
+        renderer = FEATHER.FeatherRenderer()
+
+        renderer.dialog("Restart", (),
+                        (("save", "SAVE SETTINGS AND RESTART", "warning"),),
+                        x=160, y=130, width=480, height=220)
+
+        button = renderer._buttons["save"]
+        self.assertGreater(button.width, 240)
+        self.assertLessEqual(button.width, 360)
+        self.assertLessEqual(abs(button.x + button.width // 2 - 400), 1)
+        self.assertGreaterEqual(
+            button.width - 2 * renderer.BUTTON_TEXT_PADDING,
+            renderer.text_width(button.label, "JetBrainsMono 8pt"))
+
     def test_dialog_supports_five_lines_below_title(self):
         renderer = FEATHER.FeatherRenderer()
         lines = tuple("LINE %d" % index for index in range(1, 7))
@@ -1361,7 +1442,7 @@ class RendererStateTest(unittest.TestCase):
 
         for index in range(1, 6):
             self.assertIn("LINE %d" % index, drawing)
-        self.assertNotIn("LINE 6", drawing)
+        self.assertIn("LINE 6", drawing)
         self.assertIn("-p 400 171", drawing)
         self.assertNotIn("-p 400 163", drawing)
 
@@ -1381,7 +1462,8 @@ class RendererStateTest(unittest.TestCase):
         self.assertIsNotNone(hint_panel)
         self.assertGreaterEqual(int(hint_panel.group(1)), 30)
         self.assertLessEqual(int(hint_panel.group(2)), 740)
-        self.assertIn(long_text, dialog)
+        self.assertEqual(sum(len(part) for part in re.findall(
+            r'--batch text .* -t "(X+)"', dialog)), len(long_text))
         self.assertIn("--max-width 584 --truncate", dialog)
 
     def test_text_bounds_are_delegated_to_typer(self):
@@ -1944,7 +2026,7 @@ class RendererStateTest(unittest.TestCase):
     def test_button_press_feedback_redraws_without_duplicate_hitbox(self):
         renderer = FEATHER.FeatherRenderer()
         sent = []
-        renderer.send = sent.append
+        renderer.send = lambda commands, **kwargs: sent.append(commands)
         renderer.button("nav.control", 20, 60, 200, 100, "CONTROL",
                         subtitle="Move and heat")
         self.assertTrue(renderer.flash_button("nav.control"))
@@ -1965,7 +2047,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertFalse(any("--id " in command for command in down))
 
         sent = []
-        renderer.send = sent.append
+        renderer.send = lambda commands, **kwargs: sent.append(commands)
         self.assertTrue(renderer.flash_button("mod.prev"))
         self.assertTrue(renderer.restore_button("mod.prev"))
         self.assertEqual(len(sent), 2)
