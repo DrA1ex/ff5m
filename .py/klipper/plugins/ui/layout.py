@@ -100,7 +100,9 @@ class Rect:
         return "Rect(%d, %d, %d, %d)" % tuple(self)
 
     def __eq__(self, other):
-        return isinstance(other, Rect) and tuple(self) == tuple(other)
+        return (isinstance(other, Rect) and self.x == other.x
+                and self.y == other.y and self.width == other.width
+                and self.height == other.height)
 
     @property
     def right(self):
@@ -1266,8 +1268,10 @@ class Node(metaclass=_NodeMeta):
 
     def render_interactions(self, renderer, state, layout):
         state = getattr(self, "_item_scope", state)
-        commands = _command_list(
-            self.interaction_commands(renderer, state, layout.rect(self)))
+        commands = []
+        if type(self).interaction_commands is not Node.interaction_commands:
+            commands.extend(_command_list(
+                self.interaction_commands(renderer, state, layout.rect(self))))
         for child in self.paint_children(state):
             commands.extend(child.render_interactions(renderer, state, layout))
         return commands
@@ -2966,12 +2970,10 @@ class DeclarativePage(Tree):
             return None
         new_layout = LayoutResult(previous=old_layout)
         self.root.arrange(self.bounds, new_layout)
-        nodes = tuple(self.root.walk())
-        if (old_layout._nodes.keys() != new_layout._nodes.keys() or
-                old_layout._nodes.keys() != {id(node) for node in nodes}):
+        if old_layout._nodes.keys() != new_layout._nodes.keys():
             return None
 
-        owned = set()
+        boundaries = {}
         damage = []
         ancestors = set()
         for root in roots:
@@ -2979,8 +2981,6 @@ class DeclarativePage(Tree):
             while parent is not None:
                 ancestors.add(parent)
                 parent = parent.parent
-            members = tuple(root.walk())
-            owned.update(id(node) for node in members)
             previous = old_layout.rect(root)
             current = new_layout.rect(root)
             region = previous.union(current)
@@ -2988,30 +2988,42 @@ class DeclarativePage(Tree):
                     or not self._subtree_covers(
                         root, current, self._paint_state(root), new_layout)):
                 return None
-            for node in members:
-                if not previous.contains(old_layout.rect(node)):
-                    return None
-                if not current.contains(new_layout.rect(node)):
-                    return None
+            boundaries[id(root)] = (previous, current)
             damage.append(region)
 
         if any(first.overlaps(second) for index, first in enumerate(damage)
                for second in damage[index + 1:]):
             return None
-        for node in nodes:
-            if (type(node).interaction_commands is Node.interaction_commands and
-                    any(name in node.__dict__ for name in ("action", "actions", "buttons"))):
+        # Carry the repaint boundary down the tree so geometry, overflow and
+        # input compatibility are checked together, once per node.
+        visited = set()
+        pending = [(self.root, None)]
+        while pending:
+            node, boundary = pending.pop()
+            identity = id(node)
+            visited.add(identity)
+            previous = old_layout._nodes.get(identity)
+            current = new_layout._nodes.get(identity)
+            if previous is None or current is None:
                 return None
-            if id(node) in owned:
+            if (type(node).interaction_commands is Node.interaction_commands and
+                    ("action" in node.__dict__ or "actions" in node.__dict__
+                     or "buttons" in node.__dict__)):
+                return None
+            boundary = boundaries.get(identity, boundary)
+            pending.extend((child, boundary) for child in node.render_children())
+            if boundary is not None:
+                if not boundary[0].contains(previous) or not boundary[1].contains(current):
+                    return None
                 continue
-            previous = old_layout.rect(node)
-            current = new_layout.rect(node)
-            if (previous != current or
+            if ((previous is not current and previous != current) or
                     (node._dirty != Dirty.CLEAN and node not in ancestors)):
                 return None
             if (node.paints_pixels and
                     any(previous.overlaps(region) for region in damage)):
                 return None
+        if visited != old_layout._nodes.keys():
+            return None
 
         set_page_identity = getattr(renderer, "set_semantic_page", None)
         if set_page_identity is not None:

@@ -575,6 +575,8 @@ def derived(function, *inputs):
 
 
 def resolve(value, store):
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     if isinstance(value, Binding):
         value = value.resolve(store)
     elif callable(value):

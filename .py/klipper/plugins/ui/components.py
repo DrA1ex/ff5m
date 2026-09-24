@@ -12,6 +12,7 @@ from .theme import ThemeColor, ThemeRole
 from .actions import Action, action_wire_id, validate_action
 from .bindings import resolve, resolve_deep
 from .font_metrics import get_font_metrics
+from .identity import serialize_key
 from .layout import (
     CreationContract, CreationIdentityContract, CreationSourceContract, Dirty,
     Node, Rect, _SINGLE_CHILD_STRUCTURE, subdivision_positions,
@@ -82,6 +83,22 @@ def _frozen(value):
     return value
 
 
+def _signature_value(value, state):
+    # Most properties are literals. Resolve and freeze containers in one pass,
+    # without allocating an intermediate dict/list for every frame.
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    value = resolve(value, state)
+    if isinstance(value, Enum):
+        return serialize_key(value)
+    if isinstance(value, dict):
+        return tuple(sorted((key, _signature_value(item, state))
+                            for key, item in value.items()))
+    if isinstance(value, (tuple, list)):
+        return tuple(_signature_value(item, state) for item in value)
+    return value
+
+
 class ButtonStyle:
     """Typed button defaults accepted by ``Override.with_button_style``."""
 
@@ -142,13 +159,18 @@ class Component(Node):
         self._active_action_wire_id = None if value is None else action_wire_id(value)
 
     def state_signature(self, state):
-        values = []
-        for name, value in self.__dict__.items():
-            if name.startswith("_") or name in (
-                    "key", "layout_options", "parent"):
-                continue
-            values.append((name, _frozen(resolve_deep(value, state))))
-        return tuple(values)
+        # Cache field selection only. Values, bindings and nested containers
+        # remain live; adding/removing even one attribute refreshes the list.
+        keys = tuple(self.__dict__)
+        cached = getattr(self, "_signature_fields", None)
+        if cached is None or cached[0] != keys:
+            fields = tuple(name for name in keys if not name.startswith("_")
+                           and name not in ("key", "layout_options", "parent"))
+            self._signature_fields = (keys, fields)
+        else:
+            fields = cached[1]
+        return tuple((name, _signature_value(self.__dict__[name], state))
+                     for name in fields)
 
 
 class Fill(Component):
