@@ -208,7 +208,11 @@ class FeatherRenderer:
 
     @staticmethod
     def quote(value):
-        value = str(value).replace("\r\n", "\n").replace("\r", "\n")
+        value = str(value)
+        if (value != "--end" and "\r" not in value and "\n" not in value
+                and "\\" not in value and '"' not in value):
+            return '"%s"' % value
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
         # A line containing only the pipe sentinel would terminate the frame
         # before Typer tokenizes the quoted text. Keep the visible content and
         # make that reserved line harmless without flattening real line breaks.

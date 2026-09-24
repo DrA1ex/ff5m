@@ -523,18 +523,35 @@ class Text(Component):
     def _content_width(self):
         if self._measurement is None:
             self._measurement = self._resolve_measurement(self._measurement_state)
+        metrics = get_font_metrics()
+        key = (self._measurement, self.layout_options.padding.horizontal, id(metrics))
+        cached = getattr(self, "_width_measurement", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         value, font, maximum, _maximum_height, _wrap = self._measurement
         if value is None:
             return None
-        width = get_font_metrics().text_width(value, font)
+        width = metrics.text_width(value, font)
         if maximum is not None:
             width = min(width, int(maximum))
-        return max(1, width + self.layout_options.padding.horizontal)
+        result = max(1, width + self.layout_options.padding.horizontal)
+        self._width_measurement = (key, result)
+        return result
 
     def _content_height(self, cross_extent=None, dynamic_minimum=False):
         metrics = get_font_metrics()
         if self._measurement is None:
             self._measurement = self._resolve_measurement(self._measurement_state)
+        # Layout asks the same leaf for its natural size through several
+        # ancestors. Keep only the latest query, keyed by all size inputs.
+        wrapped = self._measurement[4]
+        key = (self._measurement, cross_extent if wrapped else None,
+               dynamic_minimum if wrapped or self._measurement[0] is None else False,
+               self.layout_options.width if wrapped else None, self.layout_options.padding.horizontal,
+               self.layout_options.padding.vertical, id(metrics))
+        cached = getattr(self, "_height_measurement", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         value, font, maximum_width, maximum, wrap = self._measurement
         metric = metrics.metric(font)
         width = None
@@ -559,7 +576,9 @@ class Text(Component):
         height = text_height + self.layout_options.padding.vertical
         if maximum is not None:
             height = min(height, int(maximum))
-        return max(metric.glyph_height, height)
+        result = max(metric.glyph_height, height)
+        self._height_measurement = (key, result)
+        return result
 
     def preferred_extent(self, direction, cross_extent=None):
         if direction == "horizontal":

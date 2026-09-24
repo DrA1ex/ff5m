@@ -9,9 +9,11 @@ import inspect
 import itertools
 import uuid
 from enum import Enum, IntEnum
+from functools import lru_cache
 
 from .bindings import Binding, ItemScope, StateStore, derived, page_state_keys, resolve
 from .actions import ItemCommand, action_wire_id, collect_actions, validate_action
+from .font_metrics import get_font_metrics
 from .identity import PageKey, serialize_key
 from .properties import (
     CreationFieldSpec, EditorSpec, Invalidation, PropertySpec, RewritePolicy, SourceSpec,
@@ -510,6 +512,8 @@ class LayoutResult:
             self._named_nodes[key] = node
 
     def rect(self, node_or_key):
+        if isinstance(node_or_key, Node):
+            return self._nodes[id(node_or_key)]
         key = self._name(node_or_key)
         if isinstance(key, str):
             return self._names[key]
@@ -821,6 +825,15 @@ def _validate_template_item(value, path="ListView item"):
 
 
 
+@lru_cache(maxsize=128)
+def _constructor_signature(constructor):
+    signature = inspect.signature(constructor)
+    parameters = tuple(signature.parameters.values())
+    if parameters and parameters[0].name == "self":
+        signature = signature.replace(parameters=parameters[1:])
+    return signature
+
+
 class _NodeMeta(type):
     """Capture explicit args and defer ParamRef coercion centrally."""
 
@@ -851,12 +864,9 @@ class _NodeMeta(type):
         call_args = args
         call_kwargs = kwargs
         try:
-            signature = inspect.signature(cls.__init__)
-            parameters = tuple(signature.parameters.values())
-            if parameters and parameters[0].name == "self":
-                signature = signature.replace(parameters=parameters[1:])
+            signature = _constructor_signature(cls.__init__)
             bound = signature.bind_partial(*args, **kwargs)
-            source_specs = _NodeMeta._source_specs(cls)
+            source_specs = None
 
             var_keywords_name = None
             for parameter in signature.parameters.values():
@@ -879,6 +889,8 @@ class _NodeMeta(type):
                     for key, item in tuple(values.items()):
                         if not _NodeMeta._param_ref(item):
                             continue
+                        if source_specs is None:
+                            source_specs = _NodeMeta._source_specs(cls)
                         placeholder = _NodeMeta._placeholder(
                             None, source_specs.get(key, ()))
                         if placeholder is inspect.Parameter.empty:
@@ -891,6 +903,8 @@ class _NodeMeta(type):
                     continue
                 if not _NodeMeta._param_ref(value):
                     continue
+                if source_specs is None:
+                    source_specs = _NodeMeta._source_specs(cls)
                 placeholder = _NodeMeta._placeholder(
                     parameter, source_specs.get(name, ()))
                 if placeholder is inspect.Parameter.empty:
@@ -898,8 +912,9 @@ class _NodeMeta(type):
                 deferred[name] = value
                 bound.arguments[name] = placeholder
 
-            call_args = bound.args
-            call_kwargs = bound.kwargs
+            if deferred:
+                call_args = bound.args
+                call_kwargs = bound.kwargs
         except (TypeError, ValueError):
             # Opaque custom signatures remain runtime-valid; they simply do not
             # get central explicit/deferred authoring metadata.
@@ -919,7 +934,7 @@ class _NodeMeta(type):
                     specs[0].set_on(node, value)
         node._authoring_property_defaults = dict(
             (spec.name, copy.deepcopy(spec.value_from(node)))
-            for spec in getattr(node, "property_schema", ()))
+            for spec in getattr(node, "property_schema", ()) if spec.styleable)
         node._authoring_layout_defaults = node._snapshot_layout_options()
         return node
 
@@ -977,6 +992,7 @@ class Node(metaclass=_NodeMeta):
             raise TypeError("Node.style requires an Enum member")
         _capture_modifier(self, "style", (("style", 0),))
         self._style_id = style_id
+        self.invalidate_layout()
         return self
 
     # Shared layout modifiers. They deliberately mutate the declaration node
@@ -984,18 +1000,21 @@ class Node(metaclass=_NodeMeta):
     def ref(self, key):
         _capture_modifier(self, "ref", (("key", 0),))
         self.key = key
+        self.invalidate_layout()
         return self
 
     def width(self, value):
         _capture_modifier(self, "width", (("width", 0),))
         self._explicit_layout.add("width")
         self.layout_options.width = self._size_value(value)
+        self.invalidate_layout()
         return self
 
     def height(self, value):
         _capture_modifier(self, "height", (("height", 0),))
         self._explicit_layout.add("height")
         self.layout_options.height = self._size_value(value)
+        self.invalidate_layout()
         return self
 
     def size(self, width, height):
@@ -1003,6 +1022,7 @@ class Node(metaclass=_NodeMeta):
         self._explicit_layout.update(("width", "height"))
         self.layout_options.width = self._size_value(width)
         self.layout_options.height = self._size_value(height)
+        self.invalidate_layout()
         return self
 
     @staticmethod
@@ -1022,6 +1042,7 @@ class Node(metaclass=_NodeMeta):
             self.layout_options.grow = int(value)
             if self.layout_options.grow < 0:
                 raise ValueError("Element grow must be non-negative")
+        self.invalidate_layout()
         return self
 
     def margin(self, value=0, **kwargs):
@@ -1031,6 +1052,7 @@ class Node(metaclass=_NodeMeta):
             self.layout_options.margin = value
         else:
             self.layout_options.margin = Insets.from_values(value, **kwargs)
+        self.invalidate_layout()
         return self
 
     def padding(self, value=0, **kwargs):
@@ -1040,6 +1062,7 @@ class Node(metaclass=_NodeMeta):
             self.layout_options.padding = value
         else:
             self.layout_options.padding = Insets.from_values(value, **kwargs)
+        self.invalidate_layout()
         return self
 
     def align(self, horizontal=None, vertical=None):
@@ -1051,6 +1074,7 @@ class Node(metaclass=_NodeMeta):
         if vertical is not None:
             self._explicit_layout.add("vertical")
             self.layout_options.vertical = vertical
+        self.invalidate_layout()
         return self
 
     def offset(self, x=0, y=0):
@@ -1064,6 +1088,7 @@ class Node(metaclass=_NodeMeta):
         self._explicit_layout.add("offset")
         self.layout_options.offset_x = x if isinstance(x, ParamRef) else int(x)
         self.layout_options.offset_y = y if isinstance(y, ParamRef) else int(y)
+        self.invalidate_layout()
         return self
 
     def allow_overflow(self, value=True):
@@ -1072,6 +1097,7 @@ class Node(metaclass=_NodeMeta):
         self._explicit_layout.add("allow_overflow")
         self.layout_options.allow_overflow = (
             value if isinstance(value, ParamRef) else bool(value))
+        self.invalidate_layout()
         return self
 
     def repaint_boundary(self):
@@ -1484,7 +1510,9 @@ class ComponentTemplate:
         if extra:
             raise TypeError("Unknown component parameter(s): %s" % ", ".join(extra))
         arguments = dict((name, kwargs[name]) for name in expected)
-        root = copy.deepcopy(self.root)
+        # Parameters belong to the shared declaration. Instantiation substitutes
+        # their references; copying their editor schemas serves no runtime use.
+        root = copy.deepcopy(self.root, {id(value): value for value in self.parameters})
         definition_root_source = getattr(root, "_source", None)
 
         instance_source = _capture_construction(
@@ -2727,6 +2755,9 @@ class DeclarativePage(Tree):
         self.actions = {}
         self._refresh_actions()
         self.initialized = state is not None
+        self._layout_prepared = False
+        self._layout_bounds = self.bounds
+        self._layout_metrics_id = id(get_font_metrics())
         if self.initialized:
             self.root.clear_dirty()
 
@@ -2763,14 +2794,52 @@ class DeclarativePage(Tree):
     def _fresh_state(self, values=None):
         return StateStore(self.state_schema, values)
 
-    def draw(self, renderer, state=None):
-        self.state = self._fresh_state(state)
+    def prepare_layout(self):
+        """Arrange the declared state before the first renderer-backed draw."""
+        if self.initialized:
+            return
         self.root.update(self.state, initialize=True)
         if self.styles is not None:
             self.styles.apply(self.root)
         self.layout = LayoutResult()
         self.root.arrange(self.bounds, self.layout)
-        self._refresh_actions()
+        self.root.clear_dirty()
+        self.state.clear_changes()
+        self._layout_bounds = self.bounds
+        self._layout_metrics_id = id(get_font_metrics())
+        self._layout_prepared = True
+
+    def draw(self, renderer, state=None, reuse_layout=False, refs=None,
+             reuse_styles=False):
+        """Draw a full surface; refs and static styles may reuse a clean tree.
+
+        Callers supplying refs must include every node affected by the new
+        state. reuse_styles requires unchanged styles since the last draw or
+        prepare_layout call. Direct edits to layout_options or style rules
+        require root.invalidate_layout() before drawing.
+        """
+        clean = self.root._dirty == Dirty.CLEAN and not self.state.changed_keys
+        reuse_layout = bool(
+            reuse_layout and (self.initialized or self._layout_prepared)
+            and self._layout_bounds == self.bounds
+            and self._layout_metrics_id == id(get_font_metrics()))
+        reuse_cached = reuse_layout and clean
+        self.state = self._fresh_state(state)
+        if reuse_cached and refs is not None:
+            for ref in refs:
+                node = self.node(ref)
+                node.update(self._paint_state(node))
+        else:
+            self.root.update(self.state, initialize=not reuse_layout)
+        if self.styles is not None and not (reuse_cached and reuse_styles):
+            self.styles.apply(self.root)
+        if not reuse_layout or self.root._dirty >= Dirty.LAYOUT:
+            self.layout = LayoutResult()
+            self.root.arrange(self.bounds, self.layout)
+            self._layout_bounds = self.bounds
+            self._layout_metrics_id = id(get_font_metrics())
+        if not reuse_cached or refs is None or self.root._actions_dirty:
+            self._refresh_actions()
         set_page_identity = getattr(renderer, "set_semantic_page", None)
         if set_page_identity is not None:
             set_page_identity(self.page_id)
@@ -2788,6 +2857,24 @@ class DeclarativePage(Tree):
         self.root.update(self.state)
         if self.styles is not None:
             self.styles.apply(self.root)
+        return self._render_updates(renderer)
+
+    def update_refs(self, renderer, state, refs):
+        """Update known state-bound nodes without traversing unrelated content.
+
+        The caller must name every node affected by the supplied state values.
+        Dynamic styles and structural changes use the regular update path.
+        """
+        if (not self.initialized or self.root._dirty != Dirty.CLEAN
+                or self.state.changed_keys):
+            return self.update(renderer, state)
+        nodes = tuple(self.node(ref) for ref in refs)
+        self.state.update(state)
+        for node in nodes:
+            node.update(self._paint_state(node))
+        return self._render_updates(renderer)
+
+    def _render_updates(self, renderer):
         if self.root._actions_dirty or self.root._dirty >= Dirty.LAYOUT:
             commands = renderer.redraw_page()
             commands.extend(self.draw(renderer, self.state))

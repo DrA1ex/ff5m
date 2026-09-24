@@ -243,6 +243,118 @@ class PreviewProcessTest(unittest.TestCase):
 
 
 class PrintPreviewLayoutTest(unittest.TestCase):
+    def test_ready_preview_redraw_skips_unchanged_metrics_and_styles(self):
+        with PreviewHelper():
+            path = _write_gcode()
+            try:
+                worker = DeferredPreviewWorker()
+                controller = _controller(path, worker)
+                controller._render_print_page()
+                page = printing_ui.get_page()
+                elapsed = page.node(printing_ui.PrintingRef.ELAPSED)
+
+                with mock.patch.object(page.root, "update", side_effect=AssertionError("full update")):
+                    with mock.patch.object(elapsed, "update", side_effect=AssertionError("unchanged metric")):
+                        with mock.patch.object(page.styles, "apply", side_effect=AssertionError("style pass")):
+                            worker.finish(0)
+            finally:
+                pathlib.Path(path).unlink()
+
+        drawing = "\n".join(controller.batches[-1])
+        self.assertIn("--batch image ", drawing)
+        self.assertIn("--batch clear-hitboxes --layer base", drawing)
+
+    def test_incomplete_full_redraw_values_use_regular_update(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        page = printing_ui.get_page()
+
+        with mock.patch.object(page.styles, "apply", wraps=page.styles.apply) as apply:
+            commands = printing_ui.render(
+                controller.renderer,
+                {printing_ui.PrintingState.STATUS: "NEW STATUS"},
+                reuse_layout=True)
+
+        apply.assert_called_once()
+        self.assertTrue(any("NEW STATUS" in command for command in commands))
+
+    def test_ready_preview_repaints_full_surface_with_existing_geometry(self):
+        with PreviewHelper():
+            path = _write_gcode()
+            try:
+                worker = DeferredPreviewWorker()
+                controller = _controller(path, worker)
+                controller._render_print_page()
+                layout = printing_ui.get_page().layout
+                worker.finish(0)
+            finally:
+                pathlib.Path(path).unlink()
+
+        self.assertIs(printing_ui.get_page().layout, layout)
+        drawing = "\n".join(controller.batches[-1])
+        self.assertIn("--batch clear-hitboxes --layer base", drawing)
+        self.assertIn("--batch fill -p 0 0 -s 800 442", drawing)
+        self.assertIn("--batch image ", drawing)
+        self.assertIn("print.cancel", controller.renderer._buttons)
+
+    def test_first_draw_contains_current_progress_without_a_second_paint(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        drawing = "\n".join(controller.batches[0])
+        self.assertEqual(drawing.count('-t "00:01:40"'), 1)
+        self.assertEqual(drawing.count('-t "4.50 MM"'), 1)
+        self.assertNotIn('-t "0.00 MM"', drawing)
+
+    def test_unchanged_progress_skips_command_construction(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        controller.batches.clear()
+        with mock.patch.object(printing_ui, "update_progress", wraps=printing_ui.update_progress) as update:
+            controller._update_print_progress(100)
+            update.assert_not_called()
+        self.assertEqual(controller.batches, [])
+
+    def test_preparation_time_keeps_updating_without_full_page_traversal(self):
+        controller = _controller("/data/missing.gcode")
+        controller.print_state = PrintState.PREPARING
+        controller.start_print_macro = type("Start", (), {
+            "variables": {"print_started": False}})()
+        controller._render_print_page()
+        controller.batches.clear()
+        controller.print_stats.status["print_duration"] = 101
+        page = printing_ui.get_page()
+
+        with mock.patch.object(page.root, "update", side_effect=AssertionError("full page update")):
+            with mock.patch.object(page.styles, "apply", side_effect=AssertionError("style pass")):
+                controller._update_print_progress(101)
+
+        self.assertEqual(len(controller.batches), 1)
+        self.assertIn('00:01:41', "\n".join(controller.batches[0]))
+
+    def test_height_only_update_does_not_repaint_other_metrics(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        controller.batches.clear()
+        controller.toolhead.status["position"] = (10.0, 20.0, 6.25, 0.0)
+        elapsed = printing_ui.get_page().node(printing_ui.PrintingRef.ELAPSED)
+        with mock.patch.object(elapsed, "update", side_effect=AssertionError("unchanged metric updated")):
+            controller._update_print_progress(101)
+        drawing = "\n".join(controller.batches[0])
+        self.assertIn('6.25 MM', drawing)
+        for text in ('00:01:40', '00:05:00', '5 / 90', 'PROGRESS'):
+            self.assertNotIn(text, drawing)
+
+    def test_progress_change_updates_track_and_percentage(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        controller.batches.clear()
+        controller.print_stats.status["print_duration"] = 200
+        controller._update_print_progress(101)
+        drawing = "\n".join(controller.batches[0])
+        self.assertIn('50%', drawing)
+        track = printing_ui.rect(printing_ui.PrintingRef.PROGRESS)
+        self.assertIn("stroke -p %d %d" % (track.x, track.y), drawing)
+
     def test_page_keeps_controls_left_and_panel_right(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
@@ -276,6 +388,16 @@ class PrintPreviewLayoutTest(unittest.TestCase):
 
     def test_progress_updates_never_paint_over_the_preview_panel(self):
         controller = _controller("/data/missing.gcode")
+        # Start from a rendered page, independent of the previous test's
+        # singleton page state; then change every telemetry field.
+        controller.print_stats.status["print_duration"] = 0
+        controller.print_stats.status["info"] = {}
+        controller.toolhead.status["position"] = (0, 0, 0, 0)
+        controller._render_print_page()
+        controller.batches.clear()
+        controller.print_stats.status["print_duration"] = 100
+        controller.print_stats.status["info"] = {"current_layer": 5, "total_layer": 90}
+        controller.toolhead.status["position"] = (10.0, 20.0, 4.5, 0.0)
         controller._last_print_controls_ready = True
         controller._last_progress = None
         controller._last_time = None

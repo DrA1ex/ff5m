@@ -32,6 +32,7 @@ from ui import (
 )
 from ff5m_ui.screen import ScreenPage
 from ff5m_ui.move import runtime as move_ui
+from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.print_state import PrintState
 from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
 from feather.files import (
@@ -193,6 +194,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.renderer = FeatherRenderer(
             self.debug, blending=self.blending,
             raster_acceleration=self.raster_acceleration)
+        # Construct the print page during configuration, before a print can
+        # need reactor time for its first preview geometry lookup.
+        printing_ui.get_page()
         register_async = getattr(
             self.reactor, "register_async_callback", None)
         if register_async is None:
@@ -590,6 +594,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
 
         self._ensure_renderer_started()
         self._stop_startup_animation()
+        printing_ui.get_page().prepare_layout()
         self.print_state = PrintState.IDLE
         self.recovery_status = (self.resurrection.get_status(self.reactor.monotonic())
                                 if self.resurrection is not None else None)

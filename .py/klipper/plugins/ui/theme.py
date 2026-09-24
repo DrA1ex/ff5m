@@ -111,10 +111,9 @@ class ResolvedTheme:
         self._values = MappingProxyType(dict(values))
 
     def resolve(self, token):
-        token = normalize_theme_token(token)
         if isinstance(token, (ThemeColor, ThemeRole)):
             return self._values[token]
-        return token
+        return normalize_theme_token(token)
 
     def as_dict(self):
         return dict((token.value, value) for token, value in self._values.items())

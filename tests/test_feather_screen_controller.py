@@ -29,6 +29,7 @@ from tests.test_feather_screen import (
     mod_param,
 )
 from ff5m_ui.move import runtime as MOVE_UI
+from ff5m_ui.printing import runtime as PRINTING_UI
 from ff5m_ui.filament import actions as FILAMENT_ACTIONS
 from ff5m_ui.home import page as HOME_PAGE
 from ff5m_ui.home import state as HOME_STATE
@@ -2344,8 +2345,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.preview_cache = PreviewCache(256 * 1024)
         controller.file_worker = None
         controller._live_z_adjust_allowed = lambda eventtime: False
-        controller._current_print_progress_commands = (
-            lambda eventtime: ([], 0, None))
+        controller._current_print_progress_values = (
+            lambda eventtime: (0, ("--:--:--", "--:--:--", "? / ?", 0.0)))
         controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_print_page()
@@ -2377,8 +2378,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.start_print_macro = type("Start", (), {"variables": {
             "print_started": False}})()
         controller._live_z_adjust_allowed = lambda eventtime: False
-        controller._current_print_progress_commands = (
-            lambda eventtime: ([], 0, None))
+        controller._current_print_progress_values = (
+            lambda eventtime: (0, ("--:--:--", "--:--:--", "? / ?", 0.0)))
         controller.renderer.set_header_action("global.abort", "ABORT")
 
         controller._render_print_page()
@@ -2408,6 +2409,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.motion_report = StatusObject({
             "live_position": (10.0, 20.0, 3.25, 0.0)})
 
+        PRINTING_UI.render(controller.renderer, {
+            PRINTING_UI.PrintingState.LAYER: "1 / 10",
+        })
         controller._update_print_progress(100)
 
         drawing = "\n".join(batches[0])

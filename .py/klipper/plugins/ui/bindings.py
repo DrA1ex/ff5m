@@ -580,10 +580,8 @@ def resolve(value, store):
     elif callable(value):
         raise TypeError(
             "State callables must use derived(function, bind(...), ...) instead")
-    if isinstance(value, (ThemeColor, ThemeRole)):
-        return value
     if isinstance(value, Enum):
-        return value.value
+        return value if isinstance(value, (ThemeColor, ThemeRole)) else value.value
     return value
 
 

@@ -32,6 +32,7 @@ class PrintingRef(Enum):
     FILENAME = "printing.filename"
     STATUS = "printing.status"
     PROGRESS = "printing.progress"
+    PROGRESS_VALUE = "printing.progress.value"
     ELAPSED = "printing.elapsed"
     REMAINING = "printing.remaining"
     LAYER = "printing.layer"
@@ -53,6 +54,9 @@ class PrintProgress(Component):
     def __init__(self, value, key=None):
         super().__init__(key=key)
         self.value = value
+
+    def state_signature(self, state):
+        return max(0, min(100, int(resolve(self.value, state))))
 
     def draw(self, renderer, state, bounds):
         inset = min(6, bounds.width // 2, bounds.height // 2)
@@ -115,7 +119,7 @@ def _details(compact=False):
                     derived(lambda value: "%d%%" % value, progress_value),
                     color=ThemeColor.PRIMARY,
                     horizontal="right",
-                ).style(UiStyle.VALUE),
+                ).style(UiStyle.VALUE).ref(PrintingRef.PROGRESS_VALUE),
             ),),
             columns=Equal(2), rows=Equal(1), gap=0,
         ).height("content"),

@@ -24,6 +24,16 @@ GCODE_PREVIEW_LOADER_RADII = (7, 10, 13, 10)
 GCODE_PREVIEW_LOADER_DIAMETER = 72
 
 
+def _progress_state(progress, values):
+    return {
+        printing_ui.PrintingState.PROGRESS: progress,
+        printing_ui.PrintingState.ELAPSED: values[0],
+        printing_ui.PrintingState.REMAINING: values[1],
+        printing_ui.PrintingState.LAYER: values[2],
+        printing_ui.PrintingState.HEIGHT: "%.2f MM" % values[3],
+    }
+
+
 def _gcode_preview_image_rect():
     box = printing_ui.rect(printing_ui.PrintingRef.PREVIEW_BOX)
     padding = max(0, printing_ui.PREVIEW_IMAGE_PADDING)
@@ -67,14 +77,14 @@ class PrintingPagesMixin:
             printing_ui.PrintingState.PREVIEW_STATUS:
                 "none" if preview is None else preview["status"],
         }
-        commands += printing_ui.render(self.renderer, values)
         if stats is None:
-            progress_commands, progress, values = (
-                self._current_print_progress_commands(eventtime))
+            progress, progress_values = self._current_print_progress_values(eventtime)
         else:
-            progress_commands, progress, values = (
-                self._current_print_progress_commands(eventtime, stats))
-        commands += progress_commands
+            progress, progress_values = self._current_print_progress_values(
+                eventtime, stats)
+        values.update(_progress_state(progress, progress_values))
+        commands += printing_ui.render(
+            self.renderer, values, reuse_layout=True)
         if preview is not None and preview["status"] == "ready":
             commands += self._gcode_preview_image_commands(preview)
             self._stop_gcode_preview_loader()
@@ -92,7 +102,7 @@ class PrintingPagesMixin:
                 eventtime + GCODE_PREVIEW_REDRAW_PERIOD)
         self._last_print_controls_ready = controls_ready
         self._last_progress = progress
-        self._last_time = values
+        self._last_time = progress_values
 
     def _gcode_preview_render_spec(self, stats=None):
         layer_state = None
@@ -388,12 +398,11 @@ class PrintingPagesMixin:
             self._render_print_page()
             return
         stats = self.print_stats.get_status(eventtime)
-        commands, progress, values = self._current_print_progress_commands(
-            eventtime, stats)
-        progress_changed = (
-            progress != self._last_progress or values != self._last_time)
-        if not progress_changed:
-            commands = []
+        progress, values = self._current_print_progress_values(eventtime, stats)
+        commands = []
+        if progress != self._last_progress or values != self._last_time:
+            commands = printing_ui.update_progress(
+                self.renderer, _progress_state(progress, values))
 
         preview = getattr(self, "_gcode_preview", None)
         preview_redraw = False
@@ -418,7 +427,7 @@ class PrintingPagesMixin:
         if accepted is not False and preview_redraw:
             preview["painted_render_key"] = preview.get("render_key")
 
-    def _current_print_progress_commands(self, eventtime, stats=None):
+    def _current_print_progress_values(self, eventtime, stats=None):
         stats = stats or self.print_stats.get_status(eventtime)
         progress_value = self._print_progress(eventtime, stats)
         progress = int(progress_value * 100)
@@ -437,14 +446,7 @@ class PrintingPagesMixin:
         height = float(position[2])
         values = (self._clock_duration(elapsed),
                   self._clock_duration(remaining), layer, round(height, 2))
-        commands = printing_ui.update_progress(self.renderer, {
-            printing_ui.PrintingState.PROGRESS: progress,
-            printing_ui.PrintingState.ELAPSED: values[0],
-            printing_ui.PrintingState.REMAINING: values[1],
-            printing_ui.PrintingState.LAYER: values[2],
-            printing_ui.PrintingState.HEIGHT: "%.2f MM" % values[3],
-        })
-        return commands, progress, values
+        return progress, values
 
     def _print_progress(self, eventtime, stats=None):
         stats = stats or self.print_stats.get_status(eventtime)

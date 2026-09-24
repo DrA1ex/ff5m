@@ -502,6 +502,29 @@ with a before/after PSS profile demonstrating a net process-total reduction.
 - Preserve padding through the shared hint/dialog primitives. Dynamic hint widths include their horizontal inset, and dialog lines are clipped to the padded content area.
 - For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/guppy`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
 
+### Print page rendering
+
+Print telemetry is collected before command construction. Unchanged values
+skip the page update entirely. Changed progress values update only the metric
+and progress components; layout changes still trigger a full page redraw. Full
+page draws include telemetry from the start, avoiding an immediate second
+progress paint. The print page is constructed during Feather configuration and
+its default geometry is prepared when Klipper becomes ready, before a print
+needs either operation. Preview recolor/retry processing still runs on
+unchanged telemetry. Full redraws, including publication of a ready preview,
+reuse prepared geometry when changed state and styles do not require new
+layout; changed bounds or font metrics force a new arrangement.
+
+The canonical framework also avoids copying non-styleable property defaults
+and template parameter declaration schemas during node construction. Constructor
+signature inspection uses a bounded cache; ordinary calls keep their original
+arguments rather than rebuilding them from reflection. Stylesheet application
+reuses schema lookup, style-chain resolution and provenance within each pass,
+so subsequent passes still observe edits. Text leaves retain only their last
+width/height measurement, keyed by text, font, wrapping constraints, padding
+and the metrics catalog. Unwrapped height does not depend on parent width.
+The update cycle remains at 1 Hz and the preview loader at 12.5 Hz.
+
 Primary implementation references in this repository:
 [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py),
 [`feather_ui.py`](../../.py/klipper/plugins/feather_ui.py), the published

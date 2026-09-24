@@ -26,8 +26,38 @@ def get_page():
     return _page_module().PAGE
 
 
-def render(renderer, values):
-    return get_page().draw(renderer, values)
+def _changed_refs(module, page, values):
+    ref = module.PrintingRef
+    targets = {
+        PrintingState.FILENAME: (ref.FILENAME,),
+        PrintingState.STATUS: (ref.STATUS,),
+        PrintingState.PROGRESS: (ref.PROGRESS, ref.PROGRESS_VALUE),
+        PrintingState.ELAPSED: (ref.ELAPSED,),
+        PrintingState.REMAINING: (ref.REMAINING,),
+        PrintingState.LAYER: (ref.LAYER,),
+        PrintingState.HEIGHT: (ref.HEIGHT,),
+        PrintingState.PAUSED: (ref.PAUSE,),
+        PrintingState.CONTROLS_READY: (ref.PAUSE, ref.FILAMENT),
+        PrintingState.PENDING_ACTION: (ref.PAUSE,),
+        PrintingState.LIVE_Z_ALLOWED: (ref.Z_ADJUST,),
+        PrintingState.PREVIEW_STATUS: (ref.PREVIEW,),
+    }
+    if any(key not in targets for key in values):
+        return None
+    return tuple(dict.fromkeys(
+        target for key, value in values.items()
+        if value != page.state.get(key)
+        for target in targets[key]))
+
+
+def render(renderer, values, reuse_layout=False):
+    module = _page_module()
+    page = module.PAGE
+    refs = (_changed_refs(module, page, values)
+            if reuse_layout and all(key in values for key in page.state)
+            else None)
+    return page.draw(renderer, values, reuse_layout=reuse_layout,
+                     refs=refs, reuse_styles=refs is not None)
 
 
 def update(renderer, values):
@@ -37,14 +67,10 @@ def update(renderer, values):
 def update_progress(renderer, values):
     module = _page_module()
     page = module.PAGE
-    for ref in (
-            module.PrintingRef.PROGRESS,
-            module.PrintingRef.ELAPSED,
-            module.PrintingRef.REMAINING,
-            module.PrintingRef.LAYER,
-            module.PrintingRef.HEIGHT):
-        page.invalidate(ref)
-    return page.update(renderer, values)
+    refs = _changed_refs(module, page, values)
+    if refs is None:
+        return page.update(renderer, values)
+    return page.update_refs(renderer, values, refs)
 
 
 def rect(ref):

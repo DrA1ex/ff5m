@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import subprocess
+from functools import lru_cache
 
 from .font_policy import DEFAULT_FONT, FONT_FALLBACKS
 
@@ -123,6 +124,10 @@ class FontMetrics:
         return min(candidates)[1] if candidates else None
 
     def normalize_for_text(self, font, value):
+        return self._normalize_for_text(str(font), str(value))
+
+    @lru_cache(maxsize=256)
+    def _normalize_for_text(self, font, value):
         normalized = self.normalize_font(font)
         current = normalized
         visited = set()
@@ -319,6 +324,7 @@ def apply_font_policy(metrics, default_font=None, fallbacks=None):
     metrics.default_font = default_font
     for name in metrics.names:
         metrics.fonts[name].fallback = normalized_fallbacks.get(name)
+    FontMetrics._normalize_for_text.cache_clear()
     return metrics
 
 
@@ -340,6 +346,7 @@ def _inherit_policy(metrics, policy):
         metrics.fonts[name].fallback = (
             policy_metric.fallback if policy_metric is not None and
             policy_metric.fallback in metrics.fonts else None)
+    FontMetrics._normalize_for_text.cache_clear()
     return metrics
 
 
@@ -373,3 +380,4 @@ def get_font_metrics():
 def set_font_metrics(metrics):
     global _metrics
     _metrics = metrics
+    FontMetrics._normalize_for_text.cache_clear()
