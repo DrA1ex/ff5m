@@ -1,3 +1,9 @@
+## Validated Typer font metrics and the shared word-v1 layout algorithm.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
 """Validated Typer font metrics and the shared word-v1 layout algorithm."""
 
 import json
@@ -62,7 +68,7 @@ class FontMetric:
 
 
 class FontMetrics:
-    __slots__ = ("fonts", "names", "default_font")
+    __slots__ = ("fonts", "names", "default_font", "revision")
 
     def __init__(self, fonts, default_font=None):
         self.fonts = dict((metric.name, metric) for metric in fonts)
@@ -70,6 +76,7 @@ class FontMetrics:
         if not self.names:
             raise ValueError("font metrics must contain fonts")
         self.default_font = default_font or self.names[0]
+        self.revision = 0
         if self.default_font not in self.fonts:
             raise ValueError("default_font must name a declared font")
         for metric in self.fonts.values():
@@ -77,6 +84,10 @@ class FontMetrics:
                 raise ValueError(
                     "font fallback %r for %r is not declared" %
                     (metric.fallback, metric.name))
+
+    @property
+    def cache_key(self):
+        return id(self), self.revision
 
     def normalize_font(self, font, allow_proportional=False):
         value = str(font)
@@ -155,6 +166,10 @@ class FontMetrics:
         if width <= 0:
             return [text]
         font = self.normalize_for_text(font, text)
+        return list(self._wrap_text_lines(text, font, width))
+
+    @lru_cache(maxsize=512)
+    def _wrap_text_lines(self, text, font, width):
         metric = self.fonts[font]
 
         def fits(line):
@@ -204,7 +219,7 @@ class FontMetrics:
                 current = ""
             if not found_word:
                 lines.append("")
-        return lines
+        return tuple(lines)
 
     def text_height(self, value, font, max_width=None, wrap=False):
         font = self.normalize_for_text(font, value)
@@ -324,7 +339,9 @@ def apply_font_policy(metrics, default_font=None, fallbacks=None):
     metrics.default_font = default_font
     for name in metrics.names:
         metrics.fonts[name].fallback = normalized_fallbacks.get(name)
+    metrics.revision += 1
     FontMetrics._normalize_for_text.cache_clear()
+    FontMetrics._wrap_text_lines.cache_clear()
     return metrics
 
 
@@ -346,7 +363,9 @@ def _inherit_policy(metrics, policy):
         metrics.fonts[name].fallback = (
             policy_metric.fallback if policy_metric is not None and
             policy_metric.fallback in metrics.fonts else None)
+    metrics.revision += 1
     FontMetrics._normalize_for_text.cache_clear()
+    FontMetrics._wrap_text_lines.cache_clear()
     return metrics
 
 
@@ -380,4 +399,7 @@ def get_font_metrics():
 def set_font_metrics(metrics):
     global _metrics
     _metrics = metrics
+    if metrics is not None:
+        metrics.revision += 1
     FontMetrics._normalize_for_text.cache_clear()
+    FontMetrics._wrap_text_lines.cache_clear()

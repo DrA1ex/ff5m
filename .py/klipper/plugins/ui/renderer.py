@@ -870,6 +870,14 @@ class FeatherRenderer:
         return self.hitbox(self._wire_action(action), x, y, width, height,
                            continuous)
 
+    def button_hitbox(self, action, x, y, width, height, active=True):
+        logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
+        if (not active or
+                (logical_action == "nav.menu" and
+                 (self._busy_label is not None or self._header_action is not None))):
+            return ()
+        return self.action_hitbox(action, x, y, width, height)
+
     def overlay_hitbox(self, action, x, y, width, height, continuous=False):
         return self.hitbox(
             self._wire_action(action), x, y, width, height,
@@ -1303,6 +1311,18 @@ class FeatherRenderer:
     def redraw_page(self):
         """Rebuild interactions and pixels through the normal page lifecycle."""
         return self.begin_page(self._page_title, back=self._page_back)
+
+    def redraw_page_hitboxes(self):
+        """Rebuild base input after isolated layout changes without painting pixels."""
+        self._hitboxes = {}
+        commands = [self.clear_hitboxes("base"), self._wake_hitbox()]
+        if self._page_back:
+            commands.append(self.action_hitbox("nav.back", 14, 7, 146, 46))
+        if self._header_action is not None:
+            action, _label, state, _font = self._header_action
+            if state not in ("disabled", "busy"):
+                commands.append(self.action_hitbox(action, 648, 7, 132, 46))
+        return commands
 
     def begin_page(self, title, back=False):
         self._page_title = title

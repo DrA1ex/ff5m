@@ -491,23 +491,29 @@ LAYOUT_SCHEMA = property_schema(
 class LayoutResult:
     """Arranged bounds and nodes indexed by object identity and stable refs."""
 
-    __slots__ = ("_nodes", "_names", "_named_nodes")
+    __slots__ = ("_nodes", "_names", "_named_nodes", "_slots", "_reuse_clean", "_set_names")
 
-    def __init__(self):
-        self._nodes = {}
-        self._names = {}
-        self._named_nodes = {}
+    def __init__(self, previous=None):
+        self._nodes = {} if previous is None else dict(previous._nodes)
+        self._names = {} if previous is None else dict(previous._names)
+        self._named_nodes = {} if previous is None else dict(previous._named_nodes)
+        self._slots = {} if previous is None else dict(previous._slots)
+        self._reuse_clean = previous is not None
+        self._set_names = set()
 
     @staticmethod
     def _name(value):
         return value.value if isinstance(value, Enum) else value
 
-    def set(self, node, rect):
+    def set(self, node, rect, slot=None):
         self._nodes[id(node)] = rect
+        self._slots[id(node)] = slot
         if node.key is not None:
             key = self._name(node.key)
-            if key in self._names:
+            if (key in self._set_names or
+                    (key in self._names and self._named_nodes[key] is not node)):
                 raise ValueError("Duplicate layout ref: %s" % key)
+            self._set_names.add(key)
             self._names[key] = rect
             self._named_nodes[key] = node
 
@@ -1226,8 +1232,11 @@ class Node(metaclass=_NodeMeta):
     def arrange(self, bounds, result):
         if not isinstance(bounds, Rect):
             bounds = Rect(*bounds)
+        if (result._reuse_clean and self._dirty < Dirty.LAYOUT
+                and result._slots.get(id(self)) == bounds):
+            return
         arranged = self._box(bounds)
-        result.set(self, arranged)
+        result.set(self, arranged, bounds)
         self._arrange(arranged.inset(self.layout_options.padding), result)
 
     def _arrange(self, bounds, result):
@@ -1250,6 +1259,18 @@ class Node(metaclass=_NodeMeta):
 
     def draw(self, renderer, state, bounds):
         return ()
+
+    def interaction_commands(self, renderer, state, bounds):
+        """Replay input for an unchanged painted subtree after reflow."""
+        return ()
+
+    def render_interactions(self, renderer, state, layout):
+        state = getattr(self, "_item_scope", state)
+        commands = _command_list(
+            self.interaction_commands(renderer, state, layout.rect(self)))
+        for child in self.paint_children(state):
+            commands.extend(child.render_interactions(renderer, state, layout))
+        return commands
 
     def render_children(self):
         return ()
@@ -2777,7 +2798,7 @@ class DeclarativePage(Tree):
         self.initialized = state is not None
         self._layout_prepared = False
         self._layout_bounds = self.bounds
-        self._layout_metrics_id = id(get_font_metrics())
+        self._layout_metrics_key = get_font_metrics().cache_key
         if self.initialized:
             self.root.clear_dirty()
 
@@ -2826,7 +2847,7 @@ class DeclarativePage(Tree):
         self.root.clear_dirty()
         self.state.clear_changes()
         self._layout_bounds = self.bounds
-        self._layout_metrics_id = id(get_font_metrics())
+        self._layout_metrics_key = get_font_metrics().cache_key
         self._layout_prepared = True
 
     def draw(self, renderer, state=None, reuse_layout=False, refs=None,
@@ -2842,7 +2863,7 @@ class DeclarativePage(Tree):
         reuse_layout = bool(
             reuse_layout and (self.initialized or self._layout_prepared)
             and self._layout_bounds == self.bounds
-            and self._layout_metrics_id == id(get_font_metrics()))
+            and self._layout_metrics_key == get_font_metrics().cache_key)
         reuse_cached = reuse_layout and clean
         self.state = self._fresh_state(state)
         if reuse_cached and refs is not None:
@@ -2864,7 +2885,7 @@ class DeclarativePage(Tree):
             self.layout = LayoutResult()
             self.root.arrange(self.bounds, self.layout)
             self._layout_bounds = self.bounds
-            self._layout_metrics_id = id(get_font_metrics())
+            self._layout_metrics_key = get_font_metrics().cache_key
         if refresh_actions:
             self._refresh_actions()
         set_page_identity = getattr(renderer, "set_semantic_page", None)
@@ -2881,6 +2902,8 @@ class DeclarativePage(Tree):
             self.state.update(state)
         if not self.initialized:
             return self.draw(renderer, self.state)
+        if self._layout_metrics_key != get_font_metrics().cache_key:
+            self.root.invalidate_layout()
         self.root.update(self.state)
         if self.styles is not None:
             self.styles.apply(self.root)
@@ -2892,10 +2915,15 @@ class DeclarativePage(Tree):
         The caller must name every node affected by the supplied state values.
         Dynamic styles and structural changes use the regular update path.
         """
-        if (not self.initialized or self.root._dirty != Dirty.CLEAN
+        if (not self.initialized or self.root._actions_dirty
+                or self._layout_metrics_key != get_font_metrics().cache_key
                 or self.state.changed_keys):
             return self.update(renderer, state)
         nodes = tuple(self.node(ref) for ref in refs)
+        if (self.root._dirty != Dirty.CLEAN and
+                any(not any(self._is_ancestor(node, dirty) for node in nodes)
+                    for dirty in self._dirty_roots())):
+            return self.update(renderer, state)
         self.state.update(state)
         for node in nodes:
             node.update(self._paint_state(node))
@@ -2903,6 +2931,10 @@ class DeclarativePage(Tree):
 
     def _render_updates(self, renderer):
         if self.root._actions_dirty or self.root._dirty >= Dirty.LAYOUT:
+            if not self.root._actions_dirty:
+                partial = self._render_layout_regions(renderer)
+                if partial is not None:
+                    return partial
             commands = renderer.redraw_page()
             commands.extend(self._render_full(
                 renderer, arrange=True, refresh_actions=True))
@@ -2915,6 +2947,84 @@ class DeclarativePage(Tree):
                 root.render_dirty(
                     renderer, self._paint_state(root), self.layout))
             root.clear_dirty()
+        self.root.clear_dirty()
+        self.state.clear_changes()
+        return commands
+
+    def _render_layout_regions(self, renderer):
+        """Repaint isolated opaque boundaries when layout moves only inside them."""
+        if (not hasattr(renderer, "redraw_page_hitboxes")
+                or self._layout_bounds != self.bounds
+                or self._layout_metrics_key != get_font_metrics().cache_key):
+            return None
+        roots = self._dirty_roots()
+        if not roots or any(not node._repaint_boundary for node in roots):
+            return None
+        old_layout = self.layout
+        if any(LayoutResult._name(node.key) != key
+               for key, node in old_layout._named_nodes.items()):
+            return None
+        new_layout = LayoutResult(previous=old_layout)
+        self.root.arrange(self.bounds, new_layout)
+        nodes = tuple(self.root.walk())
+        if (old_layout._nodes.keys() != new_layout._nodes.keys() or
+                old_layout._nodes.keys() != {id(node) for node in nodes}):
+            return None
+
+        owned = set()
+        damage = []
+        ancestors = set()
+        for root in roots:
+            parent = root.parent
+            while parent is not None:
+                ancestors.add(parent)
+                parent = parent.parent
+            members = tuple(root.walk())
+            owned.update(id(node) for node in members)
+            previous = old_layout.rect(root)
+            current = new_layout.rect(root)
+            region = previous.union(current)
+            if (not self.bounds.contains(region)
+                    or not self._subtree_covers(
+                        root, current, self._paint_state(root), new_layout)):
+                return None
+            for node in members:
+                if not previous.contains(old_layout.rect(node)):
+                    return None
+                if not current.contains(new_layout.rect(node)):
+                    return None
+            damage.append(region)
+
+        if any(first.overlaps(second) for index, first in enumerate(damage)
+               for second in damage[index + 1:]):
+            return None
+        for node in nodes:
+            if (type(node).interaction_commands is Node.interaction_commands and
+                    any(name in node.__dict__ for name in ("action", "actions", "buttons"))):
+                return None
+            if id(node) in owned:
+                continue
+            previous = old_layout.rect(node)
+            current = new_layout.rect(node)
+            if (previous != current or
+                    (node._dirty != Dirty.CLEAN and node not in ancestors)):
+                return None
+            if (node.paints_pixels and
+                    any(previous.overlaps(region) for region in damage)):
+                return None
+
+        set_page_identity = getattr(renderer, "set_semantic_page", None)
+        if set_page_identity is not None:
+            set_page_identity(self.page_id)
+        commands = []
+        for root, region in zip(roots, damage):
+            commands.append(renderer.fill(*region))
+            commands.extend(root.render(renderer, self._paint_state(root), new_layout))
+        commands.extend(renderer.redraw_page_hitboxes())
+        commands.extend(self.root.render_interactions(renderer, self.state, new_layout))
+        self.layout = new_layout
+        self._layout_bounds = self.bounds
+        self._layout_metrics_key = get_font_metrics().cache_key
         self.root.clear_dirty()
         self.state.clear_changes()
         return commands
@@ -3020,12 +3130,13 @@ class DeclarativePage(Tree):
         return any(self._subtree_overlaps(child, target, state)
                    for child in node.paint_children(state))
 
-    def _subtree_covers(self, node, target, state):
+    def _subtree_covers(self, node, target, state, layout=None):
         """Opaque compositions need no repair, even with nonuniform borders."""
+        layout = self.layout if layout is None else layout
         state = getattr(node, "_item_scope", state)
-        if node.covers_bounds and self.layout.rect(node).contains(target):
+        if node.covers_bounds and layout.rect(node).contains(target):
             return True
-        return any(self._subtree_covers(child, target, state)
+        return any(self._subtree_covers(child, target, state, layout)
                    for child in node.paint_children(state))
 
     def _subtree_background(self, node, target, state):

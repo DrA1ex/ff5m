@@ -15,6 +15,7 @@ sys.path.insert(0, str(PLUGINS))
 
 from feather.features.benchmark import BenchmarkFeature  # noqa: E402
 from feather.screen.pages.home import HomePagesMixin  # noqa: E402
+from ff5m_ui.benchmark import layout_page  # noqa: E402
 from ff5m_ui.benchmark.layout_page import LayoutRef  # noqa: E402
 from ff5m_ui.benchmark.page import BenchmarkRef  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
@@ -52,6 +53,40 @@ class Renderer(FeatherRenderer):
 
 
 class ComponentBenchmarkTest(unittest.TestCase):
+    def test_targeted_frames_match_normal_component_updates(self):
+        host = SimpleNamespace(
+            reactor=Reactor(), renderer=Renderer(),
+            page=ScreenPage.COMPONENT_BENCHMARK,
+            print_state=PrintState.IDLE,
+        )
+        feature = BenchmarkFeature(host)
+        regular = layout_page.create_page()
+        targeted = layout_page.create_page()
+        regular_renderer = Renderer()
+        targeted_renderer = Renderer()
+        initial = feature._layout_state(True)
+        regular_renderer.begin_page("Component benchmark", back=True)
+        targeted_renderer.begin_page("Component benchmark", back=True)
+        self.assertEqual(regular.draw(regular_renderer, initial),
+                         targeted.draw(targeted_renderer, initial))
+
+        for frame in range(1, 44):
+            feature.frame = frame
+            include_stats = frame % 7 == 0
+            state = feature._layout_state(include_stats)
+            refs = [LayoutRef.CARD]
+            if include_stats:
+                refs.append(BenchmarkRef.STATS)
+            for page in (regular, targeted):
+                page.node(LayoutRef.CARD).width(feature._layout_width(frame))
+            expected = regular.update(regular_renderer, state)
+            actual = targeted.update_refs(targeted_renderer, state, refs)
+            self.assertEqual(actual, expected, frame)
+            for ref in (LayoutRef.CARD, LayoutRef.DESCRIPTION,
+                        LayoutRef.ACTIONS, BenchmarkRef.STATS):
+                self.assertEqual(targeted.rect(ref), regular.rect(ref),
+                                 (frame, ref))
+
     def test_five_menu_title_taps_open_only_the_component_benchmark(self):
         class Menu(HomePagesMixin):
             def __init__(self):
@@ -107,6 +142,7 @@ class ComponentBenchmarkTest(unittest.TestCase):
         self.assertGreater(narrow_buttons[2].y, narrow_buttons[0].y)
 
         for frame in range(65):
+            previous_card = tree.layout.rect(card)
             token = renderer.batches[-1][3]
             self.assertEqual(token, feature.tracker.pending.token)
             feature.on_render_receipt(
@@ -114,6 +150,12 @@ class ComponentBenchmarkTest(unittest.TestCase):
                 reactor.now + 0.012)
             reactor.now += 0.04
             feature._tick(reactor.now)
+            commands = renderer.batches[-1][0]
+            if frame in (0, 21):
+                damage = previous_card.union(tree.layout.rect(card))
+                self.assertEqual(commands[0], renderer.fill(*damage))
+                self.assertFalse(any("COMMIT FPS" in command for command in commands))
+                self.assertFalse(any("-s 800 442" in command for command in commands))
             if frame == 15:
                 self.assertEqual(tree.layout.rect(card).width, 460)
                 self.assertLess(tree.layout.rect(description).height, narrow_height)
@@ -136,6 +178,12 @@ class ComponentBenchmarkTest(unittest.TestCase):
         self.assertGreater(feature.display_stats.commit_fps, 0)
         self.assertGreater(feature.display_stats.frame_median_ms, 0)
         self.assertGreater(feature.display_stats.python_ms, 0)
+        self.assertTrue(any(
+            "COMMIT FPS" in command
+            for batch in renderer.batches[1:] for command in batch[0]))
+        self.assertFalse(any(
+            "-s 800 442" in command
+            for batch in renderer.batches[1:] for command in batch[0]))
         self.assertEqual(renderer.batches[-1][2], "component-benchmark")
         feature.back(host.page)
         self.assertEqual(host.page, ScreenPage.MAIN_MENU)

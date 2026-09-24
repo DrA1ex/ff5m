@@ -81,7 +81,7 @@ def _workload():
         Panel(border=ThemeColor.BORDER, background=ThemeColor.PANEL,
               line_width=1),
         content,
-    ).width(300).ref(LayoutRef.CARD)
+    ).width(300).repaint_boundary().ref(LayoutRef.CARD)
 
 
 def create_page():

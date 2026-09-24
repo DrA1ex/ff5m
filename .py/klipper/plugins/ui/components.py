@@ -361,6 +361,11 @@ class Button(Component):
             resolve(self.action, state), *bounds,
             resolve(self.label, state), **kwargs)
 
+    def interaction_commands(self, renderer, state, bounds):
+        return renderer.button_hitbox(
+            resolve(self.action, state), *bounds,
+            active=self.interaction_signature(state))
+
 
 class ArrowButton(Component):
     """Theme-aware vertical paging button rendered as geometry."""
@@ -392,6 +397,11 @@ class ArrowButton(Component):
             direction=resolve(self.direction, state),
             state=resolve(self.state, state))
 
+    def interaction_commands(self, renderer, state, bounds):
+        if not self.interaction_signature(state):
+            return ()
+        return renderer.action_hitbox(resolve(self.action, state), *bounds)
+
 
 class ToggleSwitch(Component):
     """Rectangular boolean switch with renderer-owned hitbox and animation."""
@@ -419,6 +429,11 @@ class ToggleSwitch(Component):
             active=resolve(self.active, state),
             enabled=resolve(self.enabled, state))
 
+    def interaction_commands(self, renderer, state, bounds):
+        if not self.interaction_signature(state):
+            return ()
+        return renderer.action_hitbox(resolve(self.action, state), *bounds)
+
 
 class Hitbox(Component):
     paints_pixels = False
@@ -439,6 +454,9 @@ class Hitbox(Component):
         return renderer.action_hitbox(
             resolve(self.action, state), *bounds,
             continuous=resolve(self.continuous, state))
+
+    def interaction_commands(self, renderer, state, bounds):
+        return self.draw(renderer, state, bounds)
 
 
 class Text(Component):
@@ -524,7 +542,8 @@ class Text(Component):
         if self._measurement is None:
             self._measurement = self._resolve_measurement(self._measurement_state)
         metrics = get_font_metrics()
-        key = (self._measurement, self.layout_options.padding.horizontal, id(metrics))
+        key = (self._measurement, self.layout_options.padding.horizontal,
+               metrics.cache_key)
         cached = getattr(self, "_width_measurement", None)
         if cached is not None and cached[0] == key:
             return cached[1]
@@ -548,7 +567,7 @@ class Text(Component):
         key = (self._measurement, cross_extent if wrapped else None,
                dynamic_minimum if wrapped or self._measurement[0] is None else False,
                self.layout_options.width if wrapped else None, self.layout_options.padding.horizontal,
-               self.layout_options.padding.vertical, id(metrics))
+               self.layout_options.padding.vertical, metrics.cache_key)
         cached = getattr(self, "_height_measurement", None)
         if cached is not None and cached[0] == key:
             return cached[1]

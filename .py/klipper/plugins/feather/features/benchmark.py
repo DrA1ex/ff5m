@@ -344,7 +344,11 @@ class BenchmarkFeature(FeatureHostProxy):
                 commands += self.page_tree.draw(self.renderer, state)
                 kind, key = "surface", None
             else:
-                commands = self.page_tree.update(self.renderer, state)
+                refs = [layout_page.LayoutRef.CARD]
+                if include_stats:
+                    refs.append(benchmark_page.BenchmarkRef.STATS)
+                commands = self.page_tree.update_refs(
+                    self.renderer, state, refs)
                 kind, key = "animation", "component-benchmark"
             python_ms = (time.perf_counter() - build_started) * 1000.0
         elif full:
