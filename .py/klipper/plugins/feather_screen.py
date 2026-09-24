@@ -67,7 +67,7 @@ EXACT_ACTIONS = {
         "nav.menu", "nav.heat", "nav.network", "nav.job",
         "home.last_job", "nav.filament", "nav.move"),
     ScreenPage.MAIN_MENU: ("nav.back", "nav.files", "nav.control", "nav.filament",
-                     "nav.network"),
+                     "nav.network", "menu.component_benchmark.tap"),
     ScreenPage.CONTROL_HOME: ("nav.back", "nav.move", "nav.heat", "nav.calibration",
                         "nav.settings"),
     ScreenPage.FILE_BROWSER: (
@@ -148,7 +148,9 @@ FEATURE_SPECS = (
                 "SettingsFeature", (
         ScreenPage.SETTINGS, ScreenPage.MOD_SETTINGS, ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE)),
     FeatureSpec("benchmark", _feature_module("benchmark"),
-                "BenchmarkFeature", (ScreenPage.RENDER_BENCHMARK,)),
+                "BenchmarkFeature", (
+                    ScreenPage.RENDER_BENCHMARK,
+                    ScreenPage.COMPONENT_BENCHMARK)),
 )
 
 
@@ -1128,6 +1130,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._show_page(ScreenPage.IDLE_HOME)
             elif action == "nav.menu":
                 self._show_page(ScreenPage.MAIN_MENU)
+            elif action == "menu.component_benchmark.tap":
+                self._handle_component_benchmark_tap()
             elif action == "nav.files":
                 self.file_page = 0
                 self.file_source = "internal"

@@ -23,3 +23,4 @@ class AppPage(PageKey):
     SAFE_Z_CALIBRATION = "z_offset.safe"
     CALIBRATION_SCREWS_RESULT = "calibration.screws.result"
     RENDER_BENCHMARK = "benchmark.render"
+    COMPONENT_BENCHMARK = "benchmark.components"

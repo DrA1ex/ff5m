@@ -162,7 +162,7 @@ def _metric_row(label, state_key, formatter, label_ref, value_ref):
     )
 
 
-def _stats():
+def stats_panel():
     metrics = Grid(
         matrix=(
             _metric_row(
@@ -230,7 +230,7 @@ def _stats():
 
 def create_page():
     root = Grid(
-        matrix=((_surface(), _stats()),),
+        matrix=((_surface(), stats_panel()),),
         columns=(FLEX, STATS_WIDTH), rows=(FLEX,), gap=10,
     ).padding(left=8, top=8, right=8, bottom=8).ref(BenchmarkRef.ROOT)
     page = PageTree(root, CONTENT, page_id=AppPage.RENDER_BENCHMARK)

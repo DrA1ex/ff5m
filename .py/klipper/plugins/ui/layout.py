@@ -780,6 +780,10 @@ _WRAP_CREATION = CreationContract("Layout", "sequence", (
         validation=ValidationSpec(minimum=1, maximum=4000),
         editor=EditorSpec("number", label="Item width"), bindings=()),
     CreationFieldSpec(
+        "min_item_width", int, default=None, nullable=True,
+        validation=ValidationSpec(minimum=1, maximum=4000),
+        editor=EditorSpec("number", label="Minimum item width"), bindings=()),
+    CreationFieldSpec(
         "item_height", int, default=None, nullable=True,
         validation=ValidationSpec(minimum=1, maximum=4000),
         editor=EditorSpec("number", label="Item height"), bindings=()),
@@ -2439,6 +2443,12 @@ class WrapPanel(Node):
                 "number", label="Item width", group="Wrap layout"),
             bindings=(), invalidation=Invalidation.LAYOUT),
         PropertySpec(
+            "min_item_width", int, default=None, nullable=True,
+            validation=ValidationSpec(minimum=1, maximum=4000),
+            editor=EditorSpec(
+                "number", label="Minimum item width", group="Wrap layout"),
+            bindings=(), invalidation=Invalidation.LAYOUT),
+        PropertySpec(
             "item_height", int, default=None, nullable=True,
             validation=ValidationSpec(minimum=1, maximum=4000),
             editor=EditorSpec(
@@ -2466,6 +2476,7 @@ class WrapPanel(Node):
         if self.orientation not in ("horizontal", "vertical"):
             raise ValueError("Unknown wrap orientation: %s" % self.orientation)
         self.item_width = kwargs.get("item_width")
+        self.min_item_width = kwargs.get("min_item_width")
         self.item_height = kwargs.get("item_height")
         self.horizontal_gap = int(kwargs.get("horizontal_gap", 0))
         self.vertical_gap = int(kwargs.get("vertical_gap", 0))
@@ -2484,9 +2495,16 @@ class WrapPanel(Node):
         count = len(self.children)
         if not count:
             return
+        if self.min_item_width is not None and bounds.width < self.min_item_width:
+            raise ValueError("WrapPanel minimum item width does not fit")
         if self.orientation == "horizontal":
             columns = self._fit_count(
-                bounds.width, self.item_width, self.horizontal_gap)
+                bounds.width,
+                self.item_width if self.item_width is not None
+                else self.min_item_width,
+                self.horizontal_gap)
+            if self.item_width is None:
+                columns = min(columns, count)
             rows = (count + columns - 1) // columns
         else:
             rows = self._fit_count(
@@ -2494,6 +2512,8 @@ class WrapPanel(Node):
             columns = (count + rows - 1) // rows
         width = ((bounds.width - self.horizontal_gap * (columns - 1)) // columns
                  if self.item_width is None else int(self.item_width))
+        if self.min_item_width is not None and width < self.min_item_width:
+            raise ValueError("WrapPanel minimum item width does not fit")
         height = ((bounds.height - self.vertical_gap * (rows - 1)) // rows
                   if self.item_height is None else int(self.item_height))
         for index, child in enumerate(self.children):
@@ -2833,12 +2853,19 @@ class DeclarativePage(Tree):
             self.root.update(self.state, initialize=not reuse_layout)
         if self.styles is not None and not (reuse_cached and reuse_styles):
             self.styles.apply(self.root)
-        if not reuse_layout or self.root._dirty >= Dirty.LAYOUT:
+        return self._render_full(
+            renderer,
+            arrange=not reuse_layout or self.root._dirty >= Dirty.LAYOUT,
+            refresh_actions=(not reuse_cached or refs is None
+                             or self.root._actions_dirty))
+
+    def _render_full(self, renderer, arrange, refresh_actions):
+        if arrange:
             self.layout = LayoutResult()
             self.root.arrange(self.bounds, self.layout)
             self._layout_bounds = self.bounds
             self._layout_metrics_id = id(get_font_metrics())
-        if not reuse_cached or refs is None or self.root._actions_dirty:
+        if refresh_actions:
             self._refresh_actions()
         set_page_identity = getattr(renderer, "set_semantic_page", None)
         if set_page_identity is not None:
@@ -2877,7 +2904,8 @@ class DeclarativePage(Tree):
     def _render_updates(self, renderer):
         if self.root._actions_dirty or self.root._dirty >= Dirty.LAYOUT:
             commands = renderer.redraw_page()
-            commands.extend(self.draw(renderer, self.state))
+            commands.extend(self._render_full(
+                renderer, arrange=True, refresh_actions=True))
             return commands
         roots = self._dirty_roots()
         commands = []

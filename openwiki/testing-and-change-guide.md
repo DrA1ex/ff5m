@@ -17,6 +17,26 @@ The G-code macro tests use the same Jinja delimiters and config-comment rules
 as Klipper. They render macros against explicit status snapshots and inspect
 the resulting G-code. They do not emulate motion, heaters, or the MCU.
 
+## Interactive renderer benchmarks
+
+On an idle Feather screen, tap the **Settings** title five times within two
+seconds to open the existing render-command benchmark. Tap the **MAIN MENU**
+title five times within two seconds to open the component benchmark. Back
+returns to the page that opened each benchmark. Neither benchmark starts a
+printer operation, and both stop if the print state ceases to be idle.
+
+The component benchmark changes a card width from 300 to 510 pixels on every
+frame. Wrapped text changes height, buttons change columns and stretch to fill
+the available row while keeping a minimum width, and the sample
+rows advance. Each frame runs the page's normal component update and full
+layout pass. The **PYTHON** metric includes state updates, layout, and command
+construction; frame median and p95 measure submission to render receipt, and
+**COMMIT FPS** counts received frame receipts in the last second. The first
+30 frames warm the benchmark before samples enter the rolling window.
+
+The two benchmarks share receipt timing and stop/restart behavior, but their
+results represent different workloads and should be compared within each page.
+
 ## Feather on-printer regression runner
 
 Feather provides a hidden, opt-in G-code harness whose implementation remains a

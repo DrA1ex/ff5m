@@ -13,6 +13,7 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
 sys.path.insert(0, str(PLUGINS))
 
 from ff5m_ui.benchmark import page as benchmark_page  # noqa: E402
+from ff5m_ui.benchmark import layout_page as benchmark_layout_page  # noqa: E402
 from ff5m_ui.filament.action import page as filament_action_page  # noqa: E402
 from ff5m_ui.filament.material import page as filament_material_page  # noqa: E402
 from ff5m_ui.heat import page as heat_page  # noqa: E402
@@ -109,6 +110,7 @@ class FontManifestTest(unittest.TestCase):
         pages = (
             home_page.PAGE,
             benchmark_page.PAGE,
+            benchmark_layout_page.PAGE,
             heat_page.create_page(("PLA", "ABS")),
             filament_material_page.create_page((("PLA", 220), ("ABS", 250))),
             filament_action_page.create_page(False),

@@ -19,6 +19,7 @@ from ff5m_ui.print_state import PrintState
 
 
 benchmark_page = LazyModule("ff5m_ui.benchmark.page")
+layout_page = LazyModule("ff5m_ui.benchmark.layout_page")
 benchmark_state = LazyModule("ff5m_ui.benchmark.state")
 
 
@@ -45,8 +46,10 @@ class BenchmarkFeature(FeatureHostProxy):
         self.timer = None
         self.active = False
         self.page_tree = None
+        self.benchmark_page = None
         self.surface_node = None
         self.stats_node = None
+        self.workload_node = None
         self.tracker = ReceiptTracker(self.RECEIPT_TIMEOUT)
         self.session = 0
         self.frame = 0
@@ -66,37 +69,43 @@ class BenchmarkFeature(FeatureHostProxy):
             self._tick, self.reactor.NEVER)
 
     def render(self, page):
-        if page != ScreenPage.RENDER_BENCHMARK:
+        if page not in (ScreenPage.RENDER_BENCHMARK,
+                        ScreenPage.COMPONENT_BENCHMARK):
             raise ValueError("benchmark feature cannot render %s" % page)
         
         if self.print_state != PrintState.IDLE:
             raise RuntimeError("Render benchmark requires an idle printer")
 
+        self.benchmark_page = page
         self.mode = self.MODES[0]
-        self.page_tree = benchmark_page.create_page()
-        self.surface_node = self.page_tree.node(
-            benchmark_page.BenchmarkRef.SURFACE)
-        self.stats_node = self.page_tree.node(
-            benchmark_page.BenchmarkRef.STATS)
+        if page == ScreenPage.RENDER_BENCHMARK:
+            self.page_tree = benchmark_page.create_page()
+            self.surface_node = self.page_tree.node(
+                benchmark_page.BenchmarkRef.SURFACE)
+            self.stats_node = self.page_tree.node(
+                benchmark_page.BenchmarkRef.STATS)
+        else:
+            self.page_tree = layout_page.create_page()
+            self.workload_node = self.page_tree.node(layout_page.LayoutRef.CARD)
         self.active = True
         now = self.reactor.monotonic()
         self._reset_measurements(now)
         self._submit_frame(now, full=True)
 
     def allows_action(self, page, action):
-        return page == ScreenPage.RENDER_BENCHMARK and action == "nav.back"
+        return page == self.benchmark_page and action == "nav.back"
 
     def handle_action(self, page, action):
         return False
 
     def resolve_semantic_action(self, page, wire_id):
-        if page != ScreenPage.RENDER_BENCHMARK or self.page_tree is None:
+        if page != self.benchmark_page or self.page_tree is None:
             return None
         
         return self.page_tree.resolve_action(wire_id)
 
     def handle_semantic_action(self, page, action):
-        if page != ScreenPage.RENDER_BENCHMARK:
+        if page != self.benchmark_page:
             return False
         
         if (isinstance(action, BenchmarkAction)
@@ -107,11 +116,13 @@ class BenchmarkFeature(FeatureHostProxy):
         raise KeyError("Unsupported benchmark action: %s" % action)
 
     def back(self, page):
-        if page != ScreenPage.RENDER_BENCHMARK:
+        if page != self.benchmark_page:
             return False
         
         self._stop_session()
-        self._show_page(ScreenPage.SETTINGS)
+        self._show_page(
+            ScreenPage.MAIN_MENU if page == ScreenPage.COMPONENT_BENCHMARK
+            else ScreenPage.SETTINGS)
 
         return True
 
@@ -121,7 +132,8 @@ class BenchmarkFeature(FeatureHostProxy):
             self._show_page(self.page_for_print_state())
 
     def on_page_changed(self, old_page, new_page):
-        if old_page == ScreenPage.RENDER_BENCHMARK and new_page != old_page:
+        if old_page in (ScreenPage.RENDER_BENCHMARK,
+                        ScreenPage.COMPONENT_BENCHMARK) and new_page != old_page:
             self._stop_session()
 
     def on_print_state_changed(self, old_state, new_state, stats_state):
@@ -129,7 +141,7 @@ class BenchmarkFeature(FeatureHostProxy):
             self._stop_session()
 
     def on_renderer_restarted(self):
-        if self.page == ScreenPage.RENDER_BENCHMARK:
+        if self.page == self.benchmark_page:
             self._stop_session()
 
     def on_render_receipt(self, receipt, eventtime):
@@ -219,8 +231,10 @@ class BenchmarkFeature(FeatureHostProxy):
         self.samples.clear()
         self.receipt_times.clear()
         self.page_tree = None
+        self.benchmark_page = None
         self.surface_node = None
         self.stats_node = None
+        self.workload_node = None
 
         if self.timer is not None:
             try:
@@ -250,6 +264,29 @@ class BenchmarkFeature(FeatureHostProxy):
             values.update(benchmark_state.stats_values(self.display_stats))
             values[state.STATUS] = self.display_status
         
+        return values
+
+    @staticmethod
+    def _layout_width(frame):
+        phase = frame % 42
+        return 300 + 10 * min(phase, 42 - phase)
+
+    def _layout_state(self, include_stats):
+        state = layout_page.LayoutState
+        rows = layout_page.ROWS
+        offset = (self.frame // 8) % len(rows)
+        values = {
+            state.WIDTH: "%d PX / FRAME %d" % (
+                self._layout_width(self.frame), self.frame),
+            state.DESCRIPTION: layout_page.DESCRIPTION,
+            state.ROW_ONE: rows[offset],
+            state.ROW_TWO: rows[(offset + 1) % len(rows)],
+            state.ROW_THREE: rows[(offset + 2) % len(rows)],
+        }
+        if include_stats:
+            values.update(benchmark_state.stats_values(self.display_stats))
+            values[benchmark_state.BenchmarkState.STATUS] = self.display_status
+            values[benchmark_state.BenchmarkState.MODE] = "reflow"
         return values
 
     def _render_animation(self, state):
@@ -288,7 +325,7 @@ class BenchmarkFeature(FeatureHostProxy):
         return "%x:%d" % (self.session, self.frame + 1)
 
     def _submit_frame(self, eventtime, full=False):
-        if not self.active or self.page != ScreenPage.RENDER_BENCHMARK:
+        if not self.active or self.page != self.benchmark_page:
             return self.reactor.NEVER
         if self.tracker.pending is not None:
             return self.tracker.pending.deadline
@@ -297,7 +334,20 @@ class BenchmarkFeature(FeatureHostProxy):
         build_started = time.perf_counter()
         include_stats = bool(full or self.stats_dirty)
 
-        if full:
+        if self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK:
+            self.workload_node.layout_options.width = self._layout_width(self.frame)
+            self.workload_node.invalidate_layout()
+            state = self._layout_state(include_stats)
+            if full:
+                commands = self.renderer.begin_page(
+                    "Component benchmark", back=True)
+                commands += self.page_tree.draw(self.renderer, state)
+                kind, key = "surface", None
+            else:
+                commands = self.page_tree.update(self.renderer, state)
+                kind, key = "animation", "component-benchmark"
+            python_ms = (time.perf_counter() - build_started) * 1000.0
+        elif full:
             state = self._state(
                 eventtime, include_stats=True, include_mode=True)
             commands = self.renderer.begin_page(
@@ -402,11 +452,12 @@ class BenchmarkFeature(FeatureHostProxy):
         self.stats_dirty = True
 
     def _cycle_mode(self, eventtime):
-        if not self.active or self.page != ScreenPage.RENDER_BENCHMARK:
+        if not self.active or self.page != self.benchmark_page:
             return
-        
-        index = self.MODES.index(self.mode)
-        self.mode = self.MODES[(index + 1) % len(self.MODES)]
+
+        if self.benchmark_page == ScreenPage.RENDER_BENCHMARK:
+            index = self.MODES.index(self.mode)
+            self.mode = self.MODES[(index + 1) % len(self.MODES)]
         self._reset_measurements(eventtime)
         self._submit_frame(eventtime, full=True)
 
@@ -418,9 +469,13 @@ class BenchmarkFeature(FeatureHostProxy):
             self.reactor.update_timer(self.timer, self.reactor.NEVER)
 
         page_tree = self.page_tree
-        if page_tree is None or self.page != ScreenPage.RENDER_BENCHMARK:
+        if page_tree is None or self.page != self.benchmark_page:
             return
-        
-        commands = self._render_stats()
+
+        if self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK:
+            commands = page_tree.update(
+                self.renderer, self._layout_state(include_stats=True))
+        else:
+            commands = self._render_stats()
 
         self.renderer.send_animation(commands, "render-benchmark-error")

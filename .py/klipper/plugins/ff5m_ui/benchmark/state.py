@@ -34,7 +34,8 @@ class BenchmarkState(StateKey):
     ANGLE_X = state(float, default=0.0)
     ANGLE_Y = state(float, default=0.0)
     ANGLE_Z = state(float, default=0.0)
-    MODE = state(str, default=BENCHMARK_MODES[0], choices=BENCHMARK_MODES)
+    MODE = state(str, default=BENCHMARK_MODES[0],
+                 choices=BENCHMARK_MODES + ("reflow",))
     COMMIT_FPS = state(float, default=None, unit="fps", category="benchmark")
     FRAME_MEDIAN_MS = state(
         float, default=None, unit="ms", category="benchmark")

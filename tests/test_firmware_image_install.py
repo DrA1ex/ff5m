@@ -418,11 +418,12 @@ echo unexpected > "$RESULT_PATH"
         self.assertEqual(result.returncode, 0, result.stdout)
         self._wait_for(
             lambda: self.launch_log.exists()
-            and "Installer exited with status 7"
+            and "Ensure writing stopped, then power off."
             in self.launch_log.read_text(encoding="utf-8"),
-            "runner did not record the entrypoint failure",
+            "runner did not record the delayed completion error",
         )
         runner_output = self.launch_log.read_text(encoding="utf-8")
+        self.assertIn("Installer exited with status 7", runner_output)
         self.assertIn("Firmware installer failed", runner_output)
         self.assertIn("Ensure writing stopped, then power off.", runner_output)
         self.assertFalse(self.typer_log.exists())
