@@ -21,6 +21,7 @@ from inotify_simple import flags as iFlags
 from ...utils import source_info
 from ...utils import json_wrapper as jsonw
 from ...common import RequestType, TransportType
+from . import gcode_3mf
 
 # Annotation imports
 from typing import (
@@ -826,7 +827,10 @@ class FileManager:
                 root = upload_info['root']
                 if root not in self.full_access_roots:
                     raise self.server.error(f"Invalid root request: {root}")
-                if root == "gcodes" and upload_info['ext'] in VALID_GCODE_EXTS:
+                if root == "gcodes" and (
+                    upload_info['ext'] in VALID_GCODE_EXTS or
+                    upload_info['unzip_3mf']
+                ):
                     result = await self._finish_gcode_upload(upload_info)
                 else:
                     result = await self._finish_standard_upload(upload_info)
@@ -866,9 +870,16 @@ class FileManager:
         start_print: bool = upload_args.get('print', "false") == "true"
         f_ext = os.path.splitext(dest_path)[-1].lower()
         unzip_ufp = f_ext == ".ufp" and root == "gcodes"
+        unzip_3mf = (
+            root == "gcodes" and
+            gcode_3mf.is_gcode_3mf(filename)
+        )
         if unzip_ufp:
             filename = os.path.splitext(filename)[0] + ".gcode"
             dest_path = os.path.splitext(dest_path)[0] + ".gcode"
+        elif unzip_3mf:
+            filename = gcode_3mf.output_filename(filename)
+            dest_path = gcode_3mf.output_filename(dest_path)
         if (
             os.path.isfile(dest_path) and
             os.access in os.supports_effective_ids and
@@ -885,6 +896,8 @@ class FileManager:
             'tmp_file_path': upload_args['tmp_file_path'],
             'start_print': start_print,
             'unzip_ufp': unzip_ufp,
+            'unzip_3mf': unzip_3mf,
+            'plate_index': upload_args.get('plateindex', None),
             'ext': f_ext,
             "is_link": os.path.islink(dest_path),
             "user": upload_args.get("current_user")
@@ -957,7 +970,28 @@ class FileManager:
                     os.mkdir(cur_path)
                     # wait for inotify to create a watch before proceeding
                     await asyncio.sleep(.1)
-            if upload_info['unzip_ufp']:
+            if upload_info['unzip_3mf']:
+                tmp_path = upload_info['tmp_file_path']
+                dest_path = upload_info['dest_path']
+                if upload_info["is_link"]:
+                    dest_path = os.path.realpath(dest_path)
+                eventloop = self.server.get_event_loop()
+                try:
+                    await eventloop.run_in_thread(
+                        gcode_3mf.extract_gcode_3mf,
+                        tmp_path,
+                        dest_path,
+                        upload_info['plate_index']
+                    )
+                except gcode_3mf.GCode3MFError as exc:
+                    raise self.server.error(str(exc), 400)
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                finfo = self.get_path_info(
+                    upload_info['dest_path'], upload_info['root'])
+            elif upload_info['unzip_ufp']:
                 tmp_path = upload_info['tmp_file_path']
                 finfo = self.get_path_info(tmp_path, upload_info['root'])
                 finfo['ufp_path'] = tmp_path
