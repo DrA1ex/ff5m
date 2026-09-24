@@ -111,10 +111,10 @@ async function main() {
             item
           );
           await page.waitForFunction(
-            (screen) => (
-              window.FeatherDesignerV2Bridge?.scene()?.screen === screen
-            ),
-            item.semantic_page_id,
+            (operations) => JSON.stringify(
+              window.FeatherDesignerV2Bridge?.scene()?.operations
+            ) === JSON.stringify(operations),
+            item.scene.operations,
             { timeout: 10000 }
           );
 

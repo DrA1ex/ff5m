@@ -304,6 +304,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._filament_present = None
 
         self.message = ""
+        self.message_title = None
         self.message_return = ScreenPage.IDLE_HOME
         self.message_actions = (("message.ok", "OK", "enabled"),)
         self.error_message = ""
@@ -1814,12 +1815,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.toast_message = str(message)
         self.renderer.toast(self.toast_message)
 
-    def _show_message(self, message, return_page, actions=None):
+    def _show_message(self, message, return_page, actions=None, title=None):
         recovery = self._classify_error(message)
         if recovery is not None:
             self._show_error(message, "runtime", recovery)
             return
         self.message = str(message)
+        self.message_title = None if title is None else str(title)
         self.message_page = 0
         self.message_return = return_page
         self.message_actions = (
@@ -1831,11 +1833,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         save_mesh = any(
             action == "mesh.save"
             for action, _label, _state in self.message_actions)
-        title = "Save bed mesh?" if save_mesh else "Message"
-        commands = self.renderer.begin_page(title)
+        title = (getattr(self, "message_title", None) or
+                 ("Save bed mesh?" if save_mesh else "Message"))
+        title_only = not self.message
+        commands = self.renderer.begin_page("Notification")
         commands += self.renderer.dialog(
-            title, (self.message,), self.message_actions,
-            x=90, y=95, width=620, height=300, tone="info",
+            title, (self.message,) if self.message else (), self.message_actions,
+            x=90, y=143 if title_only else 130, width=620,
+            height=194 if title_only else 220, tone="info",
             page=getattr(self, "message_page", 0),
             page_actions=("message.prev", "message.next"))
         self.renderer.send(commands)
@@ -1892,7 +1897,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             title = "KLIPPER IS NOT READY"
         commands += self.renderer.dialog(
             title, (" ".join(self.error_message.split()), advice), buttons,
-            x=80, y=85, width=640, height=325, tone="danger",
+            x=160, y=130, width=480, height=220, tone="danger",
             page=getattr(self, "error_page", 0),
             page_actions=("error.prev", "error.next"))
         self.renderer.prioritize_next_batch("critical", "error-screen")
@@ -2024,7 +2029,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self.pending_action = None
                 if self.page == ScreenPage.CANCEL_CONFIRM:
                     self.print_state = PrintState.IDLE
-                    self._show_message("Print cancelled", ScreenPage.IDLE_HOME)
+                    self._show_message(
+                        "", ScreenPage.IDLE_HOME, title="Print cancelled")
                 elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                     self._show_page(self.page)
             elif (eventtime >= self.pending_until
@@ -2181,13 +2187,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     reason = str(
                         variables.get("cancel_reason") or ""
                     ).replace("\n", " ").strip()
-                    label = ("Print cancelled\nReason: %s" % reason
-                             if reason else "Print cancelled")
+                    title = "Print cancelled"
+                    message = "Reason: %s" % reason if reason else ""
                 else:
-                    label = {
+                    title = {
                         "complete": "Print finished",
                         "error": "Print failed",
                     }.get(stats_state, "Print stopped")
+                    message = ""
                 self.cancel_requested = False
                 self.cancel_waiting_for_heat = False
                 self.home_during_print = False
@@ -2214,7 +2221,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                         actions=(("mesh.save", "SAVE & RESTART", "enabled"),
                                  ("message.ok", "LATER", "enabled")))
                 else:
-                    self._show_message(label, ScreenPage.IDLE_HOME)
+                    self._show_message(
+                        message, ScreenPage.IDLE_HOME, title=title)
             elif old_state == PrintState.INACTIVE:
                 self._show_page(ScreenPage.IDLE_HOME)
 

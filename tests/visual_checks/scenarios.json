@@ -257,6 +257,27 @@
       }
     },
     {
+      "id": "dialog-nine-lines-second",
+      "label": "Dialog layout / nine lines, second page",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "dialog_fixture": {
+        "title": "Nine line message",
+        "lines": [
+          "LINE 1 REMAINS VISIBLE.",
+          "LINE 2 REMAINS VISIBLE.",
+          "LINE 3 REMAINS VISIBLE.",
+          "LINE 4 REMAINS VISIBLE.",
+          "LINE 5 REMAINS VISIBLE.",
+          "LINE 6 REMAINS VISIBLE.",
+          "LINE 7 REMAINS VISIBLE.",
+          "LINE 8 REMAINS VISIBLE.",
+          "LINE 9 REMAINS VISIBLE."
+        ],
+        "buttons": [["dialog.test.ok", "CONTINUE", "warning"]],
+        "page": 1
+      }
+    },
+    {
       "id": "dialog-wrapped",
       "label": "Dialog layout / wrapped text",
       "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
@@ -360,6 +381,70 @@
       }
     },
     {
+      "id": "error-mcu-restart-dialog",
+      "label": "Klipper error / MCU restart",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "error_fixture": {
+        "message": "Shutdown due to webhooks request. Once the underlying issue is corrected, use the FIRMWARE_RESTART command to reset the firmware, reload the config, and restart the host software. Printer is shutdown",
+        "recovery": "firmware_restart"
+      }
+    },
+    {
+      "id": "error-timer-too-close-dialog",
+      "label": "Klipper error / Timer too close",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "error_fixture": {
+        "message": "MCU 'mcu' shutdown: Timer too close. This often indicates that the host computer is overloaded. Check the Klipper log and the host load. Once the underlying issue is corrected, use the FIRMWARE_RESTART command to reset the firmware, reload the config, and restart the host software. Printer is shutdown.",
+        "recovery": "firmware_restart",
+        "page": 0
+      }
+    },
+    {
+      "id": "print-finished-dialog",
+      "label": "Print result / finished",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print finished", "message": ""}
+    },
+    {
+      "id": "print-cancelled-dialog",
+      "label": "Print result / cancelled",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print cancelled", "message": ""}
+    },
+    {
+      "id": "print-cancelled-two-line-title",
+      "label": "Print result / two-line title",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print\ncancelled", "message": ""}
+    },
+    {
+      "id": "print-cancelled-three-line-title",
+      "label": "Print result / three-line title",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print\ncancelled\nby user", "message": ""}
+    },
+    {
+      "id": "print-cancelled-reason-dialog",
+      "label": "Print result / cancelled with reason",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print cancelled", "message": "Reason: FILAMENT RUNOUT"}
+    },
+    {
+      "id": "print-failed-dialog",
+      "label": "Print result / failed",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {"title": "Print failed", "message": ""}
+    },
+    {
+      "id": "print-mesh-save-dialog",
+      "label": "Print result / save new bed mesh",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "message_fixture": {
+        "message": "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART.",
+        "buttons": [["mesh.save", "SAVE & RESTART", "enabled"], ["message.ok", "LATER", "enabled"]]
+      }
+    },
+    {
       "id": "ota-update-short",
       "label": "OTA update / short changelog",
       "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
@@ -394,6 +479,28 @@
           "CHANGE 12: EXERCISE PAGINATED RELEASE NOTES",
           "CHANGE 13: EXERCISE PAGINATED RELEASE NOTES",
           "CHANGE 14: EXERCISE PAGINATED RELEASE NOTES"
+        ],
+        "page": 1
+      }
+    },
+    {
+      "id": "ota-recovery-long",
+      "label": "OTA recovery / paged local files",
+      "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
+      "ota_fixture": {
+        "installed_version": "1.4.1-243",
+        "available_version": "1.4.1-244",
+        "changes": [],
+        "recovery_files": [
+          "UNTRACKED: path/to/file-01.sh",
+          "UNTRACKED: path/to/file-02.sh",
+          "UNTRACKED: path/to/file-03.sh",
+          "UNTRACKED: path/to/file-04.sh",
+          "UNTRACKED: path/to/file-05.sh",
+          "UNTRACKED: path/to/file-06.sh",
+          "UNTRACKED: path/to/file-07.sh",
+          "UNTRACKED: path/to/file-08.sh",
+          "UNTRACKED: path/to/file-09.sh"
         ],
         "page": 1
       }

@@ -1312,8 +1312,8 @@ class FileWorkflowTest(unittest.TestCase):
         restarts = []
         messages = []
         controller._restart_klipper = restarts.append
-        controller._show_message = lambda message, page, actions=None: (
-            messages.append((message, page, actions)))
+        controller._show_message = lambda message, page, actions=None, title=None: (
+            messages.append((message, page, actions, title)))
 
         controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
 
@@ -1336,8 +1336,8 @@ class FileWorkflowTest(unittest.TestCase):
         })
         controller.bed_mesh = StatusObject({"profile_name": "auto"})
         messages = []
-        controller._show_message = lambda message, page, actions=None: (
-            messages.append((message, page, actions)))
+        controller._show_message = lambda message, page, actions=None, title=None: (
+            messages.append((message, page, actions, title)))
 
         controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
 
@@ -1358,13 +1358,14 @@ class FileWorkflowTest(unittest.TestCase):
         })
         controller.bed_mesh = StatusObject({"profile_name": "auto"})
         messages = []
-        controller._show_message = lambda message, page, actions=None: (
-            messages.append((message, page, actions)))
+        controller._show_message = lambda message, page, actions=None, title=None: (
+            messages.append((message, page, actions, title)))
 
         controller._change_print_state(FEATHER.PrintState.IDLE, "complete")
 
         self.assertEqual(len(messages), 1)
         self.assertIsNone(messages[0][2])
+        self.assertEqual(messages[0][3], "Print finished")
 
     def test_mesh_save_prompt_buttons_fit_message_dialog(self):
         controller = base_controller()
@@ -1380,11 +1381,15 @@ class FileWorkflowTest(unittest.TestCase):
         controller._render_message()
 
         frame = rendering.latest
-        body = frame.text(controller.message)
-        self.assertEqual(body.font, "JetBrainsMono 12pt")
-        self.assertEqual(body.max_height, 108)
-        self.assertTrue(body.wrap)
-        self.assertTrue(body.truncate)
+        body_lines = [text for text in frame.texts
+                      if text.font == "JetBrainsMono 8pt"
+                      and text.max_width == 564]
+        self.assertEqual(" ".join(text.value for text in body_lines),
+                         controller.message)
+        self.assertTrue(all(text.truncate for text in body_lines))
+        self.assertTrue(all(text.max_width is not None
+                            and 0 < text.max_width <= 620
+                            for text in body_lines))
         save = frame.button("mesh.save").bounds
         later = frame.button("message.ok").bounds
         for button in (save, later):
@@ -1404,9 +1409,11 @@ class FileWorkflowTest(unittest.TestCase):
 
         controller._render_message()
 
-        body = rendering.latest.text(controller.message)
-        self.assertEqual(tuple(body.value.splitlines()), lines)
-        self.assertTrue(body.wrap)
+        body_lines = [text for text in rendering.latest.texts
+                      if text.font == "JetBrainsMono 8pt"
+                      and text.max_width == 564]
+        self.assertEqual(tuple(text.value for text in body_lines), lines)
+        self.assertLess(body_lines[0].y, body_lines[1].y)
 
     def test_incomplete_generated_auto_mesh_does_not_offer_save(self):
         for stats_state in ("cancelled", "error"):
@@ -1422,8 +1429,8 @@ class FileWorkflowTest(unittest.TestCase):
                 restarts = []
                 messages = []
                 controller._restart_klipper = restarts.append
-                controller._show_message = lambda message, page, actions=None: (
-                    messages.append((message, page, actions)))
+                controller._show_message = lambda message, page, actions=None, title=None: (
+                    messages.append((message, page, actions, title)))
 
                 controller._change_print_state(
                     FEATHER.PrintState.IDLE, stats_state)
@@ -1431,6 +1438,9 @@ class FileWorkflowTest(unittest.TestCase):
                 self.assertEqual(restarts, [])
                 self.assertEqual(len(messages), 1)
                 self.assertIsNone(messages[0][2])
+                self.assertEqual(messages[0][3], (
+                    "Print cancelled" if stats_state == "cancelled"
+                    else "Print failed"))
 
     def test_completed_print_does_not_offer_save_without_generated_auto(self):
         cases = (
@@ -1453,14 +1463,15 @@ class FileWorkflowTest(unittest.TestCase):
                     "profile_name": profile_name})
                 messages = []
                 controller._show_message = (
-                    lambda message, page, actions=None:
-                    messages.append((message, page, actions)))
+                    lambda message, page, actions=None, title=None:
+                    messages.append((message, page, actions, title)))
 
                 controller._change_print_state(
                     FEATHER.PrintState.IDLE, "complete")
 
                 self.assertEqual(len(messages), 1)
                 self.assertIsNone(messages[0][2])
+                self.assertEqual(messages[0][3], "Print finished")
 
     def test_mesh_save_action_requires_idle_and_runs_save_config(self):
         controller = base_controller()

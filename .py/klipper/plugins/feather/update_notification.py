@@ -10,6 +10,7 @@ from feather.screen.pagination import Pagination
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.screen import ScreenPage
 from ui import ThemeColor
+from ui.layout_helpers import DIALOG_BUTTON_FONT, DIALOG_LIST_FONT
 
 
 STARTUP_DELAY = 5.0
@@ -19,13 +20,14 @@ FAILURE_RETRY_INTERVAL = 300.0
 MAX_FAILURE_RETRY_INTERVAL = 21600.0
 SAFETY_RETRY_INTERVAL = 300.0
 DEFAULT_UPDATE_INTERVAL_MINUTES = 360
-CHANGE_PAGE_SIZE = 6
+CHANGE_PAGE_SIZE = 4
 MAX_CHANGE_ITEMS = 24
 MAX_RECOVERY_FILES = 64
 MAX_VERSION_LENGTH = 64
 MAX_REVISION_LENGTH = 128
 MAX_CHANGE_LENGTH = 160
 MAX_PROGRESS_LENGTH = 160
+UPDATE_DIALOG_BOUNDS = (40, 74, 720, 348)
 
 _ACTIVE_PRINT_STATES = frozenset((
     PrintState.PREPARING, PrintState.PRINTING, PrintState.PAUSED,
@@ -454,28 +456,21 @@ class ForgeXUpdateNotification:
             "Forge-X %s available" % version, (),
             (("update.later", "LATER", "enabled"),
              ("update.install", "UPDATE", "warning")),
-            x=40, y=72, width=720, height=350, tone="info")
+            *UPDATE_DIALOG_BOUNDS, tone="info", custom_body=True)
         commands.append(self.host.renderer.text(
-            72, 150, "CHANGES SINCE %s" %
+            72, 160, "CHANGES SINCE %s" %
             (self.installed_version or "CURRENT VERSION"),
-            ThemeColor.PRIMARY, "JetBrainsMono Bold 8pt",
+            ThemeColor.PRIMARY, DIALOG_BUTTON_FONT,
             max_width=570, truncate=True))
         for index, subject in enumerate(pagination.visible):
             commands.append(self.host.renderer.text(
-                78, 184 + index * 30, "- " + subject,
-                ThemeColor.TEXT, "JetBrainsMono 8pt",
+                78, 194 + index * 36, "- " + subject,
+                ThemeColor.TEXT, DIALOG_LIST_FONT,
                 max_width=570, truncate=True))
         if pagination.page_count > 1:
-            commands += self.host.renderer.arrow_button(
-                "update.prev", 678, 137, 52, 48, "up",
-                active=pagination.has_previous)
-            commands += self.host.renderer.arrow_button(
-                "update.next", 678, 287, 52, 48, "down",
-                active=pagination.has_next)
-            commands.append(self.host.renderer.text(
-                704, 237, "%d / %d" %
-                (pagination.page + 1, pagination.page_count),
-                ThemeColor.DIM, "JetBrainsMono 8pt", "center", "middle"))
+            commands += self.host.renderer.dialog_pager(
+                pagination.page, pagination.page_count,
+                ("update.prev", "update.next"), *UPDATE_DIALOG_BOUNDS)
         self.host.renderer.send(commands)
 
     def _render_restart_notice(self):
@@ -508,27 +503,20 @@ class ForgeXUpdateNotification:
             "LOCAL FILES BLOCK UPDATE", (),
             (("update.later", "LATER", "enabled"),
              ("update.reset", "RESET", "danger")),
-            x=40, y=72, width=720, height=350, tone="danger")
+            *UPDATE_DIALOG_BOUNDS, tone="danger", custom_body=True)
         commands.append(self.host.renderer.text(
-            72, 150, "FILES THAT RESET WILL REMOVE OR RESTORE",
-            ThemeColor.DANGER, "JetBrainsMono Bold 8pt",
+            72, 160, "FILES THAT RESET WILL REMOVE OR RESTORE",
+            ThemeColor.DANGER, DIALOG_LIST_FONT,
             max_width=570, truncate=True))
         for index, path in enumerate(pagination.visible):
             commands.append(self.host.renderer.text(
-                78, 184 + index * 30, "- " + path,
-                ThemeColor.TEXT, "JetBrainsMono 8pt",
+                78, 194 + index * 36, "- " + path,
+                ThemeColor.TEXT, DIALOG_LIST_FONT,
                 max_width=570, truncate=True))
         if pagination.page_count > 1:
-            commands += self.host.renderer.arrow_button(
-                "update.prev", 678, 137, 52, 48, "up",
-                active=pagination.has_previous)
-            commands += self.host.renderer.arrow_button(
-                "update.next", 678, 287, 52, 48, "down",
-                active=pagination.has_next)
-            commands.append(self.host.renderer.text(
-                704, 237, "%d / %d" %
-                (pagination.page + 1, pagination.page_count),
-                ThemeColor.DIM, "JetBrainsMono 8pt", "center", "middle"))
+            commands += self.host.renderer.dialog_pager(
+                pagination.page, pagination.page_count,
+                ("update.prev", "update.next"), *UPDATE_DIALOG_BOUNDS)
         self.host.renderer.send(commands)
 
     @staticmethod

@@ -2743,8 +2743,8 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_terminal_cancel_reports_current_reason_or_generic_result(self):
         for reason, expected in (
-                ("", "Print cancelled"),
-                ("FILAMENT RUNOUT", "Print cancelled\nReason: FILAMENT RUNOUT")):
+                ("", ""),
+                ("FILAMENT RUNOUT", "Reason: FILAMENT RUNOUT")):
             with self.subTest(reason=reason):
                 controller = ScenarioController.__new__(ScenarioController)
                 controller.print_state = FEATHER.PrintState.PAUSED
@@ -2756,7 +2756,8 @@ class ControllerSafetyTest(unittest.TestCase):
                 controller.debug = False
                 messages = []
                 controller._show_message = (
-                    lambda message, page: messages.append((message, page)))
+                    lambda message, page, title=None:
+                    messages.append((message, page, title)))
 
                 controller._change_print_state(
                     FEATHER.PrintState.IDLE, "cancelled")
@@ -2764,7 +2765,8 @@ class ControllerSafetyTest(unittest.TestCase):
                 self.assertEqual(
                     controller.print_state, FEATHER.PrintState.IDLE)
                 self.assertEqual(messages, [
-                    (expected, FEATHER.ScreenPage.IDLE_HOME)])
+                    (expected, FEATHER.ScreenPage.IDLE_HOME,
+                     "Print cancelled")])
 
     def test_preheat_presets_respect_real_heater_limits(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -3535,14 +3537,70 @@ class ControllerSafetyTest(unittest.TestCase):
 
         text_commands = [line for line in batches[0]
                          if ('--batch text ' in line
-                             and '-f "JetBrainsMono 8pt"' in line
-                             and '--max-width 584' in line)]
+                             and '-f "JetBrainsMono 8pt"' in line)]
         fragments = [re.search(r'-t "([^"]+)"', line).group(1)
                      for line in text_commands]
         self.assertGreater(len(fragments), 1)
-        self.assertEqual(' '.join(fragments[:-1]), controller.error_message)
-        self.assertEqual(fragments[-1],
-                         "Check the printer, then restart the MCU.")
+        self.assertEqual(' '.join(fragments), controller.error_message +
+                         " Check the printer, then restart the MCU.")
+        self.assertNotIn("error.next", controller.renderer._buttons)
+
+    def test_timer_too_close_error_remains_reachable_across_pages(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        controller.renderer.send = batches.append
+        controller.error_message = (
+            "MCU 'mcu' shutdown: Timer too close. This often indicates that "
+            "the host computer is overloaded. Check the Klipper log and the "
+            "host load. Once the underlying issue is corrected, use the "
+            "FIRMWARE_RESTART command to reset the firmware, reload the config, "
+            "and restart the host software. Printer is shutdown.")
+        controller.error_recovery = "firmware_restart"
+        controller.error_page = 0
+
+        fragments = []
+        for page in range(2):
+            controller.error_page = page
+            controller._render_error()
+            body = [command for command in batches[-1]
+                    if ('--batch text ' in command
+                        and '-f "JetBrainsMono 8pt"' in command
+                        and re.search(r'--max-width ([2-9]\d{2})', command))]
+            fragments.extend(re.search(r'-t "([^"]+)"', command).group(1)
+                             for command in body)
+            self.assertGreaterEqual(
+                controller.renderer._buttons["error.firmware_restart"].y
+                - int(re.search(r'-p \d+ (\d+)', body[-1]).group(1)) - 11,
+                30)
+        self.assertEqual(
+            " ".join(fragments), controller.error_message +
+            " Check the printer, then restart the MCU.")
+        self.assertNotIn("error.next", controller.renderer._buttons)
+
+    def test_print_outcome_dialog_uses_status_heading_and_standard_action(self):
+        for title, message in (("Print finished", ""),
+                               ("Print cancelled", "Reason: FILAMENT RUNOUT"),
+                               ("Print failed", "")):
+            with self.subTest(title=title):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.renderer = FEATHER.FeatherRenderer()
+                batches = []
+                controller.renderer.send = batches.append
+                controller._show_page = lambda page: controller._render_message()
+
+                controller._show_message(
+                    message, FEATHER.ScreenPage.IDLE_HOME, title=title)
+
+                drawing = "\n".join(batches[0])
+                self.assertIn(title.upper(), drawing)
+                self.assertNotIn('-t "MESSAGE"', drawing)
+                if message:
+                    self.assertIn(message, drawing)
+                    self.assertIn('-f "JetBrainsMono 8pt"', drawing)
+                button = controller.renderer._buttons["message.ok"]
+                self.assertEqual(button.font, "JetBrainsMono Bold 12pt")
+                self.assertLessEqual(button.y + button.height, 422)
 
     def test_long_shutdown_message_reflows_and_pages_inside_content(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -3557,25 +3615,23 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.error_recovery = "firmware_restart"
         controller.error_page = 0
 
-        from ui.layout_helpers import layout_dialog_text
         normalized = " ".join(controller.error_message.split())
-        page_count = layout_dialog_text(
-            (normalized, "Check the printer, then restart the MCU."),
-            85, 640, 325, True)[-1]
-        self.assertGreater(page_count, 1)
-
         fragments = []
-        for page in range(page_count):
+        for page in range(20):
             controller.error_page = page
             controller._render_error()
             drawing = "\n".join(batches[-1])
-            panel = re.search(r"--batch fill -p 80 (\d+) -s 640 (\d+)", drawing)
+            panels = re.findall(
+                r"--batch fill -p (\d+) (\d+) -s (\d+) (\d+) -c 050c0f",
+                drawing)
+            panel = next((item for item in panels if int(item[3]) >= 220), None)
             self.assertIsNotNone(panel)
-            self.assertGreaterEqual(int(panel.group(1)), 74)
-            self.assertLessEqual(int(panel.group(1)) + int(panel.group(2)), 422)
+            x, y, width, height = (int(value) for value in panel)
+            self.assertEqual(x + width // 2, 400)
+            self.assertGreaterEqual(width, 480)
+            self.assertGreaterEqual(y, 74)
+            self.assertLessEqual(y + height, 422)
             self.assertIn("error.firmware_restart", controller.renderer._buttons)
-            if page + 1 < page_count:
-                self.assertIn("error.next", controller.renderer._buttons)
             if page:
                 self.assertIn("error.prev", controller.renderer._buttons)
             fragments.extend(
@@ -3583,11 +3639,16 @@ class ControllerSafetyTest(unittest.TestCase):
                 for command in batches[-1]
                 if ('--batch text ' in command
                     and '-f "JetBrainsMono 8pt"' in command
-                    and '--max-width 584' in command))
+                    and re.search(r'--max-width ([2-9]\d{2})', command)))
+            if "error.next" not in controller.renderer._buttons:
+                break
+        else:
+            self.fail("error pagination did not terminate")
 
-        self.assertEqual(" ".join(fragments[:-1]), normalized)
-        self.assertEqual(fragments[-1],
-                         "Check the printer, then restart the MCU.")
+        self.assertGreater(page, 0)
+
+        self.assertEqual(" ".join(fragments), normalized +
+                         " Check the printer, then restart the MCU.")
 
     def test_recovery_confirmation_is_wrapped_by_typer(self):
         controller = ScenarioController.__new__(ScenarioController)

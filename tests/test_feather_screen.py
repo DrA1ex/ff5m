@@ -24,11 +24,14 @@ SPEC = importlib.util.spec_from_file_location("feather_screen", MODULE_PATH)
 FEATHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FEATHER)
 UI = __import__("ui")
-from ui.layout_helpers import dialog_vertical_bounds
+from ui.layout_helpers import (
+    DIALOG_BUTTON_FONT, dialog_vertical_bounds,
+)
 from feather.network import protocol as NETWORK_PROTOCOL
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
 from feather.features.z import ZCalibrationFeature
+from tests.feather_render_test_helper import RenderFrame
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -1344,8 +1347,8 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertEqual(
             commands[0], "--batch clear-hitboxes --layer base")
-        self.assertIn("--batch fill -p 25 75 -s 430 285", drawing)
-        self.assertIn("--batch stroke -p 25 75 -s 430 285", drawing)
+        self.assertIn("--batch fill -p 160 97 -s 480 285", drawing)
+        self.assertIn("--batch stroke -p 160 97 -s 480 285", drawing)
         self.assertIn("CAUTION", drawing)
         self.assertIn("FIRST LINE", drawing)
         self.assertIn("--id 0:dialog.close", drawing)
@@ -1359,7 +1362,7 @@ class RendererStateTest(unittest.TestCase):
         renderer.dialog("Notice", (), (("ok", "OK", "enabled"),),
                         x=90, y=95, width=620, height=300)
         ok = renderer._buttons["ok"]
-        self.assertEqual(ok[:4], (328, 329, 144, 50))
+        self.assertEqual(ok[:4], (328, 310, 144, 50))
 
         renderer.dialog("Error", (),
                         (("back", "BACK", "enabled"),
@@ -1368,12 +1371,12 @@ class RendererStateTest(unittest.TestCase):
         back = renderer._buttons["back"]
         restart = renderer._buttons["restart"]
         self.assertEqual(back.width, restart.width)
-        self.assertLessEqual(back.width, 240)
+        self.assertLessEqual(back.width, 300)
         self.assertGreaterEqual(back.width - 2 * renderer.BUTTON_TEXT_PADDING,
-                                renderer.text_width("FIRMWARE RESTART", "JetBrainsMono 8pt"))
+                                renderer.text_width("FIRMWARE RESTART", DIALOG_BUTTON_FONT))
         self.assertEqual(back.x + back.width + 12, restart.x)
         self.assertEqual(back.x + restart.x + restart.width, 800)
-        self.assertEqual((back.y, back.height), (344, 50))
+        self.assertEqual((back.y, back.height), (322, 50))
 
         renderer.dialog("Small", (),
                         (("one", "ONE", "enabled"),
@@ -1381,9 +1384,31 @@ class RendererStateTest(unittest.TestCase):
                         x=25, y=75, width=300, height=220)
         one = renderer._buttons["one"]
         two = renderer._buttons["two"]
-        self.assertEqual((one.width, two.width), (126, 126))
+        self.assertEqual((one.width, two.width), (144, 144))
         self.assertEqual(one.x + one.width + 12, two.x)
-        self.assertEqual(one.y + one.height, 279)
+        self.assertEqual(one.y + one.height, 320)
+
+    def test_title_only_dialog_moves_title_and_preserves_multiline_heading(self):
+        renderer = FEATHER.FeatherRenderer()
+        buttons = (("ok", "OK", "enabled"),)
+        bounds = dict(x=90, y=130, width=620, height=180)
+
+        single = RenderFrame(renderer.dialog(
+            "Print cancelled", (), buttons, **bounds), renderer)
+        ordinary = RenderFrame(renderer.dialog(
+            "Print cancelled", ("Reason: filament runout",),
+            buttons, **bounds), renderer)
+        self.assertGreater(single.text("PRINT CANCELLED").y,
+                           ordinary.text("PRINT CANCELLED").y)
+
+        multiline = RenderFrame(renderer.dialog(
+            "Print\ncancelled\nby user", (), buttons, **bounds), renderer)
+        title_lines = [multiline.text(value)
+                       for value in ("PRINT", "CANCELLED", "BY USER")]
+        self.assertLess(title_lines[0].y, title_lines[1].y)
+        self.assertLess(title_lines[1].y, title_lines[2].y)
+        self.assertLess(title_lines[2].y + 16,
+                        multiline.button("ok").bounds.y)
 
     def test_printer_action_prompt_footer_uses_dialog_button_geometry(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -1412,11 +1437,11 @@ class RendererStateTest(unittest.TestCase):
             "Full dialog", lines, (("continue", "CONTINUE", "enabled"),),
             x=160, y=130, width=480, height=220))
 
-        self.assertIn("--batch fill -p 160 102 -s 480 276", drawing)
-        self.assertIn("-p 400 284", drawing)
-        self.assertEqual(renderer._buttons["continue"].y, 312)
+        self.assertIn("--batch fill -p 160 85 -s 480 310", drawing)
+        self.assertIn("-p 400 280", drawing)
+        self.assertEqual(renderer._buttons["continue"].y, 321)
         self.assertEqual(dialog_vertical_bounds(350, 220, 5, True),
-                         (146, 276))
+                         (112, 310))
 
     def test_dialog_allows_a_wider_button_for_a_long_label(self):
         renderer = FEATHER.FeatherRenderer()
@@ -1427,24 +1452,23 @@ class RendererStateTest(unittest.TestCase):
 
         button = renderer._buttons["save"]
         self.assertGreater(button.width, 240)
-        self.assertLessEqual(button.width, 360)
+        self.assertLessEqual(button.width, 508 - 48)
         self.assertLessEqual(abs(button.x + button.width // 2 - 400), 1)
         self.assertGreaterEqual(
             button.width - 2 * renderer.BUTTON_TEXT_PADDING,
-            renderer.text_width(button.label, "JetBrainsMono 8pt"))
+            renderer.text_width(button.label, DIALOG_BUTTON_FONT))
 
-    def test_dialog_supports_five_lines_below_title(self):
+    def test_dialog_without_actions_shows_all_six_lines(self):
         renderer = FEATHER.FeatherRenderer()
         lines = tuple("LINE %d" % index for index in range(1, 7))
 
         drawing = "\n".join(renderer.dialog(
-            "Notice", lines, (), x=80, y=85, width=640, height=325))
+            "Notice", lines, (), x=80, y=85, width=640, height=325,
+            page_actions=("notice.prev", "notice.next")))
 
-        for index in range(1, 6):
+        for index in range(1, 7):
             self.assertIn("LINE %d" % index, drawing)
-        self.assertIn("LINE 6", drawing)
-        self.assertIn("-p 400 171", drawing)
-        self.assertNotIn("-p 400 163", drawing)
+        self.assertNotIn("notice.next", renderer._buttons)
 
     def test_hints_and_dialog_lines_keep_horizontal_padding(self):
         renderer = FEATHER.FeatherRenderer()

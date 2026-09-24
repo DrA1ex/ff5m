@@ -16,7 +16,11 @@ from .font_metrics import (
     get_font_metrics, load_runtime_metrics, set_font_metrics,
 )
 from .layout_helpers import (
-    centered_button_row, dialog_pager_bounds, layout_dialog_text,
+    DIALOG_BODY_FONT, DIALOG_BODY_Y, DIALOG_BUTTON_BOTTOM,
+    DIALOG_BUTTON_FONT, DIALOG_BUTTON_HEIGHT, DIALOG_COMPACT_BUTTON_BOTTOM,
+    DIALOG_LINE_SPACING, DIALOG_PAGER_RESERVE, DIALOG_TITLE_FONT,
+    DIALOG_TITLE_TOP, centered_button_row, dialog_horizontal_bounds,
+    dialog_pager_bounds, layout_dialog_text, layout_title_only_dialog,
 )
 from .numeric_input import NumericInputSpec
 from .render_receipts import validate_render_receipt_token
@@ -1119,7 +1123,8 @@ class FeatherRenderer:
 
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
                height=220, tone="warning", modal=True,
-               preserve_header_action=True, page=0, page_actions=None):
+               preserve_header_action=True, page=0, page_actions=None,
+               custom_body=False):
         """Build a modal dialog from standard panel, text, and button primitives.
 
         ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
@@ -1128,6 +1133,7 @@ class FeatherRenderer:
         localized overlay whose caller will explicitly re-register the
         controls that remain available. Set ``preserve_header_action`` to
         false when loss of input makes even that action unusable.
+        Set ``custom_body`` when the caller draws its own content in the panel.
         """
         tones = {
             "warning": ThemeColor.WARNING,
@@ -1136,9 +1142,25 @@ class FeatherRenderer:
         }
         border = tones.get(tone, ThemeColor.PRIMARY)
         button_specs = tuple(buttons)
+        if modal and not custom_body:
+            x, width = dialog_horizontal_bounds(
+                width, title, (item[1] for item in button_specs),
+                measure_text=self.text_width)
+            y = (SCREEN_HEIGHT - height) // 2
         y, height, visible_lines, page, page_count = layout_dialog_text(
             lines, y, width, height, bool(button_specs), page=page,
             text_padding=self.DIALOG_TEXT_PADDING, screen_height=SCREEN_HEIGHT)
+        title_only = (not custom_body
+                      and not any(str(line).strip() for line in visible_lines))
+        if title_only:
+            y, height, title_rows = layout_title_only_dialog(
+                title, y, width, height, bool(button_specs),
+                text_padding=self.DIALOG_TEXT_PADDING,
+                screen_height=SCREEN_HEIGHT)
+        else:
+            title_rows = ((str(title).upper(), y + DIALOG_TITLE_TOP
+                           + get_font_metrics().metric(
+                               DIALOG_TITLE_FONT).glyph_height // 2),)
         if page_count > 1 and (page_actions is None or len(page_actions) != 2):
             raise ValueError("Overflowing dialog requires previous and next actions")
         commands = []
@@ -1153,39 +1175,60 @@ class FeatherRenderer:
             ]
         commands += self.panel(
             x, y, width, height, border=border, background=ThemeColor.PANEL)
-        commands.append(self.text(
-            x + width // 2, y + 34, str(title).upper(), border,
-            "JetBrainsMono Bold 16pt", "center", "middle",
-            max_width=width - 2 * self.DIALOG_TEXT_PADDING, truncate=True))
-        for index, line in enumerate(visible_lines):
+        for line, title_y in title_rows:
             commands.append(self.text(
-                x + width // 2, y + 86 + index * 24, str(line), ThemeColor.TEXT,
-                "JetBrainsMono 8pt", "center", "middle",
+                x + width // 2, title_y, line, border,
+                DIALOG_TITLE_FONT, "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING,
                 truncate=True))
-        if page_count > 1:
-            previous, following = page_actions
-            prev_bounds, next_bounds, counter = dialog_pager_bounds(
-                x, y, width, height, bool(button_specs))
-            commands += self.button(
-                previous, *prev_bounds, "<",
-                state="enabled" if page > 0 else "disabled", font="JetBrainsMono 8pt")
-            commands += self.button(
-                following, *next_bounds, ">",
-                state="enabled" if page + 1 < page_count else "disabled",
-                font="JetBrainsMono 8pt")
+        pager_reserve = DIALOG_PAGER_RESERVE if page_count > 1 else 0
+        for index, line in enumerate(visible_lines):
             commands.append(self.text(
-                *counter, "%d / %d" % (page + 1, page_count), ThemeColor.DIM,
-                "JetBrainsMono 8pt", "center", "middle"))
+                x + (width - pager_reserve) // 2,
+                y + DIALOG_BODY_Y + index * DIALOG_LINE_SPACING,
+                str(line), ThemeColor.TEXT, DIALOG_BODY_FONT, "center", "middle",
+                max_width=width - 2 * self.DIALOG_TEXT_PADDING - pager_reserve,
+                truncate=True))
+        if page_count > 1:
+            commands += self.dialog_pager(
+                page, page_count, page_actions, x, y, width, height,
+                has_buttons=bool(button_specs))
+        button_y = y + height - DIALOG_BUTTON_BOTTOM - DIALOG_BUTTON_HEIGHT
+        if title_only:
+            button_y = y + height - (DIALOG_COMPACT_BUTTON_BOTTOM
+                                     if len(title_rows) == 1 else 22)
+            button_y -= DIALOG_BUTTON_HEIGHT
         for (action, label, state), bounds in zip(
                 button_specs, centered_button_row(
                     (item[1] for item in button_specs),
-                    x, y + height - 66, width, measure_text=self.text_width,
-                    padding=self.BUTTON_TEXT_PADDING)):
+                    x, button_y, width, measure_text=self.text_width,
+                    font=DIALOG_BUTTON_FONT, padding=30,
+                    maximum=width, margin=24)):
             commands += self.button(
-                action, *bounds, label, state=state, font="JetBrainsMono 8pt")
+                action, *bounds, label, state=state, font=DIALOG_BUTTON_FONT)
         if modal and show_header_action:
             commands += self._header_action_commands()
+        return commands
+
+    def dialog_pager(self, page, page_count, actions, x, y, width, height,
+                     *, has_buttons=True):
+        """Draw the narrow vertical page controls shared by dialog panels."""
+        if page_count <= 1:
+            return []
+        previous, following = actions
+        prev_bounds, next_bounds, counter = dialog_pager_bounds(
+            x, y, width, height, has_buttons)
+        commands = self.arrow_button(
+            previous, *prev_bounds, "up", active=page > 0)
+        commands += self.arrow_button(
+            following, *next_bounds, "down", active=page + 1 < page_count)
+        for offset, value in ((-24, page + 1), (24, page_count)):
+            commands.append(self.text(
+                counter[0], counter[1] + offset, str(value), ThemeColor.DIM,
+                DIALOG_BODY_FONT, "center", "middle",
+                max_width=DIALOG_PAGER_RESERVE - 8, truncate=True))
+        commands.append(self.fill(
+            counter[0] - 11, counter[1] - 1, 22, 2, ThemeColor.DIM))
         return commands
 
     def flash_button(self, action):

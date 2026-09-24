@@ -15,11 +15,13 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
 sys.path.insert(0, str(PLUGINS))
 
 from feather.update_notification import (  # noqa: E402
-    CHECK_TIMEOUT, DEFAULT_UPDATE_INTERVAL_MINUTES, FAILURE_RETRY_INTERVAL,
+    CHANGE_PAGE_SIZE, CHECK_TIMEOUT, DEFAULT_UPDATE_INTERVAL_MINUTES,
+    FAILURE_RETRY_INTERVAL,
     MAX_FAILURE_RETRY_INTERVAL, ForgeXUpdateNotification, STARTUP_DELAY)
 from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
 from ui import FeatherRenderer  # noqa: E402
+from tests.feather_render_test_helper import RenderFrame  # noqa: E402
 
 
 class Reactor:
@@ -499,12 +501,32 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertIn("update.next", self.host.renderer._buttons)
         self.notification.handle_action("update.next")
         self.assertEqual(self.notification.change_page, 1)
-        self.notification.handle_action("update.next")
-        self.notification.handle_action("update.next")
+        last_page = (len(self.notification.changes) - 1) // CHANGE_PAGE_SIZE
+        for _page in range(last_page - 1):
+            self.notification.handle_action("update.next")
         drawing = "\n".join(self.host.draw_batches[-1])
 
         self.assertIn("MORE CHANGES NOT SHOWN", drawing)
         self.assertNotIn("Change 79", drawing)
+
+    def test_paged_update_uses_dialog_controls_without_covering_changes(self):
+        self.request_and_respond(changes=[
+            "Change %02d" % index for index in range(12)])
+        self.notification.handle_action("update.next")
+
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        self.assertLess(frame.text("FORGE-X 1.4.3 AVAILABLE").y,
+                        frame.text("CHANGES SINCE 1.4.2").y)
+        current, total = frame.text("2"), frame.text("3")
+        self.assertLess(current.y, total.y)
+        self.assertTrue(any(
+            shape.kind == "fill" and shape.bounds.width == 22
+            and shape.bounds.height == 2
+            and current.y < shape.bounds.y < total.y
+            for shape in frame.shapes))
+        self.assertEqual(frame.button("update.prev").bounds.width, 40)
+        self.assertEqual(frame.button("update.next").bounds.width, 40)
+        self.assertFalse(frame.has_text("2 / 3"))
 
     def test_short_changelog_has_no_scroll_controls(self):
         self.request_and_respond(changes=["One", "Two"])
@@ -607,8 +629,20 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         first_page = "\n".join(self.host.draw_batches[-1])
         self.assertIn("file-0.sh", first_page)
         self.assertNotIn("file-29.sh", first_page)
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        heading = frame.text("FILES THAT RESET WILL REMOVE OR RESTORE")
+        self.assertLess(frame.text("LOCAL FILES BLOCK UPDATE").y, heading.y)
+        self.assertLessEqual(
+            self.host.renderer.text_width(heading.value, heading.font),
+            heading.max_width)
+        self.assertEqual(frame.button("update.next").bounds.width, 40)
+        self.assertTrue(any(
+            shape.kind == "fill" and shape.bounds.width == 22
+            and shape.bounds.height == 2
+            for shape in frame.shapes))
 
-        for _page in range(4):
+        last_page = (len(files) - 1) // CHANGE_PAGE_SIZE
+        for _page in range(last_page):
             self.notification.handle_action("update.next")
         last_page = "\n".join(self.host.draw_batches[-1])
         self.assertIn("file-29.sh", last_page)

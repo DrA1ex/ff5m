@@ -1291,7 +1291,8 @@ class HybridCompositionTest(unittest.TestCase):
         }
 
         self.assertEqual(set(fixtures),
-                         {"ota-update-short", "ota-update-long"})
+                         {"ota-update-short", "ota-update-long",
+                          "ota-recovery-long"})
         self.assertEqual(fixtures["ota-update-short"]["page"], 0)
         self.assertEqual(fixtures["ota-update-long"]["page"], 1)
         self.assertEqual(len(fixtures["ota-update-long"]["changes"]), 14)
@@ -1307,8 +1308,8 @@ class HybridCompositionTest(unittest.TestCase):
         self.assertEqual(
             set(fixtures),
             {"dialog-short", "dialog-five-lines", "dialog-six-lines",
-             "dialog-wrapped", "dialog-paged-first", "dialog-paged-second",
-             "dialog-long-action"})
+             "dialog-nine-lines-second", "dialog-wrapped",
+             "dialog-paged-first", "dialog-paged-second", "dialog-long-action"})
         self.assertEqual(len(fixtures["dialog-five-lines"]["lines"]), 5)
         self.assertEqual(
             fixtures["dialog-long-action"]["buttons"][0][1],

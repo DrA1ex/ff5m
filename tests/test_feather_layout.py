@@ -1310,6 +1310,24 @@ class ZOffsetLayoutTest(unittest.TestCase):
         self.assertNotIn("--batch clear-hitboxes", drawing)
         self.assertNotIn("--batch hitbox", drawing)
 
+    def test_pressure_dialog_keeps_two_readable_lines(self):
+        renderer = FeatherRenderer()
+        values = {
+            z_offset.PaperState.DIALOG: "pressure",
+            z_offset.PaperState.DIALOG_WEIGHT: 0.0,
+        }
+
+        frame = RenderFrame(z_offset.render_paper(renderer, values), renderer)
+
+        first = frame.text("CURRENT LOAD: 0 G")
+        second = frame.text("MOVE FARTHER AND CHECK THE PAPER / NOZZLE.")
+        self.assertEqual(first.font, "JetBrainsMono 8pt")
+        self.assertEqual(second.font, first.font)
+        self.assertEqual(second.y - first.y, 24)
+        self.assertEqual(
+            [button.font for button in frame.buttons.values()
+             if button.label == "OK"], ["JetBrainsMono Bold 12pt"])
+
     def test_z_offset_dialogs_remain_modal(self):
         renderer = FeatherRenderer()
         summary = {

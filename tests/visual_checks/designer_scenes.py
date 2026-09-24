@@ -54,6 +54,58 @@ def _render_dialog_fixture(scene, fixture, project_root, theme):
     return scene
 
 
+def _render_message_fixture(scene, fixture, project_root, theme):
+    """Render the product's message dialog with the Designer renderer."""
+    plugins = project_root / ".py" / "klipper" / "plugins"
+    sys.path.insert(0, str(plugins.resolve()))
+    from feather_preview.ui import PreviewRenderer
+    from feather_screen import FeatherScreen
+
+    renderer = PreviewRenderer(width=800, height=480)
+    renderer.set_theme(theme)
+    captured = []
+    renderer.send = lambda commands: captured.extend(commands)
+    screen = FeatherScreen.__new__(FeatherScreen)
+    screen.renderer = renderer
+    screen.message = fixture["message"]
+    screen.message_title = fixture.get("title")
+    screen.message_actions = tuple(
+        tuple(button) for button in fixture.get(
+            "buttons", (("message.ok", "OK", "enabled"),)))
+    screen.message_page = fixture.get("page", 0)
+    screen._render_message()
+    scene["operations"] = captured
+    scene["title"] = "Message / " + (screen.message_title or screen.message)
+    scene["palette"] = renderer.palette
+    scene["diagnostics"] = []
+    return scene
+
+
+def _render_error_fixture(scene, fixture, project_root, theme):
+    """Render the product's error dialog with the Designer renderer."""
+    plugins = project_root / ".py" / "klipper" / "plugins"
+    sys.path.insert(0, str(plugins.resolve()))
+    from feather_preview.ui import PreviewRenderer
+    from feather_screen import FeatherScreen
+
+    renderer = PreviewRenderer(width=800, height=480)
+    renderer.set_theme(theme)
+    captured = []
+    renderer.send = lambda commands: captured.extend(commands)
+    renderer.prioritize_next_batch = lambda *args: None
+    screen = FeatherScreen.__new__(FeatherScreen)
+    screen.renderer = renderer
+    screen.error_message = fixture["message"]
+    screen.error_recovery = fixture["recovery"]
+    screen.error_page = fixture.get("page", 0)
+    screen._render_error()
+    scene["operations"] = captured
+    scene["title"] = "Klipper error / " + fixture["message"].splitlines()[0]
+    scene["palette"] = renderer.palette
+    scene["diagnostics"] = []
+    return scene
+
+
 def _render_ota_fixture(scene, fixture, project_root, theme):
     """Render the product's actual update dialog through Designer primitives."""
     plugins = project_root / ".py" / "klipper" / "plugins"
@@ -70,6 +122,7 @@ def _render_ota_fixture(scene, fixture, project_root, theme):
     notification.installed_version = fixture["installed_version"]
     notification.available_version = fixture["available_version"]
     notification.changes = tuple(fixture["changes"])
+    notification.recovery_files = tuple(fixture.get("recovery_files", ()))
     notification.change_page = fixture.get("page", 0)
     notification.render()
     scene["operations"] = captured
@@ -151,6 +204,14 @@ def main(argv=None):
             if case.get("dialog_fixture") is not None:
                 case["scene"] = _render_dialog_fixture(
                     case["scene"], case["dialog_fixture"],
+                    project_root, case["theme"])
+            if case.get("message_fixture") is not None:
+                case["scene"] = _render_message_fixture(
+                    case["scene"], case["message_fixture"],
+                    project_root, case["theme"])
+            if case.get("error_fixture") is not None:
+                case["scene"] = _render_error_fixture(
+                    case["scene"], case["error_fixture"],
                     project_root, case["theme"])
             if case.get("ota_fixture") is not None:
                 case["scene"] = _render_ota_fixture(
