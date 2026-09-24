@@ -21,6 +21,10 @@ VAR_PATH="/opt/config/mod_data/variables.cfg"
 KLIPPER_START="/opt/klipper/start.sh"
 RT_PRIO=5
 
+if ! echo -1000 > /proc/self/oom_score_adj 2>/dev/null; then
+    echo "?? Unable to enable Klipper OOM protection."
+fi
+
 rt=$("$CFG_SCRIPT" "$VAR_PATH" --get "klipper_rt" "0")
 
 if [ "$rt" = "1" ] && command -v chrt >/dev/null 2>&1; then
