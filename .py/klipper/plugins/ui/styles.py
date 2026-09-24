@@ -206,27 +206,34 @@ class StyleSheet:
         # Reuse reflection and style resolution within this pass only. A later
         # pass still observes mutable styles, schemas and authoring provenance.
         layout_specs = _layout_specs()
+        layout_names = tuple(name for name, spec in layout_specs.items() if spec.styleable)
         inheritable = _inheritable_specs()
         component_specs = {}
         resolved_styles = {}
         origins = {}
 
-        def origin(kind, style=None, property_name=None, inherited_from=None):
-            if style is None:
-                return self._origin(kind, inherited_from=inherited_from)
+        def style_origin(style, property_name):
             key = (style.id, property_name)
             if key not in origins:
-                origins[key] = self._origin(kind, style, property_name)
+                origins[key] = self._origin("style", style, property_name)
             return dict(origins[key])
 
         def visit(node, inherited):
             node_type = type(node)
             if node_type not in component_specs:
-                component_specs[node_type] = _component_specs(node_type)
+                component_specs[node_type] = {
+                    name: spec for name, spec in _component_specs(node_type).items()
+                    if spec.styleable}
             specs = component_specs[node_type]
             key = (node_type, node._style_id)
             if key not in resolved_styles:
-                resolved_styles[key] = self._style_values(node, specs, layout_specs, inheritable)
+                values, context_values = self._style_values(node, specs, layout_specs, inheritable)
+                # Declared inheritable properties publish their final value and
+                # origin below, after explicit-property precedence is applied.
+                context_values = {
+                    name: value for name, value in context_values.items()
+                    if name not in specs or not specs[name].inheritable}
+                resolved_styles[key] = (values, context_values)
             style_values, style_context = resolved_styles[key]
             node._computed_property_origins = {}
             node._computed_layout_origins = {}
@@ -235,42 +242,48 @@ class StyleSheet:
 
             context = dict(inherited)
             for name, (value, style) in style_context.items():
-                context[name] = (value, origin(
-                    "style", style, property_name=name))
+                context[name] = (value, style_origin(style, name))
 
             for name, spec in specs.items():
-                if not spec.styleable:
-                    continue
                 current = spec.value_from(node)
                 baseline = node._authoring_property_defaults.get(name, current)
-                desired = baseline
-                property_origin = origin("default")
-                if spec.inheritable and name in inherited:
-                    desired, inherited_origin = inherited[name]
-                    property_origin = origin(
-                        "inherited", inherited_from=inherited_origin)
+                inherited_value = inherited.get(name) if spec.inheritable else None
                 if name in style_values:
                     desired, style = style_values[name]
-                    property_origin = origin(
-                        "style", style, property_name=name)
-                if property_origin["kind"] != "default":
+                elif inherited_value is not None:
+                    desired = inherited_value[0]
+                else:
+                    desired = baseline
+                if name in style_values or inherited_value is not None:
                     node._computed_property_fallbacks[name] = desired
                 if name in node._explicit_properties:
                     desired = current
-                    property_origin = origin("explicit")
-                elif current != desired:
-                    spec.set_on(node, desired)
-                    if hasattr(node, "_measurement"):
-                        node._measurement = None
-                    node.invalidate(
-                        Dirty.LAYOUT if spec.invalidation != Invalidation.PAINT
-                        else Dirty.PAINT)
+                    property_origin = {"kind": "explicit"}
+                else:
+                    if name in style_values:
+                        property_origin = style_origin(style, name)
+                    elif inherited_value is not None:
+                        property_origin = {"kind": "inherited", "inherited_from": inherited_value[1]}
+                    else:
+                        property_origin = {"kind": "default"}
+                    if current != desired:
+                        spec.set_on(node, desired)
+                        if hasattr(node, "_measurement"):
+                            node._measurement = None
+                        node.invalidate(
+                            Dirty.LAYOUT if spec.invalidation != Invalidation.PAINT
+                            else Dirty.PAINT)
                 node._computed_property_origins[name] = property_origin
                 if spec.inheritable:
                     context[name] = (desired, property_origin)
 
-            for name, spec in layout_specs.items():
-                if not spec.styleable:
+            for name in layout_names:
+                styled = style_values.get("layout:" + name)
+                explicit = name in node._explicit_layout
+                # Explicit values stay untouched. Only a styled fallback needs
+                # normalization for the editor's reset-to-style operation.
+                if explicit and styled is None:
+                    node._computed_layout_origins[name] = {"kind": "explicit"}
                     continue
                 current = _layout_value(node, name)
                 baseline_value = node._authoring_layout_defaults.get(name, current)
@@ -280,26 +293,24 @@ class StyleSheet:
                 else:
                     baseline = baseline_value
                 desired = baseline
-                property_origin = origin("default")
-                styled = style_values.get("layout:" + name)
                 if styled is not None:
                     desired, style = styled
-                    property_origin = origin(
-                        "style", style, property_name=name)
                 # Compare and store runtime layout values, just as fluent
                 # modifiers do ("fill" is represented by None).
                 if name in ("width", "height"):
                     desired = node._size_value(desired)
                 elif name in ("margin", "padding"):
                     desired = tuple(desired)
-                if property_origin["kind"] != "default":
+                if styled is not None:
                     node._computed_layout_fallbacks[name] = desired
-                if name in node._explicit_layout:
-                    desired = current
-                    property_origin = origin("explicit")
-                elif current != desired:
-                    _set_layout_value(node, name, desired)
-                    node.invalidate(Dirty.LAYOUT)
+                if explicit:
+                    property_origin = {"kind": "explicit"}
+                else:
+                    property_origin = (style_origin(style, name) if styled is not None
+                                       else {"kind": "default"})
+                    if current != desired:
+                        _set_layout_value(node, name, desired)
+                        node.invalidate(Dirty.LAYOUT)
                 node._computed_layout_origins[name] = property_origin
 
             for child in node.render_children():

@@ -1322,8 +1322,13 @@ class Node(metaclass=_NodeMeta):
         self._update_input_blocking(state)
 
     def _update_input_blocking(self, state):
-        self._blocks_input = self.blocks_input(state) or any(
-            child._blocks_input for child in self.paint_children(state))
+        blocked = self.blocks_input(state)
+        if not blocked:
+            for child in self.paint_children(state):
+                if child._blocks_input:
+                    blocked = True
+                    break
+        self._blocks_input = blocked
 
     def clear_dirty(self):
         if self._dirty == Dirty.CLEAN:
@@ -3139,8 +3144,10 @@ class DeclarativePage(Tree):
         state = getattr(node, "_item_scope", state)
         if node.paints_pixels and self.layout.rect(node).overlaps(target):
             return True
-        return any(self._subtree_overlaps(child, target, state)
-                   for child in node.paint_children(state))
+        for child in node.paint_children(state):
+            if self._subtree_overlaps(child, target, state):
+                return True
+        return False
 
     def _subtree_covers(self, node, target, state, layout=None):
         """Opaque compositions need no repair, even with nonuniform borders."""
@@ -3148,8 +3155,10 @@ class DeclarativePage(Tree):
         state = getattr(node, "_item_scope", state)
         if node.covers_bounds and layout.rect(node).contains(target):
             return True
-        return any(self._subtree_covers(child, target, state, layout)
-                   for child in node.paint_children(state))
+        for child in node.paint_children(state):
+            if self._subtree_covers(child, target, state, layout):
+                return True
+        return False
 
     def _subtree_background(self, node, target, state):
         bounds = self.layout.rect(node)
