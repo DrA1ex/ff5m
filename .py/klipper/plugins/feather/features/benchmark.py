@@ -28,6 +28,8 @@ BenchmarkSample = namedtuple(
     ("latency_ms", "typer_ms", "cpu_ms", "flush_ms", "python_ms"),
 )
 
+PreparedFrame = namedtuple("PreparedFrame", "commands kind key python_ms")
+
 
 class BenchmarkFeature(FeatureHostProxy):
     name = "benchmark"
@@ -38,6 +40,8 @@ class BenchmarkFeature(FeatureHostProxy):
     WARMUP_FRAMES = 30
     WINDOW_FRAMES = 120
     STATS_PERIOD = 1.0
+    REFLOW_PERIOD = 6.0
+    ROW_PERIOD = 2.0
     MODES = BENCHMARK_MODES
 
     def __init__(self, host):
@@ -51,12 +55,12 @@ class BenchmarkFeature(FeatureHostProxy):
         self.stats_node = None
         self.workload_node = None
         self.tracker = ReceiptTracker(self.RECEIPT_TIMEOUT)
+        self.prepared_frame = None
         self.session = 0
         self.frame = 0
         self.session_started = 0.0
         self.next_target = 0.0
         self.next_stats_at = 0.0
-        self.actual_fps = 0.0
         self.samples = deque(maxlen=self.WINDOW_FRAMES)
         self.receipt_times = deque(maxlen=self.WINDOW_FRAMES * 2)
         self.mode = self.MODES[0]
@@ -200,12 +204,6 @@ class BenchmarkFeature(FeatureHostProxy):
         return "WARMUP %d/%d" % (
             min(self.frame, self.WARMUP_FRAMES), self.WARMUP_FRAMES)
 
-    def _live_status(self):
-        if self.actual_fps >= self.TARGET_FPS:
-            return f"LIVE / {self.TARGET_FPS} FPS"
-
-        return "SKIPPED FRAMES"
-
     def _raster_name(self):
         return str(self.renderer.raster_acceleration).strip().upper()
 
@@ -214,6 +212,7 @@ class BenchmarkFeature(FeatureHostProxy):
 
     def _reset_measurements(self, eventtime):
         self.tracker.cancel()
+        self.prepared_frame = None
         self.session += 1
         self.frame = 0
         self.session_started = float(eventtime)
@@ -228,6 +227,7 @@ class BenchmarkFeature(FeatureHostProxy):
     def _stop_session(self):
         self.active = False
         self.tracker.cancel()
+        self.prepared_frame = None
         self.samples.clear()
         self.receipt_times.clear()
         self.page_tree = None
@@ -266,18 +266,18 @@ class BenchmarkFeature(FeatureHostProxy):
         
         return values
 
-    @staticmethod
-    def _layout_width(frame):
-        phase = frame % 42
-        return 300 + 10 * min(phase, 42 - phase)
+    @classmethod
+    def _layout_width(cls, elapsed):
+        phase = (elapsed % cls.REFLOW_PERIOD) / cls.REFLOW_PERIOD
+        return 300 + int(round(420 * min(phase, 1.0 - phase)))
 
-    def _layout_state(self, include_stats):
+    def _layout_state(self, elapsed, include_stats):
         state = layout_page.LayoutState
         rows = layout_page.ROWS
-        offset = (self.frame // 8) % len(rows)
+        offset = int(elapsed / self.ROW_PERIOD) % len(rows)
         values = {
             state.WIDTH: "%d PX / FRAME %d" % (
-                self._layout_width(self.frame), self.frame),
+                self._layout_width(elapsed), self.frame),
             state.DESCRIPTION: layout_page.DESCRIPTION,
             state.ROW_ONE: rows[offset],
             state.ROW_TWO: rows[(offset + 1) % len(rows)],
@@ -324,20 +324,15 @@ class BenchmarkFeature(FeatureHostProxy):
     def _token(self):
         return "%x:%d" % (self.session, self.frame + 1)
 
-    def _submit_frame(self, eventtime, full=False):
-        if not self.active or self.page != self.benchmark_page:
-            return self.reactor.NEVER
-        if self.tracker.pending is not None:
-            return self.tracker.pending.deadline
-
-        frame_started = self.reactor.monotonic()
+    def _build_frame(self, eventtime, full=False):
         build_started = time.perf_counter()
         include_stats = bool(full or self.stats_dirty)
 
         if self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK:
-            self.workload_node.layout_options.width = self._layout_width(self.frame)
+            elapsed = max(0.0, float(eventtime) - self.session_started)
+            self.workload_node.layout_options.width = self._layout_width(elapsed)
             self.workload_node.invalidate_layout()
-            state = self._layout_state(include_stats)
+            state = self._layout_state(elapsed, include_stats)
             if full:
                 commands = self.renderer.begin_page(
                     "Component benchmark", back=True)
@@ -374,10 +369,23 @@ class BenchmarkFeature(FeatureHostProxy):
         if include_stats:
             self.stats_dirty = False
             
+        return PreparedFrame(commands, kind, key, python_ms)
+
+    def _submit_frame(self, eventtime, full=False):
+        if not self.active or self.page != self.benchmark_page:
+            return self.reactor.NEVER
+        if self.tracker.pending is not None:
+            return self.tracker.pending.deadline
+
+        frame_started = self.reactor.monotonic()
+        if self.prepared_frame is None:
+            self.prepared_frame = self._build_frame(eventtime, full)
+        prepared = self.prepared_frame
         token = self._token()
         submitted_at = self.reactor.monotonic()
-        self.tracker.expect(token, submitted_at, {"python_ms": python_ms})
-        accepted = self.renderer.send(commands, kind=kind, key=key, receipt=token)
+        self.tracker.expect(token, submitted_at, {"python_ms": prepared.python_ms})
+        accepted = self.renderer.send(
+            prepared.commands, kind=prepared.kind, key=prepared.key, receipt=token)
         
         if not accepted:
             self.tracker.cancel()
@@ -387,12 +395,18 @@ class BenchmarkFeature(FeatureHostProxy):
             
             return submitted_at + self.FRAME_INTERVAL
 
+        self.prepared_frame = None
         self.frame += 1
-        self.next_target = max(self.next_target, frame_started) + self.FRAME_INTERVAL
-        deadline = self.tracker.pending.deadline
-        self.reactor.update_timer(self.timer, deadline)
-
-        return deadline
+        if self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK:
+            # Keep one submitted frame and at most one prepared successor.
+            # Typer can render while Python prepares, without queueing deltas.
+            self.next_target = submitted_at + self.FRAME_INTERVAL
+            waketime = submitted_at
+        else:
+            self.next_target = max(self.next_target, frame_started) + self.FRAME_INTERVAL
+            waketime = self.tracker.pending.deadline
+        self.reactor.update_timer(self.timer, waketime)
+        return waketime
 
     def _tick(self, eventtime):
         if not self.active:
@@ -403,12 +417,12 @@ class BenchmarkFeature(FeatureHostProxy):
             return self.reactor.NEVER
         
         if self.tracker.pending is not None:
+            if (self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK
+                    and self.prepared_frame is None):
+                self.prepared_frame = self._build_frame(eventtime)
             return self.tracker.pending.deadline
-        
-        self._submit_frame(eventtime)
-        return (self.tracker.pending.deadline
-                if self.tracker.pending is not None else
-                eventtime + self.FRAME_INTERVAL)
+
+        return self._submit_frame(eventtime)
 
     @staticmethod
     def _percentile(values, percentile):
@@ -430,29 +444,29 @@ class BenchmarkFeature(FeatureHostProxy):
         if not samples:
             return
         
-        recent_receipts = tuple(
-            value for value in self.receipt_times
-            if value >= float(eventtime) - 1.0)
-        
+        # Use the same half-open window for FPS and its deficit. ACK latency
+        # can exceed one frame interval even while the pipeline keeps committing.
+        window_start = max(self.session_started, float(eventtime) - 1.0)
+        duration = float(eventtime) - window_start
+        if duration <= 0:
+            return
+        committed = sum(window_start < value <= eventtime for value in self.receipt_times)
+        fps = committed / duration
+        fps_loss = max(0.0, 100.0 * (1.0 - fps / self.TARGET_FPS))
         latency = tuple(item.latency_ms for item in samples)
-        missed = 100.0 * sum(
-            value > self.FRAME_INTERVAL * 1000.0 for value in latency
-        ) / len(latency)
-
-        self.actual_fps = len(recent_receipts)
         self.display_stats = benchmark_state.BenchmarkStats(
-            commit_fps=self.actual_fps,
+            commit_fps=fps,
             frame_median_ms=statistics.median(latency),
             frame_p95_ms=self._percentile(latency, 0.95),
             typer_ms=statistics.median(item.typer_ms for item in samples),
             cpu_ms=statistics.median(item.cpu_ms for item in samples),
             flush_ms=statistics.median(item.flush_ms for item in samples),
             python_ms=statistics.median(item.python_ms for item in samples),
-            missed_percent=missed,
+            fps_loss_percent=fps_loss,
             raster=self._raster_name(),
         )
         
-        self.display_status = self._live_status()
+        self.display_status = "TARGET %g FPS" % self.TARGET_FPS
         self.stats_dirty = True
 
     def _cycle_mode(self, eventtime):
@@ -467,6 +481,7 @@ class BenchmarkFeature(FeatureHostProxy):
 
     def _fail(self, status):
         self.tracker.cancel()
+        self.prepared_frame = None
         self.active = False
         self.display_status = str(status)
         if self.timer is not None:
@@ -477,9 +492,10 @@ class BenchmarkFeature(FeatureHostProxy):
             return
 
         if self.benchmark_page == ScreenPage.COMPONENT_BENCHMARK:
-            commands = page_tree.update(
-                self.renderer, self._layout_state(include_stats=True))
+            # A prepared delta may never have reached Typer. Repair from the
+            # full current state instead of painting over speculative geometry.
+            prepared = self._build_frame(self.reactor.monotonic(), full=True)
+            self.renderer.send(prepared.commands, kind="surface", key="render-benchmark-error")
         else:
             commands = self._render_stats()
-
-        self.renderer.send_animation(commands, "render-benchmark-error")
+            self.renderer.send_animation(commands, "render-benchmark-error")

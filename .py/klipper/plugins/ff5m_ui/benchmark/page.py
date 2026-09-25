@@ -58,8 +58,8 @@ class BenchmarkRef(Enum):
     FLUSH_VALUE = "benchmark.stats.flush.value"
     PYTHON_LABEL = "benchmark.stats.python.label"
     PYTHON_VALUE = "benchmark.stats.python.value"
-    MISSED_LABEL = "benchmark.stats.missed.label"
-    MISSED_VALUE = "benchmark.stats.missed.value"
+    FPS_LOSS_LABEL = "benchmark.stats.fps_loss.label"
+    FPS_LOSS_VALUE = "benchmark.stats.fps_loss.value"
     RASTER_LABEL = "benchmark.stats.raster.label"
     RASTER_VALUE = "benchmark.stats.raster.value"
     MODE = "benchmark.stats.mode"
@@ -108,7 +108,7 @@ def _status_color(status):
     status = str(status).upper()
     if "WARMUP" in status or "QUEUE" in status:
         return ThemeColor.WARNING
-    if "SKIPPED" in status or "TIMEOUT" in status or "FAILED" in status:
+    if "TIMEOUT" in status or "FAILED" in status:
         return ThemeColor.DANGER
     return ThemeColor.SUCCESS
 
@@ -188,8 +188,8 @@ def stats_panel():
                 "PYTHON", BenchmarkState.PYTHON_MS, _format_precise_ms,
                 BenchmarkRef.PYTHON_LABEL, BenchmarkRef.PYTHON_VALUE),
             _metric_row(
-                "MISSED", BenchmarkState.MISSED_PERCENT, _format_percent,
-                BenchmarkRef.MISSED_LABEL, BenchmarkRef.MISSED_VALUE),
+                "FPS LOSS", BenchmarkState.FPS_LOSS_PERCENT, _format_percent,
+                BenchmarkRef.FPS_LOSS_LABEL, BenchmarkRef.FPS_LOSS_VALUE),
             _metric_row(
                 "RASTER", BenchmarkState.RASTER, _format_raster,
                 BenchmarkRef.RASTER_LABEL, BenchmarkRef.RASTER_VALUE),

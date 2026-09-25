@@ -167,6 +167,22 @@ class Rect:
         return (self.x < other.right and other.x < self.right
                 and self.y < other.bottom and other.y < self.bottom)
 
+    def subtract(self, other):
+        """Return disjoint positive rectangles not covered by other."""
+        if not self.width or not self.height:
+            return ()
+        if not self.overlaps(other):
+            return (self,)
+        left, top = max(self.x, other.x), max(self.y, other.y)
+        right, bottom = min(self.right, other.right), min(self.bottom, other.bottom)
+        pieces = (
+            Rect(self.x, self.y, self.width, top - self.y),
+            Rect(self.x, bottom, self.width, self.bottom - bottom),
+            Rect(self.x, top, left - self.x, bottom - top),
+            Rect(right, top, self.right - right, bottom - top),
+        )
+        return tuple(rect for rect in pieces if rect.width and rect.height)
+
     def align(self, width, height, horizontal="center", vertical="center"):
         width = int(width)
         height = int(height)
@@ -3037,8 +3053,11 @@ class DeclarativePage(Tree):
         if set_page_identity is not None:
             set_page_identity(self.page_id)
         commands = []
-        for root, region in zip(roots, damage):
-            commands.append(renderer.fill(*region))
+        for root in roots:
+            # The checked opaque subtree paints its entire new bounds. Only
+            # vacated pixels need clearing; clearing both doubles large fills.
+            for exposed in old_layout.rect(root).subtract(new_layout.rect(root)):
+                commands.append(renderer.fill(*exposed))
             commands.extend(root.render(renderer, self._paint_state(root), new_layout))
         commands.extend(renderer.redraw_page_hitboxes())
         commands.extend(self.root.render_interactions(renderer, self.state, new_layout))
