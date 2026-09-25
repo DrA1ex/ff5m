@@ -134,6 +134,9 @@ class Rect:
             edges = Insets.all(insets)
         else:
             edges = Insets(insets, top or 0, right, bottom)
+        # Rectangles are immutable layout values; an empty inset is a no-op.
+        if not (edges.left or edges.top or edges.right or edges.bottom):
+            return self
         width = self.width - edges.horizontal
         height = self.height - edges.vertical
         if width < 0 or height < 0:
@@ -3050,7 +3053,7 @@ class DeclarativePage(Tree):
         self.node(key).invalidate(dirty)
 
     def _dirty_roots(self):
-        if self.root._dirty != Dirty.CLEAN and self._subtree_blocks_input(self.root, self.state):
+        if self.root._dirty != Dirty.CLEAN and self.root._blocks_input:
             # Modal input covers the whole page, including controls outside
             # its visual bounds. Replay paint order so its reset remains last.
             return [self.root]
@@ -3073,10 +3076,6 @@ class DeclarativePage(Tree):
                 if not self._is_ancestor(candidate, existing)]
             roots.append(candidate)
         return roots
-
-    def _subtree_blocks_input(self, node, state):
-        del state
-        return node._blocks_input
 
     def _paint_root(self, node):
         current = node
