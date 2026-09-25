@@ -106,6 +106,7 @@ def start_print_state(
         mesh_validation=False,
         validation_clear=False,
         disable_priming=True,
+        zclear="_CLEAR1",
         extruder_temperature=25.0,
         can_extrude=False,
         chamber_light_mode="MANUAL",
@@ -147,7 +148,7 @@ def start_print_state(
             "bed_mesh_validation_tolerance": 0.2,
             "clear_cooldown_temp": 150,
             "disable_cleaning": False,
-            "zclear": "_CLEAR1",
+            "zclear": zclear,
             "z_offset": 0.1,
             "filament_switch_sensor": filament_switch_sensor,
             "load_zoffset": load_zoffset,
@@ -1370,6 +1371,81 @@ class StartPrintExecutionTest(unittest.TestCase):
         disabled = run_start_print(use_kamp=True, disable_priming=True)
         self.assertNotIn("LINE_PURGE", disabled)
         self.assertNotIn("_CLEAR1", disabled)
+
+    def test_wild_bill_is_selected_for_non_kamp_priming(self):
+        commands = run_start_print(
+            zclear="_CLEAR5", disable_priming=False)
+        self.assertIn("_CLEAR5", commands)
+        self.assertNotIn("_CLEAR1", commands)
+
+        schrader = run_start_print(
+            zclear="_CLEAR4", disable_priming=False)
+        self.assertIn("_CLEAR4", schrader)
+        self.assertNotIn("_CLEAR5", schrader)
+
+    def test_wild_bill_purges_with_bounded_moves_and_restores_gcode_state(self):
+        printer = {
+            "exclude_object": {"objects": [{"polygon": [
+                [-80, -60], [-40, -60], [-40, -20], [-80, -20]]}]},
+            "configfile": {"settings": {"extruder": {
+                "filament_diameter": 1.75}}},
+            "mod_params": {"variables": {"safe_z": 10}},
+            "gcode_macro MOVE_SAFE": macro_status(BASE, "MOVE_SAFE"),
+            "toolhead": {"axis_maximum": {"z": 230}},
+        }
+        result = render_macro(BASE, "_CLEAR5", printer=printer)
+        commands = result.commands
+        self.assertEqual(commands[0], "SAVE_GCODE_STATE NAME=wild_bill_state")
+        self.assertEqual(commands[-1], "RESTORE_GCODE_STATE NAME=wild_bill_state")
+        assert_order(self, commands, (
+            "G0 Z10.0 F18000",
+            "G0 X-85.0 Y-90.0 F18000",
+            "G0 Z0.3 F18000",
+        ))
+        purges = [command for command in commands if " E15.0 " in command]
+        self.assertEqual(len(purges), 2)
+        self.assertTrue(purges[0].startswith("G1 X-45.0 E15.0 F"))
+        self.assertTrue(purges[1].startswith("G1 X-85.0 E15.0 F"))
+        self.assertAlmostEqual(float(purges[0].split(" F")[1]), 1330.4,
+                               delta=1)
+        self.assertIn("G1 E-0.5 F2100", commands)
+        self.assertIn("G2 X-77.0 Y-89.2 I4 J0 F9000", commands)
+        self.assertNotIn("M106 S255", commands)
+
+        printer["exclude_object"]["objects"] = [{"polygon": [
+            [105, 105], [110, 105], [110, 110], [105, 110]]}]
+        edge = render_macro(BASE, "_CLEAR5", printer=printer).commands
+        self.assertIn("G0 X70.0 Y75.0 F18000", edge)
+        self.assertIn("G2 X78.0 Y75.8 I4 J0 F9000", edge)
+
+        printer["exclude_object"]["objects"] = [{"polygon": [
+            [-110, -110], [-100, -110], [-100, -100], [-110, -100]]}]
+        front = render_macro(BASE, "_CLEAR5", printer=printer).commands
+        self.assertIn("G0 X-110.0 Y-110.0 F18000", front)
+
+        printer["exclude_object"]["objects"] = []
+        fallback = render_macro(BASE, "_CLEAR5", printer=printer).commands
+        self.assertIn("G0 X-20.0 Y-110.0 F18000", fallback)
+
+        printer["gcode_macro MOVE_SAFE"].update(
+            x_min=-60, x_max=60, y_min=-55, y_max=65,
+            z_min=1, z_max_margin=15)
+        printer["toolhead"]["axis_maximum"]["z"] = 25
+        printer["mod_params"]["variables"]["safe_z"] = 20
+        bounded = render_macro(BASE, "_CLEAR5", printer=printer).commands
+        self.assertIn("G0 X-20.0 Y-55.0 F18000", bounded)
+        self.assertIn("G0 Z10.0 F18000", bounded)
+        self.assertIn("G0 Z1.0 F18000", bounded)
+
+        printer["exclude_object"]["objects"] = [{"polygon": [
+            [105, 105], [110, 105], [110, 110], [105, 110]]}]
+        bounded_edge = render_macro(BASE, "_CLEAR5", printer=printer).commands
+        self.assertIn("G0 X20.0 Y60.2 F18000", bounded_edge)
+        self.assertIn("G2 X28.0 Y61.0 I4 J0 F9000", bounded_edge)
+
+        printer["gcode_macro MOVE_SAFE"].update(x_min=0, x_max=30)
+        with self.assertRaisesRegex(MacroActionError, "purge geometry"):
+            render_macro(BASE, "_CLEAR5", printer=printer)
 
     def test_lifecycle_publishes_flags_and_sets_cooldown_target(self):
         cold = run_start_print()

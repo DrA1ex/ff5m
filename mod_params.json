@@ -6,7 +6,8 @@
         "ORCA": "_CLEAR1",
         "FF1": "_CLEAR2",
         "FF2": "_CLEAR3",
-        "SCHREIDER": "_CLEAR4"
+        "SCHREIDER": "_CLEAR4",
+        "WILD_BILL": "_CLEAR5"
       }
     },
     "AutoRebootEnum": {
