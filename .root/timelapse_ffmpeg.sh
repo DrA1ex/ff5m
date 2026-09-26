@@ -14,4 +14,18 @@ if [ ! -x "$FFMPEG" ] || [ ! -e "$LOADER" ]; then
 fi
 
 LIBRARIES=/opt/ffmpeg-4.0.2/lib:/opt/x264/lib:/opt/stock-lib:/opt/stock-usr-lib
+# The printer regression holds one render here to start a print while the
+# previous timelapse is still encoding. The runner creates and removes this
+# flag; /tmp is shared with Klipper and cleared on reboot, and the bound keeps
+# a flag left by an interrupted runner from blocking renders for long.
+RENDER_HOLD=/tmp/feather-ui-test-timelapse-hold
+case "$*" in
+    *frame%06d.jpg*)
+        waited=0
+        while [ -e "$RENDER_HOLD" ] && [ "$waited" -lt 600 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        ;;
+esac
 exec /usr/bin/nice -n 19 "$LOADER" --library-path "$LIBRARIES" "$FFMPEG" -nostdin "$@"

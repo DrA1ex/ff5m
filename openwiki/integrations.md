@@ -102,15 +102,27 @@ parameter-change macro requests an immediate Moonraker restart when
 the updated Klipper parameter gates capture immediately, while Moonraker's
 component availability changes only on a later start.
 
-The component uses the existing camera snapshot endpoint. Frames and finished
-videos live under `/root/printer_data/gcodes/timelapse/` on the persistent
+The component uses the existing camera snapshot endpoint. Capture requests
+are skipped while a print is paused. Frames and finished videos live under
+`/root/printer_data/gcodes/timelapse/` on the persistent
 data partition. Capture has a 1,000-frame limit and requires 128 MiB free
 before each frame. A failed capture leaves no numbered partial frame. Render
 requires an idle virtual SD and completed or standby print status. Selecting
-another file leaves existing frames intact; starting it cancels an active
+another file leaves existing frames intact; print preparation cancels an active
 render and clears the old frames. The FFmpeg command uses one thread and the ultrafast
 x264 preset. Normal progress output is disabled so Moonraker does not buffer
 FFmpeg's carriage-return status stream during a long render.
+Moonraker reports when video generation starts and when it succeeds or fails
+in the G-code console for both automatic and manual renders. A rejected or
+skipped render does not announce a start.
+For headless display configurations, `START_PRINT` checks this render status
+through a short local Moonraker request. If rendering is active, it pauses the
+virtual SD file before print preparation and shows Wait, Cancel print, and
+Continue anyway (risky) actions. A delayed G-code check resumes that same file when
+rendering ends. Moonraker observes `_START_PRINT.print_active` to release the
+previous render and frames when print preparation begins. If Moonraker is
+unavailable, the check fails open and the print proceeds; Klipper's reactor
+remains responsive during the short check.
 [`timelapse_ffmpeg.sh`](../.root/timelapse_ffmpeg.sh) runs it at
 nice level 19. [`S99root`](../.shell/S99root) binds the stock FFmpeg,
 x264, loader and library directories into separate paths in the Moonraker

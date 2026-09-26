@@ -52,6 +52,32 @@ class PrinterHarness:
 
 
 class GcodeShellCommandTest(unittest.TestCase):
+    def test_sync_status_reports_exit_code_and_timeout_without_blocking_reactor(self):
+        shell = PLUGIN.ShellCommand.__new__(PLUGIN.ShellCommand)
+        shell.name = "status"
+        shell.mode = PLUGIN.ShellMode.SYNC
+        shell.verbose = False
+        shell.debug = False
+        shell.timeout = 1.
+        shell.returncode = None
+        shell.gcode = mock.Mock()
+        shell.printer = mock.Mock()
+        reactor = mock.Mock()
+        reactor.monotonic.side_effect = time.monotonic
+        reactor.pause.side_effect = lambda deadline: (time.sleep(.01), time.monotonic())[1]
+        shell.printer.get_reactor.return_value = reactor
+
+        for code in (0, 7):
+            shell.command = ["sh", "-c", "exit %d" % code]
+            shell.cmd_RUN_SHELL_COMMAND({})
+            self.assertEqual(shell.get_status(0.)["returncode"], code)
+
+        shell.command = ["sh", "-c", "sleep 10"]
+        shell.timeout = .03
+        shell.cmd_RUN_SHELL_COMMAND({})
+        self.assertIsNone(shell.get_status(0.)["returncode"])
+        self.assertTrue(reactor.pause.called)
+
     def _helper(self, mode, timeout=2., linewise=True):
         responses = ResponseHarness()
         helper = PLUGIN.AsyncRunHelper.__new__(PLUGIN.AsyncRunHelper)

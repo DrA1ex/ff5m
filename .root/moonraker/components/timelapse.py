@@ -4,6 +4,7 @@
 # - Limit frame count and disk use; commit captured frames atomically.
 # - Keep frames after file selection until a new print actually starts; restore
 #   them after restart and cancel rendering or export when printing begins.
+#   An active render is released when print preparation starts.
 # - Render and export only while idle; clean temporary files and keep existing
 #   outputs when names collide or an operation fails or is cancelled.
 # - Export ZIP without blocking Moonraker; run stock FFmpeg with one thread,
@@ -275,7 +276,8 @@ class Timelapse:
                                        ) -> Dict[str, Any]:
         return {
             'framecount': self.framecount,
-            'lastframefile': self.lastframefile
+            'lastframefile': self.lastframefile,
+            'rendering': self.renderisrunning,
         }
 
     async def webrequest_settings(self,
@@ -352,6 +354,12 @@ class Timelapse:
         return self.config
 
     async def handle_klippy_ready(self) -> None:
+        try:
+            await self.klippy_apis.subscribe_objects({
+                'gcode_macro _START_PRINT': ['print_active']})
+        except Exception:
+            logging.exception("Unable to subscribe to print preparation state")
+
         ioloop = IOLoop.current()
         ioloop.spawn_callback(self.setgcodevariables)
 
@@ -504,12 +512,19 @@ class Timelapse:
             if 'state' in printstats:
                 state = printstats['state']
                 if state in ('printing', 'paused'):
-                    await self._begin_print()
+                    self.printing = True
+                    # The virtual SD file becomes active before START_PRINT.
+                    if not self.renderisrunning:
+                        await self._begin_print()
                 if state == 'cancelled':
                     self.printing = False
                     self.pending_file_selected = False
                     ioloop = IOLoop.current()
                     ioloop.spawn_callback(self.stop_hyperlapse)
+
+        start = status.get('gcode_macro _START_PRINT', {})
+        if start.get('print_active') is True:
+            await self._begin_print()
 
     async def _begin_print(self, start_hyperlapse=True) -> None:
         self.printing = True
@@ -689,6 +704,8 @@ class Timelapse:
             result = {'action': 'render', 'status': 'error',
                       'msg': 'Rendering video failed'}
             self.notify_event(result)
+            self.server.send_event(
+                "server:gcode_response", "!! Timelapse: video generation failed")
             return result
         finally:
             for path in temporary_paths:
@@ -822,6 +839,8 @@ class Timelapse:
             self.lastcmdreponse = ""
             scmd = shell_cmd.build_shell_command(cmd, self.ffmpeg_cb)
             self.render_command = scmd
+            self.server.send_event(
+                "server:gcode_response", "// Timelapse: video generation started")
             try:
                 cmdstatus = await scmd.run(verbose=True,
                                            log_complete=False,
@@ -894,6 +913,13 @@ class Timelapse:
                     'cmd': cmd,
                     'cmdresponse': self.lastcmdreponse
                 })
+
+            if status == "success":
+                self.server.send_event(
+                    "server:gcode_response", "// Timelapse: video generation finished")
+            else:
+                self.server.send_event(
+                    "server:gcode_response", "!! Timelapse: video generation failed")
 
         # log and notify ws
         logging.info(msg)

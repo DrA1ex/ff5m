@@ -4,7 +4,7 @@
 # - Added queued and streaming background modes
 # - Added optional linewise raw responses for action-command protocols
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Copyright (C) 2019  Eric Callahan <arksine.code@gmail.com>
 #
@@ -367,6 +367,7 @@ class ShellCommand:
 
         self.proc_fd = None
         self.partial_output = ""
+        self.returncode = None
 
         self._async_helper = None
         if self.mode in {
@@ -382,6 +383,9 @@ class ShellCommand:
 
     cmd_RUN_SHELL_COMMAND_help = "Run a linux shell command"
 
+    def get_status(self, eventtime):
+        return {'returncode': self.returncode}
+
     def cmd_RUN_SHELL_COMMAND(self, params):
         gcode_params = params.get('PARAMS', '')
         gcode_params = shlex.split(gcode_params)
@@ -392,6 +396,7 @@ class ShellCommand:
             return self._async_helper.run(self.command, gcode_params)
 
         reactor = self.printer.get_reactor()
+        self.returncode = None
 
         try:
             proc = subprocess.Popen(
@@ -422,6 +427,8 @@ class ShellCommand:
 
         if not complete:
             AsyncRunHelper._terminate_process(proc)
+        else:
+            self.returncode = proc.returncode
 
         if self.verbose:
             if self.partial_output:
