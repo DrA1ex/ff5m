@@ -784,17 +784,27 @@ class FeatherControlsMixin:
     def _handle_heat_action(self, action):
         now = self.reactor.monotonic()
         if action.startswith("heat.e"):
-            target = self.extruder.get_status(now)["target"]
-            if action == "heat.eplus": target += 5
-            elif action == "heat.eminus": target -= 5
-            else: target = 0
+            status = self.extruder.get_status(now)
+            target = status["target"]
+            if action in ("heat.eplus", "heat.eminus"):
+                if target <= 0:
+                    target = int(float(status["temperature"]) / 5 + 0.5) * 5
+                else:
+                    target += 5 if action == "heat.eplus" else -5
+            else:
+                target = 0
             target = self._clamp_heater_target(target, self.extruder.heater, 300)
             self._run_script("M104 S%.0f" % target)
         elif action.startswith("heat.b"):
-            target = self.heater_bed.get_status(now)["target"]
-            if action == "heat.bplus": target += 5
-            elif action == "heat.bminus": target -= 5
-            else: target = 0
+            status = self.heater_bed.get_status(now)
+            target = status["target"]
+            if action in ("heat.bplus", "heat.bminus"):
+                if target <= 0:
+                    target = int(float(status["temperature"]) / 5 + 0.5) * 5
+                else:
+                    target += 5 if action == "heat.bplus" else -5
+            else:
+                target = 0
             target = self._clamp_heater_target(target, self.heater_bed, 130)
             self._run_script("M140 S%.0f" % target)
         elif action == "heat.alloff":

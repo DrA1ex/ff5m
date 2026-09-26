@@ -29,6 +29,7 @@ from tests.test_feather_screen import (
     mod_param,
 )
 from ff5m_ui.move import runtime as MOVE_UI
+from ff5m_ui.heat import actions as HEAT_ACTIONS
 from ff5m_ui.printing import runtime as PRINTING_UI
 from ff5m_ui.filament import actions as FILAMENT_ACTIONS
 from ff5m_ui.home import page as HOME_PAGE
@@ -2778,6 +2779,64 @@ class ControllerSafetyTest(unittest.TestCase):
             "heater": type("Heater", (), {"min_temp": 0, "max_temp": 251})()})()
         controller.heater_bed = type("Bed", (), {"min_temp": 0, "max_temp": 91})()
         self.assertEqual(controller._limited_preheat("ABS"), (250, 85))
+
+    def test_first_manual_heat_tap_snaps_to_nearest_actual_temperature(self):
+        heaters = (
+            (HEAT_ACTIONS.NOZZLE_PLUS, HEAT_ACTIONS.NOZZLE_MINUS, "M104"),
+            (HEAT_ACTIONS.BED_PLUS, HEAT_ACTIONS.BED_MINUS, "M140"),
+        )
+        for plus, minus, command in heaters:
+            for temperature, expected in ((25.5, 25), (28.0, 30),
+                                          (68.0, 70), (22.5, 25)):
+                for action in (plus, minus):
+                    with self.subTest(action=action.key, temperature=temperature):
+                        controller = ScenarioController.__new__(ScenarioController)
+                        controller.reactor = DeferredReactor()
+                        controller.extruder = StatusObject({
+                            "temperature": 180.0, "target": 185.0})
+                        controller.extruder.heater = type(
+                            "Heater", (), {"min_temp": 0, "max_temp": 300})()
+                        controller.heater_bed = StatusObject({
+                            "temperature": 90.0, "target": 100.0})
+                        controller.heater_bed.min_temp = 0
+                        controller.heater_bed.max_temp = 130
+                        selected = (controller.extruder if command == "M104"
+                                    else controller.heater_bed)
+                        selected.status.update(
+                            temperature=temperature, target=0.0)
+                        commands = []
+                        controller._run_script = commands.append
+
+                        controller._handle_heat_command(action)
+
+                        self.assertEqual(commands, ["%s S%d" % (command, expected)])
+
+    def test_manual_heat_taps_continue_from_target_and_obey_limits(self):
+        for plus, minus, off, command in (
+                (HEAT_ACTIONS.NOZZLE_PLUS, HEAT_ACTIONS.NOZZLE_MINUS,
+                 HEAT_ACTIONS.NOZZLE_OFF, "M104"),
+                (HEAT_ACTIONS.BED_PLUS, HEAT_ACTIONS.BED_MINUS,
+                 HEAT_ACTIONS.BED_OFF, "M140")):
+            with self.subTest(heater=command):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.reactor = DeferredReactor()
+                heater = StatusObject({"temperature": 68.0, "target": 70.0})
+                heater.min_temp = 0
+                heater.max_temp = 75
+                heater.heater = heater
+                controller.extruder = heater
+                controller.heater_bed = heater
+                commands = []
+                controller._run_script = commands.append
+
+                controller._handle_heat_command(plus)
+                heater.status["target"] = 70.0
+                controller._handle_heat_command(minus)
+                controller._handle_heat_command(off)
+
+                self.assertEqual(commands, [
+                    "%s S74" % command, "%s S65" % command,
+                    "%s S0" % command])
 
     def test_filament_extrusion_is_blocked_when_cold(self):
         controller = ScenarioController.__new__(ScenarioController)
