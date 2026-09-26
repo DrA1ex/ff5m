@@ -1132,10 +1132,10 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
         assert_order(self, result.commands, (
             "_CONTEXT_BEGIN TYPE=resume",
-            "_WAIT_TEMPERATURE CMD=M140 VALUE=65 MINIMUM=63.0",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=65 BELOW=2 ABOVE=3",
             "_CONTEXT_STATE NAME=HOMING",
             "G28",
-            "_WAIT_TEMPERATURE CMD=M104 VALUE=215 MINIMUM=215",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=215 BELOW=2 ABOVE=3",
             "_CONTEXT_END",
             "SET_IDLE_TIMEOUT TIMEOUT=600",
             "_CLIENT_EXTRUDE",
@@ -1161,8 +1161,8 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             })
 
         assert_order(self, result.commands, (
-            "_WAIT_TEMPERATURE CMD=M140 VALUE=80 MINIMUM=78.0",
-            "_WAIT_TEMPERATURE CMD=M104 VALUE=230 MINIMUM=230",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80 BELOW=2 ABOVE=3",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=230 BELOW=2 ABOVE=3",
             "RESUME_BASE VELOCITY=50",
         ))
         self.assertNotIn("G28", result.commands)
