@@ -11,6 +11,27 @@ PID_FILE=/run/moonraker.pid
 
 start() {
     echo "Starting Moonraker..."
+    timelapse=$(/opt/config/mod/.shell/commands/zconf.sh \
+        /opt/config/mod_data/variables.cfg --get timelapse 0) || return 1
+    case "$timelapse" in
+        1)
+            /bin/python3 /opt/config/mod/.py/cfg_backup.py \
+                --mode restore --avoid_writes \
+                --config /opt/config/mod_data/user.moonraker.conf \
+                --data /opt/config/mod/.cfg/default/timelapse.moonraker.conf \
+                --params-string '[timelapse]' || return 1
+        ;;
+        0)
+            /bin/python3 /opt/config/mod/.py/cfg_backup.py \
+                --mode restore --avoid_writes --no_data \
+                --config /opt/config/mod_data/user.moonraker.conf \
+                --params-string='-[timelapse]' || return 1
+        ;;
+        *)
+            echo "Invalid timelapse parameter: $timelapse" >&2
+            return 1
+        ;;
+    esac
     rm -rf $PRINTER_DATA_TMP && mkdir -p $PRINTER_DATA_TMP # clean temp
     export TMPDIR=$PRINTER_DATA_TMP # without TMPDIR moonraker writes to /tmp which is a ramdisk
 

@@ -47,7 +47,8 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
 - Patched **video streamer** with dramatically reduced memory usage
-- **Timelapse** support via [Moonraker Telegram bot](https://github.com/nlef/moonraker-telegram-bot) installed on external host
+- Built-in **Timelapse**: takes photos during printing and makes a video ([setup](/docs/CAMERA.md#timelapse)).
+- **Telegram bot** for remote printer control and timelapse videos ([setup](/docs/TELEGRAM.md)); runs on a separate computer or server.
 - Adaptive bed meshing with **KAMP** with Smart Parking.
 - Built-in **MD5** checks for gcode files.
 - **Backup** and **Restore** mechanism for printer's configuration
@@ -144,8 +145,8 @@ The existing Klipper implementation for the AD5M is outdated and plagued with bu
 - [Calibration](/docs/CALIBRATION.md)
 - [F.A.Q](/docs/FAQ.md)
 - [Alternative Screen](/docs/SCREEN.md)
-- [Camera](/docs/CAMERA.md)
-- [Telegram Bot and Timelapse](/docs/TELEGRAM.md)
+- [Camera and Timelapse](/docs/CAMERA.md)
+- [Telegram Bot](/docs/TELEGRAM.md)
 - [Dual boot](/docs/DUAL_BOOT.md)
 - [Uninstall](/docs/UNINSTALL.md)
 - [Recovery guide](/docs/RECOVERY.md)

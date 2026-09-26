@@ -59,6 +59,14 @@
         "AT_BOOT": "AT_BOOT",
         "PRINT_ONLY": "PRINT_ONLY"
       }
+    },
+    "TimelapseModeEnum": {
+      "type": "str",
+      "values": {
+        "LAYER": "LAYER",
+        "TIME": "TIME",
+        "PERCENT": "PERCENT"
+      }
     }
   },
   "ui": {
@@ -74,6 +82,13 @@
           "load_zoffset",
           "use_kamp",
           "camera",
+          "timelapse",
+          "timelapse_park",
+          "timelapse_final_frame",
+          "timelapse_mode",
+          "timelapse_every_layers",
+          "timelapse_every_seconds",
+          "timelapse_every_percent",
           "print_leveling",
           "safe_z",
           "pause_z_min",
@@ -165,6 +180,48 @@
       }
     ],
     "strict_visibility_dependencies": [
+      {
+        "parameter": "timelapse",
+        "depends_on": "camera",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "timelapse_park",
+        "depends_on": "timelapse",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "timelapse_final_frame",
+        "depends_on": "timelapse",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "timelapse_mode",
+        "depends_on": "timelapse",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "timelapse_every_layers",
+        "depends_on": "timelapse_mode",
+        "operator": "equals",
+        "value": "LAYER"
+      },
+      {
+        "parameter": "timelapse_every_seconds",
+        "depends_on": "timelapse_mode",
+        "operator": "equals",
+        "value": "TIME"
+      },
+      {
+        "parameter": "timelapse_every_percent",
+        "depends_on": "timelapse_mode",
+        "operator": "equals",
+        "value": "PERCENT"
+      },
       {
         "parameter": "mod_check_update_interval",
         "depends_on": "mod_check_update",
@@ -616,6 +673,72 @@
       "description": "Enable the low-memory camera service.",
       "options": ["not used", "enabled"],
       "order": 100
+    },
+    {
+      "key": "timelapse",
+      "type": "bool",
+      "default": 0,
+      "label": "Timelapse",
+      "description": "Capture print photos and make a video.",
+      "options": ["not used", "enabled"],
+      "order": 101
+    },
+    {
+      "key": "timelapse_park",
+      "type": "bool",
+      "default": 0,
+      "label": "Park for photos",
+      "description": "Park the head for each photo.",
+      "order": 102
+    },
+    {
+      "key": "timelapse_final_frame",
+      "type": "bool",
+      "default": 1,
+      "label": "Final photo",
+      "description": "Park and take final photo.",
+      "order": 103
+    },
+    {
+      "key": "timelapse_mode",
+      "type": "TimelapseModeEnum",
+      "default": "LAYER",
+      "label": "Timelapse interval",
+      "description": "Choose layer, time, or print progress.",
+      "options": {
+        "LAYER": "layers",
+        "TIME": "time",
+        "PERCENT": "progress"
+      },
+      "order": 104
+    },
+    {
+      "key": "timelapse_every_layers",
+      "type": "int",
+      "default": 1,
+      "minimum": 1,
+      "label": "Every N layers",
+      "description": "Take a photo every N layers.",
+      "order": 105
+    },
+    {
+      "key": "timelapse_every_seconds",
+      "type": "int",
+      "default": 30,
+      "minimum": 1,
+      "label": "Every N seconds",
+      "description": "Take a photo every N seconds.",
+      "order": 106
+    },
+    {
+      "key": "timelapse_every_percent",
+      "type": "float",
+      "default": 0.5,
+      "minimum": 0.1,
+      "maximum": 99,
+      "label": "Every N percent",
+      "description": "Take a photo at each progress step.",
+      "order": 107
     },
     {
       "key": "zssh",

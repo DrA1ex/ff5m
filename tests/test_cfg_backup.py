@@ -176,6 +176,66 @@ class CfgBackupTest(unittest.TestCase):
         self.assertTrue(cfg.is_saving("[alpha]", param_name="value"))
         self.assertTrue(stderr.write.called)
 
+    def test_invalid_inline_rules_do_not_change_config(self):
+        config = self._write("printer.cfg", "[alpha]\nvalue: 1\n")
+        before = config.read_bytes()
+
+        result = self._run_cli(
+            "--mode", "restore", "--no_data", "--config", config,
+            "--params-string", "not a rule")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(config.read_bytes(), before)
+
+    def test_inline_rules_apply_multiple_operations(self):
+        config = self._write(
+            "printer.cfg",
+            "[include old.cfg]\n[alpha]\nvalue: old\n"
+            "[remove_me]\nvalue: discarded\n"
+            "[keep]\nvalue: unchanged\n",
+        )
+        data = self._write("backup.cfg", "[alpha]\nvalue: new\n")
+
+        result = self._run_cli(
+            "--mode", "restore", "--config", config, "--data", data,
+            "--params-string", "[alpha] value\n-[remove_me]\n-[include old.cfg]")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        updated = config.read_text()
+        self.assertIn("value: new", updated)
+        self.assertNotIn("[remove_me]", updated)
+        self.assertNotIn("[include old.cfg]", updated)
+        self.assertIn("[keep]\nvalue: unchanged", updated)
+
+    def test_batch_rejects_file_and_inline_rules_together(self):
+        config = self._write("printer.cfg", "[alpha]\nvalue: 1\n")
+        rules = self._write("rules.cfg", "-[alpha]\n")
+        batch = self._write("batch.json", json.dumps([{
+            "mode": "restore", "no_data": True,
+            "config": str(config), "params": str(rules),
+            "params_string": "-[alpha]",
+        }]))
+
+        result = self._run_cli("--batch", batch)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("either parameters file or inline parameters", result.stderr)
+        self.assertEqual(config.read_text(), "[alpha]\nvalue: 1\n")
+
+    def test_batch_accepts_inline_rules(self):
+        config = self._write(
+            "printer.cfg", "[remove_me]\nvalue: 1\n[keep]\nvalue: 2\n")
+        batch = self._write("batch.json", json.dumps([{
+            "mode": "restore", "no_data": True,
+            "config": str(config), "params_string": "-[remove_me]",
+        }]))
+
+        result = self._run_cli("--batch", batch)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("[remove_me]", config.read_text())
+        self.assertIn("[keep]\nvalue: 2", config.read_text())
+
     def test_load_backup_resets_section_on_adjacent_section(self):
         cfg = self._rules("[alpha] value\n")
         data = self._write(

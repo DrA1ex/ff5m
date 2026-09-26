@@ -129,3 +129,30 @@ After completing the configuration, reload the Fluidd page. The camera should no
 
 #### Notes for Mainsail Users
 If you’re using Mainsail, the configuration process is nearly identical to Fluidd. Simply follow the steps above, and you’ll be good to go. If you run into any issues, double-check the URLs and ensure the stock camera is disabled.
+
+### Timelapse
+
+Timelapse is off by default. Enable the mod camera, then turn on `timelapse`
+in the mod settings while the printer is idle. You can also run:
+
+```gcode
+SET_MOD PARAM=timelapse VALUE=1
+```
+
+Choose **layers**, **time**, or **progress** under Timelapse interval. The
+default is one photo per layer. Layer mode needs
+[OrcaSlicer setup](SLICING.md#timelapse); time and progress modes do not. The
+default progress interval is 0.5%, and you can enter decimals.
+
+A first photo is taken at the end of `START_PRINT`, in any mode. The nozzle
+cleaning line may be visible in it. Further photos follow the chosen interval.
+
+**Park for photos** is off by default. When enabled, the head moves aside for
+photos during printing. **Final photo** is on by default and adds a photo of
+the finished print with the head parked. Turn it off to skip that photo.
+
+To skip photos for one print, add `TIMELAPSE=0` to its `START_PRINT` line. This
+does not change the setting for later prints.
+
+Find finished videos in Mainsail's Timelapse view. Video creation can take
+time; starting another print stops an unfinished video.

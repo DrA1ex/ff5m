@@ -564,36 +564,40 @@ class FeatherUtilitiesTest(unittest.TestCase):
         # Reveal every conditional parameter at once; hidden rows are never
         # drawn and would escape the measurement.
         variables.update({
-            "display_eco": True, "weight_check": True,
+            "camera": True, "timelapse": True, "display_eco": True,
+            "weight_check": True,
             "bed_mesh_validation": True, "disable_cleaning": False,
             "use_swap": manager.params_map["use_swap"].type["ZRAM"].value,
         })
-        feature = mod_controller(manager.params, variables)
-        expected = MOD_UI.visible_parameters(feature.params)
-        self.assertEqual(
-            sorted(param.key for param in expected),
-            sorted(param.key for param in manager.params if not param.hidden))
-
-        with mock.patch.object(feature.renderer, "text",
-                               wraps=feature.renderer.text) as text:
-            feature._render_mod_settings()
-            while True:
-                page = feature.mod_page
-                feature._handle_mod_action("mod.next")
-                if feature.mod_page == page:
-                    break
-
         drawn = {}
-        for call in text.call_args_list:
-            if not call.kwargs.get("truncate") or call.kwargs.get("wrap"):
-                continue
-            font = call.kwargs.get(
-                "font", call.args[4] if len(call.args) > 4 else None)
-            drawn.setdefault(str(call.args[2]), set()).add(
-                (font, int(call.kwargs["max_width"])))
+        all_visible = {}
+        for mode in ("LAYER", "TIME", "PERCENT"):
+            variables["timelapse_mode"] = mode
+            feature = mod_controller(manager.params, variables)
+            expected = MOD_UI.visible_parameters(feature.params)
+            all_visible.update((param.key, param) for param in expected)
 
-        self.assertTrue(expected)
-        for param in expected:
+            with mock.patch.object(feature.renderer, "text",
+                                   wraps=feature.renderer.text) as text:
+                feature._render_mod_settings()
+                while True:
+                    page = feature.mod_page
+                    feature._handle_mod_action("mod.next")
+                    if feature.mod_page == page:
+                        break
+
+            for call in text.call_args_list:
+                if not call.kwargs.get("truncate") or call.kwargs.get("wrap"):
+                    continue
+                font = call.kwargs.get(
+                    "font", call.args[4] if len(call.args) > 4 else None)
+                drawn.setdefault(str(call.args[2]), set()).add(
+                    (font, int(call.kwargs["max_width"])))
+
+        self.assertEqual(
+            sorted(all_visible),
+            sorted(param.key for param in manager.params if not param.hidden))
+        for param in all_visible.values():
             for value in (str(param.label).upper(), MOD_UI.description(param)):
                 self.assertTrue(value, param.key)
                 self.assertIn(value, drawn, param.key)
@@ -836,6 +840,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
         manager.variables = dict((param.key, param.default)
                                  for param in manager.params)
         cases = (
+            ("timelapse", "camera", False, True),
             ("mod_check_update_interval", "mod_check_update", False, True),
             ("backlight_eco", "display_eco", False, True),
             ("bed_mesh_validation_clear", "bed_mesh_validation", False, True),
@@ -875,6 +880,88 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertTrue(limit_visible(True, False))
         self.assertTrue(limit_visible(False, True))
         self.assertTrue(limit_visible(True, True))
+
+    def test_timelapse_interval_visibility_follows_enabled_mode(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        manager.variables = dict((param.key, param.default)
+                                 for param in manager.params)
+
+        keys = lambda: {param.key for param in MOD_UI.visible_parameters(manager)}
+        self.assertNotIn("timelapse_mode", keys())
+        manager.variables["camera"] = True
+        self.assertNotIn("timelapse_mode", keys())
+        self.assertNotIn("timelapse_park", keys())
+        self.assertNotIn("timelapse_final_frame", keys())
+        manager.variables["timelapse"] = True
+        self.assertIn("timelapse_mode", keys())
+        self.assertIn("timelapse_park", keys())
+        self.assertIn("timelapse_final_frame", keys())
+        self.assertIn("timelapse_every_layers", keys())
+        self.assertNotIn("timelapse_every_seconds", keys())
+
+        manager.variables["timelapse_mode"] = "TIME"
+        self.assertIn("timelapse_every_seconds", keys())
+        self.assertNotIn("timelapse_every_layers", keys())
+
+        manager.variables["timelapse_mode"] = "PERCENT"
+        self.assertIn("timelapse_every_percent", keys())
+        percent_input = MOD_UI.numeric_input_spec(
+            manager.params_map["timelapse_every_percent"])
+        self.assertEqual(percent_input.parse("0.5"), 0.5)
+        self.assertEqual(percent_input.parse("0.25"), 0.25)
+        with self.assertRaises(ValueError):
+            percent_input.parse("0.05")
+
+        manager.variables["timelapse"] = False
+        self.assertNotIn("timelapse_mode", keys())
+        self.assertNotIn("timelapse_park", keys())
+        self.assertNotIn("timelapse_final_frame", keys())
+        self.assertNotIn("timelapse_every_percent", keys())
+
+    def test_timelapse_defaults_off_but_preserves_persisted_on(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+
+        with tempfile.TemporaryDirectory() as directory:
+            manager.filename = str(pathlib.Path(directory) / "variables.cfg")
+            pathlib.Path(manager.filename).write_text(
+                "[Variables]\n", encoding="utf-8")
+            manager._reload()
+            self.assertFalse(manager.variables["timelapse"])
+
+            pathlib.Path(manager.filename).write_text(
+                "[Variables]\ntimelapse = 1\n", encoding="utf-8")
+            manager._reload()
+            self.assertTrue(manager.variables["timelapse"])
+
+    def test_existing_whole_percent_interval_loads_as_decimal(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+
+        with tempfile.TemporaryDirectory() as directory:
+            manager.filename = str(pathlib.Path(directory) / "variables.cfg")
+            pathlib.Path(manager.filename).write_text(
+                "[Variables]\ntimelapse_every_percent = 5\n",
+                encoding="utf-8")
+            manager._reload()
+            self.assertEqual(manager.variables["timelapse_every_percent"],
+                             5.0)
 
     def test_update_check_declaration_exposes_runtime_defaults_and_bounds(self):
         declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"

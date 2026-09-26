@@ -37,6 +37,25 @@ printer_command_available() {
     ps | grep -q "[k]lippy.py"
 }
 
+mount_timelapse_encoder() {
+    local mapping source target
+    # Keep the stock soft-float loader and libraries separate from the
+    # hard-float libraries used by Moonraker in the chroot.
+    for mapping in \
+        /opt/ffmpeg-4.0.2:ffmpeg-4.0.2 \
+        /opt/x264:x264 \
+        /lib:stock-lib \
+        /usr/lib:stock-usr-lib; do
+        source="${mapping%%:*}"
+        target="$MOD/opt/${mapping#*:}"
+        [ -d "$source" ] || return 1
+        mkdir -p "$target" || return 1
+        if ! awk -v path="$target" '$2 == path { found = 1 } END { exit !found }' /proc/mounts; then
+            mount --bind "$source" "$target" || return 1
+        fi
+    done
+}
+
 if [ -f "$NOT_FIRST_LAUNCH_F" ]; then
     first_launch=0
 else
@@ -44,6 +63,8 @@ else
 fi
 
 start() {
+    mount_timelapse_encoder || echo "Timelapse encoder is unavailable"
+
     if [ "$first_launch" -eq 1 ] && [ -f "$CUSTOM_BOOT_F" ]; then
         # Turn off and on display's backlight otherwise it's will not work.
         "$SCRIPTS"/screen.sh backlight 0

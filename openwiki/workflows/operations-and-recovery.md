@@ -266,7 +266,7 @@ These are hardware operations. This wiki records the routing, but the user-facin
 | Moonraker / Fluidd / Mainsail | `moonraker.conf`, `.root/S65moonraker`, `.root/S70httpd`, `docs/INSTALL.md` | API at port 7125; static UIs are HTTP paths. API key auth is disabled in default config. |
 | Stock / Feather / Guppy / headless screens | `config/*.cfg`, `.shell/boot/boot.sh`, `docs/SCREEN.md` | Screen selection changes network and calibration workflow. |
 | Camera | `.shell/S98camera`, `.shell/commands/zchanges.sh`, `docs/CAMERA.md` | Ensure stock camera stream is disabled before enabling mod camera. |
-| Remote SSH / Telegram timelapse | `.shell/S98zssh`, `telegram/`, `docs/TELEGRAM.md` | User-side SSH material is mutable/private and intentionally not inspected here. |
+| Remote SSH / Telegram bot | `.shell/S98zssh`, `telegram/`, `docs/TELEGRAM.md` | User-side SSH material is mutable/private and intentionally not inspected here. |
 | Cloud blocking | `.shell/init-main.sh`, `mod_params.json`, `docs/CONFIGURATION.md` | `block_cloud` is opt-in; it changes `/etc/hosts` entries, not routing/firewall. |
 
 ## Runbook for changes to boot or operations

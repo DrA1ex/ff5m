@@ -90,20 +90,37 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
   **Default**: None  
   **Example**: `MESH=PLA_profile`
 
-## Pause at Layer
+- `TIMELAPSE`: Set to 0 to skip all timelapse photos for this print.
+  **Default**: 1
+  **Example**: `TIMELAPSE=0`
 
-To enable the pause-at-layer feature, add the following commands to your slicer configuration:
+## Timelapse
 
-#### Start G-code
-Add this line before `START_PRINT`:
-```
+If you choose **layers** in the printer's Timelapse interval setting, OrcaSlicer
+must send the current layer number. In **Printer settings → Machine G-code**,
+check these two fields and add the lines if they are missing:
+
+**Start G-code**, before `START_PRINT`:
+
+```gcode
 SET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]
 ```
 
-#### After Layer Change G-code
-```
+**After layer change G-code**:
+
+```gcode
 SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num + 1}
 ```
+
+Slice the model again after changing these fields. The printer will then take
+photos automatically at the chosen layer interval. Do not add
+`TIMELAPSE_TAKE_FRAME`; remove it if an older profile already has it. If no
+layer numbers arrive, layer-change photos cannot be taken. **Time** and
+**progress** modes work without these lines.
+
+## Pause at Layer
+
+Pause at layer uses the same layer information configured above.
 
 #### Example
 To make a pause at 20 layer use this command after print started:

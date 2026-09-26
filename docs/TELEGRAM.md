@@ -1,7 +1,13 @@
 # Telegram Bot Setup
 
-The Flashforge AD5M (Pro) mod has limited hardware resources, making it impractical to run the `moonraker-telegram-bot` directly on the printer.
-Instead, the bot can be hosted on an external server that the printer can access via SSH. 
+The Telegram bot lets you control the printer remotely and create timelapse
+videos. If you only need timelapses, use Forge-X's built-in
+[`timelapse` setting](CAMERA.md#timelapse).
+
+The Flashforge AD5M (Pro) mod has limited hardware resources, making it
+impractical to run the bot directly on the printer. Instead, run it on an
+external server. It can connect over the local network or through an SSH
+tunnel.
 
 ## Bot Registration
 To register your Telegram bot:

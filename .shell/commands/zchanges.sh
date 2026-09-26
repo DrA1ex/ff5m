@@ -69,6 +69,10 @@ case "$key" in
             /etc/init.d/S98camera stop
         fi
     ;;
+
+    timelapse)
+        chroot "$MOD" /opt/config/mod/.root/S65moonraker restart
+    ;;
     
     tune_klipper)
         message "Klipper will be restarted to apply tuning."

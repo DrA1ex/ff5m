@@ -18,11 +18,13 @@ BASE = ROOT / "macros" / "base.cfg"
 HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 STOCK = ROOT / "config" / "stock.cfg"
+TIMELAPSE = ROOT / "macros" / "timelapse.cfg"
 MATERIAL = ROOT / "config" / "material.cfg"
 SMART_PARK = ROOT / "KAMP" / "Smart_Park.cfg"
 MOTION_MACROS = (
     (BASE, "M600"),
     (BASE, "MOVE_SAFE"),
+    (TIMELAPSE, "_TIMELAPSE_FINAL_PARK"),
     (CLIENT, "PAUSE"),
     (CLIENT, "CANCEL_PRINT"),
     (CLIENT, "_TOOLHEAD_PARK_PAUSE_CANCEL"),
@@ -861,6 +863,114 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
                 self.assertEqual(
                     self._axis_targets(commands, "Z"), [expected])
+
+    def test_final_photo_parks_after_bounded_five_mm_lift(self):
+        for current, expected_z in ((100, [105]), (217, [220]),
+                                    (220, []), (225, [])):
+            with self.subTest(current=current):
+                printer = self._motion_printer(current, park_dz=50)
+                printer["mod_params"]["variables"].update({
+                    "timelapse": True, "timelapse_final_frame": True})
+                printer["gcode_macro TIMELAPSE_PRINT"] = {"enable": True}
+                printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {
+                    "enable": True}
+                commands = execute_macro_chain(
+                    MOTION_MACROS, "END_PRINT", printer=printer)
+
+                self.assertEqual(self._axis_targets(commands, "Z"),
+                                 expected_z)
+                self.assertEqual(self._axis_targets(commands, "X"), [110])
+                self.assertEqual(self._axis_targets(commands, "Y"), [110])
+                if expected_z:
+                    z_move = next(i for i, line in enumerate(commands)
+                                  if line.split()[0] == "G1"
+                                  and self._axis_targets((line,), "Z"))
+                    xy_move = next(i for i, line in enumerate(commands)
+                                   if line.split()[0] == "G1"
+                                   and self._axis_targets((line,), "X"))
+                    self.assertIn("F3000", commands[z_move])
+                    self.assertEqual(commands[z_move + 2], "M400")
+                    self.assertLess(z_move + 2, xy_move)
+
+    def test_final_photo_keeps_headless_retract_after_z_clearance(self):
+        printer = self._motion_printer(100)
+        printer["gcode_move"]["gcode_position"].update({"x": 0, "y": 0})
+        printer["extruder"]["can_extrude"] = True
+        printer["mod_params"]["variables"].update({
+            "timelapse": True, "timelapse_final_frame": True})
+        printer["gcode_macro TIMELAPSE_PRINT"] = {"enable": True}
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": True}
+
+        commands = execute_macro_chain(
+            MOTION_MACROS, "END_PRINT", printer=printer)
+        self.assertEqual(self._axis_targets(commands, "Z"), [105])
+        self.assertEqual(self._axis_targets(commands, "X"), [2, 110])
+        self.assertEqual(self._axis_targets(commands, "Y"), [2, 110])
+        retract = next(i for i, line in enumerate(commands)
+                       if "E-5" in line)
+        z_move = next(i for i, line in enumerate(commands)
+                      if self._axis_targets((line,), "Z"))
+        park = next(i for i, line in enumerate(commands)
+                    if self._axis_targets((line,), "X") == [110])
+        self.assertIn("M400", commands[z_move + 1:retract])
+        self.assertLess(retract, park)
+
+    def test_final_photo_parking_is_skipped_without_capture(self):
+        printer = self._motion_printer(100, park_dz=50)
+        variables = printer["mod_params"]["variables"]
+        variables.update({"timelapse": True,
+                          "timelapse_final_frame": False})
+        printer["gcode_macro TIMELAPSE_PRINT"] = {"enable": True}
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": True}
+
+        for global_on, final_on, print_on, capture_on in (
+                (True, False, True, True),
+                (False, True, True, True),
+                (True, True, False, True),
+                (True, True, True, False)):
+            with self.subTest(global_on=global_on, final_on=final_on,
+                              print_on=print_on, capture_on=capture_on):
+                variables["timelapse"] = global_on
+                variables["timelapse_final_frame"] = final_on
+                printer["gcode_macro TIMELAPSE_PRINT"]["enable"] = print_on
+                printer["gcode_macro TIMELAPSE_TAKE_FRAME"]["enable"] = capture_on
+                commands = execute_macro_chain(
+                    MOTION_MACROS, "END_PRINT", printer=printer)
+                self.assertEqual(self._axis_targets(commands, "Z"), [150])
+
+    def test_final_photo_does_not_park_without_homing(self):
+        printer = self._motion_printer(100, homed="")
+        printer["mod_params"]["variables"].update({
+            "timelapse": True, "timelapse_final_frame": True})
+        printer["gcode_macro TIMELAPSE_PRINT"] = {"enable": True}
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": True}
+
+        commands = execute_macro_chain(
+            MOTION_MACROS, "END_PRINT", printer=printer)
+        self.assertFalse(any(
+            command.split()[0] == "G1" for command in commands))
+
+    def test_stock_final_photo_uses_same_bounded_corner_park(self):
+        macros = ((STOCK, "END_PRINT"), (BASE, "MOVE_SAFE"),
+                  (TIMELAPSE, "_TIMELAPSE_FINAL_PARK"))
+        printer = self._motion_printer(217)
+        printer["mod_params"]["variables"].update({
+            "timelapse": True, "timelapse_final_frame": True,
+            "stop_motor": 0})
+        printer["gcode_macro TIMELAPSE_PRINT"] = {"enable": True}
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": True}
+
+        parked = execute_macro_chain(macros, "END_PRINT", printer=printer)
+        self.assertEqual(self._axis_targets(parked, "Z"), [220])
+        self.assertEqual(self._axis_targets(parked, "X"), [110])
+        self.assertEqual(self._axis_targets(parked, "Y"), [110])
+        self.assertIn("G1 E-3 F3600", parked)
+        self.assertNotIn("G0 X105 Y105 F30000", parked)
+
+        printer["mod_params"]["variables"]["timelapse_final_frame"] = False
+        normal = execute_macro_chain(macros, "END_PRINT", printer=printer)
+        self.assertIn("G0 X105 Y105 F30000", normal)
+        self.assertFalse(self._axis_targets(normal, "Z"))
 
     def test_end_print_relative_lift_uses_gcode_position_with_active_mesh(self):
         printer = self._motion_printer(60, park_dz=1)

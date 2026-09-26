@@ -72,6 +72,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`camera`**: Enables the alternative camera implementation if set to `1`.  
 
+- **`timelapse`**: Takes photos during printing and creates a video. Off by default; see [Camera](CAMERA.md#timelapse) for setup.
+
 - **`filament_switch_sensor`**: Enables pause on filament runout if set to `1`.  
   **Note**: Only works with Feather/Headless screen.   
 

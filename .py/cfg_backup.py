@@ -1,10 +1,11 @@
 ## Configuration management, backup and restore
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import argparse
+import io
 import json
 import os.path
 import re
@@ -309,8 +310,10 @@ class ParametersToken(Enum):
     COMMENT = 7
 
 
-def iterate_cmd_config_tokens(file_path, *, callback):
-    with open(file_path, "r") as in_file:
+def iterate_cmd_config_tokens(file_path, *, callback, params_string=None):
+    source = (open(file_path, "r") if params_string is None
+              else io.StringIO(params_string))
+    with source as in_file:
         for line in in_file:
             s_line = line.strip()
 
@@ -338,7 +341,7 @@ def iterate_cmd_config_tokens(file_path, *, callback):
 ## Parameters configuration loading
 ##########################################################################
 
-def parse_cmd_configuration(file_path) -> Configuration:
+def parse_cmd_configuration(file_path=None, *, params_string=None) -> Configuration:
     builder = ConfigurationBuilder()
 
     def _callback(token, **kwargs):
@@ -355,8 +358,12 @@ def parse_cmd_configuration(file_path) -> Configuration:
         elif token == ParametersToken.INCLUDE_REMOVE:
             builder.include(kwargs["path"], Action.REMOVE)
 
-    print(f"Loading parameters from \"{file_path}\"...")
-    iterate_cmd_config_tokens(file_path, callback=_callback)
+    if params_string is None:
+        print(f"Loading parameters from \"{file_path}\"...")
+    else:
+        print("Loading inline parameters...")
+    iterate_cmd_config_tokens(file_path, callback=_callback,
+                              params_string=params_string)
 
     new_config = builder.build()
 
@@ -837,6 +844,7 @@ class ProcessingParams:
     mode: str
     no_data: bool
     avoid_writes: bool
+    params_string: Optional[str] = None
 
 
 def load_params_from_args(values):
@@ -847,6 +855,7 @@ def load_params_from_args(values):
         mode=values.mode,
         no_data=values.no_data,
         avoid_writes=values.avoid_writes,
+        params_string=values.params_string,
     )
 
 
@@ -858,6 +867,7 @@ def load_params_from_dict(values, avoid_writes=False):
         params_path=values.get("params", None),
         no_data=values.get("no_data", False),
         avoid_writes=values.get("avoid_writes", False) or avoid_writes,
+        params_string=values.get("params_string", None),
     )
 
 
@@ -882,11 +892,15 @@ def process(p: ProcessingParams):
     if not os.path.isfile(p.config_path):
         raise Exception(f"Config file doesn't exists: {p.config_path!r}")
 
+    if p.params_path and p.params_string is not None:
+        raise Exception("Specify either parameters file or inline parameters")
+
     if p.params_path and not os.path.isfile(p.params_path):
         raise Exception(f"Parameters file doesn't exists: {p.params_path!r}")
 
-    if p.params_path:
-        cfg = parse_cmd_configuration(p.params_path)
+    if p.params_path or p.params_string is not None:
+        cfg = parse_cmd_configuration(p.params_path,
+                                      params_string=p.params_string)
         print()
     else:
         cfg = DEFAULT_PARAMETERS
@@ -932,8 +946,11 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--data", type=str,
                         help="Path to saved printer values",
                         default="/opt/config/printer.base.cfg.bak")
-    parser.add_argument("-p", "--params", type=str,
-                        help="Path to backup parameters configuration file", )
+    params_group = parser.add_mutually_exclusive_group()
+    params_group.add_argument("-p", "--params", type=str,
+                              help="Path to backup parameters configuration file")
+    params_group.add_argument("--params-string", type=str,
+                              help="Backup parameters rules as inline text")
     parser.add_argument("-m", "--mode", type=str,
                         choices=["backup", "restore", "verify"],
                         help="Mode: (backup, restore, verify)")

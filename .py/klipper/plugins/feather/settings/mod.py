@@ -70,6 +70,8 @@ def _condition_holds(manager, condition):
              if candidate.key == parent_key), None)
     if parent is None:
         return True
+    if not parameter_is_visible(manager, parent):
+        return False
     current = manager.variables.get(parent.key, parent.default)
     expected = condition.get("value")
     if parameter_kind(parent) == "enum":
