@@ -176,7 +176,9 @@ def base_controller(state="idle"):
     controller.reactor.unregister_fd = lambda handle: None
     controller.gcode = GCodeRecorder()
     controller.print_stats = StatusObject(
-        {"state": state, "info": {"current_layer": 1, "total_layer": 10}})
+        {"state": state,
+         "print_duration": 1.0 if state in ("printing", "paused") else 0.0,
+         "info": {"current_layer": 1, "total_layer": 10}})
     controller.virtual_sdcard = VirtualSD(active=state in ("printing", "paused"))
     controller.pending_action = None
     controller.pending_until = 0
@@ -1875,6 +1877,50 @@ class PrintWorkflowTest(unittest.TestCase):
 
         controller._handle_print_action("print.cancel")
         self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+
+    def test_pause_refreshes_resume_button_before_next_periodic_update(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.ScreenPage.PRINTING
+        pages = []
+
+        def show(page):
+            controller.page = page
+            pages.append((page, controller.pending_action))
+
+        def pause(command):
+            self.assertEqual(command, "PAUSE")
+            controller.print_stats.status["state"] = "paused"
+
+        controller._show_page = show
+        controller._run_script = pause
+        controller._handle_print_action("print.pause")
+
+        self.assertEqual(controller.print_state, FEATHER.PrintState.PAUSED)
+        self.assertIsNone(controller.pending_action)
+        self.assertEqual(pages[-1], (FEATHER.ScreenPage.PAUSED, None))
+
+    def test_resume_refreshes_pause_button_after_blocking_dialog(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.PAUSED
+        pages = []
+
+        def show(page):
+            controller.page = page
+            pages.append((page, controller.pending_action))
+
+        def resume(command, message):
+            self.assertEqual((command, message),
+                             ("RESUME", "RESUMING PRINT..."))
+            controller.print_stats.status.update(
+                state="printing", print_duration=1.0)
+
+        controller._show_page = show
+        controller._run_blocking_gcode = resume
+        controller._handle_print_action("print.resume")
+
+        self.assertEqual(controller.print_state, FEATHER.PrintState.PRINTING)
+        self.assertIsNone(controller.pending_action)
+        self.assertEqual(pages[-1], (FEATHER.ScreenPage.PRINTING, None))
 
     def test_resume_rejection_is_shown_on_feather(self):
         controller = base_controller("paused")

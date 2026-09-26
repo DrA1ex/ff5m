@@ -2007,52 +2007,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         stats = self.print_stats.get_status(eventtime)
         state = stats["state"]
         virtual_sd_active = self.virtual_sdcard.is_active()
-        if state == "printing":
-            new_state = (PrintState.PREPARING
-                         if (stats["print_duration"] == 0
-                             and not self._restored_print_active(eventtime))
-                         else PrintState.PRINTING)
-        elif state == "paused":
-            new_state = PrintState.PAUSED
-        elif state in ("complete", "cancelled", "error"):
-            # Terminal virtual_sd states are operationally idle. Keeping a
-            # separate FINISHED controller state left controls looking active
-            # while rejecting or delaying taps after cancel.
-            new_state = PrintState.IDLE
-        else:
-            new_state = PrintState.IDLE
-        if new_state != self.print_state:
-            self._change_print_state(new_state, state)
+        self._reconcile_print_state(eventtime, stats)
         self._poll_usb_storage(eventtime)
         self._update_operation_context(eventtime)
         if manager is not None:
             manager.update(eventtime)
         self._refresh_emergency_stop(eventtime)
-        if self.pending_action is not None:
-            expected = {"print.pause": "paused", "print.resume": "printing",
-                        "print.cancel.confirm": "cancelled"}.get(self.pending_action)
-            completed = state == expected
-            if self.pending_action == "print.cancel.confirm":
-                completed = state not in ("printing", "paused") and not virtual_sd_active
-            if completed:
-                self.pending_action = None
-                if self.page == ScreenPage.CANCEL_CONFIRM:
-                    self.print_state = PrintState.IDLE
-                    self._show_message(
-                        "", ScreenPage.IDLE_HOME, title="Print cancelled")
-                elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
-                    self._show_page(self.page)
-            elif (eventtime >= self.pending_until
-                  and not self._blocking_operation_active()):
-                if self.pending_action == "print.cancel.confirm":
-                    # A long G28/mesh/prime operation is expected to finish at
-                    # its next cooperative boundary. Keep the accepted request
-                    # active instead of re-enabling the confirmation control.
-                    self.pending_until = eventtime + 30.0
-                    self._update_cancel_progress()
-                elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
-                    self.pending_action = None
-                    self._show_page(self.page)
+        self._reconcile_pending_action(eventtime, state, virtual_sd_active)
         if (getattr(self, "file_scan_loading", False)
                 and self.page == ScreenPage.FILE_BROWSER):
             self.file_scan_phase = (self.file_scan_phase + 1) % 5
@@ -2097,6 +2058,55 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if self.toast_until and eventtime >= self.toast_until:
             self._hide_toast()
         return eventtime + REFRESH_TIME
+
+    def _reconcile_print_state(self, eventtime, stats=None):
+        if stats is None:
+            stats = self.print_stats.get_status(eventtime)
+        state = stats["state"]
+        if state == "printing":
+            new_state = (PrintState.PREPARING
+                         if (stats["print_duration"] == 0
+                             and not self._restored_print_active(eventtime))
+                         else PrintState.PRINTING)
+        elif state == "paused":
+            new_state = PrintState.PAUSED
+        elif state in ("complete", "cancelled", "error"):
+            # Terminal virtual_sd states are operationally idle. Keeping a
+            # separate FINISHED controller state left controls looking active
+            # while rejecting or delaying taps after cancel.
+            new_state = PrintState.IDLE
+        else:
+            new_state = PrintState.IDLE
+        if new_state != self.print_state:
+            self._change_print_state(new_state, state)
+        return state
+
+    def _reconcile_pending_action(self, eventtime, state, virtual_sd_active):
+        if self.pending_action is not None:
+            expected = {"print.pause": "paused", "print.resume": "printing",
+                        "print.cancel.confirm": "cancelled"}.get(self.pending_action)
+            completed = state == expected
+            if self.pending_action == "print.cancel.confirm":
+                completed = state not in ("printing", "paused") and not virtual_sd_active
+            if completed:
+                self.pending_action = None
+                if self.page == ScreenPage.CANCEL_CONFIRM:
+                    self.print_state = PrintState.IDLE
+                    self._show_message(
+                        "", ScreenPage.IDLE_HOME, title="Print cancelled")
+                elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
+                    self._show_page(self.page)
+            elif (eventtime >= self.pending_until
+                  and not self._blocking_operation_active()):
+                if self.pending_action == "print.cancel.confirm":
+                    # A long G28/mesh/prime operation is expected to finish at
+                    # its next cooperative boundary. Keep the accepted request
+                    # active instead of re-enabling the confirmation control.
+                    self.pending_until = eventtime + 30.0
+                    self._update_cancel_progress()
+                elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
+                    self.pending_action = None
+                    self._show_page(self.page)
 
     def _poll_usb_storage(self, eventtime):
         monitor = getattr(self, "usb_storage", None)

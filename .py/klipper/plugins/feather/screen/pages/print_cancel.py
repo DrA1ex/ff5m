@@ -36,7 +36,12 @@ class PrintCancelPagesMixin:
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
             self._render_print_page()
-            self._run_script("PAUSE")
+            try:
+                self._run_script("PAUSE")
+            except Exception:
+                self.pending_action = None
+                raise
+            self._reconcile_print_action()
         elif action == "print.resume" and stats == "paused":
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
@@ -46,6 +51,7 @@ class PrintCancelPagesMixin:
             except Exception:
                 self.pending_action = None
                 raise
+            self._reconcile_print_action()
         elif action == "print.filament" and stats in ("printing", "paused"):
             if stats == "printing":
                 self._filament_request_token = getattr(
@@ -79,6 +85,13 @@ class PrintCancelPagesMixin:
                 ScreenPage.PAUSED if stats == "paused" else ScreenPage.PRINTING,
                 self._accept_print_operation_cancel,
                 self._clear_print_operation_cancel)
+
+    def _reconcile_print_action(self):
+        """Show the state reached by a completed operation immediately."""
+        eventtime = self.reactor.monotonic()
+        state = self._reconcile_print_state(eventtime)
+        self._reconcile_pending_action(
+            eventtime, state, self.virtual_sdcard.is_active())
 
     def _open_operation_cancel(
             self, return_page, on_accept=None, on_clear=None):
