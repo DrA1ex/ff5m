@@ -1006,6 +1006,35 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                     "RESTORE_GCODE_STATE NAME=_client_movement",
                 ))
 
+    def test_move_safe_relative_clamp_never_reverses_or_extends_a_move(self):
+        limits = macro_status(BASE, "MOVE_SAFE")
+
+        def targets(position, deltas):
+            commands = render_macro(BASE, "MOVE_SAFE", printer={
+                "gcode_macro MOVE_SAFE": limits,
+                "gcode_move": {"gcode_position": position},
+                "toolhead": {"axis_maximum": {"z": 230}},
+            }, params=deltas).commands
+            return {axis: self._axis_targets(commands, axis)
+                    for axis in "XYZ"}
+
+        self.assertEqual(
+            targets({"x": 115, "y": -115, "z": 225},
+                    {"X": 5, "Y": -5, "Z": 5}),
+            {"X": [], "Y": [], "Z": []})
+        self.assertEqual(
+            targets({"x": 109, "y": -109, "z": 217},
+                    {"X": 5, "Y": -5, "Z": 5}),
+            {"X": [110], "Y": [-110], "Z": [220]})
+        self.assertEqual(
+            targets({"x": 115, "y": 0, "z": 225},
+                    {"X": -2, "Z": -1}),
+            {"X": [], "Y": [], "Z": []})
+        self.assertEqual(
+            targets({"x": 115, "y": 0, "z": 225},
+                    {"X": -10, "Z": -10}),
+            {"X": [105], "Y": [], "Z": [215]})
+
     def test_smart_park_uses_fallback_and_rejects_unhomed_motion(self):
         printer = {
             "gcode_macro _KAMP_Settings": {
