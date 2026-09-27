@@ -19,6 +19,7 @@ except ImportError:
 
 FEATHER = lazy_tests.FEATHER
 Page = FEATHER.ScreenPage
+Dialog = FEATHER.ScreenDialog
 
 
 class ExternalWorkflowTest(unittest.TestCase):
@@ -100,10 +101,11 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.host._run_script.assert_not_called()
 
     def test_rejected_context_is_not_adopted_on_a_later_state_revision(self):
-        self.host.page = Page.ERROR
+        self.host.dialogs = [Dialog.ERROR]
         self.begin("bed_screws")
         self.assertIsNone(self.feature())
 
+        self.host.dialogs = []
         self.host.page = Page.IDLE_HOME
         self.context.cmd_CONTEXT_STATE(FakeCommand(NAME="PROBING"))
         self.host._update_operation_context(100.0)
@@ -144,8 +146,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                 Page.CALIBRATION_CONFIRM, Page.CALIBRATION_RESULT,
                 Page.CALIBRATION_Z, Page.SAFE_Z_CALIBRATION,
                 Page.EXTRUDER_CALIBRATION, Page.FILAMENT_ACTION,
-                Page.NETWORK_PROGRESS, Page.CANCEL_CONFIRM,
-                Page.ACTION_PROMPT, Page.ERROR, Page.MESSAGE):
+                Page.NETWORK_PROGRESS):
             with self.subTest(page=page):
                 self.host.page = page
                 self.begin("pid_bed")
@@ -154,6 +155,17 @@ class ExternalWorkflowTest(unittest.TestCase):
                 self.flush()
                 self.assertEqual(self.host.page, page)
                 self.assertIsNone(self.feature())
+
+        for dialog in Dialog:
+            with self.subTest(dialog=dialog):
+                self.host.page = Page.IDLE_HOME
+                self.host.dialogs = [dialog]
+                self.begin("pid_bed")
+                self.assertEqual(self.host._current_dialog(), dialog)
+                self.finish()
+                self.flush()
+                self.assertIsNone(self.feature())
+        self.host.dialogs = []
 
     def test_print_status_and_virtual_sd_protect_even_an_idle_home_page(self):
         for state, sd_active in (("printing", False), ("paused", False),
@@ -224,12 +236,12 @@ class ExternalWorkflowTest(unittest.TestCase):
 
     def test_cancel_confirmation_closes_when_external_operation_finishes(self):
         self.begin("bed_screws")
-        self.host.page = Page.CANCEL_CONFIRM
-        self.host.operation_cancel_return_page = Page.CALIBRATION_PROGRESS
+        self.host.dialogs = [Dialog.CANCEL_CONFIRM]
         self.host.cancel_mode = "confirm"
         self.finish()
         self.flush()
         self.assertEqual(self.host.page, Page.CALIBRATION_RESULT)
+        self.assertIsNone(self.host._current_dialog())
         self.assertIsNone(self.host.cancel_mode)
 
     def test_command_error_does_not_report_success(self):
@@ -252,14 +264,12 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.assertIsNone(self.feature().calibration_error)
 
     def test_finishing_does_not_replace_print_or_error_screen(self):
-        for page in (Page.PRINTING, Page.ERROR):
-            with self.subTest(page=page):
-                self.host.page = Page.IDLE_HOME
-                self.begin("bed_screws")
-                self.finish()
-                self.host.page = page
-                self.flush()
-                self.assertEqual(self.host.page, page)
+        self.host.page = Page.IDLE_HOME
+        self.begin("bed_screws")
+        self.finish()
+        self.host.page = Page.PRINTING
+        self.flush()
+        self.assertEqual(self.host.page, Page.PRINTING)
 
     def test_deactivation_discards_pending_completion(self):
         self.begin("bed_screws")
@@ -271,7 +281,6 @@ class ExternalWorkflowTest(unittest.TestCase):
     def test_external_recovery_survives_prompt_end_and_hands_over_to_print(self):
         self.host.page = Page.RECOVERY_PROMPT
         self.host.action_prompt = {"title": "Resurrection"}
-        self.host.action_prompt_visible = True
         self.begin("recovery")
         self.host._handle_gcode_output("// action:prompt_end")
         self.assertEqual(self.host.page, Page.CALIBRATION_PROGRESS)

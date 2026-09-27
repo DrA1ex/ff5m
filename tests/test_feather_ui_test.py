@@ -418,6 +418,7 @@ class RunnerContractTest(unittest.TestCase):
         host = type("Host", (), {
             "reactor": reactor,
             "page": FEATHER.ScreenPage.CONTROL_MOVE,
+            "_current_dialog": lambda self: None,
             "command_depth": 1,
             "busy_message": "HOMING...",
         })()
@@ -1436,7 +1437,7 @@ class RunnerContractTest(unittest.TestCase):
             [item[0] for item in seen], [
                 FEATHER.ScreenPage.FILAMENT_MATERIAL,
                 FEATHER.ScreenPage.FILAMENT_ACTION,
-                FEATHER.ScreenPage.ACTION_PROMPT,
+                FEATHER.ScreenDialog.ACTION_PROMPT,
             ])
         self.assertEqual(seen[1][2], {
             "temperature": 130.0, "target": 250.0})
@@ -1552,7 +1553,7 @@ class RunnerContractTest(unittest.TestCase):
         def show_message(message, page):
             messages.append((message, page))
             controller.message = message
-            controller.page = FEATHER.ScreenPage.MESSAGE
+            controller.dialogs = [FEATHER.ScreenDialog.MESSAGE]
 
         controller._show_message = show_message
         feature.host = controller
@@ -2213,13 +2214,15 @@ class RunnerContractTest(unittest.TestCase):
         })()
         host.print_state = FEATHER.PrintState.PRINTING
         host.page = FEATHER.ScreenPage.PRINTING
+        host.dialog = None
+        host._current_dialog = lambda: host.dialog
         host.renderer = type("Renderer", (), {"_buttons": {}})()
         feature = UI_TEST.UITestRun(host)
 
         self.assertFalse(feature.scenarios._context_print_complete())
         host.print_state = FEATHER.PrintState.IDLE
         self.assertFalse(feature.scenarios._context_print_complete())
-        host.page = FEATHER.ScreenPage.MESSAGE
+        host.dialog = FEATHER.ScreenDialog.MESSAGE
         self.assertFalse(feature.scenarios._context_print_complete())
         host.renderer._buttons["message.ok"] = ()
         self.assertTrue(feature.scenarios._context_print_complete())
@@ -2234,6 +2237,8 @@ class RunnerContractTest(unittest.TestCase):
             "get_status": lambda self, eventtime: dict(status),
         })()
         host.page = FEATHER.ScreenPage.PRINTING
+        host.dialog = None
+        host._current_dialog = lambda: host.dialog
         host.renderer = type("Renderer", (), {"_buttons": {}})()
         feature = UI_TEST.UITestRun(host)
 
@@ -2249,7 +2254,7 @@ class RunnerContractTest(unittest.TestCase):
 
         status["state"] = "cancelled"
         host.print_state = FEATHER.PrintState.IDLE
-        host.page = FEATHER.ScreenPage.MESSAGE
+        host.dialog = FEATHER.ScreenDialog.MESSAGE
         host.virtual_sdcard = type("SD", (), {
             "is_active": lambda self: False,
         })()

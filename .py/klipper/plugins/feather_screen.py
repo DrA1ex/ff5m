@@ -12,6 +12,7 @@ import signal
 import sys
 import struct
 import time
+from contextlib import nullcontext
 
 # Klipper loads this entry point as ``extras.feather_screen``, while
 # Feather UI is intentionally shared with the standalone Designer under
@@ -30,7 +31,7 @@ from ui import (
     Command, DismissToast, FeatherRenderer, ThemeColor,
     normalize_theme_name, parse_render_receipt,
 )
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.print_state import PrintState
@@ -79,9 +80,6 @@ EXACT_ACTIONS = {
                     "print.cancel", "print.z"),
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
                   "print.cancel", "print.z"),
-    ScreenPage.CANCEL_CONFIRM: (
-        "operation.cancel.back", "operation.cancel.confirm",
-        "operation.cancel.continue", "operation.cancel.force"),
     ScreenPage.CONTROL_MOVE: ("nav.back",),
     ScreenPage.CONTROL_HEAT: ("nav.back",),
     ScreenPage.NETWORK_HOME: ("nav.back", "net.scan", "net.ethernet"),
@@ -91,10 +89,6 @@ EXACT_ACTIONS = {
     ScreenPage.RECOVERY_PROMPT: (
         "recovery.restore", "recovery.cleanup", "recovery.later"),
     ScreenPage.RECOVERY_CONFIRM: ("nav.back", "recovery.confirm"),
-    ScreenPage.ACTION_PROMPT: ("prompt.prev", "prompt.next"),
-    ScreenPage.MESSAGE: ("message.ok", "message.prev", "message.next"),
-    ScreenPage.ERROR: ("error.restart", "error.firmware_restart",
-                       "error.prev", "error.next"),
     ScreenPage.UPDATE_NOTIFICATION: (
         "update.install", "update.later", "update.prev", "update.next",
         "update.reset", "update.reset.back", "update.reset.confirm"),
@@ -239,7 +233,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.cancel_waiting_for_heat = False
         self.cancel_mode = None
         self.cancel_phase = None
-        self.operation_cancel_return_page = ScreenPage.IDLE_HOME
         self.operation_cancel_on_accept = None
         self.operation_cancel_on_clear = None
         self.operation_cancel_request_id = None
@@ -304,14 +297,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.recovery_action = None
         self.recovery_status = None
         self.action_prompt = None
-        self.action_prompt_visible = False
-        self.action_prompt_return_page = ScreenPage.IDLE_HOME
+        self.dialogs = []
         self.action_prompt_page = 0
         self._filament_present = None
 
         self.message = ""
         self.message_title = None
-        self.message_return = ScreenPage.IDLE_HOME
         self.message_actions = (("message.ok", "OK", "enabled"),)
         self.error_message = ""
         self.error_category = ""
@@ -432,7 +423,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             if self.print_state == PrintState.INACTIVE:
                 self._render_startup_modal()
             else:
-                self._show_page(self.page)
+                self._render_screen()
         except Exception:
             logging.exception(
                 "[feather_screen] unable to redraw after typer restart")
@@ -442,11 +433,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             return
         if self.print_state == PrintState.INACTIVE:
             self._render_startup_modal()
-        elif self.page == ScreenPage.CONTROL_MOVE:
-            # Re-entering _show_page would release an active joystick gesture.
-            self._render_move()
         else:
-            self._show_page(self.page)
+            self._render_screen()
 
     def _ensure_renderer_started(self):
         if self.renderer.active:
@@ -684,7 +672,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.toast_until = 0.0
         self.toast_message = ""
         self.action_prompt = None
-        self.action_prompt_visible = False
+        self.dialogs = []
         self.action_prompt_page = 0
         wait = getattr(self, "temperature_wait", None)
         if wait is not None:
@@ -697,6 +685,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         operation = self._operation_context_status(eventtime)
         status.update({
             "page": getattr(self.page, "name", str(self.page)),
+            "dialog": getattr(self._current_dialog(), "name", None),
             "generation": self.renderer.generation,
             "output_frozen": self.renderer.output_frozen,
             "touch_available": getattr(self, "touch_available", None),
@@ -972,7 +961,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._run_immediate_command("M112")
             return
         if (action == "operation.cancel.force"
-                and self.page == ScreenPage.CANCEL_CONFIRM
+                and self._current_dialog() == ScreenDialog.CANCEL_CONFIRM
                 and (getattr(self, "cancel_mode", None) == "not_cancelable"
                      or getattr(self, "cancel_mode", None) == "pending")):
             logging.warning(
@@ -981,25 +970,26 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._run_immediate_command("M112")
             return
         if (action == "operation.cancel.continue"
-                and self.page == ScreenPage.CANCEL_CONFIRM
+                and self._current_dialog() == ScreenDialog.CANCEL_CONFIRM
                 and getattr(self, "cancel_mode", None) == "pending"):
             self._handle_operation_cancel_action(action)
             return
         if (action == "coldpull.cancel"
-                and self.page == ScreenPage.ACTION_PROMPT
+                and self._current_dialog() == ScreenDialog.ACTION_PROMPT
                 and self._action_prompt_is_cold_pull()
                 and "cold_pull" in self._operation_context_status().get(
                     "context_types", ())):
-            self._open_operation_cancel(ScreenPage.ACTION_PROMPT)
+            self._open_operation_cancel(self.page)
             return
         manager = getattr(self, "feature_manager", None)
-        if (manager is not None and
+        if (self._current_dialog() is None and manager is not None and
                 manager.handle_immediate_action(self.page, action)):
             logging.info(
                 "[feather_screen] immediate feature action=%s page=%s",
                 action, self.page.name)
             return
-        if (manager is None and action == "cal.cancel"
+        if (self._current_dialog() is None
+                and manager is None and action == "cal.cancel"
                 and self.page == ScreenPage.CALIBRATION_PROGRESS
                 and getattr(self, "calibration_kind", None) in (
                     "screws", "mesh", "z")):
@@ -1026,7 +1016,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "print.cancel", "operation.cancel.confirm",
             "operation.cancel.back", "operation.cancel.continue",
             "operation.cancel.force")
-        if (self.page == ScreenPage.CANCEL_CONFIRM and
+        if (self._current_dialog() == ScreenDialog.CANCEL_CONFIRM and
                 action == "operation.cancel.back"):
             busy_allowed = True
         if getattr(self, "command_depth", 0) > 0 and not busy_allowed:
@@ -1081,7 +1071,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 "[feather_screen] feature blocked action=%s", action)
             return
         owner = None
-        if manager is not None and manager.owner_name(self.page) is not None:
+        dialog = self._current_dialog()
+        if dialog is not None:
+            semantic_action = None
+        elif manager is not None and manager.owner_name(self.page) is not None:
             try:
                 owner, semantic_action = manager.resolve_semantic_action(
                     self.page, action)
@@ -1098,9 +1091,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 "print.pause", "print.resume", "operation.cancel.confirm"):
             logging.info("[feather_screen] action already in progress=%s", action)
             return
-        allowed = (owner.allows_action(self.page, action)
-                   if owner is not None
-                   else self._action_allowed(self.page, action))
+        allowed = (self._dialog_action_allowed(dialog, action)
+                   if dialog is not None else
+                   owner.allows_action(self.page, action)
+                   if owner is not None else
+                   self._action_allowed(self.page, action))
         if semantic_action is None and not allowed:
             logging.info("[feather_screen] ignored action=%s page=%s",
                          action, self.page.name)
@@ -1116,7 +1111,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     action)
                 self._toast("UNAVAILABLE DURING PRINT")
                 return
-            if semantic_action is not None:
+            if dialog is not None and action == "coldpull.cancel":
+                self._open_operation_cancel(self.page)
+            elif semantic_action is not None:
                 if owner is not None:
                     owner.handle_semantic_action(self.page, semantic_action)
                 else:
@@ -1193,7 +1190,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             elif action in ("message.prev", "message.next"):
                 self.message_page = max(0, getattr(self, "message_page", 0)
                                         + (-1 if action.endswith("prev") else 1))
-                self._show_page(ScreenPage.MESSAGE)
+                self._render_dialog()
             elif action.startswith("error."):
                 self._handle_error_action(action)
             elif action.startswith("update."):
@@ -1211,33 +1208,87 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     raise RuntimeError("The auto bed mesh is no longer active")
                 self._restart_klipper("SAVE_CONFIG")
             elif action == "message.ok":
-                self._show_page(self.message_return)
+                self._close_dialog(ScreenDialog.MESSAGE)
         except Exception as exc:
             logging.exception("[feather_screen] action failed: %s", action)
             self._show_message(str(exc), self.page)
 
     def _action_allowed(self, page, action):
-        if page == ScreenPage.MESSAGE and action not in (
-                "message.ok", "message.prev", "message.next") :
-            return any(
-                item[0] == action
-                for item in getattr(self, "message_actions", ()))
-
         if action in EXACT_ACTIONS.get(page, ()):
             return True
         return ((page == ScreenPage.FILE_BROWSER and action.startswith("file.item"))
                 or (page == ScreenPage.WIFI_SCAN and action.startswith("net.item"))
-                or (page == ScreenPage.WIFI_PASSWORD and is_keyboard_action(action))
-                or (page == ScreenPage.ACTION_PROMPT
-                    and action.startswith("prompt.button.")))
+                or (page == ScreenPage.WIFI_PASSWORD and is_keyboard_action(action)))
+
+    def _current_dialog(self):
+        dialogs = getattr(self, "dialogs", ())
+        return dialogs[-1] if dialogs else None
+
+    def _show_dialog(self, dialog, page=None):
+        if not isinstance(dialog, ScreenDialog):
+            raise TypeError("screen dialog must be a ScreenDialog member")
+        if (dialog != ScreenDialog.ERROR
+                and getattr(getattr(self, "renderer", None),
+                            "output_frozen", False)):
+            return
+        dialogs = getattr(self, "dialogs", None)
+        if dialogs is None:
+            dialogs = self.dialogs = []
+        if dialog in dialogs:
+            dialogs.remove(dialog)
+        dialogs.append(dialog)
+        if (getattr(self, "page", None) == ScreenPage.CONTROL_MOVE
+                and getattr(self, "joystick_action", None) is not None):
+            self._stop_joystick()
+        stop_preview_loader = getattr(self, "_stop_gcode_preview_loader", None)
+        if stop_preview_loader is not None:
+            stop_preview_loader()
+        if page is not None and page != self.page:
+            self._show_page(page)
+        else:
+            self._render_screen()
+
+    def _close_dialog(self, dialog):
+        dialogs = getattr(self, "dialogs", ())
+        if dialog not in dialogs:
+            return
+        was_visible = dialogs[-1] == dialog
+        dialogs.remove(dialog)
+        if was_visible:
+            self._render_screen()
+
+    def _render_dialog(self):
+        dialog = self._current_dialog()
+        if dialog == ScreenDialog.ACTION_PROMPT:
+            self._render_action_prompt()
+        elif dialog == ScreenDialog.CANCEL_CONFIRM:
+            self._render_cancel_confirm()
+        elif dialog == ScreenDialog.MESSAGE:
+            self._render_message()
+        elif dialog == ScreenDialog.ERROR:
+            self._render_error()
+
+    def _dialog_action_allowed(self, dialog, action):
+        if dialog == ScreenDialog.ACTION_PROMPT:
+            return (action in ("prompt.prev", "prompt.next", "coldpull.cancel")
+                    or action.startswith("prompt.button."))
+        if dialog == ScreenDialog.CANCEL_CONFIRM:
+            return action in (
+                "operation.cancel.back", "operation.cancel.confirm",
+                "operation.cancel.continue", "operation.cancel.force")
+        if dialog == ScreenDialog.MESSAGE:
+            return (action in ("message.ok", "message.prev", "message.next")
+                    or any(item[0] == action for item in self.message_actions))
+        if dialog == ScreenDialog.ERROR:
+            return action in (
+                "error.restart", "error.firmware_restart",
+                "error.prev", "error.next")
+        return False
 
     def _show_page(self, page):
         if not isinstance(page, ScreenPage):
             raise TypeError("screen page must be a ScreenPage member")
-        if (page != ScreenPage.ERROR
-                and getattr(
-                    getattr(self, "renderer", None),
-                    "output_frozen", False)):
+        if getattr(getattr(self, "renderer", None), "output_frozen", False):
             return
         self._cancel_file_preview()
         # A complete surface repaint removes every visual toast and commits a
@@ -1269,52 +1320,59 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.previous_page = old_page
         self.page = page
         self._notify_features("on_page_changed", old_page, page)
-        if feature is not None:
-            feature.render(page)
-        elif page == ScreenPage.IDLE_HOME:
-            self._render_home()
-        elif page == ScreenPage.MAIN_MENU:
-            self._render_main_menu()
-        elif page == ScreenPage.CONTROL_HOME:
-            self._render_control_home()
-        elif page == ScreenPage.FILE_BROWSER:
-            self._render_file_browser()
-        elif page == ScreenPage.FILE_CONFIRM:
-            self._render_file_confirm()
-        elif page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
-            self._render_print_page()
-        elif page == ScreenPage.CANCEL_CONFIRM:
-            self._render_cancel_confirm()
-        elif page == ScreenPage.CONTROL_MOVE:
-            self._render_move()
-        elif page == ScreenPage.CONTROL_HEAT:
-            self._render_heat()
-        elif page == ScreenPage.NETWORK_HOME:
-            self._render_network_home()
-        elif page == ScreenPage.WIFI_SCAN:
-            self._render_wifi_scan()
-        elif page == ScreenPage.WIFI_PASSWORD:
-            self._render_keyboard()
-        elif page == ScreenPage.NETWORK_PROGRESS:
-            self._render_network_progress()
-        elif page == ScreenPage.RECOVERY_PROMPT:
-            self._render_recovery_prompt()
-        elif page == ScreenPage.RECOVERY_CONFIRM:
-            self._render_recovery_confirm()
-        elif page == ScreenPage.ACTION_PROMPT:
-            self._render_action_prompt()
-        elif page == ScreenPage.MESSAGE:
-            self._render_message()
-        elif page == ScreenPage.ERROR:
-            self._render_error()
-        elif page == ScreenPage.UPDATE_NOTIFICATION:
-            self.update_notification.render()
-        self._show_touch_unavailable()
+        self._render_screen(feature=feature)
         update_notification = getattr(self, "update_notification", None)
         if update_notification is not None:
             update_notification.on_page_changed(old_page, page)
 
+    def _render_screen(self, feature=None):
+        page = self.page
+        if feature is None:
+            manager = getattr(self, "feature_manager", None)
+            if manager is not None and manager.owner_name(page) is not None:
+                feature = manager.get_for_page(page)
+        frame = (self.renderer.compose() if self._current_dialog()
+                 else nullcontext())
+        with frame:
+            if feature is not None:
+                feature.render(page)
+            elif page == ScreenPage.IDLE_HOME:
+                self._render_home()
+            elif page == ScreenPage.MAIN_MENU:
+                self._render_main_menu()
+            elif page == ScreenPage.CONTROL_HOME:
+                self._render_control_home()
+            elif page == ScreenPage.FILE_BROWSER:
+                self._render_file_browser()
+            elif page == ScreenPage.FILE_CONFIRM:
+                self._render_file_confirm()
+            elif page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
+                self._render_print_page()
+            elif page == ScreenPage.CONTROL_MOVE:
+                self._render_move()
+            elif page == ScreenPage.CONTROL_HEAT:
+                self._render_heat()
+            elif page == ScreenPage.NETWORK_HOME:
+                self._render_network_home()
+            elif page == ScreenPage.WIFI_SCAN:
+                self._render_wifi_scan()
+            elif page == ScreenPage.WIFI_PASSWORD:
+                self._render_keyboard()
+            elif page == ScreenPage.NETWORK_PROGRESS:
+                self._render_network_progress()
+            elif page == ScreenPage.RECOVERY_PROMPT:
+                self._render_recovery_prompt()
+            elif page == ScreenPage.RECOVERY_CONFIRM:
+                self._render_recovery_confirm()
+            elif page == ScreenPage.UPDATE_NOTIFICATION:
+                self.update_notification.render()
+            self._render_dialog()
+        self._show_touch_unavailable()
+
     def _go_back(self):
+        if self._current_dialog() == ScreenDialog.CANCEL_CONFIRM:
+            self._close_operation_cancel()
+            return
         manager = getattr(self, "feature_manager", None)
         if manager is not None:
             owner_name = manager.owner_name(self.page)
@@ -1353,8 +1411,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.page in (ScreenPage.WIFI_SCAN, ScreenPage.WIFI_PASSWORD):
             self._show_page(ScreenPage.NETWORK_HOME if self.page == ScreenPage.WIFI_SCAN
                             else ScreenPage.WIFI_SCAN)
-        elif self.page == ScreenPage.CANCEL_CONFIRM:
-            self._close_operation_cancel()
         else:
             self._show_page(ScreenPage.IDLE_HOME)
 
@@ -1442,6 +1498,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._observed_external_frame_id = frame_id
         if self.print_state != PrintState.IDLE:
             return
+        if self._current_dialog() is not None:
+            return
         pages = (
             ScreenPage.IDLE_HOME, ScreenPage.MAIN_MENU,
             ScreenPage.CONTROL_HOME, ScreenPage.CALIBRATION_HOME,
@@ -1482,6 +1540,16 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._notify_features("on_operation_end", frame_id, outcome)
         except Exception:
             logging.exception("[feather_screen] unable to finish external operation")
+        if (outcome == "cancelled"
+                and self.pending_action == "print.cancel.confirm"):
+            self.pending_action = None
+            self.cancel_requested = False
+            self.cancel_waiting_for_heat = False
+            self._reset_operation_cancel()
+            if self._current_dialog() == ScreenDialog.CANCEL_CONFIRM:
+                self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
+                self._show_message(
+                    "", ScreenPage.IDLE_HOME, title="Print cancelled")
 
     def _operation_context_status(self, eventtime=None):
         manager = getattr(self, "operation_context", None)
@@ -1769,6 +1837,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         be overdrawn by its next frame anyway.
         """
         return (self.page in pages
+                and self._current_dialog() is None
                 and not self._blocking_operation_active())
 
     def _run_blocking_gcode(self, command, message):
@@ -1832,11 +1901,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.message = str(message)
         self.message_title = None if title is None else str(title)
         self.message_page = 0
-        self.message_return = return_page
         self.message_actions = (
             actions if actions is not None
             else (("message.ok", "OK", "enabled"),))
-        self._show_page(ScreenPage.MESSAGE)
+        self._show_dialog(ScreenDialog.MESSAGE, page=return_page)
 
     def _render_message(self):
         save_mesh = any(
@@ -1845,8 +1913,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         title = (getattr(self, "message_title", None) or
                  ("Save bed mesh?" if save_mesh else "Message"))
         title_only = not self.message
-        commands = self.renderer.begin_page("Notification")
-        commands += self.renderer.dialog(
+        commands = self.renderer.dialog(
             title, (self.message,) if self.message else (), self.message_actions,
             x=90, y=143 if title_only else 130, width=620,
             height=194 if title_only else 220, tone="info",
@@ -1873,7 +1940,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         # report the same error again.  Calling begin_page() while output is
         # frozen would advance the renderer generation without replacing the
         # visible hitboxes, making the recovery button permanently stale.
-        if (getattr(self, "page", None) == ScreenPage.ERROR
+        if (self._current_dialog() == ScreenDialog.ERROR
                 and getattr(
                     getattr(self, "renderer", None),
                     "output_frozen", False)):
@@ -1887,10 +1954,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_recovery = (
             recovery if recovery is not None
             else self._classify_error(self.error_message, self.error_category))
-        self._show_page(ScreenPage.ERROR)
+        self.dialogs = [ScreenDialog.ERROR]
+        self._render_dialog()
 
     def _render_error(self):
-        commands = self.renderer.begin_page("Klipper error")
         if self.error_recovery == "firmware_restart":
             advice = "Check the printer, then restart the MCU."
             buttons = (("error.firmware_restart",
@@ -1904,7 +1971,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             advice = "Waiting for Klipper to reconnect."
             buttons = ()
             title = "KLIPPER IS NOT READY"
-        commands += self.renderer.dialog(
+        commands = self.renderer.dialog(
             title, (" ".join(self.error_message.split()), advice), buttons,
             x=160, y=130, width=480, height=220, tone="danger",
             page=getattr(self, "error_page", 0),
@@ -1944,6 +2011,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.error_message = ""
         self.error_category = ""
         self.error_recovery = None
+        self.dialogs = []
         self.shutdown_active = False
         self.restart_pending = True
         self.startup_phase = 0
@@ -2024,20 +2092,22 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif self.busy_message is not None:
             self.busy_phase = (self.busy_phase + 1) % 5
             self.renderer.loader(self.busy_message, self.busy_phase)
+        elif self._current_dialog() == ScreenDialog.CANCEL_CONFIRM:
+            if getattr(self, "cancel_mode", None) == "pending":
+                self._update_cancel_progress()
+        elif self._current_dialog() == ScreenDialog.ACTION_PROMPT:
+            if self._action_prompt_is_cold_pull():
+                self._render_action_prompt()
+        elif self._current_dialog() is not None:
+            pass
         elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
             self._update_print_progress(eventtime)
-        elif (self.page == ScreenPage.CANCEL_CONFIRM
-              and getattr(self, "cancel_mode", None) == "pending"):
-            self._update_cancel_progress()
         elif self.page == ScreenPage.IDLE_HOME:
             self._update_dashboard(eventtime)
         elif self.page == ScreenPage.CONTROL_MOVE:
             self._update_move_status(eventtime)
         elif self.page == ScreenPage.CONTROL_HEAT:
             self._update_heat_status(eventtime)
-        elif (self.page == ScreenPage.ACTION_PROMPT
-              and self._action_prompt_is_cold_pull()):
-            self._render_action_prompt()
         if self.filament_sensor is not None:
             sensor = self.filament_sensor.get_status(eventtime)
             present = sensor.get("filament_detected")
@@ -2090,7 +2160,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 completed = state not in ("printing", "paused") and not virtual_sd_active
             if completed:
                 self.pending_action = None
-                if self.page == ScreenPage.CANCEL_CONFIRM:
+                if self._current_dialog() == ScreenDialog.CANCEL_CONFIRM:
+                    self._reset_operation_cancel()
+                    self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
                     self.print_state = PrintState.IDLE
                     self._show_message(
                         "", ScreenPage.IDLE_HOME, title="Print cancelled")
@@ -2181,14 +2253,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._m73_active = False
         if new_state in (PrintState.PREPARING, PrintState.PRINTING):
             if (self.page not in (
-                    ScreenPage.PRINTING, ScreenPage.CANCEL_CONFIRM, ScreenPage.LIVE_Z_OFFSET)
+                    ScreenPage.PRINTING, ScreenPage.LIVE_Z_OFFSET)
                     and not (self.page == ScreenPage.IDLE_HOME
                              and getattr(
                                  self, "home_during_print", False))):
                 self._show_page(ScreenPage.PRINTING)
         elif new_state == PrintState.PAUSED:
             if self.page not in (
-                    ScreenPage.CANCEL_CONFIRM, ScreenPage.FILAMENT_MATERIAL,
+                    ScreenPage.FILAMENT_MATERIAL,
                     ScreenPage.FILAMENT_ACTION, ScreenPage.LIVE_Z_OFFSET) and not (
                         self.page == ScreenPage.IDLE_HOME
                         and getattr(self, "home_during_print", False)):

@@ -19,7 +19,7 @@ from feather.update_notification import (  # noqa: E402
     FAILURE_RETRY_INTERVAL,
     MAX_FAILURE_RETRY_INTERVAL, ForgeXUpdateNotification, STARTUP_DELAY)
 from ff5m_ui.print_state import PrintState  # noqa: E402
-from ff5m_ui.screen import ScreenPage  # noqa: E402
+from ff5m_ui.screen import ScreenDialog, ScreenPage  # noqa: E402
 from ui import FeatherRenderer  # noqa: E402
 from tests.feather_render_test_helper import RenderFrame  # noqa: E402
 
@@ -87,6 +87,7 @@ class Host:
         self.draw_batches = []
         self.renderer.send = self.draw_batches.append
         self.page = ScreenPage.IDLE_HOME
+        self.dialog = None
         self.previous_page = ScreenPage.IDLE_HOME
         self.print_state = PrintState.IDLE
         self.print_active = False
@@ -116,7 +117,11 @@ class Host:
 
     def _show_message(self, message, return_page):
         self.messages.append((message, return_page))
-        self._show_page(ScreenPage.MESSAGE)
+        self._show_page(return_page)
+        self.dialog = ScreenDialog.MESSAGE
+
+    def _current_dialog(self):
+        return self.dialog
 
     def page_for_print_state(self):
         return (ScreenPage.PRINTING if self.print_active
@@ -302,17 +307,19 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertFalse(self.notification.dialog_visible)
 
     def test_available_update_is_shown_only_from_safe_idle_home(self):
-        self.host.page = ScreenPage.MESSAGE
+        self.host.dialog = ScreenDialog.MESSAGE
         self.request_and_respond()
-        self.assertEqual(self.host.page, ScreenPage.MESSAGE)
+        self.assertEqual(self.host.page, ScreenPage.IDLE_HOME)
+        self.assertEqual(self.host.dialog, ScreenDialog.MESSAGE)
 
+        self.host.dialog = None
         self.host._show_page(ScreenPage.IDLE_HOME)
         self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
         self.assertTrue(self.notification.dialog_visible)
         self.assertEqual(self.notification.available_version, "1.4.3")
 
     def test_print_start_before_deferred_dialog_keeps_update_postponed(self):
-        self.host.page = ScreenPage.MESSAGE
+        self.host.dialog = ScreenDialog.MESSAGE
         self.request_and_respond()
 
         self.host.print_active = True
@@ -326,6 +333,7 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
 
         self.host.print_active = False
         self.host.print_state = PrintState.IDLE
+        self.host.dialog = None
         self.notification.on_print_state_changed(
             PrintState.PRINTING, PrintState.IDLE, "standby")
         self.host._show_page(ScreenPage.IDLE_HOME)
@@ -596,7 +604,8 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertFalse(self.notification.installing)
         self.assertIsNone(self.host.busy_message)
         self.assertEqual(self.notification.available_version, "1.4.3")
-        self.assertEqual(self.host.page, ScreenPage.MESSAGE)
+        self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
+        self.assertEqual(self.host.dialog, ScreenDialog.MESSAGE)
         self.assertIn("did not respond", self.host.messages[-1][0])
 
     def test_update_failure_clears_loader_and_keeps_update_retryable(self):
@@ -610,7 +619,8 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertFalse(self.notification.installing)
         self.assertIsNone(self.host.busy_message)
         self.assertEqual(self.notification.available_version, "1.4.3")
-        self.assertEqual(self.host.page, ScreenPage.MESSAGE)
+        self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
+        self.assertEqual(self.host.dialog, ScreenDialog.MESSAGE)
         self.assertIn("Network unavailable", self.host.messages[-1][0])
         self.assertEqual(
             self.host.messages[-1][1], ScreenPage.UPDATE_NOTIFICATION)

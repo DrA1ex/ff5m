@@ -186,12 +186,14 @@ def base_controller(state="idle"):
     controller.cancel_waiting_for_heat = False
     controller.cancel_mode = None
     controller.cancel_phase = None
-    controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
     controller.operation_cancel_on_accept = None
     controller.operation_cancel_on_clear = None
     controller.operation_cancel_request_id = None
     controller.operation_cancel_target_name = None
     controller.operation_cancel_target_mode = None
+    controller.dialogs = []
+    controller._render_dialog = lambda: None
+    controller._render_screen = lambda feature=None: controller._render_dialog()
     controller._last_context_cancel_result = None
     controller._filament_request_token = 0
     controller.busy_phase = 0
@@ -1477,7 +1479,7 @@ class FileWorkflowTest(unittest.TestCase):
 
     def test_mesh_save_action_requires_idle_and_runs_save_config(self):
         controller = base_controller()
-        controller.page = FEATHER.ScreenPage.MESSAGE
+        controller.dialogs = [FEATHER.ScreenDialog.MESSAGE]
         controller.last_action_time = -1
         controller.message_actions = (
             ("mesh.save", "SAVE & RESTART", "enabled"),
@@ -1876,7 +1878,8 @@ class PrintWorkflowTest(unittest.TestCase):
         self.assertEqual(controller.gcode.commands, [])
 
         controller._handle_print_action("print.cancel")
-        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.CANCEL_CONFIRM)
 
     def test_pause_refreshes_resume_button_before_next_periodic_update(self):
         controller = base_controller("printing")
@@ -1981,7 +1984,9 @@ class PrintWorkflowTest(unittest.TestCase):
         pages = []
         controller._show_page = pages.append
         controller._handle_print_action("print.cancel")
-        self.assertEqual(pages, [FEATHER.ScreenPage.CANCEL_CONFIRM])
+        self.assertEqual(pages, [FEATHER.ScreenPage.PAUSED])
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.CANCEL_CONFIRM)
         self.assertEqual(controller.gcode.commands, [])
         controller._handle_operation_cancel_action(
             "operation.cancel.confirm")
@@ -2083,7 +2088,8 @@ class PrintWorkflowTest(unittest.TestCase):
 
     def test_non_cancelable_dialog_offers_continue_or_confirmed_m112(self):
         controller = base_controller("printing")
-        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
         controller.cancel_mode = "not_cancelable"
         controller.renderer = FEATHER.FeatherRenderer()
         rendering = RenderCapture(controller.renderer)
@@ -2344,11 +2350,32 @@ class PrintWorkflowTest(unittest.TestCase):
         controller = base_controller("printing")
         controller.pending_action = "print.cancel.confirm"
         controller.cancel_requested = True
-        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
         controller._show_page = lambda page: None
         controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
         self.assertEqual(controller.pending_action, "print.cancel.confirm")
         self.assertTrue(controller.cancel_requested)
+
+    def test_completed_cancel_closes_dialog_even_if_print_stats_stays_paused(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
+        controller.pending_action = "print.cancel.confirm"
+        controller.cancel_mode = "pending"
+        controller.cancel_requested = True
+        controller._show_page = lambda page: setattr(controller, "page", page)
+
+        controller._handle_operation_end(1, "cancelled")
+        controller._reconcile_pending_action(90.0, "paused", False)
+
+        self.assertIsNone(controller.pending_action)
+        self.assertIsNone(controller.cancel_mode)
+        self.assertFalse(controller.cancel_requested)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.MESSAGE)
+        self.assertEqual(controller.message_title, "Print cancelled")
 
     def test_feather_abort_requests_nearest_context_domain(self):
         controller = base_controller("printing")
@@ -3377,7 +3404,8 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_filament_page_cannot_replace_cancel_confirmation(self):
         controller = base_controller("paused")
-        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.page = FEATHER.ScreenPage.PAUSED
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
         pages = []
         controller._show_page = pages.append
 
@@ -4486,7 +4514,7 @@ class TouchEventBridgeTest(unittest.TestCase):
         self.assertEqual(len(notices), 1)
         controller._handle_touch_action("print.cancel")
         self.assertEqual(actions, ["print.cancel"])
-        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
         controller._handle_touch_action("operation.cancel.back")
         self.assertEqual(actions, ["print.cancel", "operation.cancel.back"])
         controller._handle_touch_action("nav.back")
@@ -4737,18 +4765,52 @@ class ActionPromptProtocolTest(unittest.TestCase):
     def controller():
         controller = base_controller()
         controller.action_prompt = None
-        controller.action_prompt_visible = False
-        controller.action_prompt_return_page = FEATHER.ScreenPage.IDLE_HOME
         controller.action_prompt_page = 0
         controller.recovery_action = None
         controller.resurrection = None
         shown = []
 
         def show_page(page):
+            old_page = controller.page
             controller.page = page
-            shown.append(page)
+            if page != old_page or controller._current_dialog() is None:
+                shown.append(page)
+            if controller._current_dialog() is not None:
+                controller._render_dialog()
 
         controller._show_page = show_page
+        controller._render_screen = lambda: show_page(controller.page)
+        def render_dialog():
+            if controller._current_dialog() is not None:
+                shown.append(controller._current_dialog())
+            if isinstance(getattr(controller, "renderer", None),
+                          FEATHER.FeatherRenderer):
+                FEATHER.FeatherScreen._render_dialog(controller)
+        controller._render_dialog = render_dialog
+        return controller, shown
+
+    @staticmethod
+    def controller_with_navigation():
+        controller, _ = ActionPromptProtocolTest.controller()
+        del controller._show_page
+        controller._render_screen = (
+            FEATHER.FeatherScreen._render_screen.__get__(controller))
+        shown = []
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller._cancel_file_preview = lambda: None
+        controller._apply_safety_visibility = lambda page: None
+        controller._show_touch_unavailable = lambda: None
+        controller._notify_features = lambda *args: None
+        controller._render_dialog = lambda: (
+            shown.append(controller._current_dialog())
+            if controller._current_dialog() is not None else None)
+        controller._render_main_menu = lambda: shown.append(
+            FEATHER.ScreenPage.MAIN_MENU)
+        controller._render_home = lambda: shown.append(
+            FEATHER.ScreenPage.IDLE_HOME)
+        controller._render_control_home = lambda: shown.append(
+            FEATHER.ScreenPage.CONTROL_HOME)
+        controller._render_print_page = lambda: shown.append(controller.page)
         return controller, shown
 
     def test_prompt_responses_build_show_and_close_dialog(self):
@@ -4766,8 +4828,8 @@ class ActionPromptProtocolTest(unittest.TestCase):
             "// action:prompt_show",
         ]))
 
-        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
-        self.assertTrue(controller.action_prompt_visible)
+        self.assertEqual(shown, [FEATHER.ScreenDialog.ACTION_PROMPT])
+        self.assertIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
         self.assertEqual(controller.action_prompt["title"], "Choose material")
         self.assertEqual(len(controller.action_prompt["rows"]), 1)
         self.assertEqual(
@@ -4779,9 +4841,207 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
         controller._handle_gcode_output("// action:prompt_end")
 
-        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
-        self.assertFalse(controller.action_prompt_visible)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertIsNone(controller._current_dialog())
+        self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
         self.assertIsNone(controller.action_prompt)
+
+    def test_visible_prompt_survives_print_start_and_returns_to_current_print_page(self):
+        controller, shown = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Timelapse video in progress",
+            "// action:prompt_text Wait for video generation",
+            "// action:prompt_show")))
+
+        controller.print_stats.status["state"] = "printing"
+        controller._change_print_state(FEATHER.PrintState.PREPARING, "printing")
+        controller.print_stats.status["state"] = "paused"
+        controller._change_print_state(FEATHER.PrintState.PAUSED, "paused")
+
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PAUSED)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.ACTION_PROMPT)
+        self.assertEqual(shown, [
+            FEATHER.ScreenPage.IDLE_HOME, FEATHER.ScreenDialog.ACTION_PROMPT,
+            FEATHER.ScreenPage.PRINTING, FEATHER.ScreenDialog.ACTION_PROMPT,
+            FEATHER.ScreenPage.PAUSED, FEATHER.ScreenDialog.ACTION_PROMPT])
+
+        controller.print_stats.status["state"] = "printing"
+        controller._change_print_state(FEATHER.PrintState.PRINTING, "printing")
+        controller._handle_gcode_output("// action:prompt_end")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PRINTING)
+
+    def test_background_navigation_keeps_prompt_and_updates_return_page(self):
+        controller, shown = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Choose material",
+            "// action:prompt_show")))
+
+        controller._show_page(FEATHER.ScreenPage.MAIN_MENU)
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HOME)
+
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertEqual(shown, [
+            FEATHER.ScreenPage.IDLE_HOME, FEATHER.ScreenDialog.ACTION_PROMPT,
+            FEATHER.ScreenPage.MAIN_MENU, FEATHER.ScreenDialog.ACTION_PROMPT,
+            FEATHER.ScreenPage.CONTROL_HOME, FEATHER.ScreenDialog.ACTION_PROMPT])
+
+        controller._handle_gcode_output("// action:prompt_end")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.CONTROL_HOME)
+
+    def test_redraw_restores_background_behind_visible_prompt(self):
+        controller, shown = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Choose material",
+            "// action:prompt_show")))
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HOME)
+        shown.clear()
+
+        controller._show_page(controller.page)
+
+        self.assertEqual(shown, [
+            FEATHER.ScreenPage.CONTROL_HOME,
+            FEATHER.ScreenDialog.ACTION_PROMPT])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+
+    def test_background_and_dialog_are_submitted_in_one_frame(self):
+        controller, _ = self.controller_with_navigation()
+        renderer = controller.renderer
+        controller._render_main_menu = lambda: renderer.send(
+            renderer.begin_page("Menu"))
+        controller._render_dialog = (
+            lambda: FEATHER.FeatherScreen._render_dialog(controller))
+        controller._render_action_prompt = lambda: renderer.send(
+            renderer.dialog("Wait", (), (
+                ("prompt.button.0", "OK", "enabled"),)))
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Wait",
+            "// action:prompt_show")))
+        renderer._batch_queue.get(timeout=0)
+
+        controller._show_page(FEATHER.ScreenPage.MAIN_MENU)
+
+        frame = renderer._batch_queue.get(timeout=0)
+        self.assertEqual(frame.kind, "surface")
+        self.assertTrue(any('"MENU"' in command for command in frame.commands))
+        self.assertTrue(any('"WAIT"' in command for command in frame.commands))
+        self.assertIsNone(renderer._batch_queue.get(timeout=0))
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MAIN_MENU)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.ACTION_PROMPT)
+
+        controller._render_control_home = lambda: renderer.send(
+            renderer.begin_page("Control menu") + renderer.button(
+                "nav.move", 20, 80, 200, 60, "MOVE"))
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HOME)
+
+        frame = renderer._batch_queue.get(timeout=0)
+        self.assertTrue(any('"CONTROL MENU"' in command
+                            for command in frame.commands))
+        self.assertTrue(any('"WAIT"' in command
+                            for command in frame.commands))
+        self.assertEqual(set(renderer._buttons), {"prompt.button.0"})
+
+        controller._handle_gcode_output("// action:prompt_end")
+
+        frame = renderer._batch_queue.get(timeout=0)
+        self.assertTrue(any('"CONTROL MENU"' in command
+                            for command in frame.commands))
+        self.assertFalse(any('"WAIT"' in command
+                             for command in frame.commands))
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(set(renderer._buttons), {"nav.move"})
+
+    def test_message_remains_over_new_page_then_reveals_its_actions(self):
+        controller, _ = self.controller_with_navigation()
+        renderer = controller.renderer
+        controller._render_dialog = (
+            lambda: FEATHER.FeatherScreen._render_dialog(controller))
+        controller._render_main_menu = lambda: renderer.send(
+            renderer.begin_page("Main menu"))
+        controller._render_control_home = lambda: renderer.send(
+            renderer.begin_page("Control menu") + renderer.button(
+                "nav.move", 20, 80, 200, 60, "MOVE"))
+
+        controller._show_message(
+            "Page transition check", FEATHER.ScreenPage.MAIN_MENU)
+        first = renderer._batch_queue.get(timeout=0)
+        self.assertTrue(any('"MAIN MENU"' in command
+                            for command in first.commands))
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.MESSAGE)
+
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HOME)
+        covered = renderer._batch_queue.get(timeout=0)
+        self.assertTrue(any('"CONTROL MENU"' in command
+                            for command in covered.commands))
+        self.assertTrue(any('"Page transition check"' in command
+                            for command in covered.commands))
+        self.assertEqual(set(renderer._buttons), {"message.ok"})
+
+        controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
+        revealed = renderer._batch_queue.get(timeout=0)
+        self.assertTrue(any('"CONTROL MENU"' in command
+                            for command in revealed.commands))
+        self.assertFalse(any('"Page transition check"' in command
+                             for command in revealed.commands))
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(set(renderer._buttons), {"nav.move"})
+
+    def test_visual_dialog_scenarios_reveal_latest_background_page(self):
+        from feather_ui_test.scenarios import ScenarioCatalog
+
+        controller, _ = self.controller_with_navigation()
+        controller._show_page(FEATHER.ScreenPage.MAIN_MENU)
+        scenarios = ScenarioCatalog(type("Run", (), {"host": controller})())
+
+        scenarios._open_navigation_message()
+        scenarios._change_page_under_dialog(
+            FEATHER.ScreenPage.CONTROL_HOME, FEATHER.ScreenDialog.MESSAGE)
+        controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertIsNone(controller._current_dialog())
+
+        controller._show_page(FEATHER.ScreenPage.MAIN_MENU)
+        scenarios._open_navigation_prompt()
+        scenarios._change_page_under_dialog(
+            FEATHER.ScreenPage.CONTROL_HOME,
+            FEATHER.ScreenDialog.ACTION_PROMPT)
+        scenarios._dismiss_navigation_prompt()
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertIsNone(controller._current_dialog())
+
+    def test_nested_message_closes_back_to_prompt_on_current_page(self):
+        controller, shown = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Wait",
+            "// action:prompt_show")))
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HOME)
+        controller._show_dialog(FEATHER.ScreenDialog.MESSAGE)
+        shown.clear()
+
+        controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
+
+        self.assertEqual(shown, [
+            FEATHER.ScreenPage.CONTROL_HOME,
+            FEATHER.ScreenDialog.ACTION_PROMPT])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HOME)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.ACTION_PROMPT)
+
+    def test_prompt_blocks_page_action_while_page_changes_underneath(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.dialogs = [FEATHER.ScreenDialog.ACTION_PROMPT]
+        controller.last_action_time = -1.0
+        controller.feature_manager = None
+        controller._blocking_operation_active = lambda: False
+
+        controller._dispatch_action("print.pause")
+
+        self.assertEqual(controller.gcode.commands, [])
 
     def test_prompt_button_can_replace_dialog_with_next_menu(self):
         controller, shown = self.controller()
@@ -4805,10 +5065,8 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
         self.assertEqual(commands, ["OPEN_NEXT"])
         self.assertEqual(controller.action_prompt["title"], "Second")
-        self.assertEqual(
-            controller.action_prompt_return_page, FEATHER.ScreenPage.IDLE_HOME)
         self.assertEqual(shown, [
-            FEATHER.ScreenPage.ACTION_PROMPT, FEATHER.ScreenPage.ACTION_PROMPT])
+            FEATHER.ScreenDialog.ACTION_PROMPT, FEATHER.ScreenDialog.ACTION_PROMPT])
 
     def test_cold_pull_prompt_uses_its_commands_and_shared_context(self):
         controller, shown = self.controller()
@@ -4830,8 +5088,8 @@ class ActionPromptProtocolTest(unittest.TestCase):
         ]))
         controller._render_action_prompt()
 
-        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
-        self.assertTrue(controller.action_prompt_visible)
+        self.assertEqual(shown, [FEATHER.ScreenDialog.ACTION_PROMPT])
+        self.assertIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
         self.assertTrue(rendering.latest.has_action("prompt.button.0"))
 
         controller._handle_action_prompt_action("prompt.button.0")
@@ -4852,9 +5110,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         ]))
 
         frame = rendering.latest
-        self.assertTrue(controller.action_prompt_visible)
-        self.assertEqual(
-            controller.action_prompt_return_page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
         self.assertTrue(frame.has_text(
             controller.operation_context.status["current_state"]))
         self.assertTrue(frame.has_action("coldpull.cancel"))
@@ -4875,7 +5131,8 @@ class ActionPromptProtocolTest(unittest.TestCase):
             cancel_target_mode="cancelable", revision=1)
 
         controller._handle_touch_action("coldpull.cancel")
-        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.CANCEL_CONFIRM)
         self.assertEqual(controller.gcode.commands, [])
 
         controller._handle_operation_cancel_action(
@@ -4884,7 +5141,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
         controller._handle_gcode_output("// action:prompt_end")
         self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
-        self.assertFalse(controller.action_prompt_visible)
+        self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
         self.assertIsNone(controller.action_prompt)
         self.assertIsNone(controller.cancel_mode)
 
@@ -4931,13 +5188,13 @@ class ActionPromptProtocolTest(unittest.TestCase):
         result = controller.operation_context.request_cancel()
 
         self.assertTrue(result["accepted"])
-        self.assertTrue(controller.action_prompt_visible)
-        self.assertEqual(controller.page, FEATHER.ScreenPage.ACTION_PROMPT)
-        self.assertEqual(shown, [FEATHER.ScreenPage.ACTION_PROMPT])
+        self.assertIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertEqual(shown, [FEATHER.ScreenDialog.ACTION_PROMPT])
 
         controller._handle_gcode_output("// action:prompt_end")
         self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
-        self.assertFalse(controller.action_prompt_visible)
+        self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
 
     def test_cold_pull_error_overlay_also_waits_for_prompt_end(self):
         controller, shown = self.controller()
@@ -4946,13 +5203,13 @@ class ActionPromptProtocolTest(unittest.TestCase):
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_show",
         ]))
-        controller.page = FEATHER.ScreenPage.MESSAGE
-        controller.message_return = FEATHER.ScreenPage.ACTION_PROMPT
+        controller.dialogs.append(FEATHER.ScreenDialog.MESSAGE)
 
         controller._handle_gcode_output("// action:prompt_end")
 
-        self.assertEqual(shown[-1], FEATHER.ScreenPage.IDLE_HOME)
-        self.assertFalse(controller.action_prompt_visible)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.MESSAGE)
+        self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
 
     def test_prompt_end_closes_recovery_page_without_prompt_buffer(self):
         controller, shown = self.controller()
@@ -4977,7 +5234,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         ]))
 
         self.assertEqual(shown, [FEATHER.ScreenPage.RECOVERY_PROMPT])
-        self.assertTrue(controller.action_prompt_visible)
+        self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT, controller.dialogs)
 
 
 if __name__ == "__main__":

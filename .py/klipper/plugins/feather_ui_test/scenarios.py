@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
@@ -227,6 +227,30 @@ class ScenarioCatalog:
             steps, "nav.menu", ScreenPage.MAIN_MENU,
             label="ui-open-main-menu")
         self._add_capture(steps, "ui-main-menu")
+        self._add_call(steps, "ui-message-open-over-menu",
+                       self._open_navigation_message)
+        self._add_capture(steps, "ui-message-over-menu")
+        self._add_call(steps, "ui-message-background-control",
+                       lambda: self._change_page_under_dialog(
+                           ScreenPage.CONTROL_HOME, ScreenDialog.MESSAGE))
+        self._add_capture(steps, "ui-message-over-control")
+        self._add_tap(steps, "message.ok", ScreenPage.CONTROL_HOME,
+                      label="ui-message-dismiss")
+        self._add_capture(steps, "ui-message-dismissed-control")
+        self._add_tap(steps, "nav.back", ScreenPage.MAIN_MENU,
+                      label="ui-message-return-to-menu")
+        self._add_call(steps, "ui-prompt-open-over-menu",
+                       self._open_navigation_prompt)
+        self._add_capture(steps, "ui-prompt-over-menu")
+        self._add_call(steps, "ui-prompt-background-control",
+                       lambda: self._change_page_under_dialog(
+                           ScreenPage.CONTROL_HOME, ScreenDialog.ACTION_PROMPT))
+        self._add_capture(steps, "ui-prompt-over-control")
+        self._add_call(steps, "ui-prompt-dismiss",
+                       self._dismiss_navigation_prompt)
+        self._add_capture(steps, "ui-prompt-dismissed-control")
+        self._add_tap(steps, "nav.back", ScreenPage.MAIN_MENU,
+                      label="ui-prompt-return-to-menu")
         self._add_tap(steps, "nav.files", ScreenPage.FILE_BROWSER)
         self._add_render_capture(
             steps, "ui-files", lambda: self._render_file_view("list"))
@@ -918,10 +942,39 @@ class ScenarioCatalog:
     def _render_single_action_message(self):
         with _temporary_attributes(self.host, {
                 "message": "Moonraker returned an error. Check the printer connection.",
-                "message_return": ScreenPage.NETWORK_HOME,
                 "message_actions": (("message.ok", "OK", "enabled"),),
         }):
-            self._show(ScreenPage.MESSAGE)
+            self._show(ScreenDialog.MESSAGE)
+
+    def _open_navigation_message(self):
+        self.host._show_message(
+            "This dialog stays visible while the page changes.",
+            ScreenPage.MAIN_MENU, title="Page transition check")
+        self._require_dialog_over(ScreenPage.MAIN_MENU, ScreenDialog.MESSAGE)
+
+    def _open_navigation_prompt(self):
+        self.host._handle_gcode_output("\n".join((
+            "// action:prompt_begin Page transition check",
+            "// action:prompt_text This prompt stays visible while the page changes.",
+            "// action:prompt_footer_button Dismiss|RESPOND TYPE=command MSG=action:prompt_end|secondary",
+            "// action:prompt_show")))
+        self._require_dialog_over(
+            ScreenPage.MAIN_MENU, ScreenDialog.ACTION_PROMPT)
+
+    def _change_page_under_dialog(self, page, dialog):
+        self.host._show_page(page)
+        self._require_dialog_over(page, dialog)
+
+    def _dismiss_navigation_prompt(self):
+        self.host._handle_gcode_output("// action:prompt_end")
+        if (self.host.page != ScreenPage.CONTROL_HOME
+                or self.host._current_dialog() is not None):
+            raise RuntimeError("Prompt dismissal did not reveal Control menu")
+
+    def _require_dialog_over(self, page, dialog):
+        if (self.host.page != page
+                or self.host._current_dialog() != dialog):
+            raise RuntimeError("Dialog is not visible over %s" % page.name)
 
     def _render_dialog_variant(self, kind):
         title, lines, label = {
@@ -974,33 +1027,30 @@ class ScenarioCatalog:
                     ], "buttons": {}, "group": None,
                 },
                 "action_prompt_page": 0,
-                "action_prompt_visible": True,
         }):
-            self._show(ScreenPage.ACTION_PROMPT)
+            self._show(ScreenDialog.ACTION_PROMPT)
 
     def _render_two_action_message(self):
         with _temporary_attributes(self.host, {
                 "message": "The saved Wi-Fi password was rejected.",
-                "message_return": ScreenPage.WIFI_SCAN,
                 "message_actions": (
                     ("message.ok", "CANCEL", "enabled"),
                     ("net.reset.saved", "RESET PASSWORD", "warning"),
                 ),
         }):
-            self._show(ScreenPage.MESSAGE)
+            self._show(ScreenDialog.MESSAGE)
 
     def _render_mesh_save_message(self):
         with _temporary_attributes(self.host, {
                 "message": (
                     "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
                     "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART."),
-                "message_return": ScreenPage.IDLE_HOME,
                 "message_actions": (
                     ("mesh.save", "SAVE & RESTART", "enabled"),
                     ("message.ok", "LATER", "enabled"),
                 ),
         }):
-            self._show(ScreenPage.MESSAGE)
+            self._show(ScreenDialog.MESSAGE)
 
     def _render_preparing_print(self):
         class Status:
@@ -1227,11 +1277,10 @@ class ScenarioCatalog:
                     "footer": [], "buttons": {}, "group": None,
                 },
                 "action_prompt_page": 0,
-                "action_prompt_visible": True,
                 "_operation_context_status":
                     lambda eventtime=None: operation,
         }):
-            self._show(ScreenPage.ACTION_PROMPT)
+            self._show(ScreenDialog.ACTION_PROMPT)
 
     def _render_cancel_snapshot(self, kind):
         mode = "not_cancelable" if kind == "not-cancelable" else kind
@@ -1253,7 +1302,7 @@ class ScenarioCatalog:
                 "busy_phase": 2,
                 "_operation_context_status": lambda eventtime=None: operation,
         }):
-            self._show(ScreenPage.CANCEL_CONFIRM)
+            self._show(ScreenDialog.CANCEL_CONFIRM)
 
     def _render_recovery_cleanup(self):
         with _temporary_attributes(self.host, {"recovery_action": "cleanup"}):
@@ -1275,7 +1324,7 @@ class ScenarioCatalog:
                 "error_category": "",
                 "error_recovery": recovery,
         }):
-            self._show(ScreenPage.ERROR)
+            self._show(ScreenDialog.ERROR)
 
     def _render_update_snapshot(self, long):
         notification = getattr(self.host, "update_notification", None)
@@ -1495,13 +1544,13 @@ class ScenarioCatalog:
             steps, "filament-open",
             lambda: self.host._run_script("LOAD_MATERIAL"))
         self._add_capture(steps, "filament-material-prompt-screen")
-        self._add_prompt_tap(steps, self.material, ScreenPage.ACTION_PROMPT)
+        self._add_prompt_tap(steps, self.material, ScreenDialog.ACTION_PROMPT)
         self._add_capture(steps, "filament-action-prompt-screen")
-        self._add_prompt_tap(steps, "Load", ScreenPage.ACTION_PROMPT)
+        self._add_prompt_tap(steps, "Load", ScreenDialog.ACTION_PROMPT)
         self._add_capture(steps, "filament-loaded-screen")
-        self._add_prompt_tap(steps, "Purge", ScreenPage.ACTION_PROMPT)
+        self._add_prompt_tap(steps, "Purge", ScreenDialog.ACTION_PROMPT)
         self._add_capture(steps, "filament-purged-screen")
-        self._add_prompt_tap(steps, "Unload", ScreenPage.ACTION_PROMPT)
+        self._add_prompt_tap(steps, "Unload", ScreenDialog.ACTION_PROMPT)
         self._add_capture(steps, "filament-unloaded-screen")
         self._add_prompt_tap(steps, "Done")
         self._add_capture(steps, "filament-done-screen")
@@ -1709,7 +1758,7 @@ class ScenarioCatalog:
         return (state not in ("printing", "paused")
                 and not self.host.virtual_sdcard.is_active()
                 and self.host.print_state == PrintState.IDLE
-                and self.host.page == ScreenPage.MESSAGE
+                and self.host._current_dialog() == ScreenDialog.MESSAGE
                 and "message.ok" in self.host.renderer._buttons)
 
     def _context_cancelled(self):
@@ -1718,7 +1767,7 @@ class ScenarioCatalog:
         return (state == "cancelled"
                 and not self.host.virtual_sdcard.is_active()
                 and self.host.print_state == PrintState.IDLE
-                and self.host.page == ScreenPage.MESSAGE
+                and self.host._current_dialog() == ScreenDialog.MESSAGE
                 and "message.ok" in self.host.renderer._buttons)
 
     def _context_idle_timeout(self):
@@ -1766,9 +1815,15 @@ class ScenarioCatalog:
             raise RuntimeError("Recovery action prompt did not open")
 
     def _show(self, page):
-        self.host._show_page(page)
-        if self.host.page != page:
-            raise RuntimeError("Unable to show page %s" % page.name)
+        self.host.dialogs = []
+        if isinstance(page, ScreenDialog):
+            self.host._show_dialog(page)
+            if self.host._current_dialog() != page:
+                raise RuntimeError("Unable to show dialog %s" % page.name)
+        else:
+            self.host._show_page(page)
+            if self.host.page != page:
+                raise RuntimeError("Unable to show page %s" % page.name)
 
     def _render_calibration_variants(self):
         calibration = self.host.feature_manager.get("calibration")

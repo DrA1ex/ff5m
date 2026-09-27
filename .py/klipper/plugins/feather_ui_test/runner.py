@@ -16,7 +16,7 @@ import shutil
 import time
 from datetime import datetime
 
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.z_offset import actions as z_actions
 from .artifacts import (
@@ -840,15 +840,17 @@ class UITestRun:
             if self.abort_requested:
                 self._complete("aborted", "abort requested")
                 return
-            if self.host.page == ScreenPage.MESSAGE and expected != ScreenPage.MESSAGE:
+            dialog = self.host._current_dialog()
+            if dialog == ScreenDialog.MESSAGE and expected != ScreenDialog.MESSAGE:
                 raise RuntimeError(str(getattr(
                     self.host, "message", "Action opened a message")))
-            if self.host.page == ScreenPage.ERROR:
+            if dialog == ScreenDialog.ERROR:
                 raise RuntimeError(str(getattr(
                     self.host, "error_message", "Action opened an error")))
+            visible = dialog or self.host.page
             expected_seen = self.step_runtime.get(
                 "expected_page_seen", expected is None)
-            if not expected_seen and self.host.page == expected:
+            if not expected_seen and visible == expected:
                 self.step_runtime["expected_page_seen"] = True
                 expected_seen = True
             operation_active = (
@@ -870,7 +872,7 @@ class UITestRun:
             if not expected_seen:
                 raise RuntimeError(
                     "Action %s did not reach page %s; stopped at %s" %
-                    (step["label"], expected.name, self.host.page.name))
+                    (step["label"], expected.name, visible.name))
             self.step_index += 1
             self.step_runtime = {}
             self._event("PASS %s" % step["label"])

@@ -382,7 +382,6 @@ def calibration_controller(path=None):
             "cancel_available": False, "cancel_pending": False,
             "cancel_request_id": None, "cancel_target_name": None,
             "cancel_target_mode": None, "cancel_blocker_name": None})
-    controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
     controller.operation_cancel_on_accept = None
     controller.operation_cancel_on_clear = None
     controller.operation_cancel_request_id = None
@@ -484,7 +483,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         session = controller.extruder_calibration
         session.phase = "cold_pull"
         session.cold_pull_material = "PLA"
-        controller.page = FEATHER.ScreenPage.CANCEL_CONFIRM
+        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
         controller.operation_context = types.SimpleNamespace(
             get_status=lambda eventtime: {
                 "context_path": ("Cold Pull",),
@@ -497,7 +496,8 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller._poll_cold_pull_progress(10.0, force=True)
 
         self.assertEqual(batches, [])
-        self.assertEqual(controller.page, FEATHER.ScreenPage.CANCEL_CONFIRM)
+        self.assertEqual(controller._current_dialog(),
+                         FEATHER.ScreenDialog.CANCEL_CONFIRM)
 
     def test_cold_pull_runs_on_its_feature_page_without_blocking_loader(self):
         controller = calibration_controller()

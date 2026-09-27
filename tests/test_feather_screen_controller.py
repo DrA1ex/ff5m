@@ -249,7 +249,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.ScreenPage.FILE_CONFIRM: "_render_file_confirm",
             FEATHER.ScreenPage.PRINTING: "_render_print_page",
             FEATHER.ScreenPage.PAUSED: "_render_print_page",
-            FEATHER.ScreenPage.CANCEL_CONFIRM: "_render_cancel_confirm",
             FEATHER.ScreenPage.CONTROL_MOVE: "_render_move",
             FEATHER.ScreenPage.CONTROL_HEAT: "_render_heat",
             FEATHER.ScreenPage.CALIBRATION_HOME: "_render_calibration_home",
@@ -276,9 +275,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.ScreenPage.NETWORK_PROGRESS: "_render_network_progress",
             FEATHER.ScreenPage.RECOVERY_PROMPT: "_render_recovery_prompt",
             FEATHER.ScreenPage.RECOVERY_CONFIRM: "_render_recovery_confirm",
-            FEATHER.ScreenPage.ACTION_PROMPT: "_render_action_prompt",
-            FEATHER.ScreenPage.MESSAGE: "_render_message",
-            FEATHER.ScreenPage.ERROR: "_render_error",
         }
         feature_pages = {
             page for spec in FEATHER.FEATURE_SPECS for page in spec.pages
@@ -1368,7 +1364,8 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_z_shutdown_clears_local_session_without_replacing_error_page(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.gcode = FailingGCode()
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.print_state = FEATHER.PrintState.IDLE
         controller.shutdown_active = True
         controller.calibration_clean_nozzle = False
@@ -1385,7 +1382,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._run_z_calibration_preparation(100.0)
 
         self.assertFalse(controller.z_calibration.active)
-        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
         self.assertEqual(pages, [])
 
     def test_calibration_cancel_requests_context_domain_once(self):
@@ -1394,14 +1391,15 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_cancel_requested = False
         controller.calibration_cancel_dispatched = False
         controller.reactor = Reactor()
-        controller.operation_cancel_return_page = FEATHER.ScreenPage.IDLE_HOME
         controller.operation_cancel_on_accept = None
         controller.operation_cancel_on_clear = None
         controller.operation_cancel_request_id = None
         controller.operation_cancel_target_name = None
         controller.operation_cancel_target_mode = None
         controller.cancel_mode = None
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller._show_page = lambda page: setattr(controller, "page", page)
+        controller._render_screen = lambda: controller._render_dialog()
         controller._render_cancel_confirm = lambda: None
         requests = []
         controller.operation_context = type("Contexts", (), {
@@ -1467,7 +1465,8 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_frozen_error_button_shows_pressed_feedback(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.reactor = Reactor()
         controller.dimmed = False
         controller.renderer = FEATHER.FeatherRenderer()
@@ -3170,7 +3169,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.gcode = ShutdownGCode()
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.error_recovery = None
         controller._require_idle = lambda: None
         controller._limited_preheat = lambda material: (220, 60)
@@ -3181,12 +3181,13 @@ class ControllerSafetyTest(unittest.TestCase):
             controller._run_calibration(0)
 
         self.assertEqual(controller.calibration_error, "opaque command failure")
-        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
         self.assertEqual(rendered, [])
 
     def test_workflow_pages_cannot_replace_firmware_restart_screen(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
         controller.error_recovery = "firmware_restart"
@@ -3196,12 +3197,13 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._show_page(FEATHER.ScreenPage.CALIBRATION_RESULT)
 
-        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
         self.assertEqual(rendered, [])
 
     def test_frozen_shutdown_screen_ignores_late_action_error_page(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer.freeze_output()
         controller.print_state = FEATHER.PrintState.IDLE
@@ -3215,12 +3217,13 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._show_message(
             "opaque command failure", FEATHER.ScreenPage.CONTROL_HOME)
 
-        self.assertEqual(controller.page, FEATHER.ScreenPage.ERROR)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
         self.assertEqual(rendered, [])
 
     def test_frozen_shutdown_screen_preserves_recovery_hitbox_generation(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
         controller.renderer._generation = 9
         controller.renderer.freeze_output()
@@ -3230,7 +3233,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._show_message(
             "Shutdown due to M112 command; use FIRMWARE_RESTART",
-            FEATHER.ScreenPage.ERROR)
+            FEATHER.ScreenPage.CALIBRATION_PROGRESS)
 
         self.assertEqual(controller.renderer.generation, 9)
         self.assertEqual(controller.error_message,
@@ -3311,7 +3314,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         controller.renderer.send = batches.append
-        controller.page = FEATHER.ScreenPage.ERROR
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.error_message = "MCU shutdown"
         controller.error_recovery = "firmware_restart"
         controller.touch_available = True
@@ -3335,7 +3339,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertFalse(controller.touch_warning_visible)
         self.assertTrue(controller.renderer.output_frozen)
         self.assertIn("MCU shutdown", "\n".join(batches[-1]))
-        self.assertIn("192.168.2.4 | IDLE", "\n".join(batches[-1]))
+        self.assertTrue(any("192.168.2.4 | IDLE" in "\n".join(batch)
+                            for batch in batches))
         self.assertIn(
             "error.firmware_restart", controller.renderer._buttons)
 
@@ -3650,7 +3655,9 @@ class ControllerSafetyTest(unittest.TestCase):
                 controller.renderer = FEATHER.FeatherRenderer()
                 batches = []
                 controller.renderer.send = batches.append
-                controller._show_page = lambda page: controller._render_message()
+                controller.page = FEATHER.ScreenPage.IDLE_HOME
+                controller._show_page = lambda page: controller._render_dialog()
+                controller._render_screen = controller._render_dialog
 
                 controller._show_message(
                     message, FEATHER.ScreenPage.IDLE_HOME, title=title)
@@ -3759,7 +3766,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_action_prompt()
 
         drawing = "\n".join(batches[0])
-        self.assertIn("Material menu", drawing)
+        self.assertIn("--batch clear-hitboxes --layer base", drawing)
+        self.assertFalse(any(command.startswith("--batch fill -p 0 0")
+                             for command in batches[0]))
+        self.assertIn("MATERIAL MENU", drawing)
         self.assertIn("Select a profile", drawing)
         self.assertIn('prompt.button.0', drawing)
         self.assertIn('prompt.button.5', drawing)

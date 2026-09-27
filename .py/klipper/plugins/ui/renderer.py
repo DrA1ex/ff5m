@@ -10,6 +10,7 @@
 import logging
 import math
 from collections import namedtuple
+from contextlib import contextmanager
 
 from .actions import Action, DismissToast, action_wire_id
 from .font_metrics import (
@@ -144,6 +145,8 @@ class FeatherRenderer:
         self._last_submitted_generation = -1
         self._next_batch_kind = None
         self._next_batch_key = None
+        self._composite_commands = None
+        self._composite_kind = None
         self._busy_label = None
         self._header_action = None
         self._menu_suppressed = False
@@ -274,6 +277,26 @@ class FeatherRenderer:
             return self._worker.request_restart()
         return False
 
+    @contextmanager
+    def compose(self):
+        """Submit consecutive ordinary draws as one complete frame."""
+        if self._composite_commands is not None:
+            raise RuntimeError("render composition is already active")
+        self._composite_commands = []
+        self._composite_kind = None
+        try:
+            yield
+        except BaseException:
+            self._composite_commands = None
+            self._composite_kind = None
+            raise
+        commands = self._composite_commands
+        kind = self._composite_kind
+        self._composite_commands = None
+        self._composite_kind = None
+        if commands:
+            self.send(commands, kind=kind)
+
     def send(self, commands, kind=None, key=None, generation=None,
              receipt=None, button_feedback=False):
         """Publish one immutable batch; registered buttons can respond while frozen."""
@@ -292,6 +315,14 @@ class FeatherRenderer:
             kind, key = self._next_batch_kind, self._next_batch_key
         self._next_batch_kind = None
         self._next_batch_key = None
+        if self._composite_commands is not None:
+            if (generation is not None or receipt is not None
+                    or button_feedback or kind == "animation"):
+                raise ValueError("this render batch cannot be composed")
+            self._composite_commands.extend(immutable)
+            if kind == "critical":
+                self._composite_kind = "critical"
+            return True
         if kind is None:
             kind = ("surface" if batch_generation !=
                     self._last_submitted_generation else "state")

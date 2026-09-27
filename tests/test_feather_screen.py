@@ -411,10 +411,10 @@ class FeatherUtilitiesTest(unittest.TestCase):
         allowed = controller._action_allowed
         self.assertTrue(allowed(FEATHER.ScreenPage.FILE_CONFIRM, "file.start"))
         self.assertFalse(allowed(FEATHER.ScreenPage.IDLE_HOME, "file.start"))
-        self.assertTrue(allowed(FEATHER.ScreenPage.CANCEL_CONFIRM,
-                                "operation.cancel.confirm"))
-        self.assertTrue(allowed(FEATHER.ScreenPage.CANCEL_CONFIRM,
-                                "operation.cancel.back"))
+        self.assertTrue(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.CANCEL_CONFIRM, "operation.cancel.confirm"))
+        self.assertTrue(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.CANCEL_CONFIRM, "operation.cancel.back"))
         self.assertFalse(allowed(FEATHER.ScreenPage.PRINTING,
                                  "print.cancel.confirm"))
 
@@ -490,21 +490,23 @@ class FeatherUtilitiesTest(unittest.TestCase):
             FEATHER.ScreenPage.WIFI_PASSWORD, "keyboard.backspace"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.WIFI_SCAN, "net.reset.saved"))
-        self.assertFalse(allowed(
-            FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
-        self.assertFalse(allowed(
-            FEATHER.ScreenPage.MESSAGE, "mesh.save"))
+        controller.message_actions = ()
+        self.assertFalse(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.MESSAGE, "net.reset.saved"))
+        self.assertFalse(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.MESSAGE, "mesh.save"))
         controller.message_actions = (
             ("message.ok", "CANCEL", "enabled"),
             ("net.reset.saved", "RESET PASSWORD", "warning"),
         )
-        self.assertTrue(allowed(
-            FEATHER.ScreenPage.MESSAGE, "net.reset.saved"))
+        self.assertTrue(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.MESSAGE, "net.reset.saved"))
         controller.message_actions = (
             ("mesh.save", "SAVE & RESTART", "enabled"),
             ("message.ok", "LATER", "enabled"),
         )
-        self.assertTrue(allowed(FEATHER.ScreenPage.MESSAGE, "mesh.save"))
+        self.assertTrue(controller._dialog_action_allowed(
+            FEATHER.ScreenDialog.MESSAGE, "mesh.save"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.MOD_SETTINGS, "keyboard.key.hash"))
 
@@ -1514,7 +1516,7 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertEqual(
             screen.renderer._buttons["prompt.dismiss"][:4],
-            (328, 380, 144, 50))
+            (328, 370, 144, 50))
 
     def test_dialog_expands_for_five_lines_and_a_button(self):
         renderer = FEATHER.FeatherRenderer()

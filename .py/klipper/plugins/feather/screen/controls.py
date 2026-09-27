@@ -15,7 +15,7 @@ from ui.lazy import LazyModule
 from ff5m_ui.keys import AppPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.printing.actions import PrintingAction, PrintingRoute
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.home.actions import HomeNavigate, HomeRoute
 from ff5m_ui.move.geometry import (
         JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
@@ -856,7 +856,7 @@ class FeatherControlsMixin:
             state = self.print_stats.get_status(
                 self.reactor.monotonic())["state"]
             if (state != "paused" or self.cancel_requested
-                    or self.page == ScreenPage.CANCEL_CONFIRM):
+                    or self._current_dialog() == ScreenDialog.CANCEL_CONFIRM):
                 logging.info(
                     "[feather_screen] filament page ignored in state=%s "
                     "page=%s cancel=%s",
@@ -1796,21 +1796,6 @@ class FeatherControlsMixin:
 
     def _start_action_prompt(self, title):
         title = str(title).strip()
-        visible_prompt = (
-            getattr(self, "action_prompt_visible", False)
-            and self.page == ScreenPage.ACTION_PROMPT)
-        refresh_visible = (
-            visible_prompt and self.action_prompt is not None
-            and self.action_prompt.get("title") == title)
-        if (getattr(self, "action_prompt_visible", False)
-                and self.page in (
-                    ScreenPage.ACTION_PROMPT, ScreenPage.RECOVERY_PROMPT,
-                    ScreenPage.RECOVERY_CONFIRM)):
-            return_page = self.action_prompt_return_page
-        elif self.page in (ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM):
-            return_page = self.page_for_print_state()
-        else:
-            return_page = self.page
         self.action_prompt = {
             "title": title,
             "text": [],
@@ -1819,8 +1804,6 @@ class FeatherControlsMixin:
             "group": None,
             "buttons": {},
         }
-        self.action_prompt_visible = refresh_visible
-        self.action_prompt_return_page = return_page
         self.action_prompt_page = 0
 
     def _append_action_prompt_button(self, payload, footer=False):
@@ -1864,47 +1847,25 @@ class FeatherControlsMixin:
             self.recovery_status = status
             if not status.get("available"):
                 self.action_prompt = None
-                self.action_prompt_visible = False
                 return
-            page = ScreenPage.RECOVERY_PROMPT
-        else:
-            page = ScreenPage.ACTION_PROMPT
-        already_visible = (
-            self.action_prompt_visible and self.page == page)
-        self.action_prompt_visible = True
-        self.action_prompt_page = 0
-        if already_visible and page == ScreenPage.ACTION_PROMPT:
-            self._render_action_prompt()
-        else:
-            self._show_page(page)
+            self._show_page(ScreenPage.RECOVERY_PROMPT)
+            return
+        self._show_dialog(ScreenDialog.ACTION_PROMPT)
 
     def _end_action_prompt(self):
-        current_page = self.page
-        mirrored_recovery = (
-            current_page in (ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM))
-        prompt_cancel = (
-            current_page == ScreenPage.CANCEL_CONFIRM
-            and getattr(
-                self, "operation_cancel_return_page", None) == ScreenPage.ACTION_PROMPT)
-        prompt_error = (
-            current_page == ScreenPage.MESSAGE
-            and getattr(self, "message_return", None) == ScreenPage.ACTION_PROMPT)
-        displayed = (getattr(self, "action_prompt_visible", False)
-                     and current_page == ScreenPage.ACTION_PROMPT)
-        overlaid = (getattr(self, "action_prompt_visible", False)
-                    and (prompt_cancel or prompt_error))
-        return_page = getattr(
-            self, "action_prompt_return_page", ScreenPage.IDLE_HOME)
+        mirrored_recovery = self.page in (
+            ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)
+        cold_pull = self._action_prompt_is_cold_pull()
         self.action_prompt = None
-        self.action_prompt_visible = False
         self.action_prompt_page = 0
-        if prompt_cancel:
+        self._close_dialog(ScreenDialog.ACTION_PROMPT)
+        if (cold_pull
+                and self._current_dialog() == ScreenDialog.CANCEL_CONFIRM):
             self._reset_operation_cancel()
-        if mirrored_recovery or displayed or overlaid:
+            self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
+        if mirrored_recovery:
             self.recovery_action = None
-            self._show_page(
-                self.page_for_print_state()
-                if mirrored_recovery else return_page)
+            self._show_page(self.page_for_print_state())
 
     def _handle_action_prompt_response(self, line):
         command, separator, payload = line.partition(" ")
@@ -1980,24 +1941,23 @@ class FeatherControlsMixin:
             "COOLING NOZZLE": "COOLING THE NOZZLE",
             "PULLING": "PULLING FILAMENT BACK",
         }.get(stage, "STARTING COLD PULL")
-        commands = self.renderer.begin_page(title, back=False)
-        commands += self.renderer.panel(
-            24, 72, 752, 276, border=ThemeColor.WARNING,
-            background=ThemeColor.PANEL)
+        commands = self.renderer.dialog(
+            title, (), (), x=24, y=65, width=752, height=370,
+            tone="warning", custom_body=True)
         commands += [
             self.renderer.text(
-                400, 120, stage or "COLD PULL", ThemeColor.WARNING,
+                400, 155, stage or "COLD PULL", ThemeColor.WARNING,
                 "JetBrainsMono Bold 12pt", "center", "middle",
                 max_width=690, truncate=True),
             self.renderer.text(
-                400, 205, "%s\n\nNOZZLE %.1f / %.0f C" % (
+                400, 245, "%s\n\nNOZZLE %.1f / %.0f C" % (
                     hint, temperature, target),
                 ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle",
-                max_width=680, max_height=150, wrap=True, truncate=True),
+                max_width=680, max_height=110, wrap=True, truncate=True),
         ]
         if operation.get("cancel_available"):
             commands += self.renderer.button(
-                cancel_action, 235, 372, 330, 56,
+                cancel_action, 235, 368, 330, 45,
                 "CANCELLING..." if operation.get("cancel_pending") else "CANCEL",
                 state=("busy" if operation.get("cancel_pending") else "danger"),
                 font="JetBrainsMono Bold 8pt")
@@ -2015,11 +1975,13 @@ class FeatherControlsMixin:
         columns = adaptive_grid_columns(len(buttons)) if buttons else 1
         gap = 20
         width = min(295, (690 - gap * (columns - 1)) // columns)
-        commands = self.renderer.begin_page("Cold Pull")
+        commands = self.renderer.dialog(
+            "Cold Pull", (), (), x=24, y=65, width=752, height=370,
+            tone="info", custom_body=True)
         commands.append(self.renderer.text(
-            400, 90, "\n".join(prompt["text"]), ThemeColor.TEXT,
+            400, 170, "\n".join(prompt["text"]), ThemeColor.TEXT,
             "JetBrainsMono 8pt", "center", "middle", max_width=690,
-            max_height=70, wrap=True, truncate=True))
+            max_height=65, wrap=True, truncate=True))
         for row_start in range(0, len(buttons), columns):
             row = buttons[row_start:row_start + columns]
             row_width = len(row) * width + max(0, len(row) - 1) * gap
@@ -2027,13 +1989,13 @@ class FeatherControlsMixin:
             for column, button in enumerate(row):
                 commands += self.renderer.button(
                     button["action"], x + column * (width + gap),
-                    145 + (row_start // columns) * 100, width, 72,
+                    215 + (row_start // columns) * 75, width, 62,
                     button["label"], state=button["state"],
                     font="JetBrainsMono Bold 12pt")
         if prompt["footer"]:
             button = prompt["footer"][0]
             commands += self.renderer.button(
-                button["action"], 235, 372, 330, 56, button["label"],
+                button["action"], 235, 368, 330, 45, button["label"],
                 state=button["state"], font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 

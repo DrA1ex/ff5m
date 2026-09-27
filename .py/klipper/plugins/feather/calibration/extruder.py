@@ -792,7 +792,8 @@ class FeatherExtruderCalibrationMixin:
         )
         if force or signature != session.cold_pull_progress_signature:
             session.cold_pull_progress_signature = signature
-            if self.page == ScreenPage.EXTRUDER_CALIBRATION:
+            if (self.page == ScreenPage.EXTRUDER_CALIBRATION
+                    and self._current_dialog() is None):
                 self._render_extruder_calibration()
 
     def _run_cold_pull_material(self, material, hot, cold):

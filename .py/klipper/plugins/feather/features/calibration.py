@@ -7,7 +7,7 @@
 import logging
 
 from ui.lazy import LazyModule
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from feather.features.manager import FeatureHostProxy
 from feather.screen.controls import FeatherControlsMixin
 
@@ -138,14 +138,14 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
             return
         self.external_context_id = None
         try:
-            cancel_page = (self.page == ScreenPage.CANCEL_CONFIRM
-                           and self.operation_cancel_return_page
-                           == ScreenPage.CALIBRATION_PROGRESS)
-            if (self.page != ScreenPage.CALIBRATION_PROGRESS and not cancel_page
+            cancel_dialog = (
+                self._current_dialog() == ScreenDialog.CANCEL_CONFIRM)
+            if (self.page != ScreenPage.CALIBRATION_PROGRESS
                     or self._safety_print_active(eventtime)):
                 return
-            if cancel_page:
+            if cancel_dialog:
                 self._reset_operation_cancel()
+                self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
             self.calibration_cancelled = outcome == "cancelled"
             self.calibration_error = (
                 "Operation interrupted" if outcome == "interrupted" else None)

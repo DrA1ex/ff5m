@@ -7,7 +7,7 @@
 import logging
 
 from ui import ThemeColor
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 
 
 class PrintCancelPagesMixin:
@@ -96,7 +96,6 @@ class PrintCancelPagesMixin:
     def _open_operation_cancel(
             self, return_page, on_accept=None, on_clear=None):
         operation = self._operation_context_status()
-        self.operation_cancel_return_page = return_page
         self.operation_cancel_on_accept = on_accept
         self.operation_cancel_on_clear = on_clear
         self.operation_cancel_request_id = None
@@ -108,15 +107,13 @@ class PrintCancelPagesMixin:
             "cancel_target_mode")
         self.cancel_mode = ("confirm" if operation["cancel_available"]
                             else "not_cancelable")
-        self._show_page(ScreenPage.CANCEL_CONFIRM)
+        self._show_dialog(ScreenDialog.CANCEL_CONFIRM, page=return_page)
 
     def _close_operation_cancel(self):
         if getattr(self, "cancel_mode", None) == "pending":
             return
-        return_page = getattr(
-            self, "operation_cancel_return_page", ScreenPage.IDLE_HOME)
         self._reset_operation_cancel()
-        self._show_page(return_page)
+        self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
 
     def _reset_operation_cancel(self):
         self.cancel_mode = None
@@ -170,7 +167,7 @@ class PrintCancelPagesMixin:
             callback(result)
         if interrupting_wait:
             self._run_immediate_command("M108")
-            if (self.page == ScreenPage.CANCEL_CONFIRM
+            if (self._current_dialog() == ScreenDialog.CANCEL_CONFIRM
                     and self.cancel_mode == "pending"):
                 self._render_cancel_confirm()
 
@@ -206,7 +203,9 @@ class PrintCancelPagesMixin:
         interrupt = (getattr(
             self, "operation_cancel_target_mode", None) == "interruptible")
         if self.cancel_mode == "not_cancelable":
-            commands = self.renderer.begin_page("CANNOT CANCEL SAFELY")
+            commands = self.renderer.dialog(
+                "Cannot cancel safely", (), (), x=24, y=65, width=752,
+                height=370, tone="warning", custom_body=True)
             commands.append(self.renderer.text(
                 400, 145, "THIS OPERATION HAS NO SAFE CANCEL POINT",
                 ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
@@ -224,10 +223,11 @@ class PrintCancelPagesMixin:
             return
         if self.cancel_mode == "pending":
             label = self._cancel_progress_label()
-            commands = self.renderer.begin_page(
+            commands = self.renderer.dialog(
                 "%s %s" % (
                     "INTERRUPTING" if interrupt else "CANCELLING",
-                    target.upper()))
+                    target.upper()), (), (), x=24, y=65, width=752,
+                height=370, tone="warning", custom_body=True)
             commands.append(self.renderer.text(
                 400, 170, label, ThemeColor.WARNING,
                 "JetBrainsMono Bold 16pt", "center", "middle",
@@ -253,9 +253,11 @@ class PrintCancelPagesMixin:
             self.renderer.send(commands)
             self._last_cancel_label = label
             return
-        commands = self.renderer.begin_page(
+        commands = self.renderer.dialog(
             "%s %s?" % (
-                "Interrupt" if interrupt else "Cancel", target), back=False)
+                "Interrupt" if interrupt else "Cancel", target), (), (),
+            x=24, y=65, width=752, height=370, tone="warning",
+            custom_body=True)
         commands.append(self.renderer.text(400, 170,
                                            "The operation will stop at a safe point",
                                            ThemeColor.WARNING, "Roboto 16pt", "center", "middle"))
@@ -283,7 +285,7 @@ class PrintCancelPagesMixin:
         return "WILL STOP AT THE NEXT STEP"
 
     def _update_cancel_progress(self):
-        if (self.page != ScreenPage.CANCEL_CONFIRM
+        if (self._current_dialog() != ScreenDialog.CANCEL_CONFIRM
                 or self.cancel_mode != "pending"):
             return
         label = self._cancel_progress_label()

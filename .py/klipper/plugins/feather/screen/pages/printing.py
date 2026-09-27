@@ -336,6 +336,7 @@ class PrintingPagesMixin:
             preview is not None
             and preview.get("status") == "loading"
             and self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
+            and self._current_dialog() is None
             and self.print_state in (
                 PrintState.PREPARING, PrintState.PRINTING,
                 PrintState.PAUSED)

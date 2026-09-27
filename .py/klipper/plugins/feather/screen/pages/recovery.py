@@ -65,13 +65,9 @@ class RecoveryPagesMixin:
         self.action_prompt_page = pagination.page
         visible_rows = pagination.visible
 
-        commands = self.renderer.begin_page("KLIPPER PROMPT")
-        commands += self.renderer.panel(
-            30, 67, 740, 365, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
-        commands.append(self.renderer.text(
-            400, 102, prompt["title"], ThemeColor.PRIMARY,
-            "JetBrainsMono Bold 16pt", "center", "middle",
-            max_width=680, truncate=True))
+        commands = self.renderer.dialog(
+            prompt["title"], (), (), x=30, y=67, width=740, height=365,
+            tone="info", custom_body=True)
         text = "\n".join(prompt["text"])
         if text:
             commands.append(self.renderer.text(
@@ -105,7 +101,7 @@ class RecoveryPagesMixin:
         if footer:
             for button, bounds in zip(
                     footer, centered_button_row(
-                        (item["label"] for item in footer), 30, 380, 740,
+                        (item["label"] for item in footer), 30, 370, 740,
                         measure_text=self.renderer.text_width,
                         padding=self.renderer.BUTTON_TEXT_PADDING)):
                 commands += self.renderer.button(

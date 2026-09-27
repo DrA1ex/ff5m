@@ -399,6 +399,7 @@ class ForgeXUpdateNotification:
     def _can_present(self):
         return (self.active
                 and getattr(self.host, "page", None) == ScreenPage.IDLE_HOME
+                and self.host._current_dialog() is None
                 and getattr(self.host, "print_state", None) == PrintState.IDLE
                 and not self._printer_busy()
                 and not getattr(self.host, "busy_message", None))
