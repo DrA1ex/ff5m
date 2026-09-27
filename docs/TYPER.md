@@ -138,7 +138,7 @@ screen should appear at once.
 typer --double-buffered batch \
   --batch clear --color 202020 \
   --batch text --pos 400 240 --text "Ready" \
-          --font "JetBrainsMono 20pt" --h-align center \
+          --font "JetBrainsMono 16pt" --h-align center \
   --batch flush
 ```
 

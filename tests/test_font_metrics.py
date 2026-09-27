@@ -86,6 +86,10 @@ class FontManifestTest(unittest.TestCase):
 
         self.assertTrue(loaded.fonts)
         self.assertEqual(tuple(sorted(loaded.names)), loaded.names)
+        for family in ("JetBrainsMono", "JetBrainsMono Bold", "Roboto", "Roboto Bold"):
+            self.assertEqual(
+                {name for name in loaded.names if name.rsplit(" ", 1)[0] == family},
+                {f"{family} {size}pt" for size in (8, 10, 12, 16)})
         self.assertIn(loaded.default_font, loaded.fonts)
         self.assertFalse(hasattr(loaded, "catalog"))
         for metric in loaded.fonts.values():
@@ -138,6 +142,9 @@ class FontManifestTest(unittest.TestCase):
             if requested_family != normalized_family:
                 missing_families.append(requested_font)
         self.assertEqual(missing_families, [])
+        self.assertEqual(
+            loaded.normalize_for_text("Roboto 10pt", "ẞ"),
+            "JetBrainsMono 10pt")
 
         with open(font_metrics.FALLBACK_PATH, "r", encoding="utf-8") as stream:
             generated = json.load(stream)

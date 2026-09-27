@@ -10,15 +10,13 @@ DEFAULT_FONT = "JetBrainsMono 12pt"
 
 FONT_FALLBACKS = {
     "Roboto 8pt": "JetBrainsMono 8pt",
+    "Roboto 10pt": "JetBrainsMono 10pt",
     "Roboto 12pt": "JetBrainsMono 12pt",
     "Roboto 16pt": "JetBrainsMono 16pt",
-    "Roboto 20pt": "JetBrainsMono 20pt",
-    "Roboto 28pt": "JetBrainsMono 28pt",
     "Roboto Bold 8pt": "JetBrainsMono Bold 8pt",
+    "Roboto Bold 10pt": "JetBrainsMono Bold 10pt",
     "Roboto Bold 12pt": "JetBrainsMono Bold 12pt",
     "Roboto Bold 16pt": "JetBrainsMono Bold 16pt",
-    "Roboto Bold 20pt": "JetBrainsMono Bold 20pt",
-    "Roboto Bold 28pt": "JetBrainsMono Bold 28pt",
 }
 
 # TODO: Move these values into a separately overridable Typer policy contract
