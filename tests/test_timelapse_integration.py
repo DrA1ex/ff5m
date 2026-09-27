@@ -382,7 +382,8 @@ class TimelapseConfigTest(unittest.TestCase):
 
         self.assertFalse(any("_TIMELAPSE_NEW_FRAME" in line
                              for line in disabled.commands))
-        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False", enabled.commands)
+        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False PARKED=False",
+                      enabled.commands)
 
     def test_manual_commands_report_disabled_timelapse(self):
         printer = {"mod_params": {"variables": {"timelapse": False}}}
@@ -515,7 +516,7 @@ class TimelapseConfigTest(unittest.TestCase):
         self.assertEqual(commands[lift + 1], "M400")
         self.assertLess(lift + 1, park)
         self.assertNotIn(" Z", commands[park])
-        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False",
+        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False PARKED=True",
                       commands)
 
         variables["timelapse_park"] = False
@@ -526,7 +527,7 @@ class TimelapseConfigTest(unittest.TestCase):
                              for command in unparked.commands))
         self.assertNotIn("MOVE_SAFE Z=2 F=3000 ABSOLUTE=0",
                          unparked.commands)
-        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False",
+        self.assertIn("_TIMELAPSE_NEW_FRAME HYPERLAPSE=False PARKED=False",
                       unparked.commands)
 
         variables["timelapse_park"] = True
@@ -548,7 +549,8 @@ class TimelapseConfigTest(unittest.TestCase):
 
     def test_parked_frame_recovers_if_moonraker_does_not_release_it(self):
         tl = {
-            "takingframe": True, "check_time": 0.5, "wait_loops": 0,
+            "takingframe": True, "check_time": 0.1, "wait_loops": 0,
+            "release_timeout": 5.0,
             "park": {"time": 0.1}, "macro": {"resume": "RESUME_BASE"},
             "speed": {"travel": 100, "extrude": 15},
             "extruder": {"fw_retract": False, "extrude": 1},
@@ -592,7 +594,14 @@ class TimelapseConfigTest(unittest.TestCase):
         tl["extruder"]["fw_retract"] = False
 
         tl["takingframe"] = True
-        tl["wait_loops"] = 11
+        tl["wait_loops"] = 49
+        still_waiting = render_macro(
+            MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME", printer=printer,
+            section="delayed_gcode")
+        self.assertTrue(any("UPDATE_DELAYED_GCODE" in command
+                            for command in still_waiting.commands))
+
+        tl["wait_loops"] = 50
         recovered = render_macro(
             MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME", printer=printer,
             section="delayed_gcode")
@@ -602,6 +611,19 @@ class TimelapseConfigTest(unittest.TestCase):
                             for command in recovered.commands))
         self.assertFalse(any("UPDATE_DELAYED_GCODE" in command
                              for command in recovered.commands))
+
+    def test_new_frame_remote_flags_are_booleans(self):
+        printer = {"gcode_macro TIMELAPSE_TAKE_FRAME": {
+            "park": {"enable": False}}}
+        for parked, hyperlapse in ((False, False), (True, True)):
+            with self.subTest(parked=parked, hyperlapse=hyperlapse):
+                frame = render_macro(
+                    MACROS, "_TIMELAPSE_NEW_FRAME", printer=printer,
+                    params={"HYPERLAPSE": str(hyperlapse),
+                            "PARKED": str(parked)})
+                self.assertEqual(frame.remote_calls, (
+                    ("timelapse_newframe", {
+                        "parked": parked, "hyperlapse": hyperlapse}),))
 
     def test_disabled_timelapse_does_not_continue_hyperlapse_timer(self):
         printer = {
@@ -663,6 +685,102 @@ class TimelapseConfigTest(unittest.TestCase):
 
 
 class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
+    async def test_frame_scheduling_only_acknowledges_parked_capture(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.config = {
+            "enabled": True, "mode": "layermacro",
+            "stream_delay_compensation": 0.05}
+        component.takingframe = False
+        loop = mock.Mock()
+
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+            component.call_newframe(parked=False, hyperlapse=False)
+            loop.call_later.assert_called_once_with(
+                delay=0.05, callback=component.newframe,
+                release_parked=False)
+            loop.spawn_callback.assert_not_called()
+
+            loop.reset_mock()
+            component.takingframe = False
+            component.call_newframe(macropark={"enable": True},
+                                    hyperlapse="False")
+            loop.call_later.assert_called_once_with(
+                delay=0.05, callback=component.newframe,
+                release_parked=True)
+
+    async def test_declined_parked_frame_releases_immediately(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.config = {
+            "enabled": True, "mode": "layermacro",
+            "stream_delay_compensation": 0.05}
+        component.takingframe = False
+        loop = mock.Mock()
+
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+            for reason in ("disabled", "busy", "wrong mode"):
+                with self.subTest(reason=reason):
+                    loop.reset_mock()
+                    component.config["enabled"] = reason != "disabled"
+                    component.config["mode"] = (
+                        "hyperlapse" if reason == "wrong mode"
+                        else "layermacro")
+                    component.takingframe = reason == "busy"
+                    component.call_newframe(parked=True, hyperlapse=False)
+                    loop.call_later.assert_not_called()
+                    loop.spawn_callback.assert_called_once_with(
+                        component.release_parkedhead)
+
+            loop.reset_mock()
+            component.config["enabled"] = False
+            component.call_newframe(parked=False, hyperlapse=False)
+            loop.spawn_callback.assert_not_called()
+
+    async def test_snapshot_releases_parked_head_after_success_or_failure(self):
+        for parked, fail in ((False, False), (True, False), (True, True)):
+            with self.subTest(parked=parked, fail=fail):
+                with tempfile.TemporaryDirectory() as directory:
+                    events = []
+                    component = timelapse.Timelapse.__new__(
+                        timelapse.Timelapse)
+                    component.temp_dir = directory + "/"
+                    component.framecount = 0
+                    component.lastframefile = ""
+                    component.takingframe = True
+                    component.config = {
+                        "snapshoturl": "http://localhost/snapshot"}
+                    component.notify_event = lambda result: events.append(
+                        ("notify", result["status"]))
+                    component._run_gcode_without_history = mock.AsyncMock(
+                        side_effect=lambda _: events.append("release"))
+                    component.server = mock.Mock()
+                    component.server.error = RuntimeError
+
+                    def build_command(command, _callback):
+                        async def run(**_kwargs):
+                            events.append("curl")
+                            if fail:
+                                raise RuntimeError("snapshot failed")
+                            candidate = shlex.split(command)[-2]
+                            pathlib.Path(candidate).write_bytes(b"jpeg")
+                            return True
+                        return types.SimpleNamespace(run=run)
+
+                    component.server.lookup_component.return_value = (
+                        types.SimpleNamespace(
+                            build_shell_command=build_command))
+                    await component.newframe(release_parked=parked)
+
+                    self.assertEqual(events[:2], [
+                        "curl", ("notify", "error" if fail else "success")])
+                    self.assertEqual(events[2:], ["release"] if parked else [])
+                    self.assertFalse(component.takingframe)
+                    if parked:
+                        component._run_gcode_without_history.assert_awaited_once_with(
+                            "SET_GCODE_VARIABLE MACRO=TIMELAPSE_TAKE_FRAME "
+                            "VARIABLE=takingframe VALUE=False")
+                    else:
+                        component._run_gcode_without_history.assert_not_awaited()
+
     async def test_frame_info_reports_render_activity(self):
         component = timelapse.Timelapse.__new__(timelapse.Timelapse)
         component.framecount = 2

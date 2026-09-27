@@ -14,6 +14,8 @@
 #   reports the active capture settings instead.
 # - Report missing slicer layer updates after layer-based prints.
 # - Capture an optional final frame after printing ends and before rendering.
+# - Keep normal frame capture one-way; acknowledge parked captures only after
+#   the snapshot attempt completes.
 #
 # Copyright (C) 2021 Christoph Frei <fryakatkop@gmail.com>
 # Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
@@ -398,35 +400,56 @@ class Timelapse:
         except self.server.error:
             msg = f"Error executing GCode {gcommand}"
             logging.exception(msg)
-    def call_newframe(self, macropark=False, hyperlapse=False) -> None:
-        if self.config['enabled']:
-            if self.config['mode'] == "hyperlapse":
-                if hyperlapse:
-                    if not self.takingframe:
-                        self.takingframe = True
-                        self.spawn_newframe_callbacks()
-                    else:
-                        logging.info("last take frame hasn't completed"
-                                     + " ignoring take frame command"
-                                     )
-                else:
-                    logging.info("ignoring non hyperlapse triggered macros"
-                                 + "in hyperlapse mode"
-                                 )
+    def call_newframe(self, parked=False, hyperlapse=False, macropark=None) -> None:
+        # Accept the upstream macropark payload during rolling upgrades, while
+        # the Forge-X macro sends compact boolean flags.
+        if macropark is not None:
+            if isinstance(macropark, dict):
+                parked = macropark.get('enable', False)
             else:
-                if not self.takingframe:
-                    self.takingframe = True
-                    self.spawn_newframe_callbacks()
+                parked = macropark
+        if isinstance(parked, str):
+            parked = parked.lower() == 'true'
         else:
+            parked = bool(parked)
+        if isinstance(hyperlapse, str):
+            hyperlapse = hyperlapse.lower() == 'true'
+        else:
+            hyperlapse = bool(hyperlapse)
+
+        if not self.config['enabled']:
             logging.info("NEW_FRAME macro ignored timelapse is disabled")
-    def spawn_newframe_callbacks(self) -> None:
-        ioloop = IOLoop.current()
-        # release parked head after park time is passed
-        park_time = self.config['park_time']
-        ioloop.call_later(delay=park_time, callback=self.release_parkedhead)
-        # capture the frame after stream delay is passed
+            self.release_declined_parked_frame(parked)
+            return
+        if self.config['mode'] == "hyperlapse" and not hyperlapse:
+            logging.info("ignoring non hyperlapse triggered macros"
+                         + "in hyperlapse mode")
+            self.release_declined_parked_frame(parked)
+            return
+        if self.takingframe:
+            logging.info("last take frame hasn't completed"
+                         + " ignoring take frame command")
+            self.release_declined_parked_frame(parked)
+            return
+
+        self.takingframe = True
+        self.schedule_newframe(parked=parked)
+
+    def release_declined_parked_frame(self, parked=False) -> None:
+        # A parked macro has already paused Klipper before the remote call.
+        # Release it immediately if Moonraker declines the frame instead of
+        # making Klipper wait for the local timeout fallback.
+        if parked:
+            IOLoop.current().spawn_callback(self.release_parkedhead)
+
+    def schedule_newframe(self, parked=False) -> None:
+        # Frame capture is fire-and-forget for normal printing. Only a parked
+        # capture needs a Moonraker -> Klipper acknowledgement so the local
+        # macro knows when it is safe to resume motion.
         stream_delay = self.config['stream_delay_compensation']
-        ioloop.call_later(delay=stream_delay, callback=self.newframe)
+        IOLoop.current().call_later(
+            delay=stream_delay, callback=self.newframe, release_parked=parked)
+
     async def release_parkedhead(self) -> None:
         gcommand = "SET_GCODE_VARIABLE " \
             + "MACRO=TIMELAPSE_TAKE_FRAME " \
@@ -467,7 +490,8 @@ class Timelapse:
             msg = f"Error executing GCode {gcommand}"
             logging.exception(msg)
         self.hyperlapserunning = False
-    async def newframe(self, final_frame: bool = False) -> None:
+    async def newframe(self, final_frame: bool = False,
+                       release_parked: bool = False) -> None:
         result = {'action': 'newframe', 'status': 'error'}
         try:
             if final_frame and self.printing:
@@ -506,6 +530,12 @@ class Timelapse:
         finally:
             self.notify_event(result)
             self.takingframe = False
+            # Never inject housekeeping G-code during a normal capture. A
+            # parked capture is the only path that needs an acknowledgement
+            # back to Klipper, and it is sent after the snapshot has finished
+            # (successfully or not) so the head cannot resume mid-capture.
+            if release_parked:
+                await self.release_parkedhead()
     async def handle_status_update(self, status: Dict[str, Any]) -> None:
         if 'print_stats' in status:
             printstats = status['print_stats']
