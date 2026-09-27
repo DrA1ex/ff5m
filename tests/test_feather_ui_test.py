@@ -2399,6 +2399,45 @@ class RunnerContractTest(unittest.TestCase):
             self.assertFalse(checkpoint.exists())
             self.assertTrue(unrelated.exists())
 
+    def test_context_print_restores_runtime_idle_timeout(self):
+        idle_timeout = type("IdleTimeout", (), {"idle_timeout": 600.0})()
+        client = type("Client", (), {
+            "variables": {"idle_timeout": 3600},
+        })()
+        commands = []
+
+        def run_script(command):
+            commands.append(command)
+            if command.startswith("SET_IDLE_TIMEOUT TIMEOUT="):
+                idle_timeout.idle_timeout = float(command.split("=", 1)[1])
+
+        host = type("Host", (), {})()
+        host.printer = type("Printer", (), {
+            "lookup_object": lambda self, name, default=None: (
+                client if name == "gcode_macro _CLIENT_VARIABLE" else default),
+        })()
+        host.idle_timeout = idle_timeout
+        host.virtual_sdcard = type("SD", (), {
+            "is_active": lambda self: False,
+            "file_path": lambda self: None,
+        })()
+        host._run_script = run_script
+        reactor = type("Reactor", (), {"monotonic": lambda self: 1.0})()
+        fixture = UI_TEST.ContextTestFixture(
+            host, reactor, "test-run", "PETG")
+
+        with mock.patch.object(fixture, "_create_print_files"):
+            fixture.prepare_print()
+        self.assertEqual(client.variables["idle_timeout"], 2)
+        self.assertEqual(fixture.idle_timeout, 600.0)
+
+        idle_timeout.idle_timeout = 2.0
+        fixture.restore("CONTEXT_PRINT")
+
+        self.assertEqual(commands, ["SET_IDLE_TIMEOUT TIMEOUT=600"])
+        self.assertEqual(idle_timeout.idle_timeout, 600.0)
+        self.assertEqual(client.variables["idle_timeout"], 3600)
+
 
 class ContextPrintFixtureTest(unittest.TestCase):
     """The model fixture is only useful if it is fully parameterised."""

@@ -287,7 +287,7 @@ class ContextTestFixture:
             variables["idle_timeout"] = 2
 
         idle_timeout = getattr(self.host, "idle_timeout", None)
-        self.idle_timeout = getattr(idle_timeout, "timeout", None)
+        self.idle_timeout = getattr(idle_timeout, "idle_timeout", None)
         self._create_print_files()
 
     def _create_print_files(self):
