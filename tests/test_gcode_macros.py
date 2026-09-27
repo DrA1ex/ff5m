@@ -815,6 +815,18 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                     self.assertEqual(
                         self._axis_targets(commands, "Z"), [expected])
 
+    def test_pause_cancel_and_end_print_use_same_default_xy_park(self):
+        for entry in ("PAUSE", "CANCEL_PRINT", "END_PRINT"):
+            with self.subTest(entry=entry):
+                commands = execute_macro_chain(
+                    MOTION_MACROS, entry,
+                    printer=self._motion_printer(100),
+                    params={"REASON": "USER"} if entry == "CANCEL_PRINT"
+                    else None)
+
+                self.assertEqual(self._axis_targets(commands, "X"), [110])
+                self.assertEqual(self._axis_targets(commands, "Y"), [110])
+
     def test_cancel_publishes_current_reason_before_base_cancel(self):
         printer = self._motion_printer(100)
         for params, reason in ((None, ""),
@@ -969,7 +981,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
         printer["mod_params"]["variables"]["timelapse_final_frame"] = False
         normal = execute_macro_chain(macros, "END_PRINT", printer=printer)
-        self.assertIn("G0 X105 Y105 F30000", normal)
+        self.assertIn("G0 X110 Y110 F30000", normal)
         self.assertFalse(self._axis_targets(normal, "Z"))
 
     def test_end_print_relative_lift_uses_gcode_position_with_active_mesh(self):
