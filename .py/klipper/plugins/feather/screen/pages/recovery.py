@@ -1,4 +1,4 @@
-## Recovery and action-prompt pages for Feather.
+## Power-loss recovery pages for Feather.
 ##
 ## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
@@ -7,10 +7,7 @@
 import logging
 
 from ui import ThemeColor
-from ui.layout_helpers import centered_button_row
 from ff5m_ui.screen import ScreenPage
-
-from feather.screen.pagination import Pagination
 
 
 class RecoveryPagesMixin:
@@ -50,63 +47,6 @@ class RecoveryPagesMixin:
                                          "CLEANUP" if cleanup else "RESTORE",
                                          state="danger" if cleanup else "enabled",
                                          font="Roboto Bold 16pt")
-        self.renderer.send(commands)
-
-    def _render_action_prompt(self):
-        if self._action_prompt_is_cold_pull():
-            self._render_cold_pull_prompt()
-            return
-        prompt = self.action_prompt or {
-            "title": "Prompt", "text": [], "rows": [], "footer": []}
-        rows = prompt["rows"]
-        rows_per_page = 3
-        pagination = Pagination(
-            rows, self.action_prompt_page, rows_per_page)
-        self.action_prompt_page = pagination.page
-        visible_rows = pagination.visible
-
-        commands = self.renderer.dialog(
-            prompt["title"], (), (), x=30, y=67, width=740, height=365,
-            tone="info", custom_body=True)
-        text = "\n".join(prompt["text"])
-        if text:
-            commands.append(self.renderer.text(
-                400, 158, text, ThemeColor.TEXT, "JetBrainsMono 8pt",
-                "center", "middle", max_width=680, max_height=76,
-                wrap=True, truncate=True))
-
-        if pagination.page_count > 1:
-            commands += self.renderer.button(
-                "prompt.prev", 48, 77, 70, 40, "<",
-                state=("enabled" if pagination.has_previous else "disabled"),
-                font="JetBrainsMono Bold 12pt")
-            commands += self.renderer.button(
-                "prompt.next", 682, 77, 70, 40, ">",
-                state=("enabled" if pagination.has_next else "disabled"),
-                font="JetBrainsMono Bold 12pt")
-
-        for row_index, row in enumerate(visible_rows):
-            gap = 10
-            margin = 48
-            width = max(
-                1, (704 - gap * (len(row) - 1)) // max(1, len(row)))
-            y = 213 + row_index * 55
-            for column, button in enumerate(row):
-                commands += self.renderer.button(
-                    button["action"], margin + column * (width + gap), y,
-                    width, 45, button["label"], state=button["state"],
-                    font="JetBrainsMono 8pt")
-
-        footer = prompt["footer"]
-        if footer:
-            for button, bounds in zip(
-                    footer, centered_button_row(
-                        (item["label"] for item in footer), 30, 370, 740,
-                        measure_text=self.renderer.text_width,
-                        padding=self.renderer.BUTTON_TEXT_PADDING)):
-                commands += self.renderer.button(
-                    button["action"], *bounds, button["label"],
-                    state=button["state"], font="JetBrainsMono 8pt")
         self.renderer.send(commands)
 
     def _handle_recovery_action(self, action):

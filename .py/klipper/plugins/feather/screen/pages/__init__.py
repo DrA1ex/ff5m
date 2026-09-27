@@ -6,6 +6,7 @@
 
 from feather.network.pages import FeatherNetworkPagesMixin
 
+from .action_prompt import ActionPromptPagesMixin
 from .files import FILE_ROWS, FileBrowserPagesMixin
 from .home import HomePagesMixin
 from .mod_editor import ModEditorPagesMixin
@@ -25,11 +26,13 @@ class FeatherPagesMixin(
         ModSettingsPagesMixin,
         ModEditorPagesMixin,
         RecoveryPagesMixin,
+        ActionPromptPagesMixin,
         FeatherNetworkPagesMixin):
     """Compose the concrete page groups used by the main Feather screen."""
 
 
 __all__ = (
+    "ActionPromptPagesMixin",
     "FILE_ROWS",
     "FeatherPagesMixin",
     "FileBrowserPagesMixin",

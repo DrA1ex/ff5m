@@ -367,6 +367,14 @@ class TimelapseConfigTest(unittest.TestCase):
         prompt = render_macro(MACROS, "_TIMELAPSE_SETUP_PROMPT")
         self.assertTrue(any("action:prompt_begin" in command
                             for command in prompt.commands))
+        self.assertIn(
+            'RESPOND TYPE=command MSG="action:prompt_text '
+            'SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num + 1}"',
+            prompt.commands)
+        self.assertIn(
+            'RESPOND TYPE=command MSG="action:prompt_footer_button Got it|'
+            'RESPOND TYPE=command MSG=action:prompt_end|primary"',
+            prompt.commands)
 
     def test_layer_macro_only_requests_frame_when_enabled(self):
         printer = {

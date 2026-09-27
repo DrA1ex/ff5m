@@ -1499,13 +1499,16 @@ class RendererStateTest(unittest.TestCase):
         self.assertLess(title_lines[2].y + 16,
                         multiline.button("ok").bounds.y)
 
-    def test_printer_action_prompt_footer_uses_dialog_button_geometry(self):
+    def test_printer_message_uses_shared_compact_dialog(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
-        screen.renderer.send = lambda commands: None
+        frames = []
+        screen.renderer.send = lambda commands: frames.append(
+            RenderFrame(commands, screen.renderer))
         screen._action_prompt_is_cold_pull = lambda: False
         screen.action_prompt = {
-            "title": "Printer command", "text": ["Action completed."],
+            "title": "Printer command", "text": [
+                "First instruction.", "Second instruction."],
             "rows": [], "footer": [
                 {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
             ],
@@ -1514,9 +1517,38 @@ class RendererStateTest(unittest.TestCase):
 
         screen._render_action_prompt()
 
-        self.assertEqual(
-            screen.renderer._buttons["prompt.dismiss"][:4],
-            (328, 370, 144, 50))
+        frame = frames[0]
+        self.assertTrue(frame.has_text("First instruction."))
+        self.assertTrue(frame.has_text("Second instruction."))
+        self.assertEqual(frame.button("prompt.dismiss").bounds.width, 144)
+        self.assertLess(frame.button("prompt.dismiss").bounds.y, 370)
+        self.assertTrue(any(
+            shape.kind == "fill" and shape.bounds.width == 700
+            and shape.bounds.height < 365 for shape in frame.shapes))
+
+    def test_printer_message_keeps_text_pagination(self):
+        screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        screen.renderer = FEATHER.FeatherRenderer()
+        frames = []
+        screen.renderer.send = lambda commands: frames.append(
+            RenderFrame(commands, screen.renderer))
+        screen._action_prompt_is_cold_pull = lambda: False
+        screen.action_prompt = {
+            "title": "Long message",
+            "text": ["Instruction %d" % index for index in range(10)],
+            "rows": [], "footer": [
+                {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
+            ],
+        }
+        screen.action_prompt_page = 0
+
+        screen._render_action_prompt()
+        self.assertTrue(frames[-1].has_action("prompt.next"))
+        self.assertFalse(frames[-1].has_text("Instruction 9"))
+
+        screen.action_prompt_page = 1
+        screen._render_action_prompt()
+        self.assertTrue(frames[-1].has_text("Instruction 9"))
 
     def test_dialog_expands_for_five_lines_and_a_button(self):
         renderer = FEATHER.FeatherRenderer()
