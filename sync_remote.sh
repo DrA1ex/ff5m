@@ -154,6 +154,7 @@ EXPECTED_NETD="$(pwd)/mod/.bin/exec/netd"
 for package in \
     ".py/klipper/plugins/ui" \
     ".py/klipper/plugins/ff5m_ui" \
+    ".py/klipper/plugins/feather" \
     ".py/klipper/plugins/feather_ui_test"; do
     SRC_PACKAGE="./.sync/${package}"
     DEST_PACKAGE="./mod/${package}"
