@@ -319,6 +319,22 @@ Changing this parameter restarts the relevant printer services. Recreate the bed
 
 Start by running `MEM` after boot and again while reproducing the problem. Try to keep memory use below roughly 75–80%. A *Timer too close*, E0011, or E0017 error is not automatically a memory problem: memory pressure, CPU contention, and MCU workload require different fixes.
 
+### Before probing or calibration
+
+Probing is deliberately fail-stop: Klipper's homing timeout aborts the current `PROBE` before later commands in the macro can run, and Forge-X closes the multi-probe lifecycle even when a timeout or tolerance error is raised. Do not loop or blindly retry a failed probe. Correct the cause, return the printer to a known idle state, and then restart the workflow.
+
+Use this preflight for nozzle cleaning, bed meshes, Z-offset calibration, and input-shaper calibration:
+
+| Pressure source | Mitigation before motion |
+| --- | --- |
+| Memory | Run `MEM`. If usage is near or above 75–80%, close browser streams, stop the camera or other optional services, and wait for memory to settle before probing. |
+| Feather CPU | Avoid theme previews, visual regression runs, rapid page switching, and other rendering-heavy work during calibration. Normal Feather rendering is bounded and coalesced, but it still uses the same two-core host. |
+| Z-calibration state | Run one guided Z workflow at a time and do not inject unrelated console motion. On an error, let the workflow restore its captured mesh and runtime offset before starting again. |
+| File I/O | Let updates, USB copies, test-artifact collection, and large directory scans finish first. Feather scans files off the Klipper reactor with a latest-request-only queue, but flash or swap contention can still delay the host. |
+| Probe under pressure | Treat a timeout as an aborted safety operation, not a measurement. Remove the CPU, memory, or storage load, inspect the probe/load cell, and restart the complete probing workflow. |
+
+For a latency-sensitive calibration, `MMC` is the predictable swap mode. `ZRAM` reduces slow storage traffic but spends CPU on compression, so it may be the wrong tradeoff when CPU contention—not free memory—is the limiting factor.
+
 ### Built-in optimizations
 
 Recent Forge-X versions apply baseline memory optimizations automatically:
