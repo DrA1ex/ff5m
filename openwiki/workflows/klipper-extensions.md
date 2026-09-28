@@ -103,6 +103,12 @@ successful `RESUME_BASE`. A third-party macro set should preserve that ordering.
 Both calls are guarded by the `resurrection.supports_pause_markers` status field,
 so the same macros remain compatible when the extension is absent or older.
 
+The [`sdcard_cancel` plugin](../../.py/klipper/plugins/sdcard_cancel.py) exposes
+`SDCARD_CANCEL_FILE` for a file held by the timelapse start wait. Klipper's
+`CANCEL_PRINT_BASE` does not close that file because the virtual SD is inactive
+and `pause_resume` did not initiate its pause. The command calls the existing
+virtual SD cancellation method without resuming the file first.
+
 ## `feather_screen`: alternative display integration
 
 [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py) is loaded only in the Feather configuration (`SET_MOD PARAM=display VALUE=FEATHER`). It starts the bundled `typer` renderer, sends drawing commands through `/tmp/typer`, and receives named touch actions through `/tmp/feather-events`. The plugin owns the UI state machine and validates printer state before starting files, invoking pause/resume/cancel macros, moving homed axes, controlling heaters/fan, or starting an asynchronous network operation.

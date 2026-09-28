@@ -63,7 +63,9 @@ class ParkedPrint:
         }
         macros = [(ROOT / "macros/timelapse.cfg", name, section) for name, section in (
             ("TIMELAPSE_TAKE_FRAME", "gcode_macro"), ("_TIMELAPSE_NEW_FRAME", "gcode_macro"),
-            ("_WAIT_TIMELAPSE_TAKE_FRAME", "delayed_gcode"), ("_TIMELAPSE_START_RELEASE_SD", "gcode_macro"))]
+            ("_WAIT_TIMELAPSE_TAKE_FRAME", "delayed_gcode"),
+            ("_TIMELAPSE_START_RELEASE_SD", "gcode_macro"),
+            ("_TIMELAPSE_START_RESET", "gcode_macro"))]
         macros += [(ROOT / "macros/client.cfg", name, "gcode_macro") for name in (
             "PAUSE", "RESUME", "_RESUME_REJECTED", "CANCEL_PRINT", "_CLIENT_PAUSE", "_CLIENT_EXTRUDE", "_CLIENT_RETRACT",
             "_TOOLHEAD_PARK_PAUSE_CANCEL")]
@@ -120,6 +122,9 @@ class ParkedPrint:
             self.sd_starts.append((tuple(self.move.last_position), self.move.absolute_extrude))
             self.status["virtual_sdcard"]["is_active"] = True
             self.status["print_stats"]["state"] = "printing"
+        elif name == "SDCARD_CANCEL_FILE":
+            self.status["virtual_sdcard"].update(is_active=False, file_path=None)
+            self.status["print_stats"]["state"] = "cancelled"
         elif name == "MOVE_SAFE":
             relative = not self.move.absolute_coord
             self.execute("G91")
@@ -207,6 +212,22 @@ class TimelapsePauseStateTest(unittest.TestCase):
                 self.assertFalse(job.status["virtual_sdcard"]["is_active"])
                 self.assertEqual(len(job.moves), moves)
                 self.assertFalse(job.status["gcode_macro TIMELAPSE_TAKE_FRAME"]["is_paused"])
+
+    def test_cancel_during_initial_timelapse_wait_closes_file_without_moving(self):
+        job = ParkedPrint(held=True)
+        job.status["gcode_macro _TIMELAPSE_START_GUARD"].update(
+            waiting=True, prompt_open=True)
+        job.status["print_stats"]["state"] = "paused"
+        moves = len(job.moves)
+
+        job.runtime.run("CANCEL_PRINT")
+
+        self.assertEqual(len(job.moves), moves)
+        self.assertFalse(job.sd_starts)
+        self.assertIsNone(job.status["virtual_sdcard"]["file_path"])
+        self.assertEqual(job.status["print_stats"]["state"], "cancelled")
+        self.assertFalse(job.status["gcode_macro _TIMELAPSE_START_GUARD"]["waiting"])
+        self.assertFalse(job.status["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"])
 
     def test_rejected_user_resume_keeps_first_file_held_until_a_successful_retry(self):
         job = ParkedPrint(held=True)

@@ -39,6 +39,7 @@ HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 GCODE_PARSER = ROOT / ".py" / "klipper" / "patches" / "gcode.py"
 VIRTUAL_SD = ROOT / ".py" / "klipper" / "patches" / "extras" / "virtual_sdcard.py"
+SDCARD_CANCEL = ROOT / ".py" / "klipper" / "plugins" / "sdcard_cancel.py"
 
 gcode_spec = importlib.util.spec_from_file_location(
     "timelapse_gcode_parser", GCODE_PARSER)
@@ -48,6 +49,10 @@ sd_spec = importlib.util.spec_from_file_location(
     "timelapse_virtual_sdcard", VIRTUAL_SD)
 virtual_sdcard = importlib.util.module_from_spec(sd_spec)
 sd_spec.loader.exec_module(virtual_sdcard)
+cancel_spec = importlib.util.spec_from_file_location(
+    "timelapse_sdcard_cancel", SDCARD_CANCEL)
+sdcard_cancel = importlib.util.module_from_spec(cancel_spec)
+cancel_spec.loader.exec_module(sdcard_cancel)
 
 spec = importlib.util.spec_from_file_location(
     "moonraker.components.timelapse", COMPONENT)
@@ -1923,6 +1928,20 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
 class TimelapseStartGuardTest(unittest.TestCase):
     @staticmethod
+    def _cancel_command(sdcard):
+        gcode = mock.Mock()
+        printer = mock.Mock()
+        printer.lookup_object.side_effect = {
+            "gcode": gcode, "virtual_sdcard": sdcard}.__getitem__
+        config = mock.Mock()
+        config.get_printer.return_value = printer
+        command = sdcard_cancel.load_config(config)
+        gcode.register_command.assert_called_once_with(
+            "SDCARD_CANCEL_FILE", command.cmd_SDCARD_CANCEL_FILE,
+            desc=command.cmd_SDCARD_CANCEL_FILE_help)
+        return command.cmd_SDCARD_CANCEL_FILE
+
+    @staticmethod
     def _printer(returncode, waiting=False, state="printing",
                  file_path="same.gcode", prompt_open=None):
         return {
@@ -1975,10 +1994,43 @@ class TimelapseStartGuardTest(unittest.TestCase):
         self.assertIn("BEEP", result.commands)
         self.assertTrue(any("WAIT|_TIMELAPSE_START_WAIT_CHOICE" in cmd
                             for cmd in result.commands))
-        self.assertTrue(any("CANCEL|_TIMELAPSE_START_CANCEL" in cmd
+        self.assertTrue(any("CANCEL PRINT|_TIMELAPSE_START_CANCEL" in cmd
                             for cmd in result.commands))
-        self.assertTrue(any("RISKY: CONTINUE|_TIMELAPSE_START_CONTINUE"
+        self.assertTrue(any("CANCEL TIMELAPSE|_TIMELAPSE_START_CONTINUE"
                             in cmd for cmd in result.commands))
+
+    def test_paused_virtual_sd_file_cancels_without_being_resumed(self):
+        sd = virtual_sdcard.VirtualSD.__new__(virtual_sdcard.VirtualSD)
+        file = mock.Mock()
+        sd.current_file = file
+        sd.file_position = sd.file_size = 100
+        sd.work_timer = None
+        sd.cmd_from_sd = False
+        sd.reactor = mock.Mock()
+        state = {"value": "paused"}
+        sd.print_stats = mock.Mock()
+        sd.print_stats.note_cancel.side_effect = lambda: state.update(
+            value="cancelled")
+
+        self._cancel_command(sd)(mock.Mock())
+
+        self.assertEqual(state["value"], "cancelled")
+        file.close.assert_called_once()
+        self.assertIsNone(sd.current_file)
+        self.assertIsNone(sd.work_timer)
+        sd.reactor.register_timer.assert_not_called()
+
+    def test_cancel_file_command_rejects_execution_from_sd(self):
+        sd = virtual_sdcard.VirtualSD.__new__(virtual_sdcard.VirtualSD)
+        sd.current_file = mock.Mock()
+        sd.cmd_from_sd = True
+        gcmd = mock.Mock()
+        gcmd.error = RuntimeError
+
+        with self.assertRaisesRegex(RuntimeError, "cannot be run from the sdcard"):
+            self._cancel_command(sd)(gcmd)
+
+        sd.current_file.close.assert_not_called()
 
     def test_headless_start_checks_render_for_virtual_sd_print(self):
         printer = {
@@ -2040,7 +2092,7 @@ class TimelapseStartGuardTest(unittest.TestCase):
                               printer=printer)
         self.assertEqual(result.commands, ("_TIMELAPSE_START_CONTINUE",))
 
-    def test_held_virtual_sd_is_released_after_preparation_or_before_cancel(self):
+    def test_held_virtual_sd_resumes_after_preparation_or_closes_on_cancel(self):
         printer = self._printer(1, waiting=True, state="paused")
         printer["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"] = True
         printer["virtual_sdcard"].update(is_active=False)
@@ -2058,8 +2110,12 @@ class TimelapseStartGuardTest(unittest.TestCase):
             "mod_params": {"variables": {"park_dz": 10}},
             "pause_resume": {"is_paused": False}})
         cancel = render_macro(CLIENT, "CANCEL_PRINT", printer=printer)
-        self.assertEqual(cancel.commands[-2:], (
-            "_TIMELAPSE_START_RELEASE_SD FORCE=1", "CANCEL_PRINT_BASE"))
+        self.assertEqual(cancel.commands[-3:], (
+            "SDCARD_CANCEL_FILE",
+            "SET_GCODE_VARIABLE MACRO=_TIMELAPSE_START_GUARD "
+            "VARIABLE=sd_held VALUE=False",
+            "CANCEL_PRINT_BASE"))
+        self.assertNotIn("M24.1", cancel.commands)
 
         release = render_macro(
             MACROS, "_TIMELAPSE_START_RELEASE_SD", printer=printer)
@@ -2082,13 +2138,12 @@ class TimelapseStartGuardTest(unittest.TestCase):
             sd, "work_timer", None)
         sd.gcode = mock.Mock()
         sd.print_stats = mock.Mock()
-        for command in release.commands + ("CANCEL_PRINT_BASE",):
-            if command == "M24.1":
-                sd.cmd_M24(mock.Mock())
-            elif command == "CANCEL_PRINT_BASE" and sd.is_active():
-                sd.do_cancel()
+        for command in cancel.commands[-3:]:
+            if command == "SDCARD_CANCEL_FILE":
+                self._cancel_command(sd)(mock.Mock())
         self.assertIsNone(sd.current_file)
         sd.print_stats.note_cancel.assert_called_once()
+        sd.reactor.register_timer.assert_not_called()
 
         printer["virtual_sdcard"]["file_path"] = None
         missing_file = render_macro(
@@ -2164,8 +2219,9 @@ class TimelapseStartGuardTest(unittest.TestCase):
             (CLIENT, "CANCEL_PRINT"),
             (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
             "CANCEL_PRINT", printer=printer)
-        self.assertLess(cancelled.index("M24.1"),
+        self.assertLess(cancelled.index("SDCARD_CANCEL_FILE"),
                         cancelled.index("CANCEL_PRINT_BASE"))
+        self.assertNotIn("M24.1", cancelled)
 
         printer["print_stats"]["state"] = "cancelled"
         late_capture = render_macro(MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME",
@@ -2206,29 +2262,44 @@ class TimelapseStartGuardTest(unittest.TestCase):
                          ("_TIMELAPSE_START_RESET", "_START_PRINT",
                           "_TIMELAPSE_START_RELEASE_SD"))
 
-    def test_standard_resume_and_cancel_route_waiting_print(self):
+    def test_standard_resume_waits_and_cancel_stops_held_file(self):
         waiting = self._printer(2, waiting=True, state="paused")
         resume = render_macro(CLIENT, "RESUME", printer=waiting)
         cancel_printer = {
             **waiting,
-            "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
+            "gcode_macro _CLIENT_VARIABLE": {
+                "user_cancel_macro": "", "park_at_cancel": True},
             "gcode_macro RESUME": {"restore_idle_timeout": 0},
             "mod_params": {"variables": {"park_dz": 10}},
             "pause_resume": {"is_paused": False}}
         cancel = render_macro(CLIENT, "CANCEL_PRINT", printer=cancel_printer)
-        self.assertEqual(resume.commands, ("_TIMELAPSE_START_CONTINUE",))
+        self.assertNotIn("_TIMELAPSE_START_CONTINUE", resume.commands)
+        self.assertTrue(any("CANCEL TIMELAPSE" in command
+                            for command in resume.commands))
+        parser = gcode_parser.GCodeDispatch.__new__(
+            gcode_parser.GCodeDispatch)
+        for command in resume.commands:
+            parsed = types.SimpleNamespace(
+                get_commandline=lambda command=command: command, _params={})
+            parser._get_extended_params(parsed)
         self.assertEqual(cancel.commands[0], "_TIMELAPSE_START_RESET")
-        self.assertEqual(cancel.commands[-2:], (
-            "_TIMELAPSE_START_RELEASE_SD FORCE=1", "CANCEL_PRINT_BASE"))
+        self.assertEqual(cancel.commands[-3:], (
+            "SDCARD_CANCEL_FILE",
+            "SET_GCODE_VARIABLE MACRO=_TIMELAPSE_START_GUARD "
+            "VARIABLE=sd_held VALUE=False",
+            "CANCEL_PRINT_BASE"))
+        self.assertFalse(any(command.startswith((
+            "_TOOLHEAD_PARK_PAUSE_CANCEL", "_CLIENT_RETRACT"))
+            for command in cancel.commands))
         self.assertIn("CANCEL_PRINT_BASE", cancel.commands)
 
         full_cancel = execute_macro_chain((
             (CLIENT, "CANCEL_PRINT"),
-            (MACROS, "_TIMELAPSE_START_RESET"),
-            (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
+            (MACROS, "_TIMELAPSE_START_RESET")),
             "CANCEL_PRINT", printer=cancel_printer)
-        self.assertLess(full_cancel.index("M24.1"),
+        self.assertLess(full_cancel.index("SDCARD_CANCEL_FILE"),
                         full_cancel.index("CANCEL_PRINT_BASE"))
+        self.assertNotIn("M24.1", full_cancel)
 
         resumed_cancel = render_macro(
             CLIENT, "CANCEL_PRINT",
@@ -2261,8 +2332,7 @@ class TimelapseStartGuardTest(unittest.TestCase):
         cancelled = execute_macro_chain((
             (MACROS, "_TIMELAPSE_START_CANCEL"),
             (CLIENT, "CANCEL_PRINT"),
-            (MACROS, "_TIMELAPSE_START_RESET"),
-            (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
+            (MACROS, "_TIMELAPSE_START_RESET")),
             "_TIMELAPSE_START_CANCEL", printer={
                 **waiting,
                 "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
@@ -2272,8 +2342,9 @@ class TimelapseStartGuardTest(unittest.TestCase):
         self.assertLess(cancelled.index(
             'RESPOND TYPE=command MSG="action:prompt_end Previous timelapse"'),
                         cancelled.index("CANCEL_PRINT_BASE"))
-        self.assertLess(cancelled.index("M24.1"),
+        self.assertLess(cancelled.index("SDCARD_CANCEL_FILE"),
                         cancelled.index("CANCEL_PRINT_BASE"))
+        self.assertNotIn("M24.1", cancelled)
         self.assertIn("UPDATE_DELAYED_GCODE ID=_TIMELAPSE_START_POLL DURATION=0",
                       cancelled)
 

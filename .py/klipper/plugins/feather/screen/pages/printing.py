@@ -53,24 +53,33 @@ def _render_gcode_preview(path, cancel=None):
 
 class PrintingPagesMixin:
     def _render_timelapse_wait(self):
-        commands = self.renderer.begin_page("WAITING FOR TIMELAPSE")
+        cancelling = getattr(self, "pending_action", None) == "print.cancel.confirm"
+        commands = self.renderer.begin_page(
+            "CANCELLING PRINT" if cancelling else "WAITING FOR TIMELAPSE")
         commands.append(self.renderer.text(
-            400, 155, "WAITING FOR THE PREVIOUS TIMELAPSE",
+            400, 155, ("CANCELLING PRINT" if cancelling else
+                       "WAITING FOR THE PREVIOUS TIMELAPSE"),
             ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
             "middle", max_width=700, truncate=True))
         commands.append(self.renderer.text(
-            400, 200, "THE PRINT STARTS WHEN ITS STATUS IS CONFIRMED",
+            400, 200, ("PLEASE WAIT WHILE THE PRINT STOPS" if cancelling else
+                       "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES"),
             ThemeColor.DIM, "JetBrainsMono 8pt", "center",
             "middle", max_width=700, truncate=True))
         commands += self._timelapse_wait_loader_commands()
-        commands += self.renderer.button(
-            "print.resume", 85, 310, 290, 75,
-            "RISKY: CONTINUE", state="warning",
-            font="JetBrainsMono Bold 10pt")
-        commands += self.renderer.button(
-            "print.cancel", 425, 310, 290, 75,
-            "CANCEL PRINT", state="danger",
-            font="JetBrainsMono Bold 10pt")
+        if not cancelling:
+            commands += self.renderer.button(
+                "timelapse.wait.keep", 35, 310, 230, 75,
+                "WAIT", state="enabled",
+                font="JetBrainsMono Bold 10pt")
+            commands += self.renderer.button(
+                "print.cancel", 285, 310, 230, 75,
+                "CANCEL PRINT", state="danger",
+                font="JetBrainsMono Bold 10pt")
+            commands += self.renderer.button(
+                "timelapse.wait.cancel_render", 535, 310, 230, 75,
+                "CANCEL TIMELAPSE", state="warning",
+                font="JetBrainsMono Bold 9pt")
         self.renderer.send(commands)
 
     def _timelapse_wait_loader_commands(self):
@@ -94,6 +103,8 @@ class PrintingPagesMixin:
                 and not self._timelapse_user_pause()):
             self._show_page(ScreenPage.TIMELAPSE_WAIT)
         elif self.page == ScreenPage.TIMELAPSE_WAIT:
+            if getattr(self, "pending_action", None) == "print.cancel.confirm":
+                return
             target = self.page_for_print_state()
             if target != ScreenPage.TIMELAPSE_WAIT:
                 self._show_page(target)

@@ -13,6 +13,20 @@ from ff5m_ui.screen import ScreenPage
 class PrintCancelPagesMixin:
     cmd_FEATHER_ABORT_help = "Request cancellation of the active operation"
 
+    def _cancel_held_timelapse_print(self, eventtime):
+        self.pending_action = "print.cancel.confirm"
+        self.pending_until = eventtime + 30.0
+        self.cancel_requested = True
+        if self.page == ScreenPage.TIMELAPSE_WAIT:
+            self._show_page(self.page)
+        try:
+            self._run_script("CANCEL_PRINT", show_notice=False)
+        except Exception:
+            self.pending_action = None
+            self.cancel_requested = False
+            raise
+
+
     def cmd_FEATHER_ABORT(self, gcmd):
         """Request cooperative cancellation outside the G-code mutex."""
         result = self._request_operation_cancel()
@@ -33,10 +47,7 @@ class PrintCancelPagesMixin:
         if (action in ("print.resume", "print.cancel")
                 and self._timelapse_start_held() and not self._timelapse_user_pause()):
             if action == "print.resume":
-                if self._timelapse_start_waiting():
-                    self._run_script("RESUME")
-                else:
-                    self._toast("Print preparation is in progress")
+                self._toast("Print preparation is in progress")
                 return
             if action == "print.cancel":
                 waiting = self._timelapse_start_waiting()

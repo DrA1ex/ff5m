@@ -82,7 +82,9 @@ EXACT_ACTIONS = {
                     "print.cancel", "print.z"),
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
                   "print.cancel", "print.z"),
-    ScreenPage.TIMELAPSE_WAIT: ("print.resume", "print.cancel"),
+    ScreenPage.TIMELAPSE_WAIT: (
+        "timelapse.wait.keep", "print.cancel",
+        "timelapse.wait.cancel_render"),
     ScreenPage.OPERATION_CANCEL: (
         "operation.cancel.back", "operation.cancel.confirm",
         "operation.cancel.continue", "operation.cancel.force"),
@@ -1094,8 +1096,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             logging.info("[feather_screen] debounced action=%s", action)
             return
         if self.pending_action is not None and action in (
-                "print.pause", "print.resume", "operation.cancel.confirm"):
+                "print.pause", "print.resume", "print.cancel",
+                "timelapse.wait.keep", "timelapse.wait.cancel_render",
+                "timelapse.wait.cancel", "operation.cancel.confirm"):
             logging.info("[feather_screen] action already in progress=%s", action)
+            return
+        if (self.pending_action is not None
+                and self.page == ScreenPage.TIMELAPSE_WAIT
+                and action.startswith("prompt.button.")):
             return
         allowed = (self._dialog_action_allowed(dialog, action)
                    if dialog is not None else
@@ -1192,7 +1200,21 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             elif action.startswith("recovery."):
                 self._handle_recovery_action(action)
             elif action.startswith("prompt."):
-                self._handle_action_prompt_action(action)
+                prompt = (self._dialog_content(ScreenDialog.ACTION_PROMPT)
+                          if (self.page == ScreenPage.TIMELAPSE_WAIT
+                              and action.startswith("prompt.button.")) else None)
+                button = (prompt or {}).get("buttons", {}).get(action)
+                command = button["command"] if button is not None else None
+                if command == "_TIMELAPSE_START_CANCEL" and self._timelapse_start_held():
+                    self._cancel_held_timelapse_print(now)
+                elif (command in ("_TIMELAPSE_START_WAIT_CHOICE",
+                                   "_TIMELAPSE_START_CONTINUE")
+                      and self._timelapse_start_waiting()):
+                    self._run_script(command, show_notice=False)
+                    if command == "_TIMELAPSE_START_CONTINUE":
+                        self._sync_timelapse_wait_page()
+                else:
+                    self._handle_action_prompt_action(action)
             elif action in ("message.prev", "message.next"):
                 current = self._current_dialog_instance()
                 if current is not None:
@@ -1217,6 +1239,15 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._restart_klipper("SAVE_CONFIG")
             elif action == "message.ok":
                 self._close_dialog(ScreenDialog.MESSAGE)
+            elif action == "timelapse.wait.keep":
+                if self._timelapse_start_waiting():
+                    self._run_script(
+                        "_TIMELAPSE_START_WAIT_CHOICE", show_notice=False)
+            elif action == "timelapse.wait.cancel_render":
+                if self._timelapse_start_waiting():
+                    self._run_script(
+                        "_TIMELAPSE_START_CONTINUE", show_notice=False)
+                    self._sync_timelapse_wait_page()
             elif action == "timelapse.wait.cancel":
                 self._close_dialog(ScreenDialog.MESSAGE)
                 state = self.print_stats.get_status(now).get("state")
@@ -1232,7 +1263,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                         self._handle_operation_cancel_action(
                             "operation.cancel.confirm")
                 elif self._timelapse_start_held():
-                    self._run_script("CANCEL_PRINT")
+                    self._cancel_held_timelapse_print(now)
         except Exception as exc:
             logging.exception("[feather_screen] action failed: %s", action)
             self._show_message(str(exc), self.page)
@@ -2382,10 +2413,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                              and not virtual_sd_active)
             if completed:
                 self.pending_action = None
-                if getattr(self, "page", None) == ScreenPage.OPERATION_CANCEL:
+                if getattr(self, "page", None) in (
+                        ScreenPage.OPERATION_CANCEL, ScreenPage.TIMELAPSE_WAIT):
                     self.cancel_requested = False
                     self.cancel_waiting_for_heat = False
-                    self._reset_operation_cancel()
+                    if self.page == ScreenPage.OPERATION_CANCEL:
+                        self._reset_operation_cancel()
                     self._show_page(ScreenPage.IDLE_HOME)
                     self.print_state = PrintState.IDLE
                     self._show_print_result(
@@ -2528,8 +2561,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     message = ""
                 self.cancel_requested = False
                 self.cancel_waiting_for_heat = False
-                if getattr(self, "page", None) == ScreenPage.OPERATION_CANCEL:
-                    self._reset_operation_cancel()
+                if getattr(self, "page", None) in (
+                        ScreenPage.OPERATION_CANCEL, ScreenPage.TIMELAPSE_WAIT):
+                    if self.page == ScreenPage.OPERATION_CANCEL:
+                        self._reset_operation_cancel()
                     self._show_page(ScreenPage.IDLE_HOME)
                 self.home_during_print = False
                 self._m73_start_expiry = float(getattr(

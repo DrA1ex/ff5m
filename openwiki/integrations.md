@@ -119,12 +119,13 @@ For headless display configurations with timelapse enabled, `START_PRINT`
 checks whether the previous timelapse is still finishing, capturing, exporting
 frames, or rendering through a short local Moonraker request. If it is busy, or
 Moonraker cannot confirm it is idle, the virtual SD file pauses before print
-preparation and shows Wait, Cancel print, and Continue anyway (risky) actions.
-After Wait, a dedicated progress screen keeps Cancel print, Continue anyway,
-and the emergency ABORT action available. A delayed G-code check starts print
+preparation and shows Wait, Cancel print, and Cancel timelapse actions.
+After Wait, a dedicated progress screen keeps all three choices and the
+emergency ABORT action available. A delayed G-code check starts print
 preparation only when Moonraker confirms the timelapse is idle. The virtual SD
-file remains paused through preparation; cancellation releases and cancels it
-through the standard print cancellation path. If the initial frame parks the
+file remains paused through preparation; Cancel print closes the held file and
+records cancellation without resuming it. Cancel timelapse starts print
+preparation, which interrupts the earlier render. If the initial frame parks the
 head, the file resumes only after the snapshot finishes and the head returns.
 The capture uses the base pause's `PAUSE_STATE`, saved before retracting or
 changing coordinate modes. It restores the head, compensates the capture
