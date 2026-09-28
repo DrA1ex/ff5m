@@ -381,11 +381,12 @@
       }
     },
     {
-      "id": "error-mcu-restart-dialog",
-      "label": "Klipper error / MCU restart",
+      "id": "error-remote-shutdown-dialog",
+      "label": "Klipper error / remote shutdown",
       "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
       "error_fixture": {
         "message": "Shutdown due to webhooks request. Once the underlying issue is corrected, use the FIRMWARE_RESTART command to reset the firmware, reload the config, and restart the host software. Printer is shutdown",
+        "category": "shutdown",
         "recovery": "firmware_restart"
       }
     },

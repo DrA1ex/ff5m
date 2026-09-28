@@ -3,7 +3,7 @@
 # Changes:
 # - Added gcode code to execute if value out of range
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Copyright (C) 2019  Kevin O'Connor <kevin@koconnor.net>
 #
@@ -70,7 +70,10 @@ class PrinterSensorGeneric:
         template = self._template(temp)
         # Run M112 immediately if present
         if self.m112_r.search(template):
-            self.printer.invoke_shutdown("Shutdown due to sensor value exceeding the limit")
+            reason = "Shutdown due to sensor value exceeding the limit"
+            if self.name == "weightValue":
+                reason += " (weightValue: %.2f g)" % temp
+            self.printer.invoke_shutdown(reason)
             return
 
         now = self.reactor.monotonic()

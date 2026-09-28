@@ -96,6 +96,7 @@ def _render_error_fixture(scene, fixture, project_root, theme):
     screen = FeatherScreen.__new__(FeatherScreen)
     screen.renderer = renderer
     screen.error_message = fixture["message"]
+    screen.error_category = fixture.get("category", "")
     screen.error_recovery = fixture["recovery"]
     screen.error_page = fixture.get("page", 0)
     screen._render_error()

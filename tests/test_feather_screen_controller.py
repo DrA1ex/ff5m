@@ -3320,6 +3320,87 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(
             controller.renderer._buttons["error.firmware_restart"][5],
             "danger")
+        self.assertIn("MCU RESTART REQUIRED", drawing)
+
+    def test_weight_limit_shutdown_explains_value_and_recovery(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        capture_batches(controller.renderer, batches)
+        controller.error_message = (
+            "Shutdown due to sensor value exceeding the limit "
+            "(weightValue: 1284.75 g)\nPrinter is shutdown")
+        controller.error_category = "shutdown"
+        controller.error_recovery = "firmware_restart"
+        controller.params = type("Params", (), {
+            "variables": {"weight_check_max": 1200}})()
+
+        controller._render_error()
+
+        drawing = "\n".join(batches[-1])
+        rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
+        body = [re.search(r'-t "([^"]+)"', command).group(1)
+                for command in batches[-1]
+                if '-f "JetBrainsMono 8pt"' in command]
+        self.assertIn("BED PRESSURE LIMIT", rendered)
+        self.assertEqual(len(body), 5)
+        self.assertIn("protect the bed", body[0])
+        self.assertIn("pressure exceeded", body[1])
+        self.assertIn("Measured load: 1284.75 g", body[2])
+        self.assertIn("Limit: 1200 g", body[2])
+        self.assertIn("nozzle collision or load-cell fault", body[3])
+        self.assertIn("Restart firmware", body[4])
+        self.assertTrue(all(
+            controller.renderer.text_width(line, "JetBrainsMono 8pt") <= 644
+            for line in body))
+        self.assertRegex(drawing, r"--batch fill -p 50 \d+ -s 700 \d+")
+        self.assertNotIn("MCU RESTART REQUIRED", rendered)
+        self.assertIn("error.firmware_restart", controller.renderer._buttons)
+
+    def test_m112_shutdown_explains_emergency_stop_and_recovery(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        batches = []
+        capture_batches(controller.renderer, batches)
+        controller.error_message = (
+            "Shutdown due to M112 command\nPrinter is shutdown")
+        controller.error_category = "shutdown"
+        controller.error_recovery = "firmware_restart"
+
+        controller._render_error()
+
+        drawing = "\n".join(batches[-1])
+        rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
+        self.assertIn("EMERGENCY STOP", rendered)
+        self.assertIn("M112 emergency stop was requested", rendered)
+        self.assertIn("Check the printer before restarting firmware", rendered)
+        self.assertNotIn("MCU RESTART REQUIRED", rendered)
+        self.assertIn("error.firmware_restart", controller.renderer._buttons)
+
+    def test_webhooks_shutdown_explains_remote_request_and_recovery(self):
+        for separator in (". ", "\n"):
+            with self.subTest(separator=separator):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.renderer = FEATHER.FeatherRenderer()
+                batches = []
+                capture_batches(controller.renderer, batches)
+                controller.error_message = (
+                    "Shutdown due to webhooks request" + separator +
+                    "Once the underlying issue is corrected, use the "
+                    "FIRMWARE_RESTART command to reset the firmware.")
+                controller.error_category = "shutdown"
+                controller.error_recovery = "firmware_restart"
+
+                controller._render_error()
+
+                drawing = "\n".join(batches[-1])
+                rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
+                self.assertIn("REMOTE SHUTDOWN", rendered)
+                self.assertIn("connected app or remote client", rendered)
+                self.assertIn("Check why the request was sent", rendered)
+                self.assertNotIn("MCU RESTART REQUIRED", rendered)
+                self.assertNotIn("M112 emergency stop", rendered)
+                self.assertIn("error.firmware_restart", controller.renderer._buttons)
 
     def test_touch_warning_covers_and_restores_frozen_restart_dialog(self):
         controller = ScenarioController.__new__(ScenarioController)

@@ -8,6 +8,7 @@ import errno
 import fcntl
 import logging
 import os
+import re
 import signal
 import sys
 import struct
@@ -2130,11 +2131,47 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
 
     def _render_error(self):
         content = self._dialog_render_content(ScreenDialog.ERROR)
+        message = " ".join(content["message"].split())
+        lines = None
+        dialog_width = 480
         if content["recovery"] == "firmware_restart":
             advice = "Check the printer, then restart the MCU."
             buttons = (("error.firmware_restart",
                         "FIRMWARE RESTART", "danger"),)
             title = "MCU RESTART REQUIRED"
+            if content.get("category") == "shutdown":
+                reason = content["message"].splitlines()[0].strip()
+                weight = re.fullmatch(
+                    r"Shutdown due to sensor value exceeding the limit "
+                    r"\(weightValue: (-?\d+(?:\.\d+)?) g\)", reason)
+                if weight is not None:
+                    title = "BED PRESSURE LIMIT"
+                    dialog_width = 700
+                    variables = getattr(getattr(self, "params", None),
+                                        "variables", {})
+                    limit = variables.get("weight_check_max")
+                    load = "Measured load: %s g" % weight.group(1)
+                    if isinstance(limit, (int, float)):
+                        load += "    Limit: %g g" % limit
+                    lines = (
+                        "The printer stopped to protect the bed.",
+                        "Bed pressure exceeded the safety limit.",
+                        load,
+                        "Check for a nozzle collision or load-cell fault.",
+                        "Restart firmware after correcting the cause.")
+                elif reason == "Shutdown due to M112 command":
+                    title = "EMERGENCY STOP"
+                    message = ("An M112 emergency stop was requested. "
+                               "The printer shut down immediately.")
+                    advice = "Check the printer before restarting firmware."
+                elif re.match(
+                        r"^Shutdown due to webhooks request(?:[.]|$)",
+                        reason):
+                    title = "REMOTE SHUTDOWN"
+                    message = ("A connected app or remote client requested "
+                               "the printer to shut down.")
+                    advice = ("Check why the request was sent, then restart "
+                              "firmware.")
         elif content["recovery"] == "restart":
             advice = "Correct the issue, then restart Klipper."
             buttons = (("error.restart", "RESTART", "danger"),)
@@ -2143,9 +2180,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             advice = "Waiting for Klipper to reconnect."
             buttons = ()
             title = "KLIPPER IS NOT READY"
+        if lines is None:
+            lines = (message, advice)
         commands = self.renderer.dialog(
-            title, (" ".join(content["message"].split()), advice), buttons,
-            x=160, y=130, width=480, height=220, tone="danger",
+            title, lines, buttons,
+            x=160, y=130, width=dialog_width, height=220, tone="danger",
             page=self._dialog_page(ScreenDialog.ERROR),
             page_actions=("error.prev", "error.next"))
         self.renderer.prioritize_next_batch("critical", "error-screen")
