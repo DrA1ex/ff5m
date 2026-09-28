@@ -1349,6 +1349,14 @@ class Node(metaclass=_NodeMeta):
                     break
         self._blocks_input = blocked
 
+    @property
+    def input_blocked(self):
+        return self._blocks_input
+
+    @property
+    def is_clean(self):
+        return self._dirty == Dirty.CLEAN
+
     def clear_dirty(self):
         if self._dirty == Dirty.CLEAN:
             return

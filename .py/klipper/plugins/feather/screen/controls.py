@@ -7,6 +7,7 @@
 import logging
 import math
 import re
+from timelapse_state import TimelapsePhase
 from ui import (
         Back, Command, Increment, Navigate, Replace, SetValue, ThemeColor,
         Toggle,
@@ -27,6 +28,7 @@ from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
 from feather.control import joystick as joystick_ui
 from feather.control import motion as joystick_motion
 from feather.screen.pagination import Pagination, pagination_footer
+from feather.screen import prompt_titles
 from feather.materials import (
         adaptive_grid_columns, render_material_selector,
     )
@@ -1276,11 +1278,10 @@ class FeatherControlsMixin:
         stats = self.print_stats.get_status(eventtime)
         if stats.get("state") not in ("printing", "paused"):
             return False
-        if self._timelapse_frame_status().get("is_paused"):
-            return False
-        if (self.print_state == PrintState.PREPARING
-                or (self._timelapse_start_held()
-                    and not self._timelapse_user_pause())):
+        phase = self._timelapse_phase()
+        if (phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD,
+                      TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE)
+                or self.print_state == PrintState.PREPARING):
             return False
         homed = str(
             self.toolhead.get_status(eventtime).get("homed_axes", "")).lower()
@@ -1814,7 +1815,7 @@ class FeatherControlsMixin:
 
     def _start_action_prompt(self, title):
         title = str(title).strip()
-        self.action_prompt = {
+        self._prompt_draft = {
             "title": title,
             "text": [],
             "rows": [],
@@ -1822,10 +1823,9 @@ class FeatherControlsMixin:
             "group": None,
             "buttons": {},
         }
-        self.action_prompt_page = 0
 
     def _append_action_prompt_button(self, payload, footer=False):
-        prompt = self.action_prompt
+        prompt = self._prompt_draft
         if prompt is None:
             return
         button = self._prompt_button(payload, len(prompt["buttons"]))
@@ -1838,7 +1838,7 @@ class FeatherControlsMixin:
             prompt["rows"].append([button])
 
     def _finish_action_prompt_group(self):
-        prompt = self.action_prompt
+        prompt = self._prompt_draft
         if prompt is None or prompt["group"] is None:
             return
         if prompt["group"]:
@@ -1846,18 +1846,16 @@ class FeatherControlsMixin:
         prompt["group"] = None
 
     def _action_prompt_is_recovery(self):
-        prompt = self.action_prompt or {}
-        return prompt.get("title", "").strip().casefold() == "resurrection"
+        prompt = self._prompt_draft or {}
+        return prompt.get("title", "").strip().casefold() == prompt_titles.RESURRECTION
 
     def _action_prompt_is_cold_pull(self):
-        current = self._current_dialog_instance()
-        prompt = (current.content
-                  if current is not None and current.kind == ScreenDialog.ACTION_PROMPT
-                  else self.action_prompt or {})
-        return prompt.get("title", "").strip().casefold() == "cold pull"
+        current = self._find_dialog(ScreenDialog.ACTION_PROMPT)
+        prompt = current.content if current is not None else self._prompt_draft or {}
+        return prompt.get("title", "").strip().casefold() == prompt_titles.COLD_PULL
 
     def _show_action_prompt(self):
-        if self.action_prompt is None:
+        if self._prompt_draft is None:
             return
         self._finish_action_prompt_group()
         if self._action_prompt_is_recovery():
@@ -1867,29 +1865,32 @@ class FeatherControlsMixin:
                 if recovery is not None else {})
             self.recovery_status = status
             if not status.get("available"):
-                self.action_prompt = None
+                self._prompt_draft = None
                 return
             self._show_page(ScreenPage.RECOVERY_PROMPT)
             return
-        self.action_prompt["_layer"] = self._show_dialog(ScreenDialog.ACTION_PROMPT)
+        prompt = self._prompt_draft
+        self._prompt_draft = None
+        if (prompt["title"].strip().casefold() == prompt_titles.PREVIOUS_TIMELAPSE
+                and self._timelapse_phase() == TimelapsePhase.WAITING):
+            self._sync_timelapse_wait_page()
+            return
+        self._show_dialog(ScreenDialog.ACTION_PROMPT, content=prompt)
 
-    def _end_action_prompt(self):
-        prompt = self.action_prompt
-        if prompt is None:
-            # Without a draft, an unaddressed end belongs to the surviving prompt.
-            root = getattr(self, "_screen_root", None)
-            layer = (next((item for item in reversed(root.layers)
-                           if item.kind == ScreenDialog.ACTION_PROMPT), None)
-                     if root is not None else None)
-            prompt = layer.content if layer is not None else {}
+    def _end_action_prompt(self, layer=None):
+        if layer is not None:
+            prompt = layer.content
         else:
-            layer = prompt.get("_layer")
+            layer = self._find_dialog(ScreenDialog.ACTION_PROMPT)
+            prompt = self._prompt_draft or (layer.content if layer is not None else {})
+            if (self._prompt_draft is not None and layer is not None
+                    and layer.content["title"] != prompt["title"]):
+                layer = None
+            self._prompt_draft = None
         title = prompt.get("title", "").strip().casefold()
-        mirrored_recovery = (not prompt or title == "resurrection") and self.page in (
+        mirrored_recovery = (not prompt or title == prompt_titles.RESURRECTION) and self.page in (
             ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)
-        cold_pull = title == "cold pull"
-        self.action_prompt = None
-        self.action_prompt_page = 0
+        cold_pull = title == prompt_titles.COLD_PULL
         if layer is not None:
             self._close_dialog(layer)
         if layer is not None and cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
@@ -1906,22 +1907,22 @@ class FeatherControlsMixin:
         payload = payload if separator else ""
         if action == "begin":
             self._start_action_prompt(payload)
-        elif action == "text" and self.action_prompt is not None:
-            self.action_prompt["text"].append(payload)
+        elif action == "text" and self._prompt_draft is not None:
+            self._prompt_draft["text"].append(payload)
         elif action == "button":
             self._append_action_prompt_button(payload)
         elif action == "footer_button":
             self._append_action_prompt_button(payload, footer=True)
-        elif action == "button_group_start" and self.action_prompt is not None:
+        elif action == "button_group_start" and self._prompt_draft is not None:
             self._finish_action_prompt_group()
-            self.action_prompt["group"] = []
+            self._prompt_draft["group"] = []
         elif action == "button_group_end":
             self._finish_action_prompt_group()
         elif action == "show":
             self._show_action_prompt()
         elif action == "end":
-            if not payload or (self.action_prompt is not None
-                               and self.action_prompt["title"] == payload):
+            if not payload or (self._prompt_draft is not None
+                               and self._prompt_draft["title"] == payload):
                 self._end_action_prompt()
             else:
                 root = getattr(self, "_screen_root", None)
@@ -1929,7 +1930,7 @@ class FeatherControlsMixin:
                     for layer in tuple(root.layers):
                         if (layer.kind == ScreenDialog.ACTION_PROMPT
                                 and layer.content.get("title") == payload):
-                            self._close_dialog(layer)
+                            self._end_action_prompt(layer)
 
     def _handle_gcode_output(self, message):
         if any(line.strip() == "// action:forge_x_shutting_down"
@@ -1955,9 +1956,10 @@ class FeatherControlsMixin:
                 self.calibration_results.append(result)
 
     def _handle_action_prompt_action(self, action):
-        prompt = self._dialog_content(ScreenDialog.ACTION_PROMPT)
-        if not prompt:
+        instance = self._current_dialog_instance()
+        if instance is None or instance.kind != ScreenDialog.ACTION_PROMPT:
             return
+        prompt = instance.content
         if action == "prompt.prev":
             current = self._current_dialog_instance()
             if current is not None:
@@ -2009,14 +2011,13 @@ class FeatherControlsMixin:
                 font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 
-    def _render_cold_pull_prompt(self):
+    def _render_cold_pull_prompt(self, instance):
         operation = self._operation_context_status(
             self.reactor.monotonic())
         if "cold_pull" in operation.get("context_types", ()):
             self._render_operation_cold_pull("Cold Pull", "coldpull.cancel")
             return
-        prompt = self._dialog_render_content(ScreenDialog.ACTION_PROMPT) or {
-            "text": [], "rows": [], "footer": []}
+        prompt = instance.content
         buttons = [button for row in prompt["rows"] for button in row]
         columns = adaptive_grid_columns(len(buttons)) if buttons else 1
         gap = 20

@@ -10,9 +10,28 @@ import json
 import pathlib
 import re
 import shlex
+import importlib.util
+from types import SimpleNamespace
 
 import jinja2
 
+
+_STATE_PATH = pathlib.Path(__file__).parents[1] / ".py/klipper/plugins/timelapse_state.py"
+_STATE_SPEC = importlib.util.spec_from_file_location("macro_timelapse_state", _STATE_PATH)
+_STATE = importlib.util.module_from_spec(_STATE_SPEC)
+_STATE_SPEC.loader.exec_module(_STATE)
+
+
+def timelapse_status(printer):
+    path = _STATE_PATH.parents[3] / "macros/timelapse.cfg"
+    statuses = dict(printer)
+    for name in ("_TIMELAPSE_START_GUARD", "TIMELAPSE_TAKE_FRAME"):
+        statuses["gcode_macro " + name] = {
+            **load_macro(path, name).variables, **statuses.get("gcode_macro " + name, {})}
+    statuses.setdefault("pause_resume", {"is_paused": False})
+    adapter = _STATE.TimelapseState(SimpleNamespace(lookup_object=lambda name:
+        SimpleNamespace(get_status=lambda eventtime: statuses[name])))
+    return adapter.get_status(0)
 
 class MacroConfigError(ValueError):
     pass
@@ -93,8 +112,10 @@ def render_macro(path, name, *, printer=None, params=None, rawparams="",
         remote_calls.append((method, kwargs))
         return ""
 
+    printer = dict(printer or {})
+    printer["timelapse_state"] = timelapse_status(printer)
     context.update({
-        "printer": printer or {},
+        "printer": printer,
         "params": {str(key).upper(): str(value)
                    for key, value in (params or {}).items()},
         "rawparams": rawparams,

@@ -10,11 +10,11 @@ from unittest import mock
 try:
     from tests import test_feather_lazy_features as lazy_tests
     from tests.test_operation_context import CONTEXT, FakePrinter, FakeConfig, FakeCommand
-    from tests.test_feather_screen import StatusObject
+    from tests.test_feather_screen import StatusObject, blank_page
 except ImportError:
     import test_feather_lazy_features as lazy_tests
     from test_operation_context import CONTEXT, FakePrinter, FakeConfig, FakeCommand
-    from test_feather_screen import StatusObject
+    from test_feather_screen import StatusObject, blank_page
 
 
 FEATHER = lazy_tests.FEATHER
@@ -25,6 +25,7 @@ Dialog = FEATHER.ScreenDialog
 class ExternalWorkflowTest(unittest.TestCase):
     def setUp(self):
         self.host = lazy_tests.ControllerFeatureRoutingTest.controller()
+        self.host._prompt_draft = None
         self.host._show_page = self.show_page
         self.host._show_message = mock.Mock()
         self.host._run_script = mock.Mock()
@@ -101,11 +102,12 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.host._run_script.assert_not_called()
 
     def test_rejected_context_is_not_adopted_on_a_later_state_revision(self):
-        self.host.dialogs = [Dialog.ERROR]
+        blank_page(self.host, self.host.page)
+        self.host._show_error("Configuration failed", "error")
         self.begin("bed_screws")
         self.assertIsNone(self.feature())
 
-        self.host.dialogs = []
+        self.host._clear_dialogs()
         self.host.page = Page.IDLE_HOME
         self.context.cmd_CONTEXT_STATE(FakeCommand(NAME="PROBING"))
         self.host._update_operation_context(100.0)
@@ -158,14 +160,23 @@ class ExternalWorkflowTest(unittest.TestCase):
 
         for dialog in Dialog:
             with self.subTest(dialog=dialog):
-                self.host.page = Page.IDLE_HOME
-                self.host.dialogs = [dialog]
+                blank_page(self.host)
+                self.host._clear_dialogs()
+                content = {
+                    Dialog.ACTION_PROMPT: {"title": "Other operation", "text": [], "rows": [],
+                                          "footer": [], "buttons": {}},
+                    Dialog.MESSAGE: {"message": "Notice", "title": None,
+                                     "actions": (("message.ok", "OK", "enabled"),)},
+                    Dialog.ERROR: {"message": "Configuration failed", "category": "error", "recovery": "restart"},
+                    Dialog.TOUCH_UNAVAILABLE: {},
+                }[dialog]
+                self.host._show_dialog(dialog, content=content)
                 self.begin("pid_bed")
                 self.assertEqual(self.host._current_dialog(), dialog)
                 self.finish()
                 self.flush()
                 self.assertIsNone(self.feature())
-        self.host.dialogs = []
+        self.host._clear_dialogs()
 
     def test_print_status_and_virtual_sd_protect_even_an_idle_home_page(self):
         for state, sd_active in (("printing", False), ("paused", False),
@@ -297,7 +308,7 @@ class ExternalWorkflowTest(unittest.TestCase):
 
     def test_external_recovery_survives_prompt_end_and_hands_over_to_print(self):
         self.host.page = Page.RECOVERY_PROMPT
-        self.host.action_prompt = {"title": "Resurrection"}
+        self.host._start_action_prompt("Resurrection")
         self.begin("recovery")
         self.host._handle_gcode_output("// action:prompt_end")
         self.assertEqual(self.host.page, Page.CALIBRATION_PROGRESS)

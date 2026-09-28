@@ -196,6 +196,10 @@ class FeatherRenderer:
             for name, value in previous.items():
                 setattr(self, name, value)
 
+    def discard_surface(self):
+        """Roll back a prepared surface that was not submitted."""
+        self._finish_surface(False)
+
     def _visible_value(self, name):
         if self._prepared_surface is not None:
             return self._prepared_surface[name]

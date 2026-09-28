@@ -18,6 +18,7 @@ from feather.features.manager import (  # noqa: E402
     FeatureHostProxy, FeatureLoadError, FeatureSpec, LazyFeatureManager,
 )
 from ui.lazy import LazyModule, resolve_lazy_export  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture  # noqa: E402
 
 
 class SharedLazyImportTest(unittest.TestCase):
@@ -480,7 +481,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
             "register_callback": lambda self, callback, when=None: None,
         })()
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.send = lambda commands: None
+        RenderCapture(controller.renderer)
         controller.page = FEATHER.ScreenPage.CONTROL_HOME
         controller.previous_page = FEATHER.ScreenPage.IDLE_HOME
         controller.print_state = FEATHER.PrintState.IDLE

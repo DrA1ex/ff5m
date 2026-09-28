@@ -13,8 +13,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+from tests.feather_timelapse_test_helper import make_timelapse_state
 
 from tests.test_feather_screen import (
+    blank_page,
     DeferredReactor,
     FEATHER,
     FailingGCode,
@@ -58,6 +60,7 @@ class ScenarioController(FeatherZCalibrationMixin,
     """Test harness for scenario implementations no longer on the host."""
 
     boot_screen_held = False
+    timelapse_state = make_timelapse_state()
     touch_available = None
     touch_warning_visible = False
     system_shutdown_active = False
@@ -1428,8 +1431,9 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_z_shutdown_clears_local_session_without_replacing_error_page(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.gcode = FailingGCode()
-        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
+        controller.renderer = FEATHER.FeatherRenderer()
+        blank_page(controller, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        controller._show_error("Test error")
         controller.print_state = FEATHER.PrintState.IDLE
         controller.shutdown_active = True
         controller.calibration_clean_nozzle = False
@@ -1465,7 +1469,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = mock.MagicMock()
         controller.renderer.output_frozen = False
         controller._show_page = lambda page: setattr(controller, "page", page)
-        controller._render_screen = lambda: controller._render_dialog()
+        controller._render_screen = lambda: FEATHER.FeatherScreen._render_dialog(controller)
         controller._render_cancel_confirm = lambda: None
         requests = []
         controller.operation_context = type("Contexts", (), {
@@ -1531,8 +1535,6 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_frozen_error_button_shows_pressed_feedback(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.IDLE_HOME
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.reactor = Reactor()
         controller.dimmed = False
         controller.renderer = FEATHER.FeatherRenderer()
@@ -2458,6 +2460,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_prefers_live_height_and_falls_back(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
@@ -2496,6 +2499,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_uses_sd_position_and_never_moves_backwards(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 0.0
         controller._m73_active = False
@@ -2514,6 +2518,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_prefers_current_print_m73(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 10.0
         controller._m73_active = False
@@ -2532,6 +2537,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_uses_time_estimate_before_sd_fallback(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller._progress_floor = 0.0
         controller._m73_start_expiry = 10.0
         controller._m73_active = False
@@ -2547,6 +2553,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_excludes_start_print_time(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller._progress_floor = 0.52
         controller._progress_start = None
@@ -2570,6 +2577,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_print_progress_rebases_sd_after_start_print(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller._progress_floor = 0.0
         controller._progress_start = None
@@ -2726,6 +2734,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_recovered_progress_prefers_m73_and_never_moves_backwards(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller.resurrection = StatusObject({"restored": True})
         controller._progress_floor = 0.0
         controller._progress_start = (0.0, 0.0)
@@ -2937,6 +2946,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_live_z_adjust_is_available_on_every_layer_when_z_is_homed(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.print_stats = StatusObject(
             {"state": "printing", "info": {"current_layer": None}})
@@ -3235,10 +3245,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_cancel_requested = False
         controller.gcode = ShutdownGCode()
         controller.renderer = FEATHER.FeatherRenderer()
+        blank_page(controller, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        controller._show_error('MCU shutdown', '', 'firmware_restart')
         controller.renderer.freeze_output()
-        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
-        controller.error_recovery = None
         controller._require_idle = lambda: None
         controller._limited_preheat = lambda material: (220, 60)
         rendered = []
@@ -3253,11 +3262,10 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_workflow_pages_cannot_replace_firmware_restart_screen(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
+        blank_page(controller, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        controller._show_error('MCU shutdown', '', 'firmware_restart')
         controller.renderer.freeze_output()
-        controller.error_recovery = "firmware_restart"
         controller._stop_joystick = lambda: None
         rendered = []
         controller._render_calibration_result = lambda: rendered.append(True)
@@ -3269,44 +3277,42 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_frozen_shutdown_screen_ignores_late_action_error_page(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.freeze_output()
+        batches = []
+        capture_batches(controller.renderer, batches)
+        blank_page(controller, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
         controller.print_state = FEATHER.PrintState.IDLE
         controller.last_action_time = 0
         controller.pending_action = None
         controller.reactor = Reactor(now=100)
-        controller.error_recovery = None
-        rendered = []
-        controller._render_message = lambda: rendered.append(True)
+        controller._show_error('MCU shutdown', '', 'firmware_restart')
+        controller.renderer.freeze_output()
+        painted = len(batches)
 
         controller._show_message(
             "opaque command failure", FEATHER.ScreenPage.CONTROL_HOME)
 
         self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
-        self.assertEqual(rendered, [])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        self.assertEqual(len(batches), painted)
 
     def test_frozen_shutdown_screen_preserves_recovery_hitbox_generation(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer._generation = 9
+        blank_page(controller, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        controller._show_error('Shutdown due to M112 command', 'shutdown', 'firmware_restart')
         controller.renderer.freeze_output()
-        controller.error_message = "Shutdown due to M112 command"
-        controller.error_category = "shutdown"
-        controller.error_recovery = "firmware_restart"
+        generation = controller.renderer.generation
 
         controller._show_message(
             "Shutdown due to M112 command; use FIRMWARE_RESTART",
             FEATHER.ScreenPage.CALIBRATION_PROGRESS)
 
-        self.assertEqual(controller.renderer.generation, 9)
-        self.assertEqual(controller.error_message,
+        self.assertEqual(controller.renderer.generation, generation)
+        self.assertEqual(controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['message'],
                          "Shutdown due to M112 command")
-        self.assertEqual(controller.error_category, "shutdown")
-        self.assertEqual(controller.error_recovery, "firmware_restart")
+        self.assertEqual(controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['category'], "shutdown")
+        self.assertEqual(controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['recovery'], "firmware_restart")
 
     def test_error_classification_honors_firmware_restart_state_message(self):
         classify = FEATHER.FeatherScreen._classify_error
@@ -3364,13 +3370,12 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = "MCU 'mcu' shutdown: Timer too close"
-        controller.error_recovery = "firmware_restart"
+        blank_page(controller)
 
-        controller._render_error()
+        controller._show_error("MCU 'mcu' shutdown: Timer too close", '', 'firmware_restart')
 
-        drawing = "\n".join(batches[0])
-        self.assertIn(controller.error_message, drawing)
+        drawing = "\n".join(batches[-1])
+        self.assertIn(controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['message'], drawing)
         self.assertIn("error.firmware_restart", controller.renderer._buttons)
         self.assertEqual(
             controller.renderer._buttons["error.firmware_restart"][5],
@@ -3382,15 +3387,11 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = (
-            "Shutdown due to sensor value exceeding the limit "
-            "(weightValue: 1284.75 g)\nPrinter is shutdown")
-        controller.error_category = "shutdown"
-        controller.error_recovery = "firmware_restart"
+        blank_page(controller)
         controller.params = type("Params", (), {
             "variables": {"weight_check_max": 1200}})()
 
-        controller._render_error()
+        controller._show_error('Shutdown due to sensor value exceeding the limit (weightValue: 1284.75 g)\nPrinter is shutdown', 'shutdown', 'firmware_restart')
 
         drawing = "\n".join(batches[-1])
         rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
@@ -3417,12 +3418,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = (
-            "Shutdown due to M112 command\nPrinter is shutdown")
-        controller.error_category = "shutdown"
-        controller.error_recovery = "firmware_restart"
+        blank_page(controller)
 
-        controller._render_error()
+        controller._show_error('Shutdown due to M112 command\nPrinter is shutdown', 'shutdown', 'firmware_restart')
 
         drawing = "\n".join(batches[-1])
         rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
@@ -3439,14 +3437,9 @@ class ControllerSafetyTest(unittest.TestCase):
                 controller.renderer = FEATHER.FeatherRenderer()
                 batches = []
                 capture_batches(controller.renderer, batches)
-                controller.error_message = (
-                    "Shutdown due to webhooks request" + separator +
-                    "Once the underlying issue is corrected, use the "
-                    "FIRMWARE_RESTART command to reset the firmware.")
-                controller.error_category = "shutdown"
-                controller.error_recovery = "firmware_restart"
+                blank_page(controller)
 
-                controller._render_error()
+                controller._show_error('Shutdown due to webhooks request' + separator + 'Once the underlying issue is corrected, use the FIRMWARE_RESTART command to reset the firmware.', 'shutdown', 'firmware_restart')
 
                 drawing = "\n".join(batches[-1])
                 rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))
@@ -3463,16 +3456,16 @@ class ControllerSafetyTest(unittest.TestCase):
         batches = []
         capture_batches(controller.renderer, batches)
         controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
-        controller.dialogs = [FEATHER.ScreenDialog.ERROR]
-        controller.error_message = "MCU shutdown"
-        controller.error_recovery = "firmware_restart"
+        controller._show_error('MCU shutdown', '', 'firmware_restart')
         controller.touch_available = True
         controller.touch_warning_visible = False
         controller.renderer.footer(
             "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
-        controller._render_error()
+        controller._ensure_screen_root().content.painter = lambda: controller.renderer.send(
+            controller.renderer.begin_page("Current page"))
+        FEATHER.FeatherScreen._render_dialog(controller)
         controller.renderer.freeze_output()
-        controller._show_page = lambda page: controller._render_error()
+        controller._show_page = lambda page: FEATHER.FeatherScreen._render_dialog(controller)
 
         controller._handle_touch_device_status(False)
 
@@ -3632,7 +3625,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.boot_screen_held = True
         controller.startup_timer = None
         controller.print_state = FEATHER.PrintState.IDLE
-        controller.error_message = ""
         controller.page = FEATHER.ScreenPage.CONTROL_HEAT
         controller._ensure_renderer_started = (
             lambda: events.append("ensure-renderer"))
@@ -3657,7 +3649,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer.hold_output()
         controller.boot_screen_held = True
         controller.print_state = FEATHER.PrintState.IDLE
-        controller.error_message = ""
         controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.touch_available = False
         controller.touch_warning_visible = False
@@ -3756,23 +3747,20 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = (
-            "Shutdown caused by a toolhead communication timeout while the "
-            "printer was waiting for the motion queue to finish safely")
-        controller.error_recovery = "firmware_restart"
+        blank_page(controller)
 
-        controller._render_error()
+        controller._show_error('Shutdown caused by a toolhead communication timeout while the printer was waiting for the motion queue to finish safely', '', 'firmware_restart')
 
-        drawing = "\n".join(batches[0])
+        drawing = "\n".join(batches[-1])
         self.assertRegex(
             drawing, r"--batch fill -p 50 \d+ -s 700 \d+ -c 050c0f")
-        text_commands = [line for line in batches[0]
+        text_commands = [line for line in batches[-1]
                          if ('--batch text ' in line
                              and '-f "JetBrainsMono 8pt"' in line)]
         fragments = [re.search(r'-t "([^"]+)"', line).group(1)
                      for line in text_commands]
         self.assertGreater(len(fragments), 1)
-        self.assertEqual(' '.join(fragments), controller.error_message +
+        self.assertEqual(' '.join(fragments), controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['message'] +
                          " Check the printer, then restart the MCU.")
         self.assertNotIn("error.next", controller.renderer._buttons)
 
@@ -3781,19 +3769,14 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = (
-            "MCU 'mcu' shutdown: Timer too close. This often indicates that "
-            "the host computer is overloaded. Check the Klipper log and the "
-            "host load. Once the underlying issue is corrected, use the "
-            "FIRMWARE_RESTART command to reset the firmware, reload the config, "
-            "and restart the host software. Printer is shutdown.")
-        controller.error_recovery = "firmware_restart"
-        controller.error_page = 0
+        blank_page(controller)
+        controller._show_error("MCU 'mcu' shutdown: Timer too close. This often indicates that the host computer is overloaded. Check the Klipper log and the host load. Once the underlying issue is corrected, use the FIRMWARE_RESTART command to reset the firmware, reload the config, and restart the host software. Printer is shutdown.", '', 'firmware_restart')
+
 
         fragments = []
         for page in range(2):
-            controller.error_page = page
-            controller._render_error()
+            controller._find_dialog(FEATHER.ScreenDialog.ERROR).page = page
+            controller._render_dialog()
             body = [command for command in batches[-1]
                     if ('--batch text ' in command
                         and '-f "JetBrainsMono 8pt"' in command
@@ -3805,7 +3788,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 - int(re.search(r'-p \d+ (\d+)', body[-1]).group(1)) - 11,
                 30)
         self.assertEqual(
-            " ".join(fragments), controller.error_message +
+            " ".join(fragments), controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['message'] +
             " Check the printer, then restart the MCU.")
         self.assertNotIn("error.next", controller.renderer._buttons)
 
@@ -3841,19 +3824,14 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.error_message = (
-            "MCU 'mcu' shutdown: Timer too close\n"
-            + ("Once the underlying issue is corrected, reload the\n"
-               "config and restart the host software. " * 5)
-            + "\nPrinter is shutdown")
-        controller.error_recovery = "firmware_restart"
-        controller.error_page = 0
+        blank_page(controller)
+        controller._show_error("MCU 'mcu' shutdown: Timer too close\n" + 'Once the underlying issue is corrected, reload the\nconfig and restart the host software. ' * 5 + '\nPrinter is shutdown', '', 'firmware_restart')
 
-        normalized = " ".join(controller.error_message.split())
+        normalized = " ".join(controller._find_dialog(FEATHER.ScreenDialog.ERROR).content['message'].split())
         fragments = []
         for page in range(20):
-            controller.error_page = page
-            controller._render_error()
+            controller._find_dialog(FEATHER.ScreenDialog.ERROR).page = page
+            controller._render_dialog()
             drawing = "\n".join(batches[-1])
             panels = re.findall(
                 r"--batch fill -p (\d+) (\d+) -s (\d+) (\d+) -c 050c0f",
@@ -3905,34 +3883,24 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
         capture_batches(controller.renderer, batches)
-        controller.action_prompt_page = 0
+        blank_page(controller)
 
-        def button(index, label):
-            return {
-                "action": "prompt.button.%d" % index,
-                "label": label,
-                "command": label,
-                "state": "enabled",
-            }
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Material menu",
+            "// action:prompt_text Select a profile",
+            "// action:prompt_button_group_start",
+            "// action:prompt_button PLA",
+            "// action:prompt_button PETG",
+            "// action:prompt_button_group_end",
+            "// action:prompt_button ABS",
+            "// action:prompt_button ASA",
+            "// action:prompt_button PA",
+            "// action:prompt_footer_button CANCEL",
+            "// action:prompt_show")))
 
-        controller.action_prompt = {
-            "title": "Material menu",
-            "text": ["Select a profile"],
-            "rows": [
-                [button(0, "PLA"), button(1, "PETG")],
-                [button(2, "ABS")],
-                [button(3, "ASA")],
-                [button(4, "PA")],
-            ],
-            "footer": [button(5, "CANCEL")],
-        }
-
-        controller._render_action_prompt()
-
-        drawing = "\n".join(batches[0])
+        drawing = "\n".join(batches[-1])
         self.assertIn("--batch clear-hitboxes --layer base", drawing)
-        self.assertFalse(any(command.startswith("--batch fill -p 0 0")
-                             for command in batches[0]))
+        self.assertIn(controller.renderer.modal_scrim(), batches[-1])
         self.assertIn("MATERIAL MENU", drawing)
         self.assertIn("Select a profile", drawing)
         self.assertIn('prompt.button.0', drawing)
@@ -3942,14 +3910,12 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_firmware_restart_action_switches_to_animated_startup(self):
         controller = ScenarioController.__new__(ScenarioController)
-        controller.error_message = "shutdown"
-        controller.error_category = "shutdown"
-        controller.error_recovery = "firmware_restart"
+        controller.renderer = FEATHER.FeatherRenderer()
+        blank_page(controller)
+        controller._show_error('shutdown', 'shutdown', 'firmware_restart')
+        controller.renderer.freeze_output()
         controller.shutdown_active = True
         controller.restart_pending = False
-        controller.renderer = type("Renderer", (), {
-            "thaw_output": lambda self: None,
-        })()
         controller.startup_phase = 3
         controller.startup_timer = None
         controller.timer = None
@@ -3965,7 +3931,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(started, [True])
         self.assertEqual(controller.gcode.commands, ["FIRMWARE_RESTART"])
         self.assertEqual(controller.startup_phase, 0)
-        self.assertEqual(controller.error_message, "")
+        self.assertIsNone(controller._find_dialog(FEATHER.ScreenDialog.ERROR))
         self.assertFalse(controller.shutdown_active)
         self.assertTrue(controller.restart_pending)
 
@@ -3977,9 +3943,6 @@ class ControllerSafetyTest(unittest.TestCase):
                 events.append(("command", command))
 
         controller = ScenarioController.__new__(ScenarioController)
-        controller.error_message = ""
-        controller.error_category = ""
-        controller.error_recovery = None
         controller.shutdown_active = False
         controller.restart_pending = False
         controller.renderer = type("Renderer", (), {
@@ -4141,7 +4104,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.reactor = type("Reactor", (), {"NEVER": 1.0e30})()
         controller.event_handle = object()
         controller.print_state = FEATHER.PrintState.INACTIVE
-        controller.error_message = ""
         controller.startup_phase = 0
         controller.startup_restarting = False
 
@@ -4164,7 +4126,6 @@ class ControllerSafetyTest(unittest.TestCase):
         })()
         controller.event_handle = object()
         controller.print_state = FEATHER.PrintState.INACTIVE
-        controller.error_message = ""
         controller.startup_timer = object()
         controller._show_error = (
             lambda message, category: shown.append((message, category)))

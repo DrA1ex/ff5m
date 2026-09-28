@@ -27,6 +27,7 @@ from feather.previews import (  # noqa: E402
 from feather.files import FileEntry  # noqa: E402
 from ui.font_metrics import get_font_metrics  # noqa: E402
 
+from tests.feather_timelapse_test_helper import make_timelapse_state
 from tests.test_feather_screen import Reactor, StatusObject  # noqa: E402
 
 
@@ -34,6 +35,7 @@ class ScenarioController(FEATHER.FeatherScreen):
     """Test harness for controller scenarios without klippy:ready."""
 
     boot_screen_held = False
+    timelapse_state = make_timelapse_state()
     touch_available = None
     touch_warning_visible = False
     system_shutdown_active = False

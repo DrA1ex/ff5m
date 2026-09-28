@@ -6,6 +6,7 @@
 
 import logging
 
+from timelapse_state import TimelapsePhase
 from ui import ThemeColor
 from ff5m_ui.screen import ScreenPage
 
@@ -13,19 +14,54 @@ from ff5m_ui.screen import ScreenPage
 class PrintCancelPagesMixin:
     cmd_FEATHER_ABORT_help = "Request cancellation of the active operation"
 
-    def _cancel_held_timelapse_print(self, eventtime):
-        self.pending_action = "print.cancel.confirm"
-        self.pending_until = eventtime + 30.0
-        self.cancel_requested = True
+    def _request_print_cancel(self, confirmed=False):
+        """Cancel the active print; ``confirmed`` skips the confirmation step."""
+        eventtime = self.reactor.monotonic()
+        state = self.print_stats.get_status(eventtime)["state"]
+        if state not in ("printing", "paused"):
+            return
+        # CANCEL PRINT on the dedicated wait page is already an explicit choice.
+        confirmed = confirmed or self.page == ScreenPage.TIMELAPSE_WAIT
+        phase = self._timelapse_phase()
+        operation = self._operation_context_status(eventtime)
+        held = phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD)
+
+        # A held file has no cooperative cancel point: CANCEL_PRINT releases it.
+        if held and not operation["contexts"]:
+            if confirmed:
+                self._cancel_held_print()
+            else:
+                self._show_message(
+                    ("Cancel this print while it waits for the previous timelapse?"
+                     if phase == TimelapsePhase.WAITING
+                     else "Cancel this print during preparation?"),
+                    self.page,
+                    actions=(("timelapse.wait.cancel", "CANCEL PRINT", "danger"),
+                             ("message.ok", "GO BACK", "enabled")),
+                    title="Cancel print?")
+            return
+
+        return_page = (self.page if held else
+                       ScreenPage.PAUSED if state == "paused" or phase in (
+                           TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE)
+                       else ScreenPage.PRINTING)
+        self._open_operation_cancel(return_page,
+                                    self._accept_print_operation_cancel,
+                                    self._clear_print_operation_cancel)
+        # The cancel page still shows progress for an already confirmed request.
+        if confirmed and operation["cancel_available"]:
+            self._handle_operation_cancel_action("operation.cancel.confirm")
+
+    def _cancel_held_print(self):
+        self._mark_print_cancel_pending()
         if self.page == ScreenPage.TIMELAPSE_WAIT:
             self._show_page(self.page)
         try:
             self._run_script("CANCEL_PRINT", show_notice=False)
         except Exception:
-            self.pending_action = None
-            self.cancel_requested = False
+            self._clear_print_cancel_pending()
             raise
-
+        self._reconcile_print_action()
 
     def cmd_FEATHER_ABORT(self, gcmd):
         """Request cooperative cancellation outside the G-code mutex."""
@@ -42,37 +78,20 @@ class PrintCancelPagesMixin:
 
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
-        if stats == "printing" and self._timelapse_user_pause():
+        phase = self._timelapse_phase()
+        if action == "print.cancel":
+            self._request_print_cancel()
+            return
+        if stats == "printing" and phase in (
+                TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE):
             stats = "paused"
-        if (action in ("print.resume", "print.cancel")
-                and self._timelapse_start_held() and not self._timelapse_user_pause()):
-            if action == "print.resume":
+        if action == "print.resume":
+            if phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD):
                 self._toast("Print preparation is in progress")
                 return
-            if action == "print.cancel":
-                waiting = self._timelapse_start_waiting()
-                if waiting and self.page == ScreenPage.TIMELAPSE_WAIT:
-                    self._cancel_held_timelapse_print(self.reactor.monotonic())
-                    return
-
-                if (not waiting
-                        and self._operation_context_status()["contexts"]):
-                    self._open_operation_cancel(
-                        self.page,
-                        self._accept_print_operation_cancel,
-                        self._clear_print_operation_cancel)
-                    return
-                self._show_message(
-                    ("Cancel this print while it waits for the previous timelapse?"
-                     if waiting else "Cancel this print during preparation?"),
-                    self.page,
-                    actions=(("timelapse.wait.cancel", "CANCEL PRINT", "danger"),
-                             ("message.ok", "GO BACK", "enabled")),
-                    title="Cancel print?")
+            if phase in (TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE):
+                self._toast("Timelapse frame is still being captured")
                 return
-        if action == "print.resume" and self._timelapse_frame_status().get("is_paused"):
-            self._toast("Timelapse frame is still being captured")
-            return
         if action in ("print.pause", "print.filament"):
             if not self._print_controls_ready():
                 self._toast("Available after print preparation")
@@ -125,39 +144,11 @@ class PrintCancelPagesMixin:
                 self.live_z_dialog = None
                 self._begin_z_weight_gauge()
                 self._show_page(ScreenPage.LIVE_Z_OFFSET)
-        elif action == "print.cancel" and stats in ("printing", "paused"):
-            self._open_operation_cancel(
-                ScreenPage.PAUSED if stats == "paused" else ScreenPage.PRINTING,
-                self._accept_print_operation_cancel,
-                self._clear_print_operation_cancel)
+    def _timelapse_status(self):
+        return self.timelapse_state.get_status(self.reactor.monotonic())
 
-    def _timelapse_start_status(self):
-        printer = getattr(self, "printer", None)
-        if printer is None:
-            return {}
-        guard = printer.lookup_object(
-            "gcode_macro _TIMELAPSE_START_GUARD", None)
-        return (guard.get_status(self.reactor.monotonic())
-                if guard is not None else {})
-
-    def _timelapse_start_waiting(self):
-        return bool(self._timelapse_start_status().get("waiting"))
-
-    def _timelapse_start_held(self):
-        return bool(self._timelapse_start_status().get("sd_held"))
-
-    def _timelapse_frame_status(self):
-        printer = getattr(self, "printer", None)
-        if printer is None:
-            return {}
-        frame = printer.lookup_object("gcode_macro TIMELAPSE_TAKE_FRAME", None)
-        return frame.get_status(self.reactor.monotonic()) if frame is not None else {}
-
-    def _timelapse_user_pause(self):
-        pause = getattr(self, "pause_resume", None)
-        return bool(self._timelapse_frame_status().get("user_pause_requested")
-                    and pause is not None
-                    and pause.get_status(self.reactor.monotonic()).get("is_paused"))
+    def _timelapse_phase(self):
+        return TimelapsePhase(self._timelapse_status()["phase"])
 
     def _reconcile_print_action(self):
         """Show the state reached by a completed operation immediately."""
@@ -250,14 +241,22 @@ class PrintCancelPagesMixin:
                     and self.cancel_mode == "pending"):
                 self._render_cancel_confirm()
 
-    def _accept_print_operation_cancel(self, result):
+    def _mark_print_cancel_pending(self):
         self._filament_request_token = getattr(
             self, "_filament_request_token", 0) + 1
         self.pending_action = "print.cancel.confirm"
         self.pending_until = self.reactor.monotonic() + 30.0
         self.cancel_requested = True
         self.cancel_waiting_for_heat = self._temperature_wait_active()
-        self.cancel_phase = result.get("target_name")
+
+    def _clear_print_cancel_pending(self):
+        self.pending_action = None
+        self.cancel_requested = False
+        self.cancel_waiting_for_heat = False
+
+    def _accept_print_operation_cancel(self, result):
+        del result
+        self._mark_print_cancel_pending()
         started = bool(getattr(
             getattr(self, "start_print_macro", None), "variables", {}
         ).get("print_started", False))
@@ -278,7 +277,7 @@ class PrintCancelPagesMixin:
         state = self.print_stats.get_status(eventtime).get("state")
         stopped = (state in ("cancelled", "complete", "error", "standby")
                    and not self.virtual_sdcard.is_active())
-        self._clear_print_operation_cancel({})
+        self._clear_print_cancel_pending()
         self._reset_operation_cancel()
         self._reconcile_print_state(eventtime)
         self._show_message(
@@ -288,10 +287,7 @@ class PrintCancelPagesMixin:
 
     def _clear_print_operation_cancel(self, result):
         del result
-        self.pending_action = None
-        self.cancel_requested = False
-        self.cancel_waiting_for_heat = False
-        self.cancel_phase = None
+        self._clear_print_cancel_pending()
 
     def _render_cancel_confirm(self):
         target = str(getattr(

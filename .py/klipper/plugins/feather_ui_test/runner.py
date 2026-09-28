@@ -842,11 +842,9 @@ class UITestRun:
                 return
             dialog = self.host._current_dialog()
             if dialog == ScreenDialog.MESSAGE and expected != ScreenDialog.MESSAGE:
-                raise RuntimeError(str(getattr(
-                    self.host, "message", "Action opened a message")))
+                raise RuntimeError(str(self.host._find_dialog(ScreenDialog.MESSAGE).content["message"]))
             if dialog == ScreenDialog.ERROR:
-                raise RuntimeError(str(getattr(
-                    self.host, "error_message", "Action opened an error")))
+                raise RuntimeError(str(self.host._find_dialog(ScreenDialog.ERROR).content["message"]))
             visible = dialog or self.host.page
             expected_seen = self.step_runtime.get(
                 "expected_page_seen", expected is None)

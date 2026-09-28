@@ -27,6 +27,8 @@ from feather.files import FileEntry  # noqa: E402
 from feather.features.manager import LazyFeatureManager  # noqa: E402
 from ff5m_ui.home import page as HOME_PAGE  # noqa: E402
 from tests.visual_checks import hybrid as HYBRID  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture  # noqa: E402
+from tests.test_feather_screen import blank_page  # noqa: E402
 
 
 class AsyncReactor:
@@ -913,7 +915,7 @@ class RunnerContractTest(unittest.TestCase):
                 })()
 
                 def _clear_dialogs(self):
-                    self.dialogs = []
+                    pass
 
                 def _show_page(self, page):
                     self.page = page
@@ -1410,12 +1412,12 @@ class RunnerContractTest(unittest.TestCase):
         feature.material = "PETG"
         seen = []
 
-        def show(page):
+        def show(page, content=None):
             operation = host._operation_context_status()
             seen.append((
                 page, operation["current_state"],
                 host.extruder.get_status(0.0),
-                getattr(host, "action_prompt", {}).get("title"),
+                (content or {}).get("title"),
             ))
 
         feature.scenarios._show = show
@@ -1544,23 +1546,18 @@ class RunnerContractTest(unittest.TestCase):
             "register_callback": lambda self, callback, waketime=None:
             callbacks.append(callback),
         })()
-        controller.renderer = type("Renderer", (), {
-            "generation": 1,
-            "_buttons": {"synthetic.action": ()},
-            "_toggles": {},
-            "_hitboxes": {},
-            "flash_button": lambda self, action:
-            feedback.append(("down", action)) or True,
-            "restore_button": lambda self, action:
-            feedback.append(("up", action)) or True,
-        })()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer.send(controller.renderer.begin_page("Synthetic")
+                                 + controller.renderer.button("synthetic.action", 50, 50, 100, 40, "RUN"))
+        controller.renderer.flash_button = lambda action: feedback.append(("down", action)) or True
+        controller.renderer.restore_button = lambda action: feedback.append(("up", action)) or True
+        controller._paint_page = lambda: None
         controller.feature_manager = Manager()
         messages = []
 
         def show_message(message, page):
             messages.append((message, page))
-            controller.message = message
-            controller.dialogs = [FEATHER.ScreenDialog.MESSAGE]
+            return FEATHER.FeatherScreen._show_message(controller, message, page)
 
         controller._show_message = show_message
         feature.host = controller
@@ -2163,11 +2160,15 @@ class RunnerContractTest(unittest.TestCase):
             feature._preflight("RENDER", hardware_targets=False)
 
     def test_action_prompt_selection_uses_exact_visible_label(self):
-        host = type("Host", (), {})()
-        host.action_prompt = {"buttons": {
-            "prompt.button.0": {"label": "Load"},
-            "prompt.button.1": {"label": "Unload"},
-        }}
+        host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        host.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(host.renderer)
+        blank_page(host)
+        host._handle_gcode_output("\n".join((
+            "// action:prompt_begin Prompt",
+            "// action:prompt_footer_button Load",
+            "// action:prompt_footer_button Unload",
+            "// action:prompt_show")))
         feature = UI_TEST.UITestRun(host)
 
         self.assertEqual(feature.scenarios._prompt_action_for_label("load"),

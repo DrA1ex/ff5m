@@ -4,15 +4,13 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-from ff5m_ui.screen import ScreenDialog
-
+from feather.screen import prompt_titles
 
 class ActionPromptPagesMixin:
-    def _render_action_prompt(self):
-        prompt = self._dialog_render_content(ScreenDialog.ACTION_PROMPT) or {
-            "title": "Prompt", "text": [], "rows": [], "footer": []}
-        if prompt["title"].strip().casefold() == "cold pull":
-            self._render_cold_pull_prompt()
+    def _render_action_prompt(self, instance):
+        prompt = instance.content
+        if prompt["title"].strip().casefold() == prompt_titles.COLD_PULL:
+            self._render_cold_pull_prompt(instance)
             return
         commands = self.renderer.dialog(
             prompt["title"], tuple(prompt["text"]),
@@ -22,6 +20,6 @@ class ActionPromptPagesMixin:
                 tuple((button["action"], button["label"], button["state"])
                       for button in row) for row in prompt["rows"]),
             x=50, y=130, width=700, height=220, tone="info",
-            page=self._dialog_page(ScreenDialog.ACTION_PROMPT),
+            page=instance.page,
             page_actions=("prompt.prev", "prompt.next"))
         self.renderer.send(commands)

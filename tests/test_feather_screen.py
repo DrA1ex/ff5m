@@ -16,6 +16,7 @@ import tempfile
 import threading
 import unittest
 from unittest import mock
+from tests.feather_timelapse_test_helper import make_timelapse_state
 
 
 MODULE_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
@@ -31,7 +32,7 @@ from feather.network import protocol as NETWORK_PROTOCOL
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
 from feather.features.z import ZCalibrationFeature
-from tests.feather_render_test_helper import RenderFrame
+from tests.feather_render_test_helper import RenderFrame, RenderCapture
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -76,6 +77,12 @@ KLIPPER_PATH = pathlib.Path(__file__).parents[1] / ".py" / "klipper"
 sys.path.insert(0, str(KLIPPER_PATH))
 
 from plugins import resurrection as RESURRECTION  # noqa: E402
+
+
+def blank_page(screen, page=FEATHER.ScreenPage.IDLE_HOME):
+    """Put dialog tests over a page whose own content is irrelevant."""
+    screen.page = page
+    screen._paint_page = lambda feature=None: None
 
 
 class StatusObject:
@@ -490,21 +497,21 @@ class FeatherUtilitiesTest(unittest.TestCase):
             FEATHER.ScreenPage.WIFI_PASSWORD, "keyboard.backspace"))
         self.assertFalse(allowed(
             FEATHER.ScreenPage.WIFI_SCAN, "net.reset.saved"))
-        controller.message_actions = ()
+        controller.renderer = FEATHER.FeatherRenderer()
+        blank_page(controller)
+        controller._show_message("", controller.page, actions=())
         self.assertFalse(controller._dialog_action_allowed(
             FEATHER.ScreenDialog.MESSAGE, "net.reset.saved"))
         self.assertFalse(controller._dialog_action_allowed(
             FEATHER.ScreenDialog.MESSAGE, "mesh.save"))
-        controller.message_actions = (
+        controller._show_message("", controller.page, actions=(
             ("message.ok", "CANCEL", "enabled"),
-            ("net.reset.saved", "RESET PASSWORD", "warning"),
-        )
+            ("net.reset.saved", "RESET PASSWORD", "warning")))
         self.assertTrue(controller._dialog_action_allowed(
             FEATHER.ScreenDialog.MESSAGE, "net.reset.saved"))
-        controller.message_actions = (
+        controller._show_message("", controller.page, actions=(
             ("mesh.save", "SAVE & RESTART", "enabled"),
-            ("message.ok", "LATER", "enabled"),
-        )
+            ("message.ok", "LATER", "enabled")))
         self.assertTrue(controller._dialog_action_allowed(
             FEATHER.ScreenDialog.MESSAGE, "mesh.save"))
         self.assertFalse(allowed(
@@ -1570,26 +1577,20 @@ class RendererStateTest(unittest.TestCase):
     def test_printer_message_uses_shared_compact_dialog(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
-        frames = []
-        screen.renderer.send = lambda commands: frames.append(
-            RenderFrame(commands, screen.renderer))
-        screen._action_prompt_is_cold_pull = lambda: False
-        screen.action_prompt = {
-            "title": "Printer command", "text": [
-                "First instruction.", "Second instruction."],
-            "rows": [], "footer": [
-                {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
-            ],
-        }
-        screen.action_prompt_page = 0
+        rendering = RenderCapture(screen.renderer)
+        blank_page(screen)
+        screen._handle_gcode_output("\n".join((
+            "// action:prompt_begin Printer command",
+            "// action:prompt_text First instruction.",
+            "// action:prompt_text Second instruction.",
+            "// action:prompt_footer_button OK",
+            "// action:prompt_show")))
 
-        screen._render_action_prompt()
-
-        frame = frames[0]
+        frame = rendering.latest
         self.assertTrue(frame.has_text("First instruction."))
         self.assertTrue(frame.has_text("Second instruction."))
-        self.assertEqual(frame.button("prompt.dismiss").bounds.width, 144)
-        self.assertLess(frame.button("prompt.dismiss").bounds.y, 370)
+        self.assertEqual(frame.button("prompt.button.0").bounds.width, 144)
+        self.assertLess(frame.button("prompt.button.0").bounds.y, 370)
         self.assertTrue(any(
             shape.kind == "fill" and shape.bounds.width == 700
             and shape.bounds.height < 365 for shape in frame.shapes))
@@ -1597,7 +1598,7 @@ class RendererStateTest(unittest.TestCase):
     def test_replaced_prompt_rejects_old_button_event(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
-        screen.dialogs = []
+        screen._clear_dialogs()
         screen.page = FEATHER.ScreenPage.IDLE_HOME
         screen._show_touch_unavailable = lambda: None
         screen._render_home = lambda: screen.renderer.send(
@@ -1643,14 +1644,15 @@ class RendererStateTest(unittest.TestCase):
         screen._start_action_prompt("New")
         screen._append_action_prompt_button("CONFIRM|NEW_COMMAND")
         render_prompt = screen._render_action_prompt
-        def paint_new_prompt():
+        def paint_new_prompt(instance):
             screen._handle_action_prompt_action(screen.renderer.decode_action(old_tap))
-            render_prompt()
+            render_prompt(instance)
         screen._render_action_prompt = paint_new_prompt
         screen._show_action_prompt()
         screen._run_script.assert_called_once_with("OLD_COMMAND")
         screen._run_script.reset_mock()
         screen._render_action_prompt = render_prompt
+        screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT).painter = render_prompt
         screen._handle_action_prompt_action(screen.renderer.decode_action(old_tap))
         screen._run_script.assert_called_once_with("OLD_COMMAND")
         screen._run_script.reset_mock()
@@ -1674,10 +1676,9 @@ class RendererStateTest(unittest.TestCase):
         screen._handle_action_prompt_response("action:prompt_end Old")
 
         self.assertIsNone(screen._current_dialog())
-        self.assertEqual(screen.action_prompt["title"], "New draft")
+        self.assertEqual(screen._prompt_draft["title"], "New draft")
         screen._show_action_prompt()
-        self.assertEqual(screen._dialog_content(
-            FEATHER.ScreenDialog.ACTION_PROMPT)["title"], "New draft")
+        self.assertEqual(screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT).content["title"], "New draft")
 
     def test_suppressed_prompt_keeps_visible_error_and_cancel_controls_live(self):
         for dialog, page, frozen in (
@@ -1687,8 +1688,9 @@ class RendererStateTest(unittest.TestCase):
                 screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
                 screen.renderer = FEATHER.FeatherRenderer()
                 screen.renderer.send(screen.renderer.begin_page("Current"))
-                screen.dialogs = [dialog] if dialog is not None else []
-                screen.page = page
+                blank_page(screen, page)
+                if dialog is not None:
+                    screen._show_error("Configuration failed", "error", "restart")
                 action = ("error.restart" if frozen
                           else "operation.cancel.confirm")
                 old_action = screen.renderer._wire_action(action)
@@ -1703,7 +1705,7 @@ class RendererStateTest(unittest.TestCase):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
         screen.page = FEATHER.ScreenPage.IDLE_HOME
-        screen.dialogs = []
+        screen._clear_dialogs()
         screen._show_touch_unavailable = lambda: None
         screen._render_home = lambda: screen.renderer.send(
             screen.renderer.begin_page("Home"))
@@ -1713,7 +1715,7 @@ class RendererStateTest(unittest.TestCase):
         prompt_generation = screen.renderer.generation
 
         screen._show_message("Long message " * 12, screen.page)
-        self.assertEqual([layer.kind for layer in screen.dialogs], [FEATHER.ScreenDialog.ACTION_PROMPT,
+        self.assertEqual([layer.kind for layer in screen._ensure_screen_root().layers], [FEATHER.ScreenDialog.ACTION_PROMPT,
                                           FEATHER.ScreenDialog.MESSAGE])
         first_message_generation = screen.renderer.generation
         self.assertGreater(first_message_generation, prompt_generation)
@@ -1728,17 +1730,17 @@ class RendererStateTest(unittest.TestCase):
         screen._show_message("Notice", screen.page)
         screen._handle_action_prompt_response(
             "action:prompt_end Waiting")
-        self.assertEqual([layer.kind for layer in screen.dialogs], [FEATHER.ScreenDialog.MESSAGE])
+        self.assertEqual([layer.kind for layer in screen._ensure_screen_root().layers], [FEATHER.ScreenDialog.MESSAGE])
         screen._handle_action_prompt_response(
             "action:prompt_end Different prompt")
-        self.assertEqual([layer.kind for layer in screen.dialogs], [FEATHER.ScreenDialog.MESSAGE])
+        self.assertEqual([layer.kind for layer in screen._ensure_screen_root().layers], [FEATHER.ScreenDialog.MESSAGE])
 
         screen._start_action_prompt("New owner")
         screen._append_action_prompt_button("OK|NEW_COMMAND")
         screen._show_action_prompt()
         screen._handle_action_prompt_response(
             "action:prompt_end Previous timelapse")
-        self.assertEqual(screen.action_prompt["title"], "New owner")
+        self.assertEqual(screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT).content["title"], "New owner")
         self.assertEqual(screen._current_dialog(),
                          FEATHER.ScreenDialog.ACTION_PROMPT)
 
@@ -1751,8 +1753,7 @@ class RendererStateTest(unittest.TestCase):
         screen.page = FEATHER.ScreenPage.PRINTING
         guard = mock.Mock()
         guard.get_status.return_value = {"waiting": False, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
+        screen.timelapse_state = make_timelapse_state(guard=guard)
         screen._run_script = mock.Mock()
         screen._show_message = mock.Mock()
         screen._toast = mock.Mock()
@@ -1767,9 +1768,10 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(actions[0][0], "timelapse.wait.cancel")
 
         screen.print_state = FEATHER.PrintState.PAUSED
-        screen.page = FEATHER.ScreenPage.PAUSED
-        screen.dialogs = [FEATHER.ScreenDialog.MESSAGE]
-        screen.message_actions = actions
+        screen.renderer = FEATHER.FeatherRenderer()
+        blank_page(screen, FEATHER.ScreenPage.PAUSED)
+        screen._show_dialog(FEATHER.ScreenDialog.MESSAGE, content={
+            "message": "", "title": None, "actions": actions})
         screen.last_action_time = 0.0
         screen.pending_action = None
         screen.cancel_requested = False
@@ -1791,8 +1793,7 @@ class RendererStateTest(unittest.TestCase):
         screen.busy_phase = 0
         guard = mock.Mock()
         guard.get_status.return_value = {"waiting": True, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
+        screen.timelapse_state = make_timelapse_state(guard=guard)
         screen.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
         screen._apply_safety_visibility()
 
@@ -1804,66 +1805,45 @@ class RendererStateTest(unittest.TestCase):
         screen._handle_touch_action("global.abort")
         screen._run_immediate_command.assert_called_once_with("M112")
 
-    def test_timelapse_prompt_choices_use_explicit_wait_and_render_cancel(self):
+    def test_timelapse_prompt_is_suppressed_and_page_owns_choices(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        screen.reactor = mock.Mock()
-        screen.reactor.monotonic.return_value = 10.0
-        screen.print_state = FEATHER.PrintState.PAUSED
+        screen.renderer = FEATHER.FeatherRenderer()
         screen.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
-        screen.dialogs = [FEATHER.ScreenDialog.ACTION_PROMPT]
-        screen.action_prompt = {"buttons": {
-            "prompt.button.0": {"command": "_TIMELAPSE_START_WAIT_CHOICE"},
-            "prompt.button.1": {"command": "_TIMELAPSE_START_CONTINUE"}}}
-        screen.last_action_time = 0.0
-        screen.pending_action = None
-        screen._blocking_operation_active = lambda: False
-        guard = mock.Mock()
-        guard.get_status.return_value = {"waiting": True, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
-        screen._run_script = mock.Mock()
+        screen._timelapse_phase = lambda: FEATHER.TimelapsePhase.WAITING
         screen._sync_timelapse_wait_page = mock.Mock()
-
-        screen._dispatch_action("prompt.button.0")
-        screen.reactor.monotonic.return_value = 11.0
-        screen._dispatch_action("prompt.button.1")
-
-        self.assertEqual(screen._run_script.call_args_list, [
-            mock.call("_TIMELAPSE_START_WAIT_CHOICE", show_notice=False),
-            mock.call("_TIMELAPSE_START_CONTINUE", show_notice=False)])
+        screen._handle_gcode_output("\n".join((
+            "// action:prompt_begin Previous timelapse",
+            "// action:prompt_text Waiting for the previous timelapse",
+            "// action:prompt_footer_button WAIT|_TIMELAPSE_START_WAIT_CHOICE|primary",
+            "// action:prompt_footer_button CANCEL PRINT|_TIMELAPSE_START_CANCEL|error",
+            "// action:prompt_footer_button CANCEL TIMELAPSE|_TIMELAPSE_START_CONTINUE|warning",
+            "// action:prompt_show")))
+        self.assertIsNone(screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT))
+        self.assertIsNone(screen._prompt_draft)
         screen._sync_timelapse_wait_page.assert_called_once()
+        self.assertTrue(screen._action_allowed(screen.page, "print.cancel"))
+        self.assertTrue(screen._action_allowed(screen.page, "timelapse.wait.cancel_render"))
 
-    def test_timelapse_prompt_cancel_keeps_wait_page_until_file_is_closed(self):
+    def test_timelapse_page_cancel_keeps_wait_page_until_file_is_closed(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        screen.reactor = mock.Mock()
-        screen.reactor.monotonic.return_value = 10.0
+        screen.reactor = Reactor(now=10.0)
         screen.print_state = FEATHER.PrintState.PAUSED
         screen.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
-        screen.dialogs = [FEATHER.ScreenDialog.ACTION_PROMPT]
-        screen.action_prompt = {"buttons": {
-            "prompt.button.0": {"command": "_TIMELAPSE_START_CANCEL"}}}
+        screen.print_stats = StatusObject({"state": "paused"})
+        screen._timelapse_phase = lambda: FEATHER.TimelapsePhase.WAITING
+        screen._operation_context_status = lambda eventtime=None: {"contexts": ()}
         screen.last_action_time = 0.0
         screen.pending_action = None
-        screen._blocking_operation_active = lambda: False
-        guard = mock.Mock()
-        guard.get_status.return_value = {"waiting": True, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
-        screen._show_page = mock.Mock(side_effect=lambda page: setattr(
-            screen, "page", page))
+        screen._reconcile_print_action = lambda: None
+        screen._show_page = mock.Mock(side_effect=lambda page: setattr(screen, "page", page))
         screen._show_print_result = mock.Mock()
         screen._run_script = mock.Mock()
-        screen.page_for_print_state = lambda: FEATHER.ScreenPage.PRINTING
-
-        screen._dispatch_action("prompt.button.0")
-
+        screen._dispatch_action("print.cancel")
         self.assertEqual(screen.pending_action, "print.cancel.confirm")
-        screen._run_script.assert_called_once_with(
-            "CANCEL_PRINT", show_notice=False)
-        guard.get_status.return_value = {"waiting": False, "sd_held": True}
+        screen._run_script.assert_called_once_with("CANCEL_PRINT", show_notice=False)
+        screen._timelapse_phase = lambda: FEATHER.TimelapsePhase.HELD
         screen._sync_timelapse_wait_page()
         self.assertEqual(screen.page, FEATHER.ScreenPage.TIMELAPSE_WAIT)
-
         screen._reconcile_pending_action(11.0, "cancelled", False)
         self.assertEqual(screen.page, FEATHER.ScreenPage.IDLE_HOME)
         self.assertIsNone(screen.pending_action)
@@ -1878,8 +1858,7 @@ class RendererStateTest(unittest.TestCase):
         screen.print_stats.get_status.return_value = {"state": "paused"}
         guard = mock.Mock()
         guard.get_status.return_value = {"waiting": True, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
+        screen.timelapse_state = make_timelapse_state(guard=guard)
         screen._show_page = mock.Mock(side_effect=lambda page: setattr(
             screen, "page", page))
 
@@ -1896,10 +1875,11 @@ class RendererStateTest(unittest.TestCase):
         screen.print_state = FEATHER.PrintState.PAUSED
         screen.print_stats = mock.Mock()
         screen.print_stats.get_status.return_value = {"state": "paused"}
-        screen.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
-        screen.dialogs = [FEATHER.ScreenDialog.MESSAGE]
-        screen.message_actions = (
-            ("timelapse.wait.cancel", "CANCEL PRINT", "danger"),)
+        screen.renderer = FEATHER.FeatherRenderer()
+        blank_page(screen, FEATHER.ScreenPage.TIMELAPSE_WAIT)
+        screen._show_dialog(FEATHER.ScreenDialog.MESSAGE, content={
+            "message": "", "title": None,
+            "actions": (("timelapse.wait.cancel", "CANCEL PRINT", "danger"),)})
         screen.last_action_time = 0.0
         screen.pending_action = None
         screen._blocking_operation_active = lambda: False
@@ -1911,8 +1891,7 @@ class RendererStateTest(unittest.TestCase):
             "contexts": ("print",), "cancel_available": True}
         guard = mock.Mock()
         guard.get_status.return_value = {"waiting": False, "sd_held": False}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
+        screen.timelapse_state = make_timelapse_state(guard=guard)
 
         screen._dispatch_action("timelapse.wait.cancel")
         screen._open_operation_cancel.assert_called_once()
@@ -1929,8 +1908,7 @@ class RendererStateTest(unittest.TestCase):
         screen.page = FEATHER.ScreenPage.PRINTING
         guard = mock.Mock()
         guard.get_status.return_value = {"waiting": False, "sd_held": True}
-        screen.printer = mock.Mock()
-        screen.printer.lookup_object.return_value = guard
+        screen.timelapse_state = make_timelapse_state(guard=guard)
         screen._operation_context_status = lambda eventtime=None: {
             "contexts": ("print",), "cancel_available": False}
         screen._open_operation_cancel = mock.Mock()
@@ -1952,26 +1930,18 @@ class RendererStateTest(unittest.TestCase):
     def test_printer_message_keeps_text_pagination(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
-        frames = []
-        screen.renderer.send = lambda commands: frames.append(
-            RenderFrame(commands, screen.renderer))
-        screen._action_prompt_is_cold_pull = lambda: False
-        screen.action_prompt = {
-            "title": "Long message",
-            "text": ["Instruction %d" % index for index in range(10)],
-            "rows": [], "footer": [
-                {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
-            ],
-        }
-        screen.action_prompt_page = 0
+        rendering = RenderCapture(screen.renderer)
+        blank_page(screen)
+        screen._handle_gcode_output("\n".join(
+            ["// action:prompt_begin Long message"]
+            + ["// action:prompt_text Instruction %d" % index for index in range(10)]
+            + ["// action:prompt_footer_button OK", "// action:prompt_show"]))
 
-        screen._render_action_prompt()
-        self.assertTrue(frames[-1].has_action("prompt.next"))
-        self.assertFalse(frames[-1].has_text("Instruction 9"))
+        self.assertTrue(rendering.latest.has_action("prompt.next"))
+        self.assertFalse(rendering.latest.has_text("Instruction 9"))
 
-        screen.action_prompt_page = 1
-        screen._render_action_prompt()
-        self.assertTrue(frames[-1].has_text("Instruction 9"))
+        screen._handle_action_prompt_action("prompt.next")
+        self.assertTrue(rendering.latest.has_text("Instruction 9"))
 
     def test_dialog_expands_for_five_lines_and_a_button(self):
         renderer = FEATHER.FeatherRenderer()

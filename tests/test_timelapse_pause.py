@@ -67,6 +67,7 @@ class ParkedPrint:
         macros = [(ROOT / "macros/timelapse.cfg", name, section) for name, section in (
             ("TIMELAPSE_TAKE_FRAME", "gcode_macro"), ("_TIMELAPSE_NEW_FRAME", "gcode_macro"),
             ("_WAIT_TIMELAPSE_TAKE_FRAME", "delayed_gcode"),
+            ("_TIMELAPSE_FRAME_RESET", "gcode_macro"),
             ("_TIMELAPSE_START_RELEASE_SD", "gcode_macro"),
             ("_TIMELAPSE_START_RESET", "gcode_macro"),
             ("_TIMELAPSE_FINAL_PARK", "gcode_macro"))]

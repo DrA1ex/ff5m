@@ -940,11 +940,10 @@ class ScenarioCatalog:
             self._show(ScreenPage.NETWORK_PROGRESS)
 
     def _render_single_action_message(self):
-        with _temporary_attributes(self.host, {
-                "message": "Moonraker returned an error. Check the printer connection.",
-                "message_actions": (("message.ok", "OK", "enabled"),),
-        }):
-            self._show(ScreenDialog.MESSAGE)
+        self._show(ScreenDialog.MESSAGE, content={
+            "message": "Moonraker returned an error. Check the printer connection.",
+            "actions": (("message.ok", "OK", "enabled"),), "title": None,
+        })
 
     def _open_navigation_message(self):
         self.host._show_message(
@@ -1019,38 +1018,27 @@ class ScenarioCatalog:
         renderer.send(commands)
 
     def _render_action_prompt_footer(self):
-        with _temporary_attributes(self.host, {
-                "action_prompt": {
-                    "title": "Printer command", "text": ["Action completed."],
-                    "rows": [], "footer": [
-                        {"action": "prompt.dismiss", "label": "OK", "state": "enabled"},
-                    ], "buttons": {}, "group": None,
-                },
-                "action_prompt_page": 0,
-        }):
-            self._show(ScreenDialog.ACTION_PROMPT)
+        button = {"action": "prompt.button.0", "label": "OK", "state": "enabled",
+                  "command": "RESPOND TYPE=command MSG=action:prompt_end"}
+        self._show(ScreenDialog.ACTION_PROMPT, content={
+            "title": "Printer command", "text": ["Action completed."], "rows": [],
+            "footer": [button], "buttons": {button["action"]: button}, "group": None,
+        })
 
     def _render_two_action_message(self):
-        with _temporary_attributes(self.host, {
-                "message": "The saved Wi-Fi password was rejected.",
-                "message_actions": (
-                    ("message.ok", "CANCEL", "enabled"),
-                    ("net.reset.saved", "RESET PASSWORD", "warning"),
-                ),
-        }):
-            self._show(ScreenDialog.MESSAGE)
+        self._show(ScreenDialog.MESSAGE, content={
+            "message": "The saved Wi-Fi password was rejected.", "title": None,
+            "actions": (("message.ok", "CANCEL", "enabled"),
+                        ("net.reset.saved", "RESET PASSWORD", "warning")),
+        })
 
     def _render_mesh_save_message(self):
-        with _temporary_attributes(self.host, {
-                "message": (
-                    "THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
-                    "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART."),
-                "message_actions": (
-                    ("mesh.save", "SAVE & RESTART", "enabled"),
-                    ("message.ok", "LATER", "enabled"),
-                ),
-        }):
-            self._show(ScreenDialog.MESSAGE)
+        self._show(ScreenDialog.MESSAGE, content={
+            "message": ("THE NEW AUTO BED MESH IS ACTIVE FOR THIS SESSION. "
+                        "SAVE IT TO PRINTER.CFG? KLIPPER WILL RESTART."), "title": None,
+            "actions": (("mesh.save", "SAVE & RESTART", "enabled"),
+                        ("message.ok", "LATER", "enabled")),
+        })
 
     def _render_preparing_print(self):
         class Status:
@@ -1272,15 +1260,12 @@ class ScenarioCatalog:
 
         with _temporary_attributes(self.host, {
                 "extruder": SnapshotExtruder(),
-                "action_prompt": {
-                    "title": "Cold Pull", "text": [], "rows": [],
-                    "footer": [], "buttons": {}, "group": None,
-                },
-                "action_prompt_page": 0,
-                "_operation_context_status":
-                    lambda eventtime=None: operation,
+                "_operation_context_status": lambda eventtime=None: operation,
         }):
-            self._show(ScreenDialog.ACTION_PROMPT)
+            self._show(ScreenDialog.ACTION_PROMPT, content={
+                "title": "Cold Pull", "text": [], "rows": [], "footer": [],
+                "buttons": {}, "group": None,
+            })
 
     def _render_cancel_snapshot(self, kind):
         mode = "not_cancelable" if kind == "not-cancelable" else kind
@@ -1319,12 +1304,9 @@ class ScenarioCatalog:
             "firmware-restart": "MCU shutdown: timer too close.",
             "reconnecting": "Klipper disconnected; reconnecting to host.",
         }[kind]
-        with _temporary_attributes(self.host, {
-                "error_message": message,
-                "error_category": "",
-                "error_recovery": recovery,
-        }):
-            self._show(ScreenDialog.ERROR)
+        self._show(ScreenDialog.ERROR, content={
+            "message": message, "category": "", "recovery": recovery,
+        })
 
     def _render_update_snapshot(self, long):
         notification = getattr(self.host, "update_notification", None)
@@ -1706,7 +1688,8 @@ class ScenarioCatalog:
         return matches[0]
 
     def _prompt_action_for_label(self, label):
-        prompt = getattr(self.host, "action_prompt", None) or {}
+        instance = self.host._find_dialog(ScreenDialog.ACTION_PROMPT)
+        prompt = instance.content if instance is not None else {}
         matches = [
             action for action, button in prompt.get("buttons", {}).items()
             if str(button.get("label", "")).casefold()
@@ -1814,10 +1797,10 @@ class ScenarioCatalog:
         if self.host.page != ScreenPage.RECOVERY_PROMPT:
             raise RuntimeError("Recovery action prompt did not open")
 
-    def _show(self, page):
+    def _show(self, page, content=None):
         self.host._clear_dialogs()
         if isinstance(page, ScreenDialog):
-            self.host._show_dialog(page)
+            self.host._show_dialog(page, content=content)
             if self.host._current_dialog() != page:
                 raise RuntimeError("Unable to show dialog %s" % page.name)
         else:

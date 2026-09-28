@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 
+from timelapse_state import TimelapsePhase
 from ui import ThemeColor
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.screen import ScreenPage
@@ -55,7 +56,7 @@ class PrintingPagesMixin:
     def _timelapse_wait_text(self):
         if getattr(self, "pending_action", None) == "print.cancel.confirm":
             return "CANCELLING PRINT", "PLEASE WAIT WHILE THE PRINT STOPS"
-        status = self._timelapse_start_status().get("wait_status")
+        status = self._timelapse_status().get("wait_status")
         if status == "busy":
             return ("WAITING FOR THE PREVIOUS TIMELAPSE",
                     "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES")
@@ -115,8 +116,7 @@ class PrintingPagesMixin:
 
     def _sync_timelapse_wait_page(self):
         if (self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
-                and self._timelapse_start_waiting()
-                and not self._timelapse_user_pause()):
+                and self._timelapse_phase() == TimelapsePhase.WAITING):
             self._show_page(ScreenPage.TIMELAPSE_WAIT)
         elif self.page == ScreenPage.TIMELAPSE_WAIT:
             if getattr(self, "pending_action", None) == "print.cancel.confirm":
@@ -126,7 +126,9 @@ class PrintingPagesMixin:
                 self._show_page(target)
 
     def _render_print_page(self):
-        paused = self.print_state == PrintState.PAUSED or self._timelapse_user_pause()
+        phase = self._timelapse_phase()
+        paused = (phase in (TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE)
+                  or (phase == TimelapsePhase.NONE and self.print_state == PrintState.PAUSED))
         controls_ready = self._print_controls_ready()
         eventtime = self.reactor.monotonic()
         print_stats = getattr(self, "print_stats", None)
@@ -455,12 +457,12 @@ class PrintingPagesMixin:
         return eventtime + GCODE_PREVIEW_LOADER_PERIOD
 
     def _print_controls_ready(self):
-        if self._timelapse_frame_status().get("is_paused"):
+        phase = self._timelapse_phase()
+        if phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD,
+                     TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE):
             return False
-        if self._timelapse_user_pause():
+        if phase == TimelapsePhase.USER_PAUSE:
             return True
-        if self._timelapse_start_held():
-            return False
         if getattr(self, "print_state", None) == PrintState.PREPARING:
             return False
         start = getattr(self, "start_print_macro", None)

@@ -131,10 +131,10 @@ class ScreenRoot:
                 for layer in layers:
                     layer.node.update(self._tree.state)
                 modal_index = next((index for index in reversed(range(len(layers)))
-                                    if layers[index].node._blocks_input), None)
+                                    if layers[index].node.input_blocked), None)
                 if (modal_index is not None and all(
-                        layer.node._dirty == Dirty.CLEAN for layer in layers[modal_index:])):
-                    self.renderer._finish_surface(False)
+                        layer.node.is_clean for layer in layers[modal_index:])):
+                    self.renderer.discard_surface()
                     return False
             if self._rebuild:
                 previous_schema = () if self._tree is None else self._tree.state_schema
@@ -173,7 +173,7 @@ class ScreenRoot:
             self._rebuild = bool(commands) and not accepted
             return accepted or not commands
         except BaseException:
-            self.renderer._finish_surface(False)
+            self.renderer.discard_surface()
             self._rebuild = True
             raise
 
@@ -182,7 +182,7 @@ class ScreenRoot:
         if (self._rebuild or self.visible_layers
                 or any(not layer.suspended for layer in self.layers)
                 or not getattr(self.content, "accepts_deltas", False)):
-            self.renderer._finish_surface(False)
+            self.renderer.discard_surface()
             self.invalidate()
             return self.paint(receipt=metadata.get("receipt"))
         self.painting = True

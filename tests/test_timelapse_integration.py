@@ -803,8 +803,99 @@ class TimelapseConfigTest(unittest.TestCase):
 
 
 class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
+    def make_component(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        server = mock.Mock()
+        server.lookup_component.return_value.get_item.return_value = {}
+        config = mock.Mock()
+        config.get_server.return_value = server
+        config.get_options.return_value = []
+        config.get.side_effect = lambda key, default=None: (
+            directory + "/" if key in ("frame_path", "output_path") else default)
+        return timelapse.Timelapse(config)
+
+    async def test_explicit_cancel_owns_finalization_task_and_preserves_frames(self):
+        component = self.make_component()
+        frame = pathlib.Path(component.temp_dir) / "frame000001.jpg"
+        frame.write_bytes(b"previous print")
+        entered = asyncio.Event()
+        async def finish(_generation):
+            entered.set()
+            await asyncio.Event().wait()
+        component._finish_print_frames = finish
+        finalization = timelapse.PrintFinalization(component.frame_generation, "previous.gcode")
+        component.finalization = finalization
+        finalization.task = asyncio.create_task(component._finish_print(finalization))
+        await entered.wait()
+        await component.handle_status_update({"gcode_macro _START_PRINT": {"print_active": True}})
+        self.assertFalse(finalization.task.done())
+        self.assertTrue(frame.exists())
+        await component.cancel_render()
+        self.assertTrue(finalization.task.cancelled())
+        self.assertIsNone(component.finalization)
+        self.assertTrue(frame.exists())
+        self.assertFalse((await component.webrequest_lastframeinfo(None))["busy"])
+
+    async def test_cancelling_finalization_waits_for_archive_thread_cleanup(self):
+        component = self.make_component()
+        frame = pathlib.Path(component.temp_dir) / "frame000001.jpg"
+        frame.write_bytes(b"frame")
+        component.MIN_FREE_BYTES = 0
+        component._idle_status_for_render = mock.AsyncMock(return_value={
+            "print_stats": {"filename": "previous.gcode"}})
+        entered, release = threading.Event(), threading.Event()
+        def write(path, frames, cancel):
+            pathlib.Path(path).write_bytes(b"partial")
+            entered.set()
+            release.wait(2)
+            if cancel.is_set():
+                raise InterruptedError("cancelled")
+        component._write_frames_zip = write
+        component._finish_print_frames = lambda generation: component.saveFramesZip()
+        finalization = timelapse.PrintFinalization(component.frame_generation, "previous.gcode")
+        component.finalization = finalization
+        finalization.task = asyncio.create_task(component._finish_print(finalization))
+        self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+        cancelling = asyncio.create_task(component.cancel_render())
+        await asyncio.sleep(0)
+        self.assertFalse(cancelling.done())
+        self.assertTrue(component.save_cancel.is_set())
+        release.set()
+        await cancelling
+        self.assertTrue(frame.exists())
+        self.assertEqual(list(pathlib.Path(component.out_dir).glob("*.part")), [])
+        self.assertFalse(component.saveisrunning)
+
+    async def test_preparation_starts_frame_session_without_cancelling_render(self):
+        component = self.make_component()
+        frame = pathlib.Path(component.temp_dir) / "frame000001.jpg"
+        frame.write_bytes(b"previous print")
+        component.pending_file_selected = True
+        component.renderisrunning = True
+        component.render_command = mock.Mock(cancel=mock.AsyncMock())
+        await component.handle_status_update({
+            "gcode_macro _START_PRINT": {"print_active": True}})
+        self.assertTrue(frame.exists())
+        component.render_command.cancel.assert_not_awaited()
+        component.renderisrunning = False
+        await component.handle_status_update({
+            "gcode_macro _START_PRINT": {"print_active": True}})
+        self.assertFalse(frame.exists())
+        self.assertFalse(component.pending_file_selected)
+        component.render_command.cancel.assert_not_awaited()
+
+    async def test_capture_cannot_append_to_previous_print_before_session_start(self):
+        component = self.make_component()
+        component.pending_file_selected = True
+        loop = mock.Mock()
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+            component.call_newframe(parked=True)
+        loop.call_later.assert_not_called()
+        loop.spawn_callback.assert_called_once_with(component.release_parkedhead)
+        self.assertFalse(component.takingframe)
+
     async def test_frame_scheduling_only_acknowledges_parked_capture(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {
             "enabled": True, "mode": "layermacro",
             "stream_delay_compensation": 0.05}
@@ -828,7 +919,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_scheduled_frame_is_discarded_after_new_print_starts(self):
         with tempfile.TemporaryDirectory() as directory:
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.config = {"enabled": True, "mode": "layermacro",
                                 "stream_delay_compensation": 0.05,
                                 "snapshoturl": "http://localhost/snapshot"}
@@ -837,7 +928,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.lastframefile = ""
             component.frame_generation = 0
             component.takingframe = False
-            component.pending_file_selected = True
+            component.pending_file_selected = False
             component.printing = False
             component.save_cancel = None
             component.render_command = None
@@ -848,6 +939,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 component.call_newframe()
             scheduled = loop.call_later.call_args.kwargs
 
+            component.pending_file_selected = True
             await component._begin_print()
             await scheduled["callback"](
                 release_parked=scheduled["release_parked"],
@@ -858,7 +950,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
 
     async def test_declined_parked_frame_releases_immediately(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {
             "enabled": True, "mode": "layermacro",
             "stream_delay_compensation": 0.05}
@@ -889,8 +981,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(parked=parked, fail=fail):
                 with tempfile.TemporaryDirectory() as directory:
                     events = []
-                    component = timelapse.Timelapse.__new__(
-                        timelapse.Timelapse)
+                    component = self.make_component()
                     component.temp_dir = directory + "/"
                     component.framecount = 0
                     component.lastframefile = ""
@@ -931,7 +1022,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                         component._run_gcode_without_history.assert_not_awaited()
 
     async def test_frame_info_reports_render_activity(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.framecount = 2
         component.lastframefile = "frame000002.jpg"
         component.renderisrunning = True
@@ -943,14 +1034,14 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status["rendering"])
 
     async def test_frame_info_marks_capture_export_and_finalization_busy(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.framecount = 0
         component.lastframefile = ""
         component.renderisrunning = False
         component.saveisrunning = False
         component.takingframe = False
-        component.finishing_print = False
-        for field in ("takingframe", "saveisrunning", "finishing_print",
+        component.finalization = None
+        for field in ("takingframe", "saveisrunning",
                       "renderisrunning"):
             setattr(component, field, True)
             self.assertTrue((await component.webrequest_lastframeinfo(None))["busy"])
@@ -958,22 +1049,21 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await component.webrequest_lastframeinfo(None))["busy"])
 
     async def test_finalization_is_busy_from_print_end_until_it_finishes(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {"enabled": True, "mode": "layermacro"}
         component.pending_file_selected = False
         component.printing = True
-        component.finishing_print = False
+        component.finalization = None
         component._finish_print_frames = mock.AsyncMock()
         loop = mock.Mock()
         with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
             await component.handle_gcode_response("Done printing file")
-        self.assertTrue(component.finishing_print)
-        callback = loop.spawn_callback.call_args.args[0]
-        await callback()
-        self.assertFalse(component.finishing_print)
+        self.assertTrue((component.finalization is not None))
+        await component.finalization.task
+        self.assertFalse((component.finalization is not None))
 
     async def test_snapshot_url_post_does_not_change_capture_url(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {
             "snapshoturl": "http://localhost/snapshot",
             "output_framerate": 30}
@@ -997,7 +1087,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             "timelapse", "config.output_framerate", 24)
 
     async def test_target_length_must_be_positive(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {"targetlength": 10}
         component.database = mock.Mock()
         component.server = mock.Mock()
@@ -1020,7 +1110,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         connection.closing = False
         connection.server = server
         connection._request_standard = mock.AsyncMock(return_value="ok")
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.server = server
         component.klippy_apis = mock.Mock()
         component.klippy_apis.klippy = connection
@@ -1035,7 +1125,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(request.get_subscribable(), component.klippy_apis)
 
     async def test_timelapse_setup_and_hyperlapse_controls_stay_out_of_console(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {
             "enabled": True, "gcode_verbose": False, "parkhead": False,
             "parkpos": "back_left", "park_custom_pos_x": 10.0,
@@ -1064,7 +1154,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.server.send_event.assert_not_called()
 
     async def test_frame_release_resets_macro_without_console_entry(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.klippy_apis = mock.Mock()
         component.klippy_apis.run_gcode = mock.AsyncMock()
         component._run_gcode_without_history = mock.AsyncMock()
@@ -1081,7 +1171,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_render_completion_resets_macro_without_console_entry(self):
         with tempfile.TemporaryDirectory() as directory:
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.renderisrunning = False
             component.getWebcamConfig = mock.AsyncMock()
@@ -1104,7 +1194,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             frame = pathlib.Path(directory) / "frame000001.jpg"
             frame.write_bytes(b"jpeg")
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.out_dir = directory + "/"
             component.framecount = 1
@@ -1115,7 +1205,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 "time_format_code": "%Y", "duplicatelastframe": 0,
                 "variable_fps": True, "targetlength": 0}
             component.getWebcamConfig = mock.AsyncMock()
-            component._idle_status_for_render = mock.AsyncMock(return_value={
+            component._idle_status_for_render = mock.AsyncMock(return_value={"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "complete", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": False}})
             component._has_render_space = mock.Mock(return_value=True)
@@ -1132,7 +1222,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             "VARIABLE=render VALUE=False")
 
     async def test_missing_layer_updates_warn_only_for_layer_recording(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.framecount = 0
         component.takingframe = False
         component.printing = False
@@ -1149,24 +1239,24 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.klippy_apis.query_objects = mock.AsyncMock(
             return_value=status)
 
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         component.server.send_event.assert_called_once()
         self.assertIn("no layer updates",
                       component.server.send_event.call_args.args[1])
 
         component.server.send_event.reset_mock()
         status["mod_params"]["variables"]["timelapse_mode"] = "TIME"
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         component.server.send_event.assert_not_called()
 
         status["mod_params"]["variables"]["timelapse_mode"] = "LAYER"
         status["gcode_macro _TIMELAPSE_LAYER_CAPTURE"]["last_layer"] = 1
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         component.server.send_event.assert_not_called()
 
     async def test_final_frame_waits_for_capture_and_precedes_render(self):
         events = []
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.framecount = 2
         component.takingframe = True
         component.printing = False
@@ -1196,26 +1286,26 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.object(timelapse.asyncio, "sleep",
                                side_effect=finish_pending_capture):
-            await component._finish_print()
+            await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, ["wait", "frame", "render"])
         component.newframe.assert_awaited_once_with(final_frame=True)
 
         events.clear()
         status["gcode_macro TIMELAPSE_PRINT"]["enable"] = False
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, ["render"])
 
         events.clear()
         status["mod_params"]["variables"]["timelapse_final_frame"] = True
         component.printing = True
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, [])
 
         events.clear()
         component.printing = False
         status["gcode_macro TIMELAPSE_PRINT"]["enable"] = True
         status["mod_params"]["variables"]["timelapse_final_frame"] = False
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, ["render"])
 
         events.clear()
@@ -1225,19 +1315,19 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.takingframe = False
         with mock.patch.object(timelapse.asyncio, "sleep",
                                side_effect=finish_without_final_frame):
-            await component._finish_print()
+            await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, ["wait", "render"])
 
         events.clear()
         component.takingframe = True
         with mock.patch.object(timelapse.asyncio, "sleep",
                                new=mock.AsyncMock()):
-            await component._finish_print()
+            await component._finish_print_frames(component.frame_generation)
         self.assertEqual(events, [])
         component.takingframe = False
 
     async def test_inflight_capture_blocks_manual_export_and_render(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.takingframe = True
         component.renderisrunning = False
         component.notify_event = mock.Mock()
@@ -1253,7 +1343,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             frame = pathlib.Path(directory) / "frame000001.jpg"
             frame.write_bytes(b"previous print")
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 1
             component.lastframefile = frame.name
@@ -1279,7 +1369,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 "print_stats": {"state": "printing"}})
             self.assertFalse(frame.exists())
             self.assertEqual(component.framecount, 0)
-            encoder.cancel.assert_awaited_once()
+            encoder.cancel.assert_not_awaited()
 
             component.render_command = None
             frame.write_bytes(b"current print")
@@ -1291,7 +1381,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             frame = pathlib.Path(directory) / "frame000001.jpg"
             frame.write_bytes(b"previous print")
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 1
             component.lastframefile = frame.name
@@ -1309,7 +1399,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
     async def test_capture_commits_only_complete_frame(self):
         with tempfile.TemporaryDirectory() as directory:
             events = []
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 0
             component.lastframefile = ""
@@ -1365,7 +1455,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_capture_from_previous_print_cannot_commit_after_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 1
             component.lastframefile = "frame000001.jpg"
@@ -1405,7 +1495,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             (pathlib.Path(directory) / "frame000001.jpg").write_bytes(b"jpeg")
             events = []
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 1
             component.renderisrunning = False
@@ -1415,7 +1505,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.notify_event = events.append
             component.server = mock.Mock()
             component.klippy_apis = mock.Mock()
-            component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            component.klippy_apis.query_objects = mock.AsyncMock(return_value={"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "printing"},
                 "virtual_sdcard": {"is_active": True}})
 
@@ -1426,7 +1516,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(events[-1]["status"], "error")
             component.server.send_event.assert_not_called()
 
-            component.klippy_apis.query_objects.return_value = {
+            component.klippy_apis.query_objects.return_value = {"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "cancelled"},
                 "virtual_sdcard": {"is_active": True}}
             result = await component.render()
@@ -1442,7 +1532,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             videos.mkdir()
             (frames / "frame000001.jpg").write_bytes(b"jpeg")
             commands = []
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = str(frames) + "/"
             component.out_dir = str(videos) + "/"
             component.framecount = 1
@@ -1468,7 +1558,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 "previewimage": True,
             }
             component.klippy_apis = mock.Mock()
-            component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            component.klippy_apis.query_objects = mock.AsyncMock(return_value={"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "complete", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": False}})
 
@@ -1516,7 +1606,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 [("server:gcode_response", "// Timelapse: video generation started"),
                  ("server:gcode_response", "// Timelapse: video generation finished")])
 
-            component.klippy_apis.query_objects.return_value = {
+            component.klippy_apis.query_objects.return_value = {"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "cancelled", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": False}}
             second = await component.render()
@@ -1544,7 +1634,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             videos.mkdir()
             (frames / "frame000001.jpg").write_bytes(b"one")
             (frames / "frame000002.jpg").write_bytes(b"two")
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = str(frames) + "/"
             component.out_dir = str(videos) + "/"
             component.saveisrunning = False
@@ -1552,7 +1642,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.MIN_FREE_BYTES = 0
             component.config = {"time_format_code": "%Y%m%d"}
             component.klippy_apis = mock.Mock()
-            component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            component.klippy_apis.query_objects = mock.AsyncMock(return_value={"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "printing", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": True}})
 
@@ -1560,7 +1650,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(busy["status"], "error")
             self.assertFalse(list(videos.iterdir()))
 
-            component.klippy_apis.query_objects.return_value = {
+            component.klippy_apis.query_objects.return_value = {"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "complete", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": False}}
             saved = await component.saveFramesZip()
@@ -1603,10 +1693,10 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             async def delayed_status():
                 entered.set()
                 await proceed.wait()
-                return {"print_stats": {"state": "complete", "filename": "part.gcode"},
+                return {"timelapse_state": {"phase": "NONE"}, "print_stats": {"state": "complete", "filename": "part.gcode"},
                         "virtual_sdcard": {"is_active": False}}
 
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = str(frames) + "/"
             component.out_dir = str(videos) + "/"
             component.MIN_FREE_BYTES = 0
@@ -1643,7 +1733,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 if cancel.is_set():
                     raise InterruptedError("new print")
 
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = str(frames) + "/"
             component.out_dir = str(videos) + "/"
             component.MIN_FREE_BYTES = 0
@@ -1653,7 +1743,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.pending_file_selected = False
             component.config = {"time_format_code": "%Y%m%d"}
             component.klippy_apis = mock.Mock()
-            component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            component.klippy_apis.query_objects = mock.AsyncMock(return_value={"timelapse_state": {"phase": "NONE"},
                 "print_stats": {"state": "complete", "filename": "part.gcode"},
                 "virtual_sdcard": {"is_active": False}})
 
@@ -1661,6 +1751,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                                    side_effect=interrupted_export):
                 exporting = asyncio.create_task(component.saveFramesZip())
                 self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                await component.cancel_render()
                 await component.handle_status_update({
                     "print_stats": {"state": "printing"}})
                 proceed.set()
@@ -1684,6 +1775,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                                    side_effect=completed_export):
                 exporting = asyncio.create_task(component.saveFramesZip())
                 self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                await component.cancel_render()
                 await component.handle_status_update({
                     "print_stats": {"state": "printing"}})
                 proceed.set()
@@ -1694,7 +1786,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_automatic_archive_and_render_run_in_sequence(self):
         calls = []
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.config = {"saveframes": True, "autorender": True}
         component.printing = False
         component.server = mock.Mock()
@@ -1707,25 +1799,26 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.render = mock.AsyncMock(
             side_effect=lambda: calls.append("render"))
 
-        await component._finish_print()
+        await component._finish_print_frames(component.frame_generation)
 
         self.assertEqual(calls, ["archive", "render"])
 
-    async def test_new_print_cancels_active_encoder(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+    async def test_explicit_cancel_stops_active_encoder(self):
+        component = self.make_component()
         component.save_cancel = None
         component.render_command = mock.Mock()
         component.render_command.cancel = mock.AsyncMock()
-        component.renderisrunning = False
+        component.renderisrunning = True
         component.pending_file_selected = False
 
         await component.handle_status_update({
             "print_stats": {"state": "printing"}})
-
+        component.render_command.cancel.assert_not_awaited()
+        await component.cancel_render()
         component.render_command.cancel.assert_awaited_once()
 
     async def test_print_status_preserves_render_until_preparation(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.renderisrunning = True
         component.pending_file_selected = True
         component.printing = False
@@ -1747,18 +1840,20 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         await component.handle_status_update({
             "gcode_macro _START_PRINT": {"print_active": True}})
 
+        component.render_command.cancel.assert_not_awaited()
+        component.cleanup.assert_not_called()
+        await component.cancel_render()
         component.render_command.cancel.assert_awaited_once()
-        component.cleanup.assert_called_once()
 
     async def test_actual_new_print_interrupts_previous_finalization(self):
         with tempfile.TemporaryDirectory() as directory:
             frame = pathlib.Path(directory) / "frame000001.jpg"
             frame.write_bytes(b"previous print")
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.temp_dir = directory + "/"
             component.framecount = 1
             component.lastframefile = frame.name
-            component.finishing_print = True
+            component.finalization = timelapse.PrintFinalization(component.frame_generation, component.active_print_filename)
             component.renderisrunning = False
             component.pending_file_selected = True
             component.printing = False
@@ -1771,14 +1866,15 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 "print_stats": {"state": "paused"}})
             self.assertTrue(frame.exists())
             self.assertFalse(component.printing)
-            self.assertTrue(component.finishing_print)
+            self.assertTrue((component.finalization is not None))
 
+            previous = component.finalization
+            await component.cancel_render()
             await component.handle_status_update({
-                "print_stats": {"state": "printing"},
-                "gcode_macro _START_PRINT": {"print_active": True}})
+                "print_stats": {"state": "printing"}})
             self.assertFalse(frame.exists())
             self.assertTrue(component.printing)
-            self.assertEqual(component.frame_generation, 1)
+            self.assertEqual(component.frame_generation, 2)
 
             new_frame = pathlib.Path(directory) / "frame000001.jpg"
             new_frame.write_bytes(b"next print")
@@ -1787,14 +1883,48 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(new_frame.read_bytes(), b"next print")
 
             component._finish_print_frames = mock.AsyncMock()
-            await component._finish_print()
+            await component._finish_print(previous)
             self.assertEqual(new_frame.read_bytes(), b"next print")
-            self.assertEqual(component.frame_generation, 1)
+            self.assertEqual(component.frame_generation, 2)
+
+    async def test_print_started_during_finalization_begins_after_it(self):
+        component = self.make_component()
+        component.config = {"enabled": True, "mode": "layermacro"}
+        frame = pathlib.Path(component.temp_dir) / "frame000001.jpg"
+        frame.write_bytes(b"previous print")
+        release = asyncio.Event()
+
+        async def finish(_generation):
+            await release.wait()
+
+        component._finish_print_frames = finish
+        component.klippy_apis = mock.Mock(query_objects=mock.AsyncMock(
+            return_value={"gcode_macro _START_PRINT": {"print_active": True}}))
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=mock.Mock()):
+            await component.handle_gcode_response("Done printing file")
+            finalization = component.finalization
+            await component.handle_gcode_response("File selected")
+            await component.handle_status_update({
+                "print_stats": {"state": "printing"},
+                "gcode_macro _START_PRINT": {"print_active": True}})
+            component.call_newframe()
+            self.assertFalse(component.takingframe)
+            self.assertTrue(frame.exists())
+
+            release.set()
+            await finalization.task
+
+        self.assertIsNone(component.finalization)
+        self.assertTrue(component.printing)
+        self.assertFalse(frame.exists())
+        with mock.patch.object(component, "schedule_newframe") as schedule:
+            component.call_newframe()
+        schedule.assert_called_once()
 
     async def test_stale_finish_stops_after_new_print_starts(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.frame_generation = 0
-        component.finishing_print = True
+        component.finalization = timelapse.PrintFinalization(component.frame_generation, component.active_print_filename)
         component.printing = False
         component.config = {"saveframes": True, "autorender": True}
         component.server = mock.Mock(error=RuntimeError)
@@ -1807,7 +1937,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.klippy_apis = mock.Mock(query_objects=query)
         component.saveFramesZip = mock.AsyncMock()
         component.render = mock.AsyncMock()
-        finish = asyncio.create_task(component._finish_print())
+        finish = asyncio.create_task(component._finish_print(component.finalization))
         await asyncio.sleep(0)
         component.frame_generation = 1
         component.printing = False
@@ -1818,7 +1948,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_interrupted_render_does_not_remove_new_frame(self):
         with tempfile.TemporaryDirectory() as directory:
-            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component = self.make_component()
             component.frame_generation = 0
             component.renderisrunning = False
             component.temp_dir = directory + "/"
@@ -1837,27 +1967,27 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(frame.read_bytes(), b"next print")
 
     async def test_waiting_next_print_allows_previous_export_with_previous_name(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
-        component.finishing_print = True
-        component.finishing_filename = "previous.gcode"
+        component = self.make_component()
+        component.finalization = timelapse.PrintFinalization(component.frame_generation, component.active_print_filename)
+        component.finalization.filename = "previous.gcode"
         component.klippy_apis = mock.Mock()
         component.klippy_apis.query_objects = mock.AsyncMock(return_value={
             "print_stats": {"state": "paused", "filename": "next.gcode"},
             "virtual_sdcard": {"is_active": False},
-            "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True}})
+            "timelapse_state": {"phase": "WAITING"}})
 
         status = await component._idle_status_for_render()
         self.assertEqual(status["print_stats"]["filename"], "previous.gcode")
 
         component.klippy_apis.query_objects.return_value[
-            "gcode_macro _TIMELAPSE_START_GUARD"]["waiting"] = False
+            "timelapse_state"]["phase"] = "NONE"
         self.assertIsNone(await component._idle_status_for_render())
 
     async def test_filename_and_state_updates_bind_name_to_frame_generation(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.frame_generation = 4
         component.active_print_filename = "previous.gcode"
-        component.finishing_print = False
+        component.finalization = None
         component.printing = False
         component.pending_file_selected = False
         component.renderisrunning = False
@@ -1875,24 +2005,24 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         loop = mock.Mock()
         with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
             await component.handle_gcode_response("Done printing file")
-        self.assertEqual(component.finishing_filename, "current.gcode")
-        self.assertEqual(component.finishing_frame_generation, 4)
+        self.assertEqual(component.finalization.filename, "current.gcode")
+        self.assertEqual(component.finalization.generation, 4)
 
         await component.handle_status_update({
             "print_stats": {"filename": "next.gcode"}})
         self.assertEqual(component.active_print_filename, "next.gcode")
-        self.assertEqual(component.finishing_filename, "current.gcode")
+        self.assertEqual(component.finalization.filename, "current.gcode")
 
         component.klippy_apis = mock.Mock()
         component.klippy_apis.query_objects = mock.AsyncMock(return_value={
             "print_stats": {"state": "paused", "filename": "next.gcode"},
             "virtual_sdcard": {"is_active": False},
-            "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True}})
+            "timelapse_state": {"phase": "WAITING"}})
         status = await component._idle_status_for_render()
         self.assertEqual(status["print_stats"]["filename"], "current.gcode")
 
     async def test_cancelling_during_render_wait_keeps_previous_frames(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component = self.make_component()
         component.renderisrunning = True
         component.pending_file_selected = True
         component.printing = False
@@ -1912,8 +2042,8 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.render_command.cancel.assert_not_awaited()
         component.cleanup.assert_not_called()
 
-    async def test_moonraker_subscribes_to_print_preparation(self):
-        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+    async def test_moonraker_subscribes_to_print_state(self):
+        component = self.make_component()
         component.klippy_apis = mock.Mock()
         component.klippy_apis.subscribe_objects = mock.AsyncMock()
         component.setgcodevariables = mock.AsyncMock()
@@ -1923,6 +2053,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             await component.handle_klippy_ready()
 
         component.klippy_apis.subscribe_objects.assert_awaited_once_with({
+            "print_stats": ["state", "filename"],
             "gcode_macro _START_PRINT": ["print_active"]})
 
 
@@ -2391,7 +2522,8 @@ class TimelapseStartGuardTest(unittest.TestCase):
             parsed = types.SimpleNamespace(
                 get_commandline=lambda command=command: command, _params={})
             parser._get_extended_params(parsed)
-        self.assertEqual(cancel.commands[0], "_TIMELAPSE_START_RESET")
+        self.assertEqual(cancel.commands[:2], (
+            "_TIMELAPSE_FRAME_RESET", "_TIMELAPSE_START_RESET"))
         self.assertEqual(cancel.commands[-3:], (
             "SDCARD_CANCEL_FILE",
             "SET_GCODE_VARIABLE MACRO=_TIMELAPSE_START_GUARD "
@@ -2404,6 +2536,7 @@ class TimelapseStartGuardTest(unittest.TestCase):
 
         full_cancel = execute_macro_chain((
             (CLIENT, "CANCEL_PRINT"),
+            (MACROS, "_TIMELAPSE_FRAME_RESET"),
             (MACROS, "_TIMELAPSE_START_RESET")),
             "CANCEL_PRINT", printer=cancel_printer)
         self.assertLess(full_cancel.index("SDCARD_CANCEL_FILE"),
@@ -2441,6 +2574,7 @@ class TimelapseStartGuardTest(unittest.TestCase):
         cancelled = execute_macro_chain((
             (MACROS, "_TIMELAPSE_START_CANCEL"),
             (CLIENT, "CANCEL_PRINT"),
+            (MACROS, "_TIMELAPSE_FRAME_RESET"),
             (MACROS, "_TIMELAPSE_START_RESET")),
             "_TIMELAPSE_START_CANCEL", printer={
                 **waiting,
@@ -2488,6 +2622,16 @@ class TimelapseStartGuardTest(unittest.TestCase):
                               printer=self._printer(0, waiting=False))
         self.assertEqual(result.commands, ())
 
+    def test_continue_explicitly_requests_render_cancellation(self):
+        printer = self._printer(0, waiting=True, state="paused")
+        result = render_macro(MACROS, "_TIMELAPSE_START_CONTINUE", printer=printer)
+        self.assertEqual(result.remote_calls, (("timelapse_cancel_render", {}),))
+        self.assertIn("_START_PRINT", result.commands)
+        printer["print_stats"]["state"] = "cancelled"
+        stopped = render_macro(MACROS, "_TIMELAPSE_START_CONTINUE", printer=printer)
+        self.assertEqual(stopped.remote_calls, ())
+        self.assertNotIn("_START_PRINT", stopped.commands)
+
     def test_external_cancel_clears_pending_wait(self):
         result = render_macro(HEADLESS, "_COMMON_END_PRINT", printer={
             "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True},
@@ -2501,6 +2645,62 @@ class TimelapseStartGuardTest(unittest.TestCase):
             "bed_mesh": {"profile_name": "auto"},
         })
         self.assertEqual(without_guard.commands[0], "_STOP")
+
+    def test_cancel_clears_capture_with_overridden_user_hook(self):
+        printer = self._printer(2, waiting=True, state="paused")
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {
+            "takingframe": True, "is_paused": True,
+            "user_pause_requested": True, "retracted": True,
+            "wait_loops": 4}
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["wait_status"] = "unavailable"
+        printer["gcode_macro _CLIENT_VARIABLE"] = {
+            "user_cancel_macro": "CUSTOM_CANCEL_HOOK"}
+        printer["gcode_macro RESUME"] = {"restore_idle_timeout": 0}
+        printer["mod_params"] = {"variables": {"park_dz": 10}}
+        printer["pause_resume"] = {"is_paused": False}
+        runtime = MacroExecution([
+            (CLIENT, "CANCEL_PRINT", "gcode_macro"),
+            (MACROS, "_TIMELAPSE_FRAME_RESET", "gcode_macro"),
+            (MACROS, "_TIMELAPSE_START_RESET", "gcode_macro"),
+        ], printer, lambda command: None)
+        runtime.run("CANCEL_PRINT")
+
+        frame = printer["gcode_macro TIMELAPSE_TAKE_FRAME"]
+        self.assertFalse(any(frame[key] for key in (
+            "takingframe", "is_paused", "user_pause_requested", "retracted")))
+        self.assertEqual(frame["wait_loops"], 0)
+        guard = printer["gcode_macro _TIMELAPSE_START_GUARD"]
+        self.assertFalse(guard["waiting"])
+        self.assertFalse(guard["prompt_open"])
+        self.assertEqual(guard["wait_status"], "")
+        self.assertEqual(runtime.timers["_WAIT_TIMELAPSE_TAKE_FRAME"], 0)
+        self.assertEqual(runtime.timers["_TIMELAPSE_START_POLL"], 0)
+        self.assertIn("CUSTOM_CANCEL_HOOK REASON=\"\"", runtime.commands)
+        self.assertLess(runtime.commands.index("SDCARD_CANCEL_FILE"),
+                        runtime.commands.index("CANCEL_PRINT_BASE"))
+
+    def test_new_start_clears_stale_wait_status_and_prompt(self):
+        printer = self._printer(1)
+        guard = printer["gcode_macro _TIMELAPSE_START_GUARD"]
+        guard.update(prompt_open=True, wait_status="unavailable")
+        printer["gcode_macro _START_PRINT"] = {}
+        printer["mod_params"] = {"variables": {
+            "filament_switch_sensor": False, "display": 1,
+            "timelapse": False}}
+        printer["bed_mesh"] = {"profiles": {}}
+        runtime = MacroExecution([
+            (HEADLESS, "START_PRINT", "gcode_macro"),
+            (MACROS, "_TIMELAPSE_START_RESET", "gcode_macro"),
+        ], printer, lambda command: None)
+        runtime.run("START_PRINT EXTRUDER_TEMP=210 BED_TEMP=60")
+
+        self.assertFalse(guard["waiting"])
+        self.assertFalse(guard["prompt_open"])
+        self.assertEqual(guard["wait_status"], "")
+        self.assertEqual(runtime.timers["_TIMELAPSE_START_POLL"], 0)
+        self.assertIn(
+            'RESPOND TYPE=command MSG="action:prompt_end Previous timelapse"',
+            runtime.commands)
 
 
 if __name__ == "__main__":
