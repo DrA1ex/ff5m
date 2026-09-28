@@ -153,6 +153,7 @@ def visual_context_cases():
             yield specification, state, label
 
 WAIT_VARIANTS = ("HEATING", "COOLING", "NONE")
+_MISSING = object()
 
 
 class FixtureMismatch(RuntimeError):
@@ -238,10 +239,8 @@ def _snapshot(stack):
     }
 
 
-def expand_events(events, wait_variants=(), optional_variants=None):
-    """Expand compact semantic events into the exact status trace."""
+def _iter_snapshots(events, wait_variants=(), optional_variants=None):
     stack = []
-    snapshots = []
     variants = iter(wait_variants)
     default_optionals = optional_variants is None
     optionals = iter(optional_variants or ())
@@ -254,15 +253,15 @@ def expand_events(events, wait_variants=(), optional_variants=None):
                 "type": type_id, "name": name,
                 "current_state": None, "cancel_mode": cancel_mode,
             })
-            snapshots.append(_snapshot(stack))
+            yield _snapshot(stack)
         elif kind == "state":
             stack[-1]["current_state"] = event[1]
-            snapshots.append(_snapshot(stack))
+            yield _snapshot(stack)
         elif kind == "optional_state":
             enabled = True if default_optionals else next(optionals)
             if enabled:
                 stack[-1]["current_state"] = event[1]
-                snapshots.append(_snapshot(stack))
+                yield _snapshot(stack)
         elif kind == "wait":
             variant = next(variants)
             if variant not in WAIT_VARIANTS:
@@ -272,15 +271,15 @@ def expand_events(events, wait_variants=(), optional_variants=None):
                 previous = stack[-1]["current_state"]
                 stack[-1]["current_state"] = "%s %s" % (
                     variant, event[1])
-                snapshots.append(_snapshot(stack))
+                yield _snapshot(stack)
                 stack[-1]["current_state"] = previous
-                snapshots.append(_snapshot(stack))
+                yield _snapshot(stack)
         elif kind == "end":
             stack.pop()
-            snapshots.append(_snapshot(stack))
+            yield _snapshot(stack)
         elif kind == "reset":
             stack[:] = []
-            snapshots.append(_snapshot(stack))
+            yield _snapshot(stack)
         else:
             raise ValueError("unknown fixture event: %s" % (kind,))
     try:
@@ -296,7 +295,11 @@ def expand_events(events, wait_variants=(), optional_variants=None):
             pass
         else:
             raise ValueError("too many optional fixture variants")
-    return snapshots
+
+
+def expand_events(events, wait_variants=(), optional_variants=None):
+    """Expand compact semantic events into the exact status trace."""
+    return list(_iter_snapshots(events, wait_variants, optional_variants))
 
 
 NO_CONTEXT = ()
@@ -394,7 +397,14 @@ def _optional_count(events):
     return sum(1 for event in events if event[0] == "optional_state")
 
 
-def exact_variants(fixture_name):
+def _variant_name(variants, optionals):
+    names = ["HOMING" if enabled else "SKIP_HOMING"
+             for enabled in optionals]
+    names.extend(variants)
+    return ",".join(names) or "default"
+
+
+def _variant_choices(fixture_name):
     events = FIXTURES[fixture_name]
     wait_count = _wait_count(events)
     optional_count = _optional_count(events)
@@ -404,12 +414,48 @@ def exact_variants(fixture_name):
         (True, False), repeat=optional_count)) if optional_count else ((),)
     for variants in wait_choices:
         for optionals in optional_choices:
-            names = ["HOMING" if enabled else "SKIP_HOMING"
-                     for enabled in optionals]
-            names.extend(variants)
-            name = ",".join(names) or "default"
-            yield (name, expand_events(
-                events, variants, optional_variants=optionals), variants)
+            yield _variant_name(variants, optionals), variants, optionals
+
+
+def exact_variants(fixture_name):
+    events = FIXTURES[fixture_name]
+    for name, variants, optionals in _variant_choices(fixture_name):
+        yield (name, expand_events(
+            events, variants, optional_variants=optionals), variants)
+
+
+def _trace_length(events, variants, optionals):
+    return (sum(event[0] in ("begin", "state", "end", "reset")
+                for event in events)
+            + sum(optionals)
+            + 2 * sum(variant != "NONE" for variant in variants))
+
+
+def _observed_choices(events, actual):
+    """Guess choices from visible states; exact expansion still validates them."""
+    offset = 0
+    variants = []
+    optionals = []
+    for event in events:
+        kind = event[0]
+        state = (actual[offset].get("current_state")
+                 if offset < len(actual) else None)
+        if kind == "optional_state":
+            enabled = state == event[1]
+            optionals.append(enabled)
+            offset += int(enabled)
+        elif kind == "wait":
+            if state == "HEATING %s" % event[1]:
+                variant = "HEATING"
+            elif state == "COOLING %s" % event[1]:
+                variant = "COOLING"
+            else:
+                variant = "NONE"
+            variants.append(variant)
+            offset += 2 if variant != "NONE" else 0
+        else:
+            offset += 1
+    return tuple(variants), tuple(optionals)
 
 
 def first_difference(expected, actual):
@@ -422,15 +468,6 @@ def first_difference(expected, actual):
         return "trace length differs: expected=%d actual=%d" % (
             len(expected), len(actual))
     return None
-
-
-def _common_prefix(expected, actual):
-    count = 0
-    for left, right in zip(expected, actual):
-        if left != right:
-            break
-        count += 1
-    return count
 
 
 class OperationContextRecorder:
@@ -512,14 +549,45 @@ class OperationContextRecorder:
         self._scenario = None
         actual = list(self._trace)
         self._trace = []
-        candidates = []
         for fixture_name in scenario["fixtures"]:
-            for variant, expected, choices in exact_variants(fixture_name):
-                candidates.append((fixture_name, variant, expected, choices))
-                if expected == actual:
+            events = FIXTURES[fixture_name]
+            choices, optionals = _observed_choices(events, actual)
+            expected = expand_events(events, choices, optionals)
+            if expected == actual:
+                status = normalize_status(self.manager.get_status(0.0))
+                if not status["contexts"]:
+                    result = {
+                        "scenario": scenario["name"], "passed": True,
+                        "fixture": fixture_name,
+                        "variant": _variant_name(choices, optionals),
+                        "temperature_variants": list(choices),
+                        "expected": expected, "actual": actual,
+                    }
+                    self.results.append(result)
+                    return result
+
+        selected = None
+        for fixture_name in scenario["fixtures"]:
+            events = FIXTURES[fixture_name]
+            for variant, choices, optionals in _variant_choices(fixture_name):
+                prefix = 0
+                matched = True
+                for expected_snapshot, observed in itertools.zip_longest(
+                        _iter_snapshots(events, choices, optionals), actual,
+                        fillvalue=_MISSING):
+                    if expected_snapshot != observed:
+                        matched = False
+                        break
+                    prefix += 1
+                score = (prefix, -abs(
+                    _trace_length(events, choices, optionals) - len(actual)))
+                if selected is None or score > selected[4]:
+                    selected = (fixture_name, variant, choices, optionals, score)
+                if matched:
                     status = normalize_status(self.manager.get_status(0.0))
                     if status["contexts"]:
                         break
+                    expected = expand_events(events, choices, optionals)
                     result = {
                         "scenario": scenario["name"], "passed": True,
                         "fixture": fixture_name, "variant": variant,
@@ -528,13 +596,8 @@ class OperationContextRecorder:
                     }
                     self.results.append(result)
                     return result
-        selected = (max(
-            candidates,
-            key=lambda item: (
-                _common_prefix(item[2], actual),
-                -abs(len(item[2]) - len(actual))))
-            if candidates else (None, None, [], ()))
-        expected = selected[2]
+        expected = (expand_events(FIXTURES[selected[0]], selected[2], selected[3])
+                    if selected is not None else [])
         diagnostic = first_difference(expected, actual)
         final_status = normalize_status(self.manager.get_status(0.0))
         if final_status["contexts"]:
@@ -542,10 +605,10 @@ class OperationContextRecorder:
                 diagnostic or "trace differs",)
         result = {
             "scenario": scenario["name"], "passed": False,
-            "fixture": selected[0],
-            "variant": selected[1],
+            "fixture": selected[0] if selected is not None else None,
+            "variant": selected[1] if selected is not None else None,
             "temperature_variants": (
-                list(selected[3]) if candidates else []),
+                list(selected[2]) if selected is not None else []),
             "diagnostic": diagnostic, "expected": expected,
             "actual": actual,
         }

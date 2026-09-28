@@ -2718,6 +2718,49 @@ class OperationContextRecorderTest(unittest.TestCase):
                     "screws", (variant,))
                 self.assertEqual(result["temperature_variants"], [variant])
 
+    def test_late_print_kamp_variant_matches_exact_trace(self):
+        manager = ContextManagerFixture()
+        recorder = CONTEXT_FIXTURES.OperationContextRecorder(manager)
+        recorder.attach()
+        recorder.start_scenario("print_kamp", ("print_kamp",))
+        expected = CONTEXT_FIXTURES.expand_events(
+            CONTEXT_FIXTURES.PRINT_KAMP, ("NONE",) * 5,
+            optional_variants=(False, False))
+        for snapshot in expected:
+            manager.emit(snapshot)
+
+        result = recorder.finish_scenario()
+        recorder.detach()
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["variant"],
+                         "SKIP_HOMING,SKIP_HOMING,NONE,NONE,NONE,NONE,NONE")
+        self.assertEqual(result["expected"], expected)
+
+    def test_late_print_kamp_mismatch_keeps_nearest_variant(self):
+        manager = ContextManagerFixture()
+        recorder = CONTEXT_FIXTURES.OperationContextRecorder(manager)
+        recorder.attach()
+        recorder.start_scenario("print_kamp", ("print_kamp",))
+        expected = CONTEXT_FIXTURES.expand_events(
+            CONTEXT_FIXTURES.PRINT_KAMP, ("NONE",) * 5,
+            optional_variants=(False, False))
+        for snapshot in expected[:-1]:
+            manager.emit(snapshot)
+
+        with self.assertRaisesRegex(
+                CONTEXT_FIXTURES.FixtureMismatch,
+                "final operation stack is not empty"):
+            recorder.finish_scenario()
+        recorder.detach()
+
+        result = recorder.results[-1]
+        self.assertEqual(result["variant"],
+                         "SKIP_HOMING,SKIP_HOMING,NONE,NONE,NONE,NONE,NONE")
+        self.assertEqual(result["expected"], expected)
+        self.assertIn("trace length differs: expected=15 actual=14",
+                      result["diagnostic"])
+
     def test_optional_homing_matches_both_real_helper_outcomes(self):
         candidates = dict((variant, expected)
                           for variant, expected, _choices
