@@ -147,9 +147,32 @@ class FirmwareImageInstallTest(unittest.TestCase):
             time.sleep(0.02)
         self.fail(message)
 
-    def _write_runner(self):
+    def _write_runner(self, *, fast_startup=False):
         self.runner_staging.mkdir(exist_ok=True)
         source = INSTALL_IMAGE_RUNNER.read_text(encoding="utf-8")
+        if fast_startup:
+            startup_poll = (
+                '        sleep 1\n'
+                '        elapsed=$((elapsed + 1))\n'
+                '    done\n\n'
+                '    if kill -0 "$installer_pid"'
+            )
+            self.assertEqual(source.count(startup_poll), 1)
+            # The entrypoint waits for our release marker, so all ten checks
+            # can run with a shorter tick without racing its startup.
+            source = source.replace(startup_poll, startup_poll.replace(
+                'sleep 1', 'sleep 0.02'), 1)
+            launch_line = (
+                '    runner_lifecycle INFO "Installer process started '
+                '(PID $installer_pid)."\n'
+            )
+            self.assertEqual(source.count(launch_line), 1)
+            source = source.replace(launch_line, launch_line + (
+                '    while [ ! -e "$RUNNER_TEST_STARTED" ] '
+                '&& kill -0 "$installer_pid" 2>/dev/null; do\n'
+                '        sleep 0.01\n'
+                '    done\n'
+            ), 1)
         runner = self.runner_staging / "runner.sh"
         runner.write_text(source, encoding="utf-8")
         runner.chmod(0o755)
@@ -624,11 +647,13 @@ echo detached > "$RESULT_PATH"
 
     def test_binary_runner_stops_observing_after_startup_window(self):
         self.staging.mkdir()
-        runner = self._write_runner()
+        runner = self._write_runner(fast_startup=True)
         release = self.root / "release-binary"
+        started = self.root / "binary-started"
         entrypoint = self.staging / "forge-x-init"
         entrypoint.write_text(
             "#!/bin/bash\n"
+            "touch \"$RUNNER_TEST_STARTED\"\n"
             "while [ ! -e \"$RELEASE_PATH\" ]; do sleep 0.05; done\n"
             "echo console-after-detach\n"
             "echo detached > \"$RESULT_PATH\"\n",
@@ -637,6 +662,7 @@ echo detached > "$RESULT_PATH"
         entrypoint.chmod(0o755)
         environment = dict(self.environment)
         environment["RELEASE_PATH"] = str(release)
+        environment["RUNNER_TEST_STARTED"] = str(started)
         runner_output = self.root / "binary-runner.log"
 
         try:
@@ -660,6 +686,7 @@ echo detached > "$RESULT_PATH"
             output = runner_output.read_text(encoding="utf-8")
             self.assertEqual(result.returncode, 0, output)
             self.assertIn("remained active through the 10s startup window", output)
+            self.assertTrue(started.exists())
             self.assertFalse(self.result.exists())
         finally:
             release.touch()

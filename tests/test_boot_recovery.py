@@ -2451,6 +2451,7 @@ commit_boot_guard
         skip_log = run_root / "skip.log"
         screen_log = run_root / "screen.log"
         restore_pid = run_root / "restore.pid"
+        restore_ready = run_root / "restore.ready"
         config_tmp = run_root / "printer.cfg.tmp"
 
         common = run_root / "common.sh"
@@ -2477,8 +2478,10 @@ commit_boot_guard
             "      trap '' TERM\n"
             "      sleep 30 &\n"
             "      echo \"$$ $!\" > \"$STOCK_TEST_PID\"\n"
+            "      : > \"$STOCK_TEST_READY\"\n"
             "      wait\n"
             "    fi\n"
+            "    : > \"$STOCK_TEST_READY\"\n"
             "    exit \"$STOCK_TEST_STATUS\"\n"
             "  ;;\n"
             "esac\n",
@@ -2493,6 +2496,17 @@ commit_boot_guard
                 "/opt/config/printer.cfg.tmp": str(config_tmp),
                 "STOCK_RESTORE_TIMEOUT_SECONDS=15":
                     "STOCK_RESTORE_TIMEOUT_SECONDS=1",
+                # Start the shortened timeout clock after the fixture has
+                # reached the process whose cleanup we are asserting.
+                "    restore_pid=$!\n": (
+                    "    restore_pid=$!\n"
+                    "    for stock_test_wait in {1..100}; do\n"
+                    "        [ -f \"$STOCK_TEST_READY\" ] && break\n"
+                    "        kill -0 \"$restore_pid\" 2>/dev/null || break\n"
+                    "        sleep 0.01\n"
+                    "    done\n"
+                ),
+                "sleep 1": "sleep 0.05",
             })
 
         fake_bin = run_root / "bin"
@@ -2518,6 +2532,7 @@ commit_boot_guard
             "STOCK_TEST_CONFIG_TMP": str(config_tmp),
             "STOCK_TEST_HANGS": "1" if hangs else "0",
             "STOCK_TEST_PID": str(restore_pid),
+            "STOCK_TEST_READY": str(restore_ready),
             "STOCK_TEST_STATUS": str(restore_status),
         })
         result = subprocess.run(
