@@ -1609,7 +1609,8 @@ class RendererStateTest(unittest.TestCase):
         self.assertLessEqual(int(hint_panel.group(2)), 740)
         self.assertEqual(sum(len(part) for part in re.findall(
             r'--batch text .* -t "(X+)"', dialog)), len(long_text))
-        self.assertIn("--max-width 584 --truncate", dialog)
+        self.assertIn("--batch fill -p 50 120 -s 700 240", dialog)
+        self.assertIn("--max-width 644 --truncate", dialog)
 
     def test_text_bounds_are_delegated_to_typer(self):
         renderer = FEATHER.FeatherRenderer()

@@ -3603,6 +3603,9 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_error()
 
+        drawing = "\n".join(batches[0])
+        self.assertRegex(
+            drawing, r"--batch fill -p 50 \d+ -s 700 \d+ -c 050c0f")
         text_commands = [line for line in batches[0]
                          if ('--batch text ' in line
                              and '-f "JetBrainsMono 8pt"' in line)]

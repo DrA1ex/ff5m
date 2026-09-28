@@ -37,14 +37,19 @@ DIALOG_PAGER_MIN_HEIGHT = 334
 
 def dialog_horizontal_bounds(width, title, labels, *, measure_text,
                              title_padding=40, button_padding=30,
-                             button_margin=24, screen_width=800):
-    """Keep the panel centered while fitting its title and actions."""
-    required = min(max(DIALOG_MIN_WIDTH, int(screen_width) - 80), max(
+                             button_margin=24, screen_width=800,
+                             body_lines=(), text_padding=28):
+    """Keep the panel centered while fitting its title, actions, and body."""
+    body_width = max((measure_text(segment, DIALOG_BODY_FONT)
+                      for line in body_lines
+                      for segment in str(line).split("\n")), default=0)
+    required = min(max(DIALOG_MIN_WIDTH, int(screen_width) - 100), max(
         DIALOG_MIN_WIDTH, int(width),
         measure_text(str(title).upper(), DIALOG_TITLE_FONT) + 2 * title_padding,
         max((measure_text(str(label), DIALOG_BUTTON_FONT)
              + 2 * button_padding + 2 * button_margin for label in labels),
             default=0),
+        body_width + 2 * text_padding,
     ))
     return (int(screen_width) - required) // 2, required
 

@@ -1184,11 +1184,13 @@ class FeatherRenderer:
             "info": ThemeColor.PRIMARY,
         }
         border = tones.get(tone, ThemeColor.PRIMARY)
+        lines = tuple(lines)
         button_specs = tuple(buttons)
         if modal and not custom_body:
             x, width = dialog_horizontal_bounds(
                 width, title, (item[1] for item in button_specs),
-                measure_text=self.text_width)
+                measure_text=self.text_width, body_lines=lines,
+                text_padding=self.DIALOG_TEXT_PADDING)
             y = (SCREEN_HEIGHT - height) // 2
         y, height, visible_lines, page, page_count = layout_dialog_text(
             lines, y, width, height, bool(button_specs), page=page,

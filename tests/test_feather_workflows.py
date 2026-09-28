@@ -1386,13 +1386,12 @@ class FileWorkflowTest(unittest.TestCase):
 
         frame = rendering.latest
         body_lines = [text for text in frame.texts
-                      if text.font == "JetBrainsMono 8pt"
-                      and text.max_width == 564]
+                      if text.font == "JetBrainsMono 8pt"]
         self.assertEqual(" ".join(text.value for text in body_lines),
                          controller.message)
         self.assertTrue(all(text.truncate for text in body_lines))
         self.assertTrue(all(text.max_width is not None
-                            and 0 < text.max_width <= 620
+                            and 0 < text.max_width <= 700
                             for text in body_lines))
         save = frame.button("mesh.save").bounds
         later = frame.button("message.ok").bounds
