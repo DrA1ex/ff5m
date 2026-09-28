@@ -912,6 +912,9 @@ class RunnerContractTest(unittest.TestCase):
                     "sdcard_dirname": root,
                 })()
 
+                def _clear_dialogs(self):
+                    self.dialogs = []
+
                 def _show_page(self, page):
                     self.page = page
 
@@ -1088,6 +1091,7 @@ class RunnerContractTest(unittest.TestCase):
                 self.file_confirm_repeat,
                 self.file_confirm_rebuild_mesh,
                 self.file_confirm_auto_mesh)),
+            "_clear_dialogs": lambda self: setattr(self, "dialogs", []),
             "_show_page": lambda self, page: shown.append(page),
         })()
         run = type("Run", (), {"host": host})()
@@ -1374,6 +1378,7 @@ class RunnerContractTest(unittest.TestCase):
         host.feature_manager = type("FeatureManager", (), {
             "get": lambda self, name: filament,
         })()
+        host._clear_dialogs = lambda: setattr(host, "dialogs", [])
         host._show_page = show
         feature = UI_TEST.UITestRun(host)
         feature.material = "PETG"
@@ -1455,6 +1460,7 @@ class RunnerContractTest(unittest.TestCase):
         host = type("Host", (), {
             "feature_manager": manager,
             "page": FEATHER.ScreenPage.IDLE_HOME,
+            "_clear_dialogs": lambda self: setattr(self, "dialogs", []),
             "_show_page": lambda self, page: setattr(self, "page", page),
         })()
         feature = UI_TEST.UITestRun(host)
@@ -1583,6 +1589,7 @@ class RunnerContractTest(unittest.TestCase):
             "previous_page": FEATHER.ScreenPage.MAIN_MENU,
             "_run_script": lambda self, command: (_ for _ in ()).throw(
                 AssertionError("UI suite issued hardware G-code: %s" % command)),
+            "_clear_dialogs": lambda self: setattr(self, "dialogs", []),
             "_show_page": lambda self, page: shown.append(page),
         })()
         for suite in ("UI", "COMPONENT", "RENDER"):
@@ -2185,6 +2192,7 @@ class RunnerContractTest(unittest.TestCase):
             host.file_page = 2
             host.file_scan_token = 3
             host.page = FEATHER.ScreenPage.IDLE_HOME
+            host._clear_dialogs = lambda: setattr(host, "dialogs", [])
             host._show_page = lambda page: setattr(host, "page", page)
             feature = UI_TEST.UITestRun(host)
             feature.context_fixture = UI_TEST.ContextTestFixture(

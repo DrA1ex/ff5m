@@ -251,11 +251,11 @@ class FeatherNetworkPagesMixin:
         self.network_cancel_pending = False
 
     def _repaint_network(self, eventtime):
-        if self.page == ScreenPage.NETWORK_HOME:
+        if self._page_paint_allowed(ScreenPage.NETWORK_HOME):
             self._render_network_home()
-        elif self.page == ScreenPage.NETWORK_PROGRESS:
+        elif self._page_paint_allowed(ScreenPage.NETWORK_PROGRESS):
             self._render_network_progress()
-        elif self.page == ScreenPage.IDLE_HOME:
+        elif self._page_paint_allowed(ScreenPage.IDLE_HOME):
             self._update_dashboard(eventtime)
 
     def _on_network_event(self, kind, value, eventtime):

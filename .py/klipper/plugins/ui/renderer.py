@@ -18,7 +18,9 @@ from .font_metrics import (
 )
 from .layout_helpers import (
     DIALOG_BODY_FONT, DIALOG_BODY_Y, DIALOG_BUTTON_BOTTOM,
-    DIALOG_BUTTON_FONT, DIALOG_BUTTON_HEIGHT, DIALOG_COMPACT_BUTTON_BOTTOM,
+    DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
+    DIALOG_BUTTON_COMPACT_FONT,
+    DIALOG_BUTTON_HEIGHT, DIALOG_COMPACT_BUTTON_BOTTOM,
     DIALOG_LINE_SPACING, DIALOG_PAGER_RESERVE, DIALOG_TITLE_FONT,
     DIALOG_TITLE_TOP, centered_button_row, dialog_horizontal_bounds,
     dialog_pager_bounds, layout_dialog_text, layout_title_only_dialog,
@@ -137,6 +139,7 @@ class FeatherRenderer:
         self._generation = 0
         self._batch_queue = RenderBatchQueue(MAX_BATCHES, MAX_BATCH_BYTES)
         self._worker = None
+        self._timing_sink = None
         self._async_scheduler = None
         self._event_fd_handler = None
         self._restart_handler = None
@@ -147,6 +150,8 @@ class FeatherRenderer:
         self._next_batch_key = None
         self._composite_commands = None
         self._composite_kind = None
+        self._composite_key = None
+        self._composite_receipt = None
         self._busy_label = None
         self._header_action = None
         self._menu_suppressed = False
@@ -157,6 +162,46 @@ class FeatherRenderer:
         self._semantic_page_id = None
         self._page_title = ""
         self._page_back = False
+        self._prepared_surface = None
+        self._frame_owner = None
+        self._preserve_input = False
+
+    def configure_frame_owner(self, owner):
+        """Route every ordinary submission through the screen composition root."""
+        self._frame_owner = owner
+
+    _SURFACE_FIELDS = (
+        "_generation", "_buttons", "_toggles", "_hitboxes", "_pressed_buttons",
+        "_page_title", "_page_back", "_semantic_page_id", "_loader_active",
+        "_menu_suppressed", "_footer_drawn", "_last_footer", "_header_action",
+    )
+
+    @property
+    def render_allowed(self):
+        return not (self._output_frozen or self._output_held)
+
+    def _prepare_surface(self):
+        if not self.render_allowed:
+            return False
+        if self._prepared_surface is None:
+            self._prepared_surface = {
+                name: (value.copy() if isinstance(value, (dict, set)) else value)
+                for name in self._SURFACE_FIELDS
+                for value in (getattr(self, name),)
+            }
+        return True
+
+    def _finish_surface(self, accepted):
+        previous = self._prepared_surface
+        self._prepared_surface = None
+        if previous is not None and not accepted:
+            for name, value in previous.items():
+                setattr(self, name, value)
+
+    def _visible_value(self, name):
+        if self._prepared_surface is not None:
+            return self._prepared_surface[name]
+        return getattr(self, name)
 
     def configure_worker(self, async_scheduler, event_fd_handler,
                          restart_handler=None, redraw_handler=None):
@@ -177,10 +222,10 @@ class FeatherRenderer:
     @property
     def touch_warning_allowed(self):
         """Whether the visible surface has controls worth protecting."""
-        actions = set(self._buttons)
-        actions.update(
-            action for action in self._hitboxes if action != "global.wake")
-        return not self._loader_active and bool(actions)
+        actions = set(self._visible_value("_buttons"))
+        actions.update(action for action in self._visible_value("_hitboxes")
+                       if action != "global.wake")
+        return not self._visible_value("_loader_active") and bool(actions)
 
     def discard_pending_output(self):
         """Drop every untouched batch before a final lifecycle screen."""
@@ -244,6 +289,7 @@ class FeatherRenderer:
             self._async_scheduler, self._worker_event_fd_changed,
             self._worker_restarted, load_fonts, blending=self.blending,
             raster_acceleration=self.raster_acceleration)
+        self._worker.timing_sink = self._timing_sink
         started = self._worker.start()
         self._busy_label = None
         self._last_footer = None
@@ -277,25 +323,74 @@ class FeatherRenderer:
             return self._worker.request_restart()
         return False
 
+    def set_timing_sink(self, sink):
+        """Send worker render timings to an optional diagnostic consumer."""
+        self._timing_sink = sink
+        if self._worker is not None:
+            self._worker.timing_sink = sink
+
     @contextmanager
-    def compose(self):
+    def compose(self, preserve_input=False):
         """Submit consecutive ordinary draws as one complete frame."""
         if self._composite_commands is not None:
             raise RuntimeError("render composition is already active")
         self._composite_commands = []
         self._composite_kind = None
+        self._composite_key = None
+        self._composite_receipt = None
+        self._preserve_input = bool(preserve_input)
+        self._prepare_surface()
+        frame = {"accepted": False, "input_changed": False}
         try:
-            yield
+            yield frame
         except BaseException:
             self._composite_commands = None
             self._composite_kind = None
+            self._composite_key = None
+            self._composite_receipt = None
+            self._preserve_input = False
+            self._finish_surface(False)
             raise
         commands = self._composite_commands
         kind = self._composite_kind
+        key = self._composite_key
+        receipt = self._composite_receipt
         self._composite_commands = None
         self._composite_kind = None
+        self._composite_key = None
+        self._composite_receipt = None
+        self._preserve_input = False
+        previous = self._prepared_surface
+        if commands and preserve_input and previous is not None:
+            if any(getattr(self, name) != previous[name] for name in (
+                    "_buttons", "_toggles", "_hitboxes", "_header_action")):
+                # The owner must rebuild a changed input surface with fresh
+                # event IDs; an unchanged surface keeps taps crossing refresh.
+                frame["input_changed"] = True
+                requested_header = self._header_action
+                self._finish_surface(False)
+                # Header configuration may have been staged by its owner
+                # before composition; keep that request for the full retry.
+                self._prepare_surface()
+                self._header_action = requested_header
+                return
+            self._pressed_buttons = previous["_pressed_buttons"].copy()
         if commands:
-            self.send(commands, kind=kind)
+            frame["accepted"] = self.send(commands, kind=kind, key=key, receipt=receipt)
+        else:
+            self._finish_surface(False)
+
+    @contextmanager
+    def collect(self):
+        """Adapt an imperative painter into one node's ordered command list."""
+        if self._composite_commands is None:
+            raise RuntimeError("command collection requires a composed frame")
+        previous = self._composite_commands
+        commands = self._composite_commands = []
+        try:
+            yield commands
+        finally:
+            self._composite_commands = previous
 
     def send(self, commands, kind=None, key=None, generation=None,
              receipt=None, button_feedback=False):
@@ -303,30 +398,47 @@ class FeatherRenderer:
         if self._output_held:
             self._next_batch_kind = None
             self._next_batch_key = None
+            self._finish_surface(False)
             return False
-        if (self._output_frozen and not button_feedback) or not commands:
+        if self._output_frozen and not button_feedback:
+            self._finish_surface(False)
+            return False
+        if not commands:
+            if self._composite_commands is None and not button_feedback:
+                self._finish_surface(False)
             return False
         immutable = tuple(
             command if isinstance(command, BinaryCommand) else str(command)
             for command in commands)
-        batch_generation = (self._generation if generation is None
-                            else int(generation))
+        batch_generation = ((self.generation if button_feedback else self._generation)
+                            if generation is None else int(generation))
         if kind is None and self._next_batch_kind is not None:
             kind, key = self._next_batch_kind, self._next_batch_key
         self._next_batch_kind = None
         self._next_batch_key = None
         if self._composite_commands is not None:
-            if (generation is not None or receipt is not None
-                    or button_feedback or kind == "animation"):
+            if generation is not None or button_feedback:
                 raise ValueError("this render batch cannot be composed")
+            if receipt is not None:
+                token = validate_render_receipt_token(receipt)
+                if self._composite_receipt not in (None, token):
+                    raise ValueError("a composed frame can have only one receipt")
+                self._composite_receipt = token
             self._composite_commands.extend(immutable)
-            if kind == "critical":
-                self._composite_kind = "critical"
+            if kind == "critical" or (kind == "surface" and self._composite_kind != "critical"):
+                self._composite_kind = kind
+                self._composite_key = key
             return True
+        owner = self._frame_owner
+        if owner is not None and not owner.painting and not button_feedback:
+            return owner.submit(
+                immutable, kind=kind, key=key, generation=generation,
+                receipt=receipt)
         if kind is None:
             kind = ("surface" if batch_generation !=
                     self._last_submitted_generation else "state")
         if kind not in ("critical", "surface", "state", "animation"):
+            self._finish_surface(False)
             raise ValueError("unknown render batch kind: %s" % kind)
         try:
             receipt = (None if receipt is None else
@@ -335,11 +447,19 @@ class FeatherRenderer:
         except ValueError as exc:
             logging.warning("[feather_screen] rejected render batch: %s", exc)
             self._batch_queue.reject_submission()
+            self._finish_surface(False)
             return False
         batch = RenderBatch(
             immutable, kind, key, batch_generation, serialized_size, None,
             receipt)
-        accepted = self._batch_queue.put_nowait(batch)
+        try:
+            accepted = self._batch_queue.put_nowait(batch)
+        except BaseException:
+            if not button_feedback:
+                self._finish_surface(False)
+            raise
+        if not button_feedback:
+            self._finish_surface(accepted)
         if accepted:
             self._last_submitted_generation = max(
                 self._last_submitted_generation, batch_generation)
@@ -448,7 +568,7 @@ class FeatherRenderer:
             generation = int(prefix)
         except ValueError:
             return None
-        return logical if generation == self._generation else None
+        return logical if generation == self._visible_value("_generation") else None
 
     def _wire_action(self, action):
         logical = action_wire_id(action) if isinstance(action, Action) else str(action)
@@ -456,7 +576,12 @@ class FeatherRenderer:
 
     @property
     def generation(self):
-        return self._generation
+        return self._visible_value("_generation")
+
+    def invalidate_input_generation(self):
+        """Prepare a new input generation for a replacement surface."""
+        if self._prepare_surface() and not self._preserve_input:
+            self._generation += 1
 
     @property
     def theme_name(self):
@@ -526,6 +651,11 @@ class FeatherRenderer:
     def fill(self, x, y, width, height, color=ThemeColor.BACKGROUND):
         return "--batch fill -p %d %d -s %d %d -c %s" % (
             x, y, width, height, self.color(color))
+
+    def modal_scrim(self):
+        """Darken the retained framebuffer with 70%-opaque black."""
+        return "--batch fill -p 0 0 -s %d %d -c B3000000" % (
+            SCREEN_WIDTH, SCREEN_HEIGHT)
 
     def image(self, x, y, blob, format="fxi1"):
         if format != "fxi1":
@@ -894,6 +1024,8 @@ class FeatherRenderer:
         return "--batch clear-hitboxes --layer " + layer
 
     def action_hitbox(self, action, x, y, width, height, continuous=False):
+        if not self._prepare_surface():
+            return ""
         logical_action = (
             action_wire_id(action) if isinstance(action, Action) else str(action))
         self._hitboxes[logical_action] = (
@@ -927,6 +1059,8 @@ class FeatherRenderer:
 
     def toggle(self, action, x, y, width, height, active, enabled=True):
         """Draw a rectangular switch with a centered square thumb and no text."""
+        if not self._prepare_surface():
+            return []
         logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
         inset = 5
         thumb_size = max(1, height - 2 * inset)
@@ -943,6 +1077,8 @@ class FeatherRenderer:
         return commands
 
     def animate_toggle(self, action, active, scheduler, duration=0.12):
+        if not self.render_allowed:
+            return False
         spec = self._toggles.get(action)
         if spec is None or not spec[5]:
             return False
@@ -971,6 +1107,8 @@ class FeatherRenderer:
         return True
 
     def block_input(self):
+        if not self._prepare_surface():
+            return None
         self._reset_interactions()
         self.send([
             self.clear_hitboxes("base"),
@@ -1105,6 +1243,8 @@ class FeatherRenderer:
                state="enabled", font="JetBrainsMono 12pt", subtitle=None,
                layout="center", subtitle_font="JetBrainsMono 8pt",
                subtitle_color=ThemeColor.DIM, accent=None):
+        if not self._prepare_surface():
+            return []
         logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
         self._pressed_buttons.discard(logical_action)
         # active is retained for compatibility with the first Feather release.
@@ -1133,6 +1273,8 @@ class FeatherRenderer:
     def button_surface(self, action, x, y, width, height,
                        normal_commands, pressed_commands):
         """Register complete normal and pressed surfaces for a rich button."""
+        if not self._prepare_surface():
+            return []
         logical_action = (
             action_wire_id(action) if isinstance(action, Action) else str(action))
         normal = tuple(normal_commands)
@@ -1147,6 +1289,8 @@ class FeatherRenderer:
     def arrow_button(self, action, x, y, width, height, direction,
                      active=None, state="enabled"):
         """Build an up/down button with a geometric, theme-aware arrow."""
+        if not self._prepare_surface():
+            return []
         logical_action = (action_wire_id(action)
                           if isinstance(action, Action) else str(action))
         self._pressed_buttons.discard(logical_action)
@@ -1178,6 +1322,8 @@ class FeatherRenderer:
         false when loss of input makes even that action unusable.
         Set ``custom_body`` when the caller draws its own content in the panel.
         """
+        if not self._prepare_surface():
+            return []
         tones = {
             "warning": ThemeColor.WARNING,
             "danger": ThemeColor.DANGER,
@@ -1243,14 +1389,25 @@ class FeatherRenderer:
             button_y = y + height - (DIALOG_COMPACT_BUTTON_BOTTOM
                                      if len(title_rows) == 1 else 22)
             button_y -= DIALOG_BUTTON_HEIGHT
+        button_font = DIALOG_BUTTON_FONT
+        if len(button_specs) > 1:
+            available = width - 48 - 12 * (len(button_specs) - 1)
+            for candidate in (DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
+                              DIALOG_BUTTON_COMPACT_FONT):
+                button_font = self.normalize_font(candidate)
+                if sum(max(96, self.text_width(label, button_font)
+                           + 2 * self.BUTTON_TEXT_PADDING)
+                       for _, label, _ in button_specs) <= available:
+                    break
         for (action, label, state), bounds in zip(
                 button_specs, centered_button_row(
                     (item[1] for item in button_specs),
                     x, button_y, width, measure_text=self.text_width,
-                    font=DIALOG_BUTTON_FONT, padding=30,
+                    font=button_font, padding=self.BUTTON_TEXT_PADDING,
+                    minimum=(96 if len(button_specs) > 2 else 144),
                     maximum=width, margin=24)):
             commands += self.button(
-                action, *bounds, label, state=state, font=DIALOG_BUTTON_FONT)
+                action, *bounds, label, state=state, font=button_font)
         if modal and show_header_action:
             commands += self._header_action_commands()
         return commands
@@ -1277,10 +1434,10 @@ class FeatherRenderer:
         return commands
 
     def flash_button(self, action):
-        spec = self._buttons.get(action)
+        spec = self._visible_value("_buttons").get(action)
         if spec is None:
             return False
-        self._pressed_buttons.add(action)
+        self._visible_value("_pressed_buttons").add(action)
         self.prioritize_next_batch("animation", "button:%s" % action)
         if spec.layout == "surface":
             self.send(spec.surfaces[1], button_feedback=True)
@@ -1297,11 +1454,11 @@ class FeatherRenderer:
         return True
 
     def restore_button(self, action):
-        spec = self._buttons.get(action)
+        spec = self._visible_value("_buttons").get(action)
         if spec is None:
-            self._pressed_buttons.discard(action)
+            self._visible_value("_pressed_buttons").discard(action)
             return False
-        self._pressed_buttons.discard(action)
+        self._visible_value("_pressed_buttons").discard(action)
         self.prioritize_next_batch("state", "button:%s" % action)
         if spec.layout == "surface":
             self.send(spec.surfaces[0], button_feedback=True)
@@ -1319,6 +1476,8 @@ class FeatherRenderer:
 
     def set_header_action(self, action=None, label="", state="danger",
                           font="JetBrainsMono Bold 8pt"):
+        if not self._prepare_surface():
+            return False
         value = (None if action is None else
                  (action, str(label), str(state), str(font)))
         if value == self._header_action:
@@ -1347,6 +1506,8 @@ class FeatherRenderer:
 
     def redraw_page_hitboxes(self):
         """Rebuild base input after isolated layout changes without painting pixels."""
+        if not self._prepare_surface():
+            return []
         self._hitboxes = {}
         commands = [self.clear_hitboxes("base"), self._wake_hitbox()]
         if self._page_back:
@@ -1358,13 +1519,15 @@ class FeatherRenderer:
         return commands
 
     def begin_page(self, title, back=False):
+        if not self._prepare_surface():
+            return []
         self._page_title = title
         self._page_back = back
         self._loader_active = False
         self._semantic_page_id = None
         # Pressure recovery keeps the same page and its active touch gesture.
         if not self._recovering_output:
-            self._generation += 1
+            self.invalidate_input_generation()
         self._reset_interactions()
         self._menu_suppressed = False
         show_header_action = self._header_action is not None
@@ -1442,13 +1605,12 @@ class FeatherRenderer:
         self._footer_values = values
         if self._footer_drawn and values == self._last_footer:
             return
-        self._footer_drawn = False
-        if self._output_frozen:
+        if not self._prepare_surface():
             return
+        self._last_footer = values
+        self._footer_drawn = True
         self.prioritize_next_batch("state", "footer")
-        if self.send(self._footer_commands(values)) is not False:
-            self._last_footer = values
-            self._footer_drawn = True
+        self.send(self._footer_commands(values))
 
     def invalidate_footer(self):
         """Require the next page frame to restore the persistent footer."""
@@ -1515,12 +1677,14 @@ class FeatherRenderer:
 
     def loader(self, message, phase=0):
         """Replace the page with a non-interactive yielding-operation view."""
+        if not self._prepare_surface():
+            return None
         # A loader is a new interaction surface, not a partial repaint. Bump
         # the generation so already queued Back/page events cannot target the
         # page underneath it.
         first_frame = not self._loader_active
         if first_frame:
-            self._generation += 1
+            self.invalidate_input_generation()
             self._loader_active = True
         preserve_header_action = self._header_action is not None
         self._reset_interactions()
@@ -1558,10 +1722,12 @@ class FeatherRenderer:
 
     def startup_modal(self, title, detail, phase=0, critical=False):
         """Draw a pre-ready loading modal and its pulse frame."""
+        if not self._prepare_surface():
+            return None
         # This full-screen modal owns the framebuffer until the host is ready.
         # Invalidate animations scheduled by the page underneath it so a late
         # toggle/button frame cannot be painted over the restart screen.
-        self._generation += 1
+        self.invalidate_input_generation()
         self._loader_active = True
         self._reset_interactions()
         commands = [
@@ -1597,15 +1763,17 @@ class FeatherRenderer:
 
     def touch_unavailable_modal(self):
         """Replace an interactive surface until touch input reconnects."""
-        self._generation += 1
+        if not self._prepare_surface():
+            return None
+        self.invalidate_input_generation()
         self._footer_drawn = False
         commands = [
-            self.fill(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, ThemeColor.OVERLAY),
+            self.modal_scrim(),
         ]
         commands += self.dialog(
             "Touch input unavailable", (), (),
             x=110, y=110, width=580, height=270, tone="warning",
-            preserve_header_action=False)
+            preserve_header_action=False, custom_body=True)
         commands.append(self.text(
             400, 245,
             "THE TOUCH DEVICE IS NOT AVAILABLE. "
@@ -1617,7 +1785,9 @@ class FeatherRenderer:
 
     def applying_modal(self, message="APPLYING CHANGES"):
         """Dim the page and draw a non-interactive modal progress panel."""
-        self._generation += 1
+        if not self._prepare_surface():
+            return None
+        self.invalidate_input_generation()
         self._loader_active = True
         self._reset_interactions()
         commands = [

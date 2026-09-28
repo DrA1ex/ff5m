@@ -22,7 +22,8 @@ from zipfile import ZipFile
 
 import jinja2
 
-from tests.gcode_macro_harness import MacroActionError, render_macro
+from tests.gcode_macro_harness import (
+    MacroActionError, execute_macro_chain, render_macro)
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -35,12 +36,18 @@ TIMELAPSE_DATA = ROOT / ".cfg" / "default" / "timelapse.moonraker.conf"
 COMPONENT = ROOT / ".root" / "moonraker" / "components" / "timelapse.py"
 MACROS = ROOT / "macros" / "timelapse.cfg"
 HEADLESS = ROOT / "macros" / "headless.cfg"
+CLIENT = ROOT / "macros" / "client.cfg"
 GCODE_PARSER = ROOT / ".py" / "klipper" / "patches" / "gcode.py"
+VIRTUAL_SD = ROOT / ".py" / "klipper" / "patches" / "extras" / "virtual_sdcard.py"
 
 gcode_spec = importlib.util.spec_from_file_location(
     "timelapse_gcode_parser", GCODE_PARSER)
 gcode_parser = importlib.util.module_from_spec(gcode_spec)
 gcode_spec.loader.exec_module(gcode_parser)
+sd_spec = importlib.util.spec_from_file_location(
+    "timelapse_virtual_sdcard", VIRTUAL_SD)
+virtual_sdcard = importlib.util.module_from_spec(sd_spec)
+sd_spec.loader.exec_module(virtual_sdcard)
 
 spec = importlib.util.spec_from_file_location(
     "moonraker.components.timelapse", COMPONENT)
@@ -420,6 +427,8 @@ class TimelapseConfigTest(unittest.TestCase):
     def test_manual_render_leaves_result_messages_to_moonraker(self):
         printer = {
             "mod_params": {"variables": {"timelapse": True}},
+            "print_stats": {"state": "complete"},
+            "virtual_sdcard": {"is_active": False},
             "configfile": {"settings": {
                 "gcode_macro pause": {"rename_existing": "BASE_PAUSE"},
                 "gcode_macro resume": {"rename_existing": "BASE_RESUME"}}},
@@ -436,6 +445,91 @@ class TimelapseConfigTest(unittest.TestCase):
             ("timelapse_render", {"byrendermacro": "True"}),))
         self.assertEqual(started.info, ())
         self.assertEqual(finished.info, ())
+        self.assertFalse(any(command.startswith(("PAUSE", "RESUME"))
+                             for command in started.commands + finished.commands))
+
+        printer["print_stats"]["state"] = "paused"
+        with self.assertRaisesRegex(MacroActionError, "only after printing stops"):
+            render_macro(MACROS, "TIMELAPSE_RENDER", printer=printer)
+        printer["print_stats"]["state"] = "complete"
+        printer["virtual_sdcard"]["is_active"] = True
+        with self.assertRaisesRegex(MacroActionError, "only after printing stops"):
+            render_macro(MACROS, "TIMELAPSE_RENDER", printer=printer)
+
+    def test_user_pause_and_runout_during_parked_capture_keep_print_paused(self):
+        printer = {
+            "gcode_macro TIMELAPSE_TAKE_FRAME": {
+                "is_paused": True, "user_pause_requested": False},
+            "gcode_macro _START_PRINT": {"print_active": True},
+            "gcode_macro _CLIENT_VARIABLE": {},
+            "mod_params": {"variables": {
+                "pause_z_min": 50, "filament_switch_sensor": True}},
+            "toolhead": {"extruder": "extruder"},
+            "extruder": {"target": 215},
+            "pause_resume": {"is_paused": True},
+            "idle_timeout": {"state": "Printing"},
+            "filament_switch_sensor e0_sensor": {"filament_detected": False},
+        }
+        paused = render_macro(CLIENT, "PAUSE", printer=printer)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=TIMELAPSE_TAKE_FRAME "
+            "VARIABLE=user_pause_requested VALUE=True", paused.commands)
+        self.assertNotIn("PAUSE_BASE", paused.commands)
+
+        runout = render_macro(
+            HEADLESS, "e0_sensor", printer=printer,
+            section="filament_switch_sensor", gcode_option="runout_gcode")
+        self.assertIn("PAUSE", runout.commands)
+        self.assertTrue(any("Filament runout detected" in command
+                            for command in runout.commands))
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"]["user_pause_requested"] = True
+        repeated = render_macro(
+            HEADLESS, "e0_sensor", printer=printer,
+            section="filament_switch_sensor", gcode_option="runout_gcode")
+        self.assertEqual(repeated.commands, ())
+
+        tl = printer["gcode_macro TIMELAPSE_TAKE_FRAME"]
+        tl.update({
+            "takingframe": False, "is_paused": True, "retracted": True,
+            "check_time": 0.1, "wait_loops": 0,
+            "release_timeout": 5.0, "macro": {"resume": "RESUME_BASE"},
+            "speed": {"travel": 100, "extrude": 15},
+            "extruder": {"fw_retract": False, "extrude": 1},
+            "restore": {
+                "speed": 1500, "e": 0,
+                "absolute": {"coordinates": True, "extrude": True},
+                "factor": {"speed": 1.0, "extrude": 1.0}}})
+        printer["print_stats"] = {"state": "paused"}
+        printer["gcode_move"] = {
+            "speed_factor": 1.0, "extrude_factor": 1.0}
+        printer["extruder"]["can_extrude"] = True
+        held = render_macro(
+            MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME", printer=printer,
+            section="delayed_gcode")
+        self.assertFalse(any(command.startswith(("RESUME", "M24.1"))
+                             for command in held.commands))
+        self.assertIn("G0 E1 F900", held.commands)
+
+        resume = render_macro(CLIENT, "RESUME", printer=printer)
+        self.assertFalse(any(command.startswith("RESUME_BASE")
+                             for command in resume.commands))
+
+        printer["gcode_macro _TIMELAPSE_START_GUARD"] = {
+            "waiting": False, "sd_held": True}
+        held_pause = render_macro(CLIENT, "PAUSE", printer=printer)
+        self.assertIn(
+            "SET_GCODE_VARIABLE MACRO=TIMELAPSE_TAKE_FRAME "
+            "VARIABLE=user_pause_requested VALUE=True", held_pause.commands)
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"]["is_paused"] = False
+        printer["configfile"] = {"settings": {
+            "pause_resume": {"recover_velocity": 50}}}
+        printer["toolhead"]["homed_axes"] = "xyz"
+        printer["gcode_macro _CLIENT_VARIABLE"]["runout_sensor"] = ""
+        printer["filament_switch_sensor e0_sensor"]["filament_detected"] = True
+        resumed = render_macro(CLIENT, "RESUME", printer=printer)
+        self.assertLess(
+            resumed.commands.index("RESUME_BASE VELOCITY=50"),
+            resumed.commands.index("_TIMELAPSE_START_RELEASE_SD"))
 
     def test_setup_reports_capture_mode_and_interval(self):
         parser = gcode_parser.GCodeDispatch.__new__(
@@ -519,7 +613,7 @@ class TimelapseConfigTest(unittest.TestCase):
         lift = commands.index("MOVE_SAFE Z=2 F=3000 ABSOLUTE=0")
         park = next(i for i, command in enumerate(commands)
                     if command.startswith("G0 X107.0 Y109.0"))
-        self.assertLess(retract, pause)
+        self.assertLess(pause, retract)
         self.assertLess(pause, lift)
         self.assertEqual(commands[lift + 1], "M400")
         self.assertLess(lift + 1, park)
@@ -557,7 +651,8 @@ class TimelapseConfigTest(unittest.TestCase):
 
     def test_parked_frame_recovers_if_moonraker_does_not_release_it(self):
         tl = {
-            "takingframe": True, "check_time": 0.1, "wait_loops": 0,
+            "takingframe": True, "is_paused": True, "retracted": True,
+            "check_time": 0.1, "wait_loops": 0,
             "release_timeout": 5.0,
             "park": {"time": 0.1}, "macro": {"resume": "RESUME_BASE"},
             "speed": {"travel": 100, "extrude": 15},
@@ -568,6 +663,7 @@ class TimelapseConfigTest(unittest.TestCase):
                 "factor": {"speed": 1.0, "extrude": 1.0}}}
         printer = {
             "gcode_macro TIMELAPSE_TAKE_FRAME": tl,
+            "print_stats": {"state": "printing"},
             "gcode_move": {"speed_factor": 1.0, "extrude_factor": 1.0},
             "toolhead": {"extruder": "extruder"},
             "extruder": {"can_extrude": True}}
@@ -588,7 +684,7 @@ class TimelapseConfigTest(unittest.TestCase):
                             for command in released.commands))
         resume = next(i for i, command in enumerate(released.commands)
                       if command.startswith("RESUME_BASE"))
-        self.assertEqual(released.commands[resume + 2], "G0 E1 F900")
+        self.assertIn("G0 E1 F900", released.commands[:resume])
         self.assertFalse(any("VARIABLE=takingframe VALUE=False" in command
                              for command in released.commands))
 
@@ -598,7 +694,7 @@ class TimelapseConfigTest(unittest.TestCase):
             section="delayed_gcode")
         resume = next(i for i, command in enumerate(firmware.commands)
                       if command.startswith("RESUME_BASE"))
-        self.assertEqual(firmware.commands[resume + 2], "G11")
+        self.assertIn("G11", firmware.commands[:resume])
         tl["extruder"]["fw_retract"] = False
 
         tl["takingframe"] = True
@@ -619,6 +715,15 @@ class TimelapseConfigTest(unittest.TestCase):
                             for command in recovered.commands))
         self.assertFalse(any("UPDATE_DELAYED_GCODE" in command
                              for command in recovered.commands))
+
+        printer["print_stats"]["state"] = "cancelled"
+        cancelled = render_macro(
+            MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME", printer=printer,
+            section="delayed_gcode")
+        self.assertFalse(any(command.startswith(("RESUME_BASE", "G0", "G11", "M82", "G92"))
+                             for command in cancelled.commands))
+        self.assertFalse(any("UPDATE_DELAYED_GCODE" in command
+                             for command in cancelled.commands))
 
     def test_new_frame_remote_flags_are_booleans(self):
         printer = {"gcode_macro TIMELAPSE_TAKE_FRAME": {
@@ -705,7 +810,7 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             component.call_newframe(parked=False, hyperlapse=False)
             loop.call_later.assert_called_once_with(
                 delay=0.05, callback=component.newframe,
-                release_parked=False)
+                release_parked=False, frame_generation=0)
             loop.spawn_callback.assert_not_called()
 
             loop.reset_mock()
@@ -714,7 +819,38 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                                     hyperlapse="False")
             loop.call_later.assert_called_once_with(
                 delay=0.05, callback=component.newframe,
-                release_parked=True)
+                release_parked=True, frame_generation=0)
+
+    async def test_scheduled_frame_is_discarded_after_new_print_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component.config = {"enabled": True, "mode": "layermacro",
+                                "stream_delay_compensation": 0.05,
+                                "snapshoturl": "http://localhost/snapshot"}
+            component.temp_dir = directory + "/"
+            component.framecount = 0
+            component.lastframefile = ""
+            component.frame_generation = 0
+            component.takingframe = False
+            component.pending_file_selected = True
+            component.printing = False
+            component.save_cancel = None
+            component.render_command = None
+            component.server = mock.Mock()
+            component.notify_event = mock.Mock()
+            loop = mock.Mock()
+            with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+                component.call_newframe()
+            scheduled = loop.call_later.call_args.kwargs
+
+            await component._begin_print()
+            await scheduled["callback"](
+                release_parked=scheduled["release_parked"],
+                frame_generation=scheduled["frame_generation"])
+
+            component.server.lookup_component.assert_not_called()
+            self.assertEqual(component.framecount, 0)
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
 
     async def test_declined_parked_frame_releases_immediately(self):
         component = timelapse.Timelapse.__new__(timelapse.Timelapse)
@@ -800,6 +936,36 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["framecount"], 2)
         self.assertEqual(status["lastframefile"], "frame000002.jpg")
         self.assertTrue(status["rendering"])
+
+    async def test_frame_info_marks_capture_export_and_finalization_busy(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.framecount = 0
+        component.lastframefile = ""
+        component.renderisrunning = False
+        component.saveisrunning = False
+        component.takingframe = False
+        component.finishing_print = False
+        for field in ("takingframe", "saveisrunning", "finishing_print",
+                      "renderisrunning"):
+            setattr(component, field, True)
+            self.assertTrue((await component.webrequest_lastframeinfo(None))["busy"])
+            setattr(component, field, False)
+        self.assertFalse((await component.webrequest_lastframeinfo(None))["busy"])
+
+    async def test_finalization_is_busy_from_print_end_until_it_finishes(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.config = {"enabled": True, "mode": "layermacro"}
+        component.pending_file_selected = False
+        component.printing = True
+        component.finishing_print = False
+        component._finish_print_frames = mock.AsyncMock()
+        loop = mock.Mock()
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+            await component.handle_gcode_response("Done printing file")
+        self.assertTrue(component.finishing_print)
+        callback = loop.spawn_callback.call_args.args[0]
+        await callback()
+        self.assertFalse(component.finishing_print)
 
     async def test_snapshot_url_post_does_not_change_capture_url(self):
         component = timelapse.Timelapse.__new__(timelapse.Timelapse)
@@ -1011,8 +1177,11 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             "gcode_macro TIMELAPSE_PRINT": {"enable": True}}
         component.klippy_apis.query_objects = mock.AsyncMock(
             return_value=status)
-        component.newframe = mock.AsyncMock(
-            side_effect=lambda **_: events.append("frame"))
+        async def final_frame(**_):
+            events.append("frame")
+            component.takingframe = False
+
+        component.newframe = mock.AsyncMock(side_effect=final_frame)
         component.render = mock.AsyncMock(
             side_effect=lambda: events.append("render"))
 
@@ -1043,6 +1212,37 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         status["mod_params"]["variables"]["timelapse_final_frame"] = False
         await component._finish_print()
         self.assertEqual(events, ["render"])
+
+        events.clear()
+        component.takingframe = True
+        async def finish_without_final_frame(_):
+            events.append("wait")
+            component.takingframe = False
+        with mock.patch.object(timelapse.asyncio, "sleep",
+                               side_effect=finish_without_final_frame):
+            await component._finish_print()
+        self.assertEqual(events, ["wait", "render"])
+
+        events.clear()
+        component.takingframe = True
+        with mock.patch.object(timelapse.asyncio, "sleep",
+                               new=mock.AsyncMock()):
+            await component._finish_print()
+        self.assertEqual(events, [])
+        component.takingframe = False
+
+    async def test_inflight_capture_blocks_manual_export_and_render(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.takingframe = True
+        component.renderisrunning = False
+        component.notify_event = mock.Mock()
+
+        exported = await component.saveFramesZip()
+        rendered = await component.render()
+
+        self.assertEqual(exported["status"], "running")
+        self.assertEqual(rendered["status"], "running")
+        component.notify_event.assert_called_once_with(rendered)
 
     async def test_selecting_a_file_keeps_frames_until_print_starts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1157,6 +1357,43 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(component.framecount, 1)
             self.assertEqual(events[-1]["status"], "error")
             self.assertFalse((pathlib.Path(directory) / "frame000002.jpg").exists())
+
+    async def test_capture_from_previous_print_cannot_commit_after_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component.temp_dir = directory + "/"
+            component.framecount = 1
+            component.lastframefile = "frame000001.jpg"
+            component.frame_generation = 0
+            component.takingframe = True
+            component.save_cancel = None
+            component.render_command = None
+            component.pending_file_selected = True
+            component.printing = False
+            component.config = {"snapshoturl": "http://localhost/snapshot",
+                                "mode": "layermacro"}
+            component.notify_event = mock.Mock()
+
+            class Command:
+                async def run(self, **_kwargs):
+                    candidate = shlex.split(self.command)[-2]
+                    pathlib.Path(candidate).write_bytes(b"old print")
+                    await component._begin_print()
+                    return True
+
+            def build(command, _callback):
+                capture = Command()
+                capture.command = command
+                return capture
+
+            component.server = mock.Mock()
+            component.server.lookup_component.return_value.build_shell_command = build
+            await component.newframe()
+            self.assertEqual(component.framecount, 0)
+            self.assertEqual(component.lastframefile, "")
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+            self.assertEqual(component.notify_event.call_args.args[0]["status"],
+                             "error")
             self.assertFalse((pathlib.Path(directory) / "frame000002.jpg.part").exists())
 
     async def test_render_rejected_while_printing(self):
@@ -1182,6 +1419,14 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "error")
             self.assertFalse(component.renderisrunning)
             self.assertEqual(events[-1]["status"], "error")
+            component.server.send_event.assert_not_called()
+
+            component.klippy_apis.query_objects.return_value = {
+                "print_stats": {"state": "cancelled"},
+                "virtual_sdcard": {"is_active": True}}
+            result = await component.render()
+
+            self.assertEqual(result["status"], "error")
             component.server.send_event.assert_not_called()
 
     async def test_completed_print_renders_with_bounded_encoder_settings(self):
@@ -1266,6 +1511,9 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
                 [("server:gcode_response", "// Timelapse: video generation started"),
                  ("server:gcode_response", "// Timelapse: video generation finished")])
 
+            component.klippy_apis.query_objects.return_value = {
+                "print_stats": {"state": "cancelled", "filename": "part.gcode"},
+                "virtual_sdcard": {"is_active": False}}
             second = await component.render()
             self.assertEqual(second["status"], "success")
             self.assertNotEqual(second["filename"], result["filename"])
@@ -1497,6 +1745,147 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
         component.render_command.cancel.assert_awaited_once()
         component.cleanup.assert_called_once()
 
+    async def test_actual_new_print_interrupts_previous_finalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frame = pathlib.Path(directory) / "frame000001.jpg"
+            frame.write_bytes(b"previous print")
+            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component.temp_dir = directory + "/"
+            component.framecount = 1
+            component.lastframefile = frame.name
+            component.finishing_print = True
+            component.renderisrunning = False
+            component.pending_file_selected = True
+            component.printing = False
+            component.save_cancel = None
+            component.render_command = None
+            component.config = {"mode": "layermacro"}
+            component.frame_generation = 0
+
+            await component.handle_status_update({
+                "print_stats": {"state": "paused"}})
+            self.assertTrue(frame.exists())
+            self.assertFalse(component.printing)
+            self.assertTrue(component.finishing_print)
+
+            await component.handle_status_update({
+                "print_stats": {"state": "printing"},
+                "gcode_macro _START_PRINT": {"print_active": True}})
+            self.assertFalse(frame.exists())
+            self.assertTrue(component.printing)
+            self.assertEqual(component.frame_generation, 1)
+
+            new_frame = pathlib.Path(directory) / "frame000001.jpg"
+            new_frame.write_bytes(b"next print")
+            await component.handle_status_update({
+                "gcode_macro _START_PRINT": {"print_active": True}})
+            self.assertEqual(new_frame.read_bytes(), b"next print")
+
+            component._finish_print_frames = mock.AsyncMock()
+            await component._finish_print()
+            self.assertEqual(new_frame.read_bytes(), b"next print")
+            self.assertEqual(component.frame_generation, 1)
+
+    async def test_stale_finish_stops_after_new_print_starts(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.frame_generation = 0
+        component.finishing_print = True
+        component.printing = False
+        component.config = {"saveframes": True, "autorender": True}
+        component.server = mock.Mock(error=RuntimeError)
+        pending = asyncio.Event()
+
+        async def query(_objects):
+            await pending.wait()
+            return {"mod_params": {"variables": {"timelapse": True}}}
+
+        component.klippy_apis = mock.Mock(query_objects=query)
+        component.saveFramesZip = mock.AsyncMock()
+        component.render = mock.AsyncMock()
+        finish = asyncio.create_task(component._finish_print())
+        await asyncio.sleep(0)
+        component.frame_generation = 1
+        component.printing = False
+        pending.set()
+        await finish
+        component.saveFramesZip.assert_not_awaited()
+        component.render.assert_not_awaited()
+
+    async def test_interrupted_render_does_not_remove_new_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+            component.frame_generation = 0
+            component.renderisrunning = False
+            component.temp_dir = directory + "/"
+            component.notify_event = mock.Mock()
+            frame = pathlib.Path(directory) / "frame000001.jpg"
+
+            async def old_render(temporary_paths):
+                temporary_paths.append(str(frame))
+                component.frame_generation = 1
+                frame.write_bytes(b"next print")
+                return {"action": "render", "status": "skipped"}
+
+            component._render = old_render
+            result = await component.render()
+            self.assertEqual(result["status"], "skipped")
+            self.assertEqual(frame.read_bytes(), b"next print")
+
+    async def test_waiting_next_print_allows_previous_export_with_previous_name(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.finishing_print = True
+        component.finishing_filename = "previous.gcode"
+        component.klippy_apis = mock.Mock()
+        component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            "print_stats": {"state": "paused", "filename": "next.gcode"},
+            "virtual_sdcard": {"is_active": False},
+            "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True}})
+
+        status = await component._idle_status_for_render()
+        self.assertEqual(status["print_stats"]["filename"], "previous.gcode")
+
+        component.klippy_apis.query_objects.return_value[
+            "gcode_macro _TIMELAPSE_START_GUARD"]["waiting"] = False
+        self.assertIsNone(await component._idle_status_for_render())
+
+    async def test_filename_and_state_updates_bind_name_to_frame_generation(self):
+        component = timelapse.Timelapse.__new__(timelapse.Timelapse)
+        component.frame_generation = 4
+        component.active_print_filename = "previous.gcode"
+        component.finishing_print = False
+        component.printing = False
+        component.pending_file_selected = False
+        component.renderisrunning = False
+        component.render_command = None
+        component.save_cancel = None
+        component.config = {"mode": "layermacro", "enabled": True}
+        component.cleanup = mock.Mock()
+
+        await component.handle_status_update({
+            "print_stats": {"filename": "current.gcode"}})
+        await component.handle_status_update({
+            "print_stats": {"state": "printing"}})
+        self.assertEqual(component.active_print_filename, "current.gcode")
+
+        loop = mock.Mock()
+        with mock.patch.object(timelapse.IOLoop, "current", return_value=loop):
+            await component.handle_gcode_response("Done printing file")
+        self.assertEqual(component.finishing_filename, "current.gcode")
+        self.assertEqual(component.finishing_frame_generation, 4)
+
+        await component.handle_status_update({
+            "print_stats": {"filename": "next.gcode"}})
+        self.assertEqual(component.active_print_filename, "next.gcode")
+        self.assertEqual(component.finishing_filename, "current.gcode")
+
+        component.klippy_apis = mock.Mock()
+        component.klippy_apis.query_objects = mock.AsyncMock(return_value={
+            "print_stats": {"state": "paused", "filename": "next.gcode"},
+            "virtual_sdcard": {"is_active": False},
+            "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True}})
+        status = await component._idle_status_for_render()
+        self.assertEqual(status["print_stats"]["filename"], "current.gcode")
+
     async def test_cancelling_during_render_wait_keeps_previous_frames(self):
         component = timelapse.Timelapse.__new__(timelapse.Timelapse)
         component.renderisrunning = True
@@ -1534,15 +1923,21 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
 class TimelapseStartGuardTest(unittest.TestCase):
     @staticmethod
-    def _printer(returncode, waiting=False, file_path="same.gcode"):
+    def _printer(returncode, waiting=False, state="printing",
+                 file_path="same.gcode", prompt_open=None):
         return {
-            "gcode_macro _TIMELAPSE_START_GUARD": {"waiting": waiting},
+            "gcode_macro _TIMELAPSE_START_GUARD": {
+                "waiting": waiting,
+                "sd_held": waiting,
+                "prompt_open": waiting if prompt_open is None else prompt_open},
             "gcode_shell_command timelapse_render_status": {
                 "returncode": returncode},
-            "virtual_sdcard": {"file_path": file_path},
+            "print_stats": {"state": state},
+            "virtual_sdcard": {"file_path": file_path,
+                               "is_active": not waiting},
         }
 
-    def test_render_status_script_fails_open_when_moonraker_is_unavailable(self):
+    def test_render_status_script_distinguishes_busy_idle_and_unknown(self):
         script = ROOT / ".shell" / "commands" / "timelapse_render_status.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
             curl = pathlib.Path(temp_dir) / "curl"
@@ -1559,13 +1954,14 @@ class TimelapseStartGuardTest(unittest.TestCase):
                        TIMELAPSE_CURL_ARGS=str(pathlib.Path(temp_dir) / "args"))
 
             for response, curl_exit, expected in (
-                    ('{"result":{"rendering":true}}', "0", 0),
-                    ('{"result":{"rendering":false}}', "0", 1),
-                    ('', "7", 1)):
+                    ('{"result":{"busy":true}}', "0", 0),
+                    ('{"result":{"busy":false}}', "0", 1),
+                    ('{"result":{}}', "0", 2),
+                    ('', "7", 2)):
                 env["TIMELAPSE_RESPONSE"] = response
                 env["TIMELAPSE_CURL_EXIT"] = curl_exit
                 result = subprocess.run([str(script)], env=env,
-                                        capture_output=True, timeout=3)
+                                        capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, expected)
 
             request = pathlib.Path(env["TIMELAPSE_CURL_ARGS"]).read_text()
@@ -1577,33 +1973,272 @@ class TimelapseStartGuardTest(unittest.TestCase):
         self.assertIn("M25.1", result.commands)
         self.assertNotIn("_START_PRINT", result.commands)
         self.assertIn("BEEP", result.commands)
-        self.assertTrue(any("Cancel print|_TIMELAPSE_START_CANCEL" in cmd
+        self.assertTrue(any("WAIT|_TIMELAPSE_START_WAIT_CHOICE" in cmd
                             for cmd in result.commands))
-        self.assertTrue(any("Continue anyway (risky)|_TIMELAPSE_START_CONTINUE"
+        self.assertTrue(any("CANCEL|_TIMELAPSE_START_CANCEL" in cmd
+                            for cmd in result.commands))
+        self.assertTrue(any("RISKY: CONTINUE|_TIMELAPSE_START_CONTINUE"
                             in cmd for cmd in result.commands))
 
     def test_headless_start_checks_render_for_virtual_sd_print(self):
-        result = render_macro(HEADLESS, "START_PRINT", printer={
+        printer = {
             "gcode_macro START_PRINT": {
                 "feather_force_leveling": None, "feather_mesh_name": None},
             "mod_params": {"variables": {
-                "filament_switch_sensor": False, "display": 1}},
+                "filament_switch_sensor": False, "display": 1,
+                "timelapse": True}},
             "bed_mesh": {"profiles": {}},
-            "virtual_sdcard": {"file_path": "same.gcode"},
-        }, params={"EXTRUDER_TEMP": 210, "BED_TEMP": 60})
+            "virtual_sdcard": {
+                "is_active": True, "file_path": "same.gcode"},
+        }
+        result = render_macro(HEADLESS, "START_PRINT", printer=printer,
+                              params={"EXTRUDER_TEMP": 210, "BED_TEMP": 60})
         self.assertEqual(result.commands[-2:], (
             "RUN_SHELL_COMMAND CMD=timelapse_render_status",
             "_TIMELAPSE_START_DECIDE"))
 
-    def test_completed_or_unavailable_render_starts_print(self):
-        for status in (1, None):
+        printer["mod_params"]["variables"]["timelapse"] = False
+        disabled = render_macro(HEADLESS, "START_PRINT", printer=printer,
+                                params={"EXTRUDER_TEMP": 210, "BED_TEMP": 60})
+        self.assertEqual(disabled.commands[-1], "_START_PRINT")
+        self.assertFalse(any("timelapse_render_status" in command
+                             for command in disabled.commands))
+        printer["mod_params"]["variables"]["timelapse"] = True
+
+        printer["virtual_sdcard"]["is_active"] = False
+        result = render_macro(HEADLESS, "START_PRINT", printer=printer,
+                              params={"EXTRUDER_TEMP": 210, "BED_TEMP": 60})
+        self.assertEqual(result.commands[-1], "_START_PRINT")
+
+        printer["gcode_macro _TIMELAPSE_START_GUARD"] = {"sd_held": True}
+        with self.assertRaises(MacroActionError):
+            render_macro(HEADLESS, "START_PRINT", printer=printer,
+                         params={"EXTRUDER_TEMP": 210, "BED_TEMP": 60})
+
+    def test_only_confirmed_idle_starts_print(self):
+        result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                              printer=self._printer(1))
+        self.assertEqual(result.commands, ("_START_PRINT",))
+
+        for status in (2, None):
             result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
                                   printer=self._printer(status))
-            self.assertEqual(result.commands, ("_START_PRINT",))
+            self.assertIn("M25.1", result.commands)
+            self.assertNotIn("_START_PRINT", result.commands)
+            waiting = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                                   printer=self._printer(status, waiting=True))
+            self.assertNotIn("_TIMELAPSE_START_CONTINUE", waiting.commands)
 
         result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
                               printer=self._printer(1, waiting=True))
         self.assertEqual(result.commands, ("_TIMELAPSE_START_CONTINUE",))
+
+    def test_disabling_timelapse_releases_an_existing_wait(self):
+        printer = self._printer(2, waiting=True, state="paused")
+        printer["mod_params"] = {"variables": {"timelapse": False}}
+        result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                              printer=printer)
+        self.assertEqual(result.commands, ("_TIMELAPSE_START_CONTINUE",))
+
+    def test_held_virtual_sd_is_released_after_preparation_or_before_cancel(self):
+        printer = self._printer(1, waiting=True, state="paused")
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"] = True
+        printer["virtual_sdcard"].update(is_active=False)
+
+        continue_print = render_macro(
+            MACROS, "_TIMELAPSE_START_CONTINUE", printer=printer)
+        self.assertEqual(continue_print.commands, (
+            "_TIMELAPSE_START_RESET", "_START_PRINT",
+            "_TIMELAPSE_START_RELEASE_SD"))
+
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["waiting"] = False
+        printer.update({
+            "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
+            "gcode_macro RESUME": {"restore_idle_timeout": 0},
+            "mod_params": {"variables": {"park_dz": 10}},
+            "pause_resume": {"is_paused": False}})
+        cancel = render_macro(CLIENT, "CANCEL_PRINT", printer=printer)
+        self.assertEqual(cancel.commands[-2:], (
+            "_TIMELAPSE_START_RELEASE_SD FORCE=1", "CANCEL_PRINT_BASE"))
+
+        release = render_macro(
+            MACROS, "_TIMELAPSE_START_RELEASE_SD", printer=printer)
+        self.assertEqual(release.commands, (
+            "M24.1",
+            "SET_GCODE_VARIABLE MACRO=_TIMELAPSE_START_GUARD "
+            "VARIABLE=sd_held VALUE=False"))
+
+        sd = virtual_sdcard.VirtualSD.__new__(virtual_sdcard.VirtualSD)
+        sd.current_file = mock.Mock()
+        sd.file_position = sd.file_size = 100
+        sd.work_timer = None
+        sd.cmd_from_sd = False
+        sd.must_pause_work = True
+        sd.reactor = mock.Mock()
+        sd.reactor.NOW = 0
+        sd.reactor.monotonic.return_value = 1.0
+        sd.reactor.register_timer.return_value = object()
+        sd.reactor.pause.side_effect = lambda _until: setattr(
+            sd, "work_timer", None)
+        sd.gcode = mock.Mock()
+        sd.print_stats = mock.Mock()
+        for command in release.commands + ("CANCEL_PRINT_BASE",):
+            if command == "M24.1":
+                sd.cmd_M24(mock.Mock())
+            elif command == "CANCEL_PRINT_BASE" and sd.is_active():
+                sd.do_cancel()
+        self.assertIsNone(sd.current_file)
+        sd.print_stats.note_cancel.assert_called_once()
+
+        printer["virtual_sdcard"]["file_path"] = None
+        missing_file = render_macro(
+            MACROS, "_TIMELAPSE_START_RELEASE_SD", printer=printer)
+        self.assertNotIn("M24.1", missing_file.commands)
+        self.assertTrue(any("VARIABLE=sd_held VALUE=False" in command
+                            for command in missing_file.commands))
+
+        printer["virtual_sdcard"].update(file_path="same.gcode", is_active=True)
+        already_active = render_macro(
+            MACROS, "_TIMELAPSE_START_RELEASE_SD", printer=printer)
+        self.assertNotIn("M24.1", already_active.commands)
+
+    def test_held_sd_waits_for_parked_frame_and_head_restore(self):
+        printer = self._printer(1, waiting=False, state="paused")
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"] = True
+        printer["virtual_sdcard"]["is_active"] = False
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"is_paused": True}
+        held = render_macro(MACROS, "_TIMELAPSE_START_RELEASE_SD",
+                            printer=printer)
+        self.assertEqual(held.commands, ())
+
+        printer.update({
+            "mod_params": {"variables": {
+                "timelapse": True, "timelapse_park": True}},
+            "gcode_macro MOVE_SAFE": {"x_max": 110, "y_max": 110},
+            "gcode_macro HYPERLAPSE": {"run": False},
+            "gcode_macro TIMELAPSE_PRINT": {"enable": True},
+            "pause_resume": {"is_paused": False},
+            "gcode_move": {
+                "gcode_position": {"z": 20, "e": 1},
+                "absolute_coordinates": True, "absolute_extrude": True,
+                "speed": 1500, "speed_factor": 1.0,
+                "extrude_factor": 1.0},
+            "toolhead": {"axis_maximum": {"z": 230},
+                         "homed_axes": "xyz", "extruder": "extruder"},
+            "extruder": {"can_extrude": True}})
+        captured = render_macro(MACROS, "TIMELAPSE_TAKE_FRAME",
+                                printer=printer,
+                                variables={"enable": True})
+        self.assertIn("PAUSE_BASE", captured.commands)
+
+        tl = {
+            "takingframe": False, "is_paused": True, "retracted": True,
+            "check_time": 0.1, "wait_loops": 0,
+            "release_timeout": 5.0,
+            "macro": {"resume": "RESUME_BASE"},
+            "speed": {"travel": 100, "extrude": 15},
+            "extruder": {"fw_retract": False, "extrude": 1},
+            "restore": {
+                "speed": 1500, "e": 1,
+                "absolute": {"coordinates": True, "extrude": True},
+                "factor": {"speed": 1.0, "extrude": 1.0}}}
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"] = tl
+        restored = render_macro(MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME",
+                                printer=printer, section="delayed_gcode")
+        self.assertIn("RESUME_BASE VELOCITY=100", restored.commands)
+        self.assertEqual(restored.commands[-1], "_TIMELAPSE_START_RELEASE_SD")
+        self.assertLess(restored.commands.index("G0 E1 F900"),
+                        restored.commands.index("_TIMELAPSE_START_RELEASE_SD"))
+
+        forced = render_macro(MACROS, "_TIMELAPSE_START_RELEASE_SD",
+                              printer=printer, params={"FORCE": 1})
+        self.assertIn("M24.1", forced.commands)
+
+        printer.update({
+            "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
+            "gcode_macro RESUME": {"restore_idle_timeout": 0},
+            "pause_resume": {"is_paused": True}})
+        printer["mod_params"]["variables"]["park_dz"] = 10
+        printer["gcode_macro TIMELAPSE_TAKE_FRAME"]["is_paused"] = True
+        cancelled = execute_macro_chain((
+            (CLIENT, "CANCEL_PRINT"),
+            (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
+            "CANCEL_PRINT", printer=printer)
+        self.assertLess(cancelled.index("M24.1"),
+                        cancelled.index("CANCEL_PRINT_BASE"))
+
+        printer["print_stats"]["state"] = "cancelled"
+        late_capture = render_macro(MACROS, "_WAIT_TIMELAPSE_TAKE_FRAME",
+                                    printer=printer, section="delayed_gcode")
+        self.assertNotIn("RESUME_BASE VELOCITY=100", late_capture.commands)
+        self.assertNotIn("_TIMELAPSE_START_RELEASE_SD", late_capture.commands)
+
+    def test_held_virtual_sd_rejects_unrelated_pause_and_resume(self):
+        printer = self._printer(1, waiting=False, state="paused")
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"] = True
+        with self.assertRaises(MacroActionError):
+            render_macro(CLIENT, "PAUSE", printer=printer)
+        resume = render_macro(CLIENT, "RESUME", printer=printer)
+        self.assertFalse(any(command == "RESUME_BASE" or command == "M24.1"
+                             for command in resume.commands))
+
+    def test_cancelled_print_cannot_reopen_prompt_with_file_still_loaded(self):
+        result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                              printer=self._printer(
+                                  0, state="cancelled", file_path="same.gcode"))
+        self.assertEqual(result.commands, ())
+
+        result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                              printer=self._printer(
+                                  0, waiting=True, state="cancelled"))
+        self.assertEqual(result.commands, ("_TIMELAPSE_START_RESET",))
+
+    def test_paused_print_can_keep_waiting_and_resume(self):
+        paused = self._printer(0, waiting=True, state="paused")
+        result = render_macro(MACROS, "_TIMELAPSE_START_DECIDE",
+                              printer=paused)
+        self.assertEqual(result.commands, (
+            "UPDATE_DELAYED_GCODE ID=_TIMELAPSE_START_POLL DURATION=2",))
+
+        result = render_macro(MACROS, "_TIMELAPSE_START_CONTINUE",
+                              printer=paused)
+        self.assertEqual(result.commands,
+                         ("_TIMELAPSE_START_RESET", "_START_PRINT",
+                          "_TIMELAPSE_START_RELEASE_SD"))
+
+    def test_standard_resume_and_cancel_route_waiting_print(self):
+        waiting = self._printer(2, waiting=True, state="paused")
+        resume = render_macro(CLIENT, "RESUME", printer=waiting)
+        cancel_printer = {
+            **waiting,
+            "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
+            "gcode_macro RESUME": {"restore_idle_timeout": 0},
+            "mod_params": {"variables": {"park_dz": 10}},
+            "pause_resume": {"is_paused": False}}
+        cancel = render_macro(CLIENT, "CANCEL_PRINT", printer=cancel_printer)
+        self.assertEqual(resume.commands, ("_TIMELAPSE_START_CONTINUE",))
+        self.assertEqual(cancel.commands[0], "_TIMELAPSE_START_RESET")
+        self.assertEqual(cancel.commands[-2:], (
+            "_TIMELAPSE_START_RELEASE_SD FORCE=1", "CANCEL_PRINT_BASE"))
+        self.assertIn("CANCEL_PRINT_BASE", cancel.commands)
+
+        full_cancel = execute_macro_chain((
+            (CLIENT, "CANCEL_PRINT"),
+            (MACROS, "_TIMELAPSE_START_RESET"),
+            (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
+            "CANCEL_PRINT", printer=cancel_printer)
+        self.assertLess(full_cancel.index("M24.1"),
+                        full_cancel.index("CANCEL_PRINT_BASE"))
+
+        resumed_cancel = render_macro(
+            CLIENT, "CANCEL_PRINT",
+            printer={"gcode_macro _TIMELAPSE_START_GUARD": {"waiting": False},
+                     "gcode_macro _CLIENT_VARIABLE": {
+                         "user_cancel_macro": ""},
+                     "gcode_macro RESUME": {"restore_idle_timeout": 0},
+                     "mod_params": {"variables": {"park_dz": 10}},
+                     "pause_resume": {"is_paused": False}})
+        self.assertIn("CANCEL_PRINT_BASE", resumed_cancel.commands)
 
     def test_wait_poll_resumes_same_file_and_cancel_does_not_resume(self):
         waiting = self._printer(0, waiting=True)
@@ -1615,13 +2250,55 @@ class TimelapseStartGuardTest(unittest.TestCase):
         result = render_macro(MACROS, "_TIMELAPSE_START_CONTINUE",
                               printer=waiting)
         self.assertEqual(result.commands,
-                         ("_TIMELAPSE_START_RESET", "_START_PRINT", "M24.1"))
+                         ("_TIMELAPSE_START_RESET", "_START_PRINT",
+                          "_TIMELAPSE_START_RELEASE_SD"))
 
         result = render_macro(MACROS, "_TIMELAPSE_START_CANCEL",
                               printer=waiting)
-        self.assertEqual(result.commands, ("CANCEL_PRINT",))
+        cancel_command = 'CANCEL_PRINT REASON="Timelapse start cancelled"'
+        self.assertEqual(result.commands, (cancel_command,))
 
-        missing_file = self._printer(1, waiting=True, file_path=None)
+        cancelled = execute_macro_chain((
+            (MACROS, "_TIMELAPSE_START_CANCEL"),
+            (CLIENT, "CANCEL_PRINT"),
+            (MACROS, "_TIMELAPSE_START_RESET"),
+            (MACROS, "_TIMELAPSE_START_RELEASE_SD")),
+            "_TIMELAPSE_START_CANCEL", printer={
+                **waiting,
+                "gcode_macro _CLIENT_VARIABLE": {"user_cancel_macro": ""},
+                "gcode_macro RESUME": {"restore_idle_timeout": 0},
+                "mod_params": {"variables": {"park_dz": 10}},
+                "pause_resume": {"is_paused": False}})
+        self.assertLess(cancelled.index(
+            'RESPOND TYPE=command MSG="action:prompt_end Previous timelapse"'),
+                        cancelled.index("CANCEL_PRINT_BASE"))
+        self.assertLess(cancelled.index("M24.1"),
+                        cancelled.index("CANCEL_PRINT_BASE"))
+        self.assertIn("UPDATE_DELAYED_GCODE ID=_TIMELAPSE_START_POLL DURATION=0",
+                      cancelled)
+
+        result = render_macro(MACROS, "_TIMELAPSE_START_CANCEL",
+                              printer=self._printer(0, waiting=False))
+        self.assertEqual(result.commands, ())
+
+        late_cancel = self._printer(1, waiting=False, state="paused")
+        late_cancel["gcode_macro _TIMELAPSE_START_GUARD"]["sd_held"] = True
+        result = render_macro(MACROS, "_TIMELAPSE_START_CANCEL",
+                              printer=late_cancel)
+        self.assertEqual(result.commands, (cancel_command,))
+
+        closed_wait = self._printer(1, waiting=True, prompt_open=False)
+        reset = render_macro(MACROS, "_TIMELAPSE_START_RESET",
+                             printer=closed_wait)
+        self.assertFalse(any("action:prompt_end" in command
+                             for command in reset.commands))
+
+        wait_choice = render_macro(MACROS, "_TIMELAPSE_START_WAIT_CHOICE",
+                                   printer=waiting)
+        self.assertTrue(any("action:prompt_end Previous timelapse"
+                            in command for command in wait_choice.commands))
+
+        missing_file = self._printer(1, waiting=True, state="cancelled")
         result = render_macro(MACROS, "_TIMELAPSE_START_CONTINUE",
                               printer=missing_file)
         self.assertEqual(result.commands, ("_TIMELAPSE_START_RESET",))

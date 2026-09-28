@@ -8,15 +8,16 @@ from ui import ThemeColor
 from ui.layout_helpers import centered_button_row
 
 from feather.screen.pagination import Pagination
+from ff5m_ui.screen import ScreenDialog
 
 
 class ActionPromptPagesMixin:
     def _render_action_prompt(self):
-        if self._action_prompt_is_cold_pull():
+        prompt = self._dialog_render_content(ScreenDialog.ACTION_PROMPT) or {
+            "title": "Prompt", "text": [], "rows": [], "footer": []}
+        if prompt["title"].strip().casefold() == "cold pull":
             self._render_cold_pull_prompt()
             return
-        prompt = self.action_prompt or {
-            "title": "Prompt", "text": [], "rows": [], "footer": []}
         rows = prompt["rows"]
         if not rows:
             commands = self.renderer.dialog(
@@ -24,13 +25,12 @@ class ActionPromptPagesMixin:
                 tuple((button["action"], button["label"], button["state"])
                       for button in prompt["footer"]),
                 x=50, y=130, width=700, height=220, tone="info",
-                page=self.action_prompt_page,
+                page=self._dialog_page(ScreenDialog.ACTION_PROMPT),
                 page_actions=("prompt.prev", "prompt.next"))
             self.renderer.send(commands)
             return
 
-        pagination = Pagination(rows, self.action_prompt_page, 3)
-        self.action_prompt_page = pagination.page
+        pagination = Pagination(rows, self._dialog_page(ScreenDialog.ACTION_PROMPT), 3)
         commands = self.renderer.dialog(
             prompt["title"], (), (), x=30, y=67, width=740, height=365,
             tone="info", custom_body=True)

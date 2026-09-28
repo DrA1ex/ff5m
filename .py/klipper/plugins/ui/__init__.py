@@ -35,6 +35,7 @@ def framework_manifest():
     }
 
 _EXPORT_GROUPS = (
+    ("screen", ("ScreenLayer", "ScreenRoot")),
     ("layout_helpers", (
         "centered_button_row", "dialog_pager_bounds",
         "dialog_vertical_bounds", "layout_dialog_text",

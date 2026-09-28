@@ -29,6 +29,7 @@ import shutil
 import asyncio
 import shlex
 import threading
+import uuid
 from datetime import datetime
 from tornado.ioloop import IOLoop
 from zipfile import ZipFile
@@ -37,7 +38,8 @@ from ..common import WebRequest
 from typing import (
     TYPE_CHECKING,
     Dict,
-    Any
+    Any,
+    Optional
 )
 if TYPE_CHECKING:
     from confighelper import ConfigHelper
@@ -63,6 +65,11 @@ class Timelapse:
         self.saveisrunning = False
         self.save_cancel = None
         self.takingframe = False
+        self.finishing_print = False
+        self.active_print_filename = ""
+        self.finishing_filename = ""
+        self.finishing_frame_generation = None
+        self.frame_generation = 0
         self.framecount = 0
         self.lastframefile = ""
         self.lastcmdreponse = ""
@@ -280,6 +287,8 @@ class Timelapse:
             'framecount': self.framecount,
             'lastframefile': self.lastframefile,
             'rendering': self.renderisrunning,
+            'busy': (self.renderisrunning or self.saveisrunning
+                     or self.takingframe or self.finishing_print),
         }
 
     async def webrequest_settings(self,
@@ -448,7 +457,8 @@ class Timelapse:
         # macro knows when it is safe to resume motion.
         stream_delay = self.config['stream_delay_compensation']
         IOLoop.current().call_later(
-            delay=stream_delay, callback=self.newframe, release_parked=parked)
+            delay=stream_delay, callback=self.newframe, release_parked=parked,
+            frame_generation=getattr(self, 'frame_generation', 0))
 
     async def release_parkedhead(self) -> None:
         gcommand = "SET_GCODE_VARIABLE " \
@@ -491,7 +501,12 @@ class Timelapse:
             logging.exception(msg)
         self.hyperlapserunning = False
     async def newframe(self, final_frame: bool = False,
-                       release_parked: bool = False) -> None:
+                       release_parked: bool = False,
+                       frame_generation: Optional[int] = None) -> None:
+        generation = (getattr(self, 'frame_generation', 0)
+                      if frame_generation is None else frame_generation)
+        if generation != getattr(self, 'frame_generation', 0):
+            return
         result = {'action': 'newframe', 'status': 'error'}
         try:
             if final_frame and self.printing:
@@ -504,7 +519,7 @@ class Timelapse:
 
             framefile = "frame" + str(self.framecount + 1).zfill(6) + ".jpg"
             framepath = os.path.join(self.temp_dir, framefile)
-            candidate = framepath + ".part"
+            candidate = framepath + "." + uuid.uuid4().hex + ".part"
             cmd = ("/usr/bin/curl --fail --silent --show-error --max-time 2 "
                    f"--output {shlex.quote(candidate)} "
                    f"{shlex.quote(self.config['snapshoturl'])}")
@@ -513,6 +528,7 @@ class Timelapse:
             try:
                 captured = await scmd.run(timeout=3., verbose=False)
                 if (captured and os.path.getsize(candidate) > 0
+                        and generation == getattr(self, 'frame_generation', 0)
                         and not (final_frame and self.printing)):
                     os.replace(candidate, framepath)
                     self.framecount += 1
@@ -529,23 +545,27 @@ class Timelapse:
             logging.exception("Timelapse frame capture failed")
         finally:
             self.notify_event(result)
-            self.takingframe = False
+            if generation == getattr(self, 'frame_generation', 0):
+                self.takingframe = False
             # Never inject housekeeping G-code during a normal capture. A
             # parked capture is the only path that needs an acknowledgement
             # back to Klipper, and it is sent after the snapshot has finished
             # (successfully or not) so the head cannot resume mid-capture.
-            if release_parked:
+            if release_parked and generation == getattr(self, 'frame_generation', 0):
                 await self.release_parkedhead()
     async def handle_status_update(self, status: Dict[str, Any]) -> None:
         if 'print_stats' in status:
             printstats = status['print_stats']
+            if printstats.get('filename'):
+                self.active_print_filename = printstats['filename']
             if 'state' in printstats:
                 state = printstats['state']
                 if state in ('printing', 'paused'):
-                    self.printing = True
-                    # The virtual SD file becomes active before START_PRINT.
-                    if not self.renderisrunning:
-                        await self._begin_print()
+                    if not getattr(self, 'finishing_print', False):
+                        self.printing = True
+                        # The virtual SD file becomes active before START_PRINT.
+                        if not self.renderisrunning:
+                            await self._begin_print()
                 if state == 'cancelled':
                     self.printing = False
                     self.pending_file_selected = False
@@ -554,20 +574,25 @@ class Timelapse:
 
         start = status.get('gcode_macro _START_PRINT', {})
         if start.get('print_active') is True:
+            if getattr(self, 'finishing_print', False):
+                self.finishing_print = False
+                self.finishing_filename = ""
+                self.finishing_frame_generation = None
+                self.pending_file_selected = True
             await self._begin_print()
 
     async def _begin_print(self, start_hyperlapse=True) -> None:
         self.printing = True
         if self.save_cancel is not None:
             self.save_cancel.set()
-        if self.render_command is not None:
-            await self.render_command.cancel()
 
         if self.pending_file_selected:
             self.cleanup()
             self.pending_file_selected = False
             if start_hyperlapse and self.config['mode'] == "hyperlapse":
                 IOLoop.current().spawn_callback(self.start_hyperlapse)
+        if self.render_command is not None:
+            await self.render_command.cancel()
 
     async def handle_gcode_response(self, gresponse: str) -> None:
         if gresponse == "File selected":
@@ -582,10 +607,26 @@ class Timelapse:
                 ioloop = IOLoop.current()
                 ioloop.spawn_callback(self.stop_hyperlapse)
             if self.config['enabled']:
+                self.finishing_filename = getattr(self, 'active_print_filename', '')
+                self.finishing_frame_generation = getattr(self, 'frame_generation', 0)
+                self.finishing_print = True
                 ioloop = IOLoop.current()
-                ioloop.spawn_callback(self._finish_print)
+                ioloop.spawn_callback(self._finish_print,
+                                      getattr(self, 'frame_generation', 0))
 
-    async def _finish_print(self):
+    async def _finish_print(self, generation=None):
+        if generation is None:
+            generation = getattr(self, 'frame_generation', 0)
+        try:
+            if generation == getattr(self, 'frame_generation', 0):
+                await self._finish_print_frames(generation)
+        finally:
+            if generation == getattr(self, 'frame_generation', 0):
+                self.finishing_print = False
+                self.finishing_filename = ""
+                self.finishing_frame_generation = None
+
+    async def _finish_print_frames(self, generation):
         try:
             status = await self.klippy_apis.query_objects({
                 'mod_params': ['variables'],
@@ -595,7 +636,7 @@ class Timelapse:
             logging.exception("Unable to check timelapse print settings")
             status = {}
 
-        if self.printing:
+        if self.printing or generation != getattr(self, 'frame_generation', 0):
             return
 
         params = status.get('mod_params', {}).get('variables', {})
@@ -609,29 +650,36 @@ class Timelapse:
                 "SET_PRINT_STATS_INFO in the slicer or choose time/progress "
                 "capture. See docs/SLICING.md in the project GitHub.")
 
-        if params.get('timelapse') and params.get('timelapse_final_frame') and print_enabled:
-            # A layer/time frame may still be in flight at end of file.
-            for _ in range(100):
-                if self.printing:
-                    return
-                if not self.takingframe:
-                    break
-                await asyncio.sleep(0.1)
-            if self.takingframe:
-                logging.warning("Skipping final timelapse frame: previous capture is still running")
-            else:
-                self.takingframe = True
-                await self.newframe(final_frame=True)
+        # An in-flight layer/time frame owns the next frame number. Do not
+        # export or duplicate it until that capture has finished.
+        for _ in range(100):
+            if self.printing or generation != getattr(self, 'frame_generation', 0):
+                return
+            if not getattr(self, 'takingframe', False):
+                break
+            await asyncio.sleep(0.1)
+        if getattr(self, 'takingframe', False):
+            logging.warning("Skipping timelapse export: previous capture is still running")
+            return
+        if self.printing or generation != getattr(self, 'frame_generation', 0):
+            return
 
-        if self.printing:
+        if params.get('timelapse') and params.get('timelapse_final_frame') and print_enabled:
+            self.takingframe = True
+            await self.newframe(final_frame=True)
+
+        if self.printing or generation != getattr(self, 'frame_generation', 0):
             return
 
         if self.config['saveframes']:
             await self.saveFramesZip()
-        if self.config['autorender']:
+        if (self.config['autorender']
+                and generation == getattr(self, 'frame_generation', 0)):
             await self.render()
     def cleanup(self) -> None:
         logging.debug("cleanup frame directory")
+        self.frame_generation = getattr(self, 'frame_generation', 0) + 1
+        self.takingframe = False
         filelist = glob.glob(self.temp_dir + "frame*.jpg")
         if filelist:
             for filepath in filelist:
@@ -653,9 +701,12 @@ class Timelapse:
         return name
 
     async def saveFramesZip(self, webrequest=None):
-        filelist = sorted(glob.glob(self.temp_dir + "frame*.jpg"))
-        if not filelist:
+        if getattr(self, 'takingframe', False):
+            return {'action': 'saveframes', 'status': 'running',
+                    'msg': 'Frame capture is still running'}
+        if not glob.glob(self.temp_dir + "frame*.jpg"):
             return {'action': 'saveframes', 'status': 'skipped'}
+        generation = getattr(self, 'frame_generation', 0)
         if self.saveisrunning or self.renderisrunning:
             return {'action': 'saveframes', 'status': 'running'}
 
@@ -667,6 +718,14 @@ class Timelapse:
             if not (printer_status := await self._idle_status_for_render()):
                 return {'action': 'saveframes', 'status': 'error',
                         'msg': 'Frame export is available only after printing stops'}
+            if generation != getattr(self, 'frame_generation', 0):
+                return {'action': 'saveframes', 'status': 'skipped'}
+            if getattr(self, 'takingframe', False):
+                return {'action': 'saveframes', 'status': 'running',
+                        'msg': 'Frame capture is still running'}
+            filelist = sorted(glob.glob(self.temp_dir + "frame*.jpg"))
+            if not filelist:
+                return {'action': 'saveframes', 'status': 'skipped'}
             if not self._has_render_space(filelist):
                 return {'action': 'saveframes', 'status': 'error',
                         'msg': 'Not enough disk space to save frames'}
@@ -681,7 +740,7 @@ class Timelapse:
             candidate = output_path + '.part'
             await asyncio.to_thread(self._write_frames_zip, candidate,
                                     filelist, cancel)
-            if cancel.is_set():
+            if cancel.is_set() or generation != getattr(self, 'frame_generation', 0):
                 raise InterruptedError("Print started during frame export")
             os.replace(candidate, output_path)
             logging.info(f"saved frames: {outfile}")
@@ -717,15 +776,17 @@ class Timelapse:
         ioloop.spawn_callback(self.render, byrendermacro=byrendermacro)
 
     async def render(self, webrequest=None, byrendermacro=False):
-        if self.renderisrunning:
+        if self.renderisrunning or getattr(self, 'takingframe', False):
             result = {'action': 'render', 'status': 'running',
-                      'msg': 'render is already running'}
+                      'msg': ('render is already running' if self.renderisrunning
+                              else 'Frame capture is still running')}
             self.notify_event(result)
             if byrendermacro:
                 await self._release_render_macro()
             return result
 
         self.renderisrunning = True
+        generation = getattr(self, 'frame_generation', 0)
         temporary_paths = []
         try:
             return await self._render(temporary_paths)
@@ -739,6 +800,9 @@ class Timelapse:
             return result
         finally:
             for path in temporary_paths:
+                if (generation != getattr(self, 'frame_generation', 0)
+                        and os.path.basename(path).startswith('frame')):
+                    continue
                 try:
                     os.remove(path)
                 except FileNotFoundError:
@@ -758,12 +822,19 @@ class Timelapse:
             logging.exception("Unable to release timelapse render macro")
 
     async def _render(self, temporary_paths):
-        filelist = sorted(glob.glob(self.temp_dir + "frame*.jpg"))
+        generation = getattr(self, 'frame_generation', 0)
         result = {'action': 'render'}
 
         # make sure webcamconfig is uptodate for the rotation/flip feature
         await self.getWebcamConfig()
-        if not filelist:
+        filelist = sorted(glob.glob(self.temp_dir + "frame*.jpg"))
+        if generation != getattr(self, 'frame_generation', 0):
+            msg = "Print started during timelapse render"
+            status = "skipped"
+        elif getattr(self, 'takingframe', False):
+            msg = "Frame capture is still running"
+            status = "running"
+        elif not filelist:
             msg = "no frames to render, skip"
             status = "skipped"
         elif self.saveisrunning:
@@ -777,6 +848,12 @@ class Timelapse:
         elif not (printer_status := await self._idle_status_for_render()):
             msg = "Render is available only after printing stops"
             status = "error"
+        elif generation != getattr(self, 'frame_generation', 0):
+            msg = "Print started during timelapse render"
+            status = "skipped"
+        elif getattr(self, 'takingframe', False):
+            msg = "Frame capture is still running"
+            status = "running"
         elif not self._has_render_space(filelist):
             msg = "Not enough disk space to render timelapse"
             status = "error"
@@ -881,6 +958,9 @@ class Timelapse:
                 cmdstatus = False
             finally:
                 self.render_command = None
+            if generation != getattr(self, 'frame_generation', 0):
+                return {'action': 'render', 'status': 'skipped',
+                        'msg': 'Print started during timelapse render'}
             # check success
             if cmdstatus:
                 status = "success"
@@ -921,7 +1001,9 @@ class Timelapse:
                             preview_ok = await scmd.run(verbose=True,
                                                         log_complete=False,
                                                         timeout=9999999999)
-                            if preview_ok and os.path.getsize(preview_candidate) > 0:
+                            if (generation == getattr(self, 'frame_generation', 0)
+                                    and preview_ok
+                                    and os.path.getsize(preview_candidate) > 0):
                                 os.replace(preview_candidate, previewFilePath)
                                 result['previewimage'] = previewFile
                             else:
@@ -963,9 +1045,25 @@ class Timelapse:
     async def _idle_status_for_render(self):
         try:
             status = await self.klippy_apis.query_objects({
-                'print_stats': None, 'virtual_sdcard': None})
-            if (status['print_stats']['state'] in ('complete', 'standby')
-                    and not status['virtual_sdcard']['is_active']):
+                'print_stats': None, 'virtual_sdcard': None,
+                'gcode_macro _TIMELAPSE_START_GUARD': ['waiting']})
+            idle = (status['print_stats']['state'] in ('complete', 'cancelled', 'standby')
+                    and not status['virtual_sdcard']['is_active'])
+            guard = status.get('gcode_macro _TIMELAPSE_START_GUARD', {})
+            finishing = getattr(self, 'finishing_print', False)
+            waiting = (finishing and guard.get('waiting')
+                       and not status['virtual_sdcard']['is_active']
+                       and status['print_stats']['state'] == 'paused')
+            if idle or waiting:
+                generation = getattr(self, 'frame_generation', 0)
+                previous_name = (getattr(self, 'finishing_filename', '')
+                                 if finishing and getattr(
+                                     self, 'finishing_frame_generation', generation)
+                                 == generation else '')
+                if previous_name:
+                    status = dict(status)
+                    status['print_stats'] = dict(status['print_stats'])
+                    status['print_stats']['filename'] = previous_name
                 return status
         except Exception:
             logging.exception("Unable to verify idle printer before timelapse render")

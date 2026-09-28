@@ -107,7 +107,7 @@ are skipped while a print is paused. Frames and finished videos live under
 `/root/printer_data/gcodes/timelapse/` on the persistent
 data partition. Capture has a 1,000-frame limit and requires 128 MiB free
 before each frame. A failed capture leaves no numbered partial frame. Render
-requires an idle virtual SD and completed or standby print status. Selecting
+requires an idle virtual SD and completed, cancelled, or standby print status. Selecting
 another file leaves existing frames intact; print preparation cancels an active
 render and clears the old frames. The FFmpeg command uses one thread and the ultrafast
 x264 preset. Normal progress output is disabled so Moonraker does not buffer
@@ -115,14 +115,30 @@ FFmpeg's carriage-return status stream during a long render.
 Moonraker reports when video generation starts and when it succeeds or fails
 in the G-code console for both automatic and manual renders. A rejected or
 skipped render does not announce a start.
-For headless display configurations, `START_PRINT` checks this render status
-through a short local Moonraker request. If rendering is active, it pauses the
-virtual SD file before print preparation and shows Wait, Cancel print, and
-Continue anyway (risky) actions. A delayed G-code check resumes that same file when
-rendering ends. Moonraker observes `_START_PRINT.print_active` to release the
-previous render and frames when print preparation begins. If Moonraker is
-unavailable, the check fails open and the print proceeds; Klipper's reactor
-remains responsive during the short check.
+For headless display configurations with timelapse enabled, `START_PRINT`
+checks whether the previous timelapse is still finishing, capturing, exporting
+frames, or rendering through a short local Moonraker request. If it is busy, or
+Moonraker cannot confirm it is idle, the virtual SD file pauses before print
+preparation and shows Wait, Cancel print, and Continue anyway (risky) actions.
+After Wait, a dedicated progress screen keeps Cancel print, Continue anyway,
+and the emergency ABORT action available. A delayed G-code check starts print
+preparation only when Moonraker confirms the timelapse is idle. The virtual SD
+file remains paused through preparation; cancellation releases and cancels it
+through the standard print cancellation path. If the initial frame parks the
+head, the file resumes only after the snapshot finishes and the head returns.
+The capture uses the base pause's `PAUSE_STATE`, saved before retracting or
+changing coordinate modes. It restores the head, compensates the capture
+retract, and restores the original G-code modes before either resuming SD or
+handing the pause to the normal client pause setup. A user pause requested
+during capture stays paused; the first-frame screen shows that pause and
+enables Resume after restoration, even before `print_started` becomes true.
+Rejected Resume attempts keep the file held. Cancel uses the standard forced
+SD release followed by cancellation; late capture callbacks cannot move or
+resume a stopped print, and completed captures cannot restore twice.
+Moonraker observes `_START_PRINT.print_active` to release the previous render and frames
+when print preparation begins. While the next file waits, Moonraker can finish
+the previous timelapse; continuing starts a new frame sequence immediately and
+stops the old finalization. Klipper's reactor remains responsive during the short check.
 [`timelapse_ffmpeg.sh`](../.root/timelapse_ffmpeg.sh) runs it at
 nice level 19. [`S99root`](../.shell/S99root) binds the stock FFmpeg,
 x264, loader and library directories into separate paths in the Moonraker

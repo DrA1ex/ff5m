@@ -443,7 +443,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertIn("HEATING THE NOZZLE", drawing)
         self.assertNotIn("POSITIONING, EXTRUDING, OR FINISHING", drawing)
 
-    def test_cold_pull_cancel_uses_shared_operation_dialog(self):
+    def test_cold_pull_cancel_uses_shared_operation_page(self):
         controller = calibration_controller()
         batches = []
         commands = []
@@ -476,14 +476,14 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertFalse(session.cold_pull_cancel_dispatched)
         self.assertEqual(commands, [])
 
-    def test_cold_pull_poll_does_not_overwrite_cancel_dialog(self):
+    def test_cold_pull_poll_does_not_overwrite_cancel_page(self):
         controller = calibration_controller()
         batches = []
         controller.renderer.send = batches.append
         session = controller.extruder_calibration
         session.phase = "cold_pull"
         session.cold_pull_material = "PLA"
-        controller.dialogs = [FEATHER.ScreenDialog.CANCEL_CONFIRM]
+        controller.page = FEATHER.ScreenPage.OPERATION_CANCEL
         controller.operation_context = types.SimpleNamespace(
             get_status=lambda eventtime: {
                 "context_path": ("Cold Pull",),
@@ -496,8 +496,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller._poll_cold_pull_progress(10.0, force=True)
 
         self.assertEqual(batches, [])
-        self.assertEqual(controller._current_dialog(),
-                         FEATHER.ScreenDialog.CANCEL_CONFIRM)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.OPERATION_CANCEL)
 
     def test_cold_pull_runs_on_its_feature_page_without_blocking_loader(self):
         controller = calibration_controller()
@@ -716,6 +715,35 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(commands, ["M107", "BEEP"])
         self.assertTrue(session.cooling_beeped)
         self.assertEqual(session.phase, "remove")
+
+    def test_cooling_updates_state_and_preserves_modal_output(self):
+        from tests.feather_render_test_helper import RenderCapture
+
+        controller = calibration_controller()
+        session = controller.extruder_calibration
+        session.phase = "cooling"
+        controller.renderer = FEATHER.FeatherRenderer()
+        rendering = RenderCapture(controller.renderer)
+        def paint():
+            controller.renderer.send(controller.renderer.begin_page("Cooling") + [
+                controller.renderer.text(40, 100, str(session.temperature))])
+        controller._paint_page = paint
+        controller._render_extruder_calibration = paint
+        controller._show_message("Cooling message", controller.page)
+        frames = len(rendering.frames)
+
+        controller.extruder.status.update(temperature=70.0, target=0.0)
+        controller._poll_extruder_calibration(100.0)
+
+        self.assertEqual(session.temperature, 70.0)
+        self.assertEqual(len(rendering.frames), frames)
+        self.assertFalse(rendering.latest.has_text("70.0"))
+        self.assertTrue(rendering.latest.has_text("Cooling message"))
+        self.assertEqual(set(controller.renderer._buttons), {"message.ok"})
+
+        controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
+        self.assertTrue(rendering.latest.has_text("70.0"))
+        self.assertFalse(rendering.latest.has_text("Cooling message"))
 
     def test_prepare_runs_head_fan_at_full_speed_while_cooling(self):
         controller = calibration_controller()

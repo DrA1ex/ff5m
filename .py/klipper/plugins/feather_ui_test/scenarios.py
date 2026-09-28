@@ -233,7 +233,7 @@ class ScenarioCatalog:
         self._add_call(steps, "ui-message-background-control",
                        lambda: self._change_page_under_dialog(
                            ScreenPage.CONTROL_HOME, ScreenDialog.MESSAGE))
-        self._add_capture(steps, "ui-message-over-control")
+        self._add_capture(steps, "ui-message-background-held")
         self._add_tap(steps, "message.ok", ScreenPage.CONTROL_HOME,
                       label="ui-message-dismiss")
         self._add_capture(steps, "ui-message-dismissed-control")
@@ -245,7 +245,7 @@ class ScenarioCatalog:
         self._add_call(steps, "ui-prompt-background-control",
                        lambda: self._change_page_under_dialog(
                            ScreenPage.CONTROL_HOME, ScreenDialog.ACTION_PROMPT))
-        self._add_capture(steps, "ui-prompt-over-control")
+        self._add_capture(steps, "ui-prompt-background-held")
         self._add_call(steps, "ui-prompt-dismiss",
                        self._dismiss_navigation_prompt)
         self._add_capture(steps, "ui-prompt-dismissed-control")
@@ -1302,7 +1302,7 @@ class ScenarioCatalog:
                 "busy_phase": 2,
                 "_operation_context_status": lambda eventtime=None: operation,
         }):
-            self._show(ScreenDialog.CANCEL_CONFIRM)
+            self._show(ScreenPage.OPERATION_CANCEL)
 
     def _render_recovery_cleanup(self):
         with _temporary_attributes(self.host, {"recovery_action": "cleanup"}):
@@ -1815,7 +1815,7 @@ class ScenarioCatalog:
             raise RuntimeError("Recovery action prompt did not open")
 
     def _show(self, page):
-        self.host.dialogs = []
+        self.host._clear_dialogs()
         if isinstance(page, ScreenDialog):
             self.host._show_dialog(page)
             if self.host._current_dialog() != page:

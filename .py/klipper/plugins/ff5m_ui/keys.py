@@ -9,6 +9,7 @@ from ui.identity import PageKey
 
 class AppPage(PageKey):
     __key_namespace__ = "ui.pages.keys.AppPage"
+    SCREEN_ROOT = "screen.root"
     HOME = "home.dashboard"
     PRINTING = "printing.active"
     HEAT = "heat.control"

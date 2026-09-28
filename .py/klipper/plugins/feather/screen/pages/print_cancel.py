@@ -7,7 +7,7 @@
 import logging
 
 from ui import ThemeColor
-from ff5m_ui.screen import ScreenDialog, ScreenPage
+from ff5m_ui.screen import ScreenPage
 
 
 class PrintCancelPagesMixin:
@@ -28,6 +28,36 @@ class PrintCancelPagesMixin:
 
     def _handle_print_action(self, action):
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
+        if stats == "printing" and self._timelapse_user_pause():
+            stats = "paused"
+        if (action in ("print.resume", "print.cancel")
+                and self._timelapse_start_held() and not self._timelapse_user_pause()):
+            if action == "print.resume":
+                if self._timelapse_start_waiting():
+                    self._run_script("RESUME")
+                else:
+                    self._toast("Print preparation is in progress")
+                return
+            if action == "print.cancel":
+                waiting = self._timelapse_start_waiting()
+                if (not waiting
+                        and self._operation_context_status()["contexts"]):
+                    self._open_operation_cancel(
+                        self.page,
+                        self._accept_print_operation_cancel,
+                        self._clear_print_operation_cancel)
+                    return
+                self._show_message(
+                    ("Cancel this print while it waits for the previous timelapse?"
+                     if waiting else "Cancel this print during preparation?"),
+                    self.page,
+                    actions=(("timelapse.wait.cancel", "CANCEL PRINT", "danger"),
+                             ("message.ok", "GO BACK", "enabled")),
+                    title="Cancel print?")
+                return
+        if action == "print.resume" and self._timelapse_frame_status().get("is_paused"):
+            self._toast("Timelapse frame is still being captured")
+            return
         if action in ("print.pause", "print.filament"):
             if not self._print_controls_ready():
                 self._toast("Available after print preparation")
@@ -86,6 +116,34 @@ class PrintCancelPagesMixin:
                 self._accept_print_operation_cancel,
                 self._clear_print_operation_cancel)
 
+    def _timelapse_start_status(self):
+        printer = getattr(self, "printer", None)
+        if printer is None:
+            return {}
+        guard = printer.lookup_object(
+            "gcode_macro _TIMELAPSE_START_GUARD", None)
+        return (guard.get_status(self.reactor.monotonic())
+                if guard is not None else {})
+
+    def _timelapse_start_waiting(self):
+        return bool(self._timelapse_start_status().get("waiting"))
+
+    def _timelapse_start_held(self):
+        return bool(self._timelapse_start_status().get("sd_held"))
+
+    def _timelapse_frame_status(self):
+        printer = getattr(self, "printer", None)
+        if printer is None:
+            return {}
+        frame = printer.lookup_object("gcode_macro TIMELAPSE_TAKE_FRAME", None)
+        return frame.get_status(self.reactor.monotonic()) if frame is not None else {}
+
+    def _timelapse_user_pause(self):
+        pause = getattr(self, "pause_resume", None)
+        return bool(self._timelapse_frame_status().get("user_pause_requested")
+                    and pause is not None
+                    and pause.get_status(self.reactor.monotonic()).get("is_paused"))
+
     def _reconcile_print_action(self):
         """Show the state reached by a completed operation immediately."""
         eventtime = self.reactor.monotonic()
@@ -107,13 +165,18 @@ class PrintCancelPagesMixin:
             "cancel_target_mode")
         self.cancel_mode = ("confirm" if operation["cancel_available"]
                             else "not_cancelable")
-        self._show_dialog(ScreenDialog.CANCEL_CONFIRM, page=return_page)
+        self.operation_cancel_return_page = return_page
+        self._show_page(ScreenPage.OPERATION_CANCEL)
 
     def _close_operation_cancel(self):
         if getattr(self, "cancel_mode", None) == "pending":
             return
+        return_page = getattr(self, "operation_cancel_return_page", None)
         self._reset_operation_cancel()
-        self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
+        if self.page == ScreenPage.OPERATION_CANCEL:
+            if return_page == ScreenPage.TIMELAPSE_WAIT:
+                return_page = self.page_for_print_state()
+            self._show_page(return_page or ScreenPage.IDLE_HOME)
 
     def _reset_operation_cancel(self):
         self.cancel_mode = None
@@ -122,6 +185,7 @@ class PrintCancelPagesMixin:
         self.operation_cancel_request_id = None
         self.operation_cancel_target_name = None
         self.operation_cancel_target_mode = None
+        self.operation_cancel_return_page = None
 
     def _handle_operation_cancel_action(self, action):
         if action == "operation.cancel.back":
@@ -167,7 +231,7 @@ class PrintCancelPagesMixin:
             callback(result)
         if interrupting_wait:
             self._run_immediate_command("M108")
-            if (self._current_dialog() == ScreenDialog.CANCEL_CONFIRM
+            if (self.page == ScreenPage.OPERATION_CANCEL
                     and self.cancel_mode == "pending"):
                 self._render_cancel_confirm()
 
@@ -185,10 +249,27 @@ class PrintCancelPagesMixin:
         if started and not self.cancel_waiting_for_heat:
             try:
                 self._run_script("_CONTEXT_CANCEL_POINT")
-            except Exception:
-                # Delivering the request aborts the print by raising. The print
-                # state transition reports it, so this is not an action failure.
-                logging.info("[feather_screen] print cancellation delivered")
+            except Exception as exc:
+                # Successful cooperative interruption also raises. The manager
+                # reports cleanup failure separately; print state confirms stop.
+                logging.info("[feather_screen] cancellation dispatch ended: %s", exc)
+                error = self._operation_context_status().get("cancel_error")
+                if error and self.pending_action == "print.cancel.confirm":
+                    self._show_print_cancel_failure(error)
+            self._reconcile_print_action()
+
+    def _show_print_cancel_failure(self, error):
+        eventtime = self.reactor.monotonic()
+        state = self.print_stats.get_status(eventtime).get("state")
+        stopped = (state in ("cancelled", "complete", "error", "standby")
+                   and not self.virtual_sdcard.is_active())
+        self._clear_print_operation_cancel({})
+        self._reset_operation_cancel()
+        self._reconcile_print_state(eventtime)
+        self._show_message(
+            str(error) + ("" if stopped else "\nThe print is still active. Use ABORT to stop it."),
+            self.page_for_print_state(),
+            title="Print stopped; cleanup failed" if stopped else "Print cancellation failed")
 
     def _clear_print_operation_cancel(self, result):
         del result
@@ -203,15 +284,13 @@ class PrintCancelPagesMixin:
         interrupt = (getattr(
             self, "operation_cancel_target_mode", None) == "interruptible")
         if self.cancel_mode == "not_cancelable":
-            commands = self.renderer.dialog(
-                "Cannot cancel safely", (), (), x=24, y=65, width=752,
-                height=370, tone="warning", custom_body=True)
+            commands = self.renderer.begin_page("Cannot cancel safely")
             commands.append(self.renderer.text(
-                400, 145, "THIS OPERATION HAS NO SAFE CANCEL POINT",
+                400, 175, "THIS OPERATION HAS NO SAFE CANCEL POINT",
                 ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
                 "middle", max_width=720, truncate=True))
             commands.append(self.renderer.text(
-                400, 205, "ABORT STOPS THE PRINTER IMMEDIATELY (M112)",
+                400, 225, "ABORT STOPS THE PRINTER IMMEDIATELY (M112)",
                 ThemeColor.DIM, "JetBrainsMono 8pt", "center", "middle"))
             commands += self.renderer.button(
                 "operation.cancel.back", 100, 285, 260, 100,
@@ -223,11 +302,10 @@ class PrintCancelPagesMixin:
             return
         if self.cancel_mode == "pending":
             label = self._cancel_progress_label()
-            commands = self.renderer.dialog(
+            commands = self.renderer.begin_page(
                 "%s %s" % (
                     "INTERRUPTING" if interrupt else "CANCELLING",
-                    target.upper()), (), (), x=24, y=65, width=752,
-                height=370, tone="warning", custom_body=True)
+                    target.upper()))
             commands.append(self.renderer.text(
                 400, 170, label, ThemeColor.WARNING,
                 "JetBrainsMono Bold 16pt", "center", "middle",
@@ -253,11 +331,9 @@ class PrintCancelPagesMixin:
             self.renderer.send(commands)
             self._last_cancel_label = label
             return
-        commands = self.renderer.dialog(
+        commands = self.renderer.begin_page(
             "%s %s?" % (
-                "Interrupt" if interrupt else "Cancel", target), (), (),
-            x=24, y=65, width=752, height=370, tone="warning",
-            custom_body=True)
+                "Interrupt" if interrupt else "Cancel", target))
         commands.append(self.renderer.text(400, 170,
                                            "The operation will stop at a safe point",
                                            ThemeColor.WARNING, "Roboto 16pt", "center", "middle"))
@@ -285,7 +361,8 @@ class PrintCancelPagesMixin:
         return "WILL STOP AT THE NEXT STEP"
 
     def _update_cancel_progress(self):
-        if (self._current_dialog() != ScreenDialog.CANCEL_CONFIRM
+        if (self.page != ScreenPage.OPERATION_CANCEL
+                or self._current_dialog() is not None
                 or self.cancel_mode != "pending"):
             return
         label = self._cancel_progress_label()

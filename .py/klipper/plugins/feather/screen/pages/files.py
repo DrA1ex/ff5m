@@ -168,7 +168,7 @@ class FileBrowserPagesMixin:
         self.file_entry_loaded_at[source] = self.reactor.monotonic()
         if source == self.file_source:
             self.file_entries = entries
-        if (self.page == ScreenPage.FILE_BROWSER
+        if (self._page_paint_allowed(ScreenPage.FILE_BROWSER)
                 and source == self.file_source):
             self._render_file_browser()
             if message is not None:

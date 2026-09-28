@@ -519,6 +519,22 @@ class OperationContextManagerTest(unittest.TestCase):
             "CLEAN_NOZZLE_ABORT", "CANCEL_PRINT"])
         self.assertTrue(any("cleanup" in item for item in command.responses))
 
+    def test_failed_print_cleanup_publishes_failure_with_error(self):
+        outcomes = []
+        self.printer.register_event_handler(
+            "operation_context:end", lambda *args: outcomes.append(args))
+        self.run_command("_CONTEXT_BEGIN", TYPE="print")
+        self.manager.request_cancel()
+        def fail_cleanup(script):
+            raise RuntimeError("cancel handler failed")
+        self.printer.gcode.script_hook = fail_cleanup
+        with self.assertRaisesRegex(RuntimeError, "cancellation failed"):
+            self.manager.cmd_CONTEXT_CANCEL_POINT(FakeCommand())
+        self.assertEqual(outcomes[-1][1], "cancel_failed")
+        self.assertIn("cancel handler failed", self.status()["cancel_error"])
+        self.assertFalse(self.status()["cancel_pending"])
+        self.assertEqual(self.status()["contexts"], ())
+
     def test_invalid_commands_warn_and_do_not_mutate(self):
         commands = (
             ("_CONTEXT_END", {}),

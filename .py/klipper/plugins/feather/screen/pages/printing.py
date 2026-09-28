@@ -52,8 +52,54 @@ def _render_gcode_preview(path, cancel=None):
 
 
 class PrintingPagesMixin:
+    def _render_timelapse_wait(self):
+        commands = self.renderer.begin_page("WAITING FOR TIMELAPSE")
+        commands.append(self.renderer.text(
+            400, 155, "WAITING FOR THE PREVIOUS TIMELAPSE",
+            ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
+            "middle", max_width=700, truncate=True))
+        commands.append(self.renderer.text(
+            400, 200, "THE PRINT STARTS WHEN ITS STATUS IS CONFIRMED",
+            ThemeColor.DIM, "JetBrainsMono 8pt", "center",
+            "middle", max_width=700, truncate=True))
+        commands += self._timelapse_wait_loader_commands()
+        commands += self.renderer.button(
+            "print.resume", 85, 310, 290, 75,
+            "RISKY: CONTINUE", state="warning",
+            font="JetBrainsMono Bold 10pt")
+        commands += self.renderer.button(
+            "print.cancel", 425, 310, 290, 75,
+            "CANCEL PRINT", state="danger",
+            font="JetBrainsMono Bold 10pt")
+        self.renderer.send(commands)
+
+    def _timelapse_wait_loader_commands(self):
+        phase = getattr(self, "busy_phase", 0)
+        return [self.renderer.fill(
+            290 + index * 48, 255, 32, 12,
+            ThemeColor.PRIMARY if index == phase % 5 else ThemeColor.MUTED)
+            for index in range(5)]
+
+    def _update_timelapse_wait(self):
+        if self._current_dialog() is not None:
+            return
+        self.busy_phase = (getattr(self, "busy_phase", 0) + 1) % 5
+        self.renderer.send(
+            self._timelapse_wait_loader_commands(),
+            kind="animation", key="timelapse-wait-loader")
+
+    def _sync_timelapse_wait_page(self):
+        if (self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
+                and self._timelapse_start_waiting()
+                and not self._timelapse_user_pause()):
+            self._show_page(ScreenPage.TIMELAPSE_WAIT)
+        elif self.page == ScreenPage.TIMELAPSE_WAIT:
+            target = self.page_for_print_state()
+            if target != ScreenPage.TIMELAPSE_WAIT:
+                self._show_page(target)
+
     def _render_print_page(self):
-        paused = self.print_state == PrintState.PAUSED
+        paused = self.print_state == PrintState.PAUSED or self._timelapse_user_pause()
         controls_ready = self._print_controls_ready()
         eventtime = self.reactor.monotonic()
         print_stats = getattr(self, "print_stats", None)
@@ -382,6 +428,12 @@ class PrintingPagesMixin:
         return eventtime + GCODE_PREVIEW_LOADER_PERIOD
 
     def _print_controls_ready(self):
+        if self._timelapse_frame_status().get("is_paused"):
+            return False
+        if self._timelapse_user_pause():
+            return True
+        if self._timelapse_start_held():
+            return False
         if getattr(self, "print_state", None) == PrintState.PREPARING:
             return False
         start = getattr(self, "start_print_macro", None)

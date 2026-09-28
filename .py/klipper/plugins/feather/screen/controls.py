@@ -856,7 +856,7 @@ class FeatherControlsMixin:
             state = self.print_stats.get_status(
                 self.reactor.monotonic())["state"]
             if (state != "paused" or self.cancel_requested
-                    or self._current_dialog() == ScreenDialog.CANCEL_CONFIRM):
+                    or self.page == ScreenPage.OPERATION_CANCEL):
                 logging.info(
                     "[feather_screen] filament page ignored in state=%s "
                     "page=%s cancel=%s",
@@ -1274,7 +1274,11 @@ class FeatherControlsMixin:
         stats = self.print_stats.get_status(eventtime)
         if stats.get("state") not in ("printing", "paused"):
             return False
-        if self.print_state == PrintState.PREPARING:
+        if self._timelapse_frame_status().get("is_paused"):
+            return False
+        if (self.print_state == PrintState.PREPARING
+                or (self._timelapse_start_held()
+                    and not self._timelapse_user_pause())):
             return False
         homed = str(
             self.toolhead.get_status(eventtime).get("homed_axes", "")).lower()
@@ -1832,7 +1836,10 @@ class FeatherControlsMixin:
         return prompt.get("title", "").strip().casefold() == "resurrection"
 
     def _action_prompt_is_cold_pull(self):
-        prompt = self.action_prompt or {}
+        current = self._current_dialog_instance()
+        prompt = (current.content
+                  if current is not None and current.kind == ScreenDialog.ACTION_PROMPT
+                  else self.action_prompt or {})
         return prompt.get("title", "").strip().casefold() == "cold pull"
 
     def _show_action_prompt(self):
@@ -1850,19 +1857,20 @@ class FeatherControlsMixin:
                 return
             self._show_page(ScreenPage.RECOVERY_PROMPT)
             return
-        self._show_dialog(ScreenDialog.ACTION_PROMPT)
+        self.action_prompt["_layer"] = self._show_dialog(ScreenDialog.ACTION_PROMPT)
 
     def _end_action_prompt(self):
         mirrored_recovery = self.page in (
             ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)
         cold_pull = self._action_prompt_is_cold_pull()
+        layer = (self.action_prompt or {}).get("_layer")
         self.action_prompt = None
         self.action_prompt_page = 0
-        self._close_dialog(ScreenDialog.ACTION_PROMPT)
-        if (cold_pull
-                and self._current_dialog() == ScreenDialog.CANCEL_CONFIRM):
+        self._close_dialog(layer or ScreenDialog.ACTION_PROMPT)
+        if cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
+            return_page = self.operation_cancel_return_page
             self._reset_operation_cancel()
-            self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
+            self._show_page(return_page or ScreenPage.EXTRUDER_CALIBRATION)
         if mirrored_recovery:
             self.recovery_action = None
             self._show_page(self.page_for_print_state())
@@ -1887,7 +1895,16 @@ class FeatherControlsMixin:
         elif action == "show":
             self._show_action_prompt()
         elif action == "end":
-            self._end_action_prompt()
+            if not payload or (self.action_prompt is not None
+                               and self.action_prompt["title"] == payload):
+                self._end_action_prompt()
+            else:
+                root = getattr(self, "_screen_root", None)
+                if root is not None:
+                    for layer in tuple(root.layers):
+                        if (layer.kind == ScreenDialog.ACTION_PROMPT
+                                and layer.content.get("title") == payload):
+                            self._close_dialog(layer)
 
     def _handle_gcode_output(self, message):
         if any(line.strip() == "// action:forge_x_shutting_down"
@@ -1913,15 +1930,19 @@ class FeatherControlsMixin:
                 self.calibration_results.append(result)
 
     def _handle_action_prompt_action(self, action):
-        prompt = self.action_prompt
-        if prompt is None:
+        prompt = self._dialog_content(ScreenDialog.ACTION_PROMPT)
+        if not prompt:
             return
         if action == "prompt.prev":
-            self.action_prompt_page = max(0, self.action_prompt_page - 1)
-            self._render_action_prompt()
+            current = self._current_dialog_instance()
+            if current is not None:
+                current.page = max(0, current.page - 1)
+            self._render_dialog()
         elif action == "prompt.next":
-            self.action_prompt_page += 1
-            self._render_action_prompt()
+            current = self._current_dialog_instance()
+            if current is not None:
+                current.page += 1
+            self._render_dialog()
         elif action.startswith("prompt.button."):
             button = prompt["buttons"].get(action)
             if button is not None and button["command"]:
@@ -1969,7 +1990,7 @@ class FeatherControlsMixin:
         if "cold_pull" in operation.get("context_types", ()):
             self._render_operation_cold_pull("Cold Pull", "coldpull.cancel")
             return
-        prompt = self.action_prompt or {
+        prompt = self._dialog_render_content(ScreenDialog.ACTION_PROMPT) or {
             "text": [], "rows": [], "footer": []}
         buttons = [button for row in prompt["rows"] for button in row]
         columns = adaptive_grid_columns(len(buttons)) if buttons else 1

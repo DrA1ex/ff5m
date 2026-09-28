@@ -40,7 +40,7 @@ class RenderedMacro:
 _SECTION = re.compile(r"^\s*\[([^]]+)\]\s*(?:[#;].*)?$")
 
 
-def load_macro(path, name, section="gcode_macro"):
+def load_macro(path, name, section="gcode_macro", gcode_option="gcode"):
     sections = _read_sections(path)
     section_name = "%s %s" % (section, name)
     matches = [options for current, options in sections
@@ -51,8 +51,8 @@ def load_macro(path, name, section="gcode_macro"):
             % (section_name, path, len(matches)))
 
     options = matches[0]
-    if "gcode" not in options:
-        raise MacroConfigError("[%s] has no gcode option" % section_name)
+    if gcode_option not in options:
+        raise MacroConfigError("[%s] has no %s option" % (section_name, gcode_option))
 
     variables = {}
     for option, value in options.items():
@@ -66,12 +66,12 @@ def load_macro(path, name, section="gcode_macro"):
             raise MacroConfigError(
                 "invalid literal for %s in [%s]: %s"
                 % (option, section_name, error)) from error
-    return MacroSource(name, options["gcode"], variables)
+    return MacroSource(name, options[gcode_option], variables)
 
 
 def render_macro(path, name, *, printer=None, params=None, rawparams="",
-                 variables=None, section="gcode_macro"):
-    macro = load_macro(path, name, section)
+                 variables=None, section="gcode_macro", gcode_option="gcode"):
+    macro = load_macro(path, name, section, gcode_option)
     context = dict(macro.variables)
     if variables:
         context.update(variables)
@@ -159,6 +159,57 @@ def execute_macro_chain(macros, entry, *, printer=None, params=None):
     root_rawparams = " ".join(
         "%s=%s" % (name, value) for name, value in root_params.items())
     return tuple(execute(entry_key, root_params, root_rawparams, ()))
+
+
+class MacroExecution:
+    """Execute macro variables and delayed callbacks against a G-code adapter."""
+
+    def __init__(self, macros, printer, terminal, refresh=lambda: None):
+        self.macros = {name.upper(): (path, section) for path, name, section in macros}
+        self.printer = printer
+        self.terminal = terminal
+        self.refresh = refresh
+        self.timers = {}
+        self.commands = []
+        self.stack = []
+        for name, (path, section) in self.macros.items():
+            if section == "gcode_macro":
+                self.printer.setdefault("gcode_macro " + name,
+                                        load_macro(path, name, section).variables)
+
+    def run(self, command):
+        command = command.split(";", 1)[0].strip()
+        if not command:
+            return
+        name, _, rawparams = command.partition(" ")
+        name = name.upper()
+        if name in self.macros or name in ("SET_GCODE_VARIABLE", "UPDATE_DELAYED_GCODE"):
+            params = dict(argument.split("=", 1) for argument in shlex.split(rawparams))
+        if name == "SET_GCODE_VARIABLE":
+            self.printer["gcode_macro " + params["MACRO"]][params["VARIABLE"]] = ast.literal_eval(params["VALUE"])
+        elif name == "UPDATE_DELAYED_GCODE":
+            self.timers[params["ID"]] = float(params["DURATION"])
+        elif name in self.macros:
+            if name in self.stack:
+                raise MacroConfigError("recursive macro call: " + " -> ".join(self.stack + [name]))
+            self.refresh()
+            path, section = self.macros[name]
+            rendered = render_macro(path, name, section=section, printer=self.printer,
+                                    params=params, rawparams=rawparams,
+                                    variables=self.printer.get("gcode_macro " + name))
+            self.stack.append(name)
+            try:
+                for child in rendered.commands:
+                    self.run(child)
+            finally:
+                self.stack.pop()
+        else:
+            self.commands.append(command)
+            self.terminal(command)
+
+    def fire(self, timer):
+        if self.timers.pop(timer, 0) > 0:
+            self.run(timer)
 
 
 def _read_sections(path):

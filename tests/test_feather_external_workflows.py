@@ -234,9 +234,10 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.assertEqual(feature.calibration_results, [{"name": "existing"}])
         self.assertEqual(self.host.page, Page.CALIBRATION_PROGRESS)
 
-    def test_cancel_confirmation_closes_when_external_operation_finishes(self):
+    def test_cancel_page_closes_when_external_operation_finishes(self):
         self.begin("bed_screws")
-        self.host.dialogs = [Dialog.CANCEL_CONFIRM]
+        self.host.operation_cancel_return_page = Page.CALIBRATION_PROGRESS
+        self.host.page = Page.OPERATION_CANCEL
         self.host.cancel_mode = "confirm"
         self.finish()
         self.flush()
@@ -250,6 +251,22 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.flush()
         self.assertEqual(self.host.page, Page.CALIBRATION_RESULT)
         self.assertEqual(self.feature().calibration_error, "Operation interrupted")
+        self.assertFalse(self.feature()._tuning_save_available())
+
+    def test_cleanup_failure_reports_an_error_instead_of_a_calibration_result(self):
+        self.context.register_context_type(FakeConfig(self.printer, "operation_context_type pid_bed", {
+            "on_cancel": "STOP_TUNING", "cancel_mode": "cancelable"}))
+        self.context.cmd_CONTEXT_BEGIN(FakeCommand(TYPE="pid_bed"))
+        def fail_cleanup(script):
+            raise RuntimeError("tuning cleanup failed")
+        self.printer.gcode.script_hook = fail_cleanup
+        self.context.request_cancel()
+        with self.assertRaisesRegex(RuntimeError, "cancellation failed"):
+            self.context.cmd_CONTEXT_CANCEL_POINT(FakeCommand())
+        self.flush()
+        self.assertEqual(self.host.page, Page.CALIBRATION_RESULT)
+        self.assertIn("tuning cleanup failed", self.feature().calibration_error)
+        self.assertFalse(self.feature().calibration_cancelled)
         self.assertFalse(self.feature()._tuning_save_available())
 
     def test_cancel_from_fluidd_finishes_as_cancelled(self):

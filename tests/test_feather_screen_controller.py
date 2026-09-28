@@ -43,6 +43,14 @@ from feather.calibration.extruder import FeatherExtruderCalibrationMixin
 from tests.feather_render_test_helper import RenderCapture
 
 
+def capture_batches(renderer, batches):
+    """Observe admitted output while exercising the real renderer lifecycle."""
+    def submit(batch):
+        batches.append(batch.commands)
+        return True
+    renderer._batch_queue.put_nowait = submit
+
+
 class ScenarioController(FeatherZCalibrationMixin,
                          FeatherExtruderCalibrationMixin,
                          FEATHER.FeatherScreen):
@@ -167,7 +175,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._read_text = lambda _path: ""
         controller._refresh_local_timezone = lambda: None
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
 
         controller._render_home()
 
@@ -240,6 +248,7 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_every_page_routes_to_a_renderer(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.renderer = FEATHER.FeatherRenderer()
         called = []
         routes = {
             FEATHER.ScreenPage.IDLE_HOME: "_render_home",
@@ -453,7 +462,7 @@ class ControllerSafetyTest(unittest.TestCase):
         })()
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
 
         def render_menu():
             controller.renderer.send(
@@ -489,7 +498,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.page = FEATHER.ScreenPage.IDLE_HOME
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.extruder = StatusObject({"temperature": 20.0, "target": 0.0})
         controller.heater_bed = StatusObject({"temperature": 21.0, "target": 0.0})
         controller.toolhead = StatusObject({"homed_axes": ""})
@@ -529,7 +538,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.extruder = StatusObject(
             {"temperature": 299.0, "target": 300.0})
         controller.heater_bed = StatusObject(
@@ -610,7 +619,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller._require_idle = lambda: None
         pages = []
         controller._show_page = pages.append
@@ -628,7 +637,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.calibration_kind = "pid_bed"
         controller.calibration_material = "PETG"
         controller._limited_preheat = lambda material: (250, 70)
@@ -670,7 +679,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.calibration_kind = "shaper"
         controller.calibration_error = None
         controller.calibration_cancelled = False
@@ -718,7 +727,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.reactor = Reactor()
         controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.0, None, "", -0.25, False)
@@ -736,7 +745,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(
             0.0, None, "", -0.25, False, safe_z=8.0)
@@ -765,7 +774,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PRINTING
         controller.print_stats = StatusObject({"state": "printing"})
@@ -795,7 +804,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.reactor = Reactor()
         controller.print_state = FEATHER.PrintState.PAUSED
         controller.print_stats = StatusObject({"state": "paused"})
@@ -965,7 +974,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.heating_profiles = {}
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.calibration_material = "n/a"
         controller.calibration_clean_nozzle = True
 
@@ -1398,6 +1407,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.operation_cancel_target_mode = None
         controller.cancel_mode = None
         controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller.renderer = mock.MagicMock()
+        controller.renderer.output_frozen = False
         controller._show_page = lambda page: setattr(controller, "page", page)
         controller._render_screen = lambda: controller._render_dialog()
         controller._render_cancel_confirm = lambda: None
@@ -1429,7 +1440,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertTrue(controller.calibration_cancel_requested)
         self.assertTrue(controller.calibration_cancel_dispatched)
 
-    def test_calibration_cancel_dialog_is_not_blocked_by_active_macro(self):
+    def test_calibration_cancel_page_is_not_blocked_by_active_macro(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller.calibration_kind = "mesh"
@@ -1470,9 +1481,10 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.reactor = Reactor()
         controller.dimmed = False
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.dialog(
+        controller.renderer.send(controller.renderer.dialog(
             "MCU restart required", (),
-            (("error.firmware_restart", "FIRMWARE RESTART", "danger"),))
+            (("error.firmware_restart", "FIRMWARE RESTART", "danger"),)))
+        controller.renderer._batch_queue.get(timeout=0)
         controller.renderer.freeze_output()
 
         controller._handle_button_feedback(
@@ -1520,7 +1532,7 @@ class ControllerSafetyTest(unittest.TestCase):
         })()
         controller.reactor = Reactor()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.renderer.set_header_action("global.abort", "ABORT")
         controller._render_calibration_progress()
         initial_generation = controller.renderer.generation
@@ -1573,7 +1585,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.params = type("Params", (), {"variables": {
             "backlight": 50, "backlight_eco": 10, "sound": 1,
             "chamber_light": 40}})()
@@ -2393,7 +2405,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.page = FEATHER.ScreenPage.PRINTING
         controller._last_progress = None
         controller._progress_floor = 0.0
@@ -2691,7 +2703,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.reactor = Reactor()
         controller.filament_material = "PLA"
         controller.filament_from_pause = True
@@ -2713,7 +2725,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.reactor = Reactor()
         controller.filament_material = "PETG"
         controller.filament_from_pause = False
@@ -2924,7 +2936,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_error = None
         controller.calibration_cancelled = True
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
 
         controller._render_calibration_result()
 
@@ -3014,7 +3026,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_error = None
         controller.calibration_cancelled = False
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
 
         controller._render_calibration_result()
 
@@ -3296,7 +3308,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.error_message = "MCU 'mcu' shutdown: Timer too close"
         controller.error_recovery = "firmware_restart"
 
@@ -3313,7 +3325,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
         controller.dialogs = [FEATHER.ScreenDialog.ERROR]
         controller.error_message = "MCU shutdown"
@@ -3347,8 +3359,12 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_touch_warning_waits_until_startup_loader_is_replaced(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller._paint_page = lambda: controller.renderer.send(
+            controller.renderer.begin_page("Ready") + controller.renderer.button(
+                "ready.confirm", 220, 300, 360, 100, "CONTINUE"))
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.touch_available = True
         controller.touch_warning_visible = False
         controller.renderer.startup_modal(
@@ -3373,7 +3389,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.shutdown_active = False
         controller.system_shutdown_active = False
         controller.page = FEATHER.ScreenPage.IDLE_HOME
@@ -3406,6 +3422,10 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_system_shutdown_replaces_queued_touch_warning(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller._render_home = lambda: controller.renderer.send(
+            controller.renderer.begin_page("Ready") + controller.renderer.button(
+                "ready.confirm", 220, 300, 360, 100, "CONTINUE"))
         controller.shutdown_active = False
         controller.system_shutdown_active = False
         controller.boot_screen_held = False
@@ -3436,7 +3456,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.page = FEATHER.ScreenPage.CONTROL_HEAT
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.renderer.footer(
             "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
         controller.renderer.begin_page("Control heat")
@@ -3494,6 +3514,10 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_touch_warning_waits_for_boot_screen_release(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
+        controller.page = FEATHER.ScreenPage.IDLE_HOME
+        controller._paint_page = lambda: controller.renderer.send(
+            controller.renderer.begin_page("Ready") + controller.renderer.button(
+                "ready.confirm", 220, 300, 360, 100, "CONTINUE"))
         controller.renderer.hold_output()
         controller.boot_screen_held = True
         controller.print_state = FEATHER.PrintState.IDLE
@@ -3595,7 +3619,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.error_message = (
             "Shutdown caused by a toolhead communication timeout while the "
             "printer was waiting for the motion queue to finish safely")
@@ -3620,7 +3644,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.error_message = (
             "MCU 'mcu' shutdown: Timer too close. This often indicates that "
             "the host computer is overloaded. Check the Klipper log and the "
@@ -3656,16 +3680,17 @@ class ControllerSafetyTest(unittest.TestCase):
             with self.subTest(title=title):
                 controller = ScenarioController.__new__(ScenarioController)
                 controller.renderer = FEATHER.FeatherRenderer()
-                batches = []
-                controller.renderer.send = batches.append
                 controller.page = FEATHER.ScreenPage.IDLE_HOME
-                controller._show_page = lambda page: controller._render_dialog()
-                controller._render_screen = controller._render_dialog
+                controller._paint_page = lambda: controller.renderer.send(
+                    controller.renderer.begin_page("Ready") + controller.renderer.button(
+                        "ready.confirm", 220, 300, 360, 100, "CONTINUE"))
+                controller.page = FEATHER.ScreenPage.IDLE_HOME
 
                 controller._show_message(
                     message, FEATHER.ScreenPage.IDLE_HOME, title=title)
 
-                drawing = "\n".join(batches[0])
+                drawing = "\n".join(
+                    controller.renderer._batch_queue.get(timeout=0).commands)
                 self.assertIn(title.upper(), drawing)
                 self.assertNotIn('-t "MESSAGE"', drawing)
                 if message:
@@ -3679,7 +3704,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.error_message = (
             "MCU 'mcu' shutdown: Timer too close\n"
             + ("Once the underlying issue is corrected, reload the\n"
@@ -3727,7 +3752,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.recovery_action = "cleanup"
 
         controller._render_recovery_confirm()
@@ -3743,7 +3768,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
         batches = []
-        controller.renderer.send = batches.append
+        capture_batches(controller.renderer, batches)
         controller.action_prompt_page = 0
 
         def button(index, label):

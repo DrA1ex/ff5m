@@ -760,7 +760,8 @@ class FeatherExtruderCalibrationMixin:
         session.temperature = temperature
         if target != 0.0:
             session.cooling_message = "SET THE HEATER TARGET BACK TO 0 C"
-            if force or old_display != int(temperature):
+            if ((force or old_display != int(temperature))
+                    and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
                 self._render_extruder_calibration()
             return
         session.cooling_message = None
@@ -775,7 +776,8 @@ class FeatherExtruderCalibrationMixin:
             self._show_page(ScreenPage.EXTRUDER_CALIBRATION)
             if should_beep:
                 self._run_script("BEEP", show_notice=False)
-        elif force or old_display != int(temperature):
+        elif ((force or old_display != int(temperature))
+              and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
             self._render_extruder_calibration()
 
     def _poll_cold_pull_progress(self, eventtime, force=False):

@@ -7,7 +7,7 @@
 import logging
 
 from ui.lazy import LazyModule
-from ff5m_ui.screen import ScreenDialog, ScreenPage
+from ff5m_ui.screen import ScreenPage
 from feather.features.manager import FeatureHostProxy
 from feather.screen.controls import FeatherControlsMixin
 
@@ -138,17 +138,21 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
             return
         self.external_context_id = None
         try:
-            cancel_dialog = (
-                self._current_dialog() == ScreenDialog.CANCEL_CONFIRM)
-            if (self.page != ScreenPage.CALIBRATION_PROGRESS
-                    or self._safety_print_active(eventtime)):
+            cancel_page = self.page == ScreenPage.OPERATION_CANCEL
+            showing_calibration = (
+                self.page == ScreenPage.CALIBRATION_PROGRESS
+                or (cancel_page and self.operation_cancel_return_page
+                    == ScreenPage.CALIBRATION_PROGRESS))
+            if not showing_calibration or self._safety_print_active(eventtime):
                 return
-            if cancel_dialog:
+            if cancel_page:
                 self._reset_operation_cancel()
-                self._close_dialog(ScreenDialog.CANCEL_CONFIRM)
             self.calibration_cancelled = outcome == "cancelled"
-            self.calibration_error = (
-                "Operation interrupted" if outcome == "interrupted" else None)
+            if outcome == "cancel_failed":
+                self.calibration_error = (self._operation_context_status().get("cancel_error")
+                                          or "Operation cleanup failed")
+            else:
+                self.calibration_error = "Operation interrupted" if outcome == "interrupted" else None
             if self.calibration_kind == "recovery":
                 status = (self.resurrection.get_status(eventtime)
                           if self.resurrection is not None else {})

@@ -57,6 +57,7 @@ class OperationContextManager:
         self.contexts = []
         self.pending_cancel = None
         self.cancelling = False
+        self.cancel_error = None
         self.revision = 0
         self.next_frame_id = 1
         self.next_cancel_request_id = 1
@@ -140,6 +141,7 @@ class OperationContextManager:
                               if self.contexts else None),
             "cancel_available": target is not None,
             "cancel_pending": pending is not None,
+            "cancel_error": self.cancel_error,
             "cancel_request_id": (
                 pending.request_id if pending is not None else None),
             "cancel_target_id": (target.frame_id if target else None),
@@ -175,6 +177,7 @@ class OperationContextManager:
             self.next_cancel_request_id, target.frame_id)
         self.next_cancel_request_id += 1
         self.pending_cancel = request
+        self.cancel_error = None
         self._changed()
         logging.info(
             "[operation_context] cancellation request #%d for %s#%d",
@@ -341,9 +344,10 @@ class OperationContextManager:
         try:
             self.gcode.run_script_from_command(cleanup)
         except Exception as exc:
+            error = "cleanup for '%s' failed: %s" % (frame.definition.name, exc)
             self._warn(
-                gcmd, "cleanup for '%s' failed: %s" % (
-                    frame.definition.name, exc))
+                gcmd, error)
+            return error
 
     def _abort_cancelled_operation(self, gcmd, target):
         target_index = self.contexts.index(target)
@@ -352,14 +356,23 @@ class OperationContextManager:
         self.pending_cancel = None
         self.cancelling = True
         self._changed()
+        errors = []
         try:
             for frame in frames:
-                self._run_cleanup(frame, gcmd)
+                error = self._run_cleanup(frame, gcmd)
+                if error is not None:
+                    errors.append(error)
         finally:
             self.cancelling = False
+        self.cancel_error = "; ".join(errors) or None
+        self._changed()
         if target_index == 0:
             self.printer.send_event(
-                "operation_context:end", target.frame_id, "cancelled")
+                "operation_context:end", target.frame_id,
+                "cancel_failed" if errors else "cancelled")
+        if errors:
+            raise gcmd.error("Operation cancellation failed: %s: %s" % (
+                target.definition.name, self.cancel_error))
         raise gcmd.error(
             "Operation cancelled: %s" % (target.definition.name,))
 

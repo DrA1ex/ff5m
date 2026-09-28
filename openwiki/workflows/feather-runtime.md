@@ -71,6 +71,54 @@ display=FEATHER
 
 `feather_screen.py` owns UI state, page transitions, safety validation, and printer actions. `typer` only renders display-list commands and maps named hitboxes to opaque touch-event strings. It does not execute G-code, control the MCU, or launch shell commands.
 
+### Screen composition and input admission
+
+The shared `ui.screen.ScreenRoot` owns ordinary output admission. It composes
+the page and transient `ScreenLayer` instances through the existing `PageTree`,
+including its overlap and modal input rules. Background status and worker
+callbacks keep updating their data while a dialog is visible, but background
+paints, including layout changes, are deferred. Closing the dialog redraws the
+page from current data; there is no separate queue of deferred paint requests.
+
+FF5M's `PaintSurface` adapter retains the existing page painters. A direct
+renderer submission may remain a delta when the page allows it and has no
+active layers. With a modal dialog, a background submission is rejected and
+its prepared input changes are discarded. With a blocking loader, the root
+repaints the loader. A new callback therefore does not need a modal visibility
+guard. Page checks select subscribers; they do not own the display.
+
+An actual `ScreenPage` transition replaces the root's content node and paints
+the new page, backdrop, and retained dialog once. Transitions between pages of
+one workflow follow the same rule. Refreshing the same page leaves its visible
+background unchanged. Dialog updates and layer lifecycle changes remain
+paintable. Renderer restart and dropped-frame recovery explicitly force a
+complete composition, because the framebuffer itself may need restoration.
+If recovery is requested during a send, the root retains it and submits a
+complete surface after that send finishes. A rejected recovery remains pending
+for the next paint; a full critical queue cannot trigger an unbounded retry.
+
+An accepted dialog instance owns its content, actions, and pagination. Product
+rules decide whether an incoming dialog replaces an instance or temporarily
+covers it. Messages cover prompts; the cancellation page suspends them;
+shutdown replaces them. A closed instance cannot be restored by inspecting
+old prompt data. The prompt protocol builder is separate from the accepted
+instance, so assembling the next prompt does not change visible actions.
+
+The renderer prepares interaction changes with each frame and commits them
+when the complete batch is admitted to its output queue. Frozen or held
+output prevents surface construction; rejection or a build exception restores
+the previous input map and generation. The root also retains the previously
+accepted dialog instance on rejection. Registered button feedback uses that
+accepted surface and remains available on frozen error screens. Queue admission
+is the boundary here; physical presentation remains asynchronous in Typer.
+
+Refreshing the same page and dialog instances keeps the input generation when
+their buttons, toggles, hitboxes, and header action are unchanged. This also
+applies to imperative painters that call `begin_page()`, such as Cold Pull
+status updates. A changed input map discards the provisional frame and builds
+one complete surface with fresh event IDs. Replacing a page or dialog always
+creates a new input generation.
+
 `feather_safety.py` composes named Klipper activity providers, bounded reference-counted operation leases, and armed-page reasons. Active printing, explicitly owned long-running G-code, motion, heating, temperature waits, joystick motion, and loaded-feature activity expose `global.abort` on every live page except Home. Direct heat and material controls expose it before an operation begins; movement controls do so only after at least one usable axis has been homed. Short bookkeeping G-code never toggles the emergency action, which prevents transient header redraws. Provider failures are fail-safe and cannot silently remove the M112 path; the renderer only receives the final visibility boolean.
 
 `_run_blocking_gcode()` owns a controller-level interaction lock for homing, probing, positioning, filament moves, Live Z saves, and similar loader operations. The loader is a new renderer generation, clears the entire page header and all previous hitboxes, and exposes only the global emergency action when safety policy requires it. The controller rechecks the lock both when a touch arrives and at action dispatch, so a queued Back event cannot escape the workflow underneath the loader. Calibration and recovery progress pages have no Back action and retain the command-depth gate for their long dispatcher-owned macros.
@@ -98,7 +146,12 @@ External macro launches use `operation_context:begin(frame_id, type)` and
 `operation_context:end(frame_id, outcome)` events. Only the outermost context
 publishes these boundaries; nested calibration inside a print, recovery, or
 another operation cannot claim the screen. Outcomes are `completed`,
-`cancelled`, and `interrupted` (including context reset and G-code errors).
+`cancelled`, `cancel_failed`, and `interrupted` (including context reset and
+G-code errors). A failed cleanup publishes its diagnostic as `cancel_error`
+and still lets remaining cleanup handlers run. Ending the context does not
+prove that a print stopped: Feather confirms a terminal `print_stats` state
+and inactive virtual SD before reporting cancellation. An active print with
+failed cleanup keeps the emergency ABORT action available.
 The context stack remains authoritative for phase text and cancellation.
 Feather also reconciles each new root frame from the normal status snapshot,
 so an active operation is still adopted if its one-shot begin event was missed.

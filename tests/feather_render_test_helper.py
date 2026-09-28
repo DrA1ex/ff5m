@@ -163,10 +163,15 @@ class RenderCapture:
     def __init__(self, renderer):
         self.frames = []
         self._renderer = renderer
-        renderer.send = self
+        renderer._batch_queue.put_nowait = self._submit
+
+    def _submit(self, batch):
+        self(batch.commands)
+        return True
 
     def __call__(self, commands):
         self.frames.append(RenderFrame(tuple(commands), self._renderer))
+        return True
 
     @property
     def latest(self):

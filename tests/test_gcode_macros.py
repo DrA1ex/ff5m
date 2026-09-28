@@ -26,6 +26,7 @@ MOTION_MACROS = (
     (BASE, "MOVE_SAFE"),
     (TIMELAPSE, "_TIMELAPSE_FINAL_PARK"),
     (CLIENT, "PAUSE"),
+    (CLIENT, "_CLIENT_PAUSE"),
     (CLIENT, "CANCEL_PRINT"),
     (CLIENT, "_TOOLHEAD_PARK_PAUSE_CANCEL"),
     (HEADLESS, "END_PRINT"),
@@ -1195,7 +1196,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             render_macro(SMART_PARK, "SMART_PARK", printer=printer)
 
     def test_pause_and_resume_publish_recovery_markers_around_base_calls(self):
-        pause = render_macro(CLIENT, "PAUSE", printer={
+        pause = execute_macro_chain(((CLIENT, "PAUSE"), (CLIENT, "_CLIENT_PAUSE")), "PAUSE", printer={
             "resurrection": {"supports_pause_markers": True},
             "gcode_macro _CLIENT_VARIABLE": {},
             "toolhead": {"extruder": "extruder"},
@@ -1217,13 +1218,13 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             "pause_resume": {"is_paused": True},
         })
 
-        assert_order(self, pause.commands, (
+        assert_order(self, pause, (
             "_RESURRECTION_PAUSE", "PAUSE_BASE",
             "_TOOLHEAD_PARK_PAUSE_CANCEL   Z_MIN=50.0",
         ))
         self.assertIn(
             "SET_GCODE_VARIABLE MACRO=RESUME VARIABLE=last_bed_temp "
-            "VALUE=\"{'restore': True, 'temp': 65}\"", pause.commands)
+            "VALUE=\"{'restore': True, 'temp': 65}\"", pause)
         assert_order(self, resume.commands, (
             "_CLIENT_EXTRUDE", "RESUME_BASE VELOCITY=50",
             "_RESURRECTION_RESUME",

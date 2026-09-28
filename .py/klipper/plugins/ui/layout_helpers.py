@@ -15,6 +15,8 @@ DIALOG_TITLE_FONT = "JetBrainsMono Bold 16pt"
 DIALOG_BODY_FONT = "JetBrainsMono 8pt"
 DIALOG_LIST_FONT = "JetBrainsMono 10pt"
 DIALOG_BUTTON_FONT = "JetBrainsMono Bold 12pt"
+DIALOG_BUTTON_MEDIUM_FONT = "JetBrainsMono Bold 10pt"
+DIALOG_BUTTON_COMPACT_FONT = "JetBrainsMono Bold 8pt"
 DIALOG_MIN_WIDTH = 480
 DIALOG_MIN_HEIGHT = 220
 DIALOG_TITLE_TOP = 22
@@ -57,18 +59,28 @@ def dialog_horizontal_bounds(width, title, labels, *, measure_text,
 def centered_button_row(labels, x, y, width, *, measure_text,
                         font="JetBrainsMono 8pt", height=50, padding=16,
                         minimum=144, maximum=360, gap=12, margin=18):
-    """Return equal, centered touch bounds sized for the widest label."""
+    """Return centered touch bounds sized for each button's own label."""
     labels = tuple(str(label) for label in labels)
     if not labels:
         return ()
-    label_width = max(measure_text(label, font) for label in labels)
-    available = max(1, (width - 2 * margin - gap * (len(labels) - 1))
-                    // len(labels))
-    button_width = min(available, maximum, max(minimum, label_width + 2 * padding))
-    group_width = len(labels) * button_width + gap * (len(labels) - 1)
+    available = max(len(labels), width - 2 * margin - gap * (len(labels) - 1))
+    widths = [min(maximum, max(minimum, measure_text(label, font) + 2 * padding))
+              for label in labels]
+    if sum(widths) > available:
+        floor = min(minimum, available // len(labels))
+        remaining = available - floor * len(labels)
+        weights = [max(0, item - floor) for item in widths]
+        total = sum(weights)
+        widths = [floor + remaining * item // total for item in weights]
+        for index in range(remaining - sum(item - floor for item in widths)):
+            widths[index % len(widths)] += 1
+    group_width = sum(widths) + gap * (len(labels) - 1)
     first_x = x + (width - group_width) // 2
-    return tuple((first_x + index * (button_width + gap), y,
-                  button_width, height) for index in range(len(labels)))
+    bounds = []
+    for button_width in widths:
+        bounds.append((first_x, y, button_width, height))
+        first_x += button_width + gap
+    return tuple(bounds)
 
 
 def dialog_vertical_bounds(y, height, line_count, has_buttons,
