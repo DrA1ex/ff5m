@@ -82,6 +82,7 @@ START_PRINT_EXECUTION_CHAIN = (
     (BASE, "_ENSURE_SERVICES_STARTED"),
     (BASE, "LOAD_GCODE_OFFSET"),
     (BASE, "_HOME_IF_NEEDED"),
+    (BASE, "_CHECK_NOZZLE_CONTACT"),
     (BASE, "_PREPARE_LEVELING"),
     (BASE, "_FULL_BED_LEVEL"),
     (BASE, "KAMP"),
@@ -114,6 +115,9 @@ def start_print_state(
         preparation_done=True,
         midi_start="",
         weight_check=False,
+        nozzle_contact_check=False,
+        weight_limit=1200,
+        load_weight=0.0,
         load_zoffset=False,
         filament_switch_sensor=False,
         filament_detected=True,
@@ -155,8 +159,11 @@ def start_print_state(
             "disable_skew": True,
             "midi_start": midi_start,
             "weight_check": weight_check,
+            "weight_check_max": weight_limit,
+            "nozzle_contact_check": nozzle_contact_check,
             "disable_priming": disable_priming,
         }},
+        "temperature_sensor weightValue": {"temperature": load_weight},
         "extruder": {"temperature": extruder_temperature,
                      "can_extrude": can_extrude},
         "bed_mesh": {
@@ -1508,6 +1515,58 @@ class StartPrintExecutionTest(unittest.TestCase):
             with self.subTest(parameter=parameter):
                 with self.assertRaises(MacroActionError):
                     run_start_print(**overrides)
+
+
+class NozzleContactCheckTest(unittest.TestCase):
+    """The parked nozzle must not already press on the bed at print start."""
+
+    def test_a_loaded_parked_nozzle_cancels_the_print_before_heating_waits(self):
+        for kamp in (False, True):
+            with self.subTest(use_kamp=kamp):
+                with self.assertRaises(MacroActionError):
+                    run_start_print(
+                        nozzle_contact_check=True, load_weight=1500,
+                        use_kamp=kamp)
+
+    def test_an_unloaded_nozzle_waits_for_the_load_to_settle_after_parking(self):
+        commands = run_start_print(nozzle_contact_check=True, load_weight=40)
+
+        assert_order(self, commands, (
+            "G1 X110 Y110 F6000",
+            "WAIT TIME=1000",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+        ))
+        self.assertFalse(any(
+            command.startswith("CANCEL_PRINT") for command in commands))
+
+        kamp = run_start_print(
+            nozzle_contact_check=True, load_weight=40, use_kamp=True)
+        assert_order(self, kamp, (
+            "SMART_PARK",
+            "WAIT TIME=1000",
+            "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+        ))
+
+    def test_the_check_can_be_disabled(self):
+        commands = run_start_print(nozzle_contact_check=False, load_weight=2000)
+
+        self.assertNotIn("WAIT TIME=1000", commands)
+
+    def test_limit_is_the_shared_load_cell_threshold(self):
+        def render(weight, limit=1200):
+            return render_macro(
+                BASE, "_CHECK_NOZZLE_CONTACT",
+                printer={
+                    "temperature_sensor weightValue": {"temperature": weight},
+                    "mod_params": {"variables": {"weight_check_max": limit}},
+                }).commands
+
+        self.assertEqual(render(1199.0), ())
+        self.assertEqual(render(2500.0, limit=3000), ())
+
+        (command,) = render(1200.0)
+        self.assertTrue(command.startswith("_RAISE_WITH_PRINT_CANCEL MSG="))
+        self.assertIn("pressing on the bed (1200 g)", command)
 
 
 class StartPrintDefaultMeshTest(unittest.TestCase):

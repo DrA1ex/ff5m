@@ -88,6 +88,7 @@
         "order": 2,
         "parameters": [
           "weight_check",
+          "nozzle_contact_check",
           "weight_check_max",
           "cell_weight",
           "bed_mesh_validation",
@@ -178,7 +179,7 @@
       },
       {
         "parameter": "weight_check_max",
-        "depends_on": "weight_check",
+        "depends_on": ["weight_check", "nozzle_contact_check"],
         "operator": "equals",
         "value": true
       },
@@ -637,8 +638,16 @@
       "type": "int",
       "default": 1200,
       "label": "Bed collision protection, weight",
-      "description": "Set the collision weight threshold.",
+      "description": "Load limit for bed checks.",
       "order": 11
+    },
+    {
+      "key": "nozzle_contact_check",
+      "type": "bool",
+      "default": 1,
+      "label": "Nozzle contact check",
+      "description": "Cancel if the nozzle touches the bed.",
+      "order": 16
     },
     {
       "key": "bed_mesh_validation",

@@ -835,7 +835,6 @@ class FeatherUtilitiesTest(unittest.TestCase):
         cases = (
             ("mod_check_update_interval", "mod_check_update", False, True),
             ("backlight_eco", "display_eco", False, True),
-            ("weight_check_max", "weight_check", False, True),
             ("bed_mesh_validation_clear", "bed_mesh_validation", False, True),
             ("bed_mesh_validation_tolerance", "bed_mesh_validation", False, True),
             ("load_zoffset_cleaning", "disable_cleaning", True, False),
@@ -851,6 +850,28 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 self.assertIn(
                     child, [param.key for param in
                             MOD_UI.visible_parameters(manager)])
+
+    def test_load_limit_is_visible_when_either_bed_check_is_enabled(self):
+        declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(declaration_path)
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        manager.variables = dict((param.key, param.default)
+                                 for param in manager.params)
+
+        def limit_visible(weight_check, contact_check):
+            manager.variables["weight_check"] = weight_check
+            manager.variables["nozzle_contact_check"] = contact_check
+            return "weight_check_max" in [
+                param.key for param in MOD_UI.visible_parameters(manager)]
+
+        self.assertFalse(limit_visible(False, False))
+        self.assertTrue(limit_visible(True, False))
+        self.assertTrue(limit_visible(False, True))
+        self.assertTrue(limit_visible(True, True))
 
     def test_update_check_declaration_exposes_runtime_defaults_and_bounds(self):
         declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"

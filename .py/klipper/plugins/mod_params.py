@@ -160,18 +160,24 @@ class ModParamManagement:
 
         dependency_by_parameter = {}
         for dependency in declaration_ui.get("strict_visibility_dependencies", []):
+            # "depends_on" is one parameter, or a list of parameters where any
+            # match makes the dependent visible.
+            parents = dependency.get("depends_on") if isinstance(dependency, dict) else None
+            if isinstance(parents, str):
+                parents = [parents]
             if (not isinstance(dependency, dict)
                     or not isinstance(dependency.get("parameter"), str)
-                    or not isinstance(dependency.get("depends_on"), str)
+                    or not isinstance(parents, list) or not parents
+                    or not all(isinstance(parent, str) for parent in parents)
                     or dependency.get("operator") != "equals"
                     or "value" not in dependency
                     or dependency["parameter"] in dependency_by_parameter):
                 raise ValueError("[mod_params]: Invalid UI visibility dependency!")
-            dependency_by_parameter[dependency["parameter"]] = {
-                "parameter": dependency["depends_on"],
-                "operator": dependency["operator"],
-                "value": dependency["value"],
-            }
+            conditions = [{"parameter": parent, "operator": dependency["operator"],
+                           "value": dependency["value"]} for parent in parents]
+            dependency_by_parameter[dependency["parameter"]] = (
+                conditions[0] if isinstance(dependency["depends_on"], str)
+                else {"any_of": conditions})
 
         for enum_name, enum_data in data.get("enums", {}).items():
             if enum_name in self.type_mapping:
@@ -206,13 +212,17 @@ class ModParamManagement:
                 if ui_category not in self.ui_categories_map:
                     raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" uses unknown ui.category!')
 
-            ui_visible_if = ui_data.get("visible_if", dependency_by_parameter.get(param_data["key"]))
+            # An explicit ui.visible_if is a single condition; strict dependencies
+            # (already validated above) may also carry several alternatives.
+            ui_visible_if = ui_data.get("visible_if")
+            if ui_visible_if is None:
+                ui_visible_if = dependency_by_parameter.get(param_data["key"])
+            elif (not isinstance(ui_visible_if, dict)
+                    or not isinstance(ui_visible_if.get("parameter"), str)
+                    or ui_visible_if.get("operator") != "equals"
+                    or "value" not in ui_visible_if):
+                raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" has invalid ui.visible_if!')
             if ui_visible_if is not None:
-                if (not isinstance(ui_visible_if, dict)
-                        or not isinstance(ui_visible_if.get("parameter"), str)
-                        or ui_visible_if.get("operator") != "equals"
-                        or "value" not in ui_visible_if):
-                    raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" has invalid ui.visible_if!')
                 ui_visible_if = dict(ui_visible_if)
 
             if issubclass(param_type, Enum):

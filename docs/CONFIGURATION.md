@@ -77,6 +77,10 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`weight_check`**: Enables bed collision protection if set to `1`.  
 
+- **`weight_check_max`**: Load limit in grams for bed collision protection and the nozzle contact check.  
+
+- **`nozzle_contact_check`**: Cancels the print at start if the parked nozzle already presses on the bed. On by default; set to `0` to disable. See [Printing](PRINTING.md#nozzle-contact-check-before-printing).  
+
 - **`bed_mesh_validation`**: Enables bed mesh validation protection if set to `1`.  
 
 - **`tune_config`**: Enables firmware parameter tuning for optimized settings (motors, extruder rotation distance, probing, Z-parking, etc.).  

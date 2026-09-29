@@ -53,6 +53,13 @@ def parameter_is_visible(manager, param):
     condition = getattr(param, "ui_visible_if", None)
     if not condition:
         return True
+    return _condition_holds(manager, condition)
+
+
+def _condition_holds(manager, condition):
+    alternatives = condition.get("any_of")
+    if alternatives is not None:
+        return any(_condition_holds(manager, item) for item in alternatives)
     if condition.get("operator") != "equals":
         return True
     parent_key = condition.get("parameter")

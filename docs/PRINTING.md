@@ -110,6 +110,14 @@ Read the related troubleshooting notes before enabling or tightening the thresho
 - [Sensor value exceeding the limit](FAQ.md#why-am-i-getting-shutdown-due-to-sensor-value-exceeding-the-limit)
 - [Endstop response or Timer too close](FAQ.md#why-am-i-getting-mcu-shutdown-with-unable-to-obtain-endstop_state-response-or-timer-too-close-during-start_print)
 
+### Nozzle contact check before printing
+
+Independently of `weight_check`, Forge-X checks the load cell right after the nozzle has parked at the start of every print. If the load is at or above `weight_check_max`, the print is cancelled with the message "the nozzle is pressing on the bed". This catches a wrong Z reference (for example after a reboot or update) before the nozzle can scratch the bed.
+
+- `nozzle_contact_check` — on by default; set it to `0` to disable the check.
+
+If the check cancels a print although nothing touches the bed, the load cell probably reads a wrong value while idle. Recalibrate it as described in [Bed pressure detected](FAQ.md#why-am-i-getting-a-bed-pressure-detected-error), or raise `weight_check_max`.
+
 > [!WARNING]
 > Do not set `weight_check_max` too low. The model's weight, normal nozzle contact, or an over-extruded area can otherwise cause false stops.
 
