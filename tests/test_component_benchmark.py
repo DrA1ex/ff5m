@@ -22,6 +22,8 @@ from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
 from ui import FeatherRenderer  # noqa: E402
 from ui.render_receipts import RenderReceipt  # noqa: E402
+from tests.feather_render_test_helper import (  # noqa: E402
+    RenderCapture, full_render_queue)
 
 
 class Reactor:
@@ -42,22 +44,13 @@ class Reactor:
         self.waketime = when
 
 
-class Renderer(FeatherRenderer):
-    def __init__(self):
-        super().__init__()
-        self.batches = []
-
-    def send(self, commands, kind=None, key=None, receipt=None):
-        self.batches.append((tuple(commands), kind, key, receipt))
-        return True
-
-
 class ComponentBenchmarkTest(unittest.TestCase):
     def feature(self):
         host = SimpleNamespace(
-            reactor=Reactor(), renderer=Renderer(),
+            reactor=Reactor(), renderer=FeatherRenderer(),
             page=ScreenPage.COMPONENT_BENCHMARK, print_state=PrintState.IDLE)
         host._show_page = lambda page: setattr(host, "page", page)
+        host.rendering = RenderCapture(host.renderer)
         feature = BenchmarkFeature(host)
         feature.initialize()
         feature.render(host.page)
@@ -139,14 +132,14 @@ class ComponentBenchmarkTest(unittest.TestCase):
         for _ in range(3):
             self.assertEqual(feature._tick(host.reactor.now), pending.deadline)
         self.assertIs(feature.prepared_frame, prepared)
-        self.assertEqual(len(host.renderer.batches), 1)
+        self.assertEqual(len(host.rendering.submitted), 1)
         self.assertEqual(feature.frame, 1)
         self.assertFalse(feature.receipt_times)
 
         host.reactor.now = 0.02
         feature.on_render_receipt(RenderReceipt(pending.token, True, 14700, 14000, 10000), 0.02)
         feature._tick(host.reactor.now)
-        self.assertEqual(host.renderer.batches[-1][0], tuple(prepared.commands))
+        self.assertEqual(host.rendering.submitted[-1].commands, tuple(prepared.commands))
         self.assertEqual(feature.frame, 2)
         self.assertEqual(len(feature.receipt_times), 1)
 
@@ -157,16 +150,14 @@ class ComponentBenchmarkTest(unittest.TestCase):
         token = feature.tracker.pending.token
         host.reactor.now = 0.02
         feature.on_render_receipt(RenderReceipt(token, True, 12000, 8000, 1000), 0.02)
-        send = host.renderer.send
-        host.renderer.send = lambda *args, **kwargs: False
-        feature._tick(0.02)
+        with full_render_queue(host.renderer):
+            feature._tick(0.02)
         self.assertIs(feature.prepared_frame, prepared)
         self.assertIsNone(feature.tracker.pending)
         self.assertEqual(feature.frame, 1)
-        host.renderer.send = send
         host.reactor.now = 0.04
         feature._tick(0.04)
-        self.assertEqual(host.renderer.batches[-1][0], tuple(prepared.commands))
+        self.assertEqual(host.rendering.submitted[-1].commands, tuple(prepared.commands))
 
     def test_cancel_reset_and_timeout_discard_prepared_geometry(self):
         for operation in ("back", "reset", "timeout", "failed"):
@@ -188,17 +179,18 @@ class ComponentBenchmarkTest(unittest.TestCase):
                 self.assertIsNone(feature.prepared_frame)
                 if operation in ("timeout", "failed"):
                     self.assertFalse(feature.active)
-                    self.assertTrue(any('-s 800 442' in command for command in host.renderer.batches[-1][0]))
-                count = len(host.renderer.batches)
+                    self.assertTrue(any('-s 800 442' in command for command in host.rendering.submitted[-1].commands))
+                count = len(host.rendering.submitted)
                 feature.on_render_receipt(RenderReceipt(old_token, True, 1, 1, 0), 1.2)
-                self.assertEqual(len(host.renderer.batches), count)
+                self.assertEqual(len(host.rendering.submitted), count)
 
     def test_pipeline_overlaps_build_and_render_without_exceeding_target(self):
         # Deterministic stage timings, not a host-speed performance assertion.
         for build_seconds, render_seconds in ((0.0185, 0.0147), (0.002, 0.003)):
             with self.subTest(build_seconds=build_seconds):
-                host = SimpleNamespace(reactor=Reactor(), renderer=Renderer(),
+                host = SimpleNamespace(reactor=Reactor(), renderer=FeatherRenderer(),
                                        page=ScreenPage.COMPONENT_BENCHMARK, print_state=PrintState.IDLE)
+                RenderCapture(host.renderer)
                 feature = BenchmarkFeature(host)
                 original_build = feature._build_frame
                 def build(*args, **kwargs):
@@ -230,15 +222,15 @@ class ComponentBenchmarkTest(unittest.TestCase):
 
     def test_targeted_frames_match_normal_component_updates(self):
         host = SimpleNamespace(
-            reactor=Reactor(), renderer=Renderer(),
+            reactor=Reactor(), renderer=FeatherRenderer(),
             page=ScreenPage.COMPONENT_BENCHMARK,
             print_state=PrintState.IDLE,
         )
         feature = BenchmarkFeature(host)
         regular = layout_page.create_page()
         targeted = layout_page.create_page()
-        regular_renderer = Renderer()
-        targeted_renderer = Renderer()
+        regular_renderer = FeatherRenderer()
+        targeted_renderer = FeatherRenderer()
         initial = feature._layout_state(0.0, True)
         regular_renderer.begin_page("Component benchmark", back=True)
         targeted_renderer.begin_page("Component benchmark", back=True)
@@ -266,7 +258,8 @@ class ComponentBenchmarkTest(unittest.TestCase):
         class Menu(HomePagesMixin):
             def __init__(self):
                 self.reactor = Reactor()
-                self.renderer = Renderer()
+                self.renderer = FeatherRenderer()
+                RenderCapture(self.renderer)
                 self.opened = []
 
             def _require_idle(self):
@@ -295,7 +288,8 @@ class ComponentBenchmarkTest(unittest.TestCase):
 
     def test_frames_reflow_wrapped_text_and_button_columns_and_publish_metrics(self):
         reactor = Reactor()
-        renderer = Renderer()
+        renderer = FeatherRenderer()
+        rendering = RenderCapture(renderer)
         host = SimpleNamespace(
             reactor=reactor, renderer=renderer,
             page=ScreenPage.COMPONENT_BENCHMARK,
@@ -318,14 +312,14 @@ class ComponentBenchmarkTest(unittest.TestCase):
 
         for frame in range(65):
             previous_card = tree.layout.rect(card)
-            token = renderer.batches[-1][3]
+            token = rendering.submitted[-1].receipt
             self.assertEqual(token, feature.tracker.pending.token)
             feature.on_render_receipt(
                 RenderReceipt(token, True, 12000, 8000, 1000),
                 reactor.now + 0.012)
             reactor.now += 0.15
             feature._tick(reactor.now)
-            commands = renderer.batches[-1][0]
+            commands = rendering.submitted[-1].commands
             if frame == 0:
                 current_card = tree.layout.rect(card)
                 for exposed in previous_card.subtract(current_card):
@@ -357,11 +351,11 @@ class ComponentBenchmarkTest(unittest.TestCase):
         self.assertGreater(feature.display_stats.python_ms, 0)
         self.assertTrue(any(
             "COMMIT FPS" in command
-            for batch in renderer.batches[1:] for command in batch[0]))
+            for batch in rendering.batches[1:] for command in batch))
         self.assertFalse(any(
             "-s 800 442" in command
-            for batch in renderer.batches[1:] for command in batch[0]))
-        self.assertEqual(renderer.batches[-1][2], "component-benchmark")
+            for batch in rendering.batches[1:] for command in batch))
+        self.assertEqual(rendering.submitted[-1].key, "component-benchmark")
         feature.back(host.page)
         self.assertEqual(host.page, ScreenPage.MAIN_MENU)
         self.assertFalse(feature.active)
@@ -369,7 +363,8 @@ class ComponentBenchmarkTest(unittest.TestCase):
 
     def test_timeout_stops_component_frames_and_reports_failure(self):
         reactor = Reactor()
-        renderer = Renderer()
+        renderer = FeatherRenderer()
+        rendering = RenderCapture(renderer)
         host = SimpleNamespace(
             reactor=reactor, renderer=renderer,
             page=ScreenPage.COMPONENT_BENCHMARK,
@@ -386,11 +381,12 @@ class ComponentBenchmarkTest(unittest.TestCase):
         self.assertIsNone(feature.tracker.pending)
         self.assertEqual(feature.display_status, "RECEIPT TIMEOUT")
         self.assertEqual(reactor.waketime, reactor.NEVER)
-        self.assertEqual(renderer.batches[-1][2], "render-benchmark-error")
+        self.assertEqual(rendering.submitted[-1].key, "render-benchmark-error")
 
     def test_existing_render_benchmark_still_cycles_modes(self):
         reactor = Reactor()
-        renderer = Renderer()
+        renderer = FeatherRenderer()
+        rendering = RenderCapture(renderer)
         host = SimpleNamespace(
             reactor=reactor, renderer=renderer,
             page=ScreenPage.RENDER_BENCHMARK,

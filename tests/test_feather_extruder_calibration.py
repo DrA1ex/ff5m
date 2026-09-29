@@ -33,6 +33,7 @@ HEATERS = importlib.util.module_from_spec(HEATER_SPEC)
 HEATER_SPEC.loader.exec_module(HEATERS)
 
 from tests.test_feather_screen import FEATHER, Reactor  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture  # noqa: E402
 
 
 class ScenarioController(EXTRUDER_CAL.FeatherExtruderCalibrationMixin,
@@ -362,7 +363,7 @@ class FakeCalibrationExtruder:
 def calibration_controller(path=None):
     controller = ScenarioController.__new__(ScenarioController)
     controller.renderer = FEATHER.FeatherRenderer()
-    controller.renderer.send = lambda commands: None
+    RenderCapture(controller.renderer)
     controller.reactor = Reactor()
     controller.extruder = FakeCalibrationExtruder()
     controller.extruder_calibration = EXTRUDER_CAL.ExtruderCalibrationSession(
@@ -395,8 +396,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller = calibration_controller()
         controller.cold_pull_materials = ()
         controller.cold_pull_profiles = {}
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
 
         controller._render_extruder_calibration()
 
@@ -409,8 +409,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
     def test_cold_pull_page_offers_cancel_for_the_whole_operation(self):
         controller = calibration_controller()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         session = controller.extruder_calibration
         session.phase = "cold_pull"
         session.cold_pull_material = "PLA"
@@ -444,9 +443,8 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
     def test_cold_pull_cancel_uses_shared_operation_page(self):
         controller = calibration_controller()
-        batches = []
         commands = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         session = controller.extruder_calibration
         session.phase = "cold_pull"
         session.cold_pull_material = "PLA"
@@ -477,8 +475,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
     def test_cold_pull_poll_does_not_overwrite_cancel_page(self):
         controller = calibration_controller()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         session = controller.extruder_calibration
         session.phase = "cold_pull"
         session.cold_pull_material = "PLA"
@@ -499,9 +496,8 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
     def test_cold_pull_runs_on_its_feature_page_without_blocking_loader(self):
         controller = calibration_controller()
-        batches = []
         events = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.temperature_wait = types.SimpleNamespace(
             variables={"active": False})
         lease = types.SimpleNamespace(
@@ -645,8 +641,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller = calibration_controller()
         session = controller.extruder_calibration
         session.phase = "input"
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
 
         for token in ("1", "0", "0", "dot", "5", "0", "0", "9"):
             controller._append_extruder_input(token)
@@ -716,7 +711,6 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(session.phase, "remove")
 
     def test_cooling_updates_state_and_preserves_modal_output(self):
-        from tests.feather_render_test_helper import RenderCapture
 
         controller = calibration_controller()
         session = controller.extruder_calibration
@@ -845,8 +839,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             controller._set_extruder_runtime_rotation = (
                 lambda value: (_ for _ in ()).throw(
                     RuntimeError("runtime rejected")))
-            batches = []
-            controller.renderer.send = batches.append
+            batches = RenderCapture(controller.renderer).batches
 
             controller._save_extruder_rotation(session.candidate)
 
@@ -868,8 +861,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             session = controller.extruder_calibration
             session.set_measurement("98")
             session.file_snapshot = EXTRUDER_CAL.inspect_user_cfg(path)
-            batches = []
-            controller.renderer.send = batches.append
+            batches = RenderCapture(controller.renderer).batches
             method_globals = (
                 controller._save_extruder_rotation.__func__.__globals__)
             original_writer = method_globals["write_user_rotation_distance"]
@@ -898,8 +890,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
                 "[extruder]\nrotation_distance: 4.380\n",
                 encoding="utf-8")
             controller = calibration_controller(path)
-            batches = []
-            controller.renderer.send = batches.append
+            batches = RenderCapture(controller.renderer).batches
             session = controller.extruder_calibration
             session.temperature = 45.0
             session.nozzle_removed = True

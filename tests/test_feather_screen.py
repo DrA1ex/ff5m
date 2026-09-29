@@ -32,7 +32,8 @@ from feather.network import protocol as NETWORK_PROTOCOL
 from ff5m_ui.move import runtime as MOVE_LAYOUT
 from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
 from feather.features.z import ZCalibrationFeature
-from tests.feather_render_test_helper import RenderFrame, RenderCapture
+from tests.feather_render_test_helper import (
+    RenderCapture, RenderFrame, full_render_queue)
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -189,8 +190,7 @@ def mod_param(key, param_type, default, label, description="Description",
 def mod_controller(params, variables):
     host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
     host.renderer = FEATHER.FeatherRenderer()
-    host.draw_batches = []
-    host.renderer.send = host.draw_batches.append
+    host.draw_batches = RenderCapture(host.renderer).batches
     host.params = ModManager(params, variables)
     host.reactor = Reactor()
     host.print_stats = StatusObject({"state": "standby"})
@@ -1408,15 +1408,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
 class RendererStateTest(unittest.TestCase):
     def test_touch_warning_wraps_body_and_invalidates_cached_footer(self):
         renderer = FEATHER.FeatherRenderer()
-        batches = []
-
-        def capture(commands):
-            if renderer.output_frozen:
-                return False
-            batches.append(commands)
-            return True
-
-        renderer.send = capture
+        batches = RenderCapture(renderer).batches
         renderer.footer(
             "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
         commands = renderer.begin_page("Ready")
@@ -1452,8 +1444,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_touch_warning_requires_an_interactive_surface(self):
         renderer = FEATHER.FeatherRenderer()
-        batches = []
-        renderer._batch_queue.put_nowait = lambda batch: (batches.append(batch.commands) or True)
+        batches = RenderCapture(renderer).batches
 
         renderer.startup_modal("INITIALIZING KLIPPER", "PLEASE WAIT")
         self.assertFalse(renderer.touch_warning_allowed)
@@ -1638,26 +1629,23 @@ class RendererStateTest(unittest.TestCase):
         screen._append_action_prompt_button("CONFIRM|OLD_COMMAND")
         screen._show_action_prompt()
         old_tap = screen.renderer._wire_action("prompt.button.0")
-        submit = screen.renderer._batch_queue.put_nowait
-        screen.renderer._batch_queue.put_nowait = lambda batch: False
-
-        screen._start_action_prompt("New")
-        screen._append_action_prompt_button("CONFIRM|NEW_COMMAND")
-        render_prompt = screen._render_action_prompt
-        def paint_new_prompt(instance):
+        with full_render_queue(screen.renderer):
+            screen._start_action_prompt("New")
+            screen._append_action_prompt_button("CONFIRM|NEW_COMMAND")
+            render_prompt = screen._render_action_prompt
+            def paint_new_prompt(instance):
+                screen._handle_action_prompt_action(screen.renderer.decode_action(old_tap))
+                render_prompt(instance)
+            screen._render_action_prompt = paint_new_prompt
+            screen._show_action_prompt()
+            screen._run_script.assert_called_once_with("OLD_COMMAND")
+            screen._run_script.reset_mock()
+            screen._render_action_prompt = render_prompt
+            screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT).painter = render_prompt
             screen._handle_action_prompt_action(screen.renderer.decode_action(old_tap))
-            render_prompt(instance)
-        screen._render_action_prompt = paint_new_prompt
-        screen._show_action_prompt()
-        screen._run_script.assert_called_once_with("OLD_COMMAND")
-        screen._run_script.reset_mock()
-        screen._render_action_prompt = render_prompt
-        screen._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT).painter = render_prompt
-        screen._handle_action_prompt_action(screen.renderer.decode_action(old_tap))
-        screen._run_script.assert_called_once_with("OLD_COMMAND")
-        screen._run_script.reset_mock()
+            screen._run_script.assert_called_once_with("OLD_COMMAND")
+            screen._run_script.reset_mock()
 
-        screen.renderer._batch_queue.put_nowait = submit
         screen._screen_root.paint()
         self.assertIsNone(screen.renderer.decode_action(old_tap))
         screen._handle_action_prompt_action("prompt.button.0")
@@ -2019,8 +2007,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_startup_modal_draws_pulsing_circle_and_loading_text(self):
         renderer = FEATHER.FeatherRenderer()
-        batches = []
-        renderer.send = batches.append
+        batches = RenderCapture(renderer).batches
 
         renderer.startup_modal("INITIALIZING KLIPPER", "STARTING", 0)
         renderer.startup_modal("INITIALIZING KLIPPER", "STARTING", 2)
@@ -2038,9 +2025,8 @@ class RendererStateTest(unittest.TestCase):
 
     def test_restart_startup_modal_cancels_late_toggle_animation_frames(self):
         renderer = FEATHER.FeatherRenderer()
-        batches = []
         callbacks = []
-        renderer._batch_queue.put_nowait = lambda batch: (batches.append(batch.commands) or True)
+        batches = RenderCapture(renderer).batches
         renderer.send(renderer.toggle("mod.item.0", 624, 101, 76, 38, False))
         renderer.animate_toggle(
             "mod.item.0", True,
@@ -2286,8 +2272,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_footer_is_preserved_across_page_frames(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
         renderer.footer(
             "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
 
@@ -2314,7 +2299,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_theme_change_repaints_cached_footer(self):
         renderer = FEATHER.FeatherRenderer()
-        renderer.send = lambda _commands: None
+        RenderCapture(renderer)
         renderer.footer(
             "NOZZLE 21/220C | BED 24/60C", "192.168.2.4 | IDLE")
 
@@ -2333,8 +2318,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_footer_repaint_removes_previous_fullscreen_overlay_pixels(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
         overlay = renderer.color(UI.ThemeColor.OVERLAY)
         renderer.startup_modal(
             "INITIALIZING KLIPPER", "INITIALIZING PRINTER SERVICES")
@@ -2472,8 +2456,7 @@ class RendererStateTest(unittest.TestCase):
     def test_toast_registers_dismiss_hitbox_in_overlay_layer(self):
         renderer = FEATHER.FeatherRenderer()
         renderer.begin_page("Home")
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
 
         renderer.toast("Saved")
 
@@ -2565,8 +2548,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_button_press_feedback_redraws_without_duplicate_hitbox(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer._batch_queue.put_nowait = lambda batch: (sent.append(batch.commands) or True)
+        sent = RenderCapture(renderer).batches
         renderer.send(renderer.button("nav.control", 20, 60, 200, 100, "CONTROL",
                         subtitle="Move and heat"))
         sent.clear()
@@ -2588,8 +2570,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertFalse(any("--id " in command for command in down))
 
         renderer.send(up + down)
-        sent = []
-        renderer._batch_queue.put_nowait = lambda batch: (sent.append(batch.commands) or True)
+        sent = RenderCapture(renderer).batches
         self.assertTrue(renderer.flash_button("mod.prev"))
         self.assertTrue(renderer.restore_button("mod.prev"))
         self.assertEqual(len(sent), 2)
@@ -2602,8 +2583,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_footer_updates_only_when_values_change(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
         renderer.footer("NOZZLE 20/0C | BED 25/0C", "Offline | IDLE")
         renderer.footer("NOZZLE 20/0C | BED 25/0C", "Offline | IDLE")
         renderer.footer("NOZZLE 21/0C | BED 25/0C", "Offline | IDLE")
@@ -2612,7 +2592,7 @@ class RendererStateTest(unittest.TestCase):
     def test_dynamic_list_and_keyboard_hitboxes_stay_between_chrome(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.send = lambda commands: None
+        RenderCapture(controller.renderer)
 
         controller.file_entries = [
             FILE_PAGES.FileEntry(
@@ -2666,8 +2646,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertTrue(renderer.set_theme("SYNTH"))
         header_background = renderer.color(UI.ThemeRole.HEADER_BACKGROUND)
         warning = renderer.color(UI.ThemeColor.WARNING)
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
         renderer.busy_notice("Klipper busy")
         renderer.busy_notice("Klipper busy")
         page = renderer.begin_page("Control")
@@ -2686,8 +2665,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_busy_notice_replaces_menu_until_command_finishes(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer.send = sent.append
+        sent = RenderCapture(renderer).batches
         renderer.busy_notice("Klipper busy")
 
         page = renderer.begin_page("Home")
@@ -2707,8 +2685,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_emergency_stop_has_priority_over_busy_notice_and_loader(self):
         renderer = FEATHER.FeatherRenderer()
-        sent = []
-        renderer._batch_queue.put_nowait = lambda batch: (sent.append(batch.commands) or True)
+        sent = RenderCapture(renderer).batches
         renderer.set_header_action("global.abort", "ABORT")
         page = renderer.begin_page("Printing", back=True)
         renderer.send(page)
@@ -2775,8 +2752,7 @@ class RendererStateTest(unittest.TestCase):
     def test_move_page_has_combined_homing_and_live_toolhead_status(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.reactor = Reactor()
         controller.jog_step = 1.0
         controller.toolhead = StatusObject({
@@ -2801,8 +2777,7 @@ class RendererStateTest(unittest.TestCase):
     def test_move_status_redraws_only_after_toolhead_changes(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.toolhead = StatusObject({
             "position": (1.0, 2.0, 10.0, 0.0),
             "homed_axes": "xyz",
@@ -2830,8 +2805,7 @@ class RendererStateTest(unittest.TestCase):
     def test_move_status_accepts_post_home_park_position(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.toolhead = StatusObject({
             "position": (120.0, 120.0, 230.0, 0.0),
             "homed_axes": "xyz",
@@ -2874,7 +2848,7 @@ class RendererStateTest(unittest.TestCase):
     def test_joystick_move_page_registers_two_continuous_regions(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        controller.renderer.send = lambda commands: None
+        RenderCapture(controller.renderer)
         controller.reactor = Reactor()
         controller.move_mode = "joystick"
         controller.joystick = type("Planner", (), {
@@ -2900,8 +2874,7 @@ class RendererStateTest(unittest.TestCase):
     def test_low_z_move_page_always_warns_and_reports_auto_profile_state(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.reactor = Reactor()
         controller.move_mode = "joystick"
         controller.move_caution_acknowledged = False
@@ -2943,8 +2916,7 @@ class RendererStateTest(unittest.TestCase):
     def test_joystick_feedback_tracks_cursor_and_position_in_realtime(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.toolhead = StatusObject({
@@ -3226,8 +3198,7 @@ class RendererStateTest(unittest.TestCase):
     def test_low_z_queued_position_is_used_for_immediate_caution(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.move_caution_signature = (False, None)
@@ -3262,8 +3233,7 @@ class RendererStateTest(unittest.TestCase):
     def test_low_z_overlay_keeps_z_feedback_live(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = []
-        controller.renderer.send = batches.append
+        batches = RenderCapture(controller.renderer).batches
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
         controller.move_mode = "joystick"
         controller.move_caution_signature = (True, "active")

@@ -221,17 +221,19 @@ assert not [name for name in sys.modules
     def test_features_load_sequentially_and_are_singletons(self):
         self.run_clean("""
 import sys
+sys.path.append(%r)
 import feather_screen
 from feather.features.manager import LazyFeatureManager
 from ff5m_ui.screen import ScreenPage
 from ui import FeatherRenderer
+from tests.feather_render_test_helper import RenderCapture
 
 class Host:
     pass
 
 host = Host()
 host.renderer = FeatherRenderer()
-host.renderer.send = lambda commands: None
+RenderCapture(host.renderer)
 host._setting = lambda key, default: default
 host.feature_manager = LazyFeatureManager(host, feather_screen.FEATURE_SPECS)
 manager = host.feature_manager
@@ -261,7 +263,7 @@ manager.get('extruder')
 assert 'feather.calibration.extruder' in sys.modules
 manager.get('settings')
 assert 'feather.settings.mod' in sys.modules
-""")
+""" % str(ROOT))
 
     def test_z_offset_constants_do_not_load_actions_or_pages(self):
         self.run_clean("""

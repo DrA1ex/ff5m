@@ -903,12 +903,8 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertEqual(
             controller.file_preview_request["key"][0], "/data/second.gcode")
 
-        feedback = []
-        send = controller.renderer.send
-        def capture_feedback(commands, **kwargs):
-            feedback.append(list(commands))
-            return send(commands, **kwargs)
-        controller.renderer.send = capture_feedback
+        feedback = rendering.batches
+        feedback.clear()
         self.assertTrue(controller.renderer.flash_button("file.item0"))
         self.assertTrue(controller.renderer.restore_button("file.item0"))
         self.assertEqual(len(feedback), 2)

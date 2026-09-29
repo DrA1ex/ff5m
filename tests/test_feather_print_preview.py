@@ -29,6 +29,7 @@ from ui.font_metrics import get_font_metrics  # noqa: E402
 
 from tests.feather_timelapse_test_helper import make_timelapse_state
 from tests.test_feather_screen import Reactor, StatusObject  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture  # noqa: E402
 
 
 class ScenarioController(FEATHER.FeatherScreen):
@@ -165,13 +166,7 @@ def _write_gcode(prefix="preview-"):
 def _controller(file_path, worker=None):
     controller = ScenarioController.__new__(ScenarioController)
     controller.renderer = FEATHER.FeatherRenderer()
-    controller.batches = []
-
-    def send(commands, **_kwargs):
-        controller.batches.append(list(commands))
-        return True
-
-    controller.renderer.send = send
+    controller.batches = RenderCapture(controller.renderer).batches
     controller.reactor = PreviewReactor()
     controller.print_state = PrintState.PRINTING
     controller.page = ScreenPage.PRINTING

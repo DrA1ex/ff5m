@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import shlex
 
@@ -158,19 +159,27 @@ class RenderFrame:
 
 
 class RenderCapture:
-    """Capture semantic frames submitted by one renderer."""
+    """Accept every batch at the Typer worker hand-off and record it.
+
+    Everything before the queue runs for real: composition, frame-owner
+    routing, surface acceptance, and visible-layer bookkeeping. ``submitted``
+    keeps each accepted ``RenderBatch`` with its kind, key, and receipt;
+    ``batches`` keeps just their command tuples; ``frames`` keeps the same
+    submissions as semantic UI frames with the controls registered at
+    submission time.
+    """
 
     def __init__(self, renderer):
+        self.submitted = []
+        self.batches = []
         self.frames = []
         self._renderer = renderer
         renderer._batch_queue.put_nowait = self._submit
 
     def _submit(self, batch):
-        self(batch.commands)
-        return True
-
-    def __call__(self, commands):
-        self.frames.append(RenderFrame(tuple(commands), self._renderer))
+        self.submitted.append(batch)
+        self.batches.append(batch.commands)
+        self.frames.append(RenderFrame(batch.commands, self._renderer))
         return True
 
     @property
@@ -178,3 +187,15 @@ class RenderCapture:
         if not self.frames:
             raise AssertionError("renderer has not submitted a frame")
         return self.frames[-1]
+
+
+@contextmanager
+def full_render_queue(renderer):
+    """Simulate a saturated Typer queue that refuses every submitted batch."""
+    queue = renderer._batch_queue
+    submit = queue.put_nowait
+    queue.put_nowait = lambda batch: False
+    try:
+        yield
+    finally:
+        queue.put_nowait = submit

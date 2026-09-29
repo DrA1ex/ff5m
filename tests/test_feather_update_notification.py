@@ -21,7 +21,7 @@ from feather.update_notification import (  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.screen import ScreenDialog, ScreenPage  # noqa: E402
 from ui import FeatherRenderer  # noqa: E402
-from tests.feather_render_test_helper import RenderFrame  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture, RenderFrame  # noqa: E402
 
 
 class Reactor:
@@ -84,8 +84,7 @@ class Host:
         self.reactor = Reactor()
         self.webhooks = Webhooks()
         self.renderer = FeatherRenderer()
-        self.draw_batches = []
-        self.renderer.send = self.draw_batches.append
+        self.draw_batches = RenderCapture(self.renderer).batches
         self.page = ScreenPage.IDLE_HOME
         self.dialog = None
         self.previous_page = ScreenPage.IDLE_HOME
