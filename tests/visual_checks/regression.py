@@ -590,11 +590,15 @@ def execute(args, output=None, progress=None):
                 item.get("semantic_page_id") for item in designer_records)),
         }
     else:
-        designer_case_ids = set(
-            item.get("case_id") for item in designer_records
-            if item.get("case_id"))
+        # COMPONENT captures typed page state, while dialog/OTA fixtures are
+        # rendered only by Designer and have no corresponding printer case.
+        component_case_ids = {
+            case["id"] for case in cases
+            if all(case.get(key) is None for key in (
+                "dialog_fixture", "message_fixture", "error_fixture", "ota_fixture"))
+        }
         hybrid.validate_printer_coverage(
-            ui_records, component_records, designer_case_ids,
+            ui_records, component_records, component_case_ids,
             require_component=args.mode == "parity")
         merged = hybrid.merge_hybrid(
             designer_records, ui_records, parity=args.mode == "parity",

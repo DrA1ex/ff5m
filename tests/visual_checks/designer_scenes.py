@@ -54,56 +54,68 @@ def _render_dialog_fixture(scene, fixture, project_root, theme):
     return scene
 
 
-def _render_message_fixture(scene, fixture, project_root, theme):
-    """Render the product's message dialog with the Designer renderer."""
+def _render_screen_dialog_fixture(scene, content, kind, page, project_root, theme):
+    """Capture a product dialog through its normal composition lifecycle."""
     plugins = project_root / ".py" / "klipper" / "plugins"
     sys.path.insert(0, str(plugins.resolve()))
     from feather_preview.ui import PreviewRenderer
-    from feather_screen import FeatherScreen
+    from feather_screen import FeatherScreen, ScreenDialog, ScreenPage
 
     renderer = PreviewRenderer(width=800, height=480)
     renderer.set_theme(theme)
     captured = []
-    renderer.send = lambda commands: captured.extend(commands)
+
+    def capture(commands, **_metadata):
+        if renderer._composite_commands is not None:
+            renderer._composite_commands.extend(commands)
+        else:
+            captured.extend(commands)
+            renderer._finish_surface(True)
+        return True
+
+    renderer.send = capture
     screen = FeatherScreen.__new__(FeatherScreen)
     screen.renderer = renderer
-    screen.message = fixture["message"]
-    screen.message_title = fixture.get("title")
-    screen.message_actions = tuple(
-        tuple(button) for button in fixture.get(
-            "buttons", (("message.ok", "OK", "enabled"),)))
-    screen.message_page = fixture.get("page", 0)
-    screen._render_message()
-    scene["operations"] = captured
-    scene["title"] = "Message / " + (screen.message_title or screen.message)
+    screen.page = ScreenPage.IDLE_HOME
+    screen._paint_page = lambda: None
+    # Standalone fixtures have no retained framebuffer to darken. Capture
+    # the dialog body, as before, without the native Typer scrim command.
+    screen._paint_dialog = lambda instance: instance.painter(instance)
+    instance = screen._show_dialog(ScreenDialog[kind], content=content)
+    if page:
+        instance.page = page
+        captured.clear()
+        screen._render_dialog()
+    scene["operations"] = list(captured)
     scene["palette"] = renderer.palette
     scene["diagnostics"] = []
+    screen._close_dialog(instance)
+    return scene
+
+
+def _render_message_fixture(scene, fixture, project_root, theme):
+    """Render the product's message dialog with the Designer renderer."""
+    content = {
+        "message": fixture["message"], "title": fixture.get("title"),
+        "actions": tuple(
+            tuple(button) for button in fixture.get(
+                "buttons", (("message.ok", "OK", "enabled"),))),
+    }
+    scene = _render_screen_dialog_fixture(
+        scene, content, "MESSAGE", fixture.get("page", 0), project_root, theme)
+    scene["title"] = "Message / " + (content["title"] or content["message"])
     return scene
 
 
 def _render_error_fixture(scene, fixture, project_root, theme):
     """Render the product's error dialog with the Designer renderer."""
-    plugins = project_root / ".py" / "klipper" / "plugins"
-    sys.path.insert(0, str(plugins.resolve()))
-    from feather_preview.ui import PreviewRenderer
-    from feather_screen import FeatherScreen
-
-    renderer = PreviewRenderer(width=800, height=480)
-    renderer.set_theme(theme)
-    captured = []
-    renderer.send = lambda commands: captured.extend(commands)
-    renderer.prioritize_next_batch = lambda *args: None
-    screen = FeatherScreen.__new__(FeatherScreen)
-    screen.renderer = renderer
-    screen.error_message = fixture["message"]
-    screen.error_category = fixture.get("category", "")
-    screen.error_recovery = fixture["recovery"]
-    screen.error_page = fixture.get("page", 0)
-    screen._render_error()
-    scene["operations"] = captured
+    content = {
+        "message": fixture["message"], "category": fixture.get("category", ""),
+        "recovery": fixture["recovery"], "terminal": False,
+    }
+    scene = _render_screen_dialog_fixture(
+        scene, content, "ERROR", fixture.get("page", 0), project_root, theme)
     scene["title"] = "Klipper error / " + fixture["message"].splitlines()[0]
-    scene["palette"] = renderer.palette
-    scene["diagnostics"] = []
     return scene
 
 

@@ -4,11 +4,42 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-"""Render a self-contained UI-regression review page around local images."""
+"""Render a multi-page, offline UI-regression review around local images.
 
+The report is a set of static pages that share one stylesheet and one script.
+Each page works on a single review aspect; only the gallery carries the full
+per-frame detail, and the other pages link to it by ``#frame-N``.
+"""
+
+import collections
 import html
 import pathlib
+import shutil
 import urllib.parse
+
+ASSETS = pathlib.Path(__file__).parents[1] / "report_assets"
+ASSET_NAMES = ("report.css", "report.js")
+
+PAGES = (
+    ("overview", "Overview"),
+    ("gallery", "Gallery"),
+    ("problems", "Problems"),
+    ("compare", "Compare"),
+    ("coverage", "Coverage"),
+    ("baselines", "Baselines"),
+    ("run", "Run"),
+)
+
+OUTCOMES = (
+    ("fail", "Fail"),
+    ("warn", "Warning"),
+    ("pass", "Pass"),
+    ("muted", "Not reviewed"),
+)
+
+NO_PAGE = "(no semantic page)"
+SEVERITY = {"fail": 0, "warn": 1, "muted": 2, "pass": 3}
+SLOWEST_FRAMES = 10
 
 
 def _text(value, fallback="—"):
@@ -33,6 +64,11 @@ def _badge(value):
         _class(value), _text(value or "not_run"))
 
 
+def _tokens(values):
+    """Encode values as the ``|a|b|`` list the page script matches against."""
+    return _text("|" + "|".join(str(item) for item in values) + "|")
+
+
 def _image_url(value):
     if not value:
         return None
@@ -43,7 +79,132 @@ def _image_url(value):
         urllib.parse.quote(path.as_posix(), safe="/"), quote=True)
 
 
-def _expectation(value):
+def _page_names(entry):
+    """Map every page slug to its file name; the overview is the entry."""
+    entry = pathlib.PurePosixPath(entry)
+    return {
+        slug: entry.name if slug == "overview"
+        else "%s-%s.html" % (entry.stem, slug)
+        for slug, _title in PAGES
+    }
+
+
+def _view(frame, number):
+    """Flatten one report frame into the values every page needs."""
+    shot = frame.get("screenshot") or {}
+    case = frame.get("case_result") or {}
+    models = frame.get("models") or ()
+    model = models[0] if models else {}
+    response = model.get("response")
+    response = response if isinstance(response, dict) else {}
+    verdict = case.get("verdict") or model.get("verdict") or frame.get(
+        "status") or "not_run"
+    error = case.get("error") or model.get("error")
+    elapsed = case.get("elapsed_seconds")
+    if elapsed is None:
+        elapsed = model.get("elapsed_seconds")
+    semantic = shot.get("semantic_page_id") or ""
+    title = (
+        shot.get("label") or shot.get("case_id") or shot.get("file")
+        or "Unlabelled frame")
+    return {
+        "number": number,
+        "title": title,
+        "verdict": verdict,
+        "outcome": _class(verdict),
+        "source": str(shot.get("source") or "unknown").lower(),
+        "image": _image_url(shot.get("artifact")),
+        "comparison": _image_url(shot.get("comparison_artifact")),
+        "page": shot.get("page") or (
+            semantic.rsplit(".", 1)[-1] if semantic else NO_PAGE),
+        "semantic_page_id": semantic,
+        "case_id": shot.get("case_id") or "",
+        "file": shot.get("file"),
+        "expectation": shot.get("expectation"),
+        "references": shot.get("expectation_references") or (),
+        "reasons": list(case.get("reasons") or model.get("reasons") or ()),
+        "error": error if isinstance(error, dict) else None,
+        "summary": response.get("summary"),
+        "checks": response.get("checks") or (),
+        "validation": (
+            case.get("json_validation") or model.get("json_validation")
+            or {"status": "not_run"}),
+        "elapsed": elapsed if isinstance(elapsed, (int, float)) else None,
+        "attempts": model.get("attempts"),
+    }
+
+
+def _problem_tokens(view):
+    """Check ids, evidence classes, and error categories behind a problem."""
+    checks, evidence, errors = [], [], []
+    for reason in view["reasons"]:
+        checks.append(reason.get("check_id") or "unspecified")
+        if reason.get("evidence_class"):
+            evidence.append(reason["evidence_class"])
+    if view["error"]:
+        errors.append(view["error"].get("category") or "error")
+    return sorted(set(checks)), sorted(set(evidence)), sorted(set(errors))
+
+
+def _search_text(view):
+    parts = [
+        view["title"], view["case_id"], view["page"], view["source"],
+        view["file"], view["summary"],
+    ]
+    parts.extend(item.get("reason") for item in view["reasons"])
+    return " ".join(str(item) for item in parts if item).lower()
+
+
+def _link(names, slug, fragment="", **query):
+    text = urllib.parse.urlencode(query)
+    return html.escape(
+        names[slug] + ("?" + text if text else "") + fragment, quote=True)
+
+
+def _frame_link(names, view):
+    return _link(names, "gallery", "#frame-%d" % view["number"])
+
+
+def _count(items, key):
+    return collections.Counter(key(item) for item in items)
+
+
+# --- shared fragments -------------------------------------------------------
+
+
+def _reasons_html(view):
+    reasons = view["reasons"]
+    if not reasons:
+        return ""
+    rows = []
+    for reason in reasons:
+        rows.append("<li>%s%s%s%s</li>" % (
+            _badge(reason.get("status")) + " " if reason.get("status") else "",
+            "<code>%s</code> " % _text(reason.get("check_id"))
+            if reason.get("check_id") else "",
+            '<span class="tag">%s</span>' % _text(reason.get("evidence_class"))
+            if reason.get("evidence_class") else "",
+            _text(reason.get("reason"), ""),
+        ))
+    return '<h4>Reasons</h4><ul class="reasons">%s</ul>' % "".join(rows)
+
+
+def _error_html(view):
+    error = view["error"]
+    if not error:
+        return ""
+    return '<div class="error"><strong>%s</strong><br>%s</div>' % (
+        _text(error.get("category"), "error"), _text(error.get("message"), ""))
+
+
+def _summary_html(view):
+    if not view["summary"]:
+        return ""
+    return '<p class="model-summary"><strong>Model summary:</strong> %s</p>' % (
+        _text(view["summary"]))
+
+
+def _expectation_html(value):
     if not isinstance(value, dict):
         return ""
     sections = (
@@ -66,120 +227,67 @@ def _expectation(value):
     return "".join(body)
 
 
-def _checklist(model):
-    response = model.get("response") if isinstance(model, dict) else None
-    checks = response.get("checks", ()) if isinstance(response, dict) else ()
+def _checklist_html(view):
+    checks = view["checks"]
     if not checks:
         return ""
-    rows = []
-    for check in checks:
-        rows.append(
-            "<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>" % (
-                _text(check.get("id")),
-                _badge(check.get("status")),
-                _text(check.get("reason"), ""),
-            ))
+    rows = "".join(
+        "<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>" % (
+            _text(check.get("id")), _badge(check.get("status")),
+            _text(check.get("reason"), ""))
+        for check in checks)
     return (
         '<details class="checks"><summary>Model checklist (%d)</summary>'
         "<table><thead><tr><th>Check</th><th>Status</th><th>Reason</th>"
         "</tr></thead><tbody>%s</tbody></table></details>"
-        % (len(rows), "".join(rows))
-    )
+        % (len(checks), rows))
 
 
-def _parity_result(model):
-    response = model.get("response") if isinstance(model, dict) else None
-    checks = response.get("checks", ()) if isinstance(response, dict) else ()
+def _parity_html(view):
     parity = next(
-        (item for item in checks if item.get("id") == "source_parity"),
+        (item for item in view["checks"] if item.get("id") == "source_parity"),
         None)
-    if parity is None:
+    if view["source"] != "parity" or parity is None:
         return ""
     return (
         '<div class="parity-result"><strong>Designer ↔ real printer:</strong>'
         " %s %s</div>" % (
-            _badge(parity.get("status")),
-            _text(parity.get("reason"), ""),
-        ))
+            _badge(parity.get("status")), _text(parity.get("reason"), "")))
 
 
-def _frame(frame, number):
-    screenshot = frame.get("screenshot", {})
-    case = frame.get("case_result", {})
-    models = frame.get("models", ())
-    model = models[0] if models else {}
-    verdict = case.get("verdict") or model.get("verdict") or frame.get(
-        "status") or "not_run"
-    source = screenshot.get("source") or "unknown"
-    image = _image_url(screenshot.get("artifact"))
-    comparison = _image_url(screenshot.get("comparison_artifact"))
-    title = (
-        screenshot.get("label")
-        or screenshot.get("case_id")
-        or screenshot.get("file")
-        or "Unlabelled frame"
+def _meta_html(view):
+    elapsed = view["elapsed"]
+    rows = (
+        ("Source", view["source"]),
+        ("Page", view["page"] if view["page"] != NO_PAGE else None),
+        ("Case", view["case_id"]),
+        ("Semantic page", view["semantic_page_id"]),
+        ("JSON", view["validation"].get("status")),
+        ("Elapsed", "%.3f s" % elapsed if elapsed is not None else None),
+        ("Attempts", view["attempts"]),
+        ("File", view["file"]),
     )
+    return "<dl>%s</dl>" % "".join(
+        "<div><dt>%s</dt><dd>%s</dd></div>" % (_text(name), _text(value))
+        for name, value in rows)
+
+
+def _images_html(view):
+    designer = view["source"] == "parity"
     images = []
-    if image:
-        primary_caption = "Designer" if source == "parity" else source
-        images.append(
-            '<figure><img loading="lazy" src="%s" alt="%s">'
-            "<figcaption>%s</figcaption></figure>" % (
-                image, _text(title), _text(primary_caption)))
-    if comparison:
-        comparison_caption = (
-            "Real printer Typer/framebuffer"
-            if source == "parity" else "comparison")
-        images.append(
-            '<figure><img loading="lazy" src="%s" alt="Comparison for %s">'
-            "<figcaption>%s</figcaption></figure>" % (
-                comparison, _text(title), _text(comparison_caption)))
-    if not images:
-        images.append('<div class="image-missing">Image unavailable</div>')
+    if view["image"] or not view["comparison"]:
+        images.append(_figure(
+            view["image"], view["title"],
+            "Designer" if designer else view["source"]))
+    if view["comparison"]:
+        images.append(_figure(
+            view["comparison"], "Comparison for " + view["title"],
+            "Real printer Typer/framebuffer" if designer else "comparison"))
+    return "".join(images)
 
-    reasons = case.get("reasons") or model.get("reasons") or ()
-    reason_html = ""
-    if reasons:
-        reason_html = "<h4>Reasons</h4><ul>%s</ul>" % "".join(
-            "<li>%s%s</li>" % (
-                (
-                    "<code>%s</code>: " % _text(reason.get("check_id"))
-                    if reason.get("check_id") else ""
-                ),
-                _text(reason.get("reason"), ""),
-            )
-            for reason in reasons
-        )
-    error = case.get("error") or model.get("error")
-    error_html = ""
-    if isinstance(error, dict):
-        error_html = (
-            '<div class="error"><strong>%s</strong><br>%s</div>' % (
-                _text(error.get("category"), "error"),
-                _text(error.get("message"), ""),
-            ))
-    response = model.get("response")
-    summary = response.get("summary") if isinstance(response, dict) else None
-    validation = (
-        case.get("json_validation")
-        or model.get("json_validation")
-        or {"status": "not_run"}
-    )
-    elapsed = case.get("elapsed_seconds")
-    if elapsed is None:
-        elapsed = model.get("elapsed_seconds")
-    meta = [
-        ("Source", source),
-        ("Page", screenshot.get("page")),
-        ("Case", screenshot.get("case_id")),
-        ("Semantic page", screenshot.get("semantic_page_id")),
-        ("JSON", validation.get("status")),
-        ("Elapsed", (
-            "%.3f s" % elapsed if isinstance(elapsed, (int, float)) else None)),
-        ("Attempts", model.get("attempts")),
-        ("File", screenshot.get("file")),
-    ]
-    references = screenshot.get("expectation_references") or ()
+
+def _detail(view):
+    references = view["references"]
     references_html = ""
     if references:
         references_html = (
@@ -187,427 +295,676 @@ def _frame(frame, number):
             "</details>" % (
                 len(references),
                 "".join("<li><code>%s</code></li>" % _text(item)
-                        for item in references),
-            ))
-    return """
-<article class="frame %(frame_class)s" data-outcome="%(frame_class)s"
-         data-source="%(source_class)s">
-  <header>
-    <div><span class="index">#%(number)d</span><h3>%(title)s</h3></div>
-    %(verdict)s
-  </header>
-  <div class="images">%(images)s</div>
-  %(parity)s
-  <dl>%(meta)s</dl>
-  %(error)s
-  %(summary)s
-  %(reasons)s
-  %(expectation)s
-  %(checks)s
-  %(references)s
-</article>""" % {
-        "frame_class": _class(verdict),
-        "source_class": _text(source.lower()),
-        "number": number,
-        "title": _text(title),
-        "verdict": _badge(verdict),
-        "images": "".join(images),
-        "parity": _parity_result(model) if source == "parity" else "",
-        "meta": "".join(
-            "<div><dt>%s</dt><dd>%s</dd></div>" % (
-                _text(name), _text(value))
-            for name, value in meta
-        ),
-        "error": error_html,
-        "summary": (
-            "<p class=\"model-summary\"><strong>Model summary:</strong> %s</p>"
-            % _text(summary) if summary else ""),
-        "reasons": reason_html,
-        "expectation": _expectation(screenshot.get("expectation")),
-        "checks": _checklist(model),
-        "references": references_html,
-    }
-
-
-def _pipeline(report):
-    stages = report.get("pipeline", ())
-    if not stages:
-        return ""
-    configuration = report.get("configuration", {})
-    coverage = report.get("coverage", {})
-    cards = []
-    for index, stage in enumerate(stages, 1):
-        counts = stage.get("counts", {})
-        runs = stage.get("runs", ())
-        details = [
-            "<span><code>%s</code>: %s</span>" % (
-                _text(str(key).replace("_", " ")), _text(value))
-            for key, value in counts.items()
-        ]
-        run_html = ""
-        if runs:
-            run_html = "<ul class=\"runs\">%s</ul>" % "".join(
-                "<li><strong>%s</strong> — %s frames"
-                "<br><code>%s</code></li>" % (
-                    _text(item.get("suite")),
-                    _text(item.get("captured", 0)),
-                    _text(item.get("run_id")),
-                )
-                for item in runs
-            )
-        cards.append("""
-<article class="stage %(stage_class)s">
-  <header><span class="stage-number">%(number)d</span>
-    <div><h3>%(title)s</h3>%(status)s</div></header>
-  <p>%(summary)s</p>
-  <div class="stage-counts">%(counts)s</div>
-  %(runs)s
-</article>""" % {
-            "stage_class": _class(stage.get("status")),
-            "number": index,
-            "title": _text(stage.get("title")),
-            "status": _badge(stage.get("status")),
-            "summary": _text(stage.get("summary"), ""),
-            "counts": "".join(details),
-            "runs": run_html,
-        })
+                        for item in references)))
     return (
-        '<details class="run-details"><summary>Run details, model evidence '
-        'and collection stages</summary>'
-        '<p class="run-configuration">Model: <code>%s</code> · '
-        'Theme: <code>%s</code> · Printer captured: %s · '
-        'Printer retained: %s · Replaced: %s</p>'
-        '<section class="pipeline">'
-        '<div class="pipeline-grid">%s</div></section></details>'
-        % (
-            _text(configuration.get("model"), "disabled"),
-            _text(configuration.get("designer_theme"), "default"),
-            _text(coverage.get("printer_captured", 0)),
-            _text(coverage.get("legacy_printer", 0)),
-            _text(coverage.get("replaced", 0)),
-            "".join(cards),
-        )
-    )
+        '<article class="frame %s"><header><div>'
+        '<span class="index">#%d</span><h3>%s</h3></div>%s</header>'
+        '<div class="images">%s</div>%s%s%s%s%s%s%s%s</article>' % (
+            view["outcome"], view["number"], _text(view["title"]),
+            _badge(view["verdict"]), _images_html(view), _parity_html(view),
+            _meta_html(view), _error_html(view), _summary_html(view),
+            _reasons_html(view), _expectation_html(view["expectation"]),
+            _checklist_html(view), references_html))
 
 
-def _tile(frame, number):
-    screenshot = frame.get("screenshot", {})
-    case = frame.get("case_result", {})
-    models = frame.get("models", ())
-    model = models[0] if models else {}
-    verdict = case.get("verdict") or model.get("verdict") or frame.get(
-        "status") or "not_run"
-    outcome = _class(verdict)
-    source = str(screenshot.get("source") or "unknown").lower()
-    image = _image_url(screenshot.get("artifact"))
-    comparison = _image_url(screenshot.get("comparison_artifact"))
-    title = (
-        screenshot.get("label")
-        or screenshot.get("case_id")
-        or screenshot.get("file")
-        or "Unlabelled frame"
-    )
+def _tile(view):
     thumbnails = []
-    if image:
+    if view["image"]:
         thumbnails.append(
-            '<span class="thumb"><img loading="lazy" src="%s" alt="%s">'
-            '%s</span>' % (
-                image,
-                _text(title),
+            '<span class="thumb"><img loading="lazy" src="%s" alt="%s">%s'
+            "</span>" % (
+                view["image"], _text(view["title"]),
                 '<span class="corner-label">Designer</span>'
-                if source == "parity" else "",
-            ))
-    if comparison:
+                if view["source"] == "parity" else ""))
+    if view["comparison"]:
         thumbnails.append(
             '<span class="thumb"><img loading="lazy" src="%s" '
             'alt="Real printer comparison for %s">'
             '<span class="corner-label">Printer</span></span>' % (
-                comparison, _text(title)))
+                view["comparison"], _text(view["title"])))
     if not thumbnails:
         thumbnails.append(
             '<span class="thumb image-missing">Image unavailable</span>')
-    problem = (
-        '<span class="problem-marker">%s</span>' % _text(verdict)
-        if outcome != "pass" else "")
-    return """
-<button class="shot-tile %(outcome)s %(pair)s" type="button"
-        data-detail="detail-%(number)d" data-outcome="%(outcome)s"
-        data-source="%(source)s" aria-haspopup="dialog">
-  <span class="shot-images">%(images)s</span>
-  <span class="shot-caption">
-    <span class="shot-title">%(title)s</span>
-    <span class="shot-meta">#%(number)d · %(source_label)s</span>
-  </span>
-  %(problem)s
-</button>""" % {
-        "outcome": outcome,
-        "pair": "pair" if comparison else "single",
-        "number": number,
-        "source": _text(source),
-        "images": "".join(thumbnails),
-        "title": _text(title),
-        "source_label": _text(
-            "Designer ↔ printer" if source == "parity" else source),
-        "problem": problem,
-    }
+    return (
+        '<button class="shot-tile %s %s" type="button" data-item '
+        'data-frame="%d" data-outcome="%s" data-source="%s" data-page="%s" '
+        'data-search="%s" aria-haspopup="dialog">'
+        '<span class="shot-images">%s</span><span class="shot-caption">'
+        '<span class="shot-title">%s</span>'
+        '<span class="shot-meta">#%d · %s</span></span>%s</button>' % (
+            view["outcome"], "dual" if view["comparison"] else "solo",
+            view["number"], _tokens([view["outcome"]]),
+            _tokens([view["source"]]), _tokens([view["page"]]),
+            _text(_search_text(view)), "".join(thumbnails),
+            _text(view["title"]), view["number"],
+            _text("Designer ↔ printer" if view["source"] == "parity"
+                  else view["source"]),
+            '<span class="problem-marker">%s</span>' % _text(view["verdict"])
+            if view["outcome"] != "pass" else ""))
 
 
-def _gallery(title, description, items, gallery_id, pair=False):
-    if not items:
-        return ""
-    return """
-<section class="gallery-section" id="%(gallery_id)s">
-  <header class="gallery-heading">
-    <div><h2>%(title)s</h2><p>%(description)s</p></div>
-    <span>%(count)d</span>
-  </header>
-  <div class="shot-grid %(pair_class)s">%(tiles)s</div>
-</section>""" % {
-        "gallery_id": _text(gallery_id),
-        "title": _text(title),
-        "description": _text(description),
-        "count": len(items),
-        "pair_class": "pair-grid" if pair else "",
-        "tiles": "".join(_tile(frame, number) for number, frame in items),
-    }
+def _chips(name, label, options):
+    """A filter button group; ``options`` are (value, label, count) rows."""
+    buttons = "".join(
+        '<button type="button" data-value="%s" aria-pressed="false">%s%s'
+        "</button>" % (
+            _text(value), _text(text),
+            '<span class="chip-count">%d</span>' % count
+            if count is not None else "")
+        for value, text, count in options)
+    return (
+        '<span class="toolbar-label">%s</span>'
+        '<div class="chips" data-filter="%s">'
+        '<button type="button" data-value="all" aria-pressed="true">All'
+        "</button>%s</div>" % (_text(label), name, buttons))
 
 
-def _overview(frames):
-    numbered = list(enumerate(frames, 1))
-    standalone = [
-        item for item in numbered
-        if item[1].get("screenshot", {}).get("source") != "parity"]
-    parity = [
-        item for item in numbered
-        if item[1].get("screenshot", {}).get("source") == "parity"]
-    galleries = [
-        _gallery(
-            "Screenshot overview",
-            "Designer pages and retained real-printer screens.",
-            standalone, "screenshot-overview"),
-        _gallery(
-            "Designer ↔ real printer",
-            "Pairwise component parity. Each tile shows both renderers.",
-            parity, "parity-overview", pair=True),
-    ]
-    templates = "".join(
-        '<template id="detail-%d">%s</template>' % (
-            number, _frame(frame, number))
-        for number, frame in numbered
+def _outcome_chips(views):
+    counts = _count(views, lambda item: item["outcome"])
+    return _chips("outcome", "Outcome", [
+        (value, label, counts[value]) for value, label in OUTCOMES
+        if counts[value]])
+
+
+def _source_chips(views):
+    counts = _count(views, lambda item: item["source"])
+    return _chips("source", "Source", [
+        (value, {"printer": "Real printer"}.get(value, value.capitalize()),
+         counts[value])
+        for value in ("designer", "printer", "parity") if counts[value]])
+
+
+def _page_select(views):
+    pages = sorted(set(item["page"] for item in views))
+    return (
+        '<span class="toolbar-label">Page</span>'
+        '<select data-filter="page" aria-label="Page"><option value="all">'
+        "All pages</option>%s</select>" % "".join(
+            '<option value="%s">%s</option>' % (_text(page), _text(page))
+            for page in pages))
+
+
+def _search_box():
+    return (
+        '<input type="search" data-search placeholder="Search title, case, '
+        'reason…" aria-label="Search">')
+
+
+# --- pages ------------------------------------------------------------------
+
+
+def _overview(report, views, names):
+    counts = _count(views, lambda item: item["outcome"])
+    bar = "".join(
+        '<span class="%s" style="flex:%d" title="%s: %d"></span>' % (
+            value, counts[value], _text(label), counts[value])
+        for value, label in OUTCOMES if counts[value])
+    legend = "".join(
+        '<a href="%s"><span class="dot %s"></span>%s <strong>%d</strong></a>'
+        % (_link(names, "gallery", outcome=value), value, _text(label),
+           counts[value])
+        for value, label in OUTCOMES if counts[value])
+    problems = [item for item in views if item["outcome"] in ("warn", "fail")]
+    problems.sort(key=lambda item: (item["outcome"] != "fail", item["number"]))
+    attention = "".join(
+        '<a class="%s" href="%s"><img loading="lazy" src="%s" alt="%s">'
+        '<span>%s<span class="attention-title">%s</span></span></a>' % (
+            item["outcome"], _frame_link(names, item),
+            item["image"] or "", _text(item["title"]),
+            _badge(item["verdict"]), _text(item["title"]))
+        for item in problems[:8] if item["image"])
+    pairs = sum(1 for item in views if item["comparison"])
+    missing = len(report.get("missing_expectations") or ())
+    aspects = (
+        ("gallery", "Every screenshot at inspection scale, filterable by "
+         "outcome, source, page, and text.",
+         "%d frames" % len(views)),
+        ("problems", "Warnings and failures with model reasons, grouped by "
+         "check, evidence class, and error.",
+         "%d to review" % len(problems)),
+        ("compare", "Designer against the real printer with side-by-side, "
+         "swipe, and difference views.",
+         "%d pairs" % pairs),
+        ("coverage", "Which pages and cases were rendered, retained from the "
+         "printer, or paired.",
+         "%d pages" % len(set(
+             item["semantic_page_id"] for item in views
+             if item["semantic_page_id"]))),
+        ("baselines", "The textual expectation behind every case and the "
+         "cases still missing one.",
+         "%d missing" % missing if missing else "complete"),
+        ("run", "Pipeline stages, model configuration, timing, and error "
+         "statistics.",
+         "%d stages" % len(report.get("pipeline") or ())),
     )
-    return "".join(galleries) + templates
+    cards = "".join(
+        '<a class="aspect" href="%s"><h3>%s</h3><p>%s</p><strong>%s</strong>'
+        "</a>" % (_link(names, slug), _text(dict(PAGES)[slug]), _text(text),
+                  _text(headline))
+        for slug, text, headline in aspects)
+    attention_html = ""
+    if problems:
+        attention_html = (
+            '<section><h2>Needs attention</h2><div class="attention">%s</div>'
+            '<p><a href="%s">All %d problems</a></p></section>' % (
+                attention, _link(names, "problems"), len(problems)))
+    return (
+        '<section><h2>Outcome</h2><div class="bar">%s</div>'
+        '<div class="legend">%s</div></section>%s'
+        '<section><h2>Review aspects</h2><div class="aspects">%s</div>'
+        "</section>" % (
+            bar, legend or '<span class="empty">No frames.</span>',
+            attention_html, cards))
 
 
-def render(report):
-    """Return a portable, dependency-free HTML report as text."""
-    status = report.get("status", "unknown")
-    coverage = report.get("coverage", {})
-    configuration = report.get("configuration", {})
-    summary = report.get("summary", {})
-    infrastructure_error = report.get("infrastructure_error")
-    frames = report.get("screenshots", ())
-    verdicts = summary.get("verdicts", {})
-    problem_count = int(verdicts.get("warn", 0)) + int(
-        verdicts.get("fail", 0))
+def _gallery(views):
+    standalone = [item for item in views if item["source"] != "parity"]
+    parity = [item for item in views if item["source"] == "parity"]
+
+    def section(title, description, items, pair=False):
+        if not items:
+            return ""
+        return (
+            '<section class="gallery-section" data-section>'
+            '<header class="gallery-heading"><div><h2>%s</h2><p>%s</p></div>'
+            '<span data-section-count>%d</span></header>'
+            '<div class="shot-grid %s">%s</div></section>' % (
+                _text(title), _text(description), len(items),
+                "pair-grid" if pair else "",
+                "".join(_tile(item) for item in items)))
+
+    body = section(
+        "Screenshot overview",
+        "Designer pages and retained real-printer screens.", standalone
+    ) + section(
+        "Designer ↔ real printer",
+        "Pairwise component parity. Each tile shows both renderers.",
+        parity, pair=True)
+    if not body:
+        return '<p class="empty">No screenshots reached the review stage.</p>'
+    toolbar = (
+        '<nav class="toolbar" aria-label="Frame filter">%s%s%s%s'
+        '<span class="spacer"></span><span class="result-count" data-count>'
+        '</span><label class="toolbar-label">Size <input type="range" '
+        'min="240" max="900" step="20" value="480" data-tile-size></label>'
+        "</nav>" % (
+            _outcome_chips(views), _source_chips(views), _page_select(views),
+            _search_box()))
+    templates = "".join(
+        '<template id="detail-%d">%s</template>' % (item["number"], _detail(item))
+        for item in views)
+    dialog = (
+        '<dialog id="frame-dialog" aria-label="Screenshot details">'
+        '<div class="modal-head"><div class="nav">'
+        '<button type="button" data-step="-1" aria-label="Previous frame">'
+        "←</button>"
+        '<button type="button" data-step="1" aria-label="Next frame">→'
+        '</button><span class="modal-position result-count"></span></div>'
+        '<button class="modal-close" type="button" aria-label="Close">×'
+        '</button></div><div class="modal-content"></div></dialog>')
+    return toolbar + body + templates + dialog
+
+
+def _problem_row(view, names):
+    checks, evidence, errors = _problem_tokens(view)
+    images = "".join(
+        '<img loading="lazy" src="%s" alt="%s">' % (url, _text(view["title"]))
+        for url in (view["image"], view["comparison"]) if url)
+    tags = "".join(
+        '<span class="tag">%s</span>' % _text(item)
+        for item in checks + evidence + ["error: " + item for item in errors])
+    return (
+        '<article class="problem %s" data-item data-outcome="%s" '
+        'data-check="%s" data-evidence="%s" data-error="%s" data-page="%s" '
+        'data-source="%s" data-search="%s"><div class="problem-images">%s'
+        '</div><div><header><h3>%s</h3>%s<a href="%s">Open details</a>'
+        "</header><p>%s</p>%s%s%s</div></article>" % (
+            view["outcome"], _tokens([view["outcome"]]), _tokens(checks),
+            _tokens(evidence), _tokens(errors), _tokens([view["page"]]),
+            _tokens([view["source"]]), _text(_search_text(view)),
+            images or '<div class="image-missing">Image unavailable</div>',
+            _text(view["title"]), _badge(view["verdict"]),
+            _frame_link(names, view), tags, _summary_html(view),
+            _reasons_html(view), _error_html(view)))
+
+
+def _problems(views, names):
+    problems = [item for item in views if item["outcome"] in ("warn", "fail")]
+    unreviewed = sum(1 for item in views if item["outcome"] == "muted")
+    note = ""
+    if unreviewed:
+        note = (
+            '<p class="muted">%d frame(s) were not reviewed by a model; open '
+            'the <a href="%s">gallery</a> to look at them.</p>' % (
+                unreviewed, _link(names, "gallery", outcome="muted")))
+    if not problems:
+        return note + '<p class="empty">No warnings or failures.</p>'
+    problems.sort(key=lambda item: (item["outcome"] != "fail", item["number"]))
+    check_counts, evidence_counts, error_counts = (
+        collections.Counter(), collections.Counter(), collections.Counter())
+    for item in problems:
+        checks, evidence, errors = _problem_tokens(item)
+        check_counts.update(checks)
+        evidence_counts.update(evidence)
+        error_counts.update(errors)
+
+    def facet(name, label, counts):
+        if not counts:
+            return ""
+        return _chips(name, label, [
+            (value, value, count) for value, count in sorted(
+                counts.items(), key=lambda pair: (-pair[1], pair[0]))])
+
+    toolbar = (
+        '<nav class="toolbar" aria-label="Problem filter">%s%s%s%s%s%s'
+        '<span class="spacer"></span><span class="result-count" data-count>'
+        "</span></nav>" % (
+            _outcome_chips(problems), facet("check", "Check", check_counts),
+            facet("evidence", "Evidence", evidence_counts),
+            facet("error", "Error", error_counts), _page_select(problems),
+            _search_box()))
+    return note + toolbar + '<div class="problem-list">%s</div>' % "".join(
+        _problem_row(item, names) for item in problems)
+
+
+def _figure(url, alt, caption):
+    image = (
+        '<img loading="lazy" src="%s" alt="%s">' % (url, _text(alt))
+        if url else '<div class="image-missing">Image unavailable</div>')
+    return "<figure>%s<figcaption>%s</figcaption></figure>" % (
+        image, _text(caption))
+
+
+def _compare(views, names):
+    pairs = [item for item in views if item["comparison"]]
+    if not pairs:
+        return (
+            '<p class="empty">No Designer ↔ real-printer pairs in this run. '
+            "Run <code>--mode parity</code> to capture them.</p>")
+    entries = "".join(
+        '<button class="pair-item %s" type="button" data-item data-pair="%d" '
+        'data-outcome="%s" data-page="%s" data-search="%s" aria-pressed="false">'
+        "<span>%s</span>%s</button>" % (
+            item["outcome"], item["number"], _tokens([item["outcome"]]),
+            _tokens([item["page"]]), _text(_search_text(item)),
+            _text(item["title"]), _badge(item["verdict"]))
+        for item in pairs)
+    sections = "".join(
+        '<section class="pair" id="pair-%d" hidden><header class="frame">'
+        '<h3>%s</h3> %s <a href="%s">Open details</a></header>'
+        '<div class="viewer" data-mode="side">%s%s</div>%s%s%s%s</section>' % (
+            item["number"], _text(item["title"]), _badge(item["verdict"]),
+            _frame_link(names, item),
+            _figure(item["image"], "Designer frame", "Designer"),
+            _figure(item["comparison"], "Real printer frame",
+                    "Real printer Typer/framebuffer"),
+            _parity_html(item), _summary_html(item), _reasons_html(item),
+            _error_html(item))
+        for item in pairs)
+    toolbar = (
+        '<nav class="toolbar" aria-label="Compare view">'
+        '<span class="toolbar-label">View</span><div class="chips">'
+        '<button type="button" data-view="side" aria-pressed="true">'
+        "Side by side</button>"
+        '<button type="button" data-view="swipe" aria-pressed="false">Swipe'
+        "</button>"
+        '<button type="button" data-view="diff" aria-pressed="false">'
+        "Difference</button></div>"
+        '<span class="spacer"></span><span class="viewer-hint">Arrow keys '
+        "switch pairs. Difference view shows black where both match.</span>"
+        "</nav>"
+        '<div class="swipe-control"><label>Designer ← → Printer '
+        '<input type="range" min="0" max="100" value="50" data-cut></label>'
+        "</div>")
+    return (
+        '%s<div class="compare"><aside><nav class="toolbar" '
+        'aria-label="Pair filter">%s%s<span class="result-count" data-count>'
+        '</span></nav><div class="pair-list">%s</div></aside><div>%s</div>'
+        "</div>" % (
+            toolbar, _outcome_chips(pairs), _search_box(), entries,
+            sections))
+
+
+def _coverage(report, views, names):
+    pages = {}
+    for item in views:
+        pages.setdefault(item["semantic_page_id"], []).append(item)
+    rows = []
+    for identifier, items in sorted(
+            pages.items(), key=lambda pair: (pair[0] == "", pair[0])):
+        sources = _count(items, lambda item: item["source"])
+        worst = min((item["outcome"] for item in items), key=SEVERITY.get)
+        label = items[0]["page"] if identifier else NO_PAGE
+        cases = "".join(
+            '<li><span class="badge source">%s</span><a href="%s">%s</a>%s'
+            "</li>" % (
+                _text(item["source"]), _frame_link(names, item),
+                _text(item["title"]), _badge(item["verdict"]))
+            for item in items)
+        rows.append(
+            '<details class="page-row" data-item data-search="%s">'
+            "<summary><span><strong>%s</strong><br>"
+            '<span class="muted" title="%s">%s</span></span>'
+            '<span class="num"><strong>%d</strong><br>designer</span>'
+            '<span class="num"><strong>%d</strong><br>printer</span>'
+            '<span class="num"><strong>%d</strong><br>parity</span>'
+            '<span class="num"><strong>%d</strong><br>total</span>%s'
+            '</summary><ul class="case-list">%s</ul></details>' % (
+                _text(" ".join(_search_text(item) for item in items)),
+                _text(label), _text(identifier), _text(
+                    identifier.rsplit(".", 1)[-1] if identifier else "legacy"),
+                sources["designer"], sources["printer"], sources["parity"],
+                len(items), _badge({"muted": "not_run"}.get(worst, worst)),
+                cases))
+    discovered = [
+        item for item in report.get("discovered_page_ids") or ()
+        if item not in pages]
+    alert = ""
+    if discovered:
+        alert = (
+            '<section class="alert warn"><h2>Discovered but not captured</h2>'
+            "<ul>%s</ul></section>" % "".join(
+                "<li><code>%s</code></li>" % _text(item)
+                for item in discovered))
+    if not rows:
+        return alert + '<p class="empty">No frames to cover.</p>'
+    return (
+        alert +
+        '<nav class="toolbar" aria-label="Coverage filter">%s'
+        '<span class="spacer"></span><span class="result-count" data-count>'
+        "</span></nav>"
+        '<div class="column-head"><span>Page</span><span>Designer</span>'
+        "<span>Printer</span><span>Parity</span><span>Total</span>"
+        "<span>Worst</span></div>%s" % (_search_box(), "".join(rows)))
+
+
+def _baseline_card(case_id, views, expectation, missing=False):
+    sources = sorted(set(item["source"] for item in views))
+    outcome = min(
+        (item["outcome"] for item in views), key=SEVERITY.get,
+        default="muted")
+    return (
+        '<article class="baseline%s" data-item data-outcome="%s" '
+        'data-search="%s"><header><h3>%s</h3><div>%s%s</div></header>%s'
+        "</article>" % (
+            " missing" if missing else "", _tokens([outcome]),
+            _text(case_id.lower() + " " + str(
+                (expectation or {}).get("description", "")).lower()),
+            _text(case_id),
+            "".join('<span class="badge source">%s</span> ' % _text(item)
+                    for item in sources),
+            _badge("needs_baseline" if missing else outcome),
+            _expectation_html(expectation)))
+
+
+def _baselines(report, views):
+    cases = {}
+    for item in views:
+        if item["expectation"] is None:
+            continue
+        cases.setdefault(item["case_id"] or item["title"], []).append(item)
     cards = [
-        ("Status", _badge(status)),
+        _baseline_card(case_id, items, items[0]["expectation"])
+        for case_id, items in cases.items()]
+    missing = [
+        _baseline_card(item.get("case_id", "?"), [], item, missing=True)
+        for item in report.get("missing_expectations") or ()]
+    if not cards and not missing:
+        return '<p class="empty">No textual baselines attached to this run.</p>'
+    body = ""
+    if missing:
+        body += (
+            '<section class="alert warn"><h2>Missing baselines (%d)</h2>'
+            "<p>These cases need a reviewed baseline; candidates were written "
+            "to <code>expectations.candidate.json</code>.</p>"
+            '<div class="baseline-grid">%s</div></section>' % (
+                len(missing), "".join(missing)))
+    return (
+        '<nav class="toolbar" aria-label="Baseline filter">%s%s'
+        '<span class="spacer"></span><span class="result-count" data-count>'
+        "</span></nav>%s<section><h2>Baselines (%d)</h2>"
+        '<div class="baseline-grid">%s</div></section>' % (
+            _outcome_chips([item for items in cases.values() for item in items]),
+            _search_box(), body, len(cards), "".join(cards)))
+
+
+def _stages(report):
+    cards = []
+    for index, stage in enumerate(report.get("pipeline") or (), 1):
+        counts = "".join(
+            "<span><code>%s</code>: %s</span>" % (
+                _text(str(key).replace("_", " ")), _text(value))
+            for key, value in (stage.get("counts") or {}).items())
+        runs = stage.get("runs") or ()
+        run_html = ""
+        if runs:
+            run_html = '<ul class="runs">%s</ul>' % "".join(
+                "<li><strong>%s</strong> — %s frames<br><code>%s</code></li>"
+                % (_text(item.get("suite")), _text(item.get("captured", 0)),
+                   _text(item.get("run_id")))
+                for item in runs)
+        cards.append(
+            '<article class="stage %s"><header><span class="stage-number">%d'
+            "</span><div><h3>%s</h3>%s</div></header><p>%s</p>"
+            '<div class="stage-counts">%s</div>%s</article>' % (
+                _class(stage.get("status")), index, _text(stage.get("title")),
+                _badge(stage.get("status")), _text(stage.get("summary"), ""),
+                counts, run_html))
+    return cards
+
+
+def _run(report, views, names):
+    configuration = report.get("configuration") or {}
+    coverage = report.get("coverage") or {}
+    reviewed = [item for item in views if item["elapsed"]]
+    total = sum(item["elapsed"] for item in reviewed)
+    settings = (
+        ("Model", configuration.get("model") or "disabled"),
+        ("Check mode", configuration.get("mode")),
+        ("Designer theme", configuration.get("designer_theme") or "default"),
+        ("Timeout", configuration.get("timeout")),
+        ("Printer captured", coverage.get("printer_captured", 0)),
+        ("Printer retained", coverage.get("legacy_printer", 0)),
+        ("Replaced by Designer", coverage.get("replaced", 0)),
+        ("Reviewed frames", len(reviewed)),
+        ("Review time", "%.1f s" % total if reviewed else None),
+        ("Mean per frame", "%.2f s" % (total / len(reviewed))
+         if reviewed else None),
+        ("Retried frames", sum(
+            1 for item in views if (item["attempts"] or 1) > 1)),
+    )
+    config_html = "<dl>%s</dl>" % "".join(
+        "<div><dt>%s</dt><dd>%s</dd></div>" % (_text(name), _text(value))
+        for name, value in settings)
+    validation = _count(views, lambda item: item["validation"].get("status"))
+    errors = _count(
+        [item for item in views if item["error"]],
+        lambda item: item["error"].get("category") or "error")
+    statistics = "".join(
+        "<table><thead><tr><th>%s</th><th>Frames</th></tr></thead><tbody>%s"
+        "</tbody></table>" % (
+            _text(title), "".join(
+                "<tr><td>%s</td><td>%d</td></tr>" % (_text(key), count)
+                for key, count in sorted(counter.items())))
+        for title, counter in (
+            ("JSON validation", validation), ("Error category", errors))
+        if counter)
+    slowest = sorted(reviewed, key=lambda item: -item["elapsed"])[
+        :SLOWEST_FRAMES]
+    slowest_html = ""
+    if slowest:
+        slowest_html = (
+            "<h2>Slowest frames</h2><table><thead><tr><th>Frame</th>"
+            "<th>Elapsed</th><th>Attempts</th></tr></thead><tbody>%s"
+            "</tbody></table>" % "".join(
+                '<tr><td><a href="%s">%s</a></td><td>%.2f s</td><td>%s</td>'
+                "</tr>" % (_frame_link(names, item), _text(item["title"]),
+                           item["elapsed"], _text(item["attempts"])) for item in slowest))
+    checklist = report.get("checklist") or ()
+    checklist_html = ""
+    if checklist:
+        checklist_html = (
+            "<details><summary>Model checklist (%d)</summary><table><thead>"
+            "<tr><th>Check</th><th>Description</th></tr></thead><tbody>%s"
+            "</tbody></table></details>" % (
+                len(checklist), "".join(
+                    "<tr><td><code>%s</code></td><td>%s</td></tr>" % (
+                        _text(item.get("id")), _text(item.get("description")))
+                    for item in checklist)))
+    stages = _stages(report)
+    files = "".join(
+        '<li><a href="%s">%s</a></li>' % (_text(name), _text(name))
+        for name in ("report.json", "report.md"))
+    return (
+        "<section><h2>Configuration</h2>%s</section>"
+        '<section><h2>Collection stages</h2><div class="pipeline-grid">%s'
+        '</div></section><section class="two-column"><div>%s</div>'
+        "<div>%s</div></section><section>%s</section>"
+        "<section><h2>Artifacts</h2><ul>%s</ul></section>" % (
+            config_html, "".join(stages) or '<p class="empty">No stages '
+            "recorded.</p>", statistics, slowest_html, checklist_html, files))
+
+
+# --- assembly ---------------------------------------------------------------
+
+
+def _navigation(names, current, views, report):
+    problems = sum(1 for item in views if item["outcome"] in ("warn", "fail"))
+    pairs = sum(1 for item in views if item["comparison"])
+    missing = len(report.get("missing_expectations") or ())
+    counts = {
+        "gallery": (len(views), ""),
+        "problems": (problems, "fail" if problems else ""),
+        "compare": (pairs, ""),
+        "baselines": (missing, "warn") if missing else (None, ""),
+    }
+    links = []
+    for slug, title in PAGES:
+        count, tone = counts.get(slug, (None, ""))
+        links.append(
+            '<a href="%s"%s>%s%s</a>' % (
+                _text(names[slug]),
+                ' aria-current="page"' if slug == current else "",
+                _text(title),
+                '<span class="count %s">%d</span>' % (tone, count)
+                if count is not None else ""))
+    return '<nav class="tabs" aria-label="Report pages">%s</nav>' % "".join(
+        links)
+
+
+def _summary_cards(report, views):
+    coverage = report.get("coverage") or {}
+    configuration = report.get("configuration") or {}
+    verdicts = (report.get("summary") or {}).get("verdicts") or {}
+    problems = int(verdicts.get("warn", 0)) + int(verdicts.get("fail", 0))
+    cards = (
+        ("Status", _badge(report.get("status", "unknown"))),
         ("Mode", _text(report.get("mode"))),
         ("Theme", _text(configuration.get("designer_theme"), "default")),
-        ("Frames", _text(len(frames), "0")),
+        ("Frames", _text(len(views), "0")),
         ("Parity pairs", _text(coverage.get("parity_pairs", 0))),
-        ("Problems", _text(problem_count)),
-    ]
+        ("Problems", _text(problems)),
+    )
+    return '<section class="summary">%s</section>' % "".join(
+        '<div class="metric"><span>%s</span><strong>%s</strong></div>' % (
+            _text(label), value) for label, value in cards)
+
+
+def _alerts(report):
     alerts = []
-    if isinstance(infrastructure_error, dict):
+    error = report.get("infrastructure_error")
+    if isinstance(error, dict):
         alerts.append(
             '<section class="alert fail"><h2>Infrastructure failure</h2>'
             "<p><strong>%s</strong></p><p>%s</p></section>" % (
-                _text(infrastructure_error.get("category"), "error"),
-                _text(infrastructure_error.get("message"), ""),
-            ))
+                _text(error.get("category"), "error"),
+                _text(error.get("message"), "")))
     missing = report.get("missing_expectations") or ()
     if missing:
         alerts.append(
             '<section class="alert warn"><h2>Baselines required</h2>'
             "<p>%d case(s) need a reviewed textual baseline.</p></section>"
             % len(missing))
-    overview_html = _overview(frames)
-    if not overview_html:
-        overview_html = (
-            '<p class="empty">No screenshots reached the review stage.</p>')
+    return "".join(alerts)
+
+
+def _document(report, views, names, slug, body):
+    status = report.get("status", "unknown")
+    title = dict(PAGES)[slug]
+    configuration = report.get("configuration") or {}
     return """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FF5M UI regression — %(title_status)s</title>
-<style>
-:root{color-scheme:dark;--bg:#0b1116;--panel:#121b22;--line:#29404d;
---text:#e4edf2;--muted:#91a4ae;--pass:#4ade80;--warn:#facc15;--fail:#fb7185}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
-font:14px/1.4 system-ui,-apple-system,sans-serif}main{max-width:1800px;margin:auto;
-padding:18px}h1,h2,h3,h4,h5{margin:.2em 0 .55em}h1{font-size:23px}
-.report-head{display:flex;align-items:center;justify-content:space-between;gap:14px;
-flex-wrap:wrap}.report-head h1{margin:0}.badge{display:inline-block;border:1px solid;
-padding:2px 8px;border-radius:999px;font-weight:750;text-transform:uppercase;
-font-size:11px}.badge.pass{color:var(--pass)}.badge.warn{color:var(--warn)}
-.badge.fail{color:var(--fail)}.badge.muted{color:var(--muted)}
-.summary{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.metric{display:flex;gap:7px;
-align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;
-padding:7px 10px}.metric span{color:var(--muted);font-size:11px}.metric strong{font-size:13px}
-.toolbar{position:sticky;top:0;z-index:10;display:flex;gap:6px;align-items:center;
-flex-wrap:wrap;margin:12px 0;padding:9px;background:rgba(11,17,22,.94);
-backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:9px}
-.toolbar button{background:#17242c;color:var(--text);border:1px solid var(--line);
-border-radius:7px;padding:6px 10px;cursor:pointer}.toolbar-label{color:var(--muted);
-font-size:11px;margin-left:7px}.alert{padding:13px;margin:12px 0;background:var(--panel);
-border:1px solid var(--line);border-radius:9px}.alert.fail{border-color:var(--fail)}
-.alert.warn{border-color:var(--warn)}.run-details{margin:10px 0;color:var(--muted)}
-.run-details>summary{display:inline-block;cursor:pointer;padding:7px 10px;
-border:1px solid var(--line);border-radius:7px;background:#111b22}
-.pipeline{margin:12px 0}.pipeline-grid{display:grid;
-grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px}.stage{padding:12px;
-background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--muted);
-border-radius:8px;color:var(--text)}.stage.pass{border-top-color:var(--pass)}
-.stage.warn{border-top-color:var(--warn)}.stage.fail{border-top-color:var(--fail)}
-.stage header{display:flex;gap:8px;align-items:start}.stage header h3{font-size:14px;margin:0 0 4px}
-.stage-number{display:grid;place-items:center;width:24px;height:24px;border-radius:50%%;
-background:#20313b;font-weight:700;flex:0 0 auto}.stage-counts{display:flex;gap:5px;
-flex-wrap:wrap}.stage-counts span{padding:3px 5px;background:#0e171d;border-radius:4px;
-font-size:10px}.runs{padding-left:18px}.gallery-section{margin:22px 0 34px}
-.gallery-heading{display:flex;justify-content:space-between;align-items:end;
-margin-bottom:9px}.gallery-heading h2{font-size:18px;margin:0}.gallery-heading p{margin:2px 0 0;
-color:var(--muted)}.gallery-heading>span{font-size:20px;font-weight:800;color:var(--muted)}
-.shot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:8px}
-.shot-grid.pair-grid{grid-template-columns:repeat(auto-fill,minmax(720px,1fr));gap:10px}
-.shot-tile{position:relative;display:block;width:100%%;padding:0;overflow:hidden;
-background:#070b0e;color:var(--text);border:2px solid #20323c;border-radius:7px;
-text-align:left;cursor:zoom-in;transition:transform .12s,border-color .12s,box-shadow .12s}
-.shot-tile:hover,.shot-tile:focus-visible{transform:translateY(-2px);border-color:#8cb7ca;
-box-shadow:0 8px 24px #0008;outline:none}.shot-tile.warn{border-color:var(--warn);
-box-shadow:0 0 0 2px #facc1530}.shot-tile.fail{border-color:var(--fail);
-box-shadow:0 0 0 2px #fb71853b}.shot-images{display:grid;grid-template-columns:1fr;
-aspect-ratio:5/3;background:#030506}.shot-tile.pair .shot-images{grid-template-columns:1fr 1fr;
-aspect-ratio:10/3}.thumb{position:relative;min-width:0;overflow:hidden}
-.thumb+ .thumb{border-left:1px solid var(--line)}.thumb img{display:block;width:100%%;
-height:100%%;object-fit:contain;background:#030506}.corner-label{position:absolute;left:5px;
-top:5px;padding:2px 5px;background:#000b;border-radius:4px;color:#fff;font-size:9px;
-text-transform:uppercase;letter-spacing:.05em}.shot-caption{display:flex;justify-content:space-between;
-gap:8px;align-items:center;padding:6px 8px;background:#111a20}.shot-title{font-weight:650;
-white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.shot-meta{color:var(--muted);
-font-size:10px;white-space:nowrap}.problem-marker{position:absolute;right:5px;top:5px;
-padding:3px 7px;border-radius:999px;background:#111e;text-transform:uppercase;
-font-weight:800;font-size:10px}.shot-tile.warn .problem-marker{color:var(--warn)}
-.shot-tile.fail .problem-marker{color:var(--fail)}
-body[data-outcome-filter="problem"] .shot-tile.pass{display:none}
-body[data-outcome-filter="pass"] .shot-tile:not(.pass){display:none}
-body[data-source-filter="designer"] .shot-tile:not([data-source="designer"]),
-body[data-source-filter="printer"] .shot-tile:not([data-source="printer"]),
-body[data-source-filter="parity"] .shot-tile:not([data-source="parity"]){display:none}
-dialog{width:min(1500px,96vw);max-height:94vh;padding:0;color:var(--text);
-background:var(--panel);border:1px solid var(--line);border-radius:11px;box-shadow:0 20px 70px #000}
-dialog::backdrop{background:#020406dc;backdrop-filter:blur(3px)}.modal-head{position:sticky;
-top:0;z-index:2;display:flex;justify-content:flex-end;padding:8px;background:var(--panel);
-border-bottom:1px solid var(--line)}.modal-close{width:36px;height:36px;border-radius:50%%;
-border:1px solid var(--line);background:#19262e;color:var(--text);font-size:22px;cursor:pointer}
-.modal-content{padding:0 16px 16px}.frame{padding:8px}.frame>header{display:flex;
-justify-content:space-between;gap:12px;align-items:start}.frame>header>div{display:flex;
-gap:10px;align-items:baseline}.index{color:var(--muted)}.images{display:grid;
-grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:10px;margin:10px 0}
-.images figure{margin:0}.images img{display:block;width:100%%;max-height:64vh;
-object-fit:contain;background:#030506;border:1px solid var(--line)}figcaption{text-align:center;
-color:var(--muted);padding:4px}.image-missing{display:grid;place-items:center;min-height:120px;
-color:var(--muted);border:1px dashed var(--line)}.parity-result{padding:9px 11px;
-background:#0e171d;border:1px solid var(--line);border-radius:7px;margin:9px 0}
-dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;margin:10px 0}
-dl div{background:#0e171d;padding:7px;border-radius:6px}dt{color:var(--muted);font-size:10px}
-dd{margin:2px 0 0;overflow-wrap:anywhere}.expectation{background:#0e171d;padding:11px;
-border-radius:7px}.expectation h5{color:var(--muted);margin-top:9px}.error{padding:11px;
-border:1px solid var(--fail);background:#2a1118;border-radius:7px}.model-summary{font-size:15px}
-table{width:100%%;border-collapse:collapse;margin-top:9px}th,td{padding:7px;
-border:1px solid var(--line);text-align:left;vertical-align:top}code{overflow-wrap:anywhere}
-details{margin-top:10px}summary{cursor:pointer;color:#b8d9e8}.empty{color:var(--muted)}
-@media(max-width:700px){main{padding:10px}.shot-grid,.shot-grid.pair-grid{
-grid-template-columns:1fr 1fr}.shot-tile.pair{grid-column:span 2}.images{
-grid-template-columns:1fr}.shot-caption{display:block}.shot-meta{display:block;margin-top:2px}}
-</style>
+<title>FF5M UI regression — %(title)s — %(status_text)s</title>
+<link rel="stylesheet" href="report.css">
 </head>
-<body data-outcome-filter="all" data-source-filter="all">
+<body data-page="%(slug)s">
 <main>
   <header class="report-head">
-    <h1>FF5M UI regression</h1>
-    %(status)s
+    <h1>FF5M UI regression</h1>%(status)s
+    <span class="run-meta">%(mode)s · %(model)s</span>
   </header>
-  <section class="summary">%(cards)s</section>
+  %(nav)s
   %(alerts)s
-  <nav class="toolbar" aria-label="Frame filter">
-    <span class="toolbar-label">Outcome:</span>
-    <button type="button" data-outcome="all">All</button>
-    <button type="button" data-outcome="problem">Problems / not run</button>
-    <button type="button" data-outcome="pass">Pass only</button>
-    <span class="toolbar-label">Source:</span>
-    <button type="button" data-source="all">All</button>
-    <button type="button" data-source="designer">Designer</button>
-    <button type="button" data-source="printer">Real printer</button>
-    <button type="button" data-source="parity">Parity</button>
-  </nav>
-  %(overview)s
-  %(pipeline)s
+  %(body)s
 </main>
-<dialog id="frame-dialog" aria-label="Screenshot details">
-  <div class="modal-head">
-    <button class="modal-close" type="button" aria-label="Close">×</button>
-  </div>
-  <div class="modal-content"></div>
-</dialog>
-<script>
-document.querySelectorAll("button[data-outcome]").forEach(function(button){
-  button.addEventListener("click",function(){
-    document.body.dataset.outcomeFilter=button.dataset.outcome;
-  });
-});
-document.querySelectorAll("button[data-source]").forEach(function(button){
-  button.addEventListener("click",function(){
-    document.body.dataset.sourceFilter=button.dataset.source;
-  });
-});
-const frameDialog=document.getElementById("frame-dialog");
-const modalContent=frameDialog.querySelector(".modal-content");
-document.querySelectorAll(".shot-tile").forEach(function(tile){
-  tile.addEventListener("click",function(){
-    const template=document.getElementById(tile.dataset.detail);
-    if(!template)return;
-    modalContent.replaceChildren(template.content.cloneNode(true));
-    frameDialog.showModal();
-  });
-});
-frameDialog.querySelector(".modal-close").addEventListener("click",function(){
-  frameDialog.close();
-});
-frameDialog.addEventListener("click",function(event){
-  if(event.target===frameDialog)frameDialog.close();
-});
-</script>
+<script src="report.js"></script>
 </body>
 </html>
 """ % {
-        "title_status": _text(status),
+        "title": _text(title),
+        "status_text": _text(status),
+        "slug": slug,
         "status": _badge(status),
-        "cards": "".join(
-            '<div class="metric"><span>%s</span><strong>%s</strong></div>'
-            % (_text(label), value)
-            for label, value in cards
-        ),
-        "alerts": "".join(alerts),
-        "pipeline": _pipeline(report),
-        "overview": overview_html,
+        "mode": _text(report.get("mode")),
+        "model": _text(configuration.get("model"), "no model"),
+        "nav": _navigation(names, slug, views, report),
+        "alerts": _alerts(report) if slug == "overview" else "",
+        "body": (
+            _summary_cards(report, views) if slug == "overview" else "")
+        + body,
     }
 
 
+def render(report, entry="report.html"):
+    """Return every report page as ``{file name: HTML text}``.
+
+    The overview is written under ``entry``; the other pages sit beside it.
+    """
+    names = _page_names(entry)
+    views = [
+        _view(frame, number)
+        for number, frame in enumerate(report.get("screenshots") or (), 1)]
+    bodies = {
+        "overview": _overview(report, views, names),
+        "gallery": _gallery(views),
+        "problems": _problems(views, names),
+        "compare": _compare(views, names),
+        "coverage": _coverage(report, views, names),
+        "baselines": _baselines(report, views),
+        "run": _run(report, views, names),
+    }
+    return {
+        names[slug]: _document(report, views, names, slug, bodies[slug])
+        for slug, _title in PAGES
+    }
+
+
+def _replace(path, writer):
+    temporary = path.with_name(path.name + ".tmp")
+    writer(temporary)
+    temporary.replace(path)
+
+
 def write(path, report):
-    """Atomically write a UTF-8 HTML report."""
+    """Atomically write all report pages and their shared assets."""
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(render(report), encoding="utf-8")
-    temporary.replace(path)
+    for name, page in render(report, path.name).items():
+        _replace(path.parent / name, lambda target, page=page: (
+            target.write_text(page, encoding="utf-8")))
+    for name in ASSET_NAMES:
+        _replace(path.parent / name, lambda target, name=name: (
+            shutil.copyfile(ASSETS / name, target)))

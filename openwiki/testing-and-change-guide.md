@@ -525,6 +525,75 @@ It contains `report.html`, `report.json`, `recording.mp4` when media succeeds,
 intermediates are
 removed only after successful media finalization and retained on failure.
 
+`report.html` is the entry page of a multi-page offline review written by
+`tests/printer_report.py`. The pages are rebuilt from the artifacts on disk
+(`tests/printer_run_data.py` reads them; nothing contacts the printer), so any
+earlier run directory can be regenerated with the newest report:
+
+```bash
+.venv/bin/python -m tests.printer_report tests/artifacts/printer-runs/<run>
+```
+
+Each page serves one review aspect:
+
+- **Overview** is a dashboard that answers "did it pass, and is anything off?"
+  without scrolling through detail. It shows the verdict, a **Needs attention**
+  list, a per-test results table, and a **Health** scorecard. Every finding
+  carries separate colored buttons into the recording, the last screen captured
+  before it, the step, the log line, or the relevant chart. Failed steps,
+  scenarios, and captures, renderer errors, and real log errors are always
+  flagged. Performance numbers (reactor
+  lag, late reactor ticks, capture time and queue delay, Typer restarts,
+  telemetry gaps, MCU round trip, lowest free memory, run time) are judged
+  against the same measurements from earlier **passing** runs of the same
+  suites in the same artifact directory: a number is "unusual" only when it
+  exceeds everything seen before and is more than 1.5 times the typical
+  (median) value, and is shown without a verdict until three such runs exist.
+  This matters because a healthy run is noisy; the render test restarts Typer
+  on purpose and a few late reactor ticks are normal. The policy and thresholds
+  live in `tests/printer_analysis.py`. A late reactor tick is a second in which
+  the 5 Hz test timer missed a 200 ms deadline; `reactor.csv` stores that count
+  per second, not cumulatively. Each phase row pairs its steps with its
+  operation-context scenario; a scenario that matches no phase gets its own row.
+- **Steps** lists every `STEP_START` with phase, kind, recording time,
+  duration, and status, plus a per-phase summary and the slowest steps. Filter
+  by suite, status, kind, phase, or text.
+- **Screens** is the capture gallery with failure markers. Similar screens are
+  grouped into collapsible cards (one per suite, phase, and purpose: periodic
+  captures, operation stages, or a single page), with a preview strip while a
+  card is closed; groups with a failure start open, and "All screens" switches
+  to the flat grid. Active filters reveal matches inside closed groups. The
+  modal shows the
+  screen with optional touch-area overlays (Klipper-side hitboxes and button
+  rectangles), position, temperatures, capture duration and queue delay, and
+  the renderer queue and worker state recorded with the frame.
+- **Telemetry** charts temperatures, heater power, position, velocity, motion
+  buffer margin and stalls, and MCU round-trip time, load, and retransmits from
+  `telemetry.jsonl`. Charts share test-phase bands, failure markers, and one
+  hover cursor.
+- **Performance** charts the harness (reactor lag and missed deadlines, capture
+  duration and queue delay, render queue and dropped batches) and the printer
+  system (load, memory, per-process CPU and RSS from `resources.tsv`; CPU
+  assumes 100 clock ticks per second), with min/mean/p95/max statistics.
+- **Checks** shows each operation-context scenario and, for a mismatch, a
+  field-level diff of the first differing snapshot. It also shows the measured
+  bed mesh heat map, Z-calibration values, and the operation-stage timeline.
+- **Logs** shows the host run log and the printer log per suite, filtered by
+  default to key lines; steps, captures, telemetry samples, and commands are one
+  click away. Step, capture, and sample lines are never classified as errors
+  from their labels.
+- **Run** holds the recording (steps link to `report-run.html#t=SECONDS`),
+  camera, telemetry, and resource status, per-suite environment, and every
+  artifact file.
+
+Every artifact is optional. A missing or malformed file is listed in the
+overview instead of failing the report, and a page that cannot be built is
+replaced by an explanation so the other pages and `report.json` stay usable.
+All times share one axis, "recording seconds": printer epoch and monotonic
+times are mapped through each suite's `timeline_start_seconds`. Seeking the
+recording from a report opened over `file://` works in browsers; a web server
+that serves it must support HTTP range requests.
+
 For every launched suite the host observes the exact `run_id` and directory
 from Feather's Moonraker status, copies that exact directory, verifies
 `summary.json` ownership
@@ -706,24 +775,48 @@ For example:
 [review 17/63] move-ready; last 6.8s; elapsed 1m 55s; ETA 5m 11s
 ```
 
-Open `report.html` for the normal human review. It is an offline report with no
-external scripts, fonts, services, or network requests. Keep it together with
-the surrounding timestamped artifact directory because its images use safe
-relative paths.
+Open `report.html` for the normal human review. The report is a set of
+static pages that share one `report.css` and one `report.js` (copied from
+`tests/report_assets/`) and need no external scripts, fonts,
+services, or network requests. Keep the pages together with the surrounding
+timestamped artifact directory because their images use safe relative paths.
+Each page works on one review aspect, and the tabs at the top move between
+them:
 
-The report is screenshot-first:
+- **Overview** (`report.html`) is the entry page: status, metrics, the
+  outcome distribution, the first problem frames, and a card per aspect with
+  its headline number. Infrastructure-failure and missing-baseline banners
+  appear here.
+- **Gallery** (`report-gallery.html`) is the screenshot-first grid: Designer
+  pages and retained real-printer screens, then a separate grid whose tiles
+  show both renderers side by side. Filter by outcome, source, page, or text,
+  and resize the tiles. Clicking a tile opens a modal with the images, textual
+  baseline, model summary, reasons, JSON-validation evidence, timings, and
+  checklist; the arrow keys step through the frames the filters leave visible.
+  Only this page carries the full per-frame detail, so other pages link to a
+  frame as `report-gallery.html#frame-N`.
+- **Problems** (`report-problems.html`) lists only warnings and failures with
+  their reasons inline. Filter by outcome, model check, evidence class, error
+  category, page, or text. Frames that were not reviewed by a model are not
+  problems; the page links to them in the gallery.
+- **Compare** (`report-compare.html`) shows one Designer/real-printer pair at
+  a time as side by side, swipe, or difference view (black where both
+  renderers match). The arrow keys switch pairs.
+- **Coverage** (`report-coverage.html`) groups frames by semantic page with
+  designer, printer, and parity counts and the worst outcome, and lists pages
+  that Designer discovered but the run did not capture.
+- **Baselines** (`report-baselines.html`) shows the textual expectation behind
+  every case and the cases that still lack one.
+- **Run** (`report-run.html`) holds the configuration, collection stages,
+  timing, JSON-validation and error statistics, the slowest frames, and links
+  to `report.json` and `report.md`.
 
-- **Screenshot overview** is a dense grid of Designer pages and retained
-  real-printer screens;
-- **Designer ↔ real printer** is a separate continuation grid whose tiles show
-  both renderer outputs side by side;
-- desktop tiles deliberately use a large inspection scale: standalone frames
-  target about 480 CSS pixels and parity pairs about 720 CSS pixels, reducing
-  the number of columns so small visual differences remain visible;
-- warning/failure tiles use prominent yellow/red borders and markers;
-- clicking any tile opens a large modal with the images, textual baseline,
-  model summary, reasons, JSON-validation evidence, timings, and checklist;
-- run stages and collection/model evidence stay collapsed until requested.
+Filters are reflected in the page URL (for example
+`report-gallery.html?outcome=fail&source=parity`), so a specific view can be
+bookmarked or shared. Desktop tiles deliberately start at a large inspection
+scale (about 480 CSS pixels for a standalone frame and 720 for a pair) so small
+visual differences remain visible; warning and failure tiles carry prominent
+yellow or red borders and markers.
 
 The first parity image is always the Designer frame and the second is always
 the real Typer/framebuffer frame. Hybrid/parity theme synchronization removes
@@ -759,20 +852,20 @@ combination receives the same single corrective retry used for malformed JSON.
 Advisory mode records `warn` and `fail` results for review without failing the
 runner process; strict mode preserves them as the explicit regression gate.
 
-Use the compact toolbar to filter by outcome or source. `report.json` remains
-the machine-readable source of truth, while `report.md` is a short
+`report.json` remains the machine-readable source of truth, while `report.md` is a short
 terminal-friendly summary.
 
 The runner also writes all three reports when discovery, printer collection,
 fingerprint validation, image handling, or model setup fails before ordinary
-review. In that case `report.html` starts with an infrastructure-failure
+review. In that case the overview starts with an infrastructure-failure
 banner, and any images already collected inside the run directory remain
 visible with `not_run` status. This makes every failed invocation reviewable
 without bypassing a safety check or losing the evidence gathered before it.
 
 Read the result in this order:
 
-1. Open `report.html` and check the status banner and source-coverage cards.
+1. Open `report.html` and check the status banner and the outcome bar, then
+   follow the Problems tab.
 2. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
    corpus. A Designer-only run intentionally reports `partial` after a clean
    review because legacy printer screens are absent.

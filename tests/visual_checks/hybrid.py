@@ -515,8 +515,8 @@ class DesignerCapture:
             timeout=timeout)
         if scene_result.returncode != 0:
             raise RegressionConfigurationError(
-                "Designer scenario validation failed: %s" %
-                " ".join(scene_result.stderr.split())[:500])
+                "Designer scenario validation failed:\n%s" %
+                scene_result.stderr.strip())
         data_root = output_directory / ".designer-data"
         environment = dict(os.environ)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -651,7 +651,7 @@ def merge_hybrid(designer_records, printer_records, parity=False,
                 continue
             pairs.append({
                 "case_id": "parity-" + designer["case_id"],
-                "label": "Designer / printer parity",
+                "label": designer.get("label") or designer["case_id"],
                 "page": printer.get("page"),
                 "semantic_page_id": printer.get("semantic_page_id"),
                 "source": "parity",

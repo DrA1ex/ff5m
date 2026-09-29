@@ -7,6 +7,7 @@
 """Host-side contracts for optional OpenAI-compatible UI visual checks."""
 
 import base64
+import html.parser
 import io
 import json
 import os
@@ -1650,7 +1651,102 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
             collector.preflight()
 
 
+class DesignerDialogFixtureTest(unittest.TestCase):
+    def setUp(self):
+        plugins = ROOT / ".py" / "klipper" / "plugins"
+        self.enterContext(mock.patch.object(sys, "path", [str(plugins), *sys.path]))
+        from ui import FeatherRenderer
+        # Load the product adapters before the temporary preview module patch
+        # so restoring sys.modules keeps their shared framework identities.
+        __import__("feather_screen")
+        __import__("feather.screen.composition")
+
+        self.renderers = []
+
+        def renderer(**_viewport):
+            result = FeatherRenderer()
+            result.palette = result._palette.as_dict()
+            self.renderers.append(result)
+            return result
+
+        self.enterContext(mock.patch.dict(sys.modules, {
+            "feather_preview.ui": mock.Mock(PreviewRenderer=renderer),
+        }))
+
+    def render(self, kind, fixture):
+        from tests.feather_render_test_helper import RenderFrame
+
+        painter = getattr(DESIGNER_SCENES, "_render_%s_fixture" % kind)
+        scene = painter({}, fixture, ROOT, "DEFAULT")
+        self.assertEqual(scene["diagnostics"], [])
+        return RenderFrame(scene["operations"], self.renderers[-1])
+
+    def test_error_dialog_preserves_recovery_actions(self):
+        for recovery, action, title in (
+                ("restart", "error.restart", "KLIPPER ERROR"),
+                ("firmware_restart", "error.firmware_restart", "MCU RESTART REQUIRED"),
+                (None, None, "KLIPPER IS NOT READY")):
+            with self.subTest(recovery=recovery):
+                frame = self.render("error", {
+                    "message": "Connection failed", "recovery": recovery,
+                })
+                self.assertIn(title.upper(), [item.value for item in frame.texts])
+                self.assertEqual(set(frame.buttons), {action} if action else set())
+
+    def test_shutdown_dialog_uses_product_specific_explanation(self):
+        frame = self.render("error", {
+            "message": "Shutdown due to webhooks request. Restart firmware.",
+            "category": "shutdown", "recovery": "firmware_restart",
+        })
+        self.assertIn("REMOTE SHUTDOWN", [item.value for item in frame.texts])
+        self.assertIn("error.firmware_restart", frame.buttons)
+
+    def test_message_dialog_preserves_title_body_and_custom_actions(self):
+        for fixture, title, actions in (
+                ({"title": "Print finished", "message": ""},
+                 "Print finished", {"message.ok"}),
+                ({"title": "Print cancelled", "message": "FILAMENT RUNOUT"},
+                 "Print cancelled", {"message.ok"}),
+                ({"message": "Save the active mesh?", "buttons": [
+                    ["mesh.save", "SAVE & RESTART", "enabled"],
+                    ["message.ok", "LATER", "enabled"]]},
+                 "Save bed mesh?", {"mesh.save", "message.ok"})):
+            with self.subTest(title=title):
+                frame = self.render("message", fixture)
+                self.assertIn(title.upper(), [item.value for item in frame.texts])
+                self.assertEqual(set(frame.buttons), actions)
+                if fixture["message"]:
+                    self.assertIn(fixture["message"], [item.value for item in frame.texts])
+
+    def test_dialog_fixtures_render_requested_page(self):
+        for kind in ("message", "error"):
+            with self.subTest(kind=kind):
+                fixture = {
+                    "message": "\n".join("Line %02d" % i for i in range(100)),
+                    "recovery": "restart",
+                }
+                first = self.render(kind, fixture)
+                second = self.render(kind, dict(fixture, page=1))
+                self.assertNotEqual([item.value for item in first.texts],
+                                    [item.value for item in second.texts])
+                self.assertIn(kind + ".prev", second.buttons)
+
+
 class RegressionOrchestratorTest(unittest.TestCase):
+    def test_designer_validation_failure_keeps_traceback_cause(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "ui_preview" / "node_modules" / "playwright").mkdir(parents=True)
+            traceback = "Traceback (most recent call last):\n" + "frame\n" * 150
+            traceback += "TypeError: missing required dialog instance"
+            result = subprocess.CompletedProcess([], 1, "", traceback)
+            capture = HYBRID.DesignerCapture(root, ROOT)
+            with mock.patch.object(HYBRID.subprocess, "run", return_value=result), \
+                    self.assertRaises(HYBRID.RegressionConfigurationError) as raised:
+                capture.capture([], root / "output")
+
+        self.assertIn(traceback, str(raised.exception))
+
     def test_main_streams_stage_frame_count_and_eta_to_stderr(self):
         output = io.StringIO()
 
@@ -1734,7 +1830,8 @@ class RegressionOrchestratorTest(unittest.TestCase):
 
             report = json.loads(
                 (output / "report.json").read_text(encoding="utf-8"))
-            page = (output / "report.html").read_text(encoding="utf-8")
+            page = (output / "report-gallery.html").read_text(
+                encoding="utf-8")
 
         self.assertEqual(result, 130)
         self.assertEqual(report["status"], "fail")
@@ -1772,91 +1869,6 @@ class RegressionOrchestratorTest(unittest.TestCase):
         with self.assertRaisesRegex(
                 ValueError, "did not apply requested state key"):
             DESIGNER_SCENES._assert_requested_state(case, stale_scene)
-
-    def test_html_report_contains_images_baselines_and_model_evidence(self):
-        report = {
-            "status": "review",
-            "mode": "designer",
-            "coverage": {
-                "designer": 1, "legacy_printer": 0,
-                "replaced": 0, "parity_pairs": 0,
-            },
-            "configuration": {"model": "vision-model"},
-            "summary": {
-                "verdicts": {"warn": 1},
-            },
-            "pipeline": [{
-                "id": "designer",
-                "status": "completed",
-                "title": "Designer discovery and capture",
-                "summary": "One frame rendered.",
-                "counts": {"captured_frames": 1},
-            }],
-            "screenshots": [{
-                "case_result": {
-                    "verdict": "warn",
-                    "json_validation": {"status": "valid"},
-                    "elapsed_seconds": 1.25,
-                    "reasons": [{
-                        "check_id": "layout_overlap",
-                        "reason": "Header needs review.",
-                    }],
-                },
-                "models": [{
-                    "attempts": 1,
-                    "response": {
-                        "verdict": "warn",
-                        "summary": "Review <header> alignment.",
-                        "checks": [{
-                            "id": "layout_overlap",
-                            "status": "warn",
-                            "reason": "Possible overlap.",
-                        }],
-                    },
-                }],
-                "screenshot": {
-                    "label": "Main <menu>",
-                    "case_id": "main-menu",
-                    "source": "designer",
-                    "artifact": "designer/frame one.png",
-                    "file": "frame one.png",
-                    "expectation": {
-                        "description": "Readable menu.",
-                        "required": ["navigation choices"],
-                        "forbidden": ["overlap"],
-                        "allowed_variations": ["colors"],
-                    },
-                    "expectation_references": [
-                        "cases.main-menu.required[0]",
-                    ],
-                },
-            }],
-        }
-
-        page = HTML_REPORT.render(report)
-
-        self.assertIn('src="designer/frame%20one.png"', page)
-        self.assertIn("Main &lt;menu&gt;", page)
-        self.assertIn("Review &lt;header&gt; alignment.", page)
-        self.assertIn("Textual baseline", page)
-        self.assertIn("navigation choices", page)
-        self.assertIn("Model checklist (1)", page)
-        self.assertIn("Run details, model evidence", page)
-        self.assertIn("Screenshot overview", page)
-        self.assertIn('class="shot-grid', page)
-        self.assertIn('<dialog id="frame-dialog"', page)
-        self.assertIn('data-detail="detail-1"', page)
-        self.assertIn('data-source="designer"', page)
-        self.assertIn("Real printer", page)
-        self.assertIn(
-            "dl{display:grid;grid-template-columns:", page)
-        self.assertIn(
-            ".shot-grid{display:grid;grid-template-columns:"
-            "repeat(auto-fill,minmax(480px,1fr))", page)
-        self.assertIn(
-            ".shot-grid.pair-grid{grid-template-columns:"
-            "repeat(auto-fill,minmax(720px,1fr))", page)
-        self.assertNotIn("<menu>", page)
 
     def test_infrastructure_failure_always_writes_html_and_json(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1927,6 +1939,23 @@ class RegressionOrchestratorTest(unittest.TestCase):
                     "path": frame,
                 },
             ]
+            fixture_content = {
+                "dialog": {"title": "Test dialog", "lines": ["Details"], "buttons": []},
+                "message": {"message": "Finished"},
+                "error": {"message": "Not ready", "recovery": "wait"},
+                "ota": {"installed_version": "1", "available_version": "2", "changes": []},
+            }
+            fixtures = [{
+                "id": "alpha-" + kind,
+                "label": "Alpha " + kind,
+                "page": page_id,
+                kind + "_fixture": content,
+            } for kind, content in fixture_content.items()]
+            designer.extend({
+                "case_id": fixture["id"], "label": fixture["label"],
+                "page": "Alpha", "semantic_page_id": page_id,
+                "source": "designer", "path": frame,
+            } for fixture in fixtures)
             fingerprint = HYBRID.ui_fingerprint(ROOT)
             ui = root / "ui"
             component = root / "component"
@@ -1975,7 +2004,7 @@ class RegressionOrchestratorTest(unittest.TestCase):
                     "label": "Alpha warning",
                     "page": page_id,
                     "state": {"ui.State.WARNING": True},
-                }],
+                }, *fixtures],
             }), encoding="utf-8")
             expectation = {
                 "description": "Complete readable test frame.",
@@ -1987,6 +2016,7 @@ class RegressionOrchestratorTest(unittest.TestCase):
                 "default-alpha": expectation,
                 "alpha-warning": expectation,
             }
+            expected_cases.update({fixture["id"]: expectation for fixture in fixtures})
             expected_cases.update({
                 "printer:" + label: expectation
                 for label in HYBRID.UI_SUITE_LABELS
@@ -2022,12 +2052,15 @@ class RegressionOrchestratorTest(unittest.TestCase):
                         REGRESSION.hybrid.DesignerCapture, "capture",
                         side_effect=capture):
                 report, _output = REGRESSION.execute(args)
-            page = (output / "report.html").read_text(encoding="utf-8")
+            page = (output / "report-gallery.html").read_text(
+                encoding="utf-8")
+            compare = (output / "report-compare.html").read_text(
+                encoding="utf-8")
             copied_ui = output / "printer" / "saved-01"
             copied_component = output / "printer" / "saved-02"
 
             self.assertEqual(report["status"], "disabled")
-            self.assertEqual(report["coverage"]["designer"], 2)
+            self.assertEqual(report["coverage"]["designer"], 6)
             printer_frames = len(HYBRID.UI_SUITE_LABELS) + 2
             self.assertEqual(
                 report["coverage"]["printer_captured"], printer_frames)
@@ -2051,10 +2084,240 @@ class RegressionOrchestratorTest(unittest.TestCase):
             self.assertIn(
                 "<figcaption>Real printer Typer/framebuffer</figcaption>",
                 page)
+            self.assertIn(
+                "<figcaption>Real printer Typer/framebuffer</figcaption>",
+                compare)
             self.assertIn("printer/saved-01/frame.png", page)
             self.assertIn("printer/saved-02/frame.png", page)
             self.assertTrue(copied_ui.is_dir())
             self.assertTrue(copied_component.is_dir())
+
+
+class LinkCollector(html.parser.HTMLParser):
+    """Collect what a page references and how many review items it has."""
+
+    def __init__(self):
+        super().__init__()
+        self.links = []
+        self.images = []
+        self.items = 0
+        self.problem_titles = []
+        self._in_problem_title = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in ("a", "link") and attrs.get("href"):
+            self.links.append(attrs["href"])
+        if tag == "script" and attrs.get("src"):
+            self.links.append(attrs["src"])
+        if tag == "img" and attrs.get("src"):
+            self.images.append(attrs["src"])
+        if "data-item" in attrs:
+            self.items += 1
+            if "problem" in attrs.get("class", "").split():
+                self._in_problem_title = True
+
+    def handle_data(self, data):
+        if self._in_problem_title and data.strip():
+            self.problem_titles.append(data.strip())
+            self._in_problem_title = False
+
+
+def _parse(page):
+    collector = LinkCollector()
+    collector.feed(page)
+    return collector
+
+
+def _frame(label, verdict, **shot):
+    reasons = []
+    if verdict in ("warn", "fail"):
+        reasons = [{
+            "check_id": "layout_overlap", "status": verdict,
+            "evidence_class": "product_semantic",
+            "reason": "%s needs review." % label,
+        }]
+    return {
+        "case_result": {
+            "verdict": verdict, "reasons": reasons,
+            "json_validation": {"status": "valid"},
+            "elapsed_seconds": 1.5, "error": None,
+        },
+        "models": [{
+            "attempts": 1,
+            "response": {
+                "verdict": verdict, "summary": "Summary of %s." % label,
+                "checks": [{
+                    "id": "source_parity", "status": verdict,
+                    "reason": "Compared.",
+                }],
+            },
+        }],
+        "screenshot": dict({
+            "label": label, "case_id": label.lower(), "source": "designer",
+            "artifact": "designer/%s.png" % label.lower(),
+            "semantic_page_id": "ui.pages.keys.AppPage.%s" % label.upper(),
+            "page": label,
+            "expectation": {
+                "description": "%s baseline." % label,
+                "required": ["a visible title"],
+            },
+        }, **shot),
+    }
+
+
+class HtmlReportTest(unittest.TestCase):
+    def setUp(self):
+        not_run = _frame("Idle", "not_run")
+        not_run["models"] = []
+        self.report = {
+            "status": "review", "mode": "parity",
+            "coverage": {"designer": 3, "parity_pairs": 1},
+            "configuration": {"model": "vision-model"},
+            "summary": {"verdicts": {"warn": 1, "fail": 1}},
+            "discovered_page_ids": [
+                "ui.pages.keys.AppPage.HEAT",
+                "ui.pages.keys.AppPage.NEVER_CAPTURED",
+            ],
+            "missing_expectations": [{
+                "case_id": "brand-new", "description": "Describe it.",
+                "forbidden": ["blank frame"],
+            }],
+            "pipeline": [{
+                "id": "designer", "status": "completed",
+                "title": "Designer discovery and capture",
+                "summary": "Frames rendered.",
+                "counts": {"captured_frames": 5},
+            }],
+            "screenshots": [
+                _frame("Heat", "pass"),
+                _frame("Main <menu>", "warn", artifact="designer/a b.png"),
+                _frame(
+                    "Move", "fail", source="parity",
+                    comparison_artifact="printer/move.png"),
+                not_run,
+                _frame("Escape", "pass", artifact="/etc/passwd",
+                       comparison_artifact="../outside.png"),
+            ],
+        }
+        self.pages = HTML_REPORT.render(self.report)
+
+    def test_every_review_aspect_has_its_own_page(self):
+        self.assertEqual(sorted(self.pages), sorted([
+            "report.html", "report-gallery.html", "report-problems.html",
+            "report-compare.html", "report-coverage.html",
+            "report-baselines.html", "report-run.html",
+        ]))
+
+    def test_written_pages_link_only_to_files_that_exist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            HTML_REPORT.write(output / "report.html", self.report)
+            for name in self.pages:
+                for target in _parse(
+                        (output / name).read_text(encoding="utf-8")).links:
+                    path = urllib.parse.urlsplit(target).path
+                    if path.startswith(("http", "#")):
+                        continue
+                    self.assertTrue(
+                        (output / urllib.parse.unquote(path)).is_file()
+                        or path in ("report.json", "report.md"),
+                        "%s links to missing %s" % (name, target))
+            self.assertEqual(
+                sorted(item.name for item in output.glob("*.tmp")), [])
+
+    def test_entry_name_moves_the_whole_page_set(self):
+        pages = HTML_REPORT.render(self.report, entry="run-1.html")
+
+        self.assertIn("run-1.html", pages)
+        self.assertIn("run-1-gallery.html", pages)
+        self.assertIn('href="run-1-problems.html"', pages["run-1.html"])
+
+    def test_gallery_holds_every_frame_and_escapes_text(self):
+        gallery = self.pages["report-gallery.html"]
+
+        self.assertEqual(_parse(gallery).items, 5)
+        self.assertIn("Main &lt;menu&gt;", gallery)
+        self.assertNotIn("<menu>", gallery)
+        self.assertIn('src="designer/a%20b.png"', gallery)
+        self.assertIn("Textual baseline", gallery)
+        self.assertIn("Model checklist (1)", gallery)
+
+    def test_unsafe_image_paths_are_never_referenced(self):
+        for page in self.pages.values():
+            for source in _parse(page).images:
+                self.assertFalse(source.startswith("/"), source)
+                self.assertNotIn("..", source)
+
+    def test_problems_page_lists_only_warnings_and_failures(self):
+        problems = _parse(self.pages["report-problems.html"])
+
+        self.assertEqual(problems.items, 2)
+        self.assertIn("Move needs review.", self.pages["report-problems.html"])
+        self.assertIn("product_semantic", self.pages["report-problems.html"])
+        self.assertIn("1 frame(s) were not reviewed",
+                      self.pages["report-problems.html"])
+
+    def test_problems_page_reports_a_clean_run(self):
+        report = dict(self.report, screenshots=[_frame("Heat", "pass")])
+
+        page = HTML_REPORT.render(report)["report-problems.html"]
+
+        self.assertIn("No warnings or failures.", page)
+        self.assertEqual(_parse(page).items, 0)
+
+    def test_compare_page_offers_only_paired_frames(self):
+        compare = self.pages["report-compare.html"]
+
+        self.assertEqual(_parse(compare).items, 1)
+        self.assertIn('src="printer/move.png"', compare)
+        self.assertIn("Difference", compare)
+
+    def test_compare_page_explains_a_run_without_pairs(self):
+        report = dict(self.report, screenshots=[_frame("Heat", "pass")])
+
+        page = HTML_REPORT.render(report)["report-compare.html"]
+
+        self.assertIn("No Designer ↔ real-printer pairs", page)
+
+    def test_coverage_page_flags_pages_that_were_never_captured(self):
+        coverage = self.pages["report-coverage.html"]
+
+        self.assertIn("NEVER_CAPTURED", coverage)
+        self.assertNotIn("AppPage.HEAT</code>", coverage)
+
+    def test_baselines_page_shows_expectations_and_missing_cases(self):
+        baselines = self.pages["report-baselines.html"]
+
+        self.assertIn("a visible title", baselines)
+        self.assertIn("Missing baselines (1)", baselines)
+        self.assertIn("brand-new", baselines)
+        self.assertIn("blank frame", baselines)
+
+    def test_run_page_summarizes_configuration_timing_and_stages(self):
+        run = self.pages["report-run.html"]
+
+        self.assertIn("vision-model", run)
+        self.assertIn("Designer discovery and capture", run)
+        self.assertIn("Slowest frames", run)
+
+    def test_infrastructure_failure_is_visible_on_the_entry_page(self):
+        report = dict(
+            self.report, infrastructure_error={
+                "category": "RuntimeError", "message": "bad <thing>"})
+
+        overview = HTML_REPORT.render(report)["report.html"]
+
+        self.assertIn("Infrastructure failure", overview)
+        self.assertIn("bad &lt;thing&gt;", overview)
+
+    def test_empty_report_still_renders_every_page(self):
+        pages = HTML_REPORT.render({"status": "fail"})
+
+        self.assertEqual(len(pages), len(HTML_REPORT.PAGES))
+        self.assertIn(
+            "No screenshots reached the review stage.",
+            pages["report-gallery.html"])
 
 
 class VisualChecksPackageResolutionTest(unittest.TestCase):

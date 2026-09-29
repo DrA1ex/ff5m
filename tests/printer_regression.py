@@ -13,7 +13,6 @@ work begins only from :func:`main` or an explicit :class:`RegressionRun`.
 import argparse
 import csv
 import datetime
-import html
 import json
 import math
 import os
@@ -27,6 +26,7 @@ import threading
 import time
 import urllib.parse
 
+from tests import printer_report
 from tests.printer_connection import (
     ARTIFACT_ROOT,
     PrinterConnection,
@@ -1427,86 +1427,7 @@ def _write_report(output, report):
         json.dumps(public, indent=2, sort_keys=True) + "\n",
         encoding="utf-8")
     temporary.replace(output / "report.json")
-
-    def escape(value):
-        return html.escape(str(value if value is not None else ""))
-
-    rows = []
-    for suite in public["suites"]:
-        links = " ".join(
-            '<a href="%s">%s</a>' % (
-                escape(urllib.parse.quote(path, safe="/")), escape(name))
-            for name, path in suite.get("links", {}).items())
-        rows.append(
-            "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-            "<td>%s</td><td>%s</td><td>%s</td></tr>" % (
-                escape(suite["name"]), escape(suite["printer_suite"]),
-                escape(suite["status"]), escape(suite.get("reason")),
-                escape(suite.get("duration_seconds")),
-                escape(suite.get("screenshot_count", 0)), links))
-    warnings = "".join(
-        "<li>%s</li>" % escape(item) for item in public.get("warnings", []))
-    media = public.get("media", {})
-    video = ""
-    if media.get("recording"):
-        source = escape(urllib.parse.quote(media["recording"], safe="/"))
-        video = '<video controls preload="metadata" src="%s"></video>' % source
-    error = public.get("infrastructure_error")
-    error_html = (
-        "<p class=error><strong>Infrastructure:</strong> %s</p>" %
-        escape(error.get("message")) if error else "")
-    camera = public.get("camera", {})
-    camera_info = camera.get("metadata") or {}
-    camera_html = (
-        "<p>Camera: <code>%s</code>%s</p>" % (
-            escape(camera.get("status", "unknown")),
-            (" · %s · %s FPS" % (
-                escape(camera_info.get("name") or
-                       camera_info.get("service") or "printer camera"),
-                escape(camera_info.get("target_fps"))))
-            if camera_info else ""))
-    telemetry = public.get("telemetry", {})
-    telemetry_link = (
-        ' · <a href="%s">JSONL</a>' % escape(
-            urllib.parse.quote(telemetry["file"], safe="/"))
-        if telemetry.get("file") else "")
-    telemetry_html = (
-        "<p>RT telemetry: <code>%s</code> · requested %s Hz · "
-        "effective %s Hz · %s samples%s</p>" % (
-            escape(telemetry.get("status", "unknown")),
-            escape(telemetry.get("rate_hz", 0)),
-            escape(telemetry.get("effective_rate_hz", 0)),
-            escape(telemetry.get("sample_count", 0)), telemetry_link))
-    resources = public.get("resources", {})
-    resources_link = (
-        ' · <a href="%s">TSV</a>' % escape(
-            urllib.parse.quote(resources["file"], safe="/"))
-        if resources.get("file") else "")
-    resources_html = "<p>Printer resources: <code>%s</code>%s</p>" % (
-        escape(resources.get("status", "unknown")), resources_link)
-    page = """<!doctype html>
-<html><head><meta charset="utf-8"><title>FF5M printer regression</title>
-<style>
-body{font:15px system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;color:#18202a}
-table{border-collapse:collapse;width:100%%}th,td{border:1px solid #ccd3db;padding:.55rem;text-align:left;vertical-align:top}
-video{width:100%%;max-height:70vh;background:#000}.error{color:#a11}code{background:#eef1f4;padding:.1rem .3rem}
-</style></head><body>
-<h1>FF5M printer regression: %s</h1>
-<p>Printer <code>%s</code> · requested <code>%s</code> · %s FPS · screen capture interval %ss · duration %.1fs<br>Started %s · finished %s</p>
-%s%s%s%s%s
-<h2>Suites</h2><table><thead><tr><th>Host suite</th><th>Printer suite</th><th>Status</th><th>Reason</th><th>Duration</th><th>Screens</th><th>Artifacts</th></tr></thead><tbody>%s</tbody></table>
-<h2>Warnings</h2><ul>%s</ul>
-<p><a href="report.json">Machine-readable report</a></p>
-</body></html>
-""" % (
-        escape(public["status"]), escape(public["printer_host"]),
-        escape(public["requested_suite"]), public["fps"],
-        escape(public.get("screen_capture_interval", 0)),
-        float(public.get("duration_seconds") or 0.0),
-        escape(public.get("started_at")), escape(public.get("finished_at")),
-        camera_html, telemetry_html, resources_html, error_html, video,
-        "".join(rows), warnings)
-    (output / "report.html").write_text(page, encoding="utf-8")
+    printer_report.write(output)
 
 
 class RegressionRun:

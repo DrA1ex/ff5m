@@ -1,0 +1,155 @@
+/* Printer-regression additions to the shared report styles.
+ *
+ * Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+ *
+ * This file may be distributed under the terms of the GNU GPLv3 license
+ */
+
+:root{--tile:320px}
+.bad{color:var(--fail)}
+.links{margin:8px 0 0;color:var(--muted)}
+a.seek{white-space:nowrap}
+pre.wrap{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;font:12px/1.4 ui-monospace,Menlo,monospace}
+.problem>div:only-child{grid-column:1/-1}
+.summary-dl{margin:10px 0}
+
+/* Overview */
+.suite-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:10px}
+.suite-card{padding:12px 14px;background:var(--panel);border:1px solid var(--line);
+border-left:4px solid var(--muted);border-radius:9px}
+.suite-card.pass{border-left-color:var(--pass)}.suite-card.warn{border-left-color:var(--warn)}
+.suite-card.fail{border-left-color:var(--fail)}
+.suite-card header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.suite-card header h3{margin:0;font-size:17px}
+.suite-card .reason{margin:8px 0}
+
+/* Tables */
+table.steps,table.log,table.scenarios{margin-top:12px}
+table.steps thead th,table.log thead th{position:sticky;top:0;z-index:3}
+table.steps td.label{overflow-wrap:anywhere}
+table.steps tr.fail td:first-child,table.steps tr.warn td:first-child{border-left:3px solid var(--fail)}
+table.steps tr.warn td:first-child{border-left-color:var(--warn)}
+table.steps tr.fail{background:#2a111855}
+tr.failed-row{background:#2a111855}
+table.diff td:first-child{white-space:nowrap}
+table.log{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+table.log td{padding:2px 7px;border-color:#1b2a33}
+table.log td.n{color:var(--muted);text-align:right;width:1%;white-space:nowrap}
+table.log td.t{width:1%;white-space:nowrap}
+table.log td.m{white-space:pre-wrap;overflow-wrap:anywhere}
+table.log tr.error td.m{color:var(--fail)}
+table.log tr.warn td.m{color:var(--warn)}
+table.log tr:target td{background:#2a4250}
+
+/* Charts */
+.chart-card{margin:10px 0 16px;padding:10px 12px;background:var(--panel);
+border:1px solid var(--line);border-radius:9px}
+.chart-card figcaption{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;
+padding:0 0 6px;text-align:left;color:var(--text)}
+.chart-card .legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.swatch{display:inline-flex;gap:5px;align-items:center}
+.swatch i{display:inline-block;width:14px;height:3px;border-radius:2px}
+.chart-readout{margin-left:auto;font:12px ui-monospace,Menlo,monospace;color:var(--link)}
+svg.chart{display:block;width:100%;height:auto;cursor:crosshair}
+svg.chart .grid{stroke:#ffffff14;stroke-width:1}
+svg.chart .grid.vertical{stroke:#ffffff0c}
+svg.chart .tick{fill:var(--muted);font-size:11px}
+svg.chart .band-label{fill:#ffffff88;font-size:10px;pointer-events:none}
+svg.chart .line{stroke-width:1.6;stroke-linejoin:round}
+svg.chart .line.dash{stroke-dasharray:5 4;opacity:.75}
+svg.chart .marker{stroke-width:1.3}
+svg.chart .marker.fail{stroke:var(--fail)}
+svg.chart .marker.suite{stroke:#94a3b8;stroke-dasharray:3 3}
+svg.chart .cursor{stroke:#e4edf2;stroke-width:1;pointer-events:none}
+svg.heatmap{display:block;width:min(520px,100%);margin:8px 0}
+svg.heatmap text{fill:#fff;font-size:15px;font-weight:600}
+
+/* Screens */
+.screen-view{position:relative;display:block;width:100%;max-width:900px;margin:8px auto;
+background:#030506;border:1px solid var(--line)}
+.screen-view img{display:block;width:100%;height:auto}
+.screen-view .hit{position:absolute;display:none;box-sizing:border-box;
+border:1px dashed #facc15aa;pointer-events:auto}
+.screen-view .hit.button{border:2px solid #60a5fa;background:#60a5fa22}
+.frame.show-hitboxes .screen-view .hit{display:block}
+.shot-grid.screens .shot-tile.fail .shot-images{outline:0}
+
+/* Run */
+video#recording{display:block;width:100%;max-height:70vh;background:#000;border-radius:8px}
+
+/* Action buttons: every jump target is a separate, colored pill */
+.actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+td.actions{white-space:normal}
+p.actions{margin:10px 0 0}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1px solid var(--line);
+border-radius:999px;background:#0e171d;color:var(--text);font-size:12px;font-weight:600;
+text-decoration:none;white-space:nowrap}
+.pill:hover{text-decoration:none;filter:brightness(1.25)}
+.pill.video{border-color:#a78bfa;color:#c4b5fd}
+.pill.screen{border-color:#60a5fa;color:#93c5fd}
+.pill.log{border-color:#4ade80;color:#86efac}
+.pill.steps{border-color:#facc15;color:#fde047}
+.pill.chart{border-color:#22d3ee;color:#67e8f9}
+.pill.checks{border-color:#f472b6;color:#f9a8d4}
+.pill.page{border-color:#94a3b8;color:#cbd5e1}
+
+/* Overview dashboard */
+.verdict{display:flex;gap:20px;align-items:center;padding:18px 22px;margin:12px 0;
+background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--muted);border-radius:12px}
+.verdict.pass{border-left-color:var(--pass)}.verdict.warn{border-left-color:var(--warn)}
+.verdict.fail{border-left-color:var(--fail)}
+.verdict-status{font-size:34px;font-weight:800;letter-spacing:.04em}
+.verdict.pass .verdict-status{color:var(--pass)}.verdict.fail .verdict-status{color:var(--fail)}
+.verdict.warn .verdict-status{color:var(--warn)}
+.verdict-line{margin:0 0 3px;font-size:18px;font-weight:650}
+.verdict .muted{margin:0}
+.findings{display:grid;gap:8px}
+.finding{display:flex;gap:14px;justify-content:space-between;align-items:center;flex-wrap:wrap;
+padding:12px 16px;background:var(--panel);border:1px solid var(--line);
+border-left:5px solid var(--warn);border-radius:9px}
+.finding.fail{border-left-color:var(--fail);background:#2a111833}
+.finding-text{flex:1 1 420px;min-width:0}
+.finding h3{margin:0 0 4px;font-size:15px}
+.finding .detail{color:var(--muted);overflow-wrap:anywhere}
+table.results td{vertical-align:middle}
+table.results tr.fail{background:#2a111844}
+.mini-badge{display:inline-block;margin:2px 4px 2px 0;padding:1px 8px;border-radius:5px;font-size:11px;
+border:1px solid var(--line);color:var(--muted)}
+.mini-badge.pass{border-color:#4ade8077;color:#86efac}
+.mini-badge.fail{border-color:var(--fail);color:var(--fail)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.tile{display:flex;flex-direction:column;padding:12px 14px;background:var(--panel);
+border:1px solid var(--line);border-radius:9px}
+.tile.warn{border-color:var(--warn);background:#2a24081f}
+.tile h3{margin:0;font-size:13px;color:var(--muted);font-weight:600}
+.tile .dot{margin-right:7px}
+.tile .value{font-size:26px;margin:4px 0 2px}
+.tile .meaning{margin:0 0 6px;color:var(--muted);font-size:12px}
+.tile .typical{margin:0 0 6px;font-size:12px}
+.tile.warn .typical{color:var(--warn)}
+.tile a{margin-top:auto;font-size:12px}
+
+/* Screens: grouped cards */
+.screen-group{margin:10px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.group-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px}
+.group-toggle{display:inline-flex;gap:9px;align-items:center;background:transparent;border:0;
+padding:4px 6px;font-size:15px}
+.group-toggle .chev{display:inline-block;width:8px;height:8px;border-right:2px solid var(--muted);
+border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .12s}
+.screen-group.open .chev{transform:rotate(45deg)}
+.count-label{color:var(--muted)}
+.group-head .strip{display:flex;gap:4px;margin-left:auto}
+.strip img.mini{height:38px;width:auto;aspect-ratio:5/3;object-fit:cover;border:1px solid var(--line);
+border-radius:4px;background:#030506}
+.screen-group.open .strip{display:none}
+.group-body{padding:0 12px 12px}
+.screen-group.closed .group-body{display:none}
+body[data-filtered=true] .screen-group.closed .group-body{display:grid}
+body[data-screens=flat] .screen-groups{display:grid;gap:8px;
+grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr))}
+body[data-screens=flat] .screen-group{display:contents}
+body[data-screens=flat] .group-head{display:none}
+body[data-screens=flat] .screen-group .group-body,
+body[data-screens=flat] .screen-group.closed .group-body{display:contents}
+body:not([data-screens=flat]) button[data-groups]{display:inline-block}
+body[data-screens=flat] button[data-groups]{display:none}
