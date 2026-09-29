@@ -16,6 +16,12 @@ including during Klipper connection; they must not look like an idle printer.
 
 `USER_PAUSE` is separate because Resume must stay blocked during restoration
 and become available afterward. Ordinary pauses use Klipper's print state.
+A frame parks the head through `pause_resume`, so `print_stats` reports
+`paused` while the print still runs. `TimelapsePhase.print_state()` is the one
+rule that maps it to the state the user sees: FRAME is printing, and a user
+pause is paused. `page_for_print_state()` applies it, and the cancel page
+returns there. `locks_print_controls` names the phases in which Pause,
+Filament, and live Z are unavailable.
 Feather suppresses the previous-timelapse prompt while waiting; its page owns
 the choices. The Klipper prompt remains available to web clients.
 All Feather print-cancel requests enter `_request_print_cancel`, which chooses
@@ -27,14 +33,24 @@ first.
 Each accepted `DialogInstance` owns its content, pagination, painter, allowed
 actions, and priority. The per-kind policy lives in one `DialogSpec` entry of
 `DIALOGS`: painter, navigation and content-declared actions, priority, covered
-kinds, and whether the dialog may reach a frozen surface. A rejected dialog is
-logged and returns `None`. `_prompt_draft` exists only to assemble incoming prompt
-protocol messages; ordinary prompt display transfers it into a dialog.
+kinds, whether the dialog may reach a frozen surface, and whether it stays on
+top. A rejected dialog is logged and returns `None`. `_prompt_draft` exists
+only to assemble incoming prompt protocol messages; ordinary prompt display
+transfers it into a dialog.
 Renderers receive that instance explicitly. Ordinary notifications cannot
-replace ERROR or TOUCH_UNAVAILABLE. A message may cover a prompt, and a touch
-warning may cover an error; closing the covering layer reveals the retained
-instance. The screen root's admitted layers remain authoritative for input
-when an attempted replacement frame is rejected.
+replace ERROR or TOUCH_UNAVAILABLE. A message may cover a prompt. The touch
+warning stays on top: an error that arrives while it is shown opens beneath
+it. Closing the covering layer reveals the retained instance. The warning
+layer is the only record that the warning is shown. The screen root's
+admitted layers remain authoritative for input when an attempted replacement
+frame is rejected.
+
+`_show_terminal_error` is the single path for shutdown and disconnect. It
+replaces queued output with the error screen, marks that ERROR as terminal,
+and freezes output. A terminal ERROR ignores later non-terminal errors from
+the interrupted operation. When touch returns, output is refrozen only if a
+terminal ERROR remains, so a runtime error revealed under the warning stays
+interactive.
 
 Moonraker owns print finalization through `PrintFinalization`: the previous
 filename, frame generation, and cancellable task. Selecting the next file or

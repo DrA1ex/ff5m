@@ -50,13 +50,16 @@ class ScreenRoot:
         self._values = {}
         renderer.configure_frame_owner(self)
 
-    def open(self, layer, replace=None, paint=True):
+    def open(self, layer, replace=None, paint=True, *, before=None):
         if not isinstance(layer, ScreenLayer):
             raise TypeError("screen layer must be a ScreenLayer instance")
         if replace is not None:
             self.close(replace, paint=False)
         if layer not in self.layers:
-            self.layers.append(layer)
+            if before is None:
+                self.layers.append(layer)
+            else:
+                self.layers.insert(self.layers.index(before), layer)
         self._rebuild = True
         return self.paint() if paint else True
 

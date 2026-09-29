@@ -119,23 +119,26 @@ class DialogSpec(NamedTuple):
     covers: frozenset
     # Recovery must still reach a frozen shutdown/disconnect surface.
     shows_while_frozen: bool
+    # Dialogs accepted later open beneath it: it explains why input is
+    # unavailable, which stays true whatever content arrives.
+    stays_on_top: bool
 
 
 RECOVERY_DIALOG_PRIORITY = 1
 DIALOGS = {
     ScreenDialog.ACTION_PROMPT: DialogSpec(
         "_render_action_prompt", ("prompt.prev", "prompt.next", "coldpull.cancel"),
-        lambda content: content["buttons"], 0, frozenset(), False),
+        lambda content: content["buttons"], 0, frozenset(), False, False),
     ScreenDialog.MESSAGE: DialogSpec(
         "_render_message", ("message.prev", "message.next"),
         lambda content: (action for action, _label, _state in content["actions"]),
-        0, frozenset((ScreenDialog.ACTION_PROMPT,)), False),
+        0, frozenset((ScreenDialog.ACTION_PROMPT,)), False, False),
     ScreenDialog.ERROR: DialogSpec(
         "_render_error", ("error.prev", "error.next", "error.restart", "error.firmware_restart"),
-        lambda content: (), RECOVERY_DIALOG_PRIORITY, frozenset(), True),
+        lambda content: (), RECOVERY_DIALOG_PRIORITY, frozenset(), True, False),
     ScreenDialog.TOUCH_UNAVAILABLE: DialogSpec(
         "_render_touch_unavailable", (), lambda content: (),
-        RECOVERY_DIALOG_PRIORITY, frozenset(ScreenDialog), False),
+        RECOVERY_DIALOG_PRIORITY, frozenset(ScreenDialog), False, True),
 }
 
 ACTIVE_PRINT_STATES = frozenset((
@@ -265,8 +268,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.event_handle = None
         self.event_partial = ""
         self.touch_available = None
-        self.touch_warning_visible = False
-        self.touch_warning_restore_frozen = False
         self.last_touch_time = self.reactor.monotonic()
         self.last_action_time = -1.0
         self.dimmed = False
@@ -641,12 +642,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.shutdown_active = True
         self._deactivate_components()
         if self.renderer.active:
-            self.renderer.discard_pending_output()
-            self.renderer.thaw_output()
             msg, _category = self.printer.get_state_message()
             message = msg if str(msg).strip() else "Printer is shutdown"
-            self._show_error(message, "shutdown", "firmware_restart")
-            self.renderer.freeze_output()
+            self._show_terminal_error(message, "shutdown", "firmware_restart")
 
     def _disconnect(self):
         if (self.shutdown_active
@@ -656,11 +654,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if self.restart_pending:
             return
         if self.renderer.active:
-            self.renderer.discard_pending_output()
-            self.renderer.thaw_output()
-            self._show_error(
-                "Klipper disconnected", "disconnect", recovery=None)
-            self.renderer.freeze_output()
+            self._show_terminal_error("Klipper disconnected", "disconnect", None)
+
+    def _show_terminal_error(self, message, category, recovery):
+        """Leave one final screen for a stopped Klipper until it restarts."""
+        self.renderer.discard_pending_output()
+        self.renderer.thaw_output()
+        self._show_error(message, category, recovery, terminal=True)
+        self.renderer.freeze_output()
 
     def _deactivate_components(self):
         # Suppress any final ToolHead flush after the MCU has already stopped.
@@ -726,8 +727,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "generation": self.renderer.generation,
             "output_frozen": self.renderer.output_frozen,
             "touch_available": getattr(self, "touch_available", None),
-            "touch_warning_visible": getattr(
-                self, "touch_warning_visible", False),
+            "touch_warning_visible":
+                self._find_dialog(ScreenDialog.TOUCH_UNAVAILABLE) is not None,
             "context_path": operation["context_path"],
             "context_types": operation["context_types"],
             "current_state": operation["current_state"],
@@ -849,17 +850,15 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _show_touch_unavailable(self):
         if (self.boot_screen_held
                 or self.touch_available is not False
-                or self.touch_warning_visible
+                or self._find_dialog(ScreenDialog.TOUCH_UNAVAILABLE) is not None
                 or self.system_shutdown_active
                 or not self.renderer.touch_warning_allowed):
             return False
-        was_frozen = self.renderer.output_frozen
-        if was_frozen:
-            self.renderer.thaw_output()
-        self.touch_warning_layer = self._show_dialog(ScreenDialog.TOUCH_UNAVAILABLE, content={})
+        # The warning must also reach a frozen error screen. It then owns the
+        # display: nothing else may paint while touch cannot dismiss it.
+        self.renderer.thaw_output()
+        self._show_dialog(ScreenDialog.TOUCH_UNAVAILABLE, content={})
         self.renderer.freeze_output()
-        self.touch_warning_restore_frozen = was_frozen
-        self.touch_warning_visible = True
         return True
 
     def _handle_touch_device_status(self, available):
@@ -875,18 +874,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if not available:
             self._show_touch_unavailable()
             return
-        if not getattr(self, "touch_warning_visible", False):
+        warning = self._find_dialog(ScreenDialog.TOUCH_UNAVAILABLE)
+        if warning is None:
             return
 
-        restore_frozen = getattr(
-            self, "touch_warning_restore_frozen", False)
-        self.touch_warning_visible = False
-        self.touch_warning_restore_frozen = False
+        error = self._find_dialog(ScreenDialog.ERROR)
         self.renderer.thaw_output()
-        self._close_dialog(getattr(self, "touch_warning_layer", None))
-        self.touch_warning_layer = None
+        self._close_dialog(warning)
         self._show_page(self.page)
-        if restore_frozen:
+        # The error may have arrived under the warning; either way a stopped
+        # Klipper keeps its final screen as the only display owner.
+        if error is not None and error.content["terminal"]:
             self.renderer.freeze_output()
 
     def _handle_continuous_touch(self, line):
@@ -1346,10 +1344,11 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             set(spec.actions).union(spec.content_actions(content)), spec.priority)
         # Covered instances return when the new dialog closes; replaced
         # instances are closed and cannot return.
+        on_top = next((layer for layer in root.layers if DIALOGS[layer.kind].stays_on_top), None)
         for layer in tuple(root.layers):
-            if layer.kind not in spec.covers:
+            if layer is not on_top and layer.kind not in spec.covers:
                 root.close(layer, paint=False)
-        root.open(instance, paint=False)
+        root.open(instance, before=on_top, paint=False)
         if (getattr(self, "page", None) == ScreenPage.CONTROL_MOVE
                 and getattr(self, "joystick_action", None) is not None):
             self._stop_joystick()
@@ -1551,12 +1550,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             state = None
         if state in ("printing", "paused"):
             phase = self._timelapse_phase()
-            if phase in (TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE):
-                return ScreenPage.PAUSED
             if phase == TimelapsePhase.WAITING:
                 return ScreenPage.TIMELAPSE_WAIT
-            if phase in (TimelapsePhase.HELD, TimelapsePhase.FRAME):
+            # A held file is still being prepared, which the print page shows.
+            if phase == TimelapsePhase.HELD:
                 return ScreenPage.PRINTING
+            state = phase.print_state(state)
         if state == "paused":
             return ScreenPage.PAUSED
         if state == "printing":
@@ -2074,24 +2073,22 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             return "restart"
         return None
 
-    def _show_error(self, message, category="", recovery=None):
+    def _show_error(self, message, category="", recovery=None, *, terminal=False):
         # A shutdown/disconnect screen is frozen after its complete frame has
         # reached Typer.  A late exception from the interrupted operation may
         # report the same error again.  Calling begin_page() while output is
         # frozen would advance the renderer generation without replacing the
         # visible hitboxes, making the recovery button permanently stale.
-        if (self._current_dialog() == ScreenDialog.ERROR
-                and getattr(
-                    getattr(self, "renderer", None),
-                    "output_frozen", False)):
+        final = self._find_dialog(ScreenDialog.ERROR)
+        if not terminal and final is not None and final.content["terminal"]:
             logging.info(
-                "[feather_screen] duplicate error ignored while error "
-                "screen is frozen")
+                "[feather_screen] late error ignored under the final error screen")
             return
         message, category = str(message), str(category or "")
         self._show_dialog(ScreenDialog.ERROR, content={
             "message": message, "category": category,
             "recovery": recovery if recovery is not None else self._classify_error(message, category),
+            "terminal": terminal,
         })
 
     def _render_error(self, instance):
@@ -2203,7 +2200,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if getattr(self, "system_shutdown_active", False):
             return
         self.system_shutdown_active = True
-        self.touch_warning_visible = False
         self.renderer.discard_pending_output()
         self.renderer.thaw_output()
         self._clear_dialogs()
@@ -2307,12 +2303,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _reconcile_print_state(self, eventtime, stats=None):
         if stats is None:
             stats = self.print_stats.get_status(eventtime)
-        state = stats["state"]
-        phase = self._timelapse_phase() if state in ("printing", "paused") else TimelapsePhase.NONE
-        if phase == TimelapsePhase.FRAME:
-            state = "printing"
-        elif state == "printing" and phase in (TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE):
-            state = "paused"
+        phase = (self._timelapse_phase() if stats["state"] in ("printing", "paused")
+                 else TimelapsePhase.NONE)
+        state = phase.print_state(stats["state"])
         if state == "printing":
             new_state = (PrintState.PREPARING
                          if (stats["print_duration"] == 0

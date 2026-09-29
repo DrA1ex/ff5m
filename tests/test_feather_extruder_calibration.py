@@ -41,7 +41,6 @@ class ScenarioController(EXTRUDER_CAL.FeatherExtruderCalibrationMixin,
 
     boot_screen_held = False
     touch_available = None
-    touch_warning_visible = False
     system_shutdown_active = False
 
 

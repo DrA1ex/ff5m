@@ -41,10 +41,7 @@ class PrintCancelPagesMixin:
                     title="Cancel print?")
             return
 
-        return_page = (self.page if held else
-                       ScreenPage.PAUSED if state == "paused" or phase in (
-                           TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE)
-                       else ScreenPage.PRINTING)
+        return_page = self.page if held else self.page_for_print_state()
         self._open_operation_cancel(return_page,
                                     self._accept_print_operation_cancel,
                                     self._clear_print_operation_cancel)
@@ -82,9 +79,7 @@ class PrintCancelPagesMixin:
         if action == "print.cancel":
             self._request_print_cancel()
             return
-        if stats == "printing" and phase in (
-                TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE):
-            stats = "paused"
+        stats = phase.print_state(stats)
         if action == "print.resume":
             if phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD):
                 self._toast("Print preparation is in progress")

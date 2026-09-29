@@ -126,9 +126,7 @@ class PrintingPagesMixin:
                 self._show_page(target)
 
     def _render_print_page(self):
-        phase = self._timelapse_phase()
-        paused = (phase in (TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE)
-                  or (phase == TimelapsePhase.NONE and self.print_state == PrintState.PAUSED))
+        paused = self.page_for_print_state() == ScreenPage.PAUSED
         controls_ready = self._print_controls_ready()
         eventtime = self.reactor.monotonic()
         print_stats = getattr(self, "print_stats", None)
@@ -458,8 +456,7 @@ class PrintingPagesMixin:
 
     def _print_controls_ready(self):
         phase = self._timelapse_phase()
-        if phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD,
-                     TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE):
+        if phase.locks_print_controls:
             return False
         if phase == TimelapsePhase.USER_PAUSE:
             return True

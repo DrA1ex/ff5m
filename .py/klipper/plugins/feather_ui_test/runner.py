@@ -910,12 +910,7 @@ class UITestRun:
             token = "ui-test:%s:%d:%d" % (
                 self.run_id or os.getpid(), self.step_index,
                 self.capture_number + 1)
-            command = (
-                "--batch flush --receipt %s --receipt-phase presented" %
-                token)
-            accepted = self.host.renderer.send(
-                (command,), kind="state", key="ui-test-capture-barrier")
-            if not accepted:
+            if not self.host.renderer.request_presented_receipt(token):
                 raise RuntimeError("Unable to queue capture receipt")
             self.step_runtime["capture_receipt"] = token
             self.step_runtime["receipt_deadline"] = (

@@ -167,7 +167,8 @@ class ExternalWorkflowTest(unittest.TestCase):
                                           "footer": [], "buttons": {}},
                     Dialog.MESSAGE: {"message": "Notice", "title": None,
                                      "actions": (("message.ok", "OK", "enabled"),)},
-                    Dialog.ERROR: {"message": "Configuration failed", "category": "error", "recovery": "restart"},
+                    Dialog.ERROR: {"message": "Configuration failed", "category": "error",
+                                   "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},
                 }[dialog]
                 self.host._show_dialog(dialog, content=content)

@@ -487,6 +487,16 @@ class FeatherRenderer:
         return self.send(
             commands, kind="animation", key=key, receipt=receipt)
 
+    def request_presented_receipt(self, token):
+        """Queue a Typer presentation barrier without repainting the frame."""
+        if not self.render_allowed:
+            return False
+        token = validate_render_receipt_token(token)
+        # A protocol-only barrier can pass the modal frame owner safely.
+        return self.send(
+            ("--batch flush --receipt %s --receipt-phase presented" % token,),
+            kind="state", key="presented-receipt", button_feedback=True)
+
     def get_status(self):
         if self._worker is None:
             status = self._batch_queue.snapshot()

@@ -26,6 +26,7 @@ import feather_screen as FEATHER  # noqa: E402
 from feather.files import FileEntry  # noqa: E402
 from feather.features.manager import LazyFeatureManager  # noqa: E402
 from ff5m_ui.home import page as HOME_PAGE  # noqa: E402
+from ui.font_metrics import get_font_metrics  # noqa: E402
 from tests.visual_checks import hybrid as HYBRID  # noqa: E402
 from tests.feather_render_test_helper import RenderCapture  # noqa: E402
 from tests.test_feather_screen import blank_page  # noqa: E402
@@ -645,8 +646,8 @@ class RunnerContractTest(unittest.TestCase):
             def get_status(self):
                 return dict(status)
 
-            def send(self, commands, **kwargs):
-                submissions.append((commands, kwargs))
+            def request_presented_receipt(self, token):
+                submissions.append(token)
                 status["submitted_batches"] += 1
                 status["rendered_batches"] += 1
                 return True
@@ -670,8 +671,8 @@ class RunnerContractTest(unittest.TestCase):
 
         self.assertEqual(captures, [])
         self.assertEqual(len(submissions), 1)
-        self.assertIn("--receipt-phase presented", submissions[0][0][0])
         token = feature.step_runtime["capture_receipt"]
+        self.assertEqual(submissions, [token])
         receipt = type("Receipt", (), {
             "token": token, "success": True,
         })()
@@ -681,6 +682,35 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(len(captures), 1)
         self.assertNotIn(token, feature.capture_receipts)
         self.assertEqual(step, {"kind": "capture", "label": "presented"})
+
+    def test_capture_receipt_can_queue_while_dialog_is_visible(self):
+        from ui import Dialog, Rect, ScreenLayer, ScreenRoot, Text
+
+        renderer = FEATHER.FeatherRenderer()
+        root = ScreenRoot(renderer, Text("Background"),
+                          Rect(0, 0, 800, 480), FEATHER.AppPage.SCREEN_ROOT,
+                          chrome=False)
+        root.paint()
+        renderer._batch_queue.get(timeout=0)
+        root.open(ScreenLayer(Dialog("Foreground", (), (), modal=True)))
+        renderer._batch_queue.get(timeout=0)
+        renderer.get_status = lambda: {
+            "submitted_batches": 2, "rendered_batches": 2,
+            "coalesced_batches": 0, "dropped_batches": 0,
+        }
+        reactor = type("Reactor", (), {"monotonic": lambda self: 10.0})()
+        feature = UI_TEST.UITestRun(type("Host", (), {
+            "renderer": renderer, "reactor": reactor,
+        })())
+        feature._schedule = mock.Mock()
+
+        feature._capture({"kind": "capture", "label": "modal"})
+
+        batch = renderer._batch_queue.get(timeout=0)
+        self.assertEqual(batch.commands, (
+            "--batch flush --receipt %s --receipt-phase presented" %
+            feature.step_runtime["capture_receipt"],))
+        self.assertTrue(root.visible_layers)
 
     def test_screen_metadata_observes_live_telemetry(self):
         telemetry = []
@@ -1027,6 +1057,64 @@ class RunnerContractTest(unittest.TestCase):
                 "measure-ready", "input", "warning", "result",
                 "exit-warning", "saved")},
             {label for label in captures if label.startswith("ui-extruder-")})
+
+    def test_dialog_layout_snapshot_replaces_previous_message(self):
+        host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        host.renderer = FEATHER.FeatherRenderer()
+        host.print_state = FEATHER.PrintState.IDLE
+        host.page = FEATHER.ScreenPage.NETWORK_PROGRESS
+        host._paint_page = lambda: host.renderer.send(
+            host.renderer.begin_page("Network"))
+        capture = RenderCapture(host.renderer)
+        def show_page(page):
+            host.page = page
+            root = host._ensure_screen_root()
+            root.invalidate()
+            root.paint()
+
+        host._show_page = show_page
+        scenarios = SCENARIOS.ScenarioCatalog(
+            type("Run", (), {"host": host})())
+
+        scenarios._render_single_action_message()
+        self.assertTrue(capture.latest.has_text(
+            "Moonraker returned an error. Check the printer connection."))
+
+        scenarios._render_dialog_variant("short")
+
+        self.assertTrue(capture.latest.has_text("SHORT MESSAGE"))
+        self.assertFalse(capture.latest.has_text(
+            "Moonraker returned an error. Check the printer connection."))
+        self.assertIsNone(host._current_dialog())
+
+        scenarios._render_dialog_variant("paged-second")
+
+        self.assertTrue(capture.latest.has_text("MESSAGE LINE 9."))
+        self.assertFalse(capture.latest.has_text("SHORT MESSAGE"))
+
+    def test_update_restart_snapshot_fits_loader_message(self):
+        host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        host.renderer = FEATHER.FeatherRenderer()
+        host.update_notification = type("Notification", (), {"installing": False})()
+        capture = RenderCapture(host.renderer)
+
+        def show_page(page):
+            host.page = page
+            host.renderer.loader(host.busy_message, host.busy_phase)
+
+        host._show_page = show_page
+        scenarios = SCENARIOS.ScenarioCatalog(
+            type("Run", (), {"host": host})())
+
+        scenarios._render_update_restart_snapshot()
+
+        message = next(text for text in capture.latest.texts
+                       if "RESTART MANUALLY" in text.value)
+        self.assertEqual(message.font, "JetBrainsMono Bold 16pt")
+        self.assertTrue(message.wrap)
+        self.assertLessEqual(get_font_metrics().text_height(
+            message.value, message.font, message.max_width, wrap=True),
+            message.max_height)
 
     def test_operation_context_visuals_cover_registered_contract_and_states(self):
         specifications = CONTEXT_FIXTURES.VISUAL_CONTEXTS

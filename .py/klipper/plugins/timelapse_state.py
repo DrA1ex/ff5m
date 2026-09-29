@@ -15,6 +15,27 @@ class TimelapsePhase(Enum):
     FRAME_USER_PAUSE = "FRAME_USER_PAUSE"
     USER_PAUSE = "USER_PAUSE"
 
+    def print_state(self, stats_state):
+        """print_stats state as the user sees it during this phase.
+
+        A frame parks the head through pause_resume, so print_stats reports
+        "paused" while the print is still running. A pause the user requested
+        is a pause even before or while the frame finishes.
+        """
+        if stats_state not in ("printing", "paused"):
+            return stats_state
+        if self == TimelapsePhase.FRAME:
+            return "printing"
+        if self in (TimelapsePhase.USER_PAUSE, TimelapsePhase.FRAME_USER_PAUSE):
+            return "paused"
+        return stats_state
+
+    @property
+    def locks_print_controls(self):
+        """A held file or a parked frame leaves nothing for the user to steer."""
+        return self in (TimelapsePhase.WAITING, TimelapsePhase.HELD,
+                        TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE)
+
 
 class TimelapseState:
     """Read required macro fields; a broken contract must never look idle."""

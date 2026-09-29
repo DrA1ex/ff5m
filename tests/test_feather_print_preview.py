@@ -37,7 +37,6 @@ class ScenarioController(FEATHER.FeatherScreen):
     boot_screen_held = False
     timelapse_state = make_timelapse_state()
     touch_available = None
-    touch_warning_visible = False
     system_shutdown_active = False
 
 

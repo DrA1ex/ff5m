@@ -1278,9 +1278,7 @@ class FeatherControlsMixin:
         stats = self.print_stats.get_status(eventtime)
         if stats.get("state") not in ("printing", "paused"):
             return False
-        phase = self._timelapse_phase()
-        if (phase in (TimelapsePhase.WAITING, TimelapsePhase.HELD,
-                      TimelapsePhase.FRAME, TimelapsePhase.FRAME_USER_PAUSE)
+        if (self._timelapse_phase().locks_print_controls
                 or self.print_state == PrintState.PREPARING):
             return False
         homed = str(

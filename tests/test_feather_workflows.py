@@ -48,7 +48,6 @@ class ScenarioController(FeatherZCalibrationMixin,
     boot_screen_held = False
     timelapse_state = make_timelapse_state()
     touch_available = None
-    touch_warning_visible = False
     system_shutdown_active = False
 
 
@@ -2030,6 +2029,21 @@ class PrintWorkflowTest(unittest.TestCase):
                 controller.reactor.now += 1.0
                 controller._dispatch_action("print.cancel")
                 self.assertEqual(controller.gcode.commands, ["CANCEL_PRINT"])
+
+    def test_back_from_cancel_during_frame_returns_to_printing(self):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.PRINTING
+        controller.timelapse_state = make_timelapse_state(
+            frame=StatusObject({"is_paused": True,
+                                "user_pause_requested": False}),
+            paused=StatusObject({"is_paused": True}))
+        controller._show_page = lambda page: setattr(controller, "page", page)
+
+        controller._request_print_cancel()
+        self.assertEqual(controller.page, FEATHER.ScreenPage.OPERATION_CANCEL)
+        controller._handle_operation_cancel_action("operation.cancel.back")
+
+        self.assertEqual(controller.page, FEATHER.ScreenPage.PRINTING)
 
     def test_failed_held_cancel_restores_wait_choices(self):
         controller, guard, capture = self.timelapse_wait_controller("busy")

@@ -479,7 +479,7 @@ class ForgeXUpdateNotification:
         commands += self.host.renderer.dialog(
             "UPDATE COMPLETE",
             ("PRINTER WILL RESTART NOW",
-             "IF IT DOES NOT, RESTART IT MANUALLY"),
+             "RESTART MANUALLY IF NEEDED"),
             (), x=70, y=105, width=660, height=280, tone="info",
             preserve_header_action=False)
         self.host.renderer.send(commands)

@@ -948,12 +948,12 @@ class ScenarioCatalog:
     def _open_navigation_message(self):
         self.host._show_message(
             "This dialog stays visible while the page changes.",
-            ScreenPage.MAIN_MENU, title="Page transition check")
+            ScreenPage.MAIN_MENU, title="Message dialog check")
         self._require_dialog_over(ScreenPage.MAIN_MENU, ScreenDialog.MESSAGE)
 
     def _open_navigation_prompt(self):
         self.host._handle_gcode_output("\n".join((
-            "// action:prompt_begin Page transition check",
+            "// action:prompt_begin G-code prompt check",
             "// action:prompt_text This prompt stays visible while the page changes.",
             "// action:prompt_footer_button Dismiss|RESPOND TYPE=command MSG=action:prompt_end|secondary",
             "// action:prompt_show")))
@@ -1008,6 +1008,7 @@ class ScenarioCatalog:
                  "RESTART KLIPPER TO APPLY THEM."),
                 "SAVE SETTINGS AND RESTART"),
         }[kind]
+        self._show(ScreenPage.NETWORK_PROGRESS)
         renderer = self.host.renderer
         commands = renderer.begin_page("Dialog layout")
         commands += renderer.dialog(
@@ -1015,7 +1016,8 @@ class ScenarioCatalog:
             x=160, y=130, width=480, height=220, tone="info",
             page=1 if kind == "paged-second" else 0,
             page_actions=("dialog.test.prev", "dialog.test.next"))
-        renderer.send(commands)
+        if not renderer.send(commands):
+            raise RuntimeError("Unable to render dialog layout snapshot")
 
     def _render_action_prompt_footer(self):
         button = {"action": "prompt.button.0", "label": "OK", "state": "enabled",
@@ -1345,7 +1347,7 @@ class ScenarioCatalog:
         }), _temporary_attributes(self.host, {
                 "busy_message": (
                     "PRINTER WILL RESTART NOW\n"
-                    "IF IT DOES NOT RESTART AUTOMATICALLY, RESTART IT MANUALLY"),
+                    "RESTART MANUALLY IF NEEDED"),
                 "busy_phase": 2,
         }):
             self._show(ScreenPage.UPDATE_NOTIFICATION)
