@@ -6,6 +6,9 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
 # Changes:
+# - Expose base_position in status for coordinate diagnostics.
+# - Log the coordinate base after homing and XYZ base/origin changes during
+#   RESTORE_GCODE_STATE; retain the stock coordinate restoration behavior.
 # - Add RESET_GCODE_ORIGIN as an extra homing safeguard: clear temporary G92
 #   shifts using Klipper's homing origin while preserving configured offsets.
 import logging
@@ -79,6 +82,11 @@ class GCodeMove:
         self.base_position[3] = self.last_position[3]
     def _handle_home_rails_end(self, homing_state, rails):
         self._reset_gcode_origin(homing_state.get_axes())
+        logging.info("Homing gcode coordinates: axes=%s position=%s"
+                     " base=%s origin=%s absolute=%s",
+                     homing_state.get_axes(), self.last_position[:3],
+                     self.base_position[:3], self.homing_position[:3],
+                     self.absolute_coord)
     def _reset_gcode_origin(self, axes):
         self.reset_last_position()
         for axis in axes:
@@ -243,6 +251,14 @@ class GCodeMove:
         state = self.saved_states.get(state_name)
         if state is None:
             raise gcmd.error("Unknown g-code state: %s" % (state_name,))
+        if (self.base_position[:3] != state['base_position'][:3]
+            or self.homing_position[:3] != state['homing_position'][:3]):
+            logging.info("Gcode state restore coordinates: name=%s"
+                         " base=%s restored_base=%s origin=%s"
+                         " restored_origin=%s",
+                         state_name, self.base_position[:3],
+                         state['base_position'][:3], self.homing_position[:3],
+                         state['homing_position'][:3])
         # Restore state
         self.absolute_coord = state['absolute_coord']
         self.absolute_extrude = state['absolute_extrude']

@@ -1,12 +1,19 @@
 # Interface to Klipper micro-controller code
 #
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
 # Changes:
+# - Backported Klipper commits dab39c02 and 1ea9f3aa (included in v0.13):
+#   stagger MCU reports and use a 0.3 timeout reporting interval to improve
+#   multi-MCU homing communication margin with the existing v0.11 protocol.
 # - Backported Klipper commit 8e6e467: schedule trsync timeout setup at the
 #   endstop start clock so synchronization is configured before homing starts.
+#   Keep this scheduling for both setup commands when reports are staggered.
+# - Log homing setup, final MCU stop reasons, and endstop trigger timestamps;
+#   periodic TRSYNC reports are not logged.
 # - Adapted Klipper commit 2b4c55f to the legacy direct PWM API: track the
 #   current software-PWM state and expose cycle-aligned scheduling for servos.
 # - Read optional TRSYNC timeout tuning from mod_data/variables.cfg without
@@ -102,25 +109,32 @@ class MCU_trsync:
                 self._home_end_clock = None
                 self._trsync_trigger_cmd.send([self._oid,
                                                self.REASON_PAST_END_TIME])
-    def start(self, print_time, trigger_completion, expire_timeout):
+    def start(self, print_time, report_offset,
+              trigger_completion, expire_timeout):
         self._trigger_completion = trigger_completion
         self._home_end_clock = None
         clock = self._mcu.print_time_to_clock(print_time)
         expire_ticks = self._mcu.seconds_to_clock(expire_timeout)
         expire_clock = clock + expire_ticks
-        report_ticks = self._mcu.seconds_to_clock(expire_timeout * .4)
-        min_extend_ticks = self._mcu.seconds_to_clock(expire_timeout * .4 * .8)
+        report_ticks = self._mcu.seconds_to_clock(expire_timeout * .3)
+        report_clock = clock + int(report_ticks * report_offset + .5)
+        min_extend_ticks = int(report_ticks * .8 + .5)
         ffi_main, ffi_lib = chelper.get_ffi()
         ffi_lib.trdispatch_mcu_setup(self._trdispatch_mcu, clock, expire_clock,
                                      expire_ticks, min_extend_ticks)
         self._mcu.register_response(self._handle_trsync_state,
                                     "trsync_state", self._oid)
-        self._trsync_start_cmd.send([self._oid, clock, report_ticks,
+        self._trsync_start_cmd.send([self._oid, report_clock, report_ticks,
                                      self.REASON_COMMS_TIMEOUT], reqclock=clock)
         for s in self._steppers:
             self._stepper_stop_cmd.send([s.get_oid(), self._oid])
         self._trsync_set_timeout_cmd.send([self._oid, expire_clock],
                                           reqclock=clock)
+        logging.info("Homing trsync start: mcu=%s oid=%d clock=%d"
+                     " report_clock=%d report_ticks=%d expire_clock=%d"
+                     " min_extend_ticks=%d reqclock=%d",
+                     self._mcu.get_name(), self._oid, clock, report_clock,
+                     report_ticks, expire_clock, min_extend_ticks, clock)
     def set_home_end_time(self, home_end_time):
         self._home_end_clock = self._mcu.print_time_to_clock(home_end_time)
     def stop(self):
@@ -229,8 +243,10 @@ class MCU_endstop:
         expire_timeout = TRSYNC_TIMEOUT
         if len(self._trsyncs) == 1:
             expire_timeout = TRSYNC_SINGLE_MCU_TIMEOUT
-        for trsync in self._trsyncs:
-            trsync.start(print_time, self._trigger_completion, expire_timeout)
+        for i, trsync in enumerate(self._trsyncs):
+            report_offset = float(i) / len(self._trsyncs)
+            trsync.start(print_time, report_offset,
+                         self._trigger_completion, expire_timeout)
         etrsync = self._trsyncs[0]
         ffi_main, ffi_lib = chelper.get_ffi()
         ffi_lib.trdispatch_start(self._trdispatch, etrsync.REASON_HOST_REQUEST)
@@ -238,6 +254,13 @@ class MCU_endstop:
             [self._oid, clock, self._mcu.seconds_to_clock(sample_time),
              sample_count, rest_ticks, triggered ^ self._invert,
              etrsync.get_oid(), etrsync.REASON_ENDSTOP_HIT], reqclock=clock)
+        logging.info("Homing endstop start: mcu=%s oid=%d pin=%s"
+                     " print_time=%.6f clock=%d rest_ticks=%d"
+                     " sample_time=%.6f sample_count=%d triggered=%s"
+                     " timeout=%.6f",
+                     self._mcu.get_name(), self._oid, self._pin, print_time,
+                     clock, rest_ticks, sample_time, sample_count, triggered,
+                     expire_timeout)
         return self._trigger_completion
     def home_wait(self, home_end_time):
         etrsync = self._trsyncs[0]
@@ -249,6 +272,11 @@ class MCU_endstop:
         ffi_main, ffi_lib = chelper.get_ffi()
         ffi_lib.trdispatch_stop(self._trdispatch)
         res = [trsync.stop() for trsync in self._trsyncs]
+        logging.info("Homing endstop stop: mcu=%s oid=%d end_time=%.6f"
+                     " reasons=%s (1=hit 2=timeout 3=host 4=past_end)",
+                     self._mcu.get_name(), self._oid, home_end_time,
+                     [(ts.get_mcu().get_name(), ts.get_oid(), reason)
+                      for ts, reason in zip(self._trsyncs, res)])
         if any([r == etrsync.REASON_COMMS_TIMEOUT for r in res]):
             return -1.
         if res[0] != etrsync.REASON_ENDSTOP_HIT:
@@ -257,7 +285,14 @@ class MCU_endstop:
             return home_end_time
         params = self._query_cmd.send([self._oid])
         next_clock = self._mcu.clock32_to_clock64(params['next_clock'])
-        return self._mcu.clock_to_print_time(next_clock - self._rest_ticks)
+        trigger_time = self._mcu.clock_to_print_time(
+            next_clock - self._rest_ticks)
+        logging.info("Homing endstop trigger: mcu=%s oid=%d"
+                     " next_clock=%d next_clock64=%d rest_ticks=%d"
+                     " trigger_time=%.6f",
+                     self._mcu.get_name(), self._oid, params['next_clock'],
+                     next_clock, self._rest_ticks, trigger_time)
+        return trigger_time
     def query_endstop(self, print_time):
         clock = self._mcu.print_time_to_clock(print_time)
         if self._mcu.is_fileoutput():
