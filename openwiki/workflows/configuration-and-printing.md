@@ -87,6 +87,50 @@ Recent macro history shows why targeted review matters:
 
 When changing macros, read the caller/callee chain across the active display config, `macros/base.cfg`, any included macro file, and the related docs. Validate the actual motion path—not only template syntax.
 
+## Smart homing origin safeguard
+
+Smart `G28` in [`macros/base.cfg`](../../macros/base.cfg) skips physical homing
+for already homed axes. After restoring the caller's G-code state, it resets
+temporary `G92` shifts on the requested XYZ axes. A parameterless `G28` selects
+all three axes; `G28 X` selects only X. Any additional axes actually homed for
+clearance also receive the reset. Unselected axes that were not homed retain
+their shifts.
+
+This is an additional safeguard to align smart homing with Klipper's normal
+homing-origin semantics, including calls that skip physical parking. It is an
+explicit compatibility change: a temporary XYZ `G92` shift no longer survives
+a successful smart `G28` for that axis. The physical parking sequence and
+already-homed optimization remain unchanged.
+
+The coordinate owner is
+[`.py/klipper/patches/extras/gcode_move.py`](../../.py/klipper/patches/extras/gcode_move.py).
+Its `RESET_GCODE_ORIGIN` command uses the same origin-reset operation as
+Klipper's `homing:home_rails_end` callback:
+
+```gcode
+RESET_GCODE_ORIGIN          ; defaults to XYZ
+RESET_GCODE_ORIGIN AXES=XZ  ; selected axes, case-insensitive
+```
+
+The command refreshes the current position through the active move transform
+and sets each selected axis's coordinate base to its configured homing origin.
+It preserves `SET_GCODE_OFFSET` calibration, E coordinates, absolute/relative
+modes, feedrate and speed/extrusion factors. It does not move the printer or
+mark axes as homed. Empty, duplicate or unsupported axis selections fail before
+changing the origin.
+
+The macro calls this command **after** `RESTORE_GCODE_STATE`, so restoration
+cannot reintroduce the saved temporary shift. A failed homing command stops
+the G-code chain; the final reset is not run and the failure is not treated as
+successful homing. `SAVE_GCODE_STATE` and `RESTORE_GCODE_STATE` retain their
+normal behavior outside this macro.
+
+[`tests/test_gcode_origin.py`](../../tests/test_gcode_origin.py) executes the
+real G-code parser and coordinate handlers with the rendered macro. It covers
+actual and skipped homing, partial and clearance homing, preserved calibration
+and modal state, repeated calls, transformed coordinates, invalid selections
+and homing failure. Run it with `.venv/bin/python -m pytest tests/test_gcode_origin.py -q`.
+
 ## Practical change checklist
 
 - Update `mod_params.json` when a supported setting changes; do not introduce an undocumented mutable key.
