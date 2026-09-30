@@ -68,8 +68,8 @@ X/Y maxima from `MOVE_SAFE` for every parked photo, retracts, lifts Z by at most
 2 mm before XY travel, then resumes at the saved position and unretracts.
 `timelapse_final_frame` is
 on by default. On normal `END_PRINT`, both stock and alternative-screen macros
-raise Z by at most 5 mm within `MOVE_SAFE`'s ceiling and park at its X/Y maxima
-before virtual SD finishes. They leave existing end parking unchanged when
+raise Z by the configured `park_dz` within `MOVE_SAFE`'s ceiling and park at
+its X/Y maxima before virtual SD finishes. They leave existing end parking unchanged when
 the final frame or per-print capture is disabled. Moonraker captures the
 final frame after virtual SD reports the end of file and after any pending
 frame completes, before frame export or rendering. If axes are unhomed, the

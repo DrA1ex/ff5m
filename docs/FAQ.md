@@ -349,12 +349,14 @@ If the camera stream is unstable or stops working, you can restart the camera se
 ## Print and Configuration Issues
 
 ### How do I change the parking Z position after a print?
-Use the `park_dz` mod parameter to change the relative Z lift after a completed print:
+Use the `park_dz` mod parameter to change the relative Z lift after a completed or cancelled print:
 ```
 SET_MOD PARAM=park_dz VALUE=100
 ```
 
 This is separate from `safe_z`, which controls the absolute safe height used before lateral parking, cleaning, and calibration moves.
+
+The final timelapse photo uses the same `park_dz` setting. The move is limited by the safe Z maximum, so tall prints may leave less room for lowering the bed.
 
 ### Why do I get errors when printing certain objects or using specific infill patterns?
 Errors during printing, especially with complex objects or infill patterns like Gyroid, are typically due to resource exhaustion rather than G-code issues. The same G-code may work multiple times but fail after a reboot due to memory constraints.

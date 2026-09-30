@@ -1681,20 +1681,22 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(screen._current_dialog(),
                          FEATHER.ScreenDialog.ACTION_PROMPT)
 
-    def test_waiting_print_uses_explicit_choices_and_confirmed_cancel(self):
+    def test_print_preparation_keeps_confirmed_cancel(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.reactor = mock.Mock()
         screen.reactor.monotonic.return_value = 10.0
         screen.print_stats = mock.Mock()
         screen.print_stats.get_status.return_value = {"state": "paused"}
-        screen.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
+        screen.page = FEATHER.ScreenPage.PRINTING
         guard = mock.Mock()
-        guard.get_status.return_value = {"waiting": True, "sd_held": True}
+        guard.get_status.return_value = {"waiting": False, "sd_held": True}
         screen.printer = mock.Mock()
         screen.printer.lookup_object.return_value = guard
         screen._run_script = mock.Mock()
         screen._show_message = mock.Mock()
         screen._toast = mock.Mock()
+        screen._operation_context_status = lambda eventtime=None: {
+            "contexts": ()}
         screen._handle_print_action("print.resume")
         screen._run_script.assert_not_called()
         screen._toast.assert_called_once()
@@ -1712,8 +1714,6 @@ class RendererStateTest(unittest.TestCase):
         screen.cancel_requested = False
         screen._blocking_operation_active = lambda: False
         screen._close_dialog = mock.Mock()
-        screen._operation_context_status = lambda eventtime=None: {
-            "contexts": ()}
         screen._show_page = mock.Mock()
         screen._dispatch_action("timelapse.wait.cancel")
         screen._run_script.assert_called_with(
@@ -1721,7 +1721,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(screen.pending_action, "print.cancel.confirm")
         self.assertTrue(screen.cancel_requested)
 
-    def test_timelapse_wait_has_three_choices_and_emergency_abort(self):
+    def test_timelapse_wait_has_only_cancel_choices_and_emergency_abort(self):
         screen = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         screen.renderer = FEATHER.FeatherRenderer()
         screen.reactor = mock.Mock()
@@ -1736,14 +1736,8 @@ class RendererStateTest(unittest.TestCase):
         screen._apply_safety_visibility()
 
         screen._render_timelapse_wait()
-        self.assertIn("print.cancel", screen.renderer._buttons)
-        self.assertIn("timelapse.wait.keep", screen.renderer._buttons)
-        self.assertIn("timelapse.wait.cancel_render", screen.renderer._buttons)
-        self.assertNotIn("print.resume", screen.renderer._buttons)
-        self.assertIn("global.abort", screen.renderer._buttons)
-        self.assertNotIn("print.pause", screen.renderer._buttons)
-        self.assertNotIn("print.filament", screen.renderer._buttons)
-        self.assertNotIn("print.z", screen.renderer._buttons)
+        self.assertEqual(set(screen.renderer._buttons), {
+            "print.cancel", "timelapse.wait.cancel_render", "global.abort"})
 
         screen._run_immediate_command = mock.Mock()
         screen._handle_touch_action("global.abort")

@@ -1225,7 +1225,9 @@ class Dialog(Component):
     def interaction_signature(self, state):
         return (self.blocks_input(state), tuple(
             button[2] not in ("disabled", "busy")
-            for button in resolve_deep(self.buttons, state)),
+            for button in resolve_deep(self.buttons, state) + tuple(
+                button for group in resolve_deep(self.button_groups, state)
+                for button in group)),
             resolve(self.page, state))
 
     @property
@@ -1258,6 +1260,26 @@ class Dialog(Component):
             buttons.append(tuple(copy.deepcopy(button)))
         self._replace_actions("buttons", tuple(buttons))
 
+    @property
+    def button_groups(self):
+        return copy.deepcopy(self.__dict__["button_groups"])
+
+    @button_groups.setter
+    def button_groups(self, value):
+        groups = []
+        for group in value:
+            buttons = []
+            for button in group:
+                if not isinstance(button, (tuple, list)) or len(button) != 3:
+                    raise TypeError("Dialog grouped buttons must be action, label, state triples")
+                if not isinstance(button[0], Action):
+                    raise TypeError("Dialog button action must be a semantic Action")
+                validate_action(button[0])
+                buttons.append(tuple(copy.deepcopy(button)))
+            if buttons:
+                groups.append(tuple(buttons))
+        self._replace_actions("button_groups", tuple(groups))
+
     covers_bounds = True
     property_schema = property_schema(
         _text("title", group="Content", live=True),
@@ -1268,6 +1290,9 @@ class Dialog(Component):
             "buttons", (tuple, list), (), kind="dialog_buttons",
             group="Actions", rewrite=False, live=False,
             source="buttons", source_index=None),
+        _property(
+            "button_groups", (tuple, list), (), kind="dialog_button_groups",
+            group="Actions", rewrite=False, live=False),
         _select(
             "tone", ("info", "warning", "danger"), "warning",
             group="Appearance"),
@@ -1278,11 +1303,12 @@ class Dialog(Component):
                   group="Actions", rewrite=False, live=False))
 
     def __init__(self, title, lines, buttons, tone="warning", modal=False,
-                 page=0, page_actions=(), key=None, **kwargs):
+                 page=0, page_actions=(), key=None, button_groups=(), **kwargs):
         super().__init__(key=key)
         self.title = title
         self.lines = lines
         self.buttons = buttons
+        self.button_groups = button_groups
         self.tone = tone
         self.modal = modal
         self.page = page
@@ -1299,7 +1325,8 @@ class Dialog(Component):
             x=bounds.x, y=bounds.y, width=bounds.width,
             height=bounds.height, tone=resolve(self.tone, state),
             modal=resolve(self.modal, state), page=resolve(self.page, state),
-            page_actions=self.page_actions or None, **kwargs)
+            page_actions=self.page_actions or None,
+            button_groups=resolve_deep(self.button_groups, state), **kwargs)
 
 
 def _creation_field(spec, required=False):

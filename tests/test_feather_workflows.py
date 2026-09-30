@@ -2000,6 +2000,129 @@ class UsbStorageMonitorTest(unittest.TestCase):
 
 
 class PrintWorkflowTest(unittest.TestCase):
+    @staticmethod
+    def timelapse_wait_controller(wait_status="unavailable"):
+        controller = base_controller("paused")
+        controller.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
+        controller.last_action_time = -1.0
+        guard = StatusObject({"waiting": True, "sd_held": True,
+                              "prompt_open": True, "wait_status": wait_status})
+        controller.printer = mock.Mock()
+        controller.printer.lookup_object.side_effect = (
+            lambda name, default=None: guard if name ==
+            "gcode_macro _TIMELAPSE_START_GUARD" else default)
+        capture = composed_controller_surface(
+            controller, controller._render_timelapse_wait)
+        controller._apply_safety_visibility()
+        controller._render_screen()
+        return controller, guard, capture
+
+    def test_timelapse_wait_cancels_print_without_confirmation(self):
+        for status in ("busy", "unavailable", "idle"):
+            with self.subTest(status=status):
+                controller, guard, capture = self.timelapse_wait_controller(status)
+                tap = controller.renderer._wire_action("print.cancel")
+
+                controller._dispatch_action(controller.renderer.decode_action(tap))
+
+                self.assertEqual(controller.gcode.commands, ["CANCEL_PRINT"])
+                self.assertIsNone(controller._current_dialog())
+                self.assertEqual(controller.page, FEATHER.ScreenPage.TIMELAPSE_WAIT)
+                self.assertEqual(controller.pending_action, "print.cancel.confirm")
+                self.assertTrue(controller.cancel_requested)
+                self.assertTrue(capture.latest.has_text("PLEASE WAIT WHILE THE PRINT STOPS"))
+                self.assertFalse(capture.latest.has_action("timelapse.wait.cancel_render"))
+
+                controller.reactor.now += 1.0
+                controller._dispatch_action("print.cancel")
+                self.assertEqual(controller.gcode.commands, ["CANCEL_PRINT"])
+
+    def test_wait_choice_keeps_unavailable_reason_visible_on_the_wait_page(self):
+        from tests.gcode_macro_harness import MacroExecution
+
+        controller, guard, capture = self.timelapse_wait_controller()
+        def respond(command):
+            parts = shlex.split(command)
+            for part in parts:
+                if part.startswith("MSG=action:prompt_"):
+                    controller._handle_gcode_output("// " + part[4:])
+        runtime = MacroExecution(
+            [(pathlib.Path(__file__).parents[1] / "macros/timelapse.cfg",
+              "_TIMELAPSE_START_WAIT_CHOICE", "gcode_macro")],
+            {"gcode_macro _TIMELAPSE_START_GUARD": guard.status}, respond)
+        controller._run_script = lambda command, **kwargs: runtime.run(command)
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Previous timelapse",
+            "// action:prompt_footer_button WAIT|_TIMELAPSE_START_WAIT_CHOICE",
+            "// action:prompt_show")))
+
+        controller._dispatch_action("prompt.button.0")
+
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(controller.page, FEATHER.ScreenPage.TIMELAPSE_WAIT)
+        self.assertFalse(capture.latest.has_action("timelapse.wait.keep"))
+        self.assertTrue(capture.latest.has_action("print.cancel"))
+        self.assertTrue(capture.latest.has_action("timelapse.wait.cancel_render"))
+        self.assertTrue(capture.latest.has_text("TIMELAPSE STATUS UNAVAILABLE"))
+        self.assertTrue(capture.latest.has_text(
+            "CHECKING MOONRAKER. PRINT WAITS FOR CONFIRMED IDLE"))
+        self.assertFalse(capture.latest.has_text(
+            "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES"))
+        self.assertTrue(guard.status["waiting"])
+        self.assertEqual(controller.gcode.commands, [])
+
+    def test_wait_reason_updates_preserve_choices_and_crossing_taps(self):
+        controller, guard, capture = self.timelapse_wait_controller("busy")
+        self.assertTrue(capture.latest.has_text("WAITING FOR THE PREVIOUS TIMELAPSE"))
+        tap = controller.renderer._wire_action("print.cancel")
+        for status, headline in (
+                ("unavailable", "TIMELAPSE STATUS UNAVAILABLE"),
+                ("busy", "WAITING FOR THE PREVIOUS TIMELAPSE"),
+                ("idle", "TIMELAPSE IS READY")):
+            with self.subTest(status=status):
+                guard.status["wait_status"] = status
+                start = len(capture.frames)
+
+                controller._update_timelapse_wait()
+
+                self.assertTrue(any(frame.has_text(headline)
+                                    for frame in capture.frames[start:]))
+                self.assertEqual(controller.renderer.decode_action(tap), "print.cancel")
+                self.assertFalse(capture.latest.has_action("timelapse.wait.keep"))
+                for action in ("print.cancel",
+                               "timelapse.wait.cancel_render", "global.abort"):
+                    self.assertTrue(capture.latest.has_action(action))
+                self.assertEqual(controller.gcode.commands, [])
+
+    def test_wait_page_recovers_under_modal_and_preserves_cancellation_text(self):
+        controller, guard, capture = self.timelapse_wait_controller()
+        controller._show_message("Notice", controller.page)
+        count = len(capture.frames)
+        guard.status["wait_status"] = "busy"
+
+        controller._update_timelapse_wait()
+
+        self.assertEqual(len(capture.frames), count)
+        controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
+        self.assertTrue(capture.latest.has_text("WAITING FOR THE PREVIOUS TIMELAPSE"))
+        controller.pending_action = "print.cancel.confirm"
+        controller._render_screen()
+        guard.status["wait_status"] = "unavailable"
+        controller._update_timelapse_wait()
+        self.assertFalse(any(frame.has_text("TIMELAPSE STATUS UNAVAILABLE")
+                             for frame in capture.frames[count:]))
+        self.assertTrue(any(frame.has_text("PLEASE WAIT WHILE THE PRINT STOPS")
+                            for frame in capture.frames[count:]))
+        self.assertFalse(capture.latest.has_action("timelapse.wait.cancel_render"))
+
+    def test_missing_wait_reason_does_not_claim_the_previous_timelapse_is_busy(self):
+        for reason in (None, "", "unknown"):
+            with self.subTest(reason=reason):
+                controller, guard, capture = self.timelapse_wait_controller(reason)
+                self.assertTrue(capture.latest.has_text("TIMELAPSE STATUS UNAVAILABLE"))
+                self.assertFalse(capture.latest.has_text(
+                    "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES"))
+
     def test_print_page_controls_follow_preparation_and_pause_state(self):
         cases = (
             ("ordinary preparation", "printing", FEATHER.PrintState.PREPARING,
@@ -5358,6 +5481,123 @@ class ActionPromptProtocolTest(unittest.TestCase):
         self.assertNotIn(FEATHER.ScreenDialog.ACTION_PROMPT,
                          [layer.kind for layer in controller.dialogs])
         self.assertIsNone(controller.action_prompt)
+
+    def test_ending_unshown_draft_preserves_visible_prompt_and_its_buttons(self):
+        for end in ("// action:prompt_end B", "// action:prompt_end"):
+            with self.subTest(end=end):
+                controller, _ = self.controller_with_navigation()
+                controller._run_script = controller.gcode.commands.append
+                controller._handle_gcode_output("\n".join((
+                    "// action:prompt_begin A",
+                    "// action:prompt_button Keep|KEEP_A",
+                    "// action:prompt_show")))
+                visible = controller._current_dialog_instance()
+                controller._handle_gcode_output("// action:prompt_begin B")
+                controller._handle_gcode_output(end)
+
+                self.assertIsNone(controller.action_prompt)
+                self.assertIs(controller._current_dialog_instance(), visible)
+                controller._handle_action_prompt_action("prompt.button.0")
+                self.assertEqual(controller.gcode.commands, ["KEEP_A"])
+
+    def test_surviving_prompt_close_button_can_end_it_without_a_draft(self):
+        for end in ("// action:prompt_end B", "// action:prompt_end"):
+            with self.subTest(end=end):
+                controller, _ = self.controller_with_navigation()
+                capture = RenderCapture(controller.renderer)
+                close = "RESPOND TYPE=command MSG=action:prompt_end"
+                def run(command):
+                    controller.gcode.commands.append(command)
+                    self.assertEqual(command, close)
+                    controller._handle_gcode_output("// action:prompt_end")
+                controller._run_script = run
+                controller._handle_gcode_output("\n".join((
+                    "// action:prompt_begin A",
+                    "// action:prompt_footer_button CLOSE|" + close,
+                    "// action:prompt_show",
+                    "// action:prompt_begin B", end)))
+                controller._handle_gcode_output("// action:prompt_end B")
+                self.assertTrue(capture.latest.has_action("prompt.button.0"))
+                self.assertIsNone(controller.action_prompt)
+
+                controller._handle_action_prompt_action("prompt.button.0")
+
+                self.assertEqual(controller.gcode.commands, [close])
+                self.assertIsNone(controller._current_dialog_instance())
+                self.assertFalse(capture.latest.has_action("prompt.button.0"))
+
+    def test_unaddressed_end_closes_surviving_prompt_under_a_message(self):
+        controller, _ = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin A", "// action:prompt_show",
+            "// action:prompt_begin B", "// action:prompt_end B")))
+        message = controller._show_message("Notice", controller.page)
+
+        controller._handle_gcode_output("// action:prompt_end")
+
+        self.assertIs(controller._current_dialog_instance(), message)
+        controller._close_dialog(message)
+        self.assertIsNone(controller._current_dialog_instance())
+
+    def test_addressed_end_closes_shown_prompt_while_preserving_other_draft(self):
+        controller, _ = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin A", "// action:prompt_show",
+            "// action:prompt_begin B", "// action:prompt_text Still building")))
+        draft = controller.action_prompt
+
+        controller._handle_gcode_output("// action:prompt_end A")
+
+        self.assertIsNone(controller._current_dialog_instance())
+        self.assertIs(controller.action_prompt, draft)
+        controller._handle_gcode_output("// action:prompt_show")
+        self.assertEqual(controller._current_dialog_instance().content["title"], "B")
+
+    def test_grouped_prompt_pages_expose_the_entire_instruction_and_commands(self):
+        controller, _ = self.controller_with_navigation()
+        capture = RenderCapture(controller.renderer)
+        instruction = "Follow every step before choosing a material. " * 35
+        controller._run_script = controller.gcode.commands.append
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Material selection",
+            "// action:prompt_text " + instruction,
+            "// action:prompt_button_group_start",
+            "// action:prompt_button PLA|SELECT_PLA",
+            "// action:prompt_button PETG|SELECT_PETG",
+            "// action:prompt_button_group_end",
+            "// action:prompt_footer_button Cancel|CANCEL_SELECTION",
+            "// action:prompt_show")))
+        self.assertTrue(capture.latest.has_action("prompt.next"))
+        seen = []
+        for _ in range(100):
+            frame = capture.latest
+            seen.extend(text.value for text in frame.texts
+                        if text.font == "JetBrainsMono 8pt" and not text.value.isdigit())
+            self.assertTrue(frame.has_action("prompt.button.2"))
+            if not frame.has_action("prompt.next"):
+                break
+            controller._handle_action_prompt_action("prompt.next")
+        else:
+            self.fail("Prompt pagination did not reach the final page")
+        self.assertEqual(" ".join(seen), instruction.strip())
+        self.assertTrue(frame.has_action("prompt.button.0"))
+        self.assertTrue(frame.has_action("prompt.button.1"))
+        controller._handle_action_prompt_action("prompt.button.1")
+        self.assertEqual(controller.gcode.commands, ["SELECT_PETG"])
+        controller._handle_action_prompt_action("prompt.prev")
+        self.assertTrue(capture.latest.has_action("prompt.next"))
+
+    def test_late_addressed_end_preserves_replacement_with_same_dialog_type(self):
+        controller, _ = self.controller_with_navigation()
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin A", "// action:prompt_show",
+            "// action:prompt_begin B", "// action:prompt_show")))
+        visible = controller._current_dialog_instance()
+
+        controller._handle_gcode_output("// action:prompt_end A")
+
+        self.assertIs(controller._current_dialog_instance(), visible)
+        self.assertEqual(visible.content["title"], "B")
 
     def test_visible_prompt_survives_print_start_and_returns_to_current_print_page(self):
         controller, shown = self.controller_with_navigation()

@@ -52,35 +52,47 @@ def _render_gcode_preview(path, cancel=None):
 
 
 class PrintingPagesMixin:
+    def _timelapse_wait_text(self):
+        if getattr(self, "pending_action", None) == "print.cancel.confirm":
+            return "CANCELLING PRINT", "PLEASE WAIT WHILE THE PRINT STOPS"
+        status = self._timelapse_start_status().get("wait_status")
+        if status == "busy":
+            return ("WAITING FOR THE PREVIOUS TIMELAPSE",
+                    "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES")
+        if status == "idle":
+            return "TIMELAPSE IS READY", "PREPARING TO START THE PRINT"
+        return ("TIMELAPSE STATUS UNAVAILABLE",
+                "CHECKING MOONRAKER. PRINT WAITS FOR CONFIRMED IDLE")
+
+    def _timelapse_wait_text_commands(self, text):
+        return [
+            self.renderer.fill(35, 130, 730, 96, ThemeColor.BACKGROUND),
+            self.renderer.text(
+                400, 155, text[0], ThemeColor.WARNING, "JetBrainsMono Bold 12pt",
+                "center", "middle", max_width=700, truncate=True),
+            self.renderer.text(
+                400, 200, text[1], ThemeColor.DIM, "JetBrainsMono 8pt",
+                "center", "middle", max_width=700, truncate=True),
+        ]
+
     def _render_timelapse_wait(self):
         cancelling = getattr(self, "pending_action", None) == "print.cancel.confirm"
+        text = self._timelapse_wait_text()
         commands = self.renderer.begin_page(
             "CANCELLING PRINT" if cancelling else "WAITING FOR TIMELAPSE")
-        commands.append(self.renderer.text(
-            400, 155, ("CANCELLING PRINT" if cancelling else
-                       "WAITING FOR THE PREVIOUS TIMELAPSE"),
-            ThemeColor.WARNING, "JetBrainsMono Bold 12pt", "center",
-            "middle", max_width=700, truncate=True))
-        commands.append(self.renderer.text(
-            400, 200, ("PLEASE WAIT WHILE THE PRINT STOPS" if cancelling else
-                       "THE PRINT STARTS WHEN THE TIMELAPSE FINISHES"),
-            ThemeColor.DIM, "JetBrainsMono 8pt", "center",
-            "middle", max_width=700, truncate=True))
+        commands += self._timelapse_wait_text_commands(text)
         commands += self._timelapse_wait_loader_commands()
         if not cancelling:
             commands += self.renderer.button(
-                "timelapse.wait.keep", 35, 310, 230, 75,
-                "WAIT", state="enabled",
-                font="JetBrainsMono Bold 10pt")
-            commands += self.renderer.button(
-                "print.cancel", 285, 310, 230, 75,
+                "print.cancel", 160, 310, 230, 75,
                 "CANCEL PRINT", state="danger",
                 font="JetBrainsMono Bold 10pt")
             commands += self.renderer.button(
-                "timelapse.wait.cancel_render", 535, 310, 230, 75,
+                "timelapse.wait.cancel_render", 410, 310, 230, 75,
                 "CANCEL TIMELAPSE", state="warning",
                 font="JetBrainsMono Bold 9pt")
-        self.renderer.send(commands)
+        if self.renderer.send(commands) is not False:
+            self._last_timelapse_wait_text = text
 
     def _timelapse_wait_loader_commands(self):
         phase = getattr(self, "busy_phase", 0)
@@ -92,6 +104,10 @@ class PrintingPagesMixin:
     def _update_timelapse_wait(self):
         if self._current_dialog() is not None:
             return
+        text = self._timelapse_wait_text()
+        if text != getattr(self, "_last_timelapse_wait_text", None):
+            if self.renderer.send(self._timelapse_wait_text_commands(text)) is not False:
+                self._last_timelapse_wait_text = text
         self.busy_phase = (getattr(self, "busy_phase", 0) + 1) % 5
         self.renderer.send(
             self._timelapse_wait_loader_commands(),

@@ -51,6 +51,10 @@ class PrintCancelPagesMixin:
                 return
             if action == "print.cancel":
                 waiting = self._timelapse_start_waiting()
+                if waiting and self.page == ScreenPage.TIMELAPSE_WAIT:
+                    self._cancel_held_timelapse_print(self.reactor.monotonic())
+                    return
+
                 if (not waiting
                         and self._operation_context_status()["contexts"]):
                     self._open_operation_cancel(

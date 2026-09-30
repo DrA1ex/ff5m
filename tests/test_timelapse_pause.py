@@ -45,7 +45,8 @@ class ParkedPrint:
         self.status = {
             "mod_params": {"variables": {
                 "timelapse": True, "timelapse_park": True, "pause_z_min": 30,
-                "safe_z": 2, "park_dz": 2, "filament_switch_sensor": False}},
+                "safe_z": 2, "park_dz": 2, "filament_switch_sensor": False,
+                "timelapse_final_frame": True, "midi_end": ""}},
             "gcode_macro MOVE_SAFE": {"x_max": 210, "y_max": 210,
                                       "x_min": 0, "y_min": 0, "z_min": 0, "z_max_margin": 5},
             "gcode_macro TIMELAPSE_PRINT": {"enable": True},
@@ -65,7 +66,10 @@ class ParkedPrint:
             ("TIMELAPSE_TAKE_FRAME", "gcode_macro"), ("_TIMELAPSE_NEW_FRAME", "gcode_macro"),
             ("_WAIT_TIMELAPSE_TAKE_FRAME", "delayed_gcode"),
             ("_TIMELAPSE_START_RELEASE_SD", "gcode_macro"),
-            ("_TIMELAPSE_START_RESET", "gcode_macro"))]
+            ("_TIMELAPSE_START_RESET", "gcode_macro"),
+            ("_TIMELAPSE_FINAL_PARK", "gcode_macro"))]
+        macros += [(ROOT / "macros/base.cfg", "MOVE_SAFE", "gcode_macro"),
+                   (ROOT / "macros/headless.cfg", "END_PRINT", "gcode_macro")]
         macros += [(ROOT / "macros/client.cfg", name, "gcode_macro") for name in (
             "PAUSE", "RESUME", "_RESUME_REJECTED", "CANCEL_PRINT", "_CLIENT_PAUSE", "_CLIENT_EXTRUDE", "_CLIENT_RETRACT",
             "_TOOLHEAD_PARK_PAUSE_CANCEL")]
@@ -125,16 +129,12 @@ class ParkedPrint:
         elif name == "SDCARD_CANCEL_FILE":
             self.status["virtual_sdcard"].update(is_active=False, file_path=None)
             self.status["print_stats"]["state"] = "cancelled"
-        elif name == "MOVE_SAFE":
-            relative = not self.move.absolute_coord
-            self.execute("G91")
-            self.execute("G0 Z" + params["Z"])
-            self.execute("G91" if relative else "G90")
         elif name in ("G10", "G11"):
             self.firmware_retracted = name == "G10"
         elif name not in {"M400", "RESPOND", "_CONTEXT_BEGIN", "_CONTEXT_END", "_CONTEXT_RESET",
                           "SET_IDLE_TIMEOUT", "_WAIT_TEMPERATURE", "TURN_OFF_HEATERS", "M106",
-                          "SET_PAUSE_NEXT_LAYER", "SET_PAUSE_AT_LAYER"}:
+                          "SET_PAUSE_NEXT_LAYER", "SET_PAUSE_AT_LAYER",
+                          "TONE", "_COMMON_END_PRINT", "_MAYBE_AUTO_REBOOT"}:
             raise AssertionError("Unhandled terminal command: " + command)
 
     def capture(self):
@@ -150,6 +150,50 @@ class ParkedPrint:
 
 
 class TimelapsePauseStateTest(unittest.TestCase):
+    def test_end_print_applies_configured_lift_with_and_without_final_photo(self):
+        for final_photo in (False, True):
+            for relative_axes in (False, True):
+                for park_dz in (1, 25, 50, 500):
+                    with self.subTest(final_photo=final_photo, relative_axes=relative_axes, park_dz=park_dz):
+                        job = ParkedPrint(relative_axes=relative_axes)
+                        job.status["mod_params"]["variables"].update(
+                            timelapse_final_frame=final_photo, park_dz=park_dz)
+                        before = job.move.get_status()
+
+                        job.runtime.run("END_PRINT")
+
+                        after = job.move.get_status()
+                        self.assertAlmostEqual(after["gcode_position"].z,
+                                               min(before["gcode_position"].z + park_dz, 225))
+                        self.assertEqual(after["absolute_coordinates"], before["absolute_coordinates"])
+                        self.assertEqual(after["absolute_extrude"], before["absolute_extrude"])
+
+    def test_cancel_reuses_pause_park_unless_cancel_xy_is_configured(self):
+        for paused in (False, True):
+            for cancel_x in (None, 90):
+                for relative_axes in (False, True):
+                    with self.subTest(paused=paused, cancel_x=cancel_x, relative_axes=relative_axes):
+                        job = ParkedPrint(relative_axes=relative_axes)
+                        job.status["gcode_macro _CLIENT_VARIABLE"].update(
+                            park_at_cancel=True, park_at_cancel_x=cancel_x)
+                        job.status["mod_params"]["variables"]["park_dz"] = 50
+                        if paused:
+                            job.runtime.run("PAUSE")
+                        before = job.move.get_status()
+
+                        job.runtime.run("CANCEL_PRINT")
+
+                        after = job.move.get_status()
+                        lift = 0 if paused and cancel_x is None else 50
+                        self.assertAlmostEqual(after["gcode_position"].z, before["gcode_position"].z + lift)
+                        if lift == 0:
+                            self.assertEqual(after["gcode_position"][:3], before["gcode_position"][:3])
+                        elif cancel_x is not None:
+                            self.assertAlmostEqual(after["gcode_position"].x, cancel_x)
+                        self.assertEqual(after["absolute_coordinates"], before["absolute_coordinates"])
+                        self.assertFalse(job.paused)
+                        self.assertFalse(job.status["virtual_sdcard"]["is_active"])
+
     def assert_restored(self, job):
         status = job.move.get_status()
         for key in ("absolute_extrude", "absolute_coordinates", "homing_origin", "speed_factor", "extrude_factor", "speed"):
@@ -215,6 +259,7 @@ class TimelapsePauseStateTest(unittest.TestCase):
 
     def test_cancel_during_initial_timelapse_wait_closes_file_without_moving(self):
         job = ParkedPrint(held=True)
+        job.status["gcode_macro _CLIENT_VARIABLE"]["park_at_cancel"] = True
         job.status["gcode_macro _TIMELAPSE_START_GUARD"].update(
             waiting=True, prompt_open=True)
         job.status["print_stats"]["state"] = "paused"

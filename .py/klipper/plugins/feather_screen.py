@@ -83,8 +83,7 @@ EXACT_ACTIONS = {
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
                   "print.cancel", "print.z"),
     ScreenPage.TIMELAPSE_WAIT: (
-        "timelapse.wait.keep", "print.cancel",
-        "timelapse.wait.cancel_render"),
+        "print.cancel", "timelapse.wait.cancel_render"),
     ScreenPage.OPERATION_CANCEL: (
         "operation.cancel.back", "operation.cancel.confirm",
         "operation.cancel.continue", "operation.cancel.force"),
@@ -1097,7 +1096,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             return
         if self.pending_action is not None and action in (
                 "print.pause", "print.resume", "print.cancel",
-                "timelapse.wait.keep", "timelapse.wait.cancel_render",
+                "timelapse.wait.cancel_render",
                 "timelapse.wait.cancel", "operation.cancel.confirm"):
             logging.info("[feather_screen] action already in progress=%s", action)
             return
@@ -1239,10 +1238,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._restart_klipper("SAVE_CONFIG")
             elif action == "message.ok":
                 self._close_dialog(ScreenDialog.MESSAGE)
-            elif action == "timelapse.wait.keep":
-                if self._timelapse_start_waiting():
-                    self._run_script(
-                        "_TIMELAPSE_START_WAIT_CHOICE", show_notice=False)
             elif action == "timelapse.wait.cancel_render":
                 if self._timelapse_start_waiting():
                     self._run_script(

@@ -176,3 +176,82 @@ def dialog_pager_bounds(x, y, width, height, has_buttons):
              - DIALOG_PAGER_ABOVE_BODY, 40, 44),
             (arrow_x, y + height - (125 if has_buttons else 76), 40, 44),
             (arrow_x + 20, y + height // 2))
+
+
+def layout_dialog_body(lines, button_groups, y, width, height, has_buttons, *,
+                       page=0, text_padding=28, screen_height=480, metrics=None):
+    """Paginate wrapped instructions followed by indivisible button groups.
+
+    Footer actions stay available on every page. Groups share the body with
+    text and leave the right edge free for page controls when needed.
+    """
+    groups = tuple(tuple(group) for group in button_groups if group)
+    if not groups:
+        y, height, visible, page, count = layout_dialog_text(
+            lines, y, width, height, has_buttons, page=page,
+            text_padding=text_padding, screen_height=screen_height,
+            metrics=metrics)
+        return y, height, visible, (), page, count
+
+    metrics = metrics or get_font_metrics()
+    max_height = screen_height - DIALOG_TOP - DIALOG_BOTTOM_INSET
+    bottom_space = (DIALOG_MULTILINE_GAP + DIALOG_BUTTON_HEIGHT
+                    + DIALOG_BUTTON_BOTTOM) if has_buttons else 16
+    body_bottom = max_height - bottom_space
+
+    def paginate(text_width):
+        wrapped = tuple(segment for value in lines
+                        for segment in metrics.wrap_text(
+                            str(value), DIALOG_BODY_FONT, text_width))
+        pages, text_rows, group_rows = [], [], []
+        end = DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
+        for kind, value in ([("text", line) for line in wrapped]
+                            + [("group", group) for group in groups]):
+            if kind == "text":
+                top = (DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
+                       + len(text_rows) * DIALOG_LINE_SPACING)
+                item_height = 2 * DIALOG_BODY_HALF_HEIGHT
+            else:
+                gap = (DIALOG_MULTILINE_GAP if text_rows and not group_rows
+                       else 12 if group_rows else 0)
+                top, item_height = end + gap, DIALOG_BUTTON_HEIGHT
+            if top + item_height > body_bottom and (text_rows or group_rows):
+                pages.append((tuple(text_rows), tuple(group_rows), end))
+                text_rows, group_rows = [], []
+                top = DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
+            if kind == "text":
+                text_rows.append(value)
+            else:
+                group_rows.append((value, top))
+            end = top + item_height
+        pages.append((tuple(text_rows), tuple(group_rows), end))
+        return pages
+
+    pages = paginate(max(1, width - 2 * text_padding))
+    if len(pages) > 1:
+        pages = paginate(max(1, width - 2 * text_padding - DIALOG_PAGER_RESERVE))
+    page = max(0, min(int(page), len(pages) - 1))
+    visible, visible_groups, end = pages[page]
+    needed = max_height if len(pages) > 1 else end + bottom_space
+    y, height = dialog_vertical_bounds(
+        y, height, 0, has_buttons, screen_height, minimum_height=needed)
+    return y, height, visible, visible_groups, page, len(pages)
+
+
+def dialog_button_layout(buttons, x, y, width, *, measure_text,
+                         normalize_font, padding):
+    """Use the largest readable font that fits the complete action row."""
+    font = DIALOG_BUTTON_FONT
+    if len(buttons) > 1:
+        available = width - 48 - 12 * (len(buttons) - 1)
+        for candidate in (DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
+                          DIALOG_BUTTON_COMPACT_FONT):
+            font = normalize_font(candidate)
+            if sum(max(96, measure_text(label, font) + 2 * padding)
+                   for _, label, _ in buttons) <= available:
+                break
+    bounds = centered_button_row(
+        (item[1] for item in buttons), x, y, width,
+        measure_text=measure_text, font=font, padding=padding,
+        minimum=96 if len(buttons) > 2 else 144, maximum=width, margin=24)
+    return font, bounds

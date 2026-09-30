@@ -877,8 +877,8 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                 self.assertEqual(
                     self._axis_targets(commands, "Z"), [expected])
 
-    def test_final_photo_parks_after_bounded_five_mm_lift(self):
-        for current, expected_z in ((100, [105]), (217, [220]),
+    def test_final_photo_parks_after_bounded_configured_lift(self):
+        for current, expected_z in ((100, [150]), (217, [220]),
                                     (220, []), (225, [])):
             with self.subTest(current=current):
                 printer = self._motion_printer(current, park_dz=50)
@@ -901,7 +901,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
                     xy_move = next(i for i, line in enumerate(commands)
                                    if line.split()[0] == "G1"
                                    and self._axis_targets((line,), "X"))
-                    self.assertIn("F3000", commands[z_move])
+                    self.assertIn("F600", commands[z_move])
                     self.assertEqual(commands[z_move + 2], "M400")
                     self.assertLess(z_move + 2, xy_move)
 
@@ -916,7 +916,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
         commands = execute_macro_chain(
             MOTION_MACROS, "END_PRINT", printer=printer)
-        self.assertEqual(self._axis_targets(commands, "Z"), [105])
+        self.assertEqual(self._axis_targets(commands, "Z"), [150])
         self.assertEqual(self._axis_targets(commands, "X"), [2, 110])
         self.assertEqual(self._axis_targets(commands, "Y"), [2, 110])
         retract = next(i for i, line in enumerate(commands)

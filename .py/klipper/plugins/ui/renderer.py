@@ -18,12 +18,10 @@ from .font_metrics import (
 )
 from .layout_helpers import (
     DIALOG_BODY_FONT, DIALOG_BODY_Y, DIALOG_BUTTON_BOTTOM,
-    DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
-    DIALOG_BUTTON_COMPACT_FONT,
     DIALOG_BUTTON_HEIGHT, DIALOG_COMPACT_BUTTON_BOTTOM,
     DIALOG_LINE_SPACING, DIALOG_PAGER_RESERVE, DIALOG_TITLE_FONT,
-    DIALOG_TITLE_TOP, centered_button_row, dialog_horizontal_bounds,
-    dialog_pager_bounds, layout_dialog_text, layout_title_only_dialog,
+    DIALOG_TITLE_TOP, dialog_horizontal_bounds, dialog_pager_bounds,
+    dialog_button_layout, layout_dialog_body, layout_title_only_dialog,
 )
 from .numeric_input import NumericInputSpec
 from .render_receipts import validate_render_receipt_token
@@ -1311,10 +1309,11 @@ class FeatherRenderer:
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
                height=220, tone="warning", modal=True,
                preserve_header_action=True, page=0, page_actions=None,
-               custom_body=False):
+               custom_body=False, button_groups=()):
         """Build a modal dialog from standard panel, text, and button primitives.
 
-        ``buttons`` contains ``(action, label, state)`` tuples. Clearing all
+        ``buttons`` contains persistent footer ``(action, label, state)`` tuples.
+        ``button_groups`` contains body rows of the same tuples. Clearing all
         existing hitboxes makes a dialog genuinely modal even when it only
         covers one control region visually. Set ``modal`` to false for a
         localized overlay whose caller will explicitly re-register the
@@ -1332,16 +1331,18 @@ class FeatherRenderer:
         border = tones.get(tone, ThemeColor.PRIMARY)
         lines = tuple(lines)
         button_specs = tuple(buttons)
+        button_groups = tuple(tuple(group) for group in button_groups if group)
         if modal and not custom_body:
             x, width = dialog_horizontal_bounds(
-                width, title, (item[1] for item in button_specs),
+                width, title, (item[1] for item in button_specs + tuple(
+                    button for group in button_groups for button in group)),
                 measure_text=self.text_width, body_lines=lines,
                 text_padding=self.DIALOG_TEXT_PADDING)
             y = (SCREEN_HEIGHT - height) // 2
-        y, height, visible_lines, page, page_count = layout_dialog_text(
-            lines, y, width, height, bool(button_specs), page=page,
+        y, height, visible_lines, visible_groups, page, page_count = layout_dialog_body(
+            lines, button_groups, y, width, height, bool(button_specs), page=page,
             text_padding=self.DIALOG_TEXT_PADDING, screen_height=SCREEN_HEIGHT)
-        title_only = (not custom_body
+        title_only = (not custom_body and not button_groups
                       and not any(str(line).strip() for line in visible_lines))
         if title_only:
             y, height, title_rows = layout_title_only_dialog(
@@ -1389,25 +1390,17 @@ class FeatherRenderer:
             button_y = y + height - (DIALOG_COMPACT_BUTTON_BOTTOM
                                      if len(title_rows) == 1 else 22)
             button_y -= DIALOG_BUTTON_HEIGHT
-        button_font = DIALOG_BUTTON_FONT
-        if len(button_specs) > 1:
-            available = width - 48 - 12 * (len(button_specs) - 1)
-            for candidate in (DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
-                              DIALOG_BUTTON_COMPACT_FONT):
-                button_font = self.normalize_font(candidate)
-                if sum(max(96, self.text_width(label, button_font)
-                           + 2 * self.BUTTON_TEXT_PADDING)
-                       for _, label, _ in button_specs) <= available:
-                    break
-        for (action, label, state), bounds in zip(
-                button_specs, centered_button_row(
-                    (item[1] for item in button_specs),
-                    x, button_y, width, measure_text=self.text_width,
-                    font=button_font, padding=self.BUTTON_TEXT_PADDING,
-                    minimum=(96 if len(button_specs) > 2 else 144),
-                    maximum=width, margin=24)):
-            commands += self.button(
-                action, *bounds, label, state=state, font=button_font)
+        rows = tuple((group, y + offset, width - pager_reserve)
+                     for group, offset in visible_groups)
+        if button_specs:
+            rows += ((button_specs, button_y, width),)
+        for specs, row_y, row_width in rows:
+            font, bounds = dialog_button_layout(
+                specs, x, row_y, row_width, measure_text=self.text_width,
+                normalize_font=self.normalize_font, padding=self.BUTTON_TEXT_PADDING)
+            for (action, label, state), target in zip(specs, bounds):
+                commands += self.button(
+                    action, *target, label, state=state, font=font)
         if modal and show_header_action:
             commands += self._header_action_commands()
         return commands

@@ -23,7 +23,7 @@ from zipfile import ZipFile
 import jinja2
 
 from tests.gcode_macro_harness import (
-    MacroActionError, execute_macro_chain, render_macro)
+    MacroActionError, MacroExecution, execute_macro_chain, render_macro)
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -1927,6 +1927,115 @@ class TimelapseComponentTest(unittest.IsolatedAsyncioTestCase):
 
 
 class TimelapseStartGuardTest(unittest.TestCase):
+    def test_unavailable_status_reports_cause_and_recovery_before_starting(self):
+        printer = self._printer(2)
+        runtime = MacroExecution(
+            [(MACROS, name, "gcode_macro") for name in (
+                "_TIMELAPSE_START_DECIDE", "_TIMELAPSE_START_RESET",
+                "_TIMELAPSE_START_CONTINUE", "_TIMELAPSE_START_WAIT_CHOICE")]
+            + [(MACROS, "_TIMELAPSE_START_POLL", "delayed_gcode")],
+            printer, lambda command: None)
+
+        runtime.run("_TIMELAPSE_START_DECIDE")
+
+        prompt = "\n".join(runtime.commands)
+        self.assertIn("status is unavailable", prompt)
+        self.assertIn("Moonraker", prompt)
+        self.assertNotIn("_START_PRINT", runtime.commands)
+        self.assertFalse(any("previous timelapse is still saving" in command
+                             for command in runtime.commands))
+        count = len(runtime.commands)
+        runtime.fire("_TIMELAPSE_START_POLL")
+        self.assertFalse(any("action:prompt_begin" in command
+                             for command in runtime.commands[count:]))
+        printer["gcode_shell_command timelapse_render_status"]["returncode"] = 0
+        runtime.fire("_TIMELAPSE_START_POLL")
+        recovered = "\n".join(runtime.commands[count:])
+        self.assertIn("connection restored", recovered)
+        self.assertIn("previous timelapse is still saving", recovered)
+        self.assertNotIn("_START_PRINT", runtime.commands)
+        self.assertEqual(runtime.commands.count("M25.1"), 1)
+
+        printer["gcode_shell_command timelapse_render_status"]["returncode"] = 1
+        runtime.fire("_TIMELAPSE_START_POLL")
+        self.assertEqual(runtime.commands.count("_START_PRINT"), 1)
+        self.assertFalse(printer["gcode_macro _TIMELAPSE_START_GUARD"]["waiting"])
+        count = len(runtime.commands)
+        runtime.fire("_TIMELAPSE_START_POLL")
+        self.assertEqual(len(runtime.commands), count)
+        parser = gcode_parser.GCodeDispatch.__new__(gcode_parser.GCodeDispatch)
+        for command in runtime.commands:
+            if command.startswith("RESPOND "):
+                parsed = types.SimpleNamespace(
+                    get_commandline=lambda command=command: command, _params={})
+                parser._get_extended_params(parsed)
+
+    def test_restored_connection_to_idle_starts_once_without_waiting_for_render(self):
+        printer = self._printer(2)
+        runtime = MacroExecution(
+            [(MACROS, name, "gcode_macro") for name in (
+                "_TIMELAPSE_START_DECIDE", "_TIMELAPSE_START_RESET",
+                "_TIMELAPSE_START_CONTINUE")]
+            + [(MACROS, "_TIMELAPSE_START_POLL", "delayed_gcode")],
+            printer, lambda command: None)
+        runtime.run("_TIMELAPSE_START_DECIDE")
+        count = len(runtime.commands)
+        printer["gcode_shell_command timelapse_render_status"]["returncode"] = 1
+
+        runtime.fire("_TIMELAPSE_START_POLL")
+
+        self.assertIn("connection restored. Idle confirmed", "\n".join(runtime.commands[count:]))
+        self.assertEqual(runtime.commands.count("_START_PRINT"), 1)
+        self.assertEqual(runtime.timers["_TIMELAPSE_START_POLL"], 0)
+
+    def test_resume_explains_unavailable_status_and_keeps_print_held(self):
+        printer = self._printer(2, waiting=True)
+        printer["gcode_macro _TIMELAPSE_START_GUARD"]["wait_status"] = "unavailable"
+
+        result = render_macro(CLIENT, "RESUME", printer=printer)
+
+        self.assertIn("status is unavailable", "\n".join(result.commands))
+        self.assertNotIn("RESUME_BASE", result.commands)
+        self.assertNotIn("_TIMELAPSE_START_CONTINUE", result.commands)
+        self.assertNotIn("M24.1", result.commands)
+
+    def test_connection_loss_updates_visible_prompt_without_reholding_sd(self):
+        printer = self._printer(0)
+        runtime = MacroExecution(
+            [(MACROS, "_TIMELAPSE_START_DECIDE", "gcode_macro")],
+            printer, lambda command: None)
+        runtime.run("_TIMELAPSE_START_DECIDE")
+        count = len(runtime.commands)
+        printer["gcode_shell_command timelapse_render_status"]["returncode"] = 2
+
+        runtime.run("_TIMELAPSE_START_DECIDE")
+
+        changed = "\n".join(runtime.commands[count:])
+        self.assertIn("status is unavailable", changed)
+        self.assertIn("action:prompt_show", changed)
+        self.assertEqual(runtime.commands.count("M25.1"), 1)
+        self.assertNotIn("_START_PRINT", runtime.commands)
+
+    def test_wait_choice_explains_unavailability_and_recovery_keeps_it_dismissed(self):
+        printer = self._printer(2)
+        runtime = MacroExecution(
+            [(MACROS, name, "gcode_macro") for name in (
+                "_TIMELAPSE_START_DECIDE", "_TIMELAPSE_START_WAIT_CHOICE")],
+            printer, lambda command: None)
+        runtime.run("_TIMELAPSE_START_DECIDE")
+        count = len(runtime.commands)
+
+        runtime.run("_TIMELAPSE_START_WAIT_CHOICE")
+
+        self.assertIn("status is unavailable", "\n".join(runtime.commands[count:]))
+        count = len(runtime.commands)
+        printer["gcode_shell_command timelapse_render_status"]["returncode"] = 0
+        runtime.run("_TIMELAPSE_START_DECIDE")
+        self.assertIn("connection restored", "\n".join(runtime.commands[count:]))
+        self.assertFalse(any("action:prompt_show" in command
+                             for command in runtime.commands[count:]))
+        self.assertNotIn("_START_PRINT", runtime.commands)
+
     @staticmethod
     def _cancel_command(sdcard):
         gcode = mock.Mock()

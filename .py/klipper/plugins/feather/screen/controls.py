@@ -1860,14 +1860,25 @@ class FeatherControlsMixin:
         self.action_prompt["_layer"] = self._show_dialog(ScreenDialog.ACTION_PROMPT)
 
     def _end_action_prompt(self):
-        mirrored_recovery = self.page in (
+        prompt = self.action_prompt
+        if prompt is None:
+            # Without a draft, an unaddressed end belongs to the surviving prompt.
+            root = getattr(self, "_screen_root", None)
+            layer = (next((item for item in reversed(root.layers)
+                           if item.kind == ScreenDialog.ACTION_PROMPT), None)
+                     if root is not None else None)
+            prompt = layer.content if layer is not None else {}
+        else:
+            layer = prompt.get("_layer")
+        title = prompt.get("title", "").strip().casefold()
+        mirrored_recovery = (not prompt or title == "resurrection") and self.page in (
             ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)
-        cold_pull = self._action_prompt_is_cold_pull()
-        layer = (self.action_prompt or {}).get("_layer")
+        cold_pull = title == "cold pull"
         self.action_prompt = None
         self.action_prompt_page = 0
-        self._close_dialog(layer or ScreenDialog.ACTION_PROMPT)
-        if cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
+        if layer is not None:
+            self._close_dialog(layer)
+        if layer is not None and cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
             return_page = self.operation_cancel_return_page
             self._reset_operation_cancel()
             self._show_page(return_page or ScreenPage.EXTRUDER_CALIBRATION)
