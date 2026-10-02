@@ -462,14 +462,40 @@ class PrintingLayoutTest(unittest.TestCase):
             printing.PrintingState.STATUS: "A LONG PREPARATION STATUS",
         })
 
-        drawing = "\n".join(page.update(renderer, {
+        previous = page.rect(printing.PrintingRef.STATUS)
+        commands = page.update(renderer, {
             printing.PrintingState.STATUS: "READY",
-        }))
-        status = page.rect(printing.PrintingRef.STATUS)
+        })
+        frame = RenderFrame(commands, renderer)
 
-        self.assertIn(
-            "fill -p %d %d -s %d %d" % status.as_tuple(), drawing)
-        self.assertIn('-t "READY"', drawing)
+        self.assertTrue(any(
+            shape.kind == "fill" and shape.bounds.x <= previous.x
+            and shape.bounds.y <= previous.y
+            and shape.bounds.right >= previous.right
+            and shape.bounds.bottom >= previous.bottom
+            for shape in frame.shapes))
+        self.assertTrue(frame.has_text("READY"))
+
+    def test_print_status_wraps_to_two_lines_without_overlapping_progress(self):
+        from ui.font_metrics import get_font_metrics
+
+        metrics = get_font_metrics()
+        for bounds in (Rect(0, 0, 800, 442), Rect(0, 0, 640, 400)):
+            page = create_printing_page(bounds)
+            renderer = FeatherRenderer()
+            for value in ("PRINTING", "PRINT -> BED LEVEL -> NOZZLE CLEANING -> HEATING NOZZLE",
+                          "WAITING FOR THE NOZZLE TO REACH TARGET TEMPERATURE " * 4, "READY"):
+                frame = RenderFrame(page.draw(renderer, {
+                    printing.PrintingState.STATUS: value,
+                }), renderer)
+                text = frame.text(value)
+                status = page.rect(printing.PrintingRef.STATUS)
+                self.assertTrue(text.wrap)
+                self.assertTrue(text.truncate)
+                self.assertLessEqual(status.height, metrics.text_height("X\nX", text.font))
+                self.assertLessEqual(status.bottom, page.rect(printing.PrintingRef.PROGRESS).y)
+                self.assertLessEqual(page.rect(printing.PrintingRef.HEIGHT).bottom,
+                                     page.rect(printing.PrintingRef.BUTTONS).y)
 
 
 class FrameworkAuthoringContractTest(unittest.TestCase):

@@ -7,6 +7,8 @@
 import unittest
 from unittest import mock
 
+from tests.feather_render_test_helper import RenderCapture
+
 try:
     from tests import test_feather_lazy_features as lazy_tests
     from tests.test_operation_context import CONTEXT, FakePrinter, FakeConfig, FakeCommand
@@ -61,6 +63,39 @@ class ExternalWorkflowTest(unittest.TestCase):
 
     def feature(self):
         return self.host.feature_manager.peek("calibration")
+
+    def test_operation_status_wraps_and_clears_after_returning_to_short_text(self):
+        from ui.font_metrics import get_font_metrics
+
+        self.begin("bed_level")
+        feature = self.feature()
+        self.host.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(self.host.renderer)
+        for kind in ("mesh", "recovery"):
+            feature.calibration_kind = kind
+            self.begin("nozzle_cleaning")
+            self.context.cmd_CONTEXT_STATE(FakeCommand(NAME="HEATING NOZZLE"))
+            feature._render_calibration_progress()
+            value = self.host._operation_context_text()
+            text = capture.latest.text(value)
+            metrics = get_font_metrics()
+            self.assertTrue(text.wrap)
+            self.assertLessEqual(metrics.text_height("X\nX", text.font), text.max_height)
+            self.assertLess(text.max_height, metrics.text_height("X\nX\nX", text.font))
+            self.assertGreater(metrics.text_height(value, text.font,
+                               max_width=text.max_width, wrap=True),
+                               metrics.metric(text.font).glyph_height)
+
+            self.finish()
+            self.context.cmd_CONTEXT_STATE(FakeCommand(NAME="READY"))
+            feature._update_calibration_progress()
+            self.assertTrue(capture.latest.has_text(self.host._operation_context_text()))
+            self.assertTrue(any(
+                shape.kind == "fill" and shape.bounds.x <= text.x - text.max_width // 2
+                and shape.bounds.y <= text.y - text.max_height // 2
+                and shape.bounds.right >= text.x + text.max_width // 2
+                and shape.bounds.bottom >= text.y + text.max_height // 2
+                for shape in capture.latest.shapes))
 
     def test_external_calibrations_show_progress_without_running_macro_again(self):
         for context_type, kind in (

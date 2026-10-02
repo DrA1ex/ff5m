@@ -106,6 +106,8 @@ def _details(compact=False):
             bind(PrintingState.STATUS),
             horizontal="left",
             vertical="top",
+            max_height=46,
+            wrap=True,
             truncate=True,
         ).style(UiStyle.TEXT).height("content").ref(PrintingRef.STATUS),
         gap=8,
@@ -124,7 +126,7 @@ def _details(compact=False):
             columns=Equal(2), rows=Equal(1), gap=0,
         ).height("content"),
         PrintProgress(progress_value).height(34).ref(PrintingRef.PROGRESS),
-        gap=8,
+        gap=4,
     ).height("content")
 
     timing = METRIC_PAIR(
@@ -146,7 +148,7 @@ def _details(compact=False):
         timing,
         Fill(ThemeColor.BORDER).height(1),
         position,
-        gap=0 if compact else 4,
+        gap=0 if compact else 2,
     ).ref(PrintingRef.DETAILS)
 
 

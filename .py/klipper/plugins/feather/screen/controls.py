@@ -1428,7 +1428,7 @@ class FeatherControlsMixin:
         commands = self.renderer.begin_page(title)
         commands.append(self.renderer.text(
             400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt", "center",
-            max_width=704, truncate=True))
+            max_width=704, max_height=68, wrap=True, truncate=True))
         commands += self._calibration_stage_commands(label, operation)
         cancel_visible = self._calibration_cancel_visible()
         if cancel_visible:
@@ -1469,7 +1469,8 @@ class FeatherControlsMixin:
         commands = [self.renderer.fill(40, 105, 720, 205, ThemeColor.BACKGROUND),
                     self.renderer.text(
                         400, 142, label, ThemeColor.SECONDARY, "JetBrainsMono Bold 12pt",
-                        "center", max_width=704, truncate=True)]
+                        "center", max_width=704, max_height=68,
+                        wrap=True, truncate=True)]
         commands += self._calibration_stage_commands(label, operation)
         self.renderer.send(commands)
 
