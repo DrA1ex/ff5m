@@ -18,10 +18,11 @@ from .font_metrics import (
 )
 from .layout_helpers import (
     DIALOG_BODY_FONT, DIALOG_BODY_Y, DIALOG_BUTTON_BOTTOM,
-    DIALOG_BUTTON_HEIGHT, DIALOG_COMPACT_BUTTON_BOTTOM,
+    DIALOG_BUTTON_HEIGHT, DIALOG_BUTTON_GAP, DIALOG_COMPACT_BUTTON_BOTTOM,
     DIALOG_LINE_SPACING, DIALOG_PAGER_RESERVE, DIALOG_TITLE_FONT,
     DIALOG_TITLE_TOP, dialog_horizontal_bounds, dialog_pager_bounds,
-    dialog_button_layout, layout_dialog_body, layout_title_only_dialog,
+    dialog_button_layout, dialog_button_rows, layout_dialog_body,
+    layout_title_only_dialog,
 )
 from .numeric_input import NumericInputSpec
 from .render_receipts import validate_render_receipt_token
@@ -1353,16 +1354,28 @@ class FeatherRenderer:
                 measure_text=self.text_width, body_lines=lines,
                 text_padding=self.DIALOG_TEXT_PADDING)
             y = (SCREEN_HEIGHT - height) // 2
+        footer_rows = dialog_button_rows(
+            button_specs, width, measure_text=self.text_width,
+            normalize_font=self.normalize_font, padding=self.BUTTON_TEXT_PADDING)
+        footer_height = (len(footer_rows) * DIALOG_BUTTON_HEIGHT
+                         + max(0, len(footer_rows) - 1) * DIALOG_BUTTON_GAP)
+        # More than two persistent rows leave too little room for the body and
+        # its page controls. Keep these actions reachable in the paged body.
+        if len(footer_rows) > 2:
+            button_groups += footer_rows
+            footer_rows, footer_height = (), 0
         y, height, visible_lines, visible_groups, page, page_count = layout_dialog_body(
-            lines, button_groups, y, width, height, bool(button_specs), page=page,
-            text_padding=self.DIALOG_TEXT_PADDING, screen_height=SCREEN_HEIGHT)
+            lines, button_groups, y, width, height, bool(footer_rows), page=page,
+            text_padding=self.DIALOG_TEXT_PADDING, screen_height=SCREEN_HEIGHT,
+            footer_height=footer_height, measure_text=self.text_width,
+            normalize_font=self.normalize_font, button_padding=self.BUTTON_TEXT_PADDING)
         title_only = (not custom_body and not button_groups
                       and not any(str(line).strip() for line in visible_lines))
         if title_only:
             y, height, title_rows = layout_title_only_dialog(
-                title, y, width, height, bool(button_specs),
+                title, y, width, height, bool(footer_rows),
                 text_padding=self.DIALOG_TEXT_PADDING,
-                screen_height=SCREEN_HEIGHT)
+                screen_height=SCREEN_HEIGHT, footer_height=footer_height)
         else:
             title_rows = ((str(title).upper(), y + DIALOG_TITLE_TOP
                            + get_font_metrics().metric(
@@ -1398,16 +1411,17 @@ class FeatherRenderer:
         if page_count > 1:
             commands += self.dialog_pager(
                 page, page_count, page_actions, x, y, width, height,
-                has_buttons=bool(button_specs))
-        button_y = y + height - DIALOG_BUTTON_BOTTOM - DIALOG_BUTTON_HEIGHT
+                has_buttons=bool(footer_rows), footer_height=footer_height)
+        button_y = y + height - DIALOG_BUTTON_BOTTOM - footer_height
         if title_only:
             button_y = y + height - (DIALOG_COMPACT_BUTTON_BOTTOM
                                      if len(title_rows) == 1 else 22)
-            button_y -= DIALOG_BUTTON_HEIGHT
+            button_y -= footer_height
         rows = tuple((group, y + offset, width - pager_reserve)
                      for group, offset in visible_groups)
-        if button_specs:
-            rows += ((button_specs, button_y, width),)
+        rows += tuple((row, button_y + index * (
+            DIALOG_BUTTON_HEIGHT + DIALOG_BUTTON_GAP), width)
+            for index, row in enumerate(footer_rows))
         for specs, row_y, row_width in rows:
             font, bounds = dialog_button_layout(
                 specs, x, row_y, row_width, measure_text=self.text_width,
@@ -1420,17 +1434,24 @@ class FeatherRenderer:
         return commands
 
     def dialog_pager(self, page, page_count, actions, x, y, width, height,
-                     *, has_buttons=True):
+                     *, has_buttons=True, footer_height=DIALOG_BUTTON_HEIGHT):
         """Draw the narrow vertical page controls shared by dialog panels."""
         if page_count <= 1:
             return []
         previous, following = actions
         prev_bounds, next_bounds, counter = dialog_pager_bounds(
-            x, y, width, height, has_buttons)
+            x, y, width, height, has_buttons, footer_height)
         commands = self.arrow_button(
             previous, *prev_bounds, "up", active=page > 0)
         commands += self.arrow_button(
             following, *next_bounds, "down", active=page + 1 < page_count)
+        if has_buttons and footer_height > DIALOG_BUTTON_HEIGHT:
+            commands.append(self.text(
+                counter[0], (prev_bounds[1] + prev_bounds[3] + next_bounds[1]) // 2,
+                "%d/%d" % (page + 1, page_count), ThemeColor.DIM,
+                DIALOG_BODY_FONT, "center", "middle",
+                max_width=DIALOG_PAGER_RESERVE - 8, truncate=True))
+            return commands
         for offset, value in ((-24, page + 1), (24, page_count)):
             commands.append(self.text(
                 counter[0], counter[1] + offset, str(value), ThemeColor.DIM,

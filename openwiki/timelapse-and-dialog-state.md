@@ -45,6 +45,22 @@ layer is the only record that the warning is shown. The screen root's
 admitted layers remain authoritative for input when an attempted replacement
 frame is rejected.
 
+Shared dialog layout measures action labels before arranging them. A row that
+cannot fit even at the compact font wraps into additional rows, preserving
+action order and explicit group boundaries. The panel grows within the content
+area (y=74..422 on the 800x480 screen); longer bodies paginate, accounting for
+the width of the page controls. Up to two footer rows stay visible on every
+page. Larger footer groups move into the paged body so every action remains
+reachable. Host regression coverage includes the MMU preset labels, text and
+button pagination, and control bounds; physical-panel validation is still
+required before release.
+Body action groups retain the original prompt's 30 px bottom inset, including
+when the panel grows or paginates; extra room stays above the action block.
+Horizontal and vertical gaps remain 12 px. Footer actions keep their existing
+24 px inset, or 30 px for a single-line title-only dialog. The screenshot
+fixtures in `tests/fixtures/dialog_layout.json` cover twelve row, font, height,
+and pagination combinations and assert those insets.
+
 `_show_terminal_error` is the single path for shutdown and disconnect. It
 replaces queued output with the error screen, marks that ERROR as terminal,
 and freezes output. A terminal ERROR ignores later non-terminal errors from

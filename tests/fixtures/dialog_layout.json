@@ -1,0 +1,14 @@
+[
+  {"id":"01-three-in-row","label":"Три кнопки в ряд","labels":["PLA","PETG","ABS"],"rows":[3]},
+  {"id":"02-two-then-one","label":"Две кнопки, затем одна","labels":["2x PETG / 2x ABS","2x PLA / 2x ABS","Standard Mix (PLA/PETG/ABS/TPU)"],"rows":[2,1]},
+  {"id":"03-one-then-two","label":"Одна кнопка, затем две — исходный MMU","labels":["Standard Mix (PLA/PETG/ABS/TPU)","2x PETG / 2x ABS","2x PLA / 2x ABS"],"rows":[1,2]},
+  {"id":"04-all-separate","label":"Все три кнопки по одной","labels":["Preset A (PLA/PETG/ABS/TPU)","Preset B (PLA/PETG/ABS/TPU)","Preset C (PLA/PETG/ABS/TPU)"],"rows":[1,1,1]},
+  {"id":"05-three-compact","label":"Три кнопки помещаются компактным шрифтом","labels":["PLA MIX PRESET","PETG MIX PRESET","ABS MIX PRESET"],"rows":[3]},
+  {"id":"06-mixed-six","label":"Шесть кнопок: три, две, одна","labels":["PLA","PETG","ABS","PLA/PETG MIX PROFILE","2x PETG / 2x ABS","Standard Mix (PLA/PETG/ABS/TPU)"],"rows":[3,2,1]},
+  {"id":"07-extra-height","label":"Высокий диалог — отступ снизу сохранён","labels":["PLA","PETG","ABS"],"height":300,"rows":[3]},
+  {"id":"08-paged-first","label":"Много кнопок — первая страница","profiles":9,"page":0,"rows":[1,1,1]},
+  {"id":"09-paged-last","label":"Много кнопок — последняя страница","profiles":9,"page":2,"rows":[1,1,1]},
+  {"id":"10-footer-two-rows","label":"Нижние действия в два ряда","labels":["CONFIRM THIS MATERIAL PROFILE NOW","CANCEL THIS MATERIAL PROFILE NOW"],"kind":"footer","rows":[1,1],"bottom":24},
+  {"id":"11-footer-title-only","label":"Два ряда действий без текста","labels":["CONFIRM THIS MATERIAL PROFILE NOW","CANCEL THIS MATERIAL PROFILE NOW"],"kind":"footer","lines":[],"rows":[1,1],"bottom":30},
+  {"id":"12-body-and-footer","label":"Кнопки на страницах и постоянный нижний ряд","profiles":9,"page":1,"footer":["CANCEL","APPLY"],"rows":[1,1],"bottom":24}
+]
