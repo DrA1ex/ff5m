@@ -20,6 +20,7 @@ from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
 from feather.files import FileEntry
+from timelapse_state import TimelapsePhase
 from .context_fixtures import (
     CONTEXT_TYPES, VISUAL_CONTEXTS, visual_context_cases,
 )
@@ -84,6 +85,9 @@ class ScenarioCatalog:
         self._ui_file_view_original = None
         self.z_probe_local = None
         self._update_maybe_present = None
+        # The render suite restarts Typer on purpose; any other restart during
+        # a run is a renderer failure.
+        self.renderer_restarts_requested = 0
 
     @property
     def host(self):
@@ -406,6 +410,14 @@ class ScenarioCatalog:
                 steps, "ui-dialog-" + kind,
                 lambda value=kind: self._render_dialog_variant(value))
         self._add_render_capture(
+            steps, "ui-dialog-nine-lines-second",
+            lambda: self._render_dialog_variant("nine-lines-second"))
+        for kind in ("finished", "cancelled", "cancelled-reason", "failed",
+                     "explicit-two-line-title", "explicit-three-line-title"):
+            self._add_render_capture(
+                steps, "ui-print-result-" + kind,
+                lambda value=kind: self._render_print_result_snapshot(value))
+        self._add_render_capture(
             steps, "ui-action-prompt-footer", self._render_action_prompt_footer)
         self._add_render_capture(
             steps, "ui-message-two-actions", self._render_two_action_message)
@@ -425,7 +437,7 @@ class ScenarioCatalog:
                 lambda value=kind: self._render_cancel_snapshot(value))
         self._add_render_capture(
             steps, "ui-recovery-cleanup", self._render_recovery_cleanup)
-        for kind in ("restart", "firmware-restart", "reconnecting"):
+        for kind in ("restart", "firmware-restart", "reconnecting", "remote-shutdown", "timer-too-close-long"):
             self._add_render_capture(
                 steps, "ui-error-" + kind,
                 lambda value=kind: self._render_error_snapshot(value))
@@ -435,6 +447,8 @@ class ScenarioCatalog:
         self._add_render_capture(
             steps, "ui-update-long",
             lambda: self._render_update_snapshot(long=True))
+        self._add_render_capture(
+            steps, "ui-update-recovery-long", self._render_update_recovery_snapshot)
         self._add_render_capture(
             steps, "ui-update-progress", self._render_update_progress_snapshot)
         self._add_render_capture(
@@ -990,6 +1004,10 @@ class ScenarioCatalog:
                 "Six line message",
                 tuple("LINE %d REMAINS VISIBLE." % index for index in range(1, 7)),
                 "CONTINUE"),
+            "nine-lines-second": (
+                "Nine line message",
+                tuple("LINE %d REMAINS VISIBLE." % index for index in range(1, 10)),
+                "CONTINUE"),
             "wrapped": (
                 "Wrapped message",
                 ("A long sentence wraps naturally across the available width " * 4,),
@@ -1014,10 +1032,24 @@ class ScenarioCatalog:
         commands += renderer.dialog(
             title, lines, (("dialog.test.ok", label, "warning"),),
             x=160, y=130, width=480, height=220, tone="info",
-            page=1 if kind == "paged-second" else 0,
+            page=1 if kind in ("paged-second", "nine-lines-second") else 0,
             page_actions=("dialog.test.prev", "dialog.test.next"))
         if not renderer.send(commands):
             raise RuntimeError("Unable to render dialog layout snapshot")
+
+    def _render_print_result_snapshot(self, kind):
+        title, message = {
+            "finished": ("Print finished", ""),
+            "cancelled": ("Print cancelled", ""),
+            "cancelled-reason": ("Print cancelled", "Reason: FILAMENT RUNOUT"),
+            "failed": ("Print failed", ""),
+            "explicit-two-line-title": ("Explicit title break\nSecond heading line", ""),
+            "explicit-three-line-title": ("Explicit title break\nSecond heading line\nThird heading line", ""),
+        }[kind]
+        self._show(ScreenDialog.MESSAGE, content={
+            "title": title, "message": message,
+            "actions": (("message.ok", "OK", "enabled"),),
+        })
 
     def _render_action_prompt_footer(self):
         button = {"action": "prompt.button.0", "label": "OK", "state": "enabled",
@@ -1300,14 +1332,25 @@ class ScenarioCatalog:
             "restart": "restart",
             "firmware-restart": "firmware_restart",
             "reconnecting": None,
+            "remote-shutdown": "firmware_restart",
+            "timer-too-close-long": "firmware_restart",
         }[kind]
         message = {
             "restart": "Klipper configuration could not be loaded.",
             "firmware-restart": "MCU shutdown: timer too close.",
             "reconnecting": "Klipper disconnected; reconnecting to host.",
+            "remote-shutdown": (
+                "Shutdown due to webhooks request. Once the underlying issue is corrected, "
+                "use the FIRMWARE_RESTART command to reset the firmware, reload the config, "
+                "and restart the host software. Printer is shutdown"),
+            "timer-too-close-long": (
+                "MCU 'mcu' shutdown: Timer too close. This often indicates that the host computer is overloaded. "
+                "Check the Klipper log and the host load. Once the underlying issue is corrected, "
+                "use the FIRMWARE_RESTART command to reset the firmware, reload the config, "
+                "and restart the host software. Printer is shutdown."),
         }[kind]
         self._show(ScreenDialog.ERROR, content={
-            "message": message, "category": "", "recovery": recovery,
+            "message": message, "category": "shutdown" if kind == "remote-shutdown" else "", "recovery": recovery,
         })
 
     def _render_update_snapshot(self, long):
@@ -1323,6 +1366,19 @@ class ScenarioCatalog:
                 "available_version": "1.4.1-244",
                 "changes": changes,
                 "change_page": 1 if long else 0,
+        }):
+            self._show(ScreenPage.UPDATE_NOTIFICATION)
+
+    def _render_update_recovery_snapshot(self):
+        notification = getattr(self.host, "update_notification", None)
+        if notification is None:
+            raise RuntimeError("Update notification feature is unavailable")
+        with _temporary_attributes(notification, {
+                "installed_version": "1.4.1-243",
+                "available_version": "1.4.1-244",
+                "changes": (),
+                "recovery_files": tuple("UNTRACKED: path/to/file-%02d.sh" % index for index in range(1, 10)),
+                "change_page": 1,
         }):
             self._show(ScreenPage.UPDATE_NOTIFICATION)
 
@@ -1420,6 +1476,7 @@ class ScenarioCatalog:
     def _request_renderer_restart(self, before):
         if not self.host.renderer.restart():
             raise RuntimeError("Renderer restart signal was not accepted")
+        self.renderer_restarts_requested += 1
 
     def _renderer_recovered(self, before, before_error=""):
         status = self.host.renderer.get_status()
@@ -1449,6 +1506,7 @@ class ScenarioCatalog:
         self._add_capture(steps, "screws-confirm")
         self._add_tap(steps, "cal.confirm", ScreenPage.CALIBRATION_PROGRESS)
         self._add_wait(steps, "screws-result", self._calibration_result, 1200.0, 1.0)
+        self._add_call(steps, "screws-validate", self._validate_screws)
         self._add_capture(steps, "screws-result")
         self._add_tap(steps, "cal.done", ScreenPage.CALIBRATION_HOME)
         self._add_call(steps, "screws-cleanup", self._hardware_cleanup)
@@ -1598,6 +1656,16 @@ class ScenarioCatalog:
             lambda: self._open_context_file(self.context_fixture.files[1]))
         self._add_tap(steps, "file.item0", ScreenPage.FILE_CONFIRM)
         self._add_tap(steps, "file.start")
+        # print_kamp's timelapse render is held in the encoder, so this print
+        # must wait for it instead of interrupting it, then start by itself
+        # once the render is released and finishes.
+        self._add_wait(
+            steps, "print_mesh-timelapse-wait", self._context_timelapse_waiting,
+            120.0, 0.5)
+        self._add_capture(steps, "print_mesh-timelapse-wait-screen")
+        self._add_call(
+            steps, "print_mesh-timelapse-release",
+            self._release_context_timelapse)
         self._add_wait(
             steps, "print_mesh-started", self._context_print_controls_ready,
             1900.0, 0.5)
@@ -1670,6 +1738,11 @@ class ScenarioCatalog:
         self._add_call(
             steps, "recovery-context-verify",
             self._finish_context_scenario, delay=0.0)
+        self._add_wait(
+            steps, "timelapse-render-idle", self._timelapse_render_idle,
+            300.0, 2.0)
+        self._add_call(
+            steps, "timelapse-held-video", self._verify_held_timelapse_video)
         self._add_call(
             steps, "context_print-cleanup", self._hardware_cleanup)
 
@@ -1717,6 +1790,32 @@ class ScenarioCatalog:
 
     def _prepare_context_print(self):
         self.context_fixture.prepare_print()
+        self.context_fixture.hold_timelapse_render()
+
+    def _context_timelapse_waiting(self):
+        return (self.host.page == ScreenPage.TIMELAPSE_WAIT
+                and self.host._timelapse_phase() == TimelapsePhase.WAITING
+                and self.host._timelapse_status().get("wait_status") == "busy"
+                and not self.host.virtual_sdcard.is_active())
+
+    def _release_context_timelapse(self):
+        # The guard polls every two seconds; the capture before this step
+        # gave it time to start the print if it were not really holding it.
+        if not self._context_timelapse_waiting():
+            raise RuntimeError("Print did not stay held for the timelapse")
+        self.context_fixture.release_timelapse_render()
+
+    def _timelapse_render_idle(self):
+        return self.context_fixture.timelapse_render_status() == "idle"
+
+    def _verify_held_timelapse_video(self):
+        name = os.path.basename(self.context_fixture.files[0])
+        videos = [path for path in self.context_fixture.timelapse_videos()
+                  if os.path.basename(path).startswith(
+                      "timelapse_%s_" % name) and path.endswith(".mp4")]
+        if not videos:
+            raise RuntimeError(
+                "The held timelapse render produced no video for %s" % name)
 
     def _open_context_file(self, path):
         self.context_fixture.open_file(
@@ -1740,7 +1839,10 @@ class ScenarioCatalog:
     def _context_print_complete(self):
         state = str(self.host.print_stats.get_status(
             self.reactor.monotonic()).get("state", "")).lower()
-        return (state not in ("printing", "paused")
+        if state in ("error", "cancelled"):
+            # The same OK message ends a failed or cancelled print.
+            raise RuntimeError("Print ended with state %s" % state)
+        return (state == "complete"
                 and not self.host.virtual_sdcard.is_active()
                 and self.host.print_state == PrintState.IDLE
                 and self.host._current_dialog() == ScreenDialog.MESSAGE
@@ -2091,8 +2193,32 @@ class ScenarioCatalog:
             raise RuntimeError("Mesh profile was not restored")
         self._mesh_snapshot = None
 
+    @staticmethod
+    def _require_calibration_success(calibration):
+        # The result page also presents failed and cancelled calibrations.
+        if calibration.calibration_error:
+            raise RuntimeError(
+                "Calibration failed: %s" % calibration.calibration_error)
+        if calibration.calibration_cancelled:
+            raise RuntimeError("Calibration was cancelled")
+
+    def _validate_screws(self):
+        calibration = self.host.feature_manager.get("calibration")
+        self._require_calibration_success(calibration)
+        settings = self.host.printer.lookup_object("configfile").get_status(
+            self.reactor.monotonic())["settings"].get("screws_tilt_adjust", {})
+        screws = [key for key in settings if re.match(r"^screw\d+$", key)]
+        results = list(calibration.calibration_results)
+        if len(results) != len(screws):
+            raise RuntimeError("Screws result has %d of %d screws" % (
+                len(results), len(screws)))
+        if [item["direction"] for item in results].count("BASE") != 1:
+            raise RuntimeError("Screws result has no single base screw")
+        self.test_results["screws"] = results
+
     def _validate_mesh(self):
         calibration = self.host.feature_manager.get("calibration")
+        self._require_calibration_success(calibration)
         matrix = calibration.calibration_mesh
         if not matrix or not matrix[0]:
             raise RuntimeError("Mesh result is empty")

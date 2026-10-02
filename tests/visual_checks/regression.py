@@ -1,10 +1,10 @@
-## Hybrid FF5M UI regression runner.
+## FF5M UI regression runner with explicit screenshot sources.
 ##
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-"""Hybrid FF5M UI regression runner.
+"""FF5M UI regression runner with independent printer and Designer sources.
 
 This module is explicit Mac-side test infrastructure. Importing it never
 contacts a printer, starts a Designer, or calls a model.
@@ -103,12 +103,13 @@ def _load_env(path):
 
 def _arguments(argv=None):
     parser = argparse.ArgumentParser(
-        description="Run the explicit host-side FF5M hybrid UI regression.")
+        description="Review the complete printer or supported Designer UI corpus.")
     parser.add_argument(
-        "--mode", choices=("hybrid", "designer", "parity"),
-        default="hybrid")
+        "--source", "--mode", dest="mode", choices=("printer", "designer", "hybrid", "parity"),
+        default="printer",
+        help="screenshot source (default: printer); hybrid/parity remain diagnostic modes")
     parser.add_argument("--project-root", default=str(ROOT))
-    parser.add_argument("--designer-root", required=True)
+    parser.add_argument("--designer-root")
     parser.add_argument("--printer-host")
     parser.add_argument("--printer-artifacts", action="append", default=[])
     parser.add_argument("--confirm-printer-idle", action="store_true")
@@ -122,9 +123,17 @@ def _arguments(argv=None):
         help=(
             "explicit Designer theme; hybrid/parity otherwise use the "
             "theme recorded by the printer artifact"))
-    parser.add_argument("--model")
-    parser.add_argument("--base-url")
-    parser.add_argument("--timeout", type=float)
+    parser.add_argument("--model", help="one model name (Codex default: gpt-6-luna)")
+    parser.add_argument("--base-url", help="OpenAI-compatible HTTP base URL")
+    parser.add_argument(
+        "--backend", choices=vision.VALID_BACKENDS,
+        help="review backend (default: codex; a base URL selects openai-compatible)")
+    parser.add_argument("--reasoning-effort", help="reasoning effort (Codex default: high)")
+    parser.add_argument(
+        "--review-workers", type=int,
+        help="parallel screenshot reviews (1-32; default: Codex 8, HTTP 1)")
+    parser.add_argument("--codex-command", help="Codex CLI executable path")
+    parser.add_argument("--timeout", type=float, help="timeout per model request in seconds")
     parser.add_argument(
         "--check-mode", choices=("advisory", "strict"),
         default=None)
@@ -132,7 +141,30 @@ def _arguments(argv=None):
     parser.add_argument("--env-file", default=str(ROOT / ".env"))
     parser.add_argument("--enable", action="store_true")
     parser.add_argument("--output")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.mode != "printer" and not args.designer_root:
+        parser.error("--designer-root is required for designer, hybrid and parity modes")
+    if args.mode == "designer" and (args.printer_host or args.printer_artifacts):
+        parser.error("designer mode does not accept printer sources")
+    return args
+
+
+def _visual_settings(args):
+    return vision.VisualCheckSettings(
+        enabled=args.enable,
+        base_url=args.base_url or os.environ.get("FF5M_VISUAL_BASE_URL", ""),
+        model=args.model or os.environ.get("FF5M_VISUAL_MODEL", ""),
+        api_key=os.environ.get(args.api_key_env, ""),
+        timeout=(args.timeout if args.timeout is not None
+                 else os.environ.get("FF5M_VISUAL_TIMEOUT")),
+        mode=args.check_mode or os.environ.get("FF5M_VISUAL_MODE", "advisory"),
+        backend=args.backend or os.environ.get("FF5M_VISUAL_BACKEND"),
+        reasoning_effort=(args.reasoning_effort
+                          or os.environ.get("FF5M_VISUAL_REASONING_EFFORT")),
+        codex_command=(args.codex_command
+                       or os.environ.get("FF5M_VISUAL_CODEX_COMMAND", "codex")),
+        review_workers=(args.review_workers if args.review_workers is not None
+                        else os.environ.get("FF5M_VISUAL_REVIEW_WORKERS")))
 
 
 def _output_directory(value):
@@ -169,7 +201,7 @@ def _printer_directories(args, output, component_cases):
         return []
     if not args.printer_host:
         raise hybrid.RegressionConfigurationError(
-            "hybrid/parity mode requires --printer-host or "
+            "printer/hybrid/parity mode requires --printer-host or "
             "--printer-artifacts")
     collector = printer.PrinterCollector(
         args.printer_host, confirmed_idle=args.confirm_printer_idle)
@@ -309,9 +341,9 @@ def _pipeline_stages(mode, designer_records, printer_runs, merged,
     printer_captured = sum(item["captured"] for item in printer_runs)
     stages = [{
         "id": "designer",
-        "status": "completed",
+        "status": "not_required" if mode == "printer" else "completed",
         "title": "Designer discovery and capture",
-        "summary": (
+        "summary": "Skipped by the explicit printer-only mode." if mode == "printer" else (
             "%d component pages discovered; %d scenario frames rendered."
             % (len(discovered), len(designer_records))),
         "counts": {
@@ -343,7 +375,7 @@ def _pipeline_stages(mode, designer_records, printer_runs, merged,
     stages.append({
         "id": "merge",
         "status": "completed",
-        "title": "Hybrid composition",
+        "title": "Hybrid composition" if mode in ("hybrid", "parity") else "Source corpus",
         "summary": (
             "%d Designer frames and %d retained printer frames; "
             "%d printer duplicate(s) replaced by Designer."
@@ -351,7 +383,8 @@ def _pipeline_stages(mode, designer_records, printer_runs, merged,
                 len(merged["designer"]),
                 len(merged["legacy"]),
                 len(merged["replaced"]),
-            )),
+            )) if mode in ("hybrid", "parity") else (
+                "All %d %s frames retained for review." % (len(merged["records"]), mode)),
         "counts": {
             "designer_frames": len(merged["designer"]),
             "printer_frames": len(merged["legacy"]),
@@ -447,6 +480,13 @@ def _redacted_error(args, exc):
 
 def _infrastructure_report(args, output, exc):
     frames = _unreviewed_artifacts(output)
+    try:
+        configuration = _visual_settings(args).public()
+    except (TypeError, ValueError):
+        # Invalid settings must not prevent the original failure report.
+        configuration = {
+            "model": args.model or os.environ.get("FF5M_VISUAL_MODEL", ""),
+        }
     return {
         "schema_version": 1,
         "status": "fail",
@@ -461,10 +501,7 @@ def _infrastructure_report(args, output, exc):
             "replaced": 0,
             "parity_pairs": 0,
         },
-        "configuration": {
-            "model": (
-                args.model or os.environ.get("FF5M_VISUAL_MODEL", "")),
-        },
+        "configuration": configuration,
         "summary": {
             "screenshots": len(frames),
             "statuses": {"not_run": len(frames)},
@@ -488,8 +525,12 @@ def _markdown_report(report):
         "- Mode: `%s`" % report["mode"],
         "- Model: `%s`" % (
             report.get("configuration", {}).get("model") or "disabled"),
+        "- Backend: `%s`" % report.get("configuration", {}).get("backend", "openai-compatible"),
+        "- Reasoning effort: `%s`" % (
+            report.get("configuration", {}).get("reasoning_effort") or "server default"),
+        "- Review workers: `%s`" % report.get("configuration", {}).get("review_workers", 1),
         "- Designer cases: %d" % coverage["designer"],
-        "- Legacy printer cases: %d" % coverage["legacy_printer"],
+        "- Printer cases: %d" % coverage["legacy_printer"],
         "- Replaced printer duplicates: %d" % coverage["replaced"],
         "- Parity pairs: %d" % coverage["parity_pairs"],
         "",
@@ -522,17 +563,21 @@ def _write_reports(output, report):
 def execute(args, output=None, progress=None):
     output = pathlib.Path(output or _output_directory(args.output)).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    settings = _visual_settings(args)
     if progress is not None:
-        progress.stage(1, 6, "Loading scenarios and discovering pages")
-    scenarios = hybrid.load_scenarios(args.scenarios)
+        progress.stage(1, 6, "Loading printer expectations" if args.mode == "printer"
+                       else "Loading scenarios and discovering pages")
     expectations = hybrid.load_expectations(args.expectations)
-    discovery = hybrid.discover_designer(
-        args.designer_root, args.project_root)
+    discovery, scenarios, cases = {}, [], []
+    if args.mode != "printer":
+        scenarios = hybrid.load_scenarios(args.scenarios)
+        discovery = hybrid.discover_designer(
+            args.designer_root, args.project_root)
+        cases = hybrid.build_designer_cases(
+            discovery, scenarios, theme=args.theme or "DEFAULT")
     # The component payload needs only IDs and typed state. Build it before
     # collection, then rebuild the render cases with the printer's captured
     # theme once artifact metadata is available.
-    cases = hybrid.build_designer_cases(
-        discovery, scenarios, theme=args.theme or "DEFAULT")
     ui_records = []
     component_records = []
     printer_runs = []
@@ -566,37 +611,38 @@ def execute(args, output=None, progress=None):
         else:
             component_records.extend(records)
     designer_theme = _designer_theme(args.theme, printer_runs)
-    cases = hybrid.build_designer_cases(
-        discovery, scenarios, theme=designer_theme)
+    designer_records = []
+    if args.mode != "printer":
+        cases = hybrid.build_designer_cases(
+            discovery, scenarios, theme=designer_theme)
+        if progress is not None:
+            progress.stage(
+                3, 6, "Rendering %d Designer screenshots with %d workers"
+                % (len(cases), args.designer_workers))
+        designer_records = hybrid.DesignerCapture(
+            args.designer_root, args.project_root).capture(
+                cases, output / "designer",
+                progress=progress.render if progress is not None else None,
+                workers=args.designer_workers)
+    elif progress is not None:
+        progress.stage(3, 6, "Designer is not required for the printer source")
     if progress is not None:
-        progress.stage(
-            3, 6, "Rendering %d Designer screenshots with %d workers"
-            % (len(cases), args.designer_workers))
-    designer_records = hybrid.DesignerCapture(
-        args.designer_root, args.project_root).capture(
-            cases, output / "designer",
-            progress=progress.render if progress is not None else None,
-            workers=args.designer_workers)
-    if progress is not None:
-        progress.stage(4, 6, "Building the merged review corpus")
-    if args.mode == "designer":
+        progress.stage(4, 6, "Building the review corpus")
+    if args.mode in ("designer", "printer"):
+        printer_records = ui_records + component_records
+        if args.mode == "printer":
+            hybrid.validate_printer_coverage(ui_records, [], ())
         merged = {
-            "records": designer_records,
+            "records": printer_records if args.mode == "printer" else designer_records,
             "designer": designer_records,
-            "legacy": [],
+            "legacy": printer_records if args.mode == "printer" else [],
             "replaced": [],
             "pairs": [],
             "discovered_page_ids": sorted(set(
                 item.get("semantic_page_id") for item in designer_records)),
         }
     else:
-        # COMPONENT captures typed page state, while dialog/OTA fixtures are
-        # rendered only by Designer and have no corresponding printer case.
-        component_case_ids = {
-            case["id"] for case in cases
-            if all(case.get(key) is None for key in (
-                "dialog_fixture", "message_fixture", "error_fixture", "ota_fixture"))
-        }
+        component_case_ids = {case["id"] for case in cases}
         hybrid.validate_printer_coverage(
             ui_records, component_records, component_case_ids,
             require_component=args.mode == "parity")
@@ -625,10 +671,7 @@ def execute(args, output=None, progress=None):
             },
             "discovered_page_ids": merged["discovered_page_ids"],
             "missing_expectations": missing,
-            "configuration": {
-                "model": args.model or "",
-                "designer_theme": designer_theme,
-            },
+            "configuration": dict(settings.public(), designer_theme=designer_theme),
             "pipeline": _pipeline_stages(
                 args.mode, designer_records, printer_runs, merged,
                 missing=missing),
@@ -637,17 +680,6 @@ def execute(args, output=None, progress=None):
         if progress is not None:
             progress.stage(
                 5, 6, "Reviewing %d screenshots" % len(ready))
-        model = args.model or os.environ.get("FF5M_VISUAL_MODEL", "")
-        base_url = args.base_url or os.environ.get(
-            "FF5M_VISUAL_BASE_URL", "")
-        timeout = args.timeout or float(os.environ.get(
-            "FF5M_VISUAL_TIMEOUT", "30"))
-        settings = vision.VisualCheckSettings(
-            enabled=args.enable, base_url=base_url, model=model,
-            api_key=os.environ.get(args.api_key_env, ""),
-            timeout=timeout, mode=(
-                args.check_mode
-                or os.environ.get("FF5M_VISUAL_MODE", "advisory")))
         artifact = image_runner.run_checks(
             settings, _image_inputs(ready),
             progress=progress.review if progress is not None else None)

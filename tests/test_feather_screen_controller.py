@@ -43,7 +43,7 @@ from feather.features.filament import FilamentFeature
 from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
 from feather.calibration.extruder import FeatherExtruderCalibrationMixin
-from tests.feather_render_test_helper import RenderCapture
+from tests.feather_render_test_helper import Bounds, RenderCapture, RenderFrame
 
 
 class ScenarioController(FeatherZCalibrationMixin,
@@ -935,6 +935,37 @@ class ControllerSafetyTest(unittest.TestCase):
             "maximum": 0.0,
             "value": 0.0,
         })
+
+    def test_weight_gauge_displays_integer_but_keeps_sensor_precision(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.weight_sensor = StatusObject({
+            "temperature": 0.0,
+            "measured_min_temp": -200.0,
+            "measured_max_temp": 9999.0,
+        })
+        controller.z_weight_gauge = None
+
+        for value, expected in ((110.6, "111"), (-110.6, "-111"),
+                                (9999.0, "9999"), (-0.2, "0")):
+            with self.subTest(value=value):
+                controller.weight_sensor.status["temperature"] = value
+                frame = RenderFrame(
+                    controller._z_weight_gauge_commands(0),
+                    controller.renderer)
+                reading = frame.text(
+                    " " + expected if expected.startswith("-") else expected)
+                panel = max((shape.bounds for shape in frame.shapes
+                             if shape.kind == "stroke"),
+                            key=lambda bounds: bounds.width)
+                visible_center = reading.x + (
+                    controller.renderer.font_advance(reading.font) // 2
+                    if expected.startswith("-") else 0)
+                self.assertEqual(visible_center, panel.x + panel.width // 2)
+                self.assertLessEqual(
+                    controller.renderer.text_width(expected, reading.font),
+                    panel.width - 12)
+                self.assertEqual(controller.z_weight_gauge["value"], value)
 
     def test_weight_gauge_turns_red_only_above_four_hundred(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -3324,6 +3355,37 @@ class ControllerSafetyTest(unittest.TestCase):
         error = controller._find_dialog(FEATHER.ScreenDialog.ERROR)
         self.assertEqual(error.content["recovery"], "firmware_restart")
         self.assertTrue(error.content["terminal"])
+        self.assertTrue(rendering.latest.has_action("error.firmware_restart"))
+
+    def test_shutdown_screen_replaces_a_prompt_even_if_deactivation_fails(self):
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.shutdown_active = False
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.renderer._worker = mock.Mock(active=True)
+        rendering = RenderCapture(controller.renderer)
+        blank_page(controller)
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Material menu",
+            "// action:prompt_text Select a material",
+            "// action:prompt_button PETG",
+            "// action:prompt_show")))
+        controller.printer = type("Printer", (), {
+            "get_state_message": lambda self: (
+                "MCU 'mcu' shutdown: Timer too close\nPrinter is shutdown",
+                "shutdown"),
+        })()
+
+        def deactivate():
+            raise RuntimeError("component cleanup failed")
+
+        controller._deactivate_components = deactivate
+        with self.assertLogs(level="ERROR"):
+            controller._shutdown()
+
+        self.assertEqual(
+            controller._current_dialog(), FEATHER.ScreenDialog.ERROR)
+        self.assertIsNone(
+            controller._find_dialog(FEATHER.ScreenDialog.ACTION_PROMPT))
         self.assertTrue(rendering.latest.has_action("error.firmware_restart"))
 
     def test_error_page_offers_firmware_restart_recovery(self):

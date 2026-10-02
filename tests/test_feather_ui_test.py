@@ -1,6 +1,9 @@
 ## Host-side contracts for the lazy on-printer Feather UI runner.
 
+import configparser
+import copy
 import csv
+import importlib.util
 import json
 import pathlib
 import re
@@ -231,6 +234,75 @@ class ArtifactWorkerTest(unittest.TestCase):
             self.assertTrue(summary["operation_context"]["passed"])
             self.assertFalse(active.exists())
 
+    def _finish_with_printer_log(self, lines, outcome="passed"):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            run = root / "20260729-120000-ui"
+            run.mkdir()
+            printer_log = root / "printer.log"
+            printer_log.write_text(
+                "Traceback (most recent call last):\n"
+                "  before this run started\n", encoding="utf-8")
+            active = root / "active.json"
+            worker = ARTIFACTS.ArtifactWorker(
+                AsyncReactor(), str(run), str(root / "fb0"),
+                str(printer_log))
+            with printer_log.open("a", encoding="utf-8") as stream:
+                stream.write("".join(line + "\n" for line in lines))
+            finished = []
+            finished_event = threading.Event()
+            with mock.patch.object(ARTIFACTS, "ACTIVE_MARKER", str(active)):
+                worker.finish(
+                    {"outcome": outcome, "reason": None, "failures": []},
+                    lambda value: (finished.append(value),
+                                   finished_event.set()))
+                self.assertTrue(finished_event.wait(3.0))
+            worker.stop()
+            written = json.loads((run / "summary.json").read_text())
+            self.assertEqual(written, finished[0])
+            return written
+
+    def test_fatal_printer_log_line_fails_a_passed_run(self):
+        summary = self._finish_with_printer_log([
+            "Homing move end: endstops=['z'] error=None",
+            "MCU 'mcu' shutdown: Timer too close",
+            "Transition to shutdown state: MCU 'mcu' shutdown: Timer too close",
+        ])
+
+        self.assertEqual(summary["outcome"], "failed")
+        self.assertEqual(summary["failures"], [{
+            "step": "printer-log",
+            "error": "2 fatal printer log line(s); first at line 2: "
+                     "MCU 'mcu' shutdown: Timer too close"}])
+        self.assertEqual(summary["reason"], summary["failures"][0]["error"])
+        self.assertEqual(
+            [item["line"] for item in summary["printer_log_failures"]],
+            [2, 3])
+
+    def test_traceback_of_an_already_failed_step_is_not_counted_twice(self):
+        summary = self._finish_with_printer_log([
+            "[feather_ui_test] step failed: print_mesh-context-verify",
+            "Traceback (most recent call last):",
+            "  File \"runner.py\", line 824, in _advance",
+        ], outcome="failed")
+        self.assertEqual(summary["printer_log_failures"], [])
+        self.assertEqual(summary["failures"], [])
+
+    def test_healthy_printer_log_and_earlier_failures_keep_the_outcome(self):
+        healthy = self._finish_with_printer_log([
+            "Homing move end: endstops=['z'] error=None",
+            "[feather_ui_test] STEP_START index=409 kind=call "
+            "label=ui-error-restart eventtime=14797.931848",
+            "Probe samples exceed tolerance. Retrying...",
+        ])
+        self.assertEqual(healthy["outcome"], "passed")
+        self.assertEqual(healthy["printer_log_failures"], [])
+
+        aborted = self._finish_with_printer_log(
+            ["Traceback (most recent call last):"], outcome="aborted")
+        self.assertEqual(aborted["outcome"], "aborted")
+        self.assertEqual(aborted["failures"][0]["step"], "printer-log")
+
     def test_capture_started_counter_brackets_frame_work(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -333,6 +405,7 @@ class RunnerContractTest(unittest.TestCase):
                 lambda self, eventtime=None, status=None:
                 " -> ".join(tuple(status["context_path"]) +
                             (status["current_state"],)),
+            "page": FEATHER.ScreenPage.CALIBRATION_PROGRESS,
         })()
         run = UI_TEST.UITestRun(host)
         run.running = True
@@ -349,7 +422,9 @@ class RunnerContractTest(unittest.TestCase):
                          context_path=("Bed Mesh",))
         run.update(4.0)
 
-        self.assertEqual(run.worker.capture.call_count, 2)
+        # LEVELING drives the toolhead against the bed: the stage is kept on
+        # the timeline, but the framebuffer is not read.
+        self.assertEqual(run.worker.capture.call_count, 1)
         self.assertEqual(
             [stage["current_state"] for stage in run.calibration_stages],
             ["CLEANING", "LEVELING"])
@@ -363,7 +438,11 @@ class RunnerContractTest(unittest.TestCase):
         logged = [str(call[0][0]) for call in run.worker.log.call_args_list]
         self.assertEqual(
             len([line for line in logged
-                 if line.startswith("CAPTURE_QUEUED")]), 2)
+                 if line.startswith("CAPTURE_QUEUED")]), 1)
+        self.assertEqual(
+            [line for line in logged if line.startswith("STAGE ")], [
+                "STAGE mesh-stage-Bed Mesh -> LEVELING "
+                "page=CALIBRATION_PROGRESS screenshot skipped during LEVELING"])
         self.assertEqual(
             run.worker.capture.call_args_list[0][0][2]["capture_kind"],
             "stage")
@@ -382,6 +461,7 @@ class RunnerContractTest(unittest.TestCase):
                 lambda self, eventtime=None, status=None:
                 " -> ".join(tuple(status["context_path"]) +
                             (status["current_state"],)),
+            "page": FEATHER.ScreenPage.CALIBRATION_PROGRESS,
         })()
         run = UI_TEST.UITestRun(host)
         run.running = True
@@ -401,7 +481,6 @@ class RunnerContractTest(unittest.TestCase):
         labels = [call[0][1] for call in run.worker.capture.call_args_list]
         self.assertEqual(labels, [
             "recovery-stage-Recovery -> HEATING NOZZLE",
-            "recovery-stage-Recovery -> HOMING",
             "recovery-stage-Recovery -> POSITIONING",
             "future_workflow-stage-Recovery -> RESTORING",
         ])
@@ -1092,6 +1171,70 @@ class RunnerContractTest(unittest.TestCase):
         self.assertTrue(capture.latest.has_text("MESSAGE LINE 9."))
         self.assertFalse(capture.latest.has_text("SHORT MESSAGE"))
 
+        scenarios._render_dialog_variant("nine-lines-second")
+        self.assertTrue(capture.latest.has_text("LINE 9 REMAINS VISIBLE."))
+        self.assertIn("dialog.test.prev", capture.latest.buttons)
+
+    def test_print_result_and_long_error_snapshots_render_native_dialogs(self):
+        host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        host.renderer = FEATHER.FeatherRenderer()
+        host.page = FEATHER.ScreenPage.NETWORK_PROGRESS
+        host._paint_page = lambda: host.renderer.send(host.renderer.begin_page("Network"))
+        host._run_script = mock.Mock(side_effect=AssertionError("visual fixture executed G-code"))
+        capture = RenderCapture(host.renderer)
+        scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": host})())
+
+        for kind, title in (("finished", "PRINT FINISHED"), ("cancelled", "PRINT CANCELLED"),
+                            ("cancelled-reason", "PRINT CANCELLED"), ("failed", "PRINT FAILED"),
+                            ("explicit-two-line-title", "EXPLICIT TITLE BREAK"),
+                            ("explicit-three-line-title", "EXPLICIT TITLE BREAK")):
+            with self.subTest(kind=kind):
+                scenarios._render_print_result_snapshot(kind)
+                self.assertTrue(capture.latest.has_text(title))
+                self.assertEqual(set(capture.latest.buttons), {"message.ok"})
+                if kind == "cancelled-reason":
+                    self.assertTrue(capture.latest.has_text("Reason: FILAMENT RUNOUT"))
+                if kind.startswith("explicit-"):
+                    self.assertTrue(capture.latest.has_text("SECOND HEADING LINE"))
+                    if kind == "explicit-three-line-title":
+                        self.assertTrue(capture.latest.has_text("THIRD HEADING LINE"))
+
+        scenarios._render_error_snapshot("remote-shutdown")
+        self.assertTrue(capture.latest.has_text("REMOTE SHUTDOWN"))
+        self.assertIn("error.firmware_restart", capture.latest.buttons)
+        scenarios._render_error_snapshot("timer-too-close-long")
+        self.assertTrue(any("Timer too close" in text.value for text in capture.latest.texts))
+        self.assertIn("error.firmware_restart", capture.latest.buttons)
+        host._run_script.assert_not_called()
+
+    def test_prompt_snapshots_render_status_and_operation_progress(self):
+        from tests.test_feather_screen import Reactor
+
+        host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        host.renderer = FEATHER.FeatherRenderer()
+        host.print_state = FEATHER.PrintState.IDLE
+        host.page = FEATHER.ScreenPage.IDLE_HOME
+        host.reactor = Reactor()
+        host._paint_page = lambda: host.renderer.send(host.renderer.begin_page("Home"))
+        host.extruder = type("Extruder", (), {
+            "heater": None,
+            "get_status": lambda self, eventtime: {"temperature": 25.0, "target": 0.0},
+        })()
+        capture = RenderCapture(host.renderer)
+        scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": host})())
+
+        scenarios._render_action_prompt_footer()
+        self.assertTrue(capture.latest.has_text("Action completed."))
+        self.assertEqual(set(capture.latest.buttons), {"prompt.button.0"})
+
+        scenarios._render_operation_cold_pull_snapshot({
+            "context_path": ("Cold pull",), "context_types": ("cold_pull",),
+            "current_state": "HEATING NOZZLE", "cancel_available": True,
+            "cancel_pending": False}, "HEATING NOZZLE")
+        self.assertTrue(capture.latest.has_text("HEATING NOZZLE"))
+        self.assertTrue(capture.latest.has_text("NOZZLE 130 / 250 C"))
+        self.assertEqual(set(capture.latest.buttons), {"coldpull.cancel"})
+
     def test_update_restart_snapshot_fits_loader_message(self):
         host = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         host.renderer = FEATHER.FeatherRenderer()
@@ -1254,6 +1397,33 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(notification.available_version, "available-before")
         self.assertEqual(notification.changes, ("before",))
         self.assertEqual(notification.change_page, 0)
+
+    def test_update_recovery_snapshot_restores_state_after_render_failure(self):
+        notification = type("Notification", (), {})()
+        notification.changes = ("original",)
+        notification.change_page = 0
+        original = vars(notification).copy()
+        host = type("Host", (), {"update_notification": notification})()
+        scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": host})())
+
+        def render(page):
+            self.assertEqual(page, FEATHER.ScreenPage.UPDATE_NOTIFICATION)
+            self.assertEqual(notification.changes, ())
+            self.assertEqual(notification.change_page, 1)
+            self.assertGreater(len(notification.recovery_files), 6)
+
+        scenarios._show = render
+        scenarios._render_update_recovery_snapshot()
+        self.assertEqual(vars(notification), original)
+
+        def fail(page):
+            render(page)
+            raise RuntimeError("frame rejected")
+
+        scenarios._show = fail
+        with self.assertRaisesRegex(RuntimeError, "frame rejected"):
+            scenarios._render_update_recovery_snapshot()
+        self.assertEqual(vars(notification), original)
 
     def test_ui_timer_pause_suppresses_and_restores_real_update_dialog(self):
         class Notification:
@@ -1765,6 +1935,7 @@ class RunnerContractTest(unittest.TestCase):
         run.step_index = 2
         run.run_id = "synthetic-run"
         run.run_directory = "/data/feather-ui-tests/synthetic-run"
+        run.ui_fingerprint = "deployed-ui"
         run.steps = [
             {"label": "prepare"},
             {"label": "heat"},
@@ -1783,6 +1954,7 @@ class RunnerContractTest(unittest.TestCase):
             "step": "cool",
             "step_index": 2,
             "step_count": 3,
+            "ui_fingerprint": "deployed-ui",
         })
 
     def test_failed_run_setup_removes_marker_directory_and_worker(self):
@@ -1834,6 +2006,9 @@ class RunnerContractTest(unittest.TestCase):
             def restore(self, host, reactor, hardware):
                 calls.append(("snapshot", hardware))
 
+            def verify(self, host, reactor, hardware):
+                calls.append(("verify", hardware))
+
         class Fixture:
             def restore(self, suite):
                 calls.append(("fixture", suite))
@@ -1857,7 +2032,7 @@ class RunnerContractTest(unittest.TestCase):
         run._complete("failed", "again")
 
         self.assertEqual(calls, [
-            ("fixture", "UI"), ("snapshot", False),
+            ("fixture", "UI"), ("snapshot", False), ("verify", False),
             ("finish", "failed"),
         ])
         self.assertTrue(run.finalizing)
@@ -2019,6 +2194,33 @@ class RunnerContractTest(unittest.TestCase):
             self.assertFalse(checkpoint.exists())
             self.assertTrue(unrelated.exists())
 
+    def test_interrupted_print_run_releases_its_timelapse_hold(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            hold = root / "hold"
+            hold.write_text("old-run\n")
+            (root / "timelapse").mkdir()
+            runner_video = root / "timelapse" / (
+                "timelapse_feather-context-old-run-kamp.gcode_2026.mp4")
+            user_video = root / "timelapse" / "timelapse_benchy.gcode_2026.mp4"
+            runner_video.write_bytes(b"runner")
+            user_video.write_bytes(b"user")
+            host = type("Host", (), {
+                "virtual_sdcard": type("SD", (), {
+                    "sdcard_dirname": str(root)})(),
+                "resurrection": None,
+            })()
+            marker = {"run_id": "old-run", "resources": {
+                "files": [], "checkpoint": None, "timelapse_hold": True}}
+
+            with mock.patch.object(
+                    RESOURCES, "TIMELAPSE_RENDER_HOLD", str(hold)):
+                UI_TEST.recover_interrupted_context_resources(host, marker)
+
+            self.assertFalse(hold.exists())
+            self.assertFalse(runner_video.exists())
+            self.assertTrue(user_video.exists())
+
     def test_stale_same_process_run_is_cleaned_before_next_run(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -2114,8 +2316,9 @@ class RunnerContractTest(unittest.TestCase):
             "print_kamp-context-start", "print_kamp-file-open",
             "print_kamp-complete", "print_kamp-finished-dismiss",
             "print_kamp-context-verify",
-            "print_mesh-context-start", "print_mesh-pause-motion-complete",
-            "print_mesh-paused",
+            "print_mesh-context-start", "print_mesh-timelapse-wait",
+            "print_mesh-timelapse-release", "print_mesh-started",
+            "print_mesh-pause-motion-complete", "print_mesh-paused",
             "print_mesh-resumed", "print_mesh-pause-for-recovery",
             "print_mesh-recovery-pause-motion-complete",
             "print_mesh-recovery-paused", "print_mesh-idle-timeout",
@@ -2125,7 +2328,8 @@ class RunnerContractTest(unittest.TestCase):
             "print_mesh-context-verify", "recovery-context-start",
             "recovery-printing", "recovery-complete",
             "recovery-finished-dismiss",
-            "recovery-context-verify",
+            "recovery-context-verify", "timelapse-render-idle",
+            "timelapse-held-video", "context_print-cleanup",
         )
         positions = [print_labels.index(label) for label in expected]
         self.assertEqual(positions, sorted(positions))
@@ -2138,6 +2342,8 @@ class RunnerContractTest(unittest.TestCase):
         print_phases = dict(
             (step["label"], step["phase"]) for step in printing)
         self.assertEqual(print_phases["print_mesh-paused"], "print_mesh")
+        self.assertEqual(
+            print_phases["print_mesh-timelapse-wait"], "print_mesh")
         self.assertEqual(print_phases["recovery-complete"], "recovery")
         self.assertEqual(
             print_phases["print_kamp-complete"], "print_kamp")
@@ -2149,6 +2355,7 @@ class RunnerContractTest(unittest.TestCase):
             "print_kamp-confirm-screen",
             "print_kamp-printing-screen",
             "print_kamp-complete-screen",
+            "print_mesh-timelapse-wait-screen",
             "print_mesh-printing-screen",
             "print_mesh-paused-screen",
             "print_mesh-resumed-screen",
@@ -2424,6 +2631,15 @@ class RunnerContractTest(unittest.TestCase):
                     RuntimeError, "foreign recovery checkpoint"):
                 feature._preflight("CONTEXT_PRINT", hardware_targets=True)
 
+            # The print scenarios need a real timelapse render to hold.
+            checkpoint.unlink()
+            host.params = type("Params", (), {
+                "variables": {"timelapse": False}})()
+            with self.assertRaisesRegex(RuntimeError, "Enable timelapse"):
+                feature._preflight("CONTEXT_PRINT", hardware_targets=True)
+            host.params.variables["timelapse"] = True
+            feature._preflight("CONTEXT_PRINT", hardware_targets=True)
+
     def test_context_runtime_cleanup_restores_memory_and_owned_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -2465,7 +2681,17 @@ class RunnerContractTest(unittest.TestCase):
                 "is_active": lambda self: False,
                 "file_path": lambda self: str(gcode),
                 "do_cancel": lambda self: cancelled.append(True),
+                "sdcard_dirname": str(root),
             })()
+            videos = root / "timelapse"
+            videos.mkdir()
+            runner_video = videos / (
+                "timelapse_feather-context-old-run-kamp.gcode_2026.mp4")
+            user_video = videos / "timelapse_benchy.gcode_2026.mp4"
+            runner_video.write_bytes(b"runner")
+            user_video.write_bytes(b"user")
+            hold = root / "timelapse-hold"
+            hold.write_text("test-run\n")
             host.operation_context = type("Context", (), {
                 "get_status": lambda self, eventtime: {"contexts": ()},
             })()
@@ -2487,9 +2713,12 @@ class RunnerContractTest(unittest.TestCase):
             fixture.client_macro = client
             fixture.client_idle_timeout = 3600
             fixture.idle_timeout = 600.0
+            fixture.timelapse_hold = True
             feature.context_fixture = fixture
 
-            feature._restore_context_runtime()
+            with mock.patch.object(
+                    RESOURCES, "TIMELAPSE_RENDER_HOLD", str(hold)):
+                feature._restore_context_runtime()
 
             self.assertEqual(params.variables["check_md5"], 1)
             self.assertEqual(params.variables["current_material"], "PETG")
@@ -2501,6 +2730,10 @@ class RunnerContractTest(unittest.TestCase):
             self.assertFalse(gcode.exists())
             self.assertFalse(checkpoint.exists())
             self.assertTrue(unrelated.exists())
+            self.assertFalse(hold.exists())
+            self.assertFalse(fixture.timelapse_hold)
+            self.assertFalse(runner_video.exists())
+            self.assertTrue(user_video.exists())
 
     def test_context_print_restores_runtime_idle_timeout(self):
         idle_timeout = type("IdleTimeout", (), {"idle_timeout": 600.0})()
@@ -2523,6 +2756,7 @@ class RunnerContractTest(unittest.TestCase):
         host.virtual_sdcard = type("SD", (), {
             "is_active": lambda self: False,
             "file_path": lambda self: None,
+            "sdcard_dirname": tempfile.gettempdir() + "/no-such-sdcard",
         })()
         host._run_script = run_script
         reactor = type("Reactor", (), {"monotonic": lambda self: 1.0})()
@@ -2535,11 +2769,466 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(fixture.idle_timeout, 600.0)
 
         idle_timeout.idle_timeout = 2.0
-        fixture.restore("CONTEXT_PRINT")
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+                RESOURCES, "TIMELAPSE_RENDER_HOLD", temporary + "/hold"):
+            fixture.restore("CONTEXT_PRINT")
 
         self.assertEqual(commands, ["SET_IDLE_TIMEOUT TIMEOUT=600"])
         self.assertEqual(idle_timeout.idle_timeout, 600.0)
         self.assertEqual(client.variables["idle_timeout"], 3600)
+
+
+def _klipper_configfile():
+    """Load the deployed Klipper configfile patch with a minimal printer."""
+    spec = importlib.util.spec_from_file_location(
+        "ff5m_patched_configfile",
+        str(ROOT / ".py" / "klipper" / "patches" / "configfile.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    gcode = type("GCode", (), {
+        "register_command": lambda self, *args, **kwargs: None})()
+    printer = type("Printer", (), {
+        "lookup_object": lambda self, name, default=None: gcode})()
+    configfile = module.PrinterConfig(printer)
+    configfile.autosave = module.ConfigWrapper(
+        printer, configparser.RawConfigParser(), {}, "printer")
+    return module, configfile
+
+
+class RunHealthTest(unittest.TestCase):
+    class Worker:
+        def __init__(self):
+            self.summaries = []
+            self.logs = []
+
+        def finish(self, summary, callback):
+            self.summaries.append(summary)
+
+        def log(self, message):
+            self.logs.append(message)
+
+    def _running(self, suite="UI", renderer_status=None):
+        status = dict(renderer_status or {
+            "worker_state": "running", "typer_restarts": 1,
+            "worker_last_error": "", "dropped_batches": 0,
+        })
+        renderer = type("Renderer", (), {
+            "status": status,
+            "get_status": lambda self: dict(self.status),
+            "restart": lambda self: True,
+        })()
+        host = type("Host", (), {
+            "reactor": object(), "renderer": renderer,
+        })()
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run.suite = suite
+        run.run_id = "test-run"
+        run.started_at = UI_TEST.time.time()
+        run.worker = self.Worker()
+        run.renderer_baseline = renderer.get_status()
+        return run, renderer
+
+    def test_unexpected_gcode_error_fails_an_otherwise_passed_run(self):
+        run, _renderer = self._running()
+        run.on_gcode_output("// probing\n!! Move out of range: 0.000 -5.000")
+        run.on_gcode_output(
+            "!! NOTE: Bed leveling adjustments were calculated for the "
+            "nuts under the bed!")
+
+        run._complete("passed", None)
+
+        summary = run.worker.summaries[0]
+        self.assertEqual(summary["outcome"], "failed")
+        self.assertIn("Move out of range", summary["reason"])
+        self.assertEqual(
+            [item["error"] for item in summary["gcode_errors"]],
+            ["Move out of range: 0.000 -5.000"])
+        self.assertEqual(
+            [item["step"] for item in summary["failures"]], ["gcode-error"])
+
+    def test_known_note_and_output_outside_the_run_do_not_fail_it(self):
+        run, _renderer = self._running()
+        run.running = False
+        run.on_gcode_output("!! left over from an earlier command")
+        run.running = True
+        run.on_gcode_output(
+            "!! NOTE: Bed leveling adjustments were calculated for the "
+            "nuts under the bed!")
+
+        run._complete("passed", None)
+
+        self.assertEqual(run.worker.summaries[0]["outcome"], "passed")
+        self.assertEqual(run.worker.summaries[0]["gcode_errors"], [])
+
+    def test_only_requested_typer_restarts_are_healthy(self):
+        run, renderer = self._running(suite="RENDER")
+        run.scenarios._request_renderer_restart(None)
+        renderer.status["typer_restarts"] = 2
+        run._complete("passed", None)
+        self.assertEqual(run.worker.summaries[0]["outcome"], "passed")
+
+        run, renderer = self._running()
+        renderer.status["typer_restarts"] = 2
+        run._complete("passed", None)
+        summary = run.worker.summaries[0]
+        self.assertEqual(summary["outcome"], "failed")
+        self.assertEqual(summary["reason"],
+                         "Typer restarted 1 time(s), expected 0")
+
+    def test_new_renderer_error_or_stopped_worker_fails_the_run(self):
+        run, renderer = self._running()
+        renderer.status["worker_last_error"] = "broken pipe"
+        renderer.status["worker_state"] = "backoff"
+
+        run._complete("passed", None)
+
+        summary = run.worker.summaries[0]
+        self.assertEqual(summary["outcome"], "failed")
+        self.assertEqual(
+            [item["error"] for item in summary["failures"]], [
+                "Typer reported an error: broken pipe",
+                "Typer worker is backoff"])
+
+    def test_health_problems_keep_the_original_failure_reason(self):
+        run, renderer = self._running()
+        renderer.status["typer_restarts"] = 3
+
+        run._complete("failed", "Timed out: heat-stable")
+
+        summary = run.worker.summaries[0]
+        self.assertEqual(summary["reason"], "Timed out: heat-stable")
+        self.assertEqual(summary["failures"][-1]["step"], "renderer")
+
+    def test_wait_fails_as_soon_as_an_error_dialog_is_visible(self):
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 1.0})(),
+            "page": FEATHER.ScreenPage.CALIBRATION_RESULT,
+            "_current_dialog": lambda self: FEATHER.ScreenDialog.ERROR,
+            "_find_dialog": lambda self, kind: type("Dialog", (), {
+                "content": {"message": "Probing failed"}})(),
+        })()
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run.steps = [{
+            "kind": "wait", "label": "screws-result", "phase": "screws",
+            "predicate": lambda: True, "timeout": 1200.0, "interval": 1.0,
+        }]
+        completed = []
+        run._event = lambda message: None
+        run._complete = lambda outcome, reason: completed.append(
+            (outcome, reason))
+
+        run._advance(1.0)
+
+        self.assertEqual(completed, [("failed", "Probing failed")])
+        self.assertEqual(run.step_index, 0)
+
+
+class TimelapseWaitScenarioTest(unittest.TestCase):
+    def _run(self, returncode=1):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = pathlib.Path(self.temporary.name)
+        self.hold = root / "hold"
+        patcher = mock.patch.object(
+            RESOURCES, "TIMELAPSE_RENDER_HOLD", str(self.hold))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.markers = []
+        self.status = {"code": returncode}
+        command = type("Command", (), {
+            "get_status": lambda _self, eventtime: {
+                "returncode": self.status["code"]}})()
+        self.timelapse = {
+            "phase": SCENARIOS.TimelapsePhase.WAITING, "wait_status": "busy"}
+        self.sd_active = False
+        host = type("Host", (), {})()
+        host.reactor = type("Reactor", (), {"monotonic": lambda _self: 1.0})()
+        host.printer = type("Printer", (), {
+            "lookup_object": lambda _self, name: command})()
+        host._run_script = lambda script: None
+        host.page = FEATHER.ScreenPage.TIMELAPSE_WAIT
+        host._timelapse_phase = lambda: self.timelapse["phase"]
+        host._timelapse_status = lambda: {
+            "wait_status": self.timelapse["wait_status"]}
+        host.virtual_sdcard = type("SD", (), {
+            "is_active": lambda _self: self.sd_active,
+            "sdcard_dirname": str(root)})()
+        run = UI_TEST.UITestRun(host)
+        run.context_fixture = RESOURCES.ContextTestFixture(
+            host, host.reactor, "test-run", "PLA",
+            changed=lambda: self.markers.append(
+                run.context_fixture.marker_state()["timelapse_hold"]))
+        return run, host
+
+    def test_render_is_held_only_from_a_confirmed_idle_status(self):
+        run, _host = self._run(returncode=2)
+        with self.assertRaisesRegex(RuntimeError, "must be idle, got unavailable"):
+            run.context_fixture.hold_timelapse_render()
+        self.assertFalse(self.hold.exists())
+
+        run, _host = self._run(returncode=1)
+        run.context_fixture.hold_timelapse_render()
+        self.assertTrue(self.hold.exists())
+        # Ownership reaches the run marker before the flag is created.
+        self.assertEqual(self.markers, [True])
+
+    def test_print_must_be_held_on_the_wait_page_until_release(self):
+        run, host = self._run()
+        run.context_fixture.hold_timelapse_render()
+        self.assertTrue(run.scenarios._context_timelapse_waiting())
+
+        run.scenarios._release_context_timelapse()
+        self.assertFalse(self.hold.exists())
+        self.assertEqual(self.markers, [True, False])
+
+        run.context_fixture.hold_timelapse_render()
+        self.sd_active = True
+        with self.assertRaisesRegex(RuntimeError, "did not stay held"):
+            run.scenarios._release_context_timelapse()
+        self.assertTrue(self.hold.exists())
+
+    def test_wait_requires_the_wait_page_and_a_busy_render(self):
+        run, host = self._run()
+        self.timelapse["wait_status"] = "unavailable"
+        self.assertFalse(run.scenarios._context_timelapse_waiting())
+        self.timelapse["wait_status"] = "busy"
+        host.page = FEATHER.ScreenPage.PRINTING
+        self.assertFalse(run.scenarios._context_timelapse_waiting())
+
+    def test_held_render_must_produce_the_kamp_video(self):
+        run, _host = self._run()
+        root = pathlib.Path(self.temporary.name)
+        kamp = root / "feather-context-test-run-kamp.gcode"
+        run.context_fixture.files = [str(kamp)]
+        with self.assertRaisesRegex(RuntimeError, "produced no video"):
+            run.scenarios._verify_held_timelapse_video()
+        (root / "timelapse").mkdir()
+        (root / "timelapse" / (
+            "timelapse_feather-context-test-run-kamp.gcode_20261002_0831.mp4"
+        )).write_bytes(b"video")
+        run.scenarios._verify_held_timelapse_video()
+
+    def test_render_idle_is_read_through_the_guard_status_command(self):
+        run, _host = self._run(returncode=0)
+        self.assertFalse(run.scenarios._timelapse_render_idle())
+        self.status["code"] = 1
+        self.assertTrue(run.scenarios._timelapse_render_idle())
+
+
+class ShutdownDeactivationTest(unittest.TestCase):
+    def test_klipper_shutdown_finalizes_the_run_without_gcode(self):
+        summaries = []
+
+        def run_script(command):
+            raise AssertionError("G-code during shutdown: %s" % command)
+
+        renderer = type("Renderer", (), {"get_status": lambda self: {
+            "worker_state": "running", "typer_restarts": 0,
+            "worker_last_error": ""}})()
+        host = type("Host", (), {
+            "reactor": object(), "renderer": renderer,
+            "shutdown_active": True, "_run_script": run_script,
+            "_show_page": lambda self, page: None,
+        })()
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run.suite = "CONTEXT_MATERIAL"
+        run.run_id = "test-run"
+        run.started_at = UI_TEST.time.time()
+        run.renderer_baseline = renderer.get_status()
+        run.snapshot = RESOURCES.PrinterStateSnapshot(
+            FEATHER.ScreenPage.IDLE_HOME, FEATHER.ScreenPage.MAIN_MENU,
+            "PLA", 0.0, None, "", 0.0, 0.0, 0.0, False)
+        run.worker = type("Worker", (), {
+            "finish": lambda self, summary, callback: summaries.append(
+                summary),
+            "log": lambda self, message: None,
+        })()
+
+        run.deactivate()
+
+        self.assertEqual(summaries[0]["outcome"], "aborted")
+        self.assertEqual(summaries[0]["reason"], "Klipper shutdown")
+
+
+class StateRestoreVerificationTest(unittest.TestCase):
+    def _host(self, configfile):
+        shown = []
+        host = type("Host", (), {})()
+        host.printer = type("Printer", (), {
+            "lookup_object": lambda self, name, default=None: configfile})()
+        host.bed_mesh = type("Mesh", (), {})()
+        host.bed_mesh.pmgr = type("Profiles", (), {})()
+        host.bed_mesh.pmgr.profiles = {
+            "auto": {"points": [[0.1, 0.2], [0.3, 0.4]]}}
+        host.params = type("Params", (), {})()
+        host.params.variables = {"z_offset": -0.1, "current_material": "PLA"}
+        host.filament_material = "PLA"
+        host.timer = None
+        host.previous_page = FEATHER.ScreenPage.MAIN_MENU
+        host._show_page = shown.append
+        return host
+
+    @staticmethod
+    def _snapshot(host):
+        return RESOURCES.PrinterStateSnapshot(
+            FEATHER.ScreenPage.IDLE_HOME, FEATHER.ScreenPage.MAIN_MENU,
+            "PLA", 0.0, None, "", 0.0, 0.0, 0.0, False,
+            RESOURCES._capture_pending_config(
+                host.printer.lookup_object("configfile")),
+            copy.deepcopy(host.bed_mesh.pmgr.profiles),
+            copy.deepcopy(host.params.variables))
+
+    def test_mesh_calibration_leaves_nothing_for_the_next_save_config(self):
+        _module, configfile = _klipper_configfile()
+        configfile.set("bed_mesh auto", "points", "\n0.1, 0.2\n0.3, 0.4")
+        configfile.save_config_pending = False
+        configfile.status_save_pending = {}
+        host = self._host(configfile)
+        snapshot = self._snapshot(host)
+        before = configfile._build_config_string(configfile.autosave)
+
+        # What a mesh calibration does while the UI later says DON'T SAVE.
+        configfile.set("bed_mesh auto_prev", "points", "\n0.1, 0.2\n0.3, 0.4")
+        configfile.set("bed_mesh auto", "points", "\n0.9, 0.9\n0.9, 0.9")
+        host.bed_mesh.pmgr.profiles = dict(
+            host.bed_mesh.pmgr.profiles,
+            auto={"points": [[0.9, 0.9], [0.9, 0.9]]},
+            auto_prev={"points": [[0.1, 0.2], [0.3, 0.4]]})
+        with self.assertRaisesRegex(
+                RuntimeError,
+                "pending SAVE_CONFIG changes; bed mesh profiles"):
+            snapshot.verify(host, None, False)
+
+        snapshot.restore(host, None, False)
+        snapshot.verify(host, None, False)
+
+        self.assertEqual(
+            configfile._build_config_string(configfile.autosave), before)
+        self.assertFalse(configfile.get_status(0.0)["save_config_pending"])
+        self.assertEqual(
+            configfile.get_status(0.0)["save_config_pending_items"], {})
+        self.assertEqual(
+            host.bed_mesh.pmgr.profiles,
+            {"auto": {"points": [[0.1, 0.2], [0.3, 0.4]]}})
+
+    def test_verification_names_a_persistent_mod_parameter_change(self):
+        _module, configfile = _klipper_configfile()
+        host = self._host(configfile)
+        snapshot = self._snapshot(host)
+        host.params.variables["z_offset"] = -0.25
+
+        snapshot.restore(host, None, False)
+        with self.assertRaisesRegex(
+                RuntimeError, "Cleanup did not restore mod parameters "
+                "z_offset"):
+            snapshot.verify(host, None, False)
+
+    def test_hardware_verification_reobserves_offset_mesh_and_heaters(self):
+        _module, configfile = _klipper_configfile()
+        host = self._host(configfile)
+        snapshot = self._snapshot(host)
+        status = {
+            "gcode": {"homing_origin": [0.0, 0.0, 0.0]},
+            "mesh": {"profile_name": ""},
+            "extruder": {"target": 0.0},
+            "bed": {"target": 0.0},
+        }
+
+        def reader(key):
+            return type("Status", (), {
+                "get_status": lambda self, eventtime: status[key]})()
+
+        host.gcode_move = reader("gcode")
+        host.bed_mesh.get_status = lambda eventtime: status["mesh"]
+        host.bed_mesh.z_mesh = None
+        host.extruder = reader("extruder")
+        host.heater_bed = reader("bed")
+        reactor = type("Reactor", (), {"monotonic": lambda self: 1.0})()
+        snapshot.verify(host, reactor, True)
+
+        status["gcode"]["homing_origin"][2] = -0.2
+        status["bed"]["target"] = 60.0
+        with self.assertRaisesRegex(
+                RuntimeError, "runtime Z offset; heater targets"):
+            snapshot.verify(host, reactor, True)
+
+
+class CalibrationResultTest(unittest.TestCase):
+    def _run(self, results=(), error=None, cancelled=False):
+        calibration = type("Calibration", (), {})()
+        calibration.calibration_results = list(results)
+        calibration.calibration_error = error
+        calibration.calibration_cancelled = cancelled
+        calibration.calibration_mesh = [[0.1, 0.2], [0.3, 0.4]]
+        settings = {"screws_tilt_adjust": {
+            "screw1": [1.0, 2.0], "screw1_name": "rear left",
+            "screw2": [3.0, 4.0], "screw2_name": "rear right",
+            "screw3": [5.0, 6.0], "screw3_name": "front left",
+            "speed": 50.0,
+        }}
+        configfile = type("ConfigFile", (), {
+            "get_status": lambda self, eventtime: {"settings": settings}})()
+        host = type("Host", (), {
+            "reactor": type("Reactor", (), {
+                "monotonic": lambda self: 1.0})(),
+            "printer": type("Printer", (), {
+                "lookup_object": lambda self, name: configfile})(),
+            "feature_manager": type("Features", (), {
+                "get": lambda self, name: calibration})(),
+            "renderer": type("Renderer", (), {
+                "_buttons": {"cal.mesh.discard": ()}})(),
+        })()
+        return UI_TEST.UITestRun(host)
+
+    def test_screws_require_every_configured_screw_and_one_base(self):
+        base = {"name": "rear left", "direction": "BASE", "turns": "-"}
+        right = {"name": "rear right", "direction": "CW", "turns": "00:15"}
+        front = {"name": "front left", "direction": "CCW", "turns": "00:05"}
+
+        run = self._run([base, right, front])
+        run.scenarios._validate_screws()
+        self.assertEqual(run.test_results["screws"], [base, right, front])
+
+        with self.assertRaisesRegex(RuntimeError, "2 of 3 screws"):
+            self._run([base, right]).scenarios._validate_screws()
+        with self.assertRaisesRegex(RuntimeError, "single base"):
+            self._run([right, right, front]).scenarios._validate_screws()
+
+    def test_error_or_cancel_result_page_is_not_a_calibration_result(self):
+        for run, message in (
+                (self._run(error="Probe triggered prior to movement"),
+                 "Calibration failed: Probe triggered prior to movement"),
+                (self._run(cancelled=True), "Calibration was cancelled")):
+            with self.assertRaisesRegex(RuntimeError, message):
+                run.scenarios._validate_screws()
+            with self.assertRaisesRegex(RuntimeError, message):
+                run.scenarios._validate_mesh()
+
+    def test_a_failed_print_is_not_a_completed_print(self):
+        status = {"state": "error"}
+        host = type("Host", (), {})()
+        host.reactor = type("Reactor", (), {
+            "monotonic": lambda self: 1.0})()
+        host.print_stats = type("Stats", (), {
+            "get_status": lambda self, eventtime: dict(status)})()
+        host.virtual_sdcard = type("SD", (), {
+            "is_active": lambda self: False})()
+        host.print_state = FEATHER.PrintState.IDLE
+        host._current_dialog = lambda: FEATHER.ScreenDialog.MESSAGE
+        host.renderer = type("Renderer", (), {
+            "_buttons": {"message.ok": ()}})()
+        run = UI_TEST.UITestRun(host)
+
+        with self.assertRaisesRegex(RuntimeError, "ended with state error"):
+            run.scenarios._context_print_complete()
+        status["state"] = "standby"
+        self.assertFalse(run.scenarios._context_print_complete())
+        status["state"] = "complete"
+        self.assertTrue(run.scenarios._context_print_complete())
 
 
 class ContextPrintFixtureTest(unittest.TestCase):
@@ -2839,6 +3528,25 @@ class OperationContextRecorderTest(unittest.TestCase):
         self.assertEqual(result["variant"],
                          "SKIP_HOMING,SKIP_HOMING,NONE,NONE,NONE,NONE,NONE")
         self.assertEqual(result["expected"], expected)
+
+    def test_print_mesh_resume_accepts_the_trace_recorded_on_the_printer(self):
+        # Recorded on the FF5M: the UI resume opens and closes RESUME's own
+        # context after printing has started.
+        actual = json.loads(
+            (ROOT / "tests" / "fixtures" / "print_mesh_resume_trace.json")
+            .read_text(encoding="utf-8"))
+        manager = ContextManagerFixture()
+        recorder = CONTEXT_FIXTURES.OperationContextRecorder(manager)
+        recorder.attach()
+        recorder.start_scenario("print_mesh_resume", ("print_mesh_resume",))
+        for snapshot in actual:
+            manager.emit(snapshot)
+
+        result = recorder.finish_scenario()
+        recorder.detach()
+
+        self.assertTrue(result["passed"], result.get("diagnostic"))
+        self.assertEqual(result["expected"], actual)
 
     def test_late_print_kamp_mismatch_keeps_nearest_variant(self):
         manager = ContextManagerFixture()

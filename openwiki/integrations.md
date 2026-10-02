@@ -141,7 +141,10 @@ when print preparation begins. While the next file waits, Moonraker can finish
 the previous timelapse; continuing starts a new frame sequence immediately and
 stops the old finalization. Klipper's reactor remains responsive during the short check.
 [`timelapse_ffmpeg.sh`](../.root/timelapse_ffmpeg.sh) runs it at
-nice level 19. [`S99root`](../.shell/S99root) binds the stock FFmpeg,
+nice level 19. A render waits while the printer regression's
+`/tmp/feather-ui-test-timelapse-hold` flag exists (at most 10 minutes), so the
+regression can test starting a print during a real render; normally the flag
+is absent and rendering starts immediately. [`S99root`](../.shell/S99root) binds the stock FFmpeg,
 x264, loader and library directories into separate paths in the Moonraker
 chroot. The wrapper invokes the stock ARM loader with an explicit library path;
 the chroot's own libraries remain unchanged. The bind mounts are prepared on

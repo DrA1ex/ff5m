@@ -375,6 +375,9 @@ PRINT_MESH_RESUME = (
     ("state", "CHECKING MESH"), ("end",),
     ("state", "RESUMING HEAT"), ("wait", "NOZZLE"),
     ("state", "PRIMING"), ("state", "PRINTING"),
+    # The scenario's UI pause and resume: RESUME always opens a resume context
+    # and restores the bed, then the nozzle, temperature inside it.
+    ("begin", "resume"), ("wait", "BED"), ("wait", "NOZZLE"), ("end",),
     ("reset",),
 )
 RECOVERY = (

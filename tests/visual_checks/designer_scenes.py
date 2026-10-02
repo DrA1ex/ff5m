@@ -11,7 +11,6 @@ import json
 import pathlib
 import pickle
 import sys
-from types import SimpleNamespace
 
 
 def _state_metadata(scene):
@@ -32,117 +31,6 @@ def _assert_requested_state(case, scene):
             raise ValueError(
                 "Designer scene did not apply requested state key: %s"
                 % key)
-
-
-def _render_dialog_fixture(scene, fixture, project_root, theme):
-    plugins = project_root / ".py" / "klipper" / "plugins"
-    sys.path.insert(0, str(plugins.resolve()))
-    from feather_preview.ui import PreviewRenderer
-
-    renderer = PreviewRenderer(width=800, height=480)
-    renderer.set_theme(theme)
-    commands = renderer.begin_page("Dialog layout")
-    commands += renderer.dialog(
-        fixture["title"], fixture["lines"], fixture["buttons"],
-        x=160, y=130, width=480, height=220, tone="info",
-        page=fixture.get("page", 0),
-        page_actions=("dialog.test.prev", "dialog.test.next"))
-    scene["operations"] = commands
-    scene["title"] = "Dialog layout / " + fixture["title"]
-    scene["palette"] = renderer.palette
-    scene["diagnostics"] = []
-    return scene
-
-
-def _render_screen_dialog_fixture(scene, content, kind, page, project_root, theme):
-    """Capture a product dialog through its normal composition lifecycle."""
-    plugins = project_root / ".py" / "klipper" / "plugins"
-    sys.path.insert(0, str(plugins.resolve()))
-    from feather_preview.ui import PreviewRenderer
-    from feather_screen import FeatherScreen, ScreenDialog, ScreenPage
-
-    renderer = PreviewRenderer(width=800, height=480)
-    renderer.set_theme(theme)
-    captured = []
-
-    def capture(commands, **_metadata):
-        if renderer._composite_commands is not None:
-            renderer._composite_commands.extend(commands)
-        else:
-            captured.extend(commands)
-            renderer._finish_surface(True)
-        return True
-
-    renderer.send = capture
-    screen = FeatherScreen.__new__(FeatherScreen)
-    screen.renderer = renderer
-    screen.page = ScreenPage.IDLE_HOME
-    screen._paint_page = lambda: None
-    # Standalone fixtures have no retained framebuffer to darken. Capture
-    # the dialog body, as before, without the native Typer scrim command.
-    screen._paint_dialog = lambda instance: instance.painter(instance)
-    instance = screen._show_dialog(ScreenDialog[kind], content=content)
-    if page:
-        instance.page = page
-        captured.clear()
-        screen._render_dialog()
-    scene["operations"] = list(captured)
-    scene["palette"] = renderer.palette
-    scene["diagnostics"] = []
-    screen._close_dialog(instance)
-    return scene
-
-
-def _render_message_fixture(scene, fixture, project_root, theme):
-    """Render the product's message dialog with the Designer renderer."""
-    content = {
-        "message": fixture["message"], "title": fixture.get("title"),
-        "actions": tuple(
-            tuple(button) for button in fixture.get(
-                "buttons", (("message.ok", "OK", "enabled"),))),
-    }
-    scene = _render_screen_dialog_fixture(
-        scene, content, "MESSAGE", fixture.get("page", 0), project_root, theme)
-    scene["title"] = "Message / " + (content["title"] or content["message"])
-    return scene
-
-
-def _render_error_fixture(scene, fixture, project_root, theme):
-    """Render the product's error dialog with the Designer renderer."""
-    content = {
-        "message": fixture["message"], "category": fixture.get("category", ""),
-        "recovery": fixture["recovery"], "terminal": False,
-    }
-    scene = _render_screen_dialog_fixture(
-        scene, content, "ERROR", fixture.get("page", 0), project_root, theme)
-    scene["title"] = "Klipper error / " + fixture["message"].splitlines()[0]
-    return scene
-
-
-def _render_ota_fixture(scene, fixture, project_root, theme):
-    """Render the product's actual update dialog through Designer primitives."""
-    plugins = project_root / ".py" / "klipper" / "plugins"
-    sys.path.insert(0, str(plugins.resolve()))
-    from feather_preview.ui import PreviewRenderer
-    from feather.update_notification import ForgeXUpdateNotification
-
-    renderer = PreviewRenderer(width=800, height=480)
-    renderer.set_theme(theme)
-    captured = []
-    renderer.send = lambda commands: captured.extend(commands)
-    notification = ForgeXUpdateNotification(
-        SimpleNamespace(renderer=renderer, reactor=None), None)
-    notification.installed_version = fixture["installed_version"]
-    notification.available_version = fixture["available_version"]
-    notification.changes = tuple(fixture["changes"])
-    notification.recovery_files = tuple(fixture.get("recovery_files", ()))
-    notification.change_page = fixture.get("page", 0)
-    notification.render()
-    scene["operations"] = captured
-    scene["title"] = "OTA update / " + fixture["available_version"]
-    scene["palette"] = renderer.palette
-    scene["diagnostics"] = []
-    return scene
 
 
 def main(argv=None):
@@ -214,22 +102,6 @@ def main(argv=None):
                 "viewport": viewport,
             })
             _assert_requested_state(case, case["scene"])
-            if case.get("dialog_fixture") is not None:
-                case["scene"] = _render_dialog_fixture(
-                    case["scene"], case["dialog_fixture"],
-                    project_root, case["theme"])
-            if case.get("message_fixture") is not None:
-                case["scene"] = _render_message_fixture(
-                    case["scene"], case["message_fixture"],
-                    project_root, case["theme"])
-            if case.get("error_fixture") is not None:
-                case["scene"] = _render_error_fixture(
-                    case["scene"], case["error_fixture"],
-                    project_root, case["theme"])
-            if case.get("ota_fixture") is not None:
-                case["scene"] = _render_ota_fixture(
-                    case["scene"], case["ota_fixture"],
-                    project_root, case["theme"])
     finally:
         client.close()
     plan_path.write_text(

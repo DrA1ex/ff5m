@@ -1,0 +1,414 @@
+[
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": null,
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": null
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "HOMING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "HOMING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "LEVELING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "LEVELING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "USING LOADED PROFILE",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "USING LOADED PROFILE"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PARKING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PARKING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "HEATING NOZZLE",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "HEATING NOZZLE"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PARKING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PARKING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print",
+   "Mesh Validation"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PARKING",
+    "name": "Print",
+    "type": "print"
+   },
+   {
+    "cancel_mode": "interruptible",
+    "current_state": null,
+    "name": "Mesh Validation",
+    "type": "mesh_validation"
+   }
+  ],
+  "current_state": null
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print",
+   "Mesh Validation"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PARKING",
+    "name": "Print",
+    "type": "print"
+   },
+   {
+    "cancel_mode": "interruptible",
+    "current_state": "CHECKING MESH",
+    "name": "Mesh Validation",
+    "type": "mesh_validation"
+   }
+  ],
+  "current_state": "CHECKING MESH"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PARKING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PARKING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "RESUMING HEAT",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "RESUMING HEAT"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PRIMING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PRIMING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PRINTING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PRINTING"
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print",
+   "Resume"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PRINTING",
+    "name": "Print",
+    "type": "print"
+   },
+   {
+    "cancel_mode": "interruptible",
+    "current_state": null,
+    "name": "Resume",
+    "type": "resume"
+   }
+  ],
+  "current_state": null
+ },
+ {
+  "cancel_available": true,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": "cancelable",
+   "name": "Print",
+   "type": "print"
+  },
+  "context_path": [
+   "Print"
+  ],
+  "contexts": [
+   {
+    "cancel_mode": "cancelable",
+    "current_state": "PRINTING",
+    "name": "Print",
+    "type": "print"
+   }
+  ],
+  "current_state": "PRINTING"
+ },
+ {
+  "cancel_available": false,
+  "cancel_blocker": {
+   "name": null,
+   "type": null
+  },
+  "cancel_pending": false,
+  "cancel_target": {
+   "mode": null,
+   "name": null,
+   "type": null
+  },
+  "context_path": [],
+  "contexts": [],
+  "current_state": null
+ }
+]

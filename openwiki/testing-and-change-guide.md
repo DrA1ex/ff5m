@@ -125,8 +125,23 @@ remaining model. OrcaSlicer's estimate for the extrusion portion is about two
 and a half minutes. The model print is deliberately last: it leaves a part in
 the bed centre, so every scenario that probes or wipes the bed must precede it.
 Together the two files cover the `print`, `kamp`, `mesh_validation`,
-`nozzle_clean`, and `recovery` contexts plus the print pause, resume, cancel,
-and terminal-dialog controls.
+`nozzle_clean`, `resume`, and `recovery` contexts plus the print pause,
+resume, cancel, and terminal-dialog controls.
+
+The group also starts a print while the previous timelapse is still being
+encoded. Before the first print the runner confirms through the guard's own
+`timelapse_render_status` command that Moonraker is idle, then creates
+`/tmp/feather-ui-test-timelapse-hold`. While that flag exists,
+[`timelapse_ffmpeg.sh`](../.root/timelapse_ffmpeg.sh) holds the render (at
+most 10 minutes; `/tmp` is shared with Moonraker's chroot and cleared on
+reboot), so the KAMP print's real render stays busy. Starting the second print
+must then show `TIMELAPSE_WAIT` with a `busy` status and keep the file held.
+The runner releases the flag, and the print must start by itself. At the end
+the runner waits for the render to become idle and requires the KAMP print's
+video. Timelapse must therefore be enabled; preflight refuses
+`CONTEXT_PRINT` otherwise. Cleanup and interrupted-run recovery remove the
+flag and every `timelapse_feather-context-*` video, which only runner files
+can produce.
 
 `CONTEXT_MATERIAL` drives the normal action-prompt protocol: it selects the
 requested material, performs Load, Purge, Unload, and Done, then selects the
@@ -301,6 +316,42 @@ own temporary G-code files and checkpoint. Before and after any live group,
 independently verify standby, zero heater targets, and inactive virtual SD, and
 retain the artifact directory plus deployed UI fingerprint.
 
+Mesh calibration and KAMP write the new mesh into the in-memory `auto` and
+`auto_prev` profiles and into Klipper's SAVE_CONFIG buffer even when the UI
+answer is DON'T SAVE or LATER. Every run therefore snapshots that buffer, its
+pending flags, and the bed-mesh profiles, and restores them during cleanup, so
+a later unrelated SAVE_CONFIG cannot persist test data.
+
+#### What a passed run guarantees
+
+A step passing is not enough. The runner also fails a run, with its own
+`failures` entry, when:
+
+- `cleanup`: re-observation after restore finds a leaked value: the selected
+  material, pending SAVE_CONFIG content, bed-mesh profiles, any mod parameter,
+  and, for hardware suites, runtime Z, the active mesh, or heater targets. Mod
+  parameters are only verified, never rewritten, because a rewrite would itself
+  be persistent.
+- `gcode-error`: Klipper sent any `!!` response during the run. Healthy runs
+  print one such informational note (the screws "nuts under the bed" note);
+  it is listed in `KNOWN_ERROR_NOTES` in `feather_ui_test/runner.py`. A new
+  intentional `!!` note must be added there, otherwise use `//`. The
+  responses are kept in `summary.json` as `gcode_errors` and logged in
+  `run.log` as `GCODE_ERROR`.
+- `renderer`: Typer restarted more often than the render scenario requested,
+  reported a new worker error, or is not running at the end.
+- `printer-log`: the run's own `printer.log` slice contains a Python traceback,
+  an MCU shutdown, lost MCU communication, an internal command error, or a TMC
+  driver error (`PRINTER_LOG_FAILURE` in `feather_ui_test/artifacts.py`). Such
+  lines usually come from background timers or cleanup, which no step
+  observes. `summary.json` lists up to 20 of them in `printer_log_failures`.
+
+Scenario checks treat the result page as a destination, not as success: a
+`wait` step fails as soon as an error dialog is visible, a screws or mesh
+result must carry no calibration error or cancellation, a screws result needs
+one entry per configured `screwN` with exactly one base screw, and a test
+print is complete only when `print_stats.state` is `complete`.
+
 ### Host-orchestrated unattended runs
 
 `tests.printer_regression` is the separate developer-machine entry point for
@@ -400,7 +451,19 @@ step's own capture, `stage` for one the printer's operation context triggered,
 and `periodic` for the timeline interval. Stage capture follows every real
 operation-context state change regardless of the current test phase. A long
 action therefore updates the screen timeline while it remains active, and a
-new workflow does not need to be added to a capture whitelist.
+new workflow does not need to be added to a capture whitelist. A stage that
+enters one of the same toolhead-against-bed states as the periodic guard is
+still recorded in `calibration_stages` and in `run.log` as `STAGE ...
+screenshot skipped during <state>`, but its framebuffer is not read: a
+settled capture there caused an MCU "Timer too close" shutdown on homing. The
+next stage after the motion carries the screenshot.
+
+When Klipper shuts down during a run, Feather deactivates the runner before it
+paints the shutdown screen. The runner then finalizes its artifacts as
+`aborted` with reason `Klipper shutdown` and issues no G-code: G-code cannot
+run, it could wait for the interrupted command's G-code lock and keep the
+shutdown screen from appearing, the restart clears volatile state, and the
+next run removes the owned files and timelapse flag.
 Settled semantic and stage captures wait for a quiet framebuffer by comparing
 the interpreter's own `hash()` of each sampled frame, not a digest: SHA-256 is
 computed exactly once, on the frame the loop finally accepts. The printer's
@@ -439,6 +502,14 @@ During an active suite, successful RT status samples are also the host's
 printer-process heartbeat. If no new sample arrives for 30 seconds, the host
 stops waiting on a possibly stale run and records an
 infrastructure failure instead of waiting for the suite's physical timeout.
+
+Each launched run publishes its deployed UI fingerprint in the Feather test
+status. The host compares it with the local checkout as soon as the run is
+observed and aborts it before its first phase on a mismatch, so a report never
+describes a build other than the one under review. Sync the printer and run
+again; there is no override. After every suite the host also requires
+Moonraker's `klippy_state` to be `ready`, because a shut-down Klipper still
+reports standby, zero heater targets, and inactive virtual SD.
 
 One bounded printer-side shell process independently samples `/proc` once per
 second into `resources.tsv`. It records system CPU ticks, load, available
@@ -629,40 +700,92 @@ library and adds no project, build, or printer dependency.
 
 The tool is disabled unless the developer explicitly passes `--enable`. It
 accepts either an already downloaded UI-test artifact directory (using its
-`manifest.json`) or explicit BMP/PNG/JPEG/WebP files. It then uses the common
-OpenAI-compatible `/models` and `/chat/completions` contract; there is no
-provider-specific discovery, model download, or service management.
+`manifest.json`) or explicit BMP/PNG/JPEG/WebP files. Select `--backend codex`
+to review them through the installed Codex CLI, or `--backend openai-compatible`
+to use a local vision LLM through `/models` and `/chat/completions`. Without an
+explicit backend, a configured base URL selects the HTTP backend; otherwise
+Codex is selected. There is no model download or service management.
 Feather's uncompressed 24/32-bit BMP frames are converted in memory to PNG
 with the Python standard library before submission because some compatible
 servers reject BMP vision input. The saved source artifact, its hash, and its
-byte count remain unchanged. Responses use the OpenAI-compatible
-`json_schema` format and are independently validated again by the checker.
+byte count remain unchanged. Both backends use the same prompts and JSON
+schemas, and responses are independently validated again by the checker.
+
+The Codex backend defaults to `gpt-6-luna` with reasoning effort `high`. It
+starts `codex exec` in a temporary directory, attaches screenshots with
+`--image`, supplies `--output-schema`, and reads the JSON final answer from
+`--output-last-message`. Each standalone frame has a dedicated spacing audit
+and a full review; parity audits each image independently before the paired
+review. Codex uses its existing authentication; install the CLI and complete
+`codex login` before enabling this backend. The CLI must support
+`--ignore-user-config` and `--ephemeral` (check `codex exec --help`). The review
+uses a read-only sandbox, disables approval prompts and project instructions,
+and ignores user configuration while retaining Codex authentication. It asks
+the model to inspect only attached images. CLI logs are discarded, temporary
+files are removed, and a timed-out or cancelled child process is stopped and
+reaped. Screenshots selected for Codex review are sent to the external model
+service.
+
+Codex's `app-server` uses JSON-RPC rather than the HTTP Chat Completions
+contract. It cannot be substituted as the HTTP base URL without a separate
+protocol adapter. See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+and [CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
 
 Connection settings are host-local:
 
-- `FF5M_VISUAL_BASE_URL` supplies the OpenAI-compatible base URL;
-- `--model` or `FF5M_VISUAL_MODEL` supplies exactly one loaded model name;
-- `FF5M_VISUAL_API_KEY` is optional and is never logged or serialized;
-- `--timeout` / `FF5M_VISUAL_TIMEOUT` bound each HTTP request;
+- `--backend` / `FF5M_VISUAL_BACKEND` selects `codex` or `openai-compatible`;
+- `--base-url` / `FF5M_VISUAL_BASE_URL` supplies the HTTP base URL;
+- `--model` / `FF5M_VISUAL_MODEL` selects one model (required for HTTP);
+- `--reasoning-effort` / `FF5M_VISUAL_REASONING_EFFORT` overrides reasoning
+  effort (`high` for Codex; omitted for HTTP unless explicitly supplied);
+- `--codex-command` / `FF5M_VISUAL_CODEX_COMMAND` selects the CLI executable
+  path (default `codex`);
+- `--review-workers` / `FF5M_VISUAL_REVIEW_WORKERS` selects concurrent
+  screenshot reviews (1–32; default 8 for Codex and 1 for HTTP). Use
+  `--review-workers 1` for sequential review. This is independent of
+  `--designer-workers`, which controls screenshot capture;
+- `FF5M_VISUAL_API_KEY` is optional for HTTP and is never logged or serialized;
+- `--timeout` / `FF5M_VISUAL_TIMEOUT` bounds each HTTP request or CLI invocation
+  (default 30 seconds for HTTP, 180 for Codex; allowed range 1–300);
 - `--mode advisory|strict` / `FF5M_VISUAL_MODE` select enforcement in the
   image-only command; the regression command uses `--check-mode`.
 
-A safe invocation shape, intentionally omitting endpoint and credentials, is:
+For a saved screenshot corpus with Codex:
 
 ```bash
 .venv/bin/python -m tests.visual_checks.run \
   /path/to/saved-ui-test-artifacts \
-  --enable \
+  --enable --backend codex \
+  --model gpt-6-luna --reasoning-effort high \
+  --mode advisory
+```
+
+For a local OpenAI-compatible vision LLM:
+
+```bash
+.venv/bin/python -m tests.visual_checks.run \
+  /path/to/saved-ui-test-artifacts \
+  --enable --backend openai-compatible \
+  --base-url http://127.0.0.1:1234/v1 \
   --model loaded-vision-model \
   --mode advisory
 ```
 
 The generated `visual-checks.json` keeps, for every screenshot and its selected model, the
 verdict, non-pass reasons, JSON-validation status, elapsed request time, and
-normalized errors. It also distinguishes a disabled checker, unavailable
-endpoint, absent configured model, rejected vision input, malformed response,
-and other request failures. The endpoint address, API key, and raw error bodies
-are not stored.
+normalized errors. Configuration records the backend, model, reasoning
+effort, and review worker count. Reviews run concurrently up to the selected
+limit, while each screenshot's spacing audit and verdict remain sequential.
+The report retains input order even when reviews finish in a different order.
+Model preflight is shared across workers. Cancelling a parallel Codex run
+stops active CLI processes and discards queued reviews before returning;
+an active HTTP request finishes or reaches its configured timeout before
+its worker exits. The report distinguishes a disabled checker, unavailable endpoint or
+CLI, absent configured HTTP model, rejected vision input, malformed response,
+and other request failures. A nonzero CLI exit is reported with its exit code
+and a reminder to check Codex login and model access. The endpoint address,
+API key, raw error bodies, and CLI logs are not stored. A backend failure does
+not switch to another provider.
 
 `advisory` is the default: warnings, model failures, and unavailable services
 are recorded but return a successful process status. `strict` is honored only
@@ -671,40 +794,53 @@ integration error. Even in strict mode, semantic review supplements the
 existing deterministic contracts and UI tests; it is never the sole source of
 truth.
 
-Host-side tests use an in-memory fake OpenAI-compatible endpoint. They open no
-socket, invoke no model, and cover image payloads, fixed-schema validation,
-error mapping, disabled/advisory/strict behavior, and two-image parity
-payloads.
+Host-side tests use an in-memory fake OpenAI-compatible endpoint and a fake
+Codex executable. They open no socket, invoke no model, and cover image
+payloads, fixed-schema validation, error mapping, disabled/advisory/strict
+behavior, two-image parity payloads, CLI final-answer parsing and retry, and
+process cleanup on timeout and cancellation.
 
-### Hybrid regression orchestration
+### Screenshot sources and regression orchestration
 
-`tests.visual_checks.regression` is the higher-level development command. It
-validates the FF5M project with Feather UI Designer, automatically renders
-every discovered module-level `DeclarativePage`, and creates a default case
-for every discovered stable `PageKey`. The checked-in `scenarios.json` adds
-only meaningful non-default typed states; it is not a page registry.
-The current automatic/default plus explicit matrix contains 28 cases over
-11 discovered pages, including the bed-screw result with all four corners,
-unhomed/homed movement, joystick feedback, fine/coarse steps, paper-test
-positioning/probing/ready states, Safe Z probing/result, measured summary
-results, warnings, and dialogs. Runtime
-read-only values are installed into an isolated Designer-host checkpoint for
-rendering; the product state declarations and controllers are not changed.
+`tests.visual_checks.regression` reviews one explicitly selected screenshot
+source. `--source printer` is the default and `--source designer` is the local
+alternative. `--mode` remains an alias for existing commands.
 
-The modes are:
+- `printer`: captures the complete existing non-physical `SUITE=UI` from
+  Printer Regression and reviews every manifest frame. Pages also supported
+  by Designer remain in this corpus, including all operation-state variants.
+  It does not discover pages, load Designer scenarios, start Designer, or
+  require `--designer-root`. `--printer-artifacts` can reuse saved UI captures;
+  supplied COMPONENT captures are also retained. All artifacts must have the
+  current UI fingerprint, and the UI set must be complete before model review.
+- `designer`: automatically discovers every module-level `DeclarativePage`,
+  renders its default state, and adds the meaningful typed state/action cases
+  in `scenarios.json`. The current corpus has 32 frames over 15 pages. Native
+  messages, errors, OTA notifications, and other imperative screens belong to
+  the printer corpus; Designer scenarios cannot replace a page with drawing
+  fixtures. A clean Designer result remains `partial` because native printer
+  screens were not checked. Printer inputs are rejected in this mode.
+- `hybrid`: retained for diagnostics. Combines Designer frames with printer
+  frames whose semantic page was not rendered by Designer. Frames without a
+  semantic ID and unmatched explicit `ui-context-*` states remain in the set.
+- `parity`: retained for diagnostics. Adds paired Designer/real-renderer checks
+  for the same default and typed-state cases from the cold `SUITE=COMPONENT`
+  harness to the hybrid corpus.
 
-- `designer`: local Designer frames only. While legacy pages remain, a clean
-  result is reported as `partial`, not as a complete release gate.
-- `hybrid`: Designer frames plus every frame from the existing printer
-`SUITE=UI` whose `semantic_page_id` was not rendered by Designer. A printer
-  frame with no semantic ID, or an unknown ID, stays in the corpus. Explicit
-  `ui-context-*` runtime-state frames also stay: a Designer default frame does
-  not replace the live renderer's operation-state variant.
-- `parity`: the hybrid corpus plus paired Designer/real-renderer checks for
-  the same default and additional typed-state cases captured by the cold
-  `SUITE=COMPONENT` harness.
+The screenshot source is selected before rendering. Printer Regression's
+existing captures are preserved. The UI suite also covers ten cases that
+previously relied on manual Designer drawing fixtures: the second page of a
+nine-line dialog, long remote-shutdown and MCU error explanations, print-result
+messages with and without a cancellation reason, explicit two/three-line
+test headings, and a paged OTA recovery-file list. Short/wrapped/paged dialogs,
+the long action label, mesh-save confirmation, and short/long OTA release notes
+already have printer captures. Their textual expectations remain in the
+printer corpus. Live collection checks idle
+state before the suite and again after downloading its artifacts. Incomplete
+captures or a fingerprint mismatch stop before any model request and retain
+an HTML failure report. Missing textual expectations produce `needs_baseline`.
 
-Before a Designer scenario is accepted, the scenario adapter applies mutable
+Before a Designer scenario is accepted, the runner applies mutable
 values through the Designer host state API so simulator-owned roles (for
 example homing, position, inertia, and movement step) cannot overwrite the
 requested typed state. It then verifies every requested value against the
@@ -723,17 +859,20 @@ COMPONENT artifacts must report the same theme. `--theme` remains an explicit
 override for targeted diagnostics; Designer-only mode falls back to `DEFAULT`
 when no override is supplied.
 
-The default invocation shape is:
+To review the complete printer UI corpus:
 
 ```bash
 .venv/bin/python -m tests.visual_checks.regression \
-  --mode hybrid \
-  --designer-root /path/to/feather-ui-designer \
+  --source printer \
   --printer-host <printer-host> \
   --confirm-printer-idle \
-  --model <loaded-vision-model> \
+  --backend codex --model gpt-6-luna --reasoning-effort high \
   --enable
 ```
+
+For saved captures, replace the printer host and idle-confirmation flags with
+`--printer-artifacts /path/to/UI-run`. No printer connection is made. A stale
+fingerprint still fails; do not rewrite artifact metadata to bypass it.
 
 #### First local run and result review
 
@@ -742,8 +881,9 @@ is the normal first check after UI changes:
 
 ```bash
 .venv/bin/python -m tests.visual_checks.regression \
-  --mode designer \
+  --source designer \
   --designer-root /path/to/feather-ui-designer \
+  --backend codex --model gpt-6-luna --reasoning-effort high \
   --enable
 ```
 
@@ -754,17 +894,27 @@ validates that every frame has a textual expectation. A successful run reports
 `disabled`; `needs_baseline` means a discovered default or explicit scenario
 is missing from `expectations.json`.
 
-The default local `.env` may provide the single selected model, base URL,
-timeout, and optional API key. Do not print, commit, or copy that file. An
-explicit `--model loaded-vision-model` overrides only the model selection for
-that run. The command creates an ignored timestamped directory below
+For the same local corpus with a local LLM, replace the backend and model
+flags with `--backend openai-compatible --base-url http://127.0.0.1:1234/v1
+--model loaded-vision-model`.
+
+The regression command's default local `.env` may provide the selected
+backend, model, reasoning effort, review workers, base URL, timeout, CLI path, and optional
+HTTP API key. Do not print, commit, or copy that file. Explicit CLI values
+override the corresponding environment values. Backend selection does not
+clear a configured model or effort: when switching from a locally configured
+LLM to Codex, explicitly pass `--model gpt-6-luna --reasoning-effort high` as
+shown above. The image-only command reads environment variables but does not
+load `.env`. The regression command creates an ignored timestamped directory below
 `tests/artifacts/ui-regression/` and prints the absolute paths to `report.html`
 and `report.json`.
 
 While it runs, the command prints its current pipeline stage and then one line
 for every completed model review. The review line includes the completed and
 total frame counts, case ID, last-frame time, total elapsed time, and an ETA
-derived from the mean time of the completed frames. Before the first result,
+derived from the mean review duration and selected concurrency. Progress
+arrives in completion order; a slow early frame does not hold up later results.
+Before the first result,
 the ETA is reported as `estimating`. Output is flushed immediately and remains
 visible when the regression is launched by the LM Studio benchmark command.
 For example:
@@ -866,10 +1016,10 @@ Read the result in this order:
 
 1. Open `report.html` and check the status banner and the outcome bar, then
    follow the Problems tab.
-2. `status` is `pass`, `review`, or `fail` for a complete hybrid/parity
+2. `status` is `pass`, `review`, or `fail` for a complete printer/hybrid/parity
    corpus. A Designer-only run intentionally reports `partial` after a clean
    review because legacy printer screens are absent.
-3. `coverage` shows captured printer frames, retained legacy printer frames,
+3. `coverage` shows captured printer frames, retained printer frames,
    replaced duplicates, and parity pairs. A real parity run must have a
    non-zero `parity_pairs` count.
 4. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
@@ -895,7 +1045,7 @@ error, repeat the affected saved frame once, and rerun the complete corpus
 before accepting a result. Repeated schema failures make that model unsuitable
 for this regression gate.
 
-After a successful local Designer run, a real hybrid or parity run still needs
+After a successful local Designer run, a real printer or parity run still needs
 separate explicit approval, an idle printer, and the command shown above with
 `--confirm-printer-idle`. It must not be combined with synchronization or a
 Klipper restart.

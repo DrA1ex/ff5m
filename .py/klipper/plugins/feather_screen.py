@@ -640,7 +640,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if getattr(self, "system_shutdown_active", False):
             return
         self.shutdown_active = True
-        self._deactivate_components()
+        try:
+            self._deactivate_components()
+        except Exception:
+            # The shutdown screen is the one thing a stopped printer must
+            # still show; a failing component must not suppress it.
+            logging.exception(
+                "[feather_screen] component deactivation failed on shutdown")
         if self.renderer.active:
             msg, _category = self.printer.get_state_message()
             message = msg if str(msg).strip() else "Printer is shutdown"

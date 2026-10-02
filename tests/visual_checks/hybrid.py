@@ -132,6 +132,13 @@ UI_SUITE_LABELS = frozenset((
     "ui-dialog-paged-first",
     "ui-dialog-paged-second",
     "ui-dialog-long-action",
+    "ui-dialog-nine-lines-second",
+    "ui-print-result-finished",
+    "ui-print-result-cancelled",
+    "ui-print-result-cancelled-reason",
+    "ui-print-result-failed",
+    "ui-print-result-explicit-two-line-title",
+    "ui-print-result-explicit-three-line-title",
     "ui-action-prompt-footer",
     "ui-message-two-actions",
     "ui-print-preparing",
@@ -143,8 +150,11 @@ UI_SUITE_LABELS = frozenset((
     "ui-error-restart",
     "ui-error-firmware-restart",
     "ui-error-reconnecting",
+    "ui-error-remote-shutdown",
+    "ui-error-timer-too-close-long",
     "ui-update-short",
     "ui-update-long",
+    "ui-update-recovery-long",
     "ui-update-progress",
     "ui-update-restart",
     "ui-lifecycle-startup",
@@ -304,10 +314,10 @@ def load_scenarios(path):
         page = str(item.get("page", ""))
         state = item.get("state", {})
         actions = item.get("actions", [])
-        dialog_fixture = item.get("dialog_fixture")
-        message_fixture = item.get("message_fixture")
-        error_fixture = item.get("error_fixture")
-        ota_fixture = item.get("ota_fixture")
+        if any(key.endswith("_fixture") for key in item):
+            raise RegressionConfigurationError(
+                "Designer scenarios support page state/actions only; "
+                "capture native screens from the printer")
         if not CASE_ID.match(case_id) or not page:
             raise RegressionConfigurationError(
                 "scenario requires a stable lowercase id and page")
@@ -317,55 +327,6 @@ def load_scenarios(path):
         if not isinstance(state, dict) or not isinstance(actions, list):
             raise RegressionConfigurationError(
                 "scenario state/actions have invalid types")
-        if dialog_fixture is not None:
-            if (not isinstance(dialog_fixture, dict)
-                    or not isinstance(dialog_fixture.get("title"), str)
-                    or not isinstance(dialog_fixture.get("lines"), list)
-                    or not all(isinstance(line, str)
-                               for line in dialog_fixture["lines"])
-                    or not isinstance(dialog_fixture.get("buttons"), list)
-                    or not all(isinstance(button, list) and len(button) == 3
-                               and all(isinstance(value, str) for value in button)
-                               for button in dialog_fixture["buttons"])):
-                raise RegressionConfigurationError(
-                    "dialog fixture requires a title, text lines, "
-                    "and action/label/state button triples")
-        if message_fixture is not None:
-            buttons = message_fixture.get("buttons", []) if isinstance(
-                message_fixture, dict) else None
-            if (not isinstance(message_fixture, dict)
-                    or not isinstance(message_fixture.get("message"), str)
-                    or ("title" in message_fixture
-                        and not isinstance(message_fixture["title"], str))
-                    or not isinstance(buttons, list)
-                    or not all(isinstance(button, list) and len(button) == 3
-                               and all(isinstance(value, str) for value in button)
-                               for button in buttons)
-                    or not isinstance(message_fixture.get("page", 0), int)
-                    or message_fixture.get("page", 0) < 0):
-                raise RegressionConfigurationError(
-                    "message fixture requires text, optional title and "
-                    "action/label/state button triples")
-        if error_fixture is not None:
-            if (not isinstance(error_fixture, dict)
-                    or not isinstance(error_fixture.get("message"), str)
-                    or error_fixture.get("recovery") not in (
-                        "firmware_restart", "restart", "wait")
-                    or not isinstance(error_fixture.get("page", 0), int)
-                    or error_fixture.get("page", 0) < 0):
-                raise RegressionConfigurationError(
-                    "error fixture requires message, recovery and page")
-        if ota_fixture is not None:
-            if (not isinstance(ota_fixture, dict)
-                    or not isinstance(ota_fixture.get("installed_version"), str)
-                    or not isinstance(ota_fixture.get("available_version"), str)
-                    or not isinstance(ota_fixture.get("changes"), list)
-                    or not all(isinstance(change, str)
-                               for change in ota_fixture["changes"])
-                    or not isinstance(ota_fixture.get("page", 0), int)
-                    or ota_fixture.get("page", 0) < 0):
-                raise RegressionConfigurationError(
-                    "OTA fixture requires versions, release notes, and a page")
         seen.add(case_id)
         scenario = {
             "id": case_id,
@@ -374,14 +335,6 @@ def load_scenarios(path):
             "state": state,
             "actions": actions,
         }
-        if dialog_fixture is not None:
-            scenario["dialog_fixture"] = dialog_fixture
-        if message_fixture is not None:
-            scenario["message_fixture"] = message_fixture
-        if error_fixture is not None:
-            scenario["error_fixture"] = error_fixture
-        if ota_fixture is not None:
-            scenario["ota_fixture"] = ota_fixture
         result.append(scenario)
     return result
 

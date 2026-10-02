@@ -476,6 +476,82 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("CAPTURE_INTERVAL=5", self._launch("ui", None))
 
 
+class DeployedBuildTest(unittest.TestCase):
+    class Connection:
+        def __init__(self, fingerprint):
+            self.fingerprint = fingerprint
+            self.scripts = []
+            self.reads = 0
+
+        def request_json(self, method, path, payload=None, timeout=None):
+            del path, timeout
+            if method == "POST":
+                self.scripts.append(payload["script"])
+                return {"result": "ok"}
+            self.reads += 1
+            run_id = "20260811-120000-000001-full"
+            running = self.reads > 1 and not any(
+                "ACTION=ABORT" in script for script in self.scripts)
+            return {"result": {"status": {"feather_screen": {"ui_test": {
+                "running": running, "run_id": run_id, "suite": "FULL",
+                "directory": REGRESSION.ARTIFACT_ROOT + "/" + run_id,
+                "ui_fingerprint": self.fingerprint,
+            }}}}}
+
+    def _launch(self, deployed):
+        connection = self.Connection(deployed)
+        client = REGRESSION.PrinterRunClient(
+            connection, sleeper=lambda _seconds: None,
+            ui_fingerprint="checkout")
+        return connection, client
+
+    def test_matching_build_is_launched(self):
+        connection, client = self._launch("checkout")
+        marker = client.launch(REGRESSION.selected_suites("core")[0], None)
+        self.assertEqual(marker["suite"], "FULL")
+        self.assertEqual(len(connection.scripts), 1)
+
+    def test_other_deployed_build_is_aborted_before_it_runs(self):
+        connection, client = self._launch("older-build")
+        with self.assertRaisesRegex(
+                REGRESSION.RegressionError,
+                "deployed UI fingerprint does not match"):
+            client.launch(REGRESSION.selected_suites("core")[0], None)
+        self.assertEqual(
+            connection.scripts[-1], "_FEATHER_UI_TEST ACTION=ABORT")
+
+
+class KlippyReadyAfterSuiteTest(unittest.TestCase):
+    class Connection:
+        state = "shutdown"
+
+        def request_json(self, _method, path, payload=None, timeout=None):
+            del payload, timeout
+            if path == "/server/info":
+                return {"result": {
+                    "klippy_connected": True, "klippy_state": self.state,
+                }}
+            return {"result": {"status": {"feather_screen": {
+                "ui_test": {"running": False}}}}}
+
+        def require_safe_idle(self):
+            # A shutdown Klipper still reports a safe-looking idle printer.
+            return {
+                "print_state": "standby", "heaters_off": True,
+                "virtual_sd_inactive": True,
+            }
+
+    def test_shutdown_klipper_is_not_a_safe_idle_printer(self):
+        connection = self.Connection()
+        client = REGRESSION.PrinterRunClient(connection)
+        with self.assertRaisesRegex(
+                REGRESSION.RegressionError, "Klipper is not ready"):
+            client.require_safe_idle()
+        connection.state = "ready"
+        self.assertEqual(
+            client.require_safe_idle()["print_state"], "standby")
+
+
 class PrinterPreflightTest(unittest.TestCase):
     class Connection:
         def __init__(self, objects):

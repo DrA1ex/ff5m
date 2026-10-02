@@ -90,6 +90,13 @@ UI_FINGERPRINT_FILES = (
     "feather/update_notification.py",
 )
 UI_FINGERPRINT_PACKAGES = ("ui", "ff5m_ui", "feather_ui_test")
+# Informational notes the product deliberately prints with the error prefix
+# during a healthy run.  Every other "!!" response fails the run: a command
+# error inside a macro or a background timer would otherwise pass unnoticed.
+KNOWN_ERROR_NOTES = frozenset((
+    # _BED_LEVEL_SCREWS_PROBE, after every successful screws calculation.
+    "NOTE: Bed leveling adjustments were calculated for the nuts under the bed!",
+))
 
 
 class UITestRun:
@@ -125,6 +132,9 @@ class UITestRun:
         self.calibration_stages = []
         self.test_results = {}
         self.renderer_dropped = 0
+        self.renderer_baseline = None
+        self.gcode_errors = []
+        self.ui_fingerprint = None
         self.capture_receipts = {}
         self.context_recorder = None
         self.context_fixture = None
@@ -187,9 +197,18 @@ class UITestRun:
             "context_path": signature[1],
             "current_state": signature[2],
         })
+        label = "%s-stage-%s" % (self.phase, status)
+        state = str(signature[2] or "").upper()
+        if state in PROBING_STATES:
+            # Even one framebuffer read while the toolhead works against the
+            # bed can cost the MCU its deadline ("Timer too close").  The stage
+            # stays on the timeline; the next stage, after the motion, carries
+            # the screenshot.
+            self._event("STAGE %s page=%s screenshot skipped during %s" % (
+                label, self.host.page.name, state))
+            return
         self.capture_number += 1
         number = self.capture_number
-        label = "%s-stage-%s" % (self.phase, status)
         try:
             metadata = self._screen_metadata()
         except Exception:
@@ -365,7 +384,17 @@ class UITestRun:
             self.reactor.unregister_timer(timer)
 
     def on_gcode_output(self, message):
-        pass
+        if not self.running or self.finalizing:
+            return
+        for line in str(message).splitlines():
+            line = line.strip()
+            if not line.startswith("!!"):
+                continue
+            text = line[2:].strip()
+            if text in KNOWN_ERROR_NOTES:
+                continue
+            self.gcode_errors.append({"time": time.time(), "error": text})
+            self._event("GCODE_ERROR %s" % text)
 
     def on_render_receipt(self, receipt, eventtime):
         token = str(getattr(receipt, "token", ""))
@@ -406,6 +435,7 @@ class UITestRun:
             "step": None if step is None else step.get("label"),
             "step_index": self.step_index,
             "step_count": len(self.steps),
+            "ui_fingerprint": self.ui_fingerprint,
         }
 
     def abort(self, gcmd):
@@ -470,8 +500,9 @@ class UITestRun:
         self.calibration_stages = []
         self.test_results = {}
         self.capture_receipts = {}
-        self.renderer_dropped = self.host.renderer.get_status()[
-            "dropped_batches"]
+        self.gcode_errors = []
+        self.renderer_baseline = self.host.renderer.get_status()
+        self.renderer_dropped = self.renderer_baseline["dropped_batches"]
         self._capture_original_state()
         self._recover_stale_marker()
         # Recovery may have restored a profile or runtime offset belonging to
@@ -481,6 +512,7 @@ class UITestRun:
         self._preflight(suite, hardware_targets=True)
         self.run_id = "%s-%s" % (
             datetime.now().strftime("%Y%m%d-%H%M%S-%f"), suite.lower())
+        self.ui_fingerprint = self._ui_fingerprint()
         self.context_fixture = ContextTestFixture(
             self.host, self.reactor, self.run_id, self.material,
             changed=self._persist_resource_marker,
@@ -607,6 +639,13 @@ class UITestRun:
                     raise RuntimeError(
                         "A foreign recovery checkpoint already exists")
                 if suite == "CONTEXT_PRINT":
+                    # The print scenarios hold a real render to test starting
+                    # a print while the previous timelapse is encoding.
+                    params = getattr(self.host, "params", None)
+                    if params is None or not params.variables.get("timelapse"):
+                        raise RuntimeError(
+                            "Enable timelapse to test print start during a "
+                            "render")
                     profiles = self.host.bed_mesh.get_status(
                         self.reactor.monotonic()).get("profiles", ())
                     if "auto" not in profiles:
@@ -711,7 +750,7 @@ class UITestRun:
             "pid": os.getpid(),
             "screen_capture_interval": self.screen_capture_interval,
             "software_version": start_args.get("software_version"),
-            "ui_fingerprint": self._ui_fingerprint(),
+            "ui_fingerprint": self.ui_fingerprint,
             "theme": getattr(self.host.renderer, "theme_name", None),
             "page": getattr(self.host.page, "name", str(self.host.page)),
             "heating_materials": self.host.heating_materials,
@@ -815,6 +854,9 @@ class UITestRun:
                     self._after_tap(now, item, expected),
                     eventtime + 0.22)
             elif kind == "wait":
+                # A failed operation reports through the error dialog while
+                # the page underneath may already satisfy the predicate.
+                self._raise_visible_error()
                 if step["predicate"]():
                     self._step_passed(step, 0.05)
                 else:
@@ -843,8 +885,7 @@ class UITestRun:
             dialog = self.host._current_dialog()
             if dialog == ScreenDialog.MESSAGE and expected != ScreenDialog.MESSAGE:
                 raise RuntimeError(str(self.host._find_dialog(ScreenDialog.MESSAGE).content["message"]))
-            if dialog == ScreenDialog.ERROR:
-                raise RuntimeError(str(self.host._find_dialog(ScreenDialog.ERROR).content["message"]))
+            self._raise_visible_error()
             visible = dialog or self.host.page
             expected_seen = self.step_runtime.get(
                 "expected_page_seen", expected is None)
@@ -878,6 +919,11 @@ class UITestRun:
         except Exception as exc:
             self.failures.append({"step": step["label"], "error": str(exc)})
             self._complete("failed", str(exc))
+
+    def _raise_visible_error(self):
+        if self.host._current_dialog() == ScreenDialog.ERROR:
+            raise RuntimeError(str(self.host._find_dialog(
+                ScreenDialog.ERROR).content["message"]))
 
     def _step_passed(self, step, delay, advance=True):
         if advance:
@@ -1051,25 +1097,60 @@ class UITestRun:
             first_error = exc
         try:
             if self.snapshot is not None:
-                self.snapshot.restore(
-                    self.host, self.reactor,
-                    self.suite not in NONPHYSICAL_SUITES)
+                hardware = self.suite not in NONPHYSICAL_SUITES
+                self.snapshot.restore(self.host, self.reactor, hardware)
+                self.snapshot.verify(self.host, self.reactor, hardware)
         except Exception as exc:
             if first_error is None:
                 first_error = exc
         if first_error is not None:
             raise first_error
 
-    def _complete(self, outcome, reason):
+    def _health_failures(self):
+        """Problems that no step observes but that make a run unhealthy."""
+        failures = []
+        if self.gcode_errors:
+            failures.append({"step": "gcode-error", "error": (
+                "%d G-code error response(s); first: %s" % (
+                    len(self.gcode_errors), self.gcode_errors[0]["error"]))})
+        if self.renderer_baseline is not None:
+            before = self.renderer_baseline
+            after = self.host.renderer.get_status()
+            restarts = after["typer_restarts"] - before["typer_restarts"]
+            expected = self.scenarios.renderer_restarts_requested
+            if restarts != expected:
+                failures.append({"step": "renderer", "error": (
+                    "Typer restarted %d time(s), expected %d" % (
+                        restarts, expected))})
+            if (after.get("worker_last_error", "")
+                    != before.get("worker_last_error", "")):
+                failures.append({"step": "renderer", "error": (
+                    "Typer reported an error: %s" %
+                    after.get("worker_last_error"))})
+            if after.get("worker_state") != "running":
+                failures.append({"step": "renderer", "error": (
+                    "Typer worker is %s" % after.get("worker_state"))})
+        return failures
+
+    def _complete(self, outcome, reason, restore=True):
         if not self.running or self.finalizing:
             return
         self.finalizing = True
         try:
-            self._restore_state()
+            if restore:
+                self._restore_state()
         except Exception as exc:
             self.failures.append({"step": "cleanup", "error": str(exc)})
             outcome = "failed"
             reason = reason or ("cleanup failed: %s" % exc)
+        try:
+            health = self._health_failures()
+        except Exception as exc:
+            health = [{"step": "health", "error": str(exc)}]
+        self.failures.extend(health)
+        if health and outcome == "passed":
+            outcome = "failed"
+            reason = health[0]["error"]
         self._stop_reactor_probe()
         recorder = self.context_recorder
         if recorder is not None:
@@ -1095,6 +1176,7 @@ class UITestRun:
             "outcome": outcome,
             "screen_capture_interval": self.screen_capture_interval,
             "reason": reason, "failures": self.failures,
+            "gcode_errors": self.gcode_errors,
             "calibration_stages": self.calibration_stages,
             "test_results": self.test_results,
             "operation_context": context_summary,
@@ -1140,7 +1222,15 @@ class UITestRun:
 
     def deactivate(self):
         if self.running and not self.finalizing:
-            self._complete("aborted", "feature deactivated")
+            if getattr(self.host, "shutdown_active", False):
+                # Feather deactivates this run from Klipper's shutdown handler
+                # before it paints the shutdown screen.  G-code cannot run now
+                # and may wait for the interrupted command's G-code lock, which
+                # would leave the old screen and no summary.  The restart clears
+                # volatile state and the next run removes owned resources.
+                self._complete("aborted", "Klipper shutdown", restore=False)
+            else:
+                self._complete("aborted", "feature deactivated")
             return
         self.abort_requested = True
         if self.context_recorder is not None:

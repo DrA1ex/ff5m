@@ -27,6 +27,7 @@ import time
 import urllib.parse
 
 from tests import printer_report
+from tests.visual_checks import hybrid
 from tests.printer_connection import (
     ARTIFACT_ROOT,
     PrinterConnection,
@@ -497,10 +498,14 @@ def _safe_remote_run(marker, expected_suite=None):
 class PrinterRunClient:
     """Perform the concrete remote lifecycle for one launched runner."""
 
-    def __init__(self, connection, clock=None, sleeper=None):
+    def __init__(self, connection, clock=None, sleeper=None,
+                 ui_fingerprint=None):
         self.connection = connection
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
+        # The checkout's UI fingerprint.  A run of another deployed build
+        # would report on code that is not the code under review.
+        self.ui_fingerprint = ui_fingerprint
 
     def _ui_test_status(self):
         value = self.connection.request_json(
@@ -523,7 +528,7 @@ class PrinterRunClient:
     def _ui_test_running(self):
         return self._ui_test_status()["running"]
 
-    def preflight(self):
+    def _require_klippy_ready(self):
         server = self.connection.request_json("GET", "/server/info")
         try:
             info = dict(server.get("result", server))
@@ -533,6 +538,9 @@ class PrinterRunClient:
             raise RegressionError("Moonraker is not connected to Klipper")
         if str(info.get("klippy_state", "")).lower() != "ready":
             raise RegressionError("Klipper is not ready")
+
+    def preflight(self):
+        self._require_klippy_ready()
         objects_value = self.connection.request_json(
             "GET", "/printer/objects/list")
         objects_result = objects_value.get("result", {})
@@ -546,6 +554,8 @@ class PrinterRunClient:
             raise RegressionError("another Feather UI test is active")
 
     def require_safe_idle(self):
+        # A shutdown Klipper still reports standby and zero heater targets.
+        self._require_klippy_ready()
         state = self.connection.require_safe_idle()
         if self._ui_test_running():
             raise RegressionError("the previous Feather UI test is still active")
@@ -598,6 +608,13 @@ class PrinterRunClient:
                     "directory": status.get("directory"),
                 }
                 _safe_remote_run(marker, spec["printer_suite"])
+                if (self.ui_fingerprint is not None
+                        and status.get("ui_fingerprint")
+                        != self.ui_fingerprint):
+                    self.abort(marker)
+                    raise RegressionError(
+                        "deployed UI fingerprint does not match the local "
+                        "checkout; sync the printer before testing")
                 return marker
             self.sleeper(0.25)
         raise RegressionError("printer did not publish the launched run id")
@@ -1660,13 +1677,15 @@ class RegressionRun:
                 self.connection = PrinterConnection(
                     self.args.printer, timeout=self.args.connection_timeout)
                 self.client = PrinterRunClient(
-                    self.connection, clock=self.clock, sleeper=self.sleeper)
+                    self.connection, clock=self.clock, sleeper=self.sleeper,
+                    ui_fingerprint=hybrid.ui_fingerprint(ROOT))
             self.client.preflight()
         except KeyboardInterrupt:
             self._fail("UserCancelled", "run cancelled by the operator")
             self._skip_remaining(0, "run cancelled by the operator")
             return self._finalize(started_wall, media=False)
-        except (PrinterConnectionError, RegressionError, OSError) as exc:
+        except (PrinterConnectionError, RegressionError, OSError,
+                hybrid.RegressionConfigurationError) as exc:
             self._fail(type(exc).__name__, exc)
             self._skip_remaining(0, str(exc))
             return self._finalize(started_wall, media=False)

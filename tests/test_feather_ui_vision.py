@@ -155,8 +155,29 @@ class FailingTransport:
         self.calls.append((method, path, payload))
         raise VISION.TransportFailure(self.category, self.message)
 
+    def models(self):
+        return self.request_json("GET", "/models")
+
+    def complete(self, payload):
+        return self.request_json("POST", "/chat/completions", payload)
+
 
 class VisualEvaluatorTest(unittest.TestCase):
+    def test_http_reasoning_effort_applies_to_audit_and_verdict(self):
+        with FakeOpenAIEndpoint(("vision-a",), {"vision-a": verdict()}) as server:
+            settings = VISION.VisualCheckSettings(
+                enabled=True, base_url=server.base_url, model="vision-a",
+                reasoning_effort="high")
+            result = server.evaluator(settings).evaluate(b"frame", "image/png", {})
+
+        self.assertEqual(result["status"], "passed")
+        posts = [item[2] for item in server.requests if item[0] == "POST"]
+        self.assertEqual(len(posts), 2)
+        for payload in posts:
+            self.assertEqual(payload["reasoning_effort"], "high")
+            self.assertNotIn("temperature", payload)
+            self.assertNotIn("max_tokens", payload)
+
     def test_disabled_is_default_and_never_contacts_transport(self):
         settings = VISION.VisualCheckSettings()
         transport = FailingTransport("service_unavailable", "not called")
@@ -1283,38 +1304,18 @@ class HostPipelineTest(unittest.TestCase):
 
 
 class HybridCompositionTest(unittest.TestCase):
-    def test_ota_update_scenarios_render_actual_notification(self):
-        scenarios = HYBRID.load_scenarios(
-            ROOT / "tests" / "visual_checks" / "scenarios.json")
-        fixtures = {
-            item["id"]: item["ota_fixture"]
-            for item in scenarios if "ota_fixture" in item
-        }
-
-        self.assertEqual(set(fixtures),
-                         {"ota-update-short", "ota-update-long",
-                          "ota-recovery-long"})
-        self.assertEqual(fixtures["ota-update-short"]["page"], 0)
-        self.assertEqual(fixtures["ota-update-long"]["page"], 1)
-        self.assertEqual(len(fixtures["ota-update-long"]["changes"]), 14)
-
-    def test_dialog_layout_scenarios_reach_designer_capture(self):
-        scenarios = HYBRID.load_scenarios(
-            ROOT / "tests" / "visual_checks" / "scenarios.json")
-        fixtures = {
-            item["id"]: item["dialog_fixture"]
-            for item in scenarios if "dialog_fixture" in item
-        }
-
-        self.assertEqual(
-            set(fixtures),
-            {"dialog-short", "dialog-five-lines", "dialog-six-lines",
-             "dialog-nine-lines-second", "dialog-wrapped",
-             "dialog-paged-first", "dialog-paged-second", "dialog-long-action"})
-        self.assertEqual(len(fixtures["dialog-five-lines"]["lines"]), 5)
-        self.assertEqual(
-            fixtures["dialog-long-action"]["buttons"][0][1],
-            "SAVE SETTINGS AND RESTART")
+    def test_native_fixture_cannot_replace_a_designer_page(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "scenarios.json"
+            for kind in ("dialog", "message", "error", "ota", "runtime", "composition"):
+                with self.subTest(kind=kind):
+                    path.write_text(json.dumps({"schema_version": 1, "cases": [{
+                        "id": "native-screen", "page": "ui.Pages.HOME",
+                        kind + "_fixture": {},
+                    }]}), encoding="utf-8")
+                    with self.assertRaisesRegex(
+                            HYBRID.RegressionConfigurationError, "page state/actions only"):
+                        HYBRID.load_scenarios(path)
 
     def test_designer_capture_worker_pool_is_bounded_and_ordered(self):
         script = pathlib.Path(
@@ -1633,6 +1634,40 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
                 PRINTER.PrinterCollectionError, "confirm-printer-idle"):
             collector.preflight()
 
+    def test_collection_rechecks_idle_after_download_and_retains_unsafe_run(self):
+        for safe_after in (True, False):
+            with self.subTest(safe_after=safe_after), tempfile.TemporaryDirectory() as temporary:
+                output = pathlib.Path(temporary)
+                remote = PRINTER.ARTIFACT_ROOT + "/20261007-120000-000001-ui"
+                events = []
+
+                def preflight():
+                    events.append("idle")
+                    if not safe_after and events.count("idle") == 2:
+                        raise PRINTER.PrinterCollectionError("a print is active")
+
+                def download(command, **_options):
+                    events.append("download")
+                    run = output / pathlib.PurePosixPath(remote).name
+                    run.mkdir()
+                    (run / "manifest.json").write_text("[]", encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                collector = PRINTER.PrinterCollector(
+                    "printer.invalid", confirmed_idle=True, command_runner=download, sleeper=lambda _: None)
+                with mock.patch.object(collector, "preflight", side_effect=preflight), \
+                        mock.patch.object(collector, "_latest", side_effect=["old", remote, remote]), \
+                        mock.patch.object(collector, "_active", side_effect=[True, False]), \
+                        mock.patch.object(collector, "_json", side_effect=lambda *_a: events.append("run")):
+                    if safe_after:
+                        result = collector.collect("UI", output)
+                        self.assertTrue((result / "manifest.json").is_file())
+                    else:
+                        with self.assertRaisesRegex(PRINTER.PrinterCollectionError, "print is active"):
+                            collector.collect("UI", output)
+                        self.assertTrue((output / pathlib.PurePosixPath(remote).name / "manifest.json").is_file())
+                self.assertEqual(events, ["idle", "run", "download", "idle"])
+
     def test_preflight_rejects_printing_and_heater_targets(self):
         def requester(_request, timeout=None):
             del timeout
@@ -1651,35 +1686,52 @@ class PrinterCollectorSafetyTest(unittest.TestCase):
             collector.preflight()
 
 
-class DesignerDialogFixtureTest(unittest.TestCase):
+class NativeDialogContractTest(unittest.TestCase):
     def setUp(self):
         plugins = ROOT / ".py" / "klipper" / "plugins"
         self.enterContext(mock.patch.object(sys, "path", [str(plugins), *sys.path]))
-        from ui import FeatherRenderer
-        # Load the product adapters before the temporary preview module patch
-        # so restoring sys.modules keeps their shared framework identities.
-        __import__("feather_screen")
-        __import__("feather.screen.composition")
-
-        self.renderers = []
-
-        def renderer(**_viewport):
-            result = FeatherRenderer()
-            result.palette = result._palette.as_dict()
-            self.renderers.append(result)
-            return result
-
-        self.enterContext(mock.patch.dict(sys.modules, {
-            "feather_preview.ui": mock.Mock(PreviewRenderer=renderer),
-        }))
 
     def render(self, kind, fixture):
+        from ui import FeatherRenderer
+        from feather_screen import FeatherScreen, ScreenDialog, ScreenPage
         from tests.feather_render_test_helper import RenderFrame
 
-        painter = getattr(DESIGNER_SCENES, "_render_%s_fixture" % kind)
-        scene = painter({}, fixture, ROOT, "DEFAULT")
-        self.assertEqual(scene["diagnostics"], [])
-        return RenderFrame(scene["operations"], self.renderers[-1])
+        renderer = FeatherRenderer()
+        captured = []
+
+        def capture(commands, **_metadata):
+            if renderer._composite_commands is not None:
+                renderer._composite_commands.extend(commands)
+            else:
+                captured.extend(commands)
+                renderer._finish_surface(True)
+            return True
+
+        renderer.send = capture
+        screen = FeatherScreen.__new__(FeatherScreen)
+        screen.renderer = renderer
+        screen.page = ScreenPage.IDLE_HOME
+        screen._paint_page = lambda: None
+        screen._paint_dialog = lambda instance: instance.painter(instance)
+        if kind == "message":
+            content = {
+                "message": fixture["message"], "title": fixture.get("title"),
+                "actions": tuple(tuple(button) for button in fixture.get(
+                    "buttons", (("message.ok", "OK", "enabled"),))),
+            }
+        else:
+            content = {
+                "message": fixture["message"], "category": fixture.get("category", ""),
+                "recovery": fixture["recovery"], "terminal": False,
+            }
+        instance = screen._show_dialog(ScreenDialog[kind.upper()], content=content)
+        if fixture.get("page"):
+            instance.page = fixture["page"]
+            captured.clear()
+            screen._render_dialog()
+        frame = RenderFrame(captured, renderer)
+        screen._close_dialog(instance)
+        return frame
 
     def test_error_dialog_preserves_recovery_actions(self):
         for recovery, action, title in (
@@ -1733,6 +1785,95 @@ class DesignerDialogFixtureTest(unittest.TestCase):
 
 
 class RegressionOrchestratorTest(unittest.TestCase):
+    def test_printer_source_reviews_every_frame_without_designer_or_network(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            saved = root / "saved"
+            saved.mkdir()
+            (saved / "frame.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+            (saved / "environment.json").write_text(json.dumps({
+                "suite": "UI", "ui_fingerprint": HYBRID.ui_fingerprint(ROOT),
+                "theme": "SYNTH",
+            }), encoding="utf-8")
+            manifest = [{
+                "label": label, "file": "frame.png",
+                "semantic_page_id": "ui.pages.keys.AppPage.HOME",
+            } for label in sorted(HYBRID.UI_SUITE_LABELS)]
+            manifest.extend({
+                "label": "ui-context-nested-" + state, "file": "frame.png",
+                "semantic_page_id": "ui.pages.keys.AppPage.HOME",
+                "case_id": "context-" + state,
+            } for state in ("preparing", "cancelling"))
+            (saved / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            expectation = {"description": "Readable frame", "required": ["content"],
+                           "forbidden": ["blank frame"], "allowed_variations": []}
+            expected = {"printer:" + label: expectation for label in HYBRID.UI_SUITE_LABELS}
+            expected["printer:ui-operation-context"] = expectation
+            expectations = root / "expectations.json"
+            expectations.write_text(json.dumps({"schema_version": 1, "cases": expected}), encoding="utf-8")
+            args = REGRESSION._arguments([
+                "--source", "printer", "--printer-artifacts", str(saved),
+                "--scenarios", str(root / "does-not-exist.json"),
+                "--expectations", str(expectations), "--output", str(root / "output"),
+            ])
+            with mock.patch.object(HYBRID, "discover_designer") as discover, \
+                    mock.patch.object(HYBRID, "DesignerCapture") as capture, \
+                    mock.patch.object(PRINTER, "PrinterCollector") as collector:
+                report, _ = REGRESSION.execute(args)
+                discover.assert_not_called()
+                capture.assert_not_called()
+                collector.assert_not_called()
+            frames = report["screenshots"]
+            self.assertEqual(report["status"], "disabled")
+            self.assertEqual(len(frames), len(manifest))
+            self.assertEqual([f["screenshot"]["label"] for f in frames], [f["label"] for f in manifest])
+            self.assertEqual({f["screenshot"]["source"] for f in frames}, {"printer"})
+            self.assertEqual(report["coverage"]["designer"], 0)
+            self.assertEqual(report["coverage"]["replaced"], 0)
+            self.assertEqual(report["coverage"]["legacy_printer"], len(manifest))
+            self.assertEqual(report["pipeline"][0]["status"], "not_required")
+            self.assertEqual(report["pipeline"][2]["counts"]["review_corpus"], len(manifest))
+
+            with mock.patch.object(REGRESSION.image_runner, "run_checks") as review:
+                for defect in ("incomplete", "fingerprint", "baseline"):
+                    with self.subTest(defect=defect):
+                        args.output = str(root / defect)
+                        (saved / "manifest.json").write_text(
+                            json.dumps(manifest[1:] if defect == "incomplete" else manifest), encoding="utf-8")
+                        (saved / "environment.json").write_text(json.dumps({
+                            "suite": "UI", "ui_fingerprint": "stale" if defect == "fingerprint"
+                            else HYBRID.ui_fingerprint(ROOT),
+                        }), encoding="utf-8")
+                        expectations.write_text(json.dumps({
+                            "schema_version": 1, "cases": {} if defect == "baseline" else expected,
+                        }), encoding="utf-8")
+                        if defect == "baseline":
+                            report, _ = REGRESSION.execute(args)
+                            self.assertEqual(report["status"], "needs_baseline")
+                            self.assertEqual(len(report["missing_expectations"]), len(manifest))
+                        else:
+                            with self.assertRaises(HYBRID.RegressionConfigurationError):
+                                REGRESSION.execute(args)
+                        review.assert_not_called()
+
+    def test_live_printer_source_collects_full_ui_suite_only(self):
+        args = REGRESSION._arguments([
+            "--source", "printer", "--printer-host", "printer.invalid", "--confirm-printer-idle",
+        ])
+        with mock.patch.object(PRINTER, "PrinterCollector") as collector:
+            REGRESSION._printer_directories(args, pathlib.Path("/unused"), [])
+        collector.assert_called_once_with("printer.invalid", confirmed_idle=True)
+        collector.return_value.collect.assert_called_once_with("UI", pathlib.Path("/unused/printer"))
+
+    def test_source_selection_requires_only_its_own_inputs(self):
+        self.assertEqual(REGRESSION._arguments([]).mode, "printer")
+        with mock.patch.object(sys, "stderr", io.StringIO()):
+            for options in (["--source", "designer"], ["--source", "parity"],
+                            ["--source", "designer", "--designer-root", "/designer",
+                             "--printer-artifacts", "/printer"]):
+                with self.subTest(options=options), self.assertRaises(SystemExit):
+                    REGRESSION._arguments(options)
+
     def test_designer_validation_failure_keeps_traceback_cause(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -1939,23 +2080,6 @@ class RegressionOrchestratorTest(unittest.TestCase):
                     "path": frame,
                 },
             ]
-            fixture_content = {
-                "dialog": {"title": "Test dialog", "lines": ["Details"], "buttons": []},
-                "message": {"message": "Finished"},
-                "error": {"message": "Not ready", "recovery": "wait"},
-                "ota": {"installed_version": "1", "available_version": "2", "changes": []},
-            }
-            fixtures = [{
-                "id": "alpha-" + kind,
-                "label": "Alpha " + kind,
-                "page": page_id,
-                kind + "_fixture": content,
-            } for kind, content in fixture_content.items()]
-            designer.extend({
-                "case_id": fixture["id"], "label": fixture["label"],
-                "page": "Alpha", "semantic_page_id": page_id,
-                "source": "designer", "path": frame,
-            } for fixture in fixtures)
             fingerprint = HYBRID.ui_fingerprint(ROOT)
             ui = root / "ui"
             component = root / "component"
@@ -2004,7 +2128,7 @@ class RegressionOrchestratorTest(unittest.TestCase):
                     "label": "Alpha warning",
                     "page": page_id,
                     "state": {"ui.State.WARNING": True},
-                }, *fixtures],
+                }],
             }), encoding="utf-8")
             expectation = {
                 "description": "Complete readable test frame.",
@@ -2016,7 +2140,6 @@ class RegressionOrchestratorTest(unittest.TestCase):
                 "default-alpha": expectation,
                 "alpha-warning": expectation,
             }
-            expected_cases.update({fixture["id"]: expectation for fixture in fixtures})
             expected_cases.update({
                 "printer:" + label: expectation
                 for label in HYBRID.UI_SUITE_LABELS
@@ -2060,7 +2183,7 @@ class RegressionOrchestratorTest(unittest.TestCase):
             copied_component = output / "printer" / "saved-02"
 
             self.assertEqual(report["status"], "disabled")
-            self.assertEqual(report["coverage"]["designer"], 6)
+            self.assertEqual(report["coverage"]["designer"], 2)
             printer_frames = len(HYBRID.UI_SUITE_LABELS) + 2
             self.assertEqual(
                 report["coverage"]["printer_captured"], printer_frames)

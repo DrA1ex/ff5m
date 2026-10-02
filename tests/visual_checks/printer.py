@@ -129,4 +129,5 @@ class PrinterCollector:
         if not (local / "manifest.json").is_file():
             raise PrinterCollectionError(
                 "copied printer run has no manifest")
+        self.preflight()
         return local

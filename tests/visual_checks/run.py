@@ -7,6 +7,7 @@
 """Explicit host-side runner for semantic checks of saved UI screenshots."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import mimetypes
@@ -164,11 +165,62 @@ def discover_images(inputs):
     return images
 
 
+def _check_image(image, evaluator):
+    path = image["path"]
+    size = path.stat().st_size
+    if size > MAX_IMAGE_BYTES:
+        raise ValueError(
+            "image exceeds the %d-byte limit: %s" %
+            (MAX_IMAGE_BYTES, path))
+    data = path.read_bytes()
+    request_data, request_mime_type = _request_image(
+        data, image["mime_type"])
+    context = dict(image["context"])
+    comparison_path = image.get("comparison_path")
+    if comparison_path is not None:
+        comparison_path = pathlib.Path(comparison_path)
+        comparison_data = comparison_path.read_bytes()
+        comparison_data, comparison_mime = _request_image(
+            comparison_data, _mime_type(comparison_path))
+        context["_comparison_image"] = (
+            comparison_data, comparison_mime)
+    result = evaluator.evaluate(
+        request_data, request_mime_type, context)
+    result["screenshot"] = {
+        "number": image["context"].get("number"),
+        "label": image["context"].get("label"),
+        "page": image["context"].get("page"),
+        "case_id": image["context"].get("case_id"),
+        "semantic_page_id": image["context"].get("semantic_page_id"),
+        "source": image["context"].get("source"),
+        "file": path.name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "input_mime_type": image["mime_type"],
+        "submitted_mime_type": request_mime_type,
+        "expectation": image["context"].get("expectation"),
+        "expectation_references": [
+            "cases.%s.%s[%d]" % (
+                image["context"].get("case_id"), section, index)
+            for section in ("required", "forbidden",
+                            "allowed_variations")
+            for index, _item in enumerate(
+                image["context"].get(
+                    "expectation", {}).get(section, ()))
+        ],
+    }
+    return result
+
+
 def run_checks(settings, images, evaluator=None, progress=None, clock=None):
     evaluator = evaluator or vision.VisualCheckEvaluator(settings)
     clock = clock or time.monotonic
-    records = []
     total = len(images)
+    workers = min(settings.review_workers, max(1, total)) if settings.enabled else 1
+    records = [None] * total
+    completed = 0
+    frame_time = 0.0
+    elapsed = 0.0
     started = clock()
     if progress is not None:
         progress({
@@ -179,68 +231,52 @@ def run_checks(settings, images, evaluator=None, progress=None, clock=None):
             "elapsed_seconds": 0.0,
             "eta_seconds": None,
         })
-    for index, image in enumerate(images, 1):
+
+    def review(index, image):
         frame_started = clock()
-        path = image["path"]
-        size = path.stat().st_size
-        if size > MAX_IMAGE_BYTES:
-            raise ValueError(
-                "image exceeds the %d-byte limit: %s" %
-                (MAX_IMAGE_BYTES, path))
-        data = path.read_bytes()
-        request_data, request_mime_type = _request_image(
-            data, image["mime_type"])
-        context = dict(image["context"])
-        comparison_path = image.get("comparison_path")
-        if comparison_path is not None:
-            comparison_path = pathlib.Path(comparison_path)
-            comparison_data = comparison_path.read_bytes()
-            comparison_data, comparison_mime = _request_image(
-                comparison_data, _mime_type(comparison_path))
-            context["_comparison_image"] = (
-                comparison_data, comparison_mime)
-        result = evaluator.evaluate(
-            request_data, request_mime_type, context)
-        result["screenshot"] = {
-            "number": image["context"].get("number"),
-            "label": image["context"].get("label"),
-            "page": image["context"].get("page"),
-            "case_id": image["context"].get("case_id"),
-            "semantic_page_id": image["context"].get("semantic_page_id"),
-            "source": image["context"].get("source"),
-            "file": path.name,
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "bytes": len(data),
-            "input_mime_type": image["mime_type"],
-            "submitted_mime_type": request_mime_type,
-            "expectation": image["context"].get("expectation"),
-            "expectation_references": [
-                "cases.%s.%s[%d]" % (
-                    image["context"].get("case_id"), section, index)
-                for section in ("required", "forbidden",
-                                "allowed_variations")
-                for index, _item in enumerate(
-                    image["context"].get(
-                        "expectation", {}).get(section, ()))
-            ],
-        }
-        records.append(result)
+        result = _check_image(image, evaluator)
+        finished = clock()
+        return index, result, max(0.0, finished - frame_started), finished
+
+    def collect(reviewed):
+        nonlocal completed, frame_time, elapsed
+        index, result, duration, finished = reviewed
+        records[index] = result
+        completed += 1
+        frame_time += duration
+        elapsed = max(elapsed, finished - started)
         if progress is not None:
-            now = clock()
-            elapsed = max(0.0, now - started)
-            remaining = total - index
+            image = images[index]
+            remaining = total - completed
             progress({
-                "completed": index,
+                "completed": completed,
                 "total": total,
                 "case_id": (
                     image["context"].get("case_id")
                     or image["context"].get("label")
-                    or path.stem),
-                "last_elapsed_seconds": max(0.0, now - frame_started),
+                    or image["path"].stem),
+                "last_elapsed_seconds": duration,
                 "elapsed_seconds": elapsed,
-                "eta_seconds": (
-                    elapsed / index * remaining if remaining else 0.0),
+                "eta_seconds": frame_time / completed * remaining / workers,
             })
+
+    if workers == 1:
+        for index, image in enumerate(images):
+            collect(review(index, image))
+    else:
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="visual-review")
+        try:
+            futures = [pool.submit(review, index, image) for index, image in enumerate(images)]
+            for future in as_completed(futures):
+                collect(future.result())
+        except BaseException:
+            # Ctrl-C reaches the main thread. The shared signal also stops CLI
+            # processes already running in workers before joining the pool.
+            evaluator.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
     artifact = evaluator.artifact(records)
     artifact["summary"] = evaluator.summary(records)
     statuses = [item["status"] for item in records]
@@ -272,20 +308,33 @@ def _arguments(argv):
         help="saved UI-test artifact directories or explicit image files")
     parser.add_argument(
         "--enable", action="store_true",
-        help="explicitly enable OpenAI-compatible requests")
+        help="explicitly enable model requests")
+    parser.add_argument(
+        "--backend", choices=vision.VALID_BACKENDS,
+        default=os.environ.get("FF5M_VISUAL_BACKEND"),
+        help="review backend (default: codex; a base URL selects openai-compatible)")
+    parser.add_argument(
+        "--codex-command", default=os.environ.get("FF5M_VISUAL_CODEX_COMMAND", "codex"),
+        help="Codex CLI executable path")
     parser.add_argument(
         "--base-url", default=os.environ.get(
             "FF5M_VISUAL_BASE_URL", ""),
-        help="OpenAI-compatible base URL (not written to artifacts)")
+        help="OpenAI-compatible HTTP base URL (not written to artifacts)")
     parser.add_argument(
         "--model", default=os.environ.get("FF5M_VISUAL_MODEL", ""),
-        help="one explicit model name")
+        help="one model name (Codex default: gpt-6-luna)")
+    parser.add_argument(
+        "--reasoning-effort", default=os.environ.get("FF5M_VISUAL_REASONING_EFFORT"),
+        help="model reasoning effort (Codex default: high)")
+    parser.add_argument(
+        "--review-workers", type=int, default=os.environ.get("FF5M_VISUAL_REVIEW_WORKERS"),
+        help="parallel screenshot reviews (1-32; default: Codex 8, HTTP 1)")
     parser.add_argument(
         "--api-key-env", default="FF5M_VISUAL_API_KEY",
         help="environment variable containing the optional API key")
     parser.add_argument(
         "--timeout", type=float, default=os.environ.get(
-            "FF5M_VISUAL_TIMEOUT", "30"))
+            "FF5M_VISUAL_TIMEOUT"))
     parser.add_argument(
         "--mode", choices=("advisory", "strict"), default=os.environ.get(
             "FF5M_VISUAL_MODE", "advisory"))
@@ -299,7 +348,9 @@ def main(argv=None):
     try:
         settings = vision.VisualCheckSettings(
             enabled=args.enable, base_url=args.base_url, model=args.model,
-            api_key=api_key, timeout=args.timeout, mode=args.mode)
+            api_key=api_key, timeout=args.timeout, mode=args.mode,
+            backend=args.backend, reasoning_effort=args.reasoning_effort,
+            codex_command=args.codex_command, review_workers=args.review_workers)
         images = discover_images(args.inputs)
         artifact = run_checks(settings, images)
         output = args.output

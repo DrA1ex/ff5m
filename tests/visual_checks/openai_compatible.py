@@ -11,8 +11,10 @@ printer, Feather, Klipper, or deployment runtime.
 """
 
 import base64
+from concurrent.futures import CancelledError
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +28,9 @@ MAX_REASON_LENGTH = 400
 MAX_SUMMARY_LENGTH = 600
 MAX_VALIDATION_ATTEMPTS = 2
 VALID_MODES = frozenset(("advisory", "strict"))
+VALID_BACKENDS = ("openai-compatible", "codex")
+DEFAULT_CODEX_MODEL = "gpt-6-luna"
+DEFAULT_CODEX_EFFORT = "high"
 VALID_VERDICTS = frozenset(("pass", "warn", "fail"))
 STANDALONE_VERDICTS = VALID_VERDICTS - frozenset(("warn",))
 EVIDENCE_CLASSES = frozenset((
@@ -146,14 +151,29 @@ def _model_name(value):
 
 class VisualCheckSettings:
     def __init__(self, enabled=False, base_url="", model="", api_key="",
-                 timeout=30.0, mode="advisory"):
+                 timeout=None, mode="advisory", backend=None,
+                 reasoning_effort=None, codex_command="codex", review_workers=None):
         self.enabled = bool(enabled)
         self.base_url = str(base_url or "").strip().rstrip("/")
-        self.model = _model_name(model)
+        self.backend = backend or ("openai-compatible" if self.base_url else "codex")
+        self.model = _model_name(model) or (
+            DEFAULT_CODEX_MODEL if self.backend == "codex" else "")
         self.models = (self.model,) if self.model else ()
         self.api_key = str(api_key or "")
-        self.timeout = float(timeout)
+        self.timeout = float(timeout if timeout is not None else (
+            180.0 if self.backend == "codex" else 30.0))
         self.mode = str(mode or "advisory").strip().lower()
+        self.reasoning_effort = str(reasoning_effort or (
+            DEFAULT_CODEX_EFFORT if self.backend == "codex" else "")).strip()
+        self.codex_command = str(codex_command or "codex")
+        if review_workers is None:
+            review_workers = 8 if self.backend == "codex" else 1
+        try:
+            if isinstance(review_workers, bool) or not isinstance(review_workers, (int, str)):
+                raise ValueError()
+            self.review_workers = int(review_workers)
+        except ValueError:
+            raise VisualCheckConfigurationError("visual review workers must be an integer between 1 and 32")
         self._validate()
 
     @classmethod
@@ -164,11 +184,22 @@ class VisualCheckSettings:
             base_url=value.get("base_url", ""),
             model=value.get("model", value.get("models", ())),
             api_key=value.get("api_key", ""),
-            timeout=value.get("timeout", 30.0),
+            timeout=value.get("timeout"),
             mode=value.get("mode", "advisory"),
+            backend=value.get("backend"),
+            reasoning_effort=value.get("reasoning_effort"),
+            codex_command=value.get("codex_command", "codex"),
+            review_workers=value.get("review_workers"),
         )
 
     def _validate(self):
+        if self.backend not in VALID_BACKENDS:
+            raise VisualCheckConfigurationError("unknown visual check backend")
+        if not 1 <= self.review_workers <= 32:
+            raise VisualCheckConfigurationError("visual review workers must be between 1 and 32")
+        if (self.reasoning_effort and self.reasoning_effort not in (
+                "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")):
+            raise VisualCheckConfigurationError("invalid visual reasoning effort")
         if self.mode not in VALID_MODES:
             raise VisualCheckConfigurationError(
                 "visual check mode must be advisory or strict")
@@ -176,6 +207,8 @@ class VisualCheckSettings:
             raise VisualCheckConfigurationError(
                 "visual check timeout must be between 1 and 300 seconds")
         if not self.enabled:
+            return
+        if self.backend == "codex":
             return
         if not self.base_url:
             raise VisualCheckConfigurationError(
@@ -197,6 +230,9 @@ class VisualCheckSettings:
             "enabled": self.enabled,
             "mode": self.mode,
             "model": self.model,
+            "backend": self.backend,
+            "reasoning_effort": self.reasoning_effort or None,
+            "review_workers": self.review_workers,
             "timeout": self.timeout,
             "api_key_configured": bool(self.api_key),
         }
@@ -206,6 +242,19 @@ class OpenAICompatibleHTTP:
     def __init__(self, settings, requester=None):
         self.settings = settings
         self.requester = requester or urllib.request.urlopen
+
+    def models(self):
+        return self.request_json("GET", "/models")
+
+    def complete(self, payload):
+        payload = dict(payload)
+        if self.settings.reasoning_effort:
+            payload["reasoning_effort"] = self.settings.reasoning_effort
+            payload.pop("temperature", None)
+            # The short spacing answer cap must not also cap reasoning tokens.
+            payload.pop("max_tokens", None)
+        return _completion_content(self.request_json(
+            "POST", "/chat/completions", payload))
 
     def request_json(self, method, path, payload=None):
         url = self.settings.base_url + "/" + str(path).lstrip("/")
@@ -862,33 +911,48 @@ def _error_result(model, category, message, elapsed=0.0,
 class VisualCheckEvaluator:
     def __init__(self, settings, transport=None, clock=None):
         self.settings = settings
+        self._cancelled = threading.Event()
+        if transport is None and settings.backend == "codex":
+            from .codex_cli import CodexCLI
+            transport = CodexCLI(settings, cancelled=self._cancelled)
         self.transport = transport or OpenAICompatibleHTTP(settings)
         self.clock = clock or time.monotonic
         self._catalog = None
         self._catalog_error = None
+        self._catalog_lock = threading.Lock()
+
+    def cancel(self):
+        self._cancelled.set()
+
+    def _check_cancelled(self):
+        if self._cancelled.is_set():
+            raise CancelledError("Visual review cancelled")
 
     def _models(self):
-        if self._catalog is not None or self._catalog_error is not None:
-            return self._catalog, self._catalog_error, 0.0, True
-        started = self.clock()
-        try:
-            response = self.transport.request_json("GET", "/models")
-            items = response.get("data")
-            if not isinstance(items, list):
-                raise TransportFailure(
-                    "invalid_response",
-                    "models response must contain a data array")
-            names = []
-            for item in items:
-                if isinstance(item, dict) and isinstance(item.get("id"), str):
-                    names.append(item["id"])
-            self._catalog = frozenset(names)
-        except TransportFailure as exc:
-            self._catalog_error = exc
-        elapsed = self.clock() - started
-        return self._catalog, self._catalog_error, elapsed, False
+        with self._catalog_lock:
+            self._check_cancelled()
+            if self._catalog is not None or self._catalog_error is not None:
+                return self._catalog, self._catalog_error, 0.0, True
+            started = self.clock()
+            try:
+                response = self.transport.models()
+                items = response.get("data")
+                if not isinstance(items, list):
+                    raise TransportFailure(
+                        "invalid_response",
+                        "models response must contain a data array")
+                names = []
+                for item in items:
+                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                        names.append(item["id"])
+                self._catalog = frozenset(names)
+            except TransportFailure as exc:
+                self._catalog_error = exc
+            elapsed = self.clock() - started
+            return self._catalog, self._catalog_error, elapsed, False
 
     def evaluate(self, image_bytes, mime_type, context):
+        self._check_cancelled()
         if not self.settings.enabled:
             return {
                 "schema_version": SCHEMA_VERSION,
@@ -956,12 +1020,11 @@ class VisualCheckEvaluator:
             ]
         audits = []
         for role, audit_bytes, audit_mime in audit_inputs:
+            self._check_cancelled()
             try:
-                response = self.transport.request_json(
-                    "POST", "/chat/completions", _spacing_audit_payload(
-                        model, audit_bytes, audit_mime, role))
-                audit = validate_spacing_audit(
-                    _completion_content(response))
+                response = self.transport.complete(_spacing_audit_payload(
+                    model, audit_bytes, audit_mime, role))
+                audit = validate_spacing_audit(response)
             except TransportFailure as exc:
                 return _error_result(
                     model, exc.category, exc.message,
@@ -973,18 +1036,21 @@ class VisualCheckEvaluator:
             audits.append({"role": role, "audit": audit})
         last_validation_error = None
         for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+            self._check_cancelled()
             try:
-                response = self.transport.request_json(
-                    "POST", "/chat/completions", _completion_payload(
-                        model, image_bytes, mime_type, context,
-                        corrective_retry=attempt > 1))
+                response = self.transport.complete(_completion_payload(
+                    model, image_bytes, mime_type, context,
+                    corrective_retry=attempt > 1))
             except TransportFailure as exc:
                 return _error_result(
                     model, exc.category, exc.message,
                     self.clock() - started, attempts=attempt)
+            except ValueError as exc:
+                last_validation_error = str(exc)
+                continue
             try:
                 verdict = validate_verdict(
-                    _completion_content(response),
+                    response,
                     allow_design_mismatch=(
                         context.get("_comparison_image") is not None))
                 break

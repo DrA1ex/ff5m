@@ -34,6 +34,20 @@ FRAME_SETTLE_INTERVAL = 0.25
 FRAME_SETTLE_TIMEOUT = 3.0
 MAX_RUNS = 10
 MAX_BYTES = 512 * 1024 * 1024
+# Klipper lines that are never part of a healthy run.  A run whose own log
+# slice contains one of them fails even when every step passed: an exception
+# swallowed by a background timer or an MCU shutdown during cleanup leaves the
+# printer broken without failing any step.  The patterns are deliberately
+# narrow and case-sensitive; healthy homing prints "error=None".
+PRINTER_LOG_FAILURE = re.compile(
+    r"^Traceback \(most recent call last\):|"
+    r"^Transition to shutdown state:|"
+    r"^MCU '[^']+' shutdown:|"
+    r"^Lost communication with MCU|"
+    r"^Timeout with MCU|"
+    r"^Internal error on command:|"
+    r"^TMC '[^']+' reports error:")
+MAX_LOG_FAILURES = 20
 
 
 def _jsonable(value):
@@ -56,6 +70,21 @@ def _atomic_json(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+def printer_log_failures(path):
+    """Return the run's fatal Klipper log lines as ``{"line", "text"}``."""
+    failures = []
+    previous = ""
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for number, text in enumerate(stream, 1):
+            # A failed step logs its own traceback; the step failure already
+            # fails the run and is not a second, unobserved problem.
+            if (PRINTER_LOG_FAILURE.match(text) and not previous.startswith(
+                    "[feather_ui_test] step failed:")):
+                failures.append({"line": number, "text": text.rstrip()})
+            previous = text
+    return failures
 
 
 def _directory_size(path):
@@ -409,6 +438,20 @@ class ArtifactWorker:
                 operation_context)
         summary["screenshots"] = len(self.records)
         summary["printer_log"] = self._copy_printer_log()
+        # The log slice is complete only here, after cleanup has run, so this
+        # is the one place that can still turn a passed run into a failure.
+        if summary["printer_log"] is not None:
+            failures = printer_log_failures(os.path.join(
+                self.run_directory, summary["printer_log"]))
+            summary["printer_log_failures"] = failures[:MAX_LOG_FAILURES]
+            if failures:
+                error = "%d fatal printer log line(s); first at line %d: %s" % (
+                    len(failures), failures[0]["line"], failures[0]["text"])
+                summary["failures"] = list(summary.get("failures", ())) + [
+                    {"step": "printer-log", "error": error}]
+                if summary.get("outcome") == "passed":
+                    summary["outcome"] = "failed"
+                    summary["reason"] = error
         _atomic_json(os.path.join(self.run_directory, "summary.json"), summary)
         try:
             os.unlink(ACTIVE_MARKER)

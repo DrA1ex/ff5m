@@ -760,6 +760,9 @@ def _run(report, views, names):
     total = sum(item["elapsed"] for item in reviewed)
     settings = (
         ("Model", configuration.get("model") or "disabled"),
+        ("Backend", configuration.get("backend", "openai-compatible")),
+        ("Reasoning effort", configuration.get("reasoning_effort") or "server default"),
+        ("Review workers", configuration.get("review_workers", 1)),
         ("Check mode", configuration.get("mode")),
         ("Designer theme", configuration.get("designer_theme") or "default"),
         ("Timeout", configuration.get("timeout")),

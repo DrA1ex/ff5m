@@ -1276,6 +1276,185 @@
         "printer:ui-action-prompt-footer": {"description": "Printer action prompt with one footer action.", "required": ["PRINTER COMMAND title", "Action completed message", "centered OK footer action with compact width and comfortable touch height"], "forbidden": ["full-width OK footer", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-message-two-actions": {"description": "Message dialog with a recovery choice.", "required": ["Wi-Fi password rejection message", "centered CANCEL and RESET PASSWORD actions with comfortable touch height"], "forbidden": ["full-width actions", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-print-preparing": {"description": "Print page while startup preparation is still active.", "required": ["PRINTING title and preparation status", "zero initial progress", "disabled pause, filament and Z controls"], "forbidden": ["enabled unsafe controls", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
+        "printer:ui-dialog-nine-lines-second": {
+            "description": "Second page of a nine-line dialog with vertical page controls.",
+            "required": [
+                "NINE LINE MESSAGE title",
+                "ninth message line",
+                "up-page arrow in the right column",
+                "2 above a short divider above 2",
+                "CONTINUE below the text"
+            ],
+            "forbidden": [
+                "horizontal pager row",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-error-remote-shutdown": {
+            "description": "Remote shutdown recovery dialog using the product error screen.",
+            "required": [
+                "REMOTE SHUTDOWN heading",
+                "remote request explanation",
+                "FIRMWARE RESTART action"
+            ],
+            "forbidden": [
+                "MCU RESTART REQUIRED heading",
+                "dialog touching screen edges",
+                "clipped explanation",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-error-timer-too-close-long": {
+            "description": "First page of the Timer too close recovery dialog.",
+            "required": [
+                "MCU RESTART REQUIRED heading",
+                "readable first part of the explanation",
+                "page controls",
+                "FIRMWARE RESTART action"
+            ],
+            "forbidden": [
+                "dialog touching screen edges",
+                "clipped explanation",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-finished": {
+            "description": "Actual completed-print message dialog.",
+            "required": [
+                "PRINT FINISHED dialog heading",
+                "centered OK action",
+                "readable dialog typography"
+            ],
+            "forbidden": [
+                "generic MESSAGE heading",
+                "tiny action label",
+                "overlapping controls",
+                "clipped content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-cancelled": {
+            "description": "Actual cancelled-print message dialog.",
+            "required": [
+                "PRINT CANCELLED dialog heading",
+                "centered OK action",
+                "readable dialog typography"
+            ],
+            "forbidden": [
+                "generic MESSAGE heading",
+                "tiny action label",
+                "overlapping controls",
+                "clipped content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-cancelled-reason": {
+            "description": "Cancelled-print dialog with a recorded reason.",
+            "required": [
+                "PRINT CANCELLED dialog heading",
+                "Reason: FILAMENT RUNOUT body text",
+                "centered OK action"
+            ],
+            "forbidden": [
+                "generic MESSAGE heading",
+                "clipped reason",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-failed": {
+            "description": "Actual failed-print message dialog.",
+            "required": [
+                "PRINT FAILED dialog heading",
+                "centered OK action",
+                "readable dialog typography"
+            ],
+            "forbidden": [
+                "generic MESSAGE heading",
+                "overlapping controls",
+                "clipped content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-explicit-two-line-title": {
+            "description": "Synthetic title-only message with two explicit heading lines.",
+            "required": [
+                "EXPLICIT TITLE BREAK and SECOND HEADING LINE on separate centered lines",
+                "OK action below both lines",
+                "comfortable spacing inside the dialog"
+            ],
+            "forbidden": [
+                "missing heading line",
+                "heading touching the OK action",
+                "clipped content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-print-result-explicit-three-line-title": {
+            "description": "Synthetic title-only message with three explicit heading lines.",
+            "required": [
+                "EXPLICIT TITLE BREAK, SECOND HEADING LINE, and THIRD HEADING LINE on three centered lines",
+                "OK action below all heading lines",
+                "dialog within the screen content area"
+            ],
+            "forbidden": [
+                "missing heading line",
+                "heading touching the OK action",
+                "clipped content"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
+        "printer:ui-update-recovery-long": {
+            "description": "Actual Forge-X local-file recovery dialog with paged file list.",
+            "required": [
+                "LOCAL FILES BLOCK UPDATE heading above the file list",
+                "FILES THAT RESET WILL REMOVE OR RESTORE heading",
+                "2 above a short horizontal divider above 3 in the narrow right column",
+                "narrow up and down page arrows",
+                "LATER and RESET buttons"
+            ],
+            "forbidden": [
+                "title overlapping file list",
+                "clipped paths",
+                "overlapping buttons",
+                "horizontal 2 / 3 counter"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization"
+            ]
+        },
         "printer:ui-operation-context": {"description": "Runtime operation-context state rendered on its owning Feather workflow surface.", "required": ["readable workflow title or operation stage", "screen appropriate to the active operation", "clear current progress or available action"], "forbidden": ["blank frame", "stale unrelated workflow", "overlapping controls", "clipped important content"], "allowed_variations": ["operation and stage text", "progress state", "available safe controls", "theme colors"]},
         "printer:ui-context-coverage-complete": {"description": "Idle home page proving the complete operation-context visual sequence finished.", "required": ["complete idle home dashboard", "main navigation and persistent footer"], "forbidden": ["operation progress left open", "blank frame", "overlapping controls", "clipped important content"], "allowed_variations": ["live status values", "theme colors"]},
         "printer:ui-cancel-normal": {"description": "Normal cooperative cancellation page.", "required": ["Cancel Bed mesh question", "safe-point explanation", "GO BACK and CANCEL actions", "full page background"], "forbidden": ["dimmed dialog background", "pending progress state", "overlapping controls", "clipped important content"], "allowed_variations": ["operation name", "theme colors"]},

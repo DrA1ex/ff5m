@@ -1300,15 +1300,28 @@ class ZOffsetLayoutTest(unittest.TestCase):
         }
         z_offset.render_paper(renderer, state)
 
-        drawing = "\n".join(z_offset.update_paper_gauge(renderer, {
-            "initial": 100.0, "minimum": 80.0,
-            "maximum": 120.0, "value": 110.0,
-        }))
-
-        self.assertIn('-t "+110.0"', drawing)
-        self.assertNotIn("z.probe", drawing)
-        self.assertNotIn("--batch clear-hitboxes", drawing)
-        self.assertNotIn("--batch hitbox", drawing)
+        gauge_bounds = z_offset.PAPER_PAGE.rect("paper.gauge")
+        for value, expected in ((110.6, "111"), (-110.6, "-111"),
+                                (9999.0, "9999"), (-0.2, "0")):
+            with self.subTest(value=value):
+                commands = z_offset.update_paper_gauge(renderer, {
+                    "initial": 100.0, "minimum": -200.0,
+                    "maximum": 9999.0, "value": value,
+                })
+                frame = RenderFrame(commands, renderer)
+                reading = frame.text(
+                    " " + expected if expected.startswith("-") else expected)
+                visible_center = reading.x + (
+                    renderer.font_advance(reading.font) // 2
+                    if expected.startswith("-") else 0)
+                self.assertEqual(visible_center, gauge_bounds.center_x)
+                self.assertLessEqual(
+                    renderer.text_width(expected, reading.font),
+                    gauge_bounds.width - 12)
+                drawing = "\n".join(commands)
+                self.assertNotIn("z.probe", drawing)
+                self.assertNotIn("--batch clear-hitboxes", drawing)
+                self.assertNotIn("--batch hitbox", drawing)
 
     def test_pressure_dialog_keeps_two_readable_lines(self):
         renderer = FeatherRenderer()

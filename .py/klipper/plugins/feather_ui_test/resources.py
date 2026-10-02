@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import copy
 import json
 import logging
 import math
@@ -15,6 +16,13 @@ from feather.files import FileEntry
 
 _MISSING = object()
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+# Shared with .root/timelapse_ffmpeg.sh: while this flag exists Moonraker's
+# timelapse render waits in the encoder, so a print can be started while the
+# previous timelapse is really still encoding.  Moonraker's chroot shares /tmp.
+TIMELAPSE_RENDER_HOLD = "/tmp/feather-ui-test-timelapse-hold"
+# Moonraker names a video after the printed file; every runner file starts
+# with "feather-context-", so these videos can only come from the runner.
+_RUNNER_TIMELAPSE_PREFIX = "timelapse_feather-context-"
 _CONTEXT_PRINT_FIELDS = (
     "nozzle_initial", "nozzle", "bed_initial", "bed", "flow_ratio",
     "pressure_advance", "retract_length", "retract_speed",
@@ -118,12 +126,68 @@ def _restore_print_tuning(host, tuning):
             tuning["unretract_speed"], tuning["extrude_factor"] * 100.0))
 
 
+def _release_timelapse_hold():
+    try:
+        os.unlink(TIMELAPSE_RENDER_HOLD)
+    except FileNotFoundError:
+        pass
+
+
+def runner_timelapse_videos(root):
+    directory = os.path.join(root, "timelapse")
+    try:
+        names = sorted(os.listdir(directory))
+    except FileNotFoundError:
+        return []
+    return [os.path.join(directory, name) for name in names
+            if name.startswith(_RUNNER_TIMELAPSE_PREFIX)]
+
+
+def _remove_runner_timelapse_videos(root):
+    for path in runner_timelapse_videos(root):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def _capture_pending_config(configfile):
+    """Copy what the next SAVE_CONFIG would write, and its pending flags."""
+    autosave = configfile.autosave.fileconfig
+    return {
+        "sections": dict(
+            (section, dict((option, autosave.get(section, option))
+                           for option in autosave.options(section)))
+            for section in autosave.sections()),
+        "pending_items": copy.deepcopy(configfile.status_save_pending),
+        "pending": bool(configfile.save_config_pending),
+    }
+
+
+def _restore_pending_config(configfile, saved):
+    autosave = configfile.autosave.fileconfig
+    for section in autosave.sections():
+        if section not in saved["sections"]:
+            autosave.remove_section(section)
+    for section, options in saved["sections"].items():
+        if not autosave.has_section(section):
+            autosave.add_section(section)
+        for option in autosave.options(section):
+            if option not in options:
+                autosave.remove_option(section, option)
+        for option, value in options.items():
+            autosave.set(section, option, value)
+    configfile.status_save_pending = copy.deepcopy(saved["pending_items"])
+    configfile.save_config_pending = saved["pending"]
+
+
 class PrinterStateSnapshot:
     """Capture and restore the product state temporarily changed by a run."""
 
     def __init__(self, page, previous_page, filament_material, runtime_z,
                  mesh_object, mesh_profile, extruder_target, bed_target,
-                 fan_speed, timer_active):
+                 fan_speed, timer_active, pending_config=None,
+                 mesh_profiles=None, mod_params=None):
         self.page = page
         self.previous_page = previous_page
         self.filament_material = filament_material
@@ -134,6 +198,14 @@ class PrinterStateSnapshot:
         self.bed_target = bed_target
         self.fan_speed = fan_speed
         self.timer_active = timer_active
+        # Mesh calibration and KAMP save the new mesh into the in-memory
+        # profiles and Klipper's SAVE_CONFIG buffer even when the UI says
+        # "DON'T SAVE"; any later SAVE_CONFIG would then persist test data.
+        self.pending_config = pending_config
+        self.mesh_profiles = mesh_profiles
+        # Persistent mod parameters are never restored by the runner, only
+        # verified: rewriting one would itself be a persistent change.
+        self.mod_params = mod_params
 
     @classmethod
     def capture(cls, host, reactor):
@@ -144,6 +216,8 @@ class PrinterStateSnapshot:
         heater_bed = host.heater_bed.get_status(now)
         fan = getattr(host, "fan", None)
         fan_status = fan.get_status(now) if fan is not None else {}
+        profiles = getattr(getattr(mesh, "pmgr", None), "profiles", None)
+        params = getattr(host, "params", None)
         return cls(
             host.page, host.previous_page, host.filament_material,
             float(host.gcode_move.get_status(now)["homing_origin"][2]),
@@ -152,17 +226,35 @@ class PrinterStateSnapshot:
             float(extruder.get("target", 0.0)),
             float(heater_bed.get("target", 0.0)),
             float(fan_status.get("speed", 0.0) or 0.0),
-            getattr(host, "timer", None) is not None)
+            getattr(host, "timer", None) is not None,
+            _capture_pending_config(
+                host.printer.lookup_object("configfile")),
+            None if profiles is None else copy.deepcopy(profiles),
+            None if params is None else copy.deepcopy(params.variables))
 
     def restore(self, host, reactor, hardware):
         first_error = None
+        try:
+            # Profiles go back before the active mesh is restored below, so
+            # that set_mesh() publishes the restored profile list.
+            if self.mesh_profiles is not None:
+                host.bed_mesh.pmgr.profiles = copy.deepcopy(self.mesh_profiles)
+            if self.pending_config is not None:
+                _restore_pending_config(
+                    host.printer.lookup_object("configfile"),
+                    self.pending_config)
+        except Exception as exc:
+            first_error = exc
+            logging.exception(
+                "[feather_ui_test] unable to restore pending configuration")
         if hardware:
             try:
                 z = host.feature_manager.peek("z")
                 if z is not None and z.z_calibration.active:
                     z._cancel_z_calibration()
             except Exception as exc:
-                first_error = exc
+                if first_error is None:
+                    first_error = exc
                 logging.exception(
                     "[feather_ui_test] unable to cancel Z session")
             try:
@@ -200,6 +292,52 @@ class PrinterStateSnapshot:
         if first_error is not None:
             raise first_error
 
+    def verify(self, host, reactor, hardware):
+        """Re-observe what restore() was meant to bring back.
+
+        A restore that silently missed a value would otherwise leak into the
+        user's next print while the run still reports success.
+        """
+        leaked = []
+        if host.filament_material != self.filament_material:
+            leaked.append("selected material")
+        if (self.pending_config is not None and _capture_pending_config(
+                host.printer.lookup_object("configfile"))
+                != self.pending_config):
+            leaked.append("pending SAVE_CONFIG changes")
+        if (self.mesh_profiles is not None
+                and host.bed_mesh.pmgr.profiles != self.mesh_profiles):
+            leaked.append("bed mesh profiles")
+        if self.mod_params is not None:
+            changed = sorted(
+                key for key in set(self.mod_params) | set(
+                    host.params.variables)
+                if self.mod_params.get(key, _MISSING)
+                != host.params.variables.get(key, _MISSING))
+            if changed:
+                leaked.append("mod parameters %s" % ", ".join(changed))
+        if hardware:
+            now = reactor.monotonic()
+            runtime_z = float(host.gcode_move.get_status(
+                now)["homing_origin"][2])
+            if not math.isclose(runtime_z, self.runtime_z, abs_tol=1e-6):
+                leaked.append("runtime Z offset")
+            mesh = host.bed_mesh
+            profile = str(mesh.get_status(now).get("profile_name", "") or "")
+            if (getattr(mesh, "z_mesh", None) is not self.mesh_object
+                    or profile != self.mesh_profile):
+                leaked.append("active bed mesh")
+            # restore() sends the targets with one decimal.
+            if not (math.isclose(float(host.extruder.get_status(now).get(
+                    "target", 0.0)), self.extruder_target, abs_tol=0.05)
+                    and math.isclose(float(host.heater_bed.get_status(
+                        now).get("target", 0.0)), self.bed_target,
+                        abs_tol=0.05)):
+                leaked.append("heater targets")
+        if leaked:
+            raise RuntimeError(
+                "Cleanup did not restore %s" % "; ".join(leaked))
+
 
 class ContextTestFixture:
     """Own reversible mutations used by context material and print suites."""
@@ -222,6 +360,7 @@ class ContextTestFixture:
         self.client_idle_timeout = _MISSING
         self.idle_timeout = _MISSING
         self.file_browser = None
+        self.timelapse_hold = False
 
     def _notify_changed(self):
         if self.changed is not None:
@@ -231,7 +370,37 @@ class ContextTestFixture:
         return {
             "files": list(self.files),
             "checkpoint": self.checkpoint,
+            "timelapse_hold": self.timelapse_hold,
         }
+
+    def timelapse_render_status(self):
+        """Ask Moonraker through the same command the print-start guard uses."""
+        self.host._run_script("RUN_SHELL_COMMAND CMD=timelapse_render_status")
+        command = self.host.printer.lookup_object(
+            "gcode_shell_command timelapse_render_status")
+        code = command.get_status(self.reactor.monotonic())["returncode"]
+        return {0: "busy", 1: "idle"}.get(code, "unavailable")
+
+    def hold_timelapse_render(self):
+        status = self.timelapse_render_status()
+        if status != "idle":
+            raise RuntimeError(
+                "Timelapse render status must be idle, got %s" % status)
+        # Ownership is recorded before the flag exists, so an interrupted
+        # run can always remove it.
+        self.timelapse_hold = True
+        self._notify_changed()
+        with open(TIMELAPSE_RENDER_HOLD, "w", encoding="utf-8") as stream:
+            stream.write(self.run_id + "\n")
+
+    def release_timelapse_render(self):
+        _release_timelapse_hold()
+        self.timelapse_hold = False
+        self._notify_changed()
+
+    def timelapse_videos(self):
+        return runner_timelapse_videos(os.path.realpath(
+            self.host.virtual_sdcard.sdcard_dirname))
 
     def _install_material_guard(self):
         params = getattr(self.host, "params", None)
@@ -441,6 +610,18 @@ class ContextTestFixture:
                 logging.exception(
                     "[feather_ui_test] unable to restore idle timeout")
 
+        if suite == "CONTEXT_PRINT":
+            try:
+                _release_timelapse_hold()
+                self.timelapse_hold = False
+                _remove_runner_timelapse_videos(os.path.realpath(
+                    self.host.virtual_sdcard.sdcard_dirname))
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                logging.exception(
+                    "[feather_ui_test] unable to clean up runner timelapse")
+
         if suite == "CONTEXT_PRINT" and self.saved_print_tuning is not None:
             try:
                 _restore_print_tuning(self.host, self.saved_print_tuning)
@@ -523,6 +704,9 @@ def recover_interrupted_context_resources(host, marker):
     if not resources:
         return
     root = os.path.realpath(host.virtual_sdcard.sdcard_dirname)
+    if resources.get("timelapse_hold"):
+        _release_timelapse_hold()
+    _remove_runner_timelapse_videos(root)
     safe_run = re.sub(
         r"[^a-zA-Z0-9_.-]", "-", str(marker.get("run_id", "")))
     prefix = "feather-context-%s-" % safe_run
