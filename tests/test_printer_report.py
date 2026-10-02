@@ -457,6 +457,15 @@ class ReportPagesTest(unittest.TestCase):
         self.assertIn('<svg class="heatmap"', checks)
         self.assertIn("Bed Screws", checks)
 
+    def test_screen_report_preserves_multiple_regions_of_one_action(self):
+        boxes = REPORT._hit_boxes({"hitboxes": [
+            {"action": "same", "x": 10, "y": 20, "width": 30, "height": 40},
+            {"action": "same", "x": 100, "y": 20, "width": 30, "height": 40},
+        ]})
+        self.assertEqual(boxes.count('title="same"'), 2)
+        self.assertIn("left:1.250%", boxes)
+        self.assertIn("left:12.500%", boxes)
+
     def test_screens_expose_touch_areas_renderer_state_and_capture_timing(self):
         run = self.build()
         screens = self.read(run, "report-screens.html")

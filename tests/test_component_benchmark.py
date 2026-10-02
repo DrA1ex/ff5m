@@ -270,7 +270,7 @@ class ComponentBenchmarkTest(unittest.TestCase):
 
         menu = Menu()
         menu._render_main_menu()
-        self.assertIn("menu.component_benchmark.tap", menu.renderer._hitboxes)
+        self.assertIn("menu.component_benchmark.tap", [region.action for region in menu.renderer.hitboxes])
         for index in range(4):
             menu.reactor.now = index * 0.2
             menu._handle_component_benchmark_tap()

@@ -93,6 +93,7 @@ class RenderFrame:
         self.buttons = {}
         self.toggles = {}
         self.actions = set()
+        self.hitboxes = renderer.hitboxes
 
         for command in commands:
             tokens = shlex.split(command)
@@ -129,7 +130,7 @@ class RenderFrame:
                 action, Bounds(*spec[:4]), bool(spec[4]), bool(spec[5]))
         self.actions.update(self.buttons)
         self.actions.update(self.toggles)
-        self.actions.update(dict(renderer._hitboxes))
+        self.actions.update(region.action for region in self.hitboxes)
 
     def has_action(self, action):
         return action in self.actions

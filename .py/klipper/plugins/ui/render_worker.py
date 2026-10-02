@@ -200,9 +200,13 @@ class RenderBatchQueue:
         with self._condition:
             self._metrics["rendered_batches"] += 1
 
-    def drop_render(self):
+    def drop_render(self, batch):
         with self._condition:
             self._metrics["dropped_batches"] += 1
+            # Only lost deltas need restoration. Retrying an invalid complete
+            # surface would repeat the same encoding failure on every paint.
+            if batch.kind == "state" and batch.generation >= self._latest_generation:
+                self._needs_redraw = True
 
     def obsolete(self, batch):
         with self._condition:
@@ -562,12 +566,12 @@ class TyperRenderWorker:
                         pending = None
                         raise _RestartRequested()
                     if self.queue.obsolete(pending):
-                        self.queue.drop_render()
+                        self.queue.drop_render(pending)
                     else:
                         try:
                             self._render(pending)
                         except ValueError as exc:
-                            self.queue.drop_render()
+                            self.queue.drop_render(pending)
                             self._set_state("running", exc)
                     pending = None
                 except _ReactorStopped:
@@ -586,7 +590,7 @@ class TyperRenderWorker:
                     # necessary because the controller intentionally refuses
                     # to replace it with an ordinary page.
                     if pending is not None and pending.kind != "critical":
-                        self.queue.drop_render()
+                        self.queue.drop_render(pending)
                         pending = None
                     self.queue.discard_noncritical()
                     self._recover(exc, failures)

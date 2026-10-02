@@ -368,7 +368,6 @@ class PrintCancelPagesMixin:
 
     def _update_cancel_progress(self):
         if (self.page != ScreenPage.OPERATION_CANCEL
-                or self._current_dialog() is not None
                 or self.cancel_mode != "pending"):
             return
         label = self._cancel_progress_label()

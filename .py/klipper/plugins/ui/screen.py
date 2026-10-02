@@ -11,13 +11,12 @@ from .layout import Dirty, Node, Overlay, PageTree, Rect
 class ScreenLayer:
     """One independently owned visual instance, retained while suspended."""
 
-    def __init__(self, node, retain_background=None):
+    def __init__(self, node, retain_background=False):
         if not isinstance(node, Node):
             raise TypeError("screen layer content must be a Node")
         self.node = node
         # Opt in only for painters that restore their own foreground pixels.
-        self.retain_background = (getattr(node, "retains_background", False)
-                                  if retain_background is None else bool(retain_background))
+        self.retain_background = bool(retain_background)
         self.suspended = False
 
 
@@ -103,7 +102,7 @@ class ScreenRoot:
         if self.painting or not self.renderer.render_allowed:
             self._repaint_pending = self._repaint_pending or force
             return False
-        force = force or self._repaint_pending
+        force = force or self._repaint_pending or self.renderer.needs_redraw
         self._repaint_pending = False
         self.painting = True
         try:
@@ -126,76 +125,64 @@ class ScreenRoot:
             self._draining_repaint = False
 
     def _paint_frame(self, receipt, force):
-        if force or self.renderer.header_action_changed is True:
-            # Recovery restores lost pixels; a changed header must also remove
-            # its previous control before drawing a retained foreground.
-            self._rebuild = True
         layers = tuple(layer for layer in self.layers if not layer.suspended)
-        accepted = False
-        same_surface = (self.content is self._visible_content
-                        and layers == self.visible_layers)
-        overlay_open = (not force and self.content is self._visible_content
-                        and not self.visible_layers and len(layers) == 1
-                        and layers[0].retain_background
-                        and self.renderer.header_action_changed is not True)
+        same_surface = self.content is self._visible_content and layers == self.visible_layers
+        restore = force or self.renderer.header_action_changed
+        mode = "full" if self._rebuild or restore else "delta"
         foreground = None
         try:
-            if not self._rebuild:
-                self._tree.state.update(self._values)
-                for layer in layers:
-                    layer.node.update(self._tree.state)
-                modal_index = next((index for index in reversed(range(len(layers)))
-                                    if layers[index].node.input_blocked), None)
-                if (modal_index is not None and all(
-                        layer.node.is_clean for layer in layers[modal_index:])):
-                    self.renderer.discard_surface()
-                    return False
-                if (modal_index is not None and all(
-                        layer.retain_background for layer in layers[modal_index:])):
-                    foreground = tuple(layer.node for layer in layers[modal_index:])
-            if overlay_open:
-                foreground = tuple(layer.node for layer in layers)
-            if self._rebuild:
+            if mode == "full":
                 previous_schema = () if self._tree is None else self._tree.state_schema
                 self._tree = PageTree(
                     Overlay(self.content, *(layer.node for layer in layers)),
                     self.bounds, page_id=self.page_id,
                     state_schema=tuple(key for layer in self.layers
                                        for key in page_state_keys(layer.node)))
-                # Suspended instances keep their values; closed instances and
-                # replaced pages release keys that no remaining node declares.
+                # Suspended instances retain their values; closed instances release them.
                 for key in previous_schema:
                     if key not in self._tree.state_schema:
                         self._values.pop(key, None)
-                if overlay_open:
-                    self._tree.state.update(self._values)
-                    layers[0].node.update(self._tree.state)
-                    if not layers[0].node.input_blocked:
-                        foreground = None
-            retained = foreground is not None and same_surface
+            self._tree.state.update(self._values)
+            for layer in layers:
+                layer.node.update(self._tree.state)
+            modal_index = next((index for index in reversed(range(len(layers)))
+                                if layers[index].node.input_blocked), None)
+            if mode == "delta" and modal_index is not None:
+                if all(layer.node.is_clean for layer in layers[modal_index:]):
+                    self.renderer.discard_surface()
+                    return False
+                if all(layer.retain_background for layer in layers[modal_index:]):
+                    mode = "update_foreground"
+                    foreground = tuple(layer.node for layer in layers[modal_index:])
+            elif (mode == "full" and not restore
+                  and self.content is self._visible_content and not self.visible_layers
+                  and len(layers) == 1 and modal_index == 0 and layers[0].retain_background):
+                mode = "open_foreground"
+                foreground = (layers[0].node,)
+
             with self.renderer.compose(preserve_input=same_surface,
-                                       retain_background=retained) as frame:
+                                       retain_background=mode == "update_foreground") as frame:
                 commands = []
-                if self._rebuild:
-                    if self.chrome and foreground is None:
+                if mode in ("full", "open_foreground"):
+                    if self.chrome and mode == "full":
                         commands += self.renderer.begin_page(self.title)
                     else:
                         self.renderer.invalidate_input_generation()
-                    commands += self._tree.draw(
-                        self.renderer, self._values, render_from=foreground)
-                elif foreground is not None:
-                    commands += self._tree.draw(
-                        self.renderer, self._values, reuse_layout=True,
-                        reuse_styles=True, render_from=foreground)
-                else:
+                if mode == "delta":
                     commands += self._tree.update(self.renderer, self._values)
+                else:
+                    commands += self._tree.draw(
+                        self.renderer, self._values,
+                        reuse_layout=mode == "update_foreground",
+                        reuse_styles=mode == "update_foreground", render_from=foreground)
                 if commands:
-                    self.renderer.send(commands, receipt=receipt,
-                                       kind="state" if foreground is not None else (
-                                           "surface" if self._rebuild else None))
-            if frame["background_changed"] is True:
-                # A resized panel exposes old pixels. Restore from current
-                # page data; ordinary same-bounds updates keep that page retained.
+                    self.renderer.send(
+                        commands, receipt=receipt,
+                        kind="surface" if mode == "full" else (
+                            None if mode == "delta" else "state"),
+                        key="foreground" if mode == "update_foreground" else None)
+            if frame["background_changed"]:
+                # Unknown or changed panel bounds require restoring exposed pixels.
                 return self._paint_frame(receipt, True)
             accepted = frame["accepted"]
             if accepted:

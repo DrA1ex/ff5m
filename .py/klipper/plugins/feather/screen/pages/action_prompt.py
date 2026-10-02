@@ -9,7 +9,7 @@ from feather.screen import prompt_titles
 class ActionPromptPagesMixin:
     def _render_action_prompt(self, instance):
         prompt = instance.content
-        if prompt["title"].strip().casefold() == prompt_titles.COLD_PULL:
+        if prompt_titles.is_cold_pull(prompt):
             self._render_cold_pull_prompt(instance)
             return
         commands = self.renderer.dialog(

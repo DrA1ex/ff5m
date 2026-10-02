@@ -103,8 +103,6 @@ class PrintingPagesMixin:
             for index in range(5)]
 
     def _update_timelapse_wait(self):
-        if self._current_dialog() is not None:
-            return
         text = self._timelapse_wait_text()
         if text != getattr(self, "_last_timelapse_wait_text", None):
             if self.renderer.send(self._timelapse_wait_text_commands(text)) is not False:

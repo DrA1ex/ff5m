@@ -640,7 +640,10 @@ def _steps_page(data, names):
 
 def _hit_boxes(record):
     parts = []
-    for name, box in (record.get("hitboxes") or {}).items():
+    hitboxes = record.get("hitboxes") or ()
+    regions = (hitboxes.items() if isinstance(hitboxes, dict) else
+               ((box["action"], box) for box in hitboxes))
+    for name, box in regions:
         parts.append(_hit("hit", name, box))
     for name, box in (record.get("buttons") or {}).items():
         parts.append(_hit("hit button", "%s — %s (%s)" % (

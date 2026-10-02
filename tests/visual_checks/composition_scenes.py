@@ -254,7 +254,7 @@ def run_sequence(layout, theme="DEFAULT"):
             dirty_operations=operations,
             operation_types=dict(Counter(operation["type"] for operation in operations)),
             dialog_bounds=list(renderer._dialog_bounds),
-            controls=sorted(renderer._hitboxes),
+            controls=sorted({region.action for region in renderer.hitboxes}),
             # Replaying the entire accepted history on the Designer canvas
             # preserves old pixels and accumulated alpha between checkpoints.
             composition_fixture=dict(title=layout + " / " + name, operations=list(history)),

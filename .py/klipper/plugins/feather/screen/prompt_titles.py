@@ -7,3 +7,7 @@
 COLD_PULL = "cold pull"
 RESURRECTION = "resurrection"
 PREVIOUS_TIMELAPSE = "previous timelapse"
+
+
+def is_cold_pull(prompt):
+    return prompt.get("title", "").strip().casefold() == COLD_PULL

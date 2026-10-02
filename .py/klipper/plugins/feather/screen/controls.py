@@ -1850,7 +1850,7 @@ class FeatherControlsMixin:
     def _action_prompt_is_cold_pull(self):
         current = self._find_dialog(ScreenDialog.ACTION_PROMPT)
         prompt = current.content if current is not None else self._prompt_draft or {}
-        return prompt.get("title", "").strip().casefold() == prompt_titles.COLD_PULL
+        return prompt_titles.is_cold_pull(prompt)
 
     def _show_action_prompt(self):
         if self._prompt_draft is None:
@@ -1888,7 +1888,7 @@ class FeatherControlsMixin:
         title = prompt.get("title", "").strip().casefold()
         mirrored_recovery = (not prompt or title == prompt_titles.RESURRECTION) and self.page in (
             ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)
-        cold_pull = title == prompt_titles.COLD_PULL
+        cold_pull = prompt_titles.is_cold_pull(prompt)
         if layer is not None:
             self._close_dialog(layer)
         if layer is not None and cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
@@ -1973,13 +1973,30 @@ class FeatherControlsMixin:
             if button is not None and button["command"]:
                 self._run_script(button["command"])
 
+    def _cold_pull_display(self, operation=None):
+        eventtime = self.reactor.monotonic()
+        operation = self._operation_context_status(eventtime) if operation is None else operation
+        status = self.extruder.get_status(eventtime)
+        return (
+            str(operation.get("current_state") or "").strip().upper(),
+            "%.1f" % float(status.get("temperature", 0.0)),
+            "%.0f" % float(status.get("target", 0.0)),
+            bool(operation.get("cancel_available")), bool(operation.get("cancel_pending")),
+        )
+
+    def _dialog_paint_key(self, dialog, content):
+        if dialog == ScreenDialog.ACTION_PROMPT and prompt_titles.is_cold_pull(content):
+            return self._cold_pull_prompt_key
+        return None
+
+    def _cold_pull_prompt_key(self, instance):
+        operation = self._operation_context_status(self.reactor.monotonic())
+        if "cold_pull" in operation.get("context_types", ()):
+            return ("operation", self._cold_pull_display(operation))
+        return ("prompt", instance.page)
+
     def _render_operation_cold_pull(self, title, cancel_action):
-        operation = self._operation_context_status(
-            self.reactor.monotonic())
-        stage = str(operation.get("current_state") or "").strip().upper()
-        status = self.extruder.get_status(self.reactor.monotonic())
-        temperature = float(status.get("temperature", 0.0))
-        target = float(status.get("target", 0.0))
+        stage, temperature, target, cancel_available, cancel_pending = self._cold_pull_display()
         hint = {
             "HOMING": "HOMING AND POSITIONING THE TOOLHEAD",
             "HEATING NOZZLE": "HEATING THE NOZZLE",
@@ -1996,16 +2013,16 @@ class FeatherControlsMixin:
                 "JetBrainsMono Bold 12pt", "center", "middle",
                 max_width=690, truncate=True),
             self.renderer.text(
-                400, 245, "%s\n\nNOZZLE %.1f / %.0f C" % (
+                400, 245, "%s\n\nNOZZLE %s / %s C" % (
                     hint, temperature, target),
                 ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle",
                 max_width=680, max_height=110, wrap=True, truncate=True),
         ]
-        if operation.get("cancel_available"):
+        if cancel_available:
             commands += self.renderer.button(
                 cancel_action, 235, 368, 330, 45,
-                "CANCELLING..." if operation.get("cancel_pending") else "CANCEL",
-                state=("busy" if operation.get("cancel_pending") else "danger"),
+                "CANCELLING..." if cancel_pending else "CANCEL",
+                state=("busy" if cancel_pending else "danger"),
                 font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 

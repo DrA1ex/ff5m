@@ -460,6 +460,9 @@ class ScenarioCatalog:
         self._add_render_capture(
             steps, "ui-touch-unavailable", self._render_touch_unavailable)
         self._add_call(
+            steps, "ui-touch-unavailable-close",
+            lambda: self.host._close_dialog(ScreenDialog.TOUCH_UNAVAILABLE))
+        self._add_call(
             steps, "ui-overlay-base", lambda: self._show(ScreenPage.IDLE_HOME))
         self._add_render_capture(
             steps, "ui-busy-notice", self._render_busy_notice)
@@ -1421,7 +1424,7 @@ class ScenarioCatalog:
             title, detail, phase=2, critical=critical)
 
     def _render_touch_unavailable(self):
-        self.host.renderer.touch_unavailable_modal()
+        self._show(ScreenDialog.TOUCH_UNAVAILABLE, content={})
 
     def _render_busy_notice(self):
         self.host.renderer.busy_notice("KLIPPER BUSY")

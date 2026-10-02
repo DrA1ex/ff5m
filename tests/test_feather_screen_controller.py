@@ -179,7 +179,7 @@ class ControllerSafetyTest(unittest.TestCase):
         for action in (
                 "nav.heat", "nav.network", "nav.job",
                 "home.last_job", "nav.filament", "nav.move"):
-            self.assertIn(action, controller.renderer._hitboxes)
+            self.assertIn(action, [region.action for region in controller.renderer.hitboxes])
 
     def test_move_caution_loads_existing_auto_bed_profile(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -1745,7 +1745,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.params.ui_categories_map["second"].label = "SECOND"
 
         controller._render_mod_settings()
-        self.assertNotIn("mod.more", controller.renderer._hitboxes)
+        self.assertNotIn("mod.more", [region.action for region in controller.renderer.hitboxes])
 
         # SECOND needs a heading and a row, and only one row of space is left.
         # An empty strip there would read as the end of the list, so the page
@@ -1761,7 +1761,8 @@ class ControllerSafetyTest(unittest.TestCase):
         # a button, so it fills one row slot inside the list without button
         # chrome, and the page lets the tap through.
         self.assertNotIn("mod.more", controller.renderer._buttons)
-        x, y, width, height = controller.renderer._hitboxes["mod.more"][:4]
+        x, y, width, height = next((region.x, region.y, region.width, region.height)
+                                  for region in controller.renderer.hitboxes if region.action == "mod.more")
         self.assertEqual((x, width, height),
                          (MOD_UI.LIST_X, MOD_UI.LIST_WIDTH, MOD_UI.ITEM_HEIGHT))
         self.assertLessEqual(y + height, MOD_UI.LIST_BOTTOM)
@@ -1772,7 +1773,7 @@ class ControllerSafetyTest(unittest.TestCase):
         third = "\n".join(controller.draw_batches[-1])
         self.assertEqual(controller.mod_page, 2)
         self.assertIn('-t "SECOND"', third)
-        self.assertNotIn("mod.more", controller.renderer._hitboxes)
+        self.assertNotIn("mod.more", [region.action for region in controller.renderer.hitboxes])
 
     def test_mod_dependency_toggle_repaginates_and_preserves_anchor(self):
         condition = {"parameter": "parent", "operator": "equals",
@@ -2661,7 +2662,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.reactor = Reactor()
         controller.renderer = type("Renderer", (), {
             "set_theme": lambda self, name: False,
-            "footer": lambda self, temperatures, status: None,
+            "footer": lambda self, temperatures, status, paint=True: None,
         })()
         controller._setting = lambda name, default=None: default
         controller._service_network = mock.Mock()

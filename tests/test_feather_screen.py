@@ -1424,7 +1424,7 @@ class RendererStateTest(unittest.TestCase):
         body = frame.text(
             "THE TOUCH DEVICE IS NOT AVAILABLE. "
             "WAITING FOR AUTOMATIC RECONNECTION.")
-        self.assertEqual(batches[-1][0], renderer.modal_scrim())
+        self.assertNotIn(renderer.modal_scrim(), batches[-1])
         self.assertGreaterEqual(body.y - body.max_height // 2 - title.y, 30)
         self.assertIn("--max-height 108 --wrap --truncate", warning)
         self.assertFalse(renderer._footer_drawn)
@@ -2147,7 +2147,7 @@ class RendererStateTest(unittest.TestCase):
             renderer.text(
                 100, 120, 'file "one" \\ Привет', UI.ThemeColor.BRIGHT, "Roboto 12pt",
                 "center", "middle"),
-            FEATHER.FeatherRenderer.hitbox("print.pause", 20, 315, 175, 100),
+            FEATHER.FeatherRenderer._hitbox("print.pause", 20, 315, 175, 100),
             "--batch flush",
             "--end",
         ]
@@ -2176,7 +2176,8 @@ class RendererStateTest(unittest.TestCase):
         command = renderer.action_hitbox("nav.move", 10, 20, 30, 40)
 
         self.assertIn("--id 1:nav.move", command)
-        self.assertEqual(renderer._hitboxes["nav.move"],
+        self.assertEqual(next((region.x, region.y, region.width, region.height, region.continuous)
+                              for region in renderer.hitboxes if region.action == "nav.move"),
                          (10, 20, 30, 40, False))
 
     def test_composite_button_protects_leading_minus_from_argparse(self):
@@ -2848,7 +2849,7 @@ class RendererStateTest(unittest.TestCase):
     def test_joystick_move_page_registers_two_continuous_regions(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
-        RenderCapture(controller.renderer)
+        rendering = RenderCapture(controller.renderer)
         controller.reactor = Reactor()
         controller.move_mode = "joystick"
         controller.joystick = type("Planner", (), {
@@ -2863,14 +2864,9 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn(MOVE_LAYOUT.HOME_Z.wire_id,
                       controller.renderer._buttons)
         self.assertEqual(
-            {action for action, spec in controller.renderer._hitboxes.items()
-             if spec[4]},
+            {region.action for region in rendering.latest.hitboxes if region.continuous},
             {MOVE_LAYOUT.JOYSTICK_XY.wire_id,
              MOVE_LAYOUT.JOYSTICK_Z.wire_id})
-        for action in (
-                MOVE_LAYOUT.JOYSTICK_XY.wire_id,
-                MOVE_LAYOUT.JOYSTICK_Z.wire_id):
-            self.assertTrue(controller.renderer._hitboxes[action][4])
 
     def test_low_z_move_page_always_warns_and_reports_auto_profile_state(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

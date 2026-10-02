@@ -192,8 +192,14 @@ def base_controller(state="idle"):
     controller.operation_cancel_target_name = None
     controller.operation_cancel_target_mode = None
     controller._clear_dialogs()
+    controller.extruder = StatusObject({"temperature": 25.0, "target": 0.0})
     controller.renderer = mock.MagicMock()
     controller.renderer.output_frozen = False
+    controller.renderer.header_action_changed = False
+    controller.renderer.needs_redraw = False
+    controller.renderer.compose.return_value.__enter__.return_value = {
+        "accepted": True, "background_changed": False, "input_changed": False,
+    }
     controller.renderer.set_header_action.return_value = False
     controller._render_dialog = lambda: None
     controller._paint_page = lambda: None
@@ -339,30 +345,55 @@ class ScreenCompositionWorkflowTest(unittest.TestCase):
     def test_cold_pull_tick_does_not_repeat_an_emergency_control_refresh(self):
         controller, _ = ActionPromptProtocolTest.controller_with_navigation()
         rendering = RenderCapture(controller.renderer)
+        del controller._apply_safety_visibility
+        controller.page = FEATHER.ScreenPage.CONTROL_HOME
         controller.extruder = StatusObject({"temperature": 190, "target": 100})
         controller.heater_bed = StatusObject({"temperature": 30, "target": 0})
         controller.filament_sensor = None
         controller.busy_message = None
+        controller.network_client = mock.Mock(spec=["service"])
+        controller.dimmed, controller.last_touch_time, controller.dim_timeout = False, 0, 10000
         controller.operation_context.status.update(
             context_types=("cold_pull",), current_state="HOMING",
             cancel_available=True, cancel_pending=False)
         controller._handle_gcode_output("\n".join((
             "// action:prompt_begin Cold Pull", "// action:prompt_show")))
-        for name in ("_service_network", "_update_eco_backlight", "_poll_usb_storage",
-                     "_update_operation_context", "_sync_timelapse_wait_page",
-                     "_reconcile_pending_action"):
-            setattr(controller, name, lambda *args: None)
-        def refresh_emergency(eventtime):
-            controller.renderer.set_header_action("global.abort", "ABORT")
-            FEATHER.FeatherScreen._render_dialog(controller)
-            return True
-        controller._refresh_emergency_stop = refresh_emergency
-        with mock.patch.object(controller, "_render_operation_cold_pull",
-                               wraps=controller._render_operation_cold_pull) as paint:
-            controller._update_cycle(100)
-            paint.assert_called_once()
+        submitted = len(rendering.frames)
+        controller._update_cycle(100)
+        self.assertEqual(len(rendering.frames), submitted + 1)
+        controller._update_cycle(101)
+        self.assertEqual(len(rendering.frames), submitted + 1)
         self.assertTrue(rendering.latest.has_action("global.abort"))
         self.assertTrue(rendering.latest.has_action("coldpull.cancel"))
+
+    def test_touch_unavailable_visual_scenario_uses_dialog_lifecycle(self):
+        from feather_ui_test.scenarios import ScenarioCatalog
+
+        controller, _ = ActionPromptProtocolTest.controller_with_navigation()
+        rendering = RenderCapture(controller.renderer)
+        controller._show_page(controller.page)
+        scenarios = ScenarioCatalog(type("Run", (), {"host": controller})())
+        steps = scenarios.build_steps("UI")
+        capture_index = next(index for index, step in enumerate(steps)
+                             if step["kind"] == "capture" and step["label"] == "ui-touch-unavailable")
+        steps[capture_index - 1]["callback"]()
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.TOUCH_UNAVAILABLE)
+        self.assertTrue(rendering.latest.has_text("TOUCH INPUT UNAVAILABLE"))
+        self.assertEqual(rendering.batches[-1].count(controller.renderer.modal_scrim()), 1)
+        steps[capture_index + 1]["callback"]()
+        self.assertIsNone(controller._current_dialog())
+        self.assertNotIn(controller.renderer.modal_scrim(), rendering.batches[-1])
+
+    def test_touch_unavailable_dialog_has_one_scrim_on_open_and_none_on_refresh(self):
+        controller, _ = ActionPromptProtocolTest.controller_with_navigation()
+        rendering = RenderCapture(controller.renderer)
+        controller._show_page(controller.page)
+        controller._show_dialog(FEATHER.ScreenDialog.TOUCH_UNAVAILABLE, content={})
+        scrim = controller.renderer.modal_scrim()
+        self.assertEqual(rendering.batches[-1].count(scrim), 1)
+        for _ in range(2):
+            FEATHER.FeatherScreen._render_dialog(controller)
+            self.assertNotIn(scrim, rendering.batches[-1])
 
     def test_periodic_data_and_footer_are_revealed_after_modal_close(self):
         controller = base_controller()
@@ -2580,10 +2611,18 @@ class PrintWorkflowTest(unittest.TestCase):
         controller.cancel_mode = "pending"
         controller.renderer = FEATHER.FeatherRenderer()
         capture = RenderCapture(controller.renderer)
+        controller.heater_bed = StatusObject({"temperature": 30, "target": 0})
+        controller.filament_sensor = None
+        controller.busy_message = None
+        controller.network_client = mock.Mock(spec=["service"])
+        controller.dimmed, controller.last_touch_time, controller.dim_timeout = False, 0, 10000
+        controller.pending_action = "print.cancel.confirm"
+        controller.pending_until = 1
+        controller._apply_safety_visibility()
         controller._show_error("Configuration failed", "error")
         frames = len(capture.frames)
 
-        controller._update_cancel_progress()
+        controller._update_cycle(100)
 
         self.assertEqual(len(capture.frames), frames)
 
@@ -6006,13 +6045,46 @@ class ActionPromptProtocolTest(unittest.TestCase):
         self.assertTrue(rendering.latest.has_text("PULLING"))
         self.assertTrue(any("180.0" in text.value for text in rendering.latest.texts))
         controller.operation_context.status["cancel_pending"] = True
-        with mock.patch.object(controller, "_render_operation_cold_pull",
-                               wraps=controller._render_operation_cold_pull) as paint:
-            FEATHER.FeatherScreen._render_dialog(controller)
-            paint.assert_called_once()
+        submitted = len(rendering.frames)
+        FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertEqual(len(rendering.frames), submitted + 1)
         controller._render_home.assert_not_called()
         self.assertIsNone(renderer.decode_action(tap))
         self.assertNotIn("coldpull.cancel", renderer._buttons)
+
+    def test_cold_pull_unchanged_display_skips_output_but_still_recovers(self):
+        controller, _ = self.controller_with_navigation()
+        rendering = RenderCapture(controller.renderer)
+        controller.extruder = StatusObject({"temperature": 190.01, "target": 100.01})
+        controller.operation_context.status.update(
+            context_types=("cold_pull",), current_state="HOMING",
+            cancel_available=True, cancel_pending=False)
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+        submitted = len(rendering.frames)
+        for _ in range(20):
+            controller.extruder.status.update(temperature=190.02, target=100.02)
+            FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertEqual(len(rendering.frames), submitted)
+        controller.operation_context.status["revision"] += 1
+        FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertEqual(len(rendering.frames), submitted)
+        controller.extruder.status["temperature"] = 190.12
+        FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertEqual(len(rendering.frames), submitted + 1)
+        self.assertTrue(any('190.1' in text.value for text in rendering.latest.texts))
+        controller.operation_context.status["cancel_available"] = False
+        FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertFalse(rendering.latest.has_action("coldpull.cancel"))
+        lost = rendering.submitted[-1]
+        controller.renderer._batch_queue.drop_render(lost)
+        FEATHER.FeatherScreen._render_dialog(controller)
+        self.assertEqual(rendering.submitted[-1].kind, "surface")
+        self.assertIn(controller.renderer.modal_scrim(), rendering.batches[-1])
+        controller.operation_context.status["cancel_available"] = True
+        FEATHER.FeatherScreen._render_dialog(controller)
+        fresh = controller.renderer._wire_action("coldpull.cancel")
+        self.assertEqual(controller.renderer.decode_action(fresh), "coldpull.cancel")
 
     def test_cold_pull_prompt_end_closes_cancel_page(self):
         controller, shown = self.controller()

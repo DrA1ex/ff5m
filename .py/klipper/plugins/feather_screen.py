@@ -1347,7 +1347,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
 
         instance = DialogInstance(
             dialog, content, self._paint_dialog, getattr(self, spec.painter),
-            set(spec.actions).union(spec.content_actions(content)), spec.priority)
+            set(spec.actions).union(spec.content_actions(content)), spec.priority,
+            paint_key=self._dialog_paint_key(dialog, content))
         # Covered instances return when the new dialog closes; replaced
         # instances are closed and cannot return.
         on_top = next((layer for layer in root.layers if DIALOGS[layer.kind].stays_on_top), None)
@@ -1383,7 +1384,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         root = self._ensure_screen_root()
         current = self._current_dialog_instance()
         if current is not None:
-            root.invalidate(current.node)
+            if current.node.paint_key is None:
+                root.invalidate(current.node)
             root.paint()
 
     def _paint_dialog(self, instance):
@@ -2263,32 +2265,31 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if self._current_dialog() == ScreenDialog.ACTION_PROMPT:
             if self._action_prompt_is_cold_pull() and not emergency_refreshed:
                 self._render_dialog()
-        if self._current_dialog() is not None:
-            # Keep polling printer state, but defer hidden page preparation.
-            pass
-        elif self.page == ScreenPage.OPERATION_CANCEL:
-            if getattr(self, "cancel_mode", None) == "pending":
-                self._update_cancel_progress()
-        elif self.page == ScreenPage.TIMELAPSE_WAIT:
-            self._update_timelapse_wait()
-        elif (getattr(self, "file_scan_loading", False)
-                and self.page == ScreenPage.FILE_BROWSER):
-            self.file_scan_phase = (self.file_scan_phase + 1) % 5
-            label = ("LOADING USB FILES..."
-                     if getattr(self, "file_scan_source", None) == "usb"
-                     else "LOADING PRINT FILES...")
-            self.renderer.loader(label, self.file_scan_phase)
-        elif self.busy_message is not None:
-            self.busy_phase = (self.busy_phase + 1) % 5
-            self.renderer.loader(self.busy_message, self.busy_phase)
-        elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
-            self._update_print_progress(eventtime)
-        elif self.page == ScreenPage.IDLE_HOME:
-            self._update_dashboard(eventtime)
-        elif self.page == ScreenPage.CONTROL_MOVE:
-            self._update_move_status(eventtime)
-        elif self.page == ScreenPage.CONTROL_HEAT:
-            self._update_heat_status(eventtime)
+        # Keep polling printer state, but defer hidden page preparation.
+        if self._current_dialog() is None:
+            if self.page == ScreenPage.OPERATION_CANCEL:
+                if getattr(self, "cancel_mode", None) == "pending":
+                    self._update_cancel_progress()
+            elif self.page == ScreenPage.TIMELAPSE_WAIT:
+                self._update_timelapse_wait()
+            elif (getattr(self, "file_scan_loading", False)
+                    and self.page == ScreenPage.FILE_BROWSER):
+                self.file_scan_phase = (self.file_scan_phase + 1) % 5
+                label = ("LOADING USB FILES..."
+                         if getattr(self, "file_scan_source", None) == "usb"
+                         else "LOADING PRINT FILES...")
+                self.renderer.loader(label, self.file_scan_phase)
+            elif self.busy_message is not None:
+                self.busy_phase = (self.busy_phase + 1) % 5
+                self.renderer.loader(self.busy_message, self.busy_phase)
+            elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
+                self._update_print_progress(eventtime)
+            elif self.page == ScreenPage.IDLE_HOME:
+                self._update_dashboard(eventtime)
+            elif self.page == ScreenPage.CONTROL_MOVE:
+                self._update_move_status(eventtime)
+            elif self.page == ScreenPage.CONTROL_HEAT:
+                self._update_heat_status(eventtime)
         if self.filament_sensor is not None:
             sensor = self.filament_sensor.get_status(eventtime)
             present = sensor.get("filament_detected")
@@ -2305,10 +2306,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             extruder["temperature"], extruder["target"],
             bed["temperature"], bed["target"])
         status = "%s | %s" % (network, state.upper())
-        if self._current_dialog() is None:
-            self.renderer.footer(temperatures, status)
-        else:
-            self.renderer.footer(temperatures, status, paint=False)
+        self.renderer.footer(temperatures, status, paint=self._current_dialog() is None)
         if self.toast_until and eventtime >= self.toast_until:
             self._hide_toast()
         return eventtime + REFRESH_TIME
@@ -2371,7 +2369,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     # its next cooperative boundary. Keep the accepted request
                     # active instead of re-enabling the confirmation control.
                     self.pending_until = eventtime + 30.0
-                    self._update_cancel_progress()
                 elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                     self.pending_action = None
                     self._show_page(self.page)

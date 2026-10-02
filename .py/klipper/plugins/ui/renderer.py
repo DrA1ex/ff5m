@@ -37,6 +37,9 @@ from .render_worker import (
 )
 
 
+Hitbox = namedtuple("Hitbox", "action x y width height continuous layer")
+
+
 DRAW_PIPE = "/tmp/typer"
 EVENT_PIPE = "/tmp/feather-events"
 TOUCH_DEVICE = "/dev/input/guppy"
@@ -187,7 +190,7 @@ class FeatherRenderer:
             return False
         if self._prepared_surface is None:
             self._prepared_surface = {
-                name: (value.copy() if isinstance(value, (dict, set)) else value)
+                name: (value.copy() if isinstance(value, (dict, set, list)) else value)
                 for name in self._SURFACE_FIELDS
                 for value in (getattr(self, name),)
             }
@@ -229,7 +232,7 @@ class FeatherRenderer:
     def touch_warning_allowed(self):
         """Whether the visible surface has controls worth protecting."""
         actions = set(self._visible_value("_buttons"))
-        actions.update(action for action in self._visible_value("_hitboxes")
+        actions.update(action for action, _spec in self._visible_value("_hitboxes")
                        if action != "global.wake")
         return not self._visible_value("_loader_active") and bool(actions)
 
@@ -372,7 +375,8 @@ class FeatherRenderer:
         self._retain_background = False
         previous = self._prepared_surface
         if (commands and retain_background and previous is not None
-                and (self._dialog_bounds != previous["_dialog_bounds"]
+                and (not self._dialog_bounds
+                     or self._dialog_bounds != previous["_dialog_bounds"]
                      or self._header_action != previous["_header_action"])):
             frame["background_changed"] = True
             requested_header = self._header_action
@@ -385,6 +389,8 @@ class FeatherRenderer:
                 # Replace only input IDs after building pixels once. These
                 # final resets remove IDs embedded in the earlier draw commands.
                 frame["input_changed"] = True
+                # Input replacement is a prerequisite for later pixel-only updates.
+                key = None
                 self._generation += 1
                 self._pressed_buttons.clear()
                 commands.extend(self._input_commands())
@@ -410,15 +416,15 @@ class FeatherRenderer:
 
     def _input_signature(self, values=None):
         value = (lambda name: getattr(self, name)) if values is None else values.__getitem__
-        return tuple(value("_hitboxes").items()), tuple(value("_overlay_hitboxes").items())
+        return tuple(value("_hitboxes")), tuple(value("_overlay_hitboxes"))
 
     def _input_commands(self):
         commands = [self.clear_hitboxes("base"), self.clear_hitboxes("overlay")]
-        for action, spec in self._hitboxes.items():
-            commands.append(self.hitbox(self._wire_action(action), *spec[:4],
+        for action, spec in self._hitboxes:
+            commands.append(self._hitbox(self._wire_action(action), *spec[:4],
                                         continuous=spec[4]))
-        for action, spec in self._overlay_hitboxes.items():
-            commands.append(self.hitbox(self._wire_action(action), *spec[:4],
+        for action, spec in self._overlay_hitboxes:
+            commands.append(self._hitbox(self._wire_action(action), *spec[:4],
                                         continuous=spec[4], layer="overlay"))
         return commands
 
@@ -1059,7 +1065,7 @@ class FeatherRenderer:
         return get_font_metrics().text_width(value, font)
 
     @staticmethod
-    def hitbox(action, x, y, width, height, continuous=False, layer="base"):
+    def _hitbox(action, x, y, width, height, continuous=False, layer="base"):
         layer = str(layer).lower()
         if layer not in ("base", "overlay"):
             raise ValueError("unknown hitbox layer: %s" % layer)
@@ -1077,14 +1083,40 @@ class FeatherRenderer:
             raise ValueError("unknown hitbox layer: %s" % layer)
         return "--batch clear-hitboxes --layer " + layer
 
+    @property
+    def hitboxes(self):
+        """Ordered prepared input regions, including repeated actions."""
+        return tuple(Hitbox(action, *spec, layer)
+                     for layer, entries in (("base", self._hitboxes),
+                                            ("overlay", self._overlay_hitboxes))
+                     for action, spec in entries)
+
+    @staticmethod
+    def _register_hitbox(entries, action, spec):
+        # Repainting the same region updates it; distinct regions stay ordered.
+        for index, (previous_action, previous_spec) in enumerate(entries):
+            if previous_action == action and previous_spec[:4] == spec[:4]:
+                entries[index] = (action, spec)
+                return
+        entries.append((action, spec))
+
+    @staticmethod
+    def _unregister_hitbox(entries, action, bounds):
+        entries[:] = [entry for entry in entries
+                      if entry[0] != action or entry[1][:4] != bounds]
+
+    @property
+    def needs_redraw(self):
+        return self._batch_queue.needs_redraw
+
     def action_hitbox(self, action, x, y, width, height, continuous=False):
         if not self._prepare_surface():
             return ""
         logical_action = (
             action_wire_id(action) if isinstance(action, Action) else str(action))
-        self._hitboxes[logical_action] = (
-            x, y, width, height, bool(continuous))
-        return self.hitbox(self._wire_action(action), x, y, width, height,
+        self._register_hitbox(self._hitboxes, logical_action,
+                              (x, y, width, height, bool(continuous)))
+        return self._hitbox(self._wire_action(action), x, y, width, height,
                            continuous)
 
     def button_hitbox(self, action, x, y, width, height, active=True):
@@ -1099,8 +1131,9 @@ class FeatherRenderer:
         if not self._prepare_surface():
             return ""
         logical = action_wire_id(action) if isinstance(action, Action) else str(action)
-        self._overlay_hitboxes[logical] = (x, y, width, height, bool(continuous))
-        return self.hitbox(
+        self._register_hitbox(self._overlay_hitboxes, logical,
+                              (x, y, width, height, bool(continuous)))
+        return self._hitbox(
             self._wire_action(action), x, y, width, height,
             continuous, layer="overlay")
 
@@ -1133,7 +1166,7 @@ class FeatherRenderer:
         if enabled:
             commands.append(self.action_hitbox(action, x, y, width, height))
         else:
-            self._hitboxes.pop(logical_action, None)
+            self._unregister_hitbox(self._hitboxes, logical_action, (x, y, width, height))
         return commands
 
     def animate_toggle(self, action, active, scheduler, duration=0.12):
@@ -1179,8 +1212,8 @@ class FeatherRenderer:
     def _reset_interactions(self):
         self._buttons = {}
         self._toggles = {}
-        self._hitboxes = {}
-        self._overlay_hitboxes = {}
+        self._hitboxes = []
+        self._overlay_hitboxes = []
         self._pressed_buttons = set()
 
     def _wake_hitbox(self):
@@ -1267,7 +1300,7 @@ class FeatherRenderer:
                         x + width // 2, start_y + index * 18, line,
                         subtitle_color, subtitle_font, "center", "middle"))
         if include_hitbox and state not in ("disabled", "busy"):
-            commands.append(self.hitbox(action, x, y, width, height))
+            commands.append(self._hitbox(action, x, y, width, height))
         return commands
 
     def _arrow_button_commands(self, action, x, y, width, height, direction,
@@ -1297,7 +1330,7 @@ class FeatherRenderer:
                 center_x - arrow_width // 2, head_y + index * 2,
                 arrow_width, 2, arrow_color))
         if include_hitbox and state not in ("disabled", "busy"):
-            commands.append(self.hitbox(action, x, y, width, height))
+            commands.append(self._hitbox(action, x, y, width, height))
         return commands
 
     def button(self, action, x, y, width, height, label, active=None,
@@ -1327,10 +1360,10 @@ class FeatherRenderer:
         if logical_action == "nav.menu":
             self._menu_suppressed = False
         if state not in ("disabled", "busy"):
-            self._hitboxes[logical_action] = (x, y, width, height, False)
+            self._register_hitbox(self._hitboxes, logical_action, (x, y, width, height, False))
         else:
             self._buttons.pop(logical_action, None)
-            self._hitboxes.pop(logical_action, None)
+            self._unregister_hitbox(self._hitboxes, logical_action, (x, y, width, height))
         return self._button_commands(self._wire_action(action), x, y, width,
                                      height, label, state, font, subtitle,
                                      True, layout, subtitle_font,
@@ -1372,10 +1405,10 @@ class FeatherRenderer:
                 x, y, width, height, direction, state, None, None,
                 "arrow-" + direction, None, None, None, None)
         if state not in ("disabled", "busy"):
-            self._hitboxes[logical_action] = (x, y, width, height, False)
+            self._register_hitbox(self._hitboxes, logical_action, (x, y, width, height, False))
         else:
             self._buttons.pop(logical_action, None)
-            self._hitboxes.pop(logical_action, None)
+            self._unregister_hitbox(self._hitboxes, logical_action, (x, y, width, height))
         return self._arrow_button_commands(
             self._wire_action(action), x, y, width, height, direction, state)
 
@@ -1596,7 +1629,7 @@ class FeatherRenderer:
         """Rebuild base input after isolated layout changes without painting pixels."""
         if not self._prepare_surface():
             return []
-        self._hitboxes = {}
+        self._hitboxes = []
         commands = [self.clear_hitboxes("base"), self._wake_hitbox()]
         if self._page_back:
             commands.append(self.action_hitbox("nav.back", 14, 7, 146, 46))
@@ -1723,7 +1756,7 @@ class FeatherRenderer:
     def clear_toast_hitbox(self):
         if not self._prepare_surface():
             return
-        self._overlay_hitboxes = {}
+        self._overlay_hitboxes = []
         self.prioritize_next_batch("state", "toast-hitbox")
         self.send([self.clear_hitboxes("overlay")])
 
@@ -1860,10 +1893,7 @@ class FeatherRenderer:
             return None
         self.invalidate_input_generation()
         self._footer_drawn = False
-        commands = [
-            self.modal_scrim(),
-        ]
-        commands += self.dialog(
+        commands = self.dialog(
             "Touch input unavailable", (), (),
             x=110, y=110, width=580, height=270, tone="warning",
             preserve_header_action=False, custom_body=True)

@@ -120,10 +120,26 @@ is the boundary here; physical presentation remains asynchronous in Typer.
 
 Refreshing the same page and dialog instances keeps the input generation when
 their buttons, toggles, hitboxes, and header action are unchanged. This also
-applies to imperative painters that call `begin_page()`, such as Cold Pull
-status updates. A changed input map discards the provisional frame and builds
-one complete surface with fresh event IDs. Replacing a page or dialog always
-creates a new input generation.
+applies to imperative painters that call `begin_page()`. Retained dialog layers
+opt in explicitly through `ScreenLayer(retain_background=True)`. A changed input
+map replays all ordered base and overlay regions with fresh event IDs after the
+single paint pass. Distinct regions may share an action. Unknown or changed
+panel bounds, a changed header, and a dropped `state` frame require a complete
+surface. A dropped complete `surface` frame does not request another full paint:
+rebuilding the same invalid command would repeat its encoding failure indefinitely.
+Replacing a page or dialog always creates a new input generation. Opening a
+critical dialog can leave the previous page visible beneath it.
+
+Cold Pull compares its displayed stage, rounded temperatures, target, and cancel
+state through the node's state signature. Unchanged values submit no frame.
+Queued retained refreshes coalesce by the `foreground` key; opening frames and
+input-generation replacements stay unkeyed prerequisites. A new page beneath a
+dialog is still restored immediately, while background data updates wait until
+that dialog closes.
+
+Cancellation progress paints once per periodic update. A direct
+`_reconcile_print_action()` call updates pending-action state immediately, but
+its progress label is painted on the next tick, up to one second later.
 
 `feather_safety.py` composes named Klipper activity providers, bounded reference-counted operation leases, and armed-page reasons. Active printing, explicitly owned long-running G-code, motion, heating, temperature waits, joystick motion, and loaded-feature activity expose `global.abort` on every live page except Home. Direct heat and material controls expose it before an operation begins; movement controls do so only after at least one usable axis has been homed. Short bookkeeping G-code never toggles the emergency action, which prevents transient header redraws. Provider failures are fail-safe and cannot silently remove the M112 path; the renderer only receives the final visibility boolean.
 

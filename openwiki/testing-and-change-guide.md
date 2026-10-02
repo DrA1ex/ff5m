@@ -874,7 +874,7 @@ For saved captures, replace the printer host and idle-confirmation flags with
 `--printer-artifacts /path/to/UI-run`. No printer connection is made. A stale
 fingerprint still fails; do not rewrite artifact metadata to bypass it.
 
-#### First local run and result review
+#### Local dialog composition suite
 
 For retained dialog composition, run the standalone local suite:
 
@@ -911,6 +911,8 @@ Use `--layout cards`, `--layout list`, or `--layout imperative` for one sequence
 artifact destination. Existing run directories are preserved; use a new
 directory for each run. `--trace-only` runs drawing contracts without a Designer
 or browser. Artifacts default to the ignored `tests/artifacts/` directory.
+
+#### First local run and result review
 
 Start with the local-only Designer corpus. It does not contact the printer and
 is the normal first check after UI changes:

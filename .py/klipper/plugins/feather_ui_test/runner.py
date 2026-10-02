@@ -1011,16 +1011,13 @@ class UITestRun:
                     or spec[0] + spec[2] > SCREEN_WIDTH
                     or spec[1] + spec[3] > SCREEN_HEIGHT):
                 raise RuntimeError("Invalid hitbox: %s" % action)
-        hitboxes = {}
-        for action, spec in getattr(renderer, "_hitboxes", {}).items():
-            hitboxes[str(action)] = {
-                "x": spec[0], "y": spec[1], "width": spec[2],
-                "height": spec[3], "continuous": bool(spec[4]),
-            }
-            if (spec[0] < 0 or spec[1] < 0 or spec[2] <= 0 or spec[3] <= 0
-                    or spec[0] + spec[2] > SCREEN_WIDTH
-                    or spec[1] + spec[3] > SCREEN_HEIGHT):
-                raise RuntimeError("Invalid hitbox: %s" % action)
+        hitboxes = []
+        for region in getattr(renderer, "hitboxes", ()):
+            hitboxes.append(region._asdict())
+            if (region.x < 0 or region.y < 0 or region.width <= 0 or region.height <= 0
+                    or region.x + region.width > SCREEN_WIDTH
+                    or region.y + region.height > SCREEN_HEIGHT):
+                raise RuntimeError("Invalid hitbox: %s" % region.action)
         return {
             "time": time.time(), "phase": self.phase,
             "page": self.host.page.name,
@@ -1072,7 +1069,7 @@ class UITestRun:
         interactive = (
             action in getattr(renderer, "_buttons", {})
             or action in getattr(renderer, "_toggles", {})
-            or action in getattr(renderer, "_hitboxes", {}))
+            or any(region.action == action for region in getattr(renderer, "hitboxes", ())))
         if not interactive:
             raise RuntimeError("Button is absent or disabled: %s" % action)
         if action in PERSISTENT_ACTIONS:
