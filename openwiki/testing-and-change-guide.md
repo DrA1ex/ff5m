@@ -876,6 +876,42 @@ fingerprint still fails; do not rewrite artifact metadata to bypass it.
 
 #### First local run and result review
 
+For retained dialog composition, run the standalone local suite:
+
+```bash
+.venv/bin/python -m tests.visual_checks.composition \
+  --designer-root /path/to/feather-ui-designer
+```
+
+This suite runs the native FF5M renderer, `ScreenRoot`, and product dialog
+paint lifecycle over three built-in layouts: declarative cards, declarative
+rows, and an imperative tile painter. Each layout has 17 checkpoints covering
+dialog opening, text and button updates, deferred background data, resizing,
+background component replacement, suspension/resumption, forced recovery,
+atomic dialog replacement, closing, and a subsequent dialog.
+
+The Designer canvas replays the complete accepted command history for each
+checkpoint. It does not draw an independent fresh frame: old pixels and
+repeated alpha fills remain observable. Open `report.html` in the reported
+artifact directory to inspect the screenshots manually. There are no reference
+images, pixel comparisons, printer connections, or model requests.
+
+`trace.json` and each report entry include render call order and timings,
+arranged node bounds and tree, layout passes, accepted native batches, and
+the current checkpoint's drawing operations. Counters automatically check
+background paints, dialog preparations, scrims and accepted batches. Resizing
+currently requires one discarded dialog size probe followed by one complete
+accepted composition; the trace distinguishes preparation calls from output.
+Timings are local preparation measurements, not printer performance results.
+A zero exit status confirms draw-count checks and screenshot capture;
+visual review remains manual. Failures retain the trace and completed captures.
+
+Use `--layout cards`, `--layout list`, or `--layout imperative` for one sequence,
+`--theme NAME` for a specific theme, and `--output DIRECTORY` for an empty
+artifact destination. Existing run directories are preserved; use a new
+directory for each run. `--trace-only` runs drawing contracts without a Designer
+or browser. Artifacts default to the ignored `tests/artifacts/` directory.
+
 Start with the local-only Designer corpus. It does not contact the printer and
 is the normal first check after UI changes:
 

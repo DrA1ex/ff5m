@@ -2863,7 +2863,8 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn(MOVE_LAYOUT.HOME_Z.wire_id,
                       controller.renderer._buttons)
         self.assertEqual(
-            set(controller.renderer._hitboxes) - {"global.wake"},
+            {action for action, spec in controller.renderer._hitboxes.items()
+             if spec[4]},
             {MOVE_LAYOUT.JOYSTICK_XY.wire_id,
              MOVE_LAYOUT.JOYSTICK_Z.wire_id})
         for action in (

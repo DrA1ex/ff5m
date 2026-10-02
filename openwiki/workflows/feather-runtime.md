@@ -79,6 +79,12 @@ including its overlap and modal input rules. Background status and worker
 callbacks keep updating their data while a dialog is visible, but background
 paints, including layout changes, are deferred. Closing the dialog redraws the
 page from current data; there is no separate queue of deferred paint requests.
+The periodic screen cycle skips hidden page preparation and retains current
+footer values without drawing them. Ordinary dialog updates paint only the
+foreground panel and keep the existing scrim. A resized panel or changed
+header action restores the complete composition to remove exposed old pixels.
+Changes to touch regions replace their event IDs after preparing the frame
+once; changes to button text or colors preserve compatible crossing taps.
 
 FF5M's `PaintSurface` adapter retains the existing page painters. A direct
 renderer submission may remain a delta when the page allows it and has no

@@ -102,6 +102,14 @@ def main(argv=None):
                 "viewport": viewport,
             })
             _assert_requested_state(case, case["scene"])
+            if case.get("composition_fixture") is not None:
+                fixture = case["composition_fixture"]
+                case["scene"]["title"] = fixture["title"]
+                case["scene"]["operations"] = fixture["operations"]
+                # These operations describe a native retained framebuffer,
+                # not the template page's reflected editing tree.
+                case["scene"]["nodes"] = []
+                case["scene"]["diagnostics"] = []
     finally:
         client.close()
     plan_path.write_text(

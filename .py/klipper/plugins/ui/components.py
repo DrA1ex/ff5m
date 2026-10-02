@@ -1219,6 +1219,8 @@ class VerticalGauge(Component):
 
 
 class Dialog(Component):
+    retains_background = True
+
     def blocks_input(self, state):
         return bool(resolve(self.modal, state))
 

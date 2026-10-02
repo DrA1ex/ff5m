@@ -108,14 +108,20 @@ class RenderBatchQueue:
                     self._remove(lambda queued: (
                         queued.kind != "critical"
                         and queued.generation <= batch.generation))
+                elif batch.kind == "state":
+                    # Foreground updates may replace input without replacing
+                    # backdrop pixels. Keep queued prerequisite surfaces, but
+                    # discard feedback belonging to their old touch generation.
+                    self._remove(lambda queued: (
+                        queued.kind == "animation"
+                        and queued.generation < batch.generation))
+                    if batch.key is not None:
+                        self._remove(lambda queued: (
+                            queued.kind == "state" and queued.key == batch.key
+                            and queued.generation == batch.generation))
                 elif batch.kind == "animation" and batch.key is not None:
                     self._remove(lambda queued: (
                         queued.kind == "animation"
-                        and queued.key == batch.key
-                        and queued.generation == batch.generation))
-                elif batch.kind == "state" and batch.key is not None:
-                    self._remove(lambda queued: (
-                        queued.kind == "state"
                         and queued.key == batch.key
                         and queued.generation == batch.generation))
 

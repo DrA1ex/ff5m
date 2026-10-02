@@ -336,6 +336,34 @@ def composed_controller_surface(controller, painter):
 
 
 class ScreenCompositionWorkflowTest(unittest.TestCase):
+    def test_cold_pull_tick_does_not_repeat_an_emergency_control_refresh(self):
+        controller, _ = ActionPromptProtocolTest.controller_with_navigation()
+        rendering = RenderCapture(controller.renderer)
+        controller.extruder = StatusObject({"temperature": 190, "target": 100})
+        controller.heater_bed = StatusObject({"temperature": 30, "target": 0})
+        controller.filament_sensor = None
+        controller.busy_message = None
+        controller.operation_context.status.update(
+            context_types=("cold_pull",), current_state="HOMING",
+            cancel_available=True, cancel_pending=False)
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+        for name in ("_service_network", "_update_eco_backlight", "_poll_usb_storage",
+                     "_update_operation_context", "_sync_timelapse_wait_page",
+                     "_reconcile_pending_action"):
+            setattr(controller, name, lambda *args: None)
+        def refresh_emergency(eventtime):
+            controller.renderer.set_header_action("global.abort", "ABORT")
+            FEATHER.FeatherScreen._render_dialog(controller)
+            return True
+        controller._refresh_emergency_stop = refresh_emergency
+        with mock.patch.object(controller, "_render_operation_cold_pull",
+                               wraps=controller._render_operation_cold_pull) as paint:
+            controller._update_cycle(100)
+            paint.assert_called_once()
+        self.assertTrue(rendering.latest.has_action("global.abort"))
+        self.assertTrue(rendering.latest.has_action("coldpull.cancel"))
+
     def test_periodic_data_and_footer_are_revealed_after_modal_close(self):
         controller = base_controller()
         value = {"text": "OLD"}
@@ -354,16 +382,14 @@ class ScreenCompositionWorkflowTest(unittest.TestCase):
             setattr(controller, name, lambda *args: None)
         controller._sync_timelapse_wait_page = lambda: None
         controller._reconcile_pending_action = lambda *args: None
-        def update_dashboard(eventtime):
-            value["text"] = "LATEST"
-            controller.renderer.send([controller.renderer.text(40, 100, value["text"])])
-        controller._update_dashboard = update_dashboard
+        controller._update_dashboard = mock.Mock()
 
         frames = len(rendering.frames)
         tap = controller.renderer._wire_action("message.ok")
+        value["text"] = "LATEST"
         controller._update_cycle(100)
 
-        self.assertEqual(value["text"], "LATEST")
+        controller._update_dashboard.assert_not_called()
         self.assertEqual(len(rendering.frames), frames)
         self.assertTrue(rendering.latest.has_text("OLD"))
         self.assertTrue(rendering.latest.has_text("Foreground"))
@@ -5957,24 +5983,34 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, _ = self.controller_with_navigation()
         renderer = controller.renderer
         rendering = RenderCapture(renderer)
+        controller._show_page(controller.page)
+        controller._render_home = mock.Mock(wraps=controller._render_home)
         controller.extruder = StatusObject({"temperature": 190.0, "target": 100.0})
         controller.operation_context.status.update(
             context_types=("cold_pull",), current_state="COOLING NOZZLE",
             cancel_available=True, cancel_pending=False)
         controller._handle_gcode_output("\n".join((
             "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+        controller._render_home.assert_not_called()
+        self.assertIn(renderer.modal_scrim(), rendering.batches[-1])
         tap = renderer._wire_action("coldpull.cancel")
         generation = renderer.generation
         controller.extruder.status["temperature"] = 180.0
         FEATHER.FeatherScreen._render_dialog(controller)
         controller.operation_context.status["current_state"] = "PULLING"
         FEATHER.FeatherScreen._render_dialog(controller)
+        controller._render_home.assert_not_called()
+        self.assertNotIn(renderer.modal_scrim(), rendering.batches[-1])
         self.assertEqual(renderer.generation, generation)
         self.assertEqual(renderer.decode_action(tap), "coldpull.cancel")
         self.assertTrue(rendering.latest.has_text("PULLING"))
         self.assertTrue(any("180.0" in text.value for text in rendering.latest.texts))
         controller.operation_context.status["cancel_pending"] = True
-        FEATHER.FeatherScreen._render_dialog(controller)
+        with mock.patch.object(controller, "_render_operation_cold_pull",
+                               wraps=controller._render_operation_cold_pull) as paint:
+            FEATHER.FeatherScreen._render_dialog(controller)
+            paint.assert_called_once()
+        controller._render_home.assert_not_called()
         self.assertIsNone(renderer.decode_action(tap))
         self.assertNotIn("coldpull.cancel", renderer._buttons)
 

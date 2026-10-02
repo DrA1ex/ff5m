@@ -2887,9 +2887,11 @@ class DeclarativePage(Tree):
         self._layout_prepared = True
 
     def draw(self, renderer, state=None, reuse_layout=False, refs=None,
-             reuse_styles=False):
+             reuse_styles=False, render_from=None):
         """Draw a full surface; refs and static styles may reuse a clean tree.
 
+        render_from limits painting to retained foreground nodes; callers own
+        the unchanged pixels beneath them and must redraw fully after damage.
         Callers supplying refs must include every node affected by the new
         state. reuse_styles requires unchanged styles since the last draw or
         prepare_layout call. Direct edits to layout_options or style rules
@@ -2914,9 +2916,10 @@ class DeclarativePage(Tree):
             renderer,
             arrange=not reuse_layout or self.root._dirty >= Dirty.LAYOUT,
             refresh_actions=(not reuse_cached or refs is None
-                             or self.root._actions_dirty))
+                             or self.root._actions_dirty),
+            render_from=render_from)
 
-    def _render_full(self, renderer, arrange, refresh_actions):
+    def _render_full(self, renderer, arrange, refresh_actions, render_from=None):
         if arrange:
             self.layout = LayoutResult()
             self.root.arrange(self.bounds, self.layout)
@@ -2927,7 +2930,13 @@ class DeclarativePage(Tree):
         set_page_identity = getattr(renderer, "set_semantic_page", None)
         if set_page_identity is not None:
             set_page_identity(self.page_id)
-        commands = self.root.render(renderer, self.state, self.layout)
+        if render_from is None:
+            commands = self.root.render(renderer, self.state, self.layout)
+        else:
+            commands = []
+            for node in render_from:
+                commands.extend(node.render_dirty(
+                    renderer, self._paint_state(node), self.layout))
         self.root.clear_dirty()
         self.initialized = True
         self.state.clear_changes()

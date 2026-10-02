@@ -43,4 +43,5 @@ class DialogInstance(ScreenLayer):
         self.painter = painter
         self.actions = frozenset(actions)
         self.priority = priority
-        super().__init__(PaintSurface(lambda: paint_dialog(self), modal=True))
+        super().__init__(PaintSurface(lambda: paint_dialog(self), modal=True),
+                         retain_background=True)

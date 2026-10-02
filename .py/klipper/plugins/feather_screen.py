@@ -1387,8 +1387,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             root.paint()
 
     def _paint_dialog(self, instance):
-        self.renderer.invalidate_footer()
-        self.renderer.send((self.renderer.modal_scrim(),))
+        if not self.renderer.retaining_background:
+            self.renderer.invalidate_footer()
+            self.renderer.send((self.renderer.modal_scrim(),))
         instance.painter(instance)
 
     def _render_touch_unavailable(self, instance):
@@ -2257,12 +2258,15 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._update_operation_context(eventtime)
         if manager is not None:
             manager.update(eventtime)
-        self._refresh_emergency_stop(eventtime)
+        emergency_refreshed = self._refresh_emergency_stop(eventtime)
         self._reconcile_pending_action(eventtime, state, virtual_sd_active)
         if self._current_dialog() == ScreenDialog.ACTION_PROMPT:
-            if self._action_prompt_is_cold_pull():
+            if self._action_prompt_is_cold_pull() and not emergency_refreshed:
                 self._render_dialog()
-        if self.page == ScreenPage.OPERATION_CANCEL:
+        if self._current_dialog() is not None:
+            # Keep polling printer state, but defer hidden page preparation.
+            pass
+        elif self.page == ScreenPage.OPERATION_CANCEL:
             if getattr(self, "cancel_mode", None) == "pending":
                 self._update_cancel_progress()
         elif self.page == ScreenPage.TIMELAPSE_WAIT:
@@ -2301,7 +2305,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             extruder["temperature"], extruder["target"],
             bed["temperature"], bed["target"])
         status = "%s | %s" % (network, state.upper())
-        self.renderer.footer(temperatures, status)
+        if self._current_dialog() is None:
+            self.renderer.footer(temperatures, status)
+        else:
+            self.renderer.footer(temperatures, status, paint=False)
         if self.toast_until and eventtime >= self.toast_until:
             self._hide_toast()
         return eventtime + REFRESH_TIME

@@ -164,6 +164,8 @@ class FeatherRenderer:
         self._prepared_surface = None
         self._frame_owner = None
         self._preserve_input = False
+        self._retain_background = False
+        self._dialog_bounds = ()
 
     def configure_frame_owner(self, owner):
         """Route every ordinary submission through the screen composition root."""
@@ -173,6 +175,7 @@ class FeatherRenderer:
         "_generation", "_buttons", "_toggles", "_hitboxes", "_pressed_buttons",
         "_page_title", "_page_back", "_semantic_page_id", "_loader_active",
         "_menu_suppressed", "_footer_drawn", "_last_footer", "_header_action",
+        "_overlay_hitboxes", "_dialog_bounds",
     )
 
     @property
@@ -333,8 +336,8 @@ class FeatherRenderer:
             self._worker.timing_sink = sink
 
     @contextmanager
-    def compose(self, preserve_input=False):
-        """Submit consecutive ordinary draws as one complete frame."""
+    def compose(self, preserve_input=False, retain_background=False):
+        """Submit consecutive ordinary draws as one admitted frame."""
         if self._composite_commands is not None:
             raise RuntimeError("render composition is already active")
         self._composite_commands = []
@@ -342,8 +345,10 @@ class FeatherRenderer:
         self._composite_key = None
         self._composite_receipt = None
         self._preserve_input = bool(preserve_input)
+        self._retain_background = bool(retain_background)
         self._prepare_surface()
-        frame = {"accepted": False, "input_changed": False}
+        self._dialog_bounds = ()
+        frame = {"accepted": False, "input_changed": False, "background_changed": False}
         try:
             yield frame
         except BaseException:
@@ -352,6 +357,7 @@ class FeatherRenderer:
             self._composite_key = None
             self._composite_receipt = None
             self._preserve_input = False
+            self._retain_background = False
             self._finish_surface(False)
             raise
         commands = self._composite_commands
@@ -363,25 +369,58 @@ class FeatherRenderer:
         self._composite_key = None
         self._composite_receipt = None
         self._preserve_input = False
+        self._retain_background = False
         previous = self._prepared_surface
+        if (commands and retain_background and previous is not None
+                and (self._dialog_bounds != previous["_dialog_bounds"]
+                     or self._header_action != previous["_header_action"])):
+            frame["background_changed"] = True
+            requested_header = self._header_action
+            self._finish_surface(False)
+            self._prepare_surface()
+            self._header_action = requested_header
+            return
         if commands and preserve_input and previous is not None:
-            if any(getattr(self, name) != previous[name] for name in (
-                    "_buttons", "_toggles", "_hitboxes", "_header_action")):
-                # The owner must rebuild a changed input surface with fresh
-                # event IDs; an unchanged surface keeps taps crossing refresh.
+            if self._input_signature() != self._input_signature(previous):
+                # Replace only input IDs after building pixels once. These
+                # final resets remove IDs embedded in the earlier draw commands.
                 frame["input_changed"] = True
-                requested_header = self._header_action
-                self._finish_surface(False)
-                # Header configuration may have been staged by its owner
-                # before composition; keep that request for the full retry.
-                self._prepare_surface()
-                self._header_action = requested_header
-                return
-            self._pressed_buttons = previous["_pressed_buttons"].copy()
+                self._generation += 1
+                self._pressed_buttons.clear()
+                commands.extend(self._input_commands())
+                if kind is None:
+                    kind = "state"
+            else:
+                self._pressed_buttons = previous["_pressed_buttons"].copy()
         if commands:
             frame["accepted"] = self.send(commands, kind=kind, key=key, receipt=receipt)
         else:
             self._finish_surface(False)
+
+    @property
+    def header_action_changed(self):
+        """Whether a staged header control needs its old pixels restored."""
+        return (self._prepared_surface is not None
+                and self._header_action != self._prepared_surface["_header_action"])
+
+    @property
+    def retaining_background(self):
+        """The current foreground pass must leave retained backdrop pixels intact."""
+        return self._retain_background
+
+    def _input_signature(self, values=None):
+        value = (lambda name: getattr(self, name)) if values is None else values.__getitem__
+        return tuple(value("_hitboxes").items()), tuple(value("_overlay_hitboxes").items())
+
+    def _input_commands(self):
+        commands = [self.clear_hitboxes("base"), self.clear_hitboxes("overlay")]
+        for action, spec in self._hitboxes.items():
+            commands.append(self.hitbox(self._wire_action(action), *spec[:4],
+                                        continuous=spec[4]))
+        for action, spec in self._overlay_hitboxes.items():
+            commands.append(self.hitbox(self._wire_action(action), *spec[:4],
+                                        continuous=spec[4], layer="overlay"))
+        return commands
 
     @contextmanager
     def collect(self):
@@ -428,7 +467,9 @@ class FeatherRenderer:
                     raise ValueError("a composed frame can have only one receipt")
                 self._composite_receipt = token
             self._composite_commands.extend(immutable)
-            if kind == "critical" or (kind == "surface" and self._composite_kind != "critical"):
+            if (kind == "critical"
+                    or (kind == "surface" and self._composite_kind != "critical")
+                    or (kind == "state" and self._composite_kind is None)):
                 self._composite_kind = kind
                 self._composite_key = key
             return True
@@ -1055,6 +1096,10 @@ class FeatherRenderer:
         return self.action_hitbox(action, x, y, width, height)
 
     def overlay_hitbox(self, action, x, y, width, height, continuous=False):
+        if not self._prepare_surface():
+            return ""
+        logical = action_wire_id(action) if isinstance(action, Action) else str(action)
+        self._overlay_hitboxes[logical] = (x, y, width, height, bool(continuous))
         return self.hitbox(
             self._wire_action(action), x, y, width, height,
             continuous, layer="overlay")
@@ -1087,6 +1132,8 @@ class FeatherRenderer:
             x, y, width, height, thumb_x, enabled)
         if enabled:
             commands.append(self.action_hitbox(action, x, y, width, height))
+        else:
+            self._hitboxes.pop(logical_action, None)
         return commands
 
     def animate_toggle(self, action, active, scheduler, duration=0.12):
@@ -1133,6 +1180,7 @@ class FeatherRenderer:
         self._buttons = {}
         self._toggles = {}
         self._hitboxes = {}
+        self._overlay_hitboxes = {}
         self._pressed_buttons = set()
 
     def _wake_hitbox(self):
@@ -1278,6 +1326,11 @@ class FeatherRenderer:
             return []
         if logical_action == "nav.menu":
             self._menu_suppressed = False
+        if state not in ("disabled", "busy"):
+            self._hitboxes[logical_action] = (x, y, width, height, False)
+        else:
+            self._buttons.pop(logical_action, None)
+            self._hitboxes.pop(logical_action, None)
         return self._button_commands(self._wire_action(action), x, y, width,
                                      height, label, state, font, subtitle,
                                      True, layout, subtitle_font,
@@ -1318,6 +1371,11 @@ class FeatherRenderer:
             self._buttons[logical_action] = _ButtonSpec(
                 x, y, width, height, direction, state, None, None,
                 "arrow-" + direction, None, None, None, None)
+        if state not in ("disabled", "busy"):
+            self._hitboxes[logical_action] = (x, y, width, height, False)
+        else:
+            self._buttons.pop(logical_action, None)
+            self._hitboxes.pop(logical_action, None)
         return self._arrow_button_commands(
             self._wire_action(action), x, y, width, height, direction, state)
 
@@ -1382,6 +1440,8 @@ class FeatherRenderer:
                                DIALOG_TITLE_FONT).glyph_height // 2),)
         if page_count > 1 and (page_actions is None or len(page_actions) != 2):
             raise ValueError("Overflowing dialog requires previous and next actions")
+        bounds = ((x, y, width, height),)
+        self._dialog_bounds = bounds if modal else self._dialog_bounds + bounds
         commands = []
         show_header_action = (
             preserve_header_action and self._header_action is not None)
@@ -1628,9 +1688,11 @@ class FeatherRenderer:
                       truncate=True),
         ]
 
-    def footer(self, left, right):
+    def footer(self, left, right, paint=True):
         values = (str(left), str(right))
         self._footer_values = values
+        if not paint:
+            return
         if self._footer_drawn and values == self._last_footer:
             return
         if not self._prepare_surface():
@@ -1659,6 +1721,9 @@ class FeatherRenderer:
         self.send(commands)
 
     def clear_toast_hitbox(self):
+        if not self._prepare_surface():
+            return
+        self._overlay_hitboxes = {}
         self.prioritize_next_batch("state", "toast-hitbox")
         self.send([self.clear_hitboxes("overlay")])
 

@@ -117,6 +117,7 @@ async function main() {
             item.scene.operations,
             { timeout: 10000 }
           );
+          await page.evaluate(() => document.fonts.ready);
 
           const filename =
             `${String(index + 1).padStart(3, "0")}-${item.id}.png`;
