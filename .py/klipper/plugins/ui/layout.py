@@ -1367,8 +1367,7 @@ class Node(metaclass=_NodeMeta):
     def walk(self):
         yield self
         for child in self.render_children():
-            for descendant in child.walk():
-                yield descendant
+            yield from child.walk()
 
     def walk_declarations(self):
         """Include template dependencies even before any items exist."""

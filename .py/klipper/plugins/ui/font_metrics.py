@@ -21,6 +21,7 @@ WRAP_ALGORITHM = "word-v1"
 FALLBACK_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)),
                              "font_metrics.json")
 _FONT_NAME = re.compile(r"^(.+) (\d+)pt$")
+_WRAP_WORD = re.compile(r"[^ \t\r]+")
 
 
 class FontMetric:
@@ -60,11 +61,25 @@ class FontMetric:
         return 0
 
     def text_advance(self, value):
-        return sum(self.character_advance(character) for character in str(value))
+        value = str(value)
+        # Uniform printable ASCII needs no per-glyph Python lookup. Partial
+        # fonts and control/Unicode characters retain the manifest lookup.
+        if (self.monospaced and value.isascii() and value.isprintable()
+                and self._range_offsets):
+            start, end, _offset = self._range_offsets[0]
+            if start <= 32 and end >= 126:
+                return len(value) * self.advance_x
+        return sum(self.character_advance(character) for character in value)
 
     def supports_text(self, value):
+        value = str(value)
+        if (self.monospaced and value.isascii() and value.isprintable()
+                and self._range_offsets):
+            start, end, _offset = self._range_offsets[0]
+            if start <= 32 and end >= 126:
+                return self.advance_x > 0
         return all(character in "\n\r\t" or self.character_advance(character) > 0
-                   for character in str(value))
+                   for character in value)
 
 
 class FontMetrics:
@@ -201,23 +216,13 @@ class FontMetrics:
             current = chunk
 
         for paragraph in text.split("\n"):
-            found_word = False
-            start = 0
-            while start < len(paragraph):
-                while start < len(paragraph) and paragraph[start] in " \t\r":
-                    start += 1
-                if start >= len(paragraph):
-                    break
-                end = start
-                while end < len(paragraph) and paragraph[end] not in " \t\r":
-                    end += 1
-                append_word(paragraph[start:end])
-                found_word = True
-                start = end
+            words = _WRAP_WORD.findall(paragraph)
+            for word in words:
+                append_word(word)
             if current:
                 lines.append(current)
                 current = ""
-            if not found_word:
+            if not words:
                 lines.append("")
         return tuple(lines)
 

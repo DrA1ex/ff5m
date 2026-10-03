@@ -570,6 +570,7 @@ class FeatherRenderer:
         return 32 + len(receipt or "") + sum(
             (len(command.payload) + len(command)
              if isinstance(command, BinaryCommand)
+             else len(command) if command.isascii()
              else len(command.encode("utf-8"))) + 64
             for command in commands)
 

@@ -21,6 +21,37 @@ from ui.lazy import LazyModule, resolve_lazy_export  # noqa: E402
 from tests.feather_render_test_helper import RenderCapture  # noqa: E402
 
 
+class PrintingPageImportTest(unittest.TestCase):
+    def test_page_lookup_observes_replacement_in_python_module_registry(self):
+        from ff5m_ui.printing import runtime
+
+        name = runtime.__package__ + ".page"
+        first = types.SimpleNamespace(PAGE=object())
+        second = types.SimpleNamespace(PAGE=object())
+        with mock.patch.dict(sys.modules, {name: first}):
+            self.assertIs(runtime.get_page(), first.PAGE)
+            sys.modules[name] = second
+            self.assertIs(runtime.get_page(), second.PAGE)
+
+    def test_initializing_page_uses_import_completion_before_access(self):
+        from ff5m_ui.printing import runtime
+
+        name = runtime.__package__ + ".page"
+        partial = types.SimpleNamespace(
+            PAGE=object(), __spec__=types.SimpleNamespace(_initializing=True))
+        completed = types.SimpleNamespace(PAGE=object())
+        with mock.patch.dict(sys.modules, {name: partial}):
+            with mock.patch.object(runtime.importlib, "import_module", return_value=completed):
+                self.assertIs(runtime.get_page(), completed.PAGE)
+
+    def test_blocked_page_import_keeps_python_import_error(self):
+        from ff5m_ui.printing import runtime
+
+        with mock.patch.dict(sys.modules, {runtime.__package__ + ".page": None}):
+            with self.assertRaises(ModuleNotFoundError):
+                runtime.get_page()
+
+
 class SharedLazyImportTest(unittest.TestCase):
     def test_module_proxy_imports_only_on_first_attribute_access(self):
         module = types.SimpleNamespace(first=1, second=2)

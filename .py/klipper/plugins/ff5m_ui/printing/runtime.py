@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import importlib
+import sys
 
 from ui.lazy import resolve_lazy_export
 
@@ -19,7 +20,11 @@ _LAZY_EXPORTS = {
 
 
 def _page_module():
-    return importlib.import_module("%s.page" % __package__)
+    name = "%s.page" % __package__
+    module = sys.modules.get(name)
+    if module is not None and not getattr(getattr(module, "__spec__", None), "_initializing", False):
+        return module
+    return importlib.import_module(name)
 
 
 def get_page():

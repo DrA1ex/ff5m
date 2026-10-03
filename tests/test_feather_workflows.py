@@ -6322,5 +6322,40 @@ class ActionPromptProtocolTest(unittest.TestCase):
                          [layer.kind for layer in controller._ensure_screen_root().layers])
 
 
+class PrintHistoryPersistenceTests(unittest.TestCase):
+    def test_unicode_paths_reload_and_old_entries_are_pruned(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = FILES.PrintHistory(os.path.join(root, "history.json"))
+            history.timestamps = {
+                "models/part-%04d.gcode" % number: float(number)
+                for number in range(FILES.HISTORY_LIMIT)
+            }
+            name = "models/деталь.gcode"
+            self.assertTrue(history.record(
+                root, os.path.join(root, name), FILES.HISTORY_LIMIT + 1))
+
+            restored = FILES.PrintHistory(history.path)
+            self.assertEqual(restored.timestamps, history.timestamps)
+            self.assertEqual(len(restored.timestamps), FILES.HISTORY_LIMIT)
+            self.assertNotIn("models/part-0000.gcode", restored.timestamps)
+            self.assertEqual(restored.latest_path(), name)
+            self.assertFalse(os.path.exists(history.path + ".tmp"))
+
+    def test_failed_promotion_preserves_saved_history_and_removes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = FILES.PrintHistory(os.path.join(root, "history.json"))
+            history.record(root, os.path.join(root, "first.gcode"), 1)
+            original = pathlib.Path(history.path).read_bytes()
+
+            with mock.patch.object(FILES.os, "replace", side_effect=OSError("write failed")):
+                with self.assertLogs(level="ERROR"):
+                    self.assertTrue(history.record(
+                        root, os.path.join(root, "second.gcode"), 2))
+
+            self.assertEqual(pathlib.Path(history.path).read_bytes(), original)
+            self.assertFalse(os.path.exists(history.path + ".tmp"))
+            self.assertEqual(history.latest_path(), "second.gcode")
+
+
 if __name__ == "__main__":
     unittest.main()

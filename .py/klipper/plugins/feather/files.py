@@ -250,9 +250,9 @@ class PrintHistory:
             if directory and not os.path.isdir(directory):
                 os.makedirs(directory)
             with open(temporary_path, "w") as stream:
-                json.dump(
-                    self.timestamps, stream, ensure_ascii=False,
-                    separators=(",", ":"), sort_keys=True)
+                stream.write(json.dumps(
+                    self.timestamps, ensure_ascii=False,
+                    separators=(",", ":"), sort_keys=True))
             os.replace(temporary_path, self.path)
         except (IOError, OSError):
             logging.exception("[feather_screen] unable to save print history")
