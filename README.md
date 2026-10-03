@@ -44,9 +44,10 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - GuidedZ-offset, bed, extruder, PID, and Input Shaper calibration
 - Originally developed **[Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)** specially for AD5M
 - **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen
+- **Last-known-good boot guard and Stock fallback**: updated runtime is accepted before the early boot guard is replaced, with Recovery/rollback paths for failed initialization ([details](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety))
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
-- Patched **video streamer** with dramatically reduced memory usage
+- Dedicated low-memory **[ForgeXstream](/docs/CAMERA.md)** camera service with bounded buffering, device autodetection, automatic camera reconnect, live V4L2 image controls, and source-level regression tests
 - **Timelapse** support via [Moonraker Telegram bot](https://github.com/nlef/moonraker-telegram-bot) installed on external host
 - Adaptive bed meshing with **KAMP** with Smart Parking.
 - Built-in **MD5** checks for gcode files.
