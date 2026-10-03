@@ -42,7 +42,7 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - Adapted **Guppy** screen
 - Local and USB G-code browsing and print control from Feather
 - GuidedZ-offset, bed, extruder, PID, and Input Shaper calibration
-- Originally developed **Power Loss Recovery** specially for AD5M
+- Originally developed **[Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)** specially for AD5M
 - **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen
 - **Root** access (with zsh/.oh-my-zsh)
 - **Buzzer** with ability to play monotonic melodies (midi / notes)
@@ -86,7 +86,7 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 15. **Optional**: Enable [Feather/Guppy Screen](/docs/SCREEN.md#switching-to-feather-screen).
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
 17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
-18. **Optional**: Enable [Power Loss Recovery](/docs/PRINTING.md#power-loss-recovery-resurrection).
+18. **Optional**: Review and enable [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md).
 
 ## Get Started
 
@@ -148,7 +148,8 @@ The existing Klipper implementation for the AD5M is outdated and plagued with bu
 - [Telegram Bot and Timelapse](/docs/TELEGRAM.md)
 - [Dual boot](/docs/DUAL_BOOT.md)
 - [Uninstall](/docs/UNINSTALL.md)
-- [Recovery guide](/docs/RECOVERY.md)
+- [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)
+- [Firmware Recovery guide](/docs/RECOVERY.md)
 
 ### Engineering documentation
 

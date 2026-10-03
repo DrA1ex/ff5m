@@ -81,6 +81,8 @@ The extension drives the printer PWM audio output while yielding through Klipper
 
 ## `resurrection`: optional power-loss recovery
 
+Dedicated operator guidance, limitations, UPS advice, and the controlled-pause workflow are documented in [`docs/POWER_LOSS_RECOVERY.md`](../../docs/POWER_LOSS_RECOVERY.md).
+
 [`resurrection.py`](../../.py/klipper/plugins/resurrection.py) is configured only through `headless.cfg`, which is also included by Feather. It stores recovery state in `/opt/config/mod_data/resurrection.json`. It remains inactive unless:
 
 ```gcode
@@ -94,7 +96,7 @@ RESURRECT
 RESURRECT_ABORT
 ```
 
-`RESURRECT` validates the file and saved state, loads the saved mesh and virtual-SD position, restores selected motion/fan/pressure-advance state found in the G-code, homes, tares the load cell, returns to position, and resumes. `RESURRECT_ABORT` performs cleanup instead. This procedure can move a hot printer and is explicitly emergency recovery rather than a substitute for stable power. Follow the warnings and monitoring procedure in [`docs/PRINTING.md`](../../docs/PRINTING.md#power-loss-recovery); a UPS remains the reliable solution.
+`RESURRECT` validates the file and saved state, loads the saved mesh and virtual-SD position, restores selected motion/fan/pressure-advance state found in the G-code, homes, tares the load cell, returns to position, and resumes. `RESURRECT_ABORT` performs cleanup instead. This procedure can move a hot printer and is explicitly emergency recovery rather than a substitute for stable power. Follow the warnings and monitoring procedure in [`docs/POWER_LOSS_RECOVERY.md`](../../docs/POWER_LOSS_RECOVERY.md); a UPS remains the reliable solution.
 
 Pause-safe checkpoints do not require a patched `virtual_sdcard`. The shared
 `PAUSE` macro calls the private `_RESURRECTION_PAUSE` marker immediately before

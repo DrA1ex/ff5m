@@ -250,7 +250,7 @@ KlipperScreen can be used with Forge-X by moving configs/binaries from Klipper M
 ### What is the Feather screen, and how does it help?
 Feather is Forge-X's lightweight interactive touchscreen. It uses much less memory than the Stock screen while still covering the main local workflows needed for normal printing.
 
-From Feather you can browse and print local or USB files, control an active print, move and home the printer, manage temperatures and cooling, change filament, run supported calibrations, configure normal Wi-Fi or Ethernet, adjust lighting and sound, and change Forge-X settings. It also presents Forge-X power-loss recovery when a valid recovery state is available.
+From Feather you can browse and print local or USB files, control an active print, move and home the printer, manage temperatures and cooling, change filament, run supported calibrations, configure normal Wi-Fi or Ethernet, adjust lighting and sound, and change Forge-X settings. It also presents Forge-X power-loss recovery when a valid recovery state is available. See the [Power Loss Recovery guide](POWER_LOSS_RECOVERY.md) for limitations and safe use.
 
 Fluidd or Mainsail is still required for unrestricted G-code, file deletion, advanced networking, and detailed diagnostics. See the [Screen Configuration guide](SCREEN.md#feather-screen) for the current feature list and switching instructions.
 

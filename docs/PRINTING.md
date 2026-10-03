@@ -123,67 +123,19 @@ If the check cancels a print although nothing touches the bed, the load cell pro
 
 ## Power Loss Recovery (Resurrection)
 
-Forge-X can periodically save print state and attempt to resume after an unexpected power loss, reboot, system crash, or MCU shutdown.
+Forge-X can save print state and attempt to resume a non-Stock print after an unexpected power loss, reboot, system crash, or MCU shutdown.
 
-### Important Limitations and Considerations:
+Because Klipper queues motion ahead of physical execution, and because the bed/model can cool or move during an outage, recovery is **not guaranteed to be seamless or exact**. Treat it as a way to salvage a long print rather than as a substitute for stable power.
 
-Treat recovery as a last-resort salvage feature, not as reliable protection:
+For setup, the controlled PAUSE-before-power-off workflow, UPS guidance, saved-state details, validation checks, heating order, and recovery limitations, see the dedicated **[Power Loss Recovery guide](POWER_LOSS_RECOVERY.md)**.
 
-- exact position restoration, especially Z, is not guaranteed;
-- the part may have detached or shifted;
-- the bed may have cooled enough to lose adhesion;
-- the resumed layer may have visible artifacts or weak bonding;
-- the nozzle may have cooled with solidified material inside it.
-
-> [!WARNING]
-> Stable power or a UPS is safer than recovery. Inspect the part, bed, nozzle, and printer position before accepting a recovery prompt, and watch the first resumed movements closely.
-
-### How to Enable:
+Quick enable:
 
 ```gcode
 SET_MOD PARAM=power_loss_recovery VALUE=1
 ```
 
-Optional `user.cfg` configuration:
-
-```ini
-[resurrection]
-dump_time: 3.0
-```
-
-### Configuration Parameters:
-
-- `power_loss_recovery` — enables the feature; default `0`.
-- `dump_time` — interval between state saves; default `3.0` seconds.
-
-### Available G-code Commands:
-
-- `RESURRECT` — manually starts recovery from saved state.
-- `RESURRECT_ABORT` — cancels pending recovery and removes the saved state.
-
-### How it works:
-
-During printing, Forge-X stores the current file position and important runtime state. After a restart, it detects the saved state and offers to resume or discard it. The recovery procedure restores temperatures and relevant settings, approaches the saved position, and continues from the stored file location.
-
-### Recovery Process:
-
-1. Forge-X detects a valid saved state during startup.
-2. Feather, Guppy, or Fluidd/Mainsail presents a recovery choice where supported.
-3. The user verifies the physical print and accepts or rejects recovery.
-4. Forge-X restores temperatures and runtime state.
-5. The printer moves back to the saved area and resumes the file.
-
-The Stock screen uses its own power-loss recovery system; Forge-X Resurrection is for Feather, Guppy, and Headless workflows.
-
-### State Information Saved:
-
-The saved state includes information such as:
-
-- XYZ position and feed rates;
-- hotend and bed temperatures;
-- fans, pressure advance, and speed limits;
-- active bed mesh and Z offset;
-- G-code file position and progress.
+The Stock screen uses the FlashForge recovery implementation; Forge-X Resurrection is used by Feather, Guppy, and Headless workflows.
 
 ## Bed Mesh Validation
 

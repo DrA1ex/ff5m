@@ -1,5 +1,8 @@
 # Firmware Recovery Guide
 
+> [!NOTE]
+> This page is about recovering the **printer/firmware** itself. To resume an interrupted print after power loss or a crash, see the [Power Loss Recovery guide](POWER_LOSS_RECOVERY.md).
+
 ## Forge-X Recovery Menu
 
 Early Forge-X Recovery groups the available operations by purpose:
