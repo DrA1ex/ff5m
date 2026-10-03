@@ -8,11 +8,11 @@ import errno
 import json
 import logging
 import os
-import queue
 import signal
 import socket
 import subprocess
 import threading
+import time
 
 
 DEFAULT_HISTORY_PATH = "/opt/config/mod_data/feather_print_history.json"
@@ -25,6 +25,8 @@ USB_RETRY_MAX = 30.0
 USB_HELPER_TIMEOUT = 15.0
 USB_EVENT_SETTLE = 0.4
 USB_EVENT_BUFFER = 16384
+USB_EVENT_POLL = 0.2
+USB_HELPER_STOP_TIMEOUT = 1.0
 NETLINK_KOBJECT_UEVENT = 15
 AF_NETLINK = getattr(socket, "AF_NETLINK", 16)
 
@@ -34,19 +36,23 @@ class FileTaskSuperseded(RuntimeError):
 
 
 class FileWorker:
-    """Run file I/O and preview work away from Klipper's reactor thread.
+    """Share one background thread for file tasks and resource lifecycles.
 
     Only the newest queued request is retained. A displaced queued request is
     completed with FileTaskSuperseded. A task already in progress is allowed
     to finish, but its controller token can discard the stale result.
-    """
 
-    _STOP = object()
+    Services are not queued tasks: poll(now) returns their next deadline (or
+    None), and close() always runs on worker shutdown. Service I/O never holds
+    the caller's lock. A running file task finishes before services run again.
+    """
 
     def __init__(self, schedule_async):
         self._schedule_async = schedule_async
-        self._tasks = queue.Queue(maxsize=1)
+        self._pending = None
+        self._services = []
         self._lock = threading.Lock()
+        self._wake = threading.Event()
         self._stopped = False
         self._thread = threading.Thread(
             target=self._work, name="feather-file-worker")
@@ -54,44 +60,76 @@ class FileWorker:
         self._thread.start()
 
     def submit(self, task, callback):
-        request = (task, callback)
-        superseded = None
         with self._lock:
             if self._stopped:
                 return False
-            while True:
-                try:
-                    self._tasks.put_nowait(request)
-                    break
-                except queue.Full:
-                    try:
-                        superseded = self._tasks.get_nowait()
-                    except queue.Empty:
-                        pass
-        if superseded is not None and superseded is not self._STOP:
+            superseded = self._pending
+            self._pending = (task, callback)
+            self._wake.set()
+        if superseded is not None:
             _, dropped_callback = superseded
             self._deliver(
                 dropped_callback, None,
                 FileTaskSuperseded("Replaced by a newer worker task"))
         return True
 
+    def add_service(self, service):
+        with self._lock:
+            if self._stopped:
+                return False
+            self._services.append(service)
+            self._wake.set()
+        return True
+
+    def wake(self):
+        self._wake.set()
+
     def stop(self):
         with self._lock:
             if self._stopped:
                 return
             self._stopped = True
-            while True:
-                try:
-                    self._tasks.get_nowait()
-                except queue.Empty:
-                    break
-            self._tasks.put_nowait(self._STOP)
+            self._pending = None
+            self._wake.set()
 
     def _work(self):
         while True:
-            request = self._tasks.get()
-            if request is self._STOP:
+            with self._lock:
+                self._wake.clear()
+                stopped = self._stopped
+                services = tuple(self._services)
+            if stopped:
+                for service in services:
+                    try:
+                        service.close()
+                    except Exception:
+                        logging.exception(
+                            "[feather_screen] background service cleanup failed")
                 return
+
+            deadline = None
+            for service in services:
+                try:
+                    next_poll = service.poll(time.monotonic())
+                except Exception:
+                    logging.exception(
+                        "[feather_screen] background service poll failed")
+                    next_poll = time.monotonic() + 1.0
+                if next_poll is not None:
+                    deadline = (next_poll if deadline is None
+                                else min(deadline, next_poll))
+
+            with self._lock:
+                if self._stopped:
+                    continue
+                request = self._pending
+                self._pending = None
+            if request is None:
+                timeout = (None if deadline is None
+                           else max(0.0, deadline - time.monotonic()))
+                self._wake.wait(timeout)
+                continue
+
             task, callback = request
             result = None
             error = None
@@ -108,6 +146,9 @@ class FileWorker:
 
     def _deliver(self, callback, result, error):
         def deliver(_eventtime, value=result, failure=error, done=callback):
+            with self._lock:
+                if self._stopped:
+                    return
             done(value, failure)
 
         try:
@@ -276,30 +317,42 @@ def scan_gcode_files(root, history=None, max_depth=MAX_DIRECTORY_DEPTH,
 
 
 class UsbStorageMonitor:
-    """Event-driven USB mount lifecycle for the Feather file browser."""
+    """USB lifecycle serviced by FileWorker, with reactor-visible snapshots.
+
+    The reactor only requests a mode and consumes completed state. The worker
+    alone owns sockets, helpers and retries; pause retains the mounted drive.
+    """
 
     __slots__ = (
-        "mount_point", "helper_path", "reactor",
+        "mount_point", "helper_path", "_worker", "_state_lock",
+        "_requested_active", "_stop_requested", "_mode_revision",
+        "_applied_revision", "_process_revision", "_snapshot",
+        "_visible_snapshot", "_changed",
         "_popen", "_is_mount", "_socket_factory", "event_socket",
-        "event_handle", "available", "device", "process",
+        "process",
         "process_started", "next_attempt", "next_socket_attempt", "dirty",
         "active", "failures", "stopped")
 
-    def __init__(self, virtual_sd_root, reactor,
+    def __init__(self, virtual_sd_root, worker,
                  helper_path=USB_HELPER_PATH, popen=None, is_mount=None,
                  socket_factory=None):
         self.mount_point = os.path.join(
             os.path.realpath(virtual_sd_root), USB_MOUNT_NAME)
         self.helper_path = helper_path
-        self.reactor = reactor
+        self._worker = worker
+        self._state_lock = threading.Lock()
+        self._requested_active = False
+        self._stop_requested = False
+        self._mode_revision = 0
+        self._applied_revision = 0
+        self._process_revision = 0
+        self._snapshot = self._visible_snapshot = (False, None)
+        self._changed = False
         self._popen = popen or subprocess.Popen
         self._is_mount = is_mount or os.path.ismount
         self._socket_factory = socket_factory or socket.socket
 
         self.event_socket = None
-        self.event_handle = None
-        self.available = False
-        self.device = None
         self.process = None
         self.process_started = 0.0
         self.next_attempt = 0.0
@@ -308,6 +361,16 @@ class UsbStorageMonitor:
         self.active = False
         self.failures = 0
         self.stopped = False
+        if not worker.add_service(self):
+            raise RuntimeError("USB monitor requires a running file worker")
+
+    @property
+    def available(self):
+        return not self._stop_requested and self._visible_snapshot[0]
+
+    @property
+    def device(self):
+        return None if self._stop_requested else self._visible_snapshot[1]
 
     def _open_events(self, eventtime):
         if self.event_socket is not None or self.stopped or not self.active:
@@ -321,8 +384,6 @@ class UsbStorageMonitor:
                 socket.SOL_SOCKET, socket.SO_RCVBUF, USB_EVENT_BUFFER)
             event_socket.bind((0, 1))
             event_socket.setblocking(False)
-            event_handle = self.reactor.register_fd(
-                event_socket.fileno(), self._handle_events)
         except (OSError, ValueError):
             logging.exception(
                 "[feather_screen] unable to subscribe to USB events")
@@ -334,16 +395,9 @@ class UsbStorageMonitor:
             self.next_socket_attempt = eventtime + USB_RETRY_MAX
             return
         self.event_socket = event_socket
-        self.event_handle = event_handle
         self.next_socket_attempt = eventtime
 
     def _close_events(self):
-        if self.event_handle is not None:
-            try:
-                self.reactor.unregister_fd(self.event_handle)
-            except (OSError, ValueError):
-                pass
-            self.event_handle = None
         if self.event_socket is not None:
             try:
                 self.event_socket.close()
@@ -396,6 +450,10 @@ class UsbStorageMonitor:
         if (self.process is not None or self.stopped or not self.active
                 or not self.dirty):
             return
+        with self._state_lock:
+            if not self._requested_active or self._stop_requested:
+                return
+            self._process_revision = self._mode_revision
         try:
             self.process = self._popen(
                 [self.helper_path, "attach", self.mount_point],
@@ -409,14 +467,11 @@ class UsbStorageMonitor:
         self.dirty = False
         self.process_started = eventtime
 
-    @staticmethod
-    def _terminate(process):
+    @classmethod
+    def _terminate(cls, process):
         if process is None or process.poll() is not None:
             return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except OSError:
-            pass
+        cls._kill_group(process, signal.SIGTERM)
 
     def _finish(self, eventtime):
         if self.process is None or self.process.poll() is None:
@@ -424,26 +479,36 @@ class UsbStorageMonitor:
         process = self.process
         self.process = None
         self.process_started = 0.0
-        output = process.communicate()[0].decode("utf-8", errors="replace")
+        output = self._collect_process(process)
+        if output is None:
+            self.dirty = True
+            self.next_attempt = eventtime + USB_RETRY_MAX
+            return False
+        output = output.decode("utf-8", errors="replace")
+        with self._state_lock:
+            if (self._stop_requested or not self._requested_active
+                    or self._process_revision != self._mode_revision):
+                return False
+            previous = self._snapshot
         lines = [line.strip() for line in output.splitlines() if line.strip()]
         attached = next(
             (line for line in lines if line.startswith("ATTACHED ")), None)
         mounted = self._is_mount(self.mount_point)
-        was_available = self.available
-        previous_device = self.device
-        self.available = bool(
+        was_available, previous_device = previous
+        available = bool(
             process.returncode == 0 and attached and mounted)
-        if self.available:
+        if available:
             fields = attached.split()
-            self.device = fields[1] if len(fields) > 1 else None
+            device = fields[1] if len(fields) > 1 else None
             self.failures = 0
-            self.next_attempt = eventtime
-            if not was_available or self.device != previous_device:
+            if not self.dirty:
+                self.next_attempt = eventtime
+            if not was_available or device != previous_device:
                 logging.info(
                     "[feather_screen] USB files available from %s",
-                    self.device or "unknown device")
+                    device or "unknown device")
         else:
-            self.device = None
+            device = None
             busy = "BUSY" in lines
             retry = busy or any(line.startswith("ERROR ") for line in lines)
             if retry:
@@ -454,58 +519,132 @@ class UsbStorageMonitor:
                         USB_RETRY_MAX, 2.0 ** min(self.failures, 5)))
             else:
                 self.failures = 0
-                self.next_attempt = eventtime
+                if not self.dirty:
+                    self.next_attempt = eventtime
             if not busy and lines and "NONE" not in lines:
                 logging.info(
                     "[feather_screen] USB reconciliation deferred: %s",
                     lines[-1])
-        return was_available != self.available
+        with self._state_lock:
+            if (self._stop_requested or not self._requested_active
+                    or self._process_revision != self._mode_revision):
+                return False
+            current = (available, device)
+            self._snapshot = current
+            self._changed = self._changed or current != previous
+        return current != previous
 
     def resume(self, eventtime):
-        if self.stopped:
-            return
-        if not self.active:
-            self.active = True
-            self.dirty = True
-            self.next_attempt = eventtime
-        if self.event_socket is None and eventtime >= self.next_socket_attempt:
-            self._open_events(eventtime)
+        self._request_mode(True)
 
     def pause(self):
-        if not self.active:
-            return
-        self.active = False
-        self.dirty = True
-        self._close_events()
-        self._terminate(self.process)
+        self._request_mode(False)
+
+    def _request_mode(self, active):
+        with self._state_lock:
+            if self._stop_requested or self._requested_active == active:
+                return
+            self._requested_active = active
+            self._mode_revision += 1
+        self._worker.wake()
 
     def tick(self, eventtime):
-        if self.stopped or not self.active:
-            return False
-        changed = self._finish(eventtime)
+        with self._state_lock:
+            if self._stop_requested or not self._requested_active:
+                return False
+            self._visible_snapshot = self._snapshot
+            changed = self._changed
+            self._changed = False
+        return changed
+
+    def poll(self, eventtime):
+        """Called only by the shared worker, including socket event draining."""
+        with self._state_lock:
+            stop = self._stop_requested
+            active = self._requested_active
+            revision = self._mode_revision
+        if stop:
+            self.close()
+            return None
+        if revision != self._applied_revision:
+            self.active = False
+            self._close_events()
+            self._cancel_process()
+            self._applied_revision = revision
+            self.active = active
+            self.dirty = True
+            self.next_attempt = eventtime
+        if not self.active or self.stopped:
+            return None
+
+        if self.event_socket is None and eventtime >= self.next_socket_attempt:
+            self._open_events(eventtime)
+        self._handle_events(eventtime)
+        self._finish(eventtime)
         if self.process is not None:
             if eventtime - self.process_started >= USB_HELPER_TIMEOUT:
                 logging.error(
                     "[feather_screen] USB reconciliation timed out")
-                self._terminate(self.process)
-                self.process_started = eventtime
-            return changed
-        if self.event_socket is None and eventtime >= self.next_socket_attempt:
-            self._open_events(eventtime)
+                self._cancel_process()
+                self.dirty = True
+                self.next_attempt = eventtime + USB_RETRY_MAX
+            return eventtime + USB_EVENT_POLL
         if self.dirty and eventtime >= self.next_attempt:
             self._start(eventtime)
-        return changed
+        return eventtime + USB_EVENT_POLL
 
     def stop(self):
+        with self._state_lock:
+            if self._stop_requested:
+                return
+            self._stop_requested = True
+            self._requested_active = False
+            self._visible_snapshot = (False, None)
+        self._worker.wake()
+
+    @staticmethod
+    def _kill_group(process, signum):
+        try:
+            os.killpg(process.pid, signum)
+        except OSError:
+            pass
+
+    def _cancel_process(self):
+        process = self.process
+        if process is None:
+            return
+        self.process = None
+        self.process_started = 0.0
+        self._terminate(process)
+        self._collect_process(process)
+
+    @classmethod
+    def _collect_process(cls, process):
+        # SIGKILL also covers descendants retaining a completed child's pipe.
+        try:
+            return process.communicate(timeout=USB_HELPER_STOP_TIMEOUT)[0]
+        except subprocess.TimeoutExpired:
+            cls._kill_group(process, signal.SIGKILL)
+        try:
+            return process.communicate(timeout=USB_HELPER_STOP_TIMEOUT)[0]
+        except subprocess.TimeoutExpired:
+            logging.error("[feather_screen] USB helper did not exit after SIGKILL")
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+            return None
+
+    def close(self):
+        """Canonical resource cleanup, called only on the worker thread."""
         if self.stopped:
             return
+        with self._state_lock:
+            self._stop_requested = True
+            self._requested_active = False
         self.stopped = True
         self.active = False
         self._close_events()
-        self._terminate(self.process)
-        self.process = None
-        self.available = False
-        self.device = None
+        self._cancel_process()
         try:
             self._popen(
                 [self.helper_path, "detach", self.mount_point],

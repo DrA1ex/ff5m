@@ -588,7 +588,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.print_stats = self.printer.lookup_object("print_stats")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
         self.usb_storage = UsbStorageMonitor(
-            self.virtual_sdcard.sdcard_dirname, self.reactor)
+            self.virtual_sdcard.sdcard_dirname, self.file_worker)
         self.gcode_move = self.printer.lookup_object("gcode_move")
         self.temperature_wait = self.printer.lookup_object(
             "gcode_macro _WAIT_TEMPERATURE", None)

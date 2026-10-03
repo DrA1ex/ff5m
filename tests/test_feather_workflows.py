@@ -85,7 +85,7 @@ class UsbProcess:
     def poll(self):
         return self.returncode
 
-    def communicate(self):
+    def communicate(self, timeout=None):
         return (self.output, None)
 
 
@@ -119,18 +119,23 @@ class UsbEventSocket:
         self.closed = True
 
 
-class UsbReactor:
+class ServiceWorker:
+    """Drive the shared service contract deterministically without a thread."""
+
     def __init__(self):
-        self.registered = []
-        self.unregistered = []
+        self.services = []
+        self.wakes = 0
 
-    def register_fd(self, fd, callback):
-        handle = (fd, callback)
-        self.registered.append(handle)
-        return handle
+    def add_service(self, service):
+        self.services.append(service)
+        return True
 
-    def unregister_fd(self, handle):
-        self.unregistered.append(handle)
+    def wake(self):
+        self.wakes += 1
+
+    def poll(self, eventtime):
+        for service in self.services:
+            service.poll(eventtime)
 
 
 class OperationContextStub(StatusObject):
@@ -1858,7 +1863,7 @@ class UsbStorageMonitorTest(unittest.TestCase):
 
     def _monitor(self, processes, mounted):
         calls = []
-        reactor = UsbReactor()
+        worker = ServiceWorker()
         event_socket = UsbEventSocket()
 
         def popen(command, **kwargs):
@@ -1866,10 +1871,15 @@ class UsbStorageMonitorTest(unittest.TestCase):
             return processes.pop(0)
 
         monitor = FEATHER.UsbStorageMonitor(
-            "/data", reactor, popen=popen,
+            "/data", worker, popen=popen,
             is_mount=lambda path: mounted[0],
             socket_factory=lambda *args: event_socket)
-        return monitor, calls, reactor, event_socket
+        return monitor, calls, worker, event_socket
+
+    @staticmethod
+    def _tick(monitor, eventtime):
+        monitor._worker.poll(eventtime)
+        return monitor.tick(eventtime)
 
     def test_initial_reconcile_remove_and_reinsert_are_nonblocking(self):
         mounted = [False]
@@ -1878,30 +1888,30 @@ class UsbStorageMonitorTest(unittest.TestCase):
             UsbProcess("NONE\n", returncode=2),
             UsbProcess("ATTACHED /dev/sdb1 ext4\n"),
         ]
-        monitor, calls, _reactor, events = self._monitor(processes, mounted)
+        monitor, calls, _worker, events = self._monitor(processes, mounted)
 
         monitor.resume(0.0)
-        self.assertFalse(monitor.tick(0.0))
+        self.assertFalse(self._tick(monitor, 0.0))
         self.assertEqual(calls[-1][1], "attach")
         mounted[0] = True
-        self.assertTrue(monitor.tick(1.0))
+        self.assertTrue(self._tick(monitor, 1.0))
         self.assertTrue(monitor.available)
         self.assertEqual(monitor.device, "/dev/sda1")
 
         events.messages.append(self._event("remove"))
-        monitor._handle_events(2.0)
+        monitor._worker.poll(2.0)
         mounted[0] = False
-        monitor.tick(3.0)
+        self._tick(monitor, 3.0)
         self.assertEqual(calls[-1][1], "attach")
-        self.assertTrue(monitor.tick(4.0))
+        self.assertTrue(self._tick(monitor, 4.0))
         self.assertFalse(monitor.available)
 
         events.messages.append(self._event("add"))
-        monitor._handle_events(5.0)
-        monitor.tick(6.0)
+        monitor._worker.poll(5.0)
+        self._tick(monitor, 6.0)
         self.assertEqual(calls[-1][1], "attach")
         mounted[0] = True
-        self.assertTrue(monitor.tick(7.0))
+        self.assertTrue(self._tick(monitor, 7.0))
         self.assertTrue(monitor.available)
         self.assertEqual(monitor.device, "/dev/sdb1")
 
@@ -1909,80 +1919,79 @@ class UsbStorageMonitorTest(unittest.TestCase):
         mounted = [False]
         processes = [UsbProcess("BUSY\n", returncode=3),
                      UsbProcess("ATTACHED /dev/sda1 vfat\n")]
-        monitor, calls, _reactor, _events = self._monitor(processes, mounted)
+        monitor, calls, _worker, _events = self._monitor(processes, mounted)
 
         monitor.resume(0.0)
-        monitor.tick(0.0)
-        monitor.tick(1.0)
+        self._tick(monitor, 0.0)
+        self._tick(monitor, 1.0)
         self.assertFalse(monitor.available)
         self.assertEqual(len(calls), 1)
-        monitor.tick(2.0)
+        self._tick(monitor, 2.0)
         self.assertEqual(len(calls), 2)
         mounted[0] = True
-        self.assertTrue(monitor.tick(3.0))
+        self.assertTrue(self._tick(monitor, 3.0))
 
     def test_irrelevant_events_do_not_start_reconciliation(self):
         mounted = [False]
-        monitor, calls, _reactor, events = self._monitor(
+        monitor, calls, _worker, events = self._monitor(
             [UsbProcess("NONE\n", returncode=2)], mounted)
         monitor.resume(0.0)
-        monitor.tick(0.0)
-        monitor.tick(1.0)
+        self._tick(monitor, 0.0)
+        self._tick(monitor, 1.0)
         self.assertEqual(len(calls), 1)
 
         events.messages.extend([
             self._event("change", usb=False),
             self._event("add", subsystem="net"),
         ])
-        monitor._handle_events(2.0)
-        monitor.tick(3.0)
+        monitor._worker.poll(2.0)
+        self._tick(monitor, 3.0)
 
         self.assertEqual(len(calls), 1)
 
     def test_event_overflow_keeps_subscription_and_reconciles_state(self):
         mounted = [False]
-        monitor, calls, reactor, events = self._monitor(
+        monitor, calls, worker, events = self._monitor(
             [UsbProcess("NONE\n", returncode=2),
              UsbProcess("NONE\n", returncode=2)], mounted)
         monitor.resume(0.0)
-        monitor.tick(0.0)
-        monitor.tick(1.0)
+        self._tick(monitor, 0.0)
+        self._tick(monitor, 1.0)
         self.assertEqual(len(calls), 1)
 
         events.messages.append(OSError(errno.ENOBUFS, "queue overflowed"))
         with self.assertLogs(level="WARNING") as logs:
-            monitor._handle_events(2.0)
+            monitor._worker.poll(2.0)
 
         self.assertIn("reconciling current state", logs.output[-1])
         self.assertIs(monitor.event_socket, events)
         self.assertFalse(events.closed)
-        self.assertEqual(reactor.unregistered, [])
 
-        monitor.tick(2.0)
+        self._tick(monitor, 2.0)
         self.assertEqual(len(calls), 2)
 
     def test_pause_closes_events_and_resume_forces_reconciliation(self):
         mounted = [False]
-        monitor, calls, reactor, events = self._monitor(
+        monitor, calls, worker, events = self._monitor(
             [UsbProcess("NONE\n", returncode=2),
              UsbProcess("ATTACHED /dev/sda1 vfat\n")], mounted)
         monitor.resume(0.0)
-        monitor.tick(0.0)
-        monitor.tick(1.0)
+        self._tick(monitor, 0.0)
+        self._tick(monitor, 1.0)
 
         monitor.pause()
+        monitor._worker.poll(2.0)
         events.messages.append(self._event("add"))
         self.assertTrue(events.closed)
-        self.assertEqual(reactor.unregistered, reactor.registered)
-        self.assertFalse(monitor.tick(2.0))
+        self.assertFalse(self._tick(monitor, 2.0))
         self.assertEqual(len(calls), 1)
 
         replacement = UsbEventSocket()
         monitor._socket_factory = lambda *args: replacement
         monitor.resume(3.0)
-        monitor.tick(3.0)
+        self._tick(monitor, 3.0)
         mounted[0] = True
-        self.assertTrue(monitor.tick(4.0))
+        self.assertTrue(self._tick(monitor, 4.0))
         self.assertEqual(calls[-1][1], "attach")
         self.assertTrue(monitor.available)
 
@@ -2005,28 +2014,28 @@ class UsbStorageMonitorTest(unittest.TestCase):
 
     def test_pause_terminates_inflight_reconciliation(self):
         running = UsbProcess("", running=True)
-        monitor, _calls, reactor, events = self._monitor(
+        monitor, _calls, worker, events = self._monitor(
             [running], [False])
         monitor.resume(0.0)
-        monitor.tick(0.0)
+        self._tick(monitor, 0.0)
 
         with mock.patch("feather.files.os.killpg") as killpg:
             monitor.pause()
+            monitor._worker.poll(1.0)
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
         self.assertFalse(monitor.active)
         self.assertTrue(events.closed)
-        self.assertEqual(reactor.unregistered, reactor.registered)
 
     def test_stuck_helper_is_terminated_after_timeout(self):
         running = UsbProcess("", running=True)
-        monitor, _calls, _reactor, _events = self._monitor(
+        monitor, _calls, _worker, _events = self._monitor(
             [running], [False])
         monitor.resume(0.0)
-        monitor.tick(0.0)
+        self._tick(monitor, 0.0)
 
         with mock.patch("feather.files.os.killpg") as killpg:
-            monitor.tick(FILES.USB_HELPER_TIMEOUT)
+            self._tick(monitor, FILES.USB_HELPER_TIMEOUT)
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
         self.assertFalse(monitor.available)
@@ -2034,18 +2043,95 @@ class UsbStorageMonitorTest(unittest.TestCase):
     def test_stop_signals_active_helper_and_starts_detach(self):
         running = UsbProcess("", running=True)
         detached = UsbProcess("DETACHED\n")
-        monitor, calls, reactor, events = self._monitor([detached], [False])
+        monitor, calls, worker, events = self._monitor([running, detached], [False])
         monitor.resume(0.0)
-        monitor.process = running
+        monitor._worker.poll(0.0)
 
         with mock.patch("feather.files.os.killpg") as killpg:
             monitor.stop()
+            monitor._worker.poll(1.0)
 
         killpg.assert_called_once_with(running.pid, FEATHER.signal.SIGTERM)
         self.assertEqual(calls[-1][1], "detach")
         self.assertTrue(monitor.stopped)
         self.assertTrue(events.closed)
-        self.assertEqual(reactor.unregistered, reactor.registered)
+
+    def test_events_during_attach_keep_the_settle_delay(self):
+        running = UsbProcess("ATTACHED /dev/sda1 vfat\n", running=True)
+        monitor, calls, worker, events = self._monitor(
+            [running, UsbProcess("ATTACHED /dev/sda1 vfat\n")], [True])
+        monitor.resume(0.0)
+        worker.poll(0.0)
+        events.messages.append(self._event("change"))
+        worker.poll(1.0)
+        running.returncode = 0
+        worker.poll(1.1)
+        self.assertTrue(monitor.tick(1.1))
+        self.assertEqual(len(calls), 1)
+        worker.poll(1.39)
+        self.assertEqual(len(calls), 1)
+        worker.poll(1.4)
+        self.assertEqual(len(calls), 2)
+
+    def test_socket_error_retries_subscription_without_repeating_helpers(self):
+        monitor, calls, worker, events = self._monitor(
+            [UsbProcess("NONE\n", returncode=2),
+             UsbProcess("NONE\n", returncode=2)], [False])
+        monitor.resume(0.0)
+        worker.poll(0.0)
+        worker.poll(0.2)
+        events.messages.append(OSError(errno.EBADF, "closed socket"))
+        with self.assertLogs(level="ERROR"):
+            worker.poll(1.0)
+        self.assertTrue(events.closed)
+        self.assertEqual(len(calls), 2)
+        replacement = UsbEventSocket()
+        monitor._socket_factory = lambda *args: replacement
+        worker.poll(2.0)
+        worker.poll(30.9)
+        self.assertIsNone(replacement.bound)
+        worker.poll(31.0)
+        self.assertEqual(replacement.bound, (0, 1))
+        self.assertEqual(len(calls), 2)
+
+    def test_pause_reaps_helper_and_escalates_if_sigterm_is_ignored(self):
+        running = UsbProcess("", running=True)
+        running.communicate = mock.Mock(side_effect=[
+            FILES.subprocess.TimeoutExpired("USB attach", 1.0), (b"", None)])
+        monitor, calls, worker, events = self._monitor([running], [False])
+        monitor.resume(0.0)
+        worker.poll(0.0)
+        with mock.patch("feather.files.os.killpg") as killpg:
+            monitor.pause()
+            worker.poll(0.1)
+        self.assertEqual(killpg.call_args_list, [
+            mock.call(running.pid, FILES.signal.SIGTERM),
+            mock.call(running.pid, FILES.signal.SIGKILL)])
+        self.assertIsNone(monitor.process)
+        self.assertTrue(events.closed)
+        self.assertEqual([command[1] for command in calls], ["attach"])
+
+    def test_device_replaced_before_ui_tick_still_invalidates_the_browser(self):
+        monitor, calls, worker, events = self._monitor([
+            UsbProcess("ATTACHED /dev/sda1 vfat\n"),
+            UsbProcess("NONE\n", returncode=2),
+            UsbProcess("ATTACHED /dev/sda1 vfat\n"),
+        ], [True])
+        monitor.resume(0.0)
+        worker.poll(0.0)
+        worker.poll(0.2)
+        self.assertTrue(monitor.tick(0.2))
+        events.messages.append(self._event("remove"))
+        worker.poll(1.0)
+        worker.poll(1.4)
+        worker.poll(1.6)
+        events.messages.append(self._event("add"))
+        worker.poll(2.0)
+        worker.poll(2.4)
+        worker.poll(2.6)
+        self.assertTrue(monitor.tick(3.0))
+        self.assertTrue(monitor.available)
+        self.assertFalse(monitor.tick(4.0))
 
 
 class PrintWorkflowTest(unittest.TestCase):
