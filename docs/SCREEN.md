@@ -179,6 +179,8 @@ As a last resort, update the stored parameter:
 
 ### Extending Screen Functionality
 
+You can show your own dialogs on the Feather screen with Klipper `action:prompt_*` messages. See [Your own dialogs on the Feather screen](EXTENDING.md#your-own-dialogs-on-the-feather-screen).
+
 Feather uses the `typer` renderer at `/root/printer_data/bin/typer`. The renderer supports text, shapes, buffered batches, and touch regions; see the [Typer documentation](TYPER.md).
 
 Do not start a second Typer process while Feather is active. Concurrent framebuffer or pipe access can corrupt the UI. For a custom full-screen implementation, switch to `HEADLESS` and test it while the printer is idle.

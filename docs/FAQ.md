@@ -65,30 +65,30 @@ Forge-X keeps the Klipper host that FlashForge ships with the AD5M (0.11 generat
 Forge-X uploads G-code through Moonraker, so slicers that support a Moonraker/Klipper host work, such as OrcaSlicer. The start and end G-code, and the Moonraker host settings, are described in [Slicing](SLICING.md). KAMP requires object labels, with examples for OrcaSlicer and PrusaSlicer in [Printing](PRINTING.md#kamp).
 
 ### Why does Forge-X support only the AD5M?
-Forge-X is built around one printer family so that each decision can be based on its real hardware: 128 MiB of RAM, the FlashForge Klipper 0.11 base, two MCUs, the load-cell bed sensor, and the stock boot process. Memory use, recovery, and testing are designed and verified on the AD5M and AD5M Pro. Other printers would need their own port, design work, and hardware testing.
+Forge-X is built for one printer family, so each decision can be based on its real hardware: 128 MiB of RAM, the FlashForge Klipper 0.11 base, two MCUs, the load-cell bed sensor, and the stock boot process. Memory use, recovery, and testing are designed and verified on the AD5M and AD5M Pro. Other printers would need their own port, design work, and hardware testing.
 
 ### Why doesn't Forge-X use Klipper 0.13?
-This is a deliberate choice, not a missing feature. Forge-X keeps the Klipper host and MCU firmware that FlashForge ships with the printer and backports the newer fixes and features that matter for the AD5M:
+Forge-X keeps the Klipper host and MCU firmware that FlashForge ships with the printer and backports newer fixes and features into it. The reasons:
 
-- the MCU firmware is not reflashed, so there is no host/MCU version mismatch to manage and the stock firmware keeps working next to Forge-X;
+- the MCU firmware is not reflashed, so there is no host/MCU version mismatch to manage and the stock firmware keeps working;
 - uninstall and recovery stay simple, because every replaced Klipper file has a `.bak` original;
-- the printer's 128 MiB of RAM leaves little room for a larger Klipper host and the services around it;
-- each backport is reviewed and covered by tests before release.
+- the printer has only 128 MiB of RAM, so a larger Klipper host and its services leave less room for printing;
+- each backport is reviewed and covered by tests before a release.
 
 Backported items include the `Timer too close` starvation fix, multi-MCU homing fixes, Adaptive Pressure Advance (so recent OrcaSlicer adaptive PA profiles can be used), and fixes for buttons, heaters, servos, and input shaper calibration. The full list, with upstream commit links, is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
 
 ### Can I add my own macros, plugins, or software?
-Yes. Forge-X is open source and designed to be customized without editing the mod itself:
+Yes. You can customize Forge-X without editing the mod's own files:
 
-- **Klipper:** add your own macros, sections, and overrides in `mod_data/user.cfg`, including overrides of the mod's own settings (see [User-Defined Parameters](CONFIGURATION.md#user-defined-parameters)).
-- **Moonraker:** add your own Moonraker configuration, such as authorization or notifiers, in `mod_data/user.moonraker.conf`.
-- **External programs:** run your own scripts and programs from G-code with `RUN_SHELL_COMMAND`. The shell-command module supports background, queued, and long-running processes.
-- **Linux software:** install additional packages with the Entware package manager.
-- **Your own services:** put an init script named `S<number><name>` into `/etc/init.d` inside the Forge-X environment (chroot). Forge-X runs each `S*` script with `start` after the core services at every boot, and runs `stop` in reverse order when the runtime stops. The scripts live in the Forge-X environment, so back them up before uninstalling.
-- **Display:** use `HEADLESS` mode with your own display process, draw with [Typer](TYPER.md), or use a third-party screen such as HelixScreen. KlipperScreen and Obico can also run, but check memory use with the `MEM` macro first.
-- **Forge-X itself:** the source is open, and adding a Klipper extension is described in [Forge-X Klipper extensions](../openwiki/workflows/klipper-extensions.md) and the [Contributing](../CONTRIBUTING.md) guide.
+- **Klipper:** add your own macros and sections, or override Forge-X macros and settings, in `mod_data/user.cfg`.
+- **Feather dialogs:** show your own dialogs on the Feather screen with standard Klipper `action:prompt_*` messages.
+- **Programs:** run your own scripts from G-code with `RUN_SHELL_COMMAND`.
+- **Services:** put a start/stop script named `S<number><name>` into `/etc/init.d` of the Forge-X environment, and Forge-X starts it at boot.
+- **Moonraker:** add your own configuration to `mod_data/user.moonraker.conf`.
+- **Linux software:** install packages with Entware.
+- **Display:** use `HEADLESS` mode with your own display process, draw with [Typer](TYPER.md), or use a third-party screen such as HelixScreen.
 
-Keep the printer's 128 MiB of RAM in mind: every added service uses memory that Klipper and Moonraker also need.
+Details and examples are in [Customizing and extending Forge-X](EXTENDING.md). Every added service uses some of the printer's 128 MiB of RAM, so check the result with the `MEM` macro.
 
 ### How are Forge-X updates delivered?
 Forge-X releases contain changes to Forge-X itself: fixes, features, and reviewed Klipper patches. Updates are installed from **Configuration → Software Update** (Moonraker Update Manager):

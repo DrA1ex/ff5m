@@ -151,7 +151,7 @@ To preserve all your custom parameters and configurations within the mod, you ca
 
 ## User-Defined Parameters
 
-The mod allows you to customize and extend functionality by defining your own macros or overriding existing printer parameters. These settings override any printer configuration, including `tuning.cfg`. Additionally, you can adjust Moonraker-specific parameters.
+The mod allows you to customize and extend functionality by defining your own macros or overriding existing printer parameters. See also [Customizing and extending Forge-X](EXTENDING.md) for more examples, including Feather dialogs and startup services. These settings override any printer configuration, including `tuning.cfg`. Additionally, you can adjust Moonraker-specific parameters.
 
 > [!NOTE]
 > Changes to `user.cfg` and `user.moonraker.conf` are applied after a restart or configuration reload.

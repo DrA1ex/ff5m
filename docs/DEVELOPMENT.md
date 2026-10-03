@@ -22,6 +22,8 @@ For the implementation details, commands, artifact formats, telemetry, and
 individual printer suites, see the
 [Testing and change guide](/openwiki/testing-and-change-guide.md).
 
+For user-level customization (`user.cfg` overrides, own macros, dialogs, services), see [Customizing and extending Forge-X](EXTENDING.md).
+
 ## Stock firmware integration and lifecycle safety
 
 Forge-X is integrated into the FlashForge firmware as a reversible layer rather
