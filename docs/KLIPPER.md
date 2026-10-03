@@ -1,5 +1,31 @@
 # Klipper fixes and AD5M-specific hardening
 
+Forge-X keeps the Klipper that FlashForge ships with the AD5M (0.11 generation) and adds fixes from newer upstream Klipper. The MCU firmware is not changed, and uninstalling restores the original files.
+
+**What you get:**
+
+- A fix for `Timer too close` shutdowns caused by very dense G-code (Forge-X 1.4.2 and newer).
+- Fixes for homing and probing with the printer's two MCUs.
+- Optional tuning for the E0011 (communication timeout) and E0017 (move queue overflow) errors.
+- Correct G-code file positions for files with non-ASCII characters, such as non-English object names.
+- Dynamic pressure advance, a faster input shaper calculation, and extra diagnostic logs for homing and probing.
+
+**What you need to do:** nothing for most fixes, they are applied automatically. To enable the timing tuning for E0011 / E0017, run:
+
+```gcode
+SET_MOD PARAM=tune_klipper VALUE=1
+```
+
+**Details:**
+[Why Klipper is not replaced with 0.13](#design-approach) ·
+[`Timer too close`](#the-timer-too-close-problem) ·
+[Backported upstream fixes](#upstream-klipper-fixes-backported-by-forge-x) ·
+[AD5M-specific changes](#ad5m-specific-klipper-fixes-and-adaptations) ·
+[List of replaced files](#complete-replacement-inventory) ·
+[How patches are applied and recovered](#how-patches-are-applied-and-recovered)
+
+## Design approach
+
 Forge-X deliberately keeps the FlashForge host Klipper shipped with the Adventurer 5M / 5M Pro and backports selected fixes from newer upstream Klipper versions instead of replacing the complete host and MCU stack with Klipper 0.13.
 
 This is a deliberate engineering choice for the AD5M.

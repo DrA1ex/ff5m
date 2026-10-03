@@ -21,6 +21,24 @@ its [installation guide](https://github.com/prestonbrown/helixscreen/blob/main/d
 > [!WARNING]
 > Do not change display mode during a print. Before switching, make sure you have a working network connection or a recovery route through [Dual Boot](DUAL_BOOT.md).
 
+## Quick start
+
+Switch the display mode from the console in Fluidd or Mainsail:
+
+```gcode
+SET_MOD PARAM=display VALUE=FEATHER
+```
+
+Use `FEATHER`, `GUPPY`, `HEADLESS`, or `STOCK`. Switching away from Stock stops the FlashForge companion services, so slicer upload through the vendor path stops working and you upload through Moonraker instead. If the printer becomes unreachable, boot through [Dual Boot](DUAL_BOOT.md) and switch back to `STOCK`.
+
+**Details:**
+[Stock](#stock-screen) ·
+[Feather](#feather-screen) ·
+[Guppy](#guppy-screen) ·
+[Headless](#headless-mode) ·
+[Switching modes and recovery](#switching-to-alternative-screens--headless) ·
+[Custom screens](#extending-screen-functionality)
+
 ## Alternative Screens
 
 ### Stock screen

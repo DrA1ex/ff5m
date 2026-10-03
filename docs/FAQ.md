@@ -4,6 +4,22 @@ To quickly find answers, use the GitHub navigation button at the top-right corne
 
 <p align="center"> <img width="250" src="https://github.com/user-attachments/assets/b9d8e8bd-fcb2-4d9c-afaf-c75306573c55"> </p>
 
+## Quick answers
+
+- [What is Forge-X, and which printers does it support?](#what-is-forge-x)
+- [Can I go back to the stock firmware?](#is-forge-x-reversible-can-i-go-back-to-the-stock-firmware)
+- [The printer is stuck on the Forge-X logo](#my-printer-is-stuck-on-the-screen-with-the-forge-x-logo-how-can-i-fix-it)
+- [The printer will not boot at all](#my-printer-wont-boot-i-cant-skip-the-mod-flash-firmware-or-do-anything)
+- [I can't open Fluidd or Mainsail](#why-cant-i-access-mainsail-or-fluidd)
+- [The Stock screen freezes](#stock-screen-freezes-i-cant-print-anything)
+- [`Timer too close` or MCU errors](#what-causes-timer-too-close-or-mcu-errors-e0011)
+- [Memory usage is too high](#how-can-i-reduce-memory-usage-on-my-printer)
+- ["Bed pressure detected" error](#why-am-i-getting-a-bed-pressure-detected-error)
+- [Camera settings and problems](#how-do-i-adjust-the-camera-settings)
+- [Wi-Fi password was forgotten](#why-did-the-wi-fi-credentials-get-forgotten)
+
+All questions are grouped below: [General](#general-questions) · [Firmware and installation](#firmware-and-installation-issues) · [Network](#network-and-connectivity-issues) · [Resources and performance](#resource-and-performance-issues) · [Printing and configuration](#print-and-configuration-issues) · [Community and updates](#community-contributions-and-updates) · [Camera and other topics](#additional-configuration-and-troubleshooting)
+
 ---
 
 ## General Questions

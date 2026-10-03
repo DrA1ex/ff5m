@@ -29,15 +29,7 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 | **Access** | SSH as `root` / `root` |
 | **License** | GPL-3.0 |
 
-## Main benefits
-
-- **Built for 128 MiB of RAM.** Feather uses roughly 1–2 MB of RAM, compared with roughly 10–20 MB for the Stock screen. The camera service, the swap and ZRAM options, and Moonraker startup are also tuned for low memory. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
-- **Klipper fixes.** Forge-X backports fixes from newer upstream Klipper into the FlashForge host code. They include the `Timer too close` starvation fix, the E0011 / E0017 mitigations, correct file offsets for G-code with non-ASCII characters, and dynamic pressure advance. See [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md).
-- **A local touchscreen with no extra hardware.** Feather runs as a Forge-X Klipper extension. It can browse and start local and USB files, control a running print, move and heat the printer, change filament, run guided calibrations, configure Wi-Fi and Ethernet, and offer OTA updates and Power Loss Recovery.
-- **Recovery.** If an update or configuration change fails, you should normally still be able to boot Stock or open the Recovery menu. The early boot guard falls back to the stock firmware instead of repeating a broken start. Every patched Klipper file keeps a `.bak` original, and uninstall restores configuration and Klipper files before removing the runtime.
-- **Testing.** Before releases, Forge-X goes through automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print tests. See [Development, testing, and release validation](/docs/DEVELOPMENT.md).
-- **Print safety.** Bed collision protection and a nozzle contact check use the load cell, bed mesh validation catches stale meshes, MD5 checks catch G-code corrupted during upload, and Power Loss Recovery can salvage long prints.
-- **Documentation and customization.** The user guides cover every workflow, [OpenWiki](/openwiki/quickstart.md) maps the code for contributors, and `user.cfg`, `user.moonraker.conf`, and the [Typer renderer](/docs/TYPER.md) let you customize the mod without changing its code.
+**Jump to:** [Quick start](#tldr) · [Features](#features) · [Main benefits](#main-benefits) · [Why Forge-X was developed](#why-forge-x-was-developed) · [Documentation](#documentation) · [Support](#community-and-support)
 
 ## Disclaimer
 
@@ -47,6 +39,60 @@ The printer runs Linux, but not the Linux you may be used to. It is **not** Ubun
 
 - **Do not flash another mod's firmware over Forge-X** (or Forge-X over another mod) unless you clearly understand what you are doing.
 - **Do not delete** installation, uninstallation, or recovery **logs**. They can help you restore your printer.
+
+## TL;DR
+
+> [!CAUTION]
+> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug.   
+> Do **not** enable or use KAMP.   
+> Do **not** use `MOVE_SAFE` while relative positioning (`G91`) is active.   
+> Upgrade to **1.4.1-11 or later** first.
+
+1. Uninstall any other installed mods first (⚠️ make a backup!).   
+2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
+3. Update your slicer's [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
+4. Update your slicer's [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
+5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod) (Stock screen only).
+6. Enable the [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
+7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).
+8. **⚠️ Mandatory**: Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start).
+9. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
+10. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
+11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset.
+12. **Optional**: Learn about the [Z-Offset](/docs/PRINTING.md#z-offset).
+13. **Optional**: Enable the mod's [camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
+14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control).
+15. **Optional**: Switch to the [Feather or Guppy screen](/docs/SCREEN.md#switching-to-feather-screen).
+16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
+17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
+18. **Optional**: Review and enable [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md).
+
+## Get Started
+
+To begin, follow the instructions on the [Installation page](/docs/INSTALL.md). After installation, update your slicer's start and end G-code. See the [Slicing page](/docs/SLICING.md) for details.
+
+> [!WARNING]   
+> **Important:** Review your printer settings and recalibrate the bed mesh and Z-offset. Some settings may change during installation, and printing without recalibrating can damage your printer.
+
+Forge-X also includes many features beyond the basic setup. We recommend reading the [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages before you start.
+
+> [!NOTE]
+> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. If you see recurring memory pressure, E0011/E0017, or *Timer too close* errors, read [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage). It explains when to stop optional services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
+
+For additional help, see the [F.A.Q.](/docs/FAQ.md).
+
+After installation, the services are available at:  
+- **Moonraker**: `http://<printer_ip>:7125/`  
+- **Fluidd**: `http://<printer_ip>/fluidd/`  
+- **Mainsail**: `http://<printer_ip>/mainsail/`  
+- **SSH credentials**: `root` / `root`  
+
+If you run into problems:  
+1. Check the documentation first.
+2. If the problem persists, ask for help:
+   - Join the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi), or
+   - Join the [Discord server](https://discord.gg/K7MH4hAfeX) and go to Forums → mods-and-projects → Forge-X.
+3. Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are **certain** it is a bug.
 
 ## Features
 
@@ -105,59 +151,15 @@ The printer runs Linux, but not the Linux you may be used to. It is **not** Ubun
 
 - **Regression-tested development and release process**: automated host tests, visual UI regression, and real-printer physical regression before releases ([details](/docs/DEVELOPMENT.md))
 
-## TL;DR
+## Main benefits
 
-> [!CAUTION]
-> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug.   
-> Do **not** enable or use KAMP.   
-> Do **not** use `MOVE_SAFE` while relative positioning (`G91`) is active.   
-> Upgrade to **1.4.1-11 or later** first.
-
-1. Uninstall any other installed mods first (⚠️ make a backup!).   
-2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
-3. Update your slicer's [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
-4. Update your slicer's [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
-5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod) (Stock screen only).
-6. Enable the [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
-7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).
-8. **⚠️ Mandatory**: Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start).
-9. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
-10. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
-11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset.
-12. **Optional**: Learn about the [Z-Offset](/docs/PRINTING.md#z-offset).
-13. **Optional**: Enable the mod's [camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
-14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control).
-15. **Optional**: Switch to the [Feather or Guppy screen](/docs/SCREEN.md#switching-to-feather-screen).
-16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
-17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
-18. **Optional**: Review and enable [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md).
-
-## Get Started
-
-To begin, follow the instructions on the [Installation page](/docs/INSTALL.md). After installation, update your slicer's start and end G-code. See the [Slicing page](/docs/SLICING.md) for details.
-
-> [!WARNING]   
-> **Important:** Review your printer settings and recalibrate the bed mesh and Z-offset. Some settings may change during installation, and printing without recalibrating can damage your printer.
-
-Forge-X also includes many features beyond the basic setup. We recommend reading the [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages before you start.
-
-> [!NOTE]
-> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. If you see recurring memory pressure, E0011/E0017, or *Timer too close* errors, read [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage). It explains when to stop optional services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
-
-For additional help, see the [F.A.Q.](/docs/FAQ.md).
-
-After installation, the services are available at:  
-- **Moonraker**: `http://<printer_ip>:7125/`  
-- **Fluidd**: `http://<printer_ip>/fluidd/`  
-- **Mainsail**: `http://<printer_ip>/mainsail/`  
-- **SSH credentials**: `root` / `root`  
-
-If you run into problems:  
-1. Check the documentation first.
-2. If the problem persists, ask for help:
-   - Join the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi), or
-   - Join the [Discord server](https://discord.gg/K7MH4hAfeX) and go to Forums → mods-and-projects → Forge-X.
-3. Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are **certain** it is a bug.
+- **Built for 128 MiB of RAM.** Feather uses roughly 1–2 MB of RAM, compared with roughly 10–20 MB for the Stock screen. The camera service, the swap and ZRAM options, and Moonraker startup are also tuned for low memory. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
+- **Klipper fixes.** Forge-X backports fixes from newer upstream Klipper into the FlashForge host code. They include the `Timer too close` starvation fix, the E0011 / E0017 mitigations, correct file offsets for G-code with non-ASCII characters, and dynamic pressure advance. See [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md).
+- **A local touchscreen with no extra hardware.** Feather runs as a Forge-X Klipper extension. It can browse and start local and USB files, control a running print, move and heat the printer, change filament, run guided calibrations, configure Wi-Fi and Ethernet, and offer OTA updates and Power Loss Recovery.
+- **Recovery.** If an update or configuration change fails, you should normally still be able to boot Stock or open the Recovery menu. The early boot guard falls back to the stock firmware instead of repeating a broken start. Every patched Klipper file keeps a `.bak` original, and uninstall restores configuration and Klipper files before removing the runtime.
+- **Testing.** Before releases, Forge-X goes through automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print tests. See [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+- **Print safety.** Bed collision protection and a nozzle contact check use the load cell, bed mesh validation catches stale meshes, MD5 checks catch G-code corrupted during upload, and Power Loss Recovery can salvage long prints.
+- **Documentation and customization.** The user guides cover every workflow, [OpenWiki](/openwiki/quickstart.md) maps the code for contributors, and `user.cfg`, `user.moonraker.conf`, and the [Typer renderer](/docs/TYPER.md) let you customize the mod without changing its code.
 
 ## Why Forge-X Was Developed
 

@@ -1,10 +1,24 @@
 # Printing
 
-Forge-X uses the normal print macros: `START_PRINT` starts a job, `END_PRINT` finishes it, and `PAUSE`, `RESUME`, and `CANCEL_PRINT` control an active print. Preparation and related workflows expose nested operation contexts such as `PRINT -> BED MESH -> HEATING BED` to supported UIs. `interruptible` work stops at the next managed boundary, while `cancelable` contexts additionally own cleanup domains; homing, probing, and other atomic commands finish first. `non_interruptible` work offers only Continue or the immediate emergency stop `M112`.
+Print with the normal macros: `START_PRINT` starts a job, `END_PRINT` finishes it, and `PAUSE`, `RESUME`, and `CANCEL_PRINT` control a running print. Put `START_PRINT` and `END_PRINT` in your slicer's start and end G-code (see [Slicing](SLICING.md)).
 
-Forge-X routes controllable nozzle/bed waits—including loading, Cold Pull, and resume reheating—through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.
+**Before your first print:** recalibrate the bed mesh and Z offset (see [Calibration](#calibration)) and print a small first-layer test.
 
-For the required slicer start/end G-code and upload configuration, see [Slicing](SLICING.md).
+**Jump to:**
+[Stock screen and LAN mode](#using-stock-firmware-with-mod) ·
+[Calibration](#calibration) ·
+[Bed mesh](#bed-mesh) ·
+[KAMP](#kamp) ·
+[Bed collision protection](#bed-collision-protection) ·
+[Power Loss Recovery](#power-loss-recovery-resurrection) ·
+[Bed mesh validation](#bed-mesh-validation) ·
+[Z offset](#z-offset) ·
+[Sound](#sound) ·
+[LED light](#led-light-control) ·
+[Nozzle cleaning](#nozzle-cleaning) ·
+[E0011 / E0017 fix](#fixing-communication-timeout-e0011--move-queue-overflow-e0017-error) ·
+[Reducing resource usage](#reducing-resource-usage) ·
+[Operation contexts and cancellation](#operation-contexts-and-cancellation)
 
 > [!WARNING]
 > After installing or updating Forge-X, changing the nozzle or build plate, or enabling motion/config tuning, inspect the bed mesh and Z offset before the next real print. Incorrect values can damage the nozzle or bed.
@@ -366,3 +380,9 @@ PREPARE_USB
 ```
 
 The preparation workflow is unavailable while printing. It erases and reformats the selected drive, so read both confirmation screens and verify the device before accepting them.
+
+## Operation contexts and cancellation
+
+This section is for advanced users and UI developers. Preparation and related workflows expose nested operation contexts such as `PRINT -> BED MESH -> HEATING BED` to supported UIs. `interruptible` work stops at the next managed boundary, while `cancelable` contexts additionally own cleanup domains; homing, probing, and other atomic commands finish first. `non_interruptible` work offers only Continue or the immediate emergency stop `M112`.
+
+Forge-X routes controllable nozzle/bed waits—including loading, Cold Pull, and resume reheating—through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.
