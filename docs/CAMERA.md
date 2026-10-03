@@ -5,12 +5,12 @@ The Adventurer 5M has only 128 MiB of RAM, so camera buffering and extra
 camera-server processes can directly reduce the memory available to Klipper,
 Moonraker, the local UI, and user extensions.
 
-Forge-X therefore uses a dedicated camera implementation, **ForgeXstream**,
+Forge-X therefore uses a dedicated camera implementation, **forge-x-streamer**,
 designed around the constraints of this printer rather than a generic
 multi-plugin streaming stack. Its source is maintained separately at
 [DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
 
-ForgeXstream combines V4L2 capture, bounded frame publication, HTTP MJPEG
+forge-x-streamer combines V4L2 capture, bounded frame publication, HTTP MJPEG
 serving, camera controls, and camera recovery in one executable. The design
 defaults to one requested V4L2 capture buffer, bounded publisher/client memory,
 a limited client count, and small joinable worker stacks. It does not need the
@@ -24,7 +24,7 @@ resolution, connected clients, and whether raw input encoding is enabled, so
 use the `MEM` macro when comparing a specific setup instead of relying on a
 single fixed number.
 
-ForgeXstream also handles several AD5M camera failure modes directly:
+forge-x-streamer also handles several AD5M camera failure modes directly:
 
 - `VIDEO=auto` scans `/dev/video0..63` and selects a device that actually
   reports V4L2 streaming capability;
@@ -42,7 +42,7 @@ ForgeXstream also handles several AD5M camera failure modes directly:
 
 #### Image controls and effects
 
-ForgeXstream exposes the camera's own V4L2 image controls through the built-in
+forge-x-streamer exposes the camera's own V4L2 image controls through the built-in
 `/control.htm` page and `/controls` API. Supported devices can expose
 brightness, contrast, gain, gamma, hue, saturation, sharpness, power-line
 frequency, white-balance temperature, backlight compensation, and exposure
