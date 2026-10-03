@@ -1,0 +1,42 @@
+# Forge-X
+
+> Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and a multi-layer recovery system. It is designed around the printer's 128 MiB of RAM and is fully reversible.
+
+Key facts:
+- Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
+- Supported stock firmware: 2.6.5 up to 5.1.x.
+- Klipper: the FlashForge host Klipper (0.11 generation) with reviewed backports of upstream Klipper fixes; MCU firmware is not reflashed.
+- Web interfaces: Fluidd (/fluidd/), Mainsail (/mainsail/), Moonraker API on port 7125. SSH: root / root.
+- Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
+- Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
+- Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
+- Testing: automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print regression before releases.
+- License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
+
+## User documentation
+
+- [README](README.md): overview, features, quick start
+- [Installation](docs/INSTALL.md): prerequisites, flashing, OTA updates
+- [FAQ](docs/FAQ.md): what Forge-X is, compatibility, reversibility, troubleshooting
+- [Klipper fixes and AD5M-specific hardening](docs/KLIPPER.md): backported upstream fixes, Timer too close, E0011/E0017
+- [Screens](docs/SCREEN.md): Feather, Stock, Guppy, Headless
+- [Camera](docs/CAMERA.md): forge-x-streamer
+- [Power Loss Recovery](docs/POWER_LOSS_RECOVERY.md)
+- [Calibration](docs/CALIBRATION.md)
+- [Printing](docs/PRINTING.md): KAMP, bed collision protection, bed mesh validation, resource tuning
+- [Slicing](docs/SLICING.md): slicer G-code, Moonraker connection, MD5 validation
+- [Configuration](docs/CONFIGURATION.md): mod parameters
+- [Macros](docs/MACROS.md)
+- [Telegram bot and timelapse](docs/TELEGRAM.md)
+
+## Safety, recovery, and uninstall
+
+- [Dual boot and recovery menu](docs/DUAL_BOOT.md)
+- [Uninstall](docs/UNINSTALL.md)
+- [Firmware recovery guide](docs/RECOVERY.md)
+
+## Engineering documentation
+
+- [Development, testing, and release validation](docs/DEVELOPMENT.md)
+- [Contributing](CONTRIBUTING.md)
+- [OpenWiki quickstart](openwiki/quickstart.md), [architecture](openwiki/architecture.md), [source map](openwiki/source-map.md)
