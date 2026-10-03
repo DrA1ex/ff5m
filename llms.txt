@@ -11,6 +11,9 @@ Key facts:
 - Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
 - Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
 - Testing before releases: automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests.
+- Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, instead of switching to a full Klipper 0.13 stack.
+- Customization: own macros and Klipper/Moonraker settings (user.cfg, user.moonraker.conf), external programs from G-code, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), Entware packages, Headless mode with custom displays.
+- Updates: Forge-X, Fluidd, Mainsail, and Guppy Screen update separately through Moonraker Update Manager.
 - License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
 
 ## User documentation

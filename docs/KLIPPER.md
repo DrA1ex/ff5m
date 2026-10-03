@@ -8,13 +8,16 @@ Forge-X keeps the Klipper that FlashForge ships with the AD5M (0.11 generation) 
 - Fixes for homing and probing with the printer's two MCUs.
 - Optional tuning for the E0011 (communication timeout) and E0017 (move queue overflow) errors.
 - Correct G-code file positions for files with non-ASCII characters, such as non-English object names.
-- Dynamic pressure advance, a faster input shaper calculation, and extra diagnostic logs for homing and probing.
+- Adaptive Pressure Advance (dynamic pressure advance backported from Klipper 0.13), so the adaptive PA profiles from recent OrcaSlicer versions can be used.
+- A faster input shaper calculation and extra diagnostic logs for homing and probing.
 
 **What you need to do:** nothing for most fixes, they are applied automatically. To enable the timing tuning for E0011 / E0017, run:
 
 ```gcode
 SET_MOD PARAM=tune_klipper VALUE=1
 ```
+
+**Why not a full Klipper 0.13?** Forge-X deliberately keeps the vendor-compatible Klipper and MCU pair and brings over the newer fixes and features that matter for this printer. See [Why doesn't Forge-X use Klipper 0.13?](FAQ.md#why-doesnt-forge-x-use-klipper-013)
 
 **Details:**
 [Why Klipper is not replaced with 0.13](#design-approach) ·
