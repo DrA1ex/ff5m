@@ -5,7 +5,6 @@
 # Flashforge Adventurer 5M (Pro) Firmware Mod
 
 This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
-The mod is based on ZMod, which itself is derived from Klipper-mod.
 
 > [!CAUTION]
 > *If you choose to install this mod on your AD5M (Pro), be aware that you risk voiding your warranty or damaging your printer.*
@@ -117,24 +116,19 @@ If you encounter issues:
      → Navigate to: Forums → mods-and-projects → Forge-X
    - Only open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) if you're **absolutely certain** this is a bug.
 
-## Why This Mod Was Developed
-This mod was created to address several critical limitations and challenges faced by users of the Flashforge AD5M (Pro) 3D printer. Here are the key reasons behind its development:
+## Why Forge-X Was Developed
 
-**Instability and Resource Issues in Existing Klipper Mods:**
-The previous Klipper mod for the AD5M has stopped development and is no really stable. It consumes excessive RAM, leading to issues such as "Timer too close" errors and other performance problems. And some of typical AD5M issues not fixed at all. This mod aims to resolve these issues by optimizing resource usage and ensuring a stable, reliable experience.
+Forge-X was developed to provide a more reliable, maintainable, and complete software environment for the Adventurer 5M while preserving compatibility with the printer's existing hardware and firmware base.
 
-**Closed and Inflexible Development in ZMOD:**
-While ZMOD introduced significant improvements, it is not user-friendly for further enhancements or fixes. Its closed nature and unique development approach make it difficult to modify without deep knowledge of the entire system. This mod focuses on rewriting the foundation to provide advanced users with more control, making it easier to apply patches, additions, and customizations.
+The AD5M hardware is capable of producing good print results, but the platform has several practical limitations. The host has only **128 MiB of RAM**, the bundled Klipper stack is based on the older 0.11 generation, and the stock firmware exposes only a limited subset of the functionality and integrations commonly expected from Klipper-based printers.
 
-**Lack of Essential Functionality in Stock Firmware:**
-The stock firmware lacks many essential features that modern 3D printing enthusiasts expect. For example:
-The camera functionality is poorly optimized, consuming excessive RAM and delivering subpar performance.
-Users are unable to perform standard tasks that Klipper users typically rely on, such as advanced calibration, macros, and real-time monitoring.
-This mod addresses these shortcomings by integrating modern tools and features.
+Forge-X was designed around those constraints rather than assuming the printer has the resources of a newer platform. Memory usage, CPU load, background services, UI components, camera streaming, and Klipper behavior are all treated as part of the reliability problem. Where newer software or upstream behavior is useful, it is adapted with the available hardware budget in mind.
 
-**Outdated Klipper with Unresolved Bugs:**
-The existing Klipper implementation for the AD5M is outdated and plagued with bugs. This mod focuses on fixing these long-standing issues, modifying Klipper plugins, and enhancing core functionality to better suit the specific requirements of the AD5M (Pro) printer. The goal is to provide a stable, feature-rich platform tailored to this printer's unique hardware and user needs.
+The project also aims to address software limitations that are unrelated to raw hardware performance: missing Klipper workflows, long-standing platform-specific bugs, limited recovery options, insufficient diagnostics, and the lack of an extensible environment for users who want to customize or build on top of the printer.
 
+For that reason, Forge-X treats testing, predictable failure handling, recovery, documentation, and maintainability as part of the implementation itself. The code is structured around common software-engineering practices, accompanied by user and engineering documentation, and designed so that additional integrations or platform-specific ports can be implemented without depending on undocumented project internals.
+
+In short, Forge-X exists to make better use of the hardware already present in the AD5M, while explicitly accounting for its resource limits and replacing software limitations with a more open, testable, and maintainable environment.
 
 ## Documentation
 - [Installation](/docs/INSTALL.md)
