@@ -219,9 +219,9 @@ class TimelapseConfigTest(unittest.TestCase):
                 rendered = render_macro(
                     ROOT / "macros" / "base.cfg", "_START_PRINT",
                     printer=printer)
-                self.assertEqual(rendered.commands[-1],
-                                 "TIMELAPSE_TAKE_FRAME")
-                self.assertEqual(rendered.commands[-2], "M400")
+                self.assertEqual(rendered.commands[-2:], (
+                    "TIMELAPSE_TAKE_FRAME", "_CONTEXT_STATE NAME=PRINTING"))
+                self.assertEqual(rendered.commands[-3], "M400")
                 self.assertIn("_TIMELAPSE_SCHEDULE", rendered.commands)
 
         mod["disable_priming"] = False

@@ -845,6 +845,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
             ("timelapse", "camera", False, True),
             ("mod_check_update_interval", "mod_check_update", False, True),
             ("backlight_eco", "display_eco", False, True),
+            ("weight_check_mode", "weight_check", False, True),
             ("bed_mesh_validation_clear", "bed_mesh_validation", False, True),
             ("bed_mesh_validation_tolerance", "bed_mesh_validation", False, True),
             ("load_zoffset_cleaning", "disable_cleaning", True, False),
@@ -860,6 +861,42 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 self.assertIn(
                     child, [param.key for param in
                             MOD_UI.visible_parameters(manager)])
+
+    def test_collision_modes_fit_settings_and_option_buttons(self):
+        manager = MOD_PARAMS.ModParamManagement.__new__(
+            MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(pathlib.Path(__file__).parents[1] / "mod_params.json")
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        parameter = manager.params_map["weight_check_mode"]
+        self.assertEqual(parameter.default, "EMERGENCY")
+        self.assertEqual(tuple(parameter.type.__members__),
+                         ("EMERGENCY", "PAUSE", "WARNING"))
+        for mode in parameter.type:
+            with self.subTest(mode=mode):
+                feature = mod_controller([parameter], {
+                    "weight_check": True, "weight_check_mode": mode.value})
+                feature._render_mod_settings()
+                row = RenderFrame(feature.draw_batches[-1], feature.renderer)
+                # Include the currently selected value on the settings row.
+                for text in row.texts:
+                    if text.truncate and text.max_width is not None:
+                        self.assertLessEqual(feature.renderer.text_width(
+                            text.value, text.font), text.max_width)
+                value_button = row.button("mod.item.0")
+                self.assertLessEqual(feature.renderer.text_width(
+                    value_button.label, value_button.font), value_button.bounds.width
+                    - 2 * feature.renderer.BUTTON_TEXT_PADDING)
+                feature._open_mod_parameter(0)
+                options = RenderFrame(feature.draw_batches[-1], feature.renderer)
+                buttons = [button for action, button in options.buttons.items()
+                           if action.startswith("mod.option.")]
+                self.assertEqual(len(buttons), 3)
+                for button in buttons:
+                    self.assertLessEqual(feature.renderer.text_width(
+                        button.label, button.font), button.bounds.width
+                        - 2 * feature.renderer.BUTTON_TEXT_PADDING)
 
     def test_load_limit_is_visible_when_either_bed_check_is_enabled(self):
         declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"

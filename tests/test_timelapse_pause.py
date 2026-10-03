@@ -6,12 +6,13 @@
 
 import importlib.util
 import pathlib
+import re
 import shlex
 import types
 import unittest
 from unittest import mock
 
-from tests.gcode_macro_harness import MacroActionError, MacroExecution
+from tests.gcode_macro_harness import MacroActionError, MacroExecution, render_macro
 
 ROOT = pathlib.Path(__file__).parents[1]
 
@@ -25,6 +26,7 @@ def load_module(name, path):
 
 GCODE = load_module("pause_test_gcode", ".py/klipper/patches/gcode.py")
 MOVE = load_module("pause_test_move", ".py/klipper/patches/extras/gcode_move.py")
+SENSOR = load_module("pause_test_sensor", ".py/klipper/patches/extras/temperature_sensor.py")
 
 
 class ParkedPrint:
@@ -134,7 +136,7 @@ class ParkedPrint:
         elif name not in {"M400", "RESPOND", "_CONTEXT_BEGIN", "_CONTEXT_END", "_CONTEXT_RESET",
                           "SET_IDLE_TIMEOUT", "_WAIT_TEMPERATURE", "TURN_OFF_HEATERS", "M106",
                           "SET_PAUSE_NEXT_LAYER", "SET_PAUSE_AT_LAYER",
-                          "TONE", "_COMMON_END_PRINT", "_MAYBE_AUTO_REBOOT"}:
+                          "TONE", "ALARM", "_COMMON_END_PRINT", "_MAYBE_AUTO_REBOOT"}:
             raise AssertionError("Unhandled terminal command: " + command)
 
     def capture(self):
@@ -147,6 +149,146 @@ class ParkedPrint:
         else:
             frame["takingframe"] = False
         self.runtime.fire("_WAIT_TIMELAPSE_TAKE_FRAME")
+
+
+class CollisionPauseIntegrationTest(unittest.TestCase):
+    def pause_source(self, screen):
+        sources = []
+        seen = set()
+
+        def read(path):
+            path = path.resolve()
+            if path in seen:
+                return
+            seen.add(path)
+            text = path.read_text()
+            if "[gcode_macro PAUSE]" in text:
+                sources.append(path)
+            for include in re.findall(r"^\[include (.+)\]$", text, re.MULTILINE):
+                for child in sorted(path.parent.glob(include)):
+                    read(child)
+
+        read(ROOT / "config" / (screen + ".cfg"))
+        self.assertEqual(len(sources), 1, sources)
+        return sources[0]
+
+    def job(self, screen="feather"):
+        job = ParkedPrint(absolute=True, relative_axes=True)
+        job.status.update({
+            "idle_timeout": {"state": "Printing"},
+            "operation_context": {
+                "context_types": ("print",), "current_state": "PRINTING",
+                "cancel_pending": False},
+        })
+        job.status["mod_params"]["variables"].update(
+            weight_check=True, weight_check_max=1200, weight_check_mode="PAUSE")
+        source = self.pause_source(screen)
+        job.runtime.macros.update({
+            name: (source, "gcode_macro") for name in ("PAUSE", "RESUME")})
+        job.shell_commands = []
+
+        def terminal(command):
+            if not command.startswith("RUN_SHELL_COMMAND "):
+                return job.execute(command)
+            job.shell_commands.append(command)
+            # Model Stock firmware accepting its existing zsend M25/M24 path.
+            self.assertIn('CMD=zsend PARAMS="', command)
+            if command.endswith('PARAMS="M25"'):
+                job.status["virtual_sdcard"]["is_active"] = False
+                job.status["print_stats"]["state"] = "paused"
+            elif command.endswith('PARAMS="M24"'):
+                job.status["virtual_sdcard"]["is_active"] = True
+                job.status["print_stats"]["state"] = "printing"
+            else:
+                self.fail(command)
+
+        job.runtime.terminal = terminal
+        return job
+
+    def collision(self, job):
+        job.refresh()
+        return render_macro(
+            ROOT / "macros/base.cfg", "weightValue", section="temperature_sensor",
+            gcode_option="exceed_gcode", variables={"value": 1200},
+            printer=job.status)
+
+    def test_collision_pause_and_resume_use_each_screen_configuration(self):
+        for screen in ("stock", "feather", "headless", "guppy"):
+            with self.subTest(screen=screen):
+                job = self.job(screen)
+                first = self.collision(job)
+                self.assertIn("PAUSE", first.commands)
+                self.assertNotIn("M112", first.commands)
+                for command in first.commands:
+                    job.runtime.run(command)
+                self.assertFalse(job.status["virtual_sdcard"]["is_active"])
+                self.assertEqual(job.status["print_stats"]["state"], "paused")
+                # Stock pauses virtual SD without marking pause_resume paused.
+                self.assertEqual(job.paused, screen != "stock")
+                repeated = self.collision(job)
+                self.assertNotIn("PAUSE", repeated.commands)
+                self.assertNotIn("M112", repeated.commands)
+                job.runtime.run("RESUME")
+                self.assertTrue(job.status["virtual_sdcard"]["is_active"])
+                self.assertFalse(job.paused)
+                if screen == "stock":
+                    self.assertEqual(job.shell_commands, [
+                        'RUN_SHELL_COMMAND CMD=zsend PARAMS="M25"',
+                        'RUN_SHELL_COMMAND CMD=zsend PARAMS="M24"'])
+                else:
+                    after = job.move.get_status()
+                    for field in ("gcode_position", "absolute_coordinates", "absolute_extrude"):
+                        self.assertEqual(after[field], job.original[field])
+
+    def test_parked_timelapse_collision_is_immediate_emergency(self):
+        for screen in ("stock", "feather", "headless", "guppy"):
+            with self.subTest(screen=screen):
+                job = self.job(screen)
+                job.capture()
+                self.assertTrue(job.paused)
+                self.assertFalse(job.status["virtual_sdcard"]["is_active"])
+                rendered = self.collision(job)
+                self.assertIn("M112", rendered.commands)
+                self.assertNotIn("PAUSE", rendered.commands)
+                sensor = SENSOR.PrinterSensorGeneric.__new__(SENSOR.PrinterSensorGeneric)
+                sensor.name = "weightValue"
+                sensor.printer = mock.Mock()
+                sensor._template = lambda value: rendered.text
+                sensor._handle_exceed(1200)
+                sensor.printer.invoke_shutdown.assert_called_once()
+
+    def test_timelapse_between_frames_preserves_normal_collision_pause(self):
+        for mode in ("LAYER", "TIME", "PERCENT"):
+            for screen in ("stock", "feather", "headless", "guppy"):
+                with self.subTest(mode=mode, screen=screen):
+                    job = self.job(screen)
+                    job.status["mod_params"]["variables"]["timelapse_mode"] = mode
+                    job.capture()
+                    job.finish()
+                    self.assertTrue(job.status["virtual_sdcard"]["is_active"])
+                    rendered = self.collision(job)
+                    self.assertIn("PAUSE", rendered.commands)
+                    self.assertNotIn("M112", rendered.commands)
+                    for command in rendered.commands:
+                        job.runtime.run(command)
+                    self.assertFalse(job.status["virtual_sdcard"]["is_active"])
+                    self.assertTrue(job.status["mod_params"]["variables"]["timelapse"])
+                    self.assertTrue(job.status["gcode_macro TIMELAPSE_TAKE_FRAME"]["enable"])
+
+    def test_timelapse_without_parking_does_not_block_collision_pause(self):
+        for screen in ("stock", "feather", "headless", "guppy"):
+            with self.subTest(screen=screen):
+                job = self.job(screen)
+                job.status["mod_params"]["variables"]["timelapse_park"] = False
+                job.capture()
+                self.assertTrue(job.status["virtual_sdcard"]["is_active"])
+                rendered = self.collision(job)
+                self.assertIn("PAUSE", rendered.commands)
+                self.assertNotIn("M112", rendered.commands)
+                for command in rendered.commands:
+                    job.runtime.run(command)
+                job.runtime.run("_WAIT_TIMELAPSE_TAKE_FRAME")
+                self.assertFalse(job.status["virtual_sdcard"]["is_active"])
 
 
 class TimelapsePauseStateTest(unittest.TestCase):

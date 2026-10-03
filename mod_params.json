@@ -60,6 +60,14 @@
         "PRINT_ONLY": "PRINT_ONLY"
       }
     },
+    "BedCollisionModeEnum": {
+      "type": "str",
+      "values": {
+        "EMERGENCY": "EMERGENCY",
+        "PAUSE": "PAUSE",
+        "WARNING": "WARNING"
+      }
+    },
     "TimelapseModeEnum": {
       "type": "str",
       "values": {
@@ -103,6 +111,7 @@
         "order": 2,
         "parameters": [
           "weight_check",
+          "weight_check_mode",
           "nozzle_contact_check",
           "weight_check_max",
           "cell_weight",
@@ -231,6 +240,12 @@
       {
         "parameter": "backlight_eco",
         "depends_on": "display_eco",
+        "operator": "equals",
+        "value": true
+      },
+      {
+        "parameter": "weight_check_mode",
+        "depends_on": "weight_check",
         "operator": "equals",
         "value": true
       },
@@ -763,6 +778,19 @@
       "default": 0,
       "label": "Bed collision protection",
       "description": "Enable load-cell collision protection.",
+      "order": 10
+    },
+    {
+      "key": "weight_check_mode",
+      "type": "BedCollisionModeEnum",
+      "default": "EMERGENCY",
+      "label": "Collision action",
+      "description": "Pause print, stop printer, or warn.",
+      "options": {
+        "EMERGENCY": "Emergency",
+        "PAUSE": "Pause",
+        "WARNING": "Warning"
+      },
       "order": 10
     },
     {

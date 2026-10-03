@@ -245,6 +245,104 @@ def mesh_generated_publish(profile):
             "VARIABLE=zmesh_generated VALUE='\"%s\"'" % profile)
 
 
+class BedCollisionProtectionTest(unittest.TestCase):
+    def printer(self, mode="PAUSE", **overrides):
+        printer = {
+            "mod_params": {"variables": {
+                "weight_check": True, "weight_check_max": 1200,
+                "weight_check_mode": mode}},
+            "idle_timeout": {"state": "Printing"},
+            "virtual_sdcard": {"is_active": True},
+            "print_stats": {"state": "printing"},
+            "pause_resume": {"is_paused": False},
+            "operation_context": {
+                "context_types": ("print",), "current_state": "PRINTING",
+                "cancel_pending": False},
+        }
+        for key, values in overrides.items():
+            printer.setdefault(key, {}).update(values)
+        return printer
+
+    def commands(self, printer, weight=1200):
+        return render_macro(
+            BASE, "weightValue", section="temperature_sensor",
+            gcode_option="exceed_gcode", printer=printer,
+            variables={"value": weight}).commands
+
+    def test_modes_at_the_load_limit(self):
+        for mode, action in (("EMERGENCY", "M112"), ("PAUSE", "PAUSE"),
+                             ("WARNING", None)):
+            with self.subTest(mode=mode):
+                commands = self.commands(self.printer(mode))
+                self.assertIn('RESPOND type="error" MSG="Bed pressure detected: 1200 g."',
+                              commands)
+                self.assertIn("ALARM", commands)
+                self.assertEqual(tuple(command for command in commands
+                                       if command in ("PAUSE", "M112")),
+                                 (action,) if action else ())
+
+    def test_disabled_and_below_limit_do_not_stop(self):
+        for mode in ("EMERGENCY", "PAUSE", "WARNING"):
+            with self.subTest(mode=mode):
+                disabled = self.printer(mode)
+                disabled["mod_params"]["variables"]["weight_check"] = False
+                self.assertEqual(self.commands(disabled), ())
+                commands = self.commands(self.printer(mode), weight=1100)
+                self.assertEqual(len(commands), 1)
+                self.assertTrue(commands[0].startswith("RESPOND "))
+
+    def test_pause_falls_back_outside_confirmed_printing(self):
+        cases = (
+            {"virtual_sdcard": {"is_active": False}},
+            {"print_stats": {"state": "complete"}},
+            {"operation_context": {"context_types": ()}},
+            {"operation_context": {"current_state": "PRIMING"}},
+            {"operation_context": {"cancel_pending": True}},
+            {"gcode_macro _TIMELAPSE_START_GUARD": {"waiting": True}},
+            {"gcode_macro _TIMELAPSE_START_GUARD": {"sd_held": True}},
+            {"gcode_macro TIMELAPSE_TAKE_FRAME": {"is_paused": True}},
+        )
+        cases += tuple({"operation_context": {
+            "context_types": ("print", operation)}} for operation in (
+                "bed_level", "kamp", "nozzle_clean", "recovery", "resume"))
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                for mode in ("PAUSE", "WARNING"):
+                    commands = self.commands(self.printer(mode, **overrides))
+                    self.assertNotIn("PAUSE", commands)
+                    self.assertEqual("M112" in commands, mode == "PAUSE")
+
+    def test_sustained_pressure_does_not_abort_normal_pause(self):
+        for klipper_paused, user_pause in ((False, False), (True, False), (True, True)):
+            with self.subTest(klipper_paused=klipper_paused, user_pause=user_pause):
+                printer = self.printer(
+                    pause_resume={"is_paused": klipper_paused},
+                    virtual_sdcard={"is_active": False},
+                    print_stats={"state": "paused"},
+                    **{"gcode_macro TIMELAPSE_TAKE_FRAME": {
+                        "user_pause_requested": user_pause}})
+                commands = self.commands(printer)
+                self.assertIn("ALARM", commands)
+                self.assertNotIn("PAUSE", commands)
+                self.assertNotIn("M112", commands)
+
+    def test_idle_keeps_existing_warning_only_behavior(self):
+        for mode in ("EMERGENCY", "PAUSE", "WARNING"):
+            with self.subTest(mode=mode):
+                commands = self.commands(self.printer(
+                    mode, idle_timeout={"state": "Ready"}))
+                self.assertIn("ALARM", commands)
+                self.assertNotIn("M112", commands)
+                self.assertNotIn("PAUSE", commands)
+
+    def test_printing_stage_is_published_after_start_commands(self):
+        printer = start_print_state()
+        printer["mod_params"]["variables"]["timelapse"] = True
+        commands = render_macro(BASE, "_START_PRINT", printer=printer).commands
+        self.assertEqual(commands[-2:], (
+            "TIMELAPSE_TAKE_FRAME", "_CONTEXT_STATE NAME=PRINTING"))
+
+
 class WorkflowMacroTest(unittest.TestCase):
     def test_system_power_macros_prepare_hardware_before_action(self):
         macros = (

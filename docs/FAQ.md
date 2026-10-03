@@ -275,8 +275,8 @@ For details on false triggers, see the next article.
 This safety feature is designed to prevent damage to the printer’s bed caused by the nozzle impacting it. By default, the weight limit is set to **1.2 kg**, but this can be adjusted using the `weight_check_max` parameter.
 
 The system has two stages:  
-1. **Warning**: Triggered if the weight exceeds `700g`. This serves as a precautionary notice.  
-2. **Error**: Triggered if the weight exceeds a more critical threshold (e.g., `1.2 kg`). At this stage, printing will stop to protect the printer.
+1. **Warning**: Triggered at `trigger_value` (default `1000g`). This serves as a precautionary notice.
+2. **Action**: Triggered at `weight_check_max` (default `1.2 kg`). `weight_check_mode` selects emergency shutdown, normal print pause with emergency fallback outside printing, or warning and alarm only.
 
 To customize the warning limit, you can modify the `user.cfg` file by adding the following:
 

@@ -102,7 +102,20 @@ SET_MOD PARAM=disable_priming VALUE=1
 Forge-X can stop a print when the load cell detects unexpected force. The related [configuration parameters](CONFIGURATION.md) are:
 
 - `weight_check` — enables collision detection;
+- `weight_check_mode` — `EMERGENCY` (default), `PAUSE`, or `WARNING`;
 - `weight_check_max` — maximum tolerated load in grams.
+
+`EMERGENCY` preserves the immediate shutdown during printer activity. `PAUSE` uses the existing `PAUSE` command only while virtual SD is printing, start preparation has finished, and no other operation or temporary timelapse hold is active. During preparation, cleaning, meshing, or a parked timelapse frame, it falls back to emergency shutdown. Between frames, normal print pause remains available. Repeated pressure readings do not restart an existing normal print pause. `WARNING` reports pressure and plays the alarm without requesting a pause or shutdown from this protection. Sound follows the `sound` setting.
+
+Pause uses the configured screen's existing command: Stock forwards `M25` to the stock firmware; Feather, Headless, and Guppy use the shared Klipper client pause.
+
+Pause follows the normal G-code queue and does not interrupt an executing command or movements already queued on the MCU. The independent nozzle contact check below still cancels preparation in every mode.
+
+For example, select normal print pause with:
+
+```gcode
+SET_MOD PARAM=weight_check_mode VALUE=PAUSE
+```
 
 For reliable protection, the load cell must report sensible values both cold and hot. Some degraded sensors drift by several kilograms as the bed warms.
 

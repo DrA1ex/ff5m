@@ -79,6 +79,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`weight_check`**: Enables bed collision protection if set to `1`.  
 
+- **`weight_check_mode`**: Collision action: `EMERGENCY` (default), `PAUSE`, or `WARNING`. Pause uses the normal `PAUSE` command during an active print after preparation; otherwise it falls back to emergency shutdown during printer activity. Warning only reports pressure and sounds the alarm. Shown when `weight_check` is enabled.
+
 - **`weight_check_max`**: Load limit in grams for bed collision protection and the nozzle contact check.  
 
 - **`nozzle_contact_check`**: Cancels the print at start if the parked nozzle already presses on the bed. On by default; set to `0` to disable. See [Printing](PRINTING.md#nozzle-contact-check-before-printing).  
