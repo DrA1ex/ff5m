@@ -18,7 +18,7 @@ Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the **Flas
 - [forge-x-streamer](CAMERA.md), a camera service designed for the printer's 128 MiB of RAM;
 - OTA updates, backup and restore, and a [recovery system](RECOVERY.md) with a boot guard, a recovery menu, and fallback to the stock firmware.
 
-The project focuses on reliability on constrained hardware: memory and CPU use, predictable failure handling, recovery, and regression testing are part of the design. See [Why Forge-X Was Developed](../README.md#why-forge-x-was-developed) and [Development, testing, and release validation](DEVELOPMENT.md).
+The project focuses on reliability on limited hardware: memory and CPU use, handling of failures, recovery, and regression testing. See [Why Forge-X Was Developed](../README.md#why-forge-x-was-developed) and [Development, testing, and release validation](DEVELOPMENT.md).
 
 ### Which printers and firmware versions does Forge-X support?
 Forge-X supports only the **Flashforge Adventurer 5M** and **Adventurer 5M Pro**. Other Flashforge models are not supported.

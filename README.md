@@ -4,9 +4,9 @@
 
 # Forge-X: Klipper Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
-**Forge-X** is a free, open-source (GPL-3.0), _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** stack with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a built-in lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and a multi-layer recovery system.
+**Forge-X** is a free, open-source (GPL-3.0), _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** stack with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a built-in lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools.
 
-Forge-X is designed around the real limits of this printer, which has only **128 MiB of RAM**. It is fully reversible, tested as firmware rather than as a hobby script, and documented for both users and contributors.
+Forge-X is designed for this printer's limits: the host has only **128 MiB of RAM**. The mod can be fully removed, it is tested before each release, and it comes with documentation for users and contributors.
 
 > [!CAUTION]
 > *If you install this mod on your AD5M (Pro), you risk voiding your warranty or damaging your printer.*
@@ -24,20 +24,20 @@ Forge-X is designed around the real limits of this printer, which has only **128
 | **Web interfaces** | Fluidd (`http://<printer_ip>/fluidd/`) and Mainsail (`http://<printer_ip>/mainsail/`), Moonraker API on port `7125` |
 | **Local screen** | Feather (default, built in), Stock, Guppy Screen, or Headless; [HelixScreen](/docs/SCREEN.md) is available as an external option |
 | **Camera** | [forge-x-streamer](/docs/CAMERA.md): a dedicated low-memory MJPEG service for the AD5M |
-| **Safety net** | [Last-known-good boot guard, recovery menu, fallback to Stock, uninstaller and recovery images](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety) |
+| **Recovery** | [Last-known-good boot guard, recovery menu, fallback to Stock, uninstaller and recovery images](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety) |
 | **Updates** | OTA through Moonraker Update Manager (minor versions); major versions are flashed over the existing installation without losing settings |
 | **Access** | SSH as `root` / `root` |
 | **License** | GPL-3.0 |
 
-## What makes Forge-X useful on the AD5M
+## Main benefits
 
-- **Built for 128 MiB of RAM.** Memory use is treated as part of reliability. Feather uses roughly 1–2 MB of RAM, compared with roughly 10–20 MB for the Stock screen. The camera service, swap and ZRAM options, and Moonraker startup are all tuned for this hardware. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
-- **Fixes at the Klipper level.** Forge-X backports upstream Klipper fixes into the FlashForge host code instead of working around problems by disabling features. This includes the `Timer too close` starvation fix, the E0011 / E0017 mitigations, correct file offsets for G-code with non-ASCII characters, and dynamic pressure advance. See [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md).
-- **A complete local touchscreen without extra hardware.** Feather runs as a Forge-X Klipper extension. It can browse and start local and USB files, control a running print, move and heat the printer, change filament, run guided calibrations, configure Wi-Fi and Ethernet, and offer OTA updates and Power Loss Recovery.
-- **Recovery is part of the design.** A failed update or configuration change should normally leave a Stock or Recovery route available. The early boot guard falls back to the stock firmware instead of repeating a broken start. Every patched Klipper file keeps a `.bak` original, and uninstall restores configuration and Klipper files before removing the runtime.
-- **Tested like firmware.** Forge-X has automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print regression before releases. See [Development, testing, and release validation](/docs/DEVELOPMENT.md).
-- **Print-safety features.** Bed collision protection and a nozzle contact check use the load cell, bed mesh validation catches stale meshes, MD5 checks catch G-code corrupted during upload, and Power Loss Recovery can salvage long prints.
-- **Documented and extensible.** User documentation covers every workflow, [OpenWiki](/openwiki/quickstart.md) maps the code for contributors, and `user.cfg`, `user.moonraker.conf`, and the [Typer renderer](/docs/TYPER.md) allow customization without patching the mod.
+- **Built for 128 MiB of RAM.** Feather uses roughly 1–2 MB of RAM, compared with roughly 10–20 MB for the Stock screen. The camera service, the swap and ZRAM options, and Moonraker startup are also tuned for low memory. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
+- **Klipper fixes.** Forge-X backports fixes from newer upstream Klipper into the FlashForge host code. They include the `Timer too close` starvation fix, the E0011 / E0017 mitigations, correct file offsets for G-code with non-ASCII characters, and dynamic pressure advance. See [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md).
+- **A local touchscreen with no extra hardware.** Feather runs as a Forge-X Klipper extension. It can browse and start local and USB files, control a running print, move and heat the printer, change filament, run guided calibrations, configure Wi-Fi and Ethernet, and offer OTA updates and Power Loss Recovery.
+- **Recovery.** If an update or configuration change fails, you should normally still be able to boot Stock or open the Recovery menu. The early boot guard falls back to the stock firmware instead of repeating a broken start. Every patched Klipper file keeps a `.bak` original, and uninstall restores configuration and Klipper files before removing the runtime.
+- **Testing.** Before releases, Forge-X goes through automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print tests. See [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+- **Print safety.** Bed collision protection and a nozzle contact check use the load cell, bed mesh validation catches stale meshes, MD5 checks catch G-code corrupted during upload, and Power Loss Recovery can salvage long prints.
+- **Documentation and customization.** The user guides cover every workflow, [OpenWiki](/openwiki/quickstart.md) maps the code for contributors, and `user.cfg`, `user.moonraker.conf`, and the [Typer renderer](/docs/TYPER.md) let you customize the mod without changing its code.
 
 ## Disclaimer
 

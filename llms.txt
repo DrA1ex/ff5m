@@ -1,6 +1,6 @@
 # Forge-X
 
-> Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and a multi-layer recovery system. It is designed around the printer's 128 MiB of RAM and is fully reversible.
+> Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and recovery tools. It is designed for the printer's 128 MiB of RAM and can be fully removed.
 
 Key facts:
 - Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
@@ -10,7 +10,7 @@ Key facts:
 - Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
 - Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
 - Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
-- Testing: automated host tests, rendered G-code macro tests, visual UI regression, on-printer regression, and physical print regression before releases.
+- Testing before releases: automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests.
 - License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
 
 ## User documentation
