@@ -21,6 +21,7 @@ import feather_screen as FEATHER  # noqa: E402
 from feather.screen.pages import printing as PAGES  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.printing import runtime as printing_ui  # noqa: E402
+from ff5m_ui.printing import page as PRINTING_PAGE  # noqa: E402
 from ff5m_ui.screen import ScreenPage  # noqa: E402
 from feather.previews import (  # noqa: E402
     PREVIEW_MASK_SIZE, PreviewCache, colorize_preview, decode_fxi1)
@@ -236,6 +237,71 @@ class PreviewProcessTest(unittest.TestCase):
                     PAGES._render_gcode_preview(path)
             finally:
                 pathlib.Path(path).unlink()
+
+
+class PrintStatusUpdateTest(unittest.TestCase):
+    def setUp(self):
+        self.page = PRINTING_PAGE.create_page()
+        self.page.prepare_layout()
+        self.renderer = FEATHER.FeatherRenderer()
+        page_patch = mock.patch.object(PRINTING_PAGE, "PAGE", self.page)
+        page_patch.start()
+        self.addCleanup(page_patch.stop)
+        self.values = dict(self.page.initial_state())
+        self.values.update({
+            printing_ui.PrintingState.FILENAME: "context_print-kamp.gcode",
+            printing_ui.PrintingState.STATUS: "PRINT -> HOMING",
+            printing_ui.PrintingState.PROGRESS: 31,
+            printing_ui.PrintingState.HEIGHT: "-125.00 MM",
+            printing_ui.PrintingState.CONTROLS_READY: False,
+            printing_ui.PrintingState.PREVIEW_STATUS: "loading",
+        })
+
+    def test_first_homing_draw_reuses_prepared_geometry(self):
+        layout = self.page.layout
+        with mock.patch.object(self.page.root, "arrange", side_effect=AssertionError("geometry recalculated")):
+            with mock.patch.object(self.page.root, "update", side_effect=AssertionError("full update")):
+                with mock.patch.object(self.page.styles, "apply", side_effect=AssertionError("style pass")):
+                    commands = printing_ui.render(self.renderer, self.values, reuse_layout=True)
+        self.assertIs(self.page.layout, layout)
+        drawing = "\n".join(commands)
+        for value in ("PRINT -> HOMING", "31%", "-125.00 MM"):
+            self.assertIn(value, drawing)
+
+    def test_status_updates_skip_unrelated_components_and_styles(self):
+        printing_ui.render(self.renderer, self.values, reuse_layout=True)
+        layout = self.page.layout
+        elapsed = self.page.node(printing_ui.PrintingRef.ELAPSED)
+        with mock.patch.object(self.page.root, "arrange", side_effect=AssertionError("geometry recalculated")):
+            with mock.patch.object(self.page.root, "update", side_effect=AssertionError("full update")):
+                with mock.patch.object(elapsed, "update", side_effect=AssertionError("unrelated metric")):
+                    with mock.patch.object(self.page.styles, "apply", side_effect=AssertionError("style pass")):
+                        commands = printing_ui.update(self.renderer, {
+                            printing_ui.PrintingState.STATUS: "PRINT -> HEATING"})
+                        self.assertEqual(printing_ui.update(self.renderer, {
+                            printing_ui.PrintingState.STATUS: "PRINT -> HEATING"}), [])
+        self.assertIs(self.page.layout, layout)
+        drawing = "\n".join(commands)
+        self.assertIn("PRINT -> HEATING", drawing)
+        self.assertNotIn("ELAPSED", drawing)
+        self.assertNotIn("PREVIEW", drawing)
+
+    def test_long_status_reflows_to_match_a_fresh_full_draw(self):
+        printing_ui.render(self.renderer, self.values, reuse_layout=True)
+        original = self.page.rect(printing_ui.PrintingRef.STATUS)
+        status = "PRINT -> WAITING FOR THE BED AND NOZZLE TO REACH THE REQUESTED TEMPERATURE"
+        for value in (status, "PRINT -> HOMING"):
+            commands = printing_ui.update(self.renderer, {printing_ui.PrintingState.STATUS: value})
+            self.values[printing_ui.PrintingState.STATUS] = value
+            fresh = PRINTING_PAGE.create_page()
+            fresh.draw(FEATHER.FeatherRenderer(), self.values)
+            for key in self.page.layout.keys():
+                self.assertEqual(self.page.rect(key), fresh.rect(key))
+            self.assertTrue(commands)
+            if value == status:
+                self.assertGreater(self.page.rect(printing_ui.PrintingRef.STATUS).height, original.height)
+            else:
+                self.assertEqual(self.page.rect(printing_ui.PrintingRef.STATUS), original)
 
 
 class PrintPreviewLayoutTest(unittest.TestCase):

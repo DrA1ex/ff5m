@@ -641,32 +641,40 @@ class Text(Component):
             return None
         return self._content_height(cross_extent)
 
+    def _arrange(self, bounds, result):
+        # Wrapping depends on the assigned width, including after prepare_layout.
+        self._arranged_width = bounds.width + self.layout_options.padding.horizontal
+
     def update(self, state, initialize=False):
         previous = self._measurement
         content_width = self.layout_options.width == "content"
         content_height = self.layout_options.height == "content"
-        previous_size = (
-            self._content_width() if content_width else None,
-            self._content_height() if content_height else None)
-        self._measurement_state = state
-        # Intrinsic containers may still request a fill-sized leaf's natural
-        # size during layout; resolve it lazily if no text-driven layout runs.
-        measure = (initialize or self.layout_options.width == "content"
-                   or self.layout_options.height == "content"
+        # Intrinsic containers may request a fill-sized leaf's natural height.
+        intrinsic_height = (self.layout_options.height is None
+                            and getattr(self, "_height_measurement", None) is not None)
+        measure = (initialize or content_width or content_height or intrinsic_height
                    or self.kwargs.get("wrap", False)
                    or (previous is not None and previous[4]))
-        self._measurement = self._resolve_measurement(state) if measure else None
-        super().update(state, initialize)
-        if not initialize and measure and previous != self._measurement:
+        current = self._resolve_measurement(state) if measure else None
+        size_changed = False
+        if not initialize and measure and previous != current:
+            cross_extent = getattr(self, "_arranged_width", None)
+            previous_size = (
+                self._content_width() if content_width else None,
+                self._content_height(cross_extent, dynamic_minimum=True)
+                if content_height or intrinsic_height else None)
+            self._measurement = current
             current_size = (
                 self._content_width() if content_width else None,
-                self._content_height() if content_height else None)
-            # A content-height label changing digits still has the same size.
-            # Keep it a local repaint; wrapping also depends on assigned width.
-            wrapped = ((previous is not None and previous[4])
-                       or (self._measurement is not None and self._measurement[4]))
-            if previous_size != current_size or wrapped:
-                self.invalidate(Dirty.LAYOUT)
+                self._content_height(cross_extent, dynamic_minimum=True)
+                if content_height or intrinsic_height else None)
+            size_changed = previous_size != current_size
+
+        self._measurement_state = state
+        self._measurement = current
+        super().update(state, initialize)
+        if size_changed:
+            self.invalidate(Dirty.LAYOUT)
 
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)

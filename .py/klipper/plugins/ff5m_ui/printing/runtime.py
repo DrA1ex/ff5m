@@ -61,16 +61,16 @@ def render(renderer, values, reuse_layout=False):
 
 
 def update(renderer, values):
-    return get_page().update(renderer, values)
-
-
-def update_progress(renderer, values):
     module = _page_module()
     page = module.PAGE
     refs = _changed_refs(module, page, values)
     if refs is None:
         return page.update(renderer, values)
     return page.update_refs(renderer, values, refs)
+
+
+def update_progress(renderer, values):
+    return update(renderer, values)
 
 
 def rect(ref):
