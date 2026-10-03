@@ -39,7 +39,7 @@ forge-x-streamer also handles several AD5M camera failure modes directly:
 - excess clients and malformed/oversized frames are bounded and rejected
   instead of growing resource usage without limit.
 
-#### forge-x-streamer at a glance
+#### forge-x-streamer features
 
 - **One executable, no plugin loader:** capture, frame publication, HTTP serving, image controls, and recovery are all in a single program. The MJPEG stream, snapshots, health check, and control panel share one HTTP listener (port `8080` in Forge-X).
 - **Endpoints:** `/?action=stream` (MJPEG stream; `POST /stream` also works), `/?action=snapshot` (JPEG snapshot), `/healthz` (camera readiness; returns `503` while the camera is offline), `/control.htm` (control panel), and `/controls` (read, apply, and save image controls). The multipart boundary and timestamp header keep the format of the previous MJPEG streamer, so existing clients keep working.

@@ -13,7 +13,7 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 > *After installation or uninstallation, check all printer parameters and perform a full recalibration. Skipping this step may damage your printer.*
 > *Proceed at your own risk!*
 
-## Forge-X at a glance
+## Quick facts
 
 | | |
 | --- | --- |
