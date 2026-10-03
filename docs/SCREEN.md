@@ -11,6 +11,13 @@ Forge-X supports four display modes:
 | `GUPPY` | You prefer the separate Guppy touchscreen interface. |
 | `HEADLESS` | You control the printer remotely or provide your own display process. |
 
+HelixScreen is also available for AD5M/Pro, but it is not an internal Forge-X
+display mode. The official HelixScreen project publishes a ready-made AD5M
+firmware image based on Forge-X and also documents manual installation on an
+existing Forge-X setup. See the
+[official HelixScreen project](https://github.com/prestonbrown/helixscreen) and
+its [installation guide](https://github.com/prestonbrown/helixscreen/blob/main/docs/user/INSTALL.md).
+
 > [!WARNING]
 > Do not change display mode during a print. Before switching, make sure you have a working network connection or a recovery route through [Dual Boot](DUAL_BOOT.md).
 
@@ -28,7 +35,23 @@ When using the Stock screen:
 
 ### Feather Screen
 
-Feather is Forge-X's built-in low-resource touchscreen. Unlike the early display-only implementation, current Feather versions provide the main local workflows needed for everyday printing.
+Feather is Forge-X's first-party low-resource touchscreen, designed
+specifically for the AD5M's limited 128 MiB system rather than adapted from a
+general-purpose Linux touchscreen stack. It runs as a Forge-X Klipper extension
+and uses the small Typer renderer, avoiding a separate full UI application and
+its duplicate printer-state/runtime layers.
+
+That resource budget matters on this printer: Moonraker alone uses tens of MiB
+of RAM (the current resource guide describes roughly 30 MiB), before the camera,
+web services, Klipper, and any user extensions are counted. Feather is designed
+to leave as much of that constrained memory budget as possible available to the
+printing stack and to optional services or user modifications.
+
+Unlike the early display-only implementation, current Feather versions provide
+the main local workflows needed for everyday printing. Stock mode remains fully
+supported for users who prefer the original FlashForge workflow, while Feather
+provides deeper Forge-X-specific integration without requiring the stock UI
+processes.
 
 #### Home screen and navigation
 
