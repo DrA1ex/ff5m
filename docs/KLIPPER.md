@@ -20,12 +20,62 @@ SET_MOD PARAM=tune_klipper VALUE=1
 **Why not a full Klipper 0.13?** Forge-X deliberately keeps the vendor-compatible Klipper and MCU pair and brings over the newer fixes and features that matter for this printer. See [Why doesn't Forge-X use Klipper 0.13?](FAQ.md#why-doesnt-forge-x-use-klipper-013)
 
 **Details:**
+[Source history](#source-history-of-the-patches) ·
 [Why Klipper is not replaced with 0.13](#design-approach) ·
 [`Timer too close`](#the-timer-too-close-problem) ·
 [Backported upstream fixes](#upstream-klipper-fixes-backported-by-forge-x) ·
 [AD5M-specific changes](#ad5m-specific-klipper-fixes-and-adaptations) ·
 [List of replaced files](#complete-replacement-inventory) ·
 [How patches are applied and recovered](#how-patches-are-applied-and-recovered)
+
+## Source history of the patches
+
+The files in `.py/klipper/patches/` are also published as a Git history in [DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m), a copy of Klipper with these commits on top of each other:
+
+1. upstream Klipper `v0.11.0` (`e02b7256`), the base of the FlashForge Klipper;
+2. one commit with the changes the stock FlashForge firmware makes to it;
+3. the Forge-X commits, one topic per commit.
+
+You can read the exact diff of every change there. Upstream commits that apply cleanly are cherry-picked with the original author. Commits that had to be adapted to the 0.11 code say so in their message and name the upstream commit they are based on.
+
+- [What Forge-X changes compared with the stock firmware](https://github.com/DrA1ex/klipper-ad5m/compare/182e96ab8394201923e095ede450f2468f293d16...main)
+- [What the stock firmware changes compared with upstream `v0.11.0`](https://github.com/DrA1ex/klipper-ad5m/compare/e02b725602067a2cd098a62be9a4bb10fc74a9bd...182e96ab8394201923e095ede450f2468f293d16)
+- [Description of the repository](https://github.com/DrA1ex/klipper-ad5m/blob/main/AD5M.md)
+
+> [!NOTE]
+> The patches were written as whole files, not as a series of commits on top of Klipper. The history was reconstructed by topic afterwards, so the order of the commits is chosen for reading and is not the order of the original work. What is exact: the final files are byte-identical to the files in this repository, and the stock commit has the same MD5 sums as the stock firmware for the four files it covers. One stock file, `virtual_sdcard.py`, is not reconstructed yet; see the description of the repository.
+
+To check it yourself, run `python3 tests/verify_klipper_fork.py --fork https://github.com/DrA1ex/klipper-ad5m`. It clones the commit recorded in [`docs/klipper-ad5m-manifest.json`](klipper-ad5m-manifest.json) and compares every Python file with `.py/klipper/patches/`. Without `--fork` it only checks the SHA-256 sums in the manifest, which is also done by the host tests (`tests/test_klipper_fork_manifest.py`). The prebuilt `c_helper.so` is listed in the manifest with its SHA-256. The C sources in the history repository are the sources it is built from.
+
+Where to find each change:
+
+| Change | Commits in the history repository |
+| --- | --- |
+| Stock FlashForge changes (reconstructed) | [`182e96a`](https://github.com/DrA1ex/klipper-ad5m/commit/182e96ab8394201923e095ede450f2468f293d16) |
+| `toolhead.py`: lookahead flush time and `tune_klipper` | [`86fe15e`](https://github.com/DrA1ex/klipper-ad5m/commit/86fe15e8550a473898e3eb544a7fbb328f8274e1) |
+| `toolhead.py`: `buffer_time_high` 1.5 s | [`954456b`](https://github.com/DrA1ex/klipper-ad5m/commit/954456b1294752b2e88c937ea5ea709ee89d3f3d) |
+| `toolhead.py`: yield while buffering (50cb362) | [`ccde55d`](https://github.com/DrA1ex/klipper-ad5m/commit/ccde55ddaaacb9d245a2a67a055bf705f65553d2) |
+| `toolhead.py`: low-buffer flush logging | [`7938c6a`](https://github.com/DrA1ex/klipper-ad5m/commit/7938c6ad559de47fedf03a686dab2640376fafc3) |
+| `reactor.py`: fd event dispatch (bb88985 and prerequisites) | [`c126afb`](https://github.com/DrA1ex/klipper-ad5m/commit/c126afbe750e160e43ea5c5e6201a7234bf65443), [`ff5f2e5`](https://github.com/DrA1ex/klipper-ad5m/commit/ff5f2e539a74370e262db3de7dd6c100069d26ca), [`e43fa2c`](https://github.com/DrA1ex/klipper-ad5m/commit/e43fa2cce44be45ba85a04d7297c224c01296cb9) |
+| `reactor.py`: `fileno()` kept, per-batch snapshot | [`a28433f`](https://github.com/DrA1ex/klipper-ad5m/commit/a28433f5312994c17a62b47f4cc2a3d391bc92e6), [`a628234`](https://github.com/DrA1ex/klipper-ad5m/commit/a6282342ff2cdee65266a0895827c2405df6f1ea) |
+| `mcu.py`: TRSYNC reporting and scheduling (dab39c02, 1ea9f3aa, 8e6e467) | [`bf9dcfe`](https://github.com/DrA1ex/klipper-ad5m/commit/bf9dcfe8f51c27b688ed35cfd5f267704ce522fc), [`cc7aab5`](https://github.com/DrA1ex/klipper-ad5m/commit/cc7aab5f081dbfa922c966f5e05d89af4f47d7ca), [`256df48`](https://github.com/DrA1ex/klipper-ad5m/commit/256df4861685e6c51dcec1f18bd536a1a1b44abd) |
+| `mcu.py`: `tune_klipper` TRSYNC timeout, homing logs | [`bde126b`](https://github.com/DrA1ex/klipper-ad5m/commit/bde126be1108d0b7ac58d8465ec3c2f83618a01c), [`9049ea1`](https://github.com/DrA1ex/klipper-ad5m/commit/9049ea136bce33612b7d7c514d9f899525bc2fb3) |
+| `servo.py` / `mcu.py`: PWM cycle alignment (2b4c55f) | [`1cd00fa`](https://github.com/DrA1ex/klipper-ad5m/commit/1cd00fafbf55ed96618b87d4af46d782394cf496) |
+| `tmc.py`: direction-inversion event (8dd798e), mutex (8ea7be5), driver checks | [`b7a8c09`](https://github.com/DrA1ex/klipper-ad5m/commit/b7a8c09b3f3578809288b2abe3e32939317696a9), [`c9f616b`](https://github.com/DrA1ex/klipper-ad5m/commit/c9f616baf0a60c3aa31d3bc736a850dec0d77495), [`b6e0cae`](https://github.com/DrA1ex/klipper-ad5m/commit/b6e0cae1cbae3fc9bd8d2d58424122c2b3adaf72) |
+| `buttons.py` (92fe8f1), `gcode_button.py` (b8c936f) | [`d821f55`](https://github.com/DrA1ex/klipper-ad5m/commit/d821f55a847e53ca99fc6745d8d012de728927ac), [`93c5dda`](https://github.com/DrA1ex/klipper-ad5m/commit/93c5dda6c5b34a4cd4fd0818be2e200af0637f4f) |
+| `probe.py`: `PROBE_ACCURACY` (a353efa) | [`dced81f`](https://github.com/DrA1ex/klipper-ad5m/commit/dced81f0f1bc1240b7c2df6dd357f8ccb72d8ab8) |
+| `heaters.py`: low `max_power` (01f089e), cold-extrusion override | [`07b86ba`](https://github.com/DrA1ex/klipper-ad5m/commit/07b86babb06bb8bf7a521f38c08faa8f64f62363), [`4a2c60a`](https://github.com/DrA1ex/klipper-ad5m/commit/4a2c60a3b1b87ffdc29530d869978f128aa281b6) |
+| `virtual_sdcard.py`: file offsets (600e89a), hidden files, `load_file()`, print-time metadata, Python 2 | [`ad06680`](https://github.com/DrA1ex/klipper-ad5m/commit/ad066800d110bee61d5e7bdcd3400e7e3fd5e715), [`0cac54c`](https://github.com/DrA1ex/klipper-ad5m/commit/0cac54c65236bfdb9d287d7df810ccb187f1eeff), [`faabdef`](https://github.com/DrA1ex/klipper-ad5m/commit/faabdef72bcca1d6477185634e8159f5c99fb6ff), [`03259fd`](https://github.com/DrA1ex/klipper-ad5m/commit/03259fd07cb790901de7a5ab5fcc151799d877cb), [`58f90b1`](https://github.com/DrA1ex/klipper-ad5m/commit/58f90b13ef9165027b22e9ce13cffb26225092da) |
+| `shaper_calibrate.py`, `resonance_tester.py`: `square_corner_velocity`, pipe deadlock, plot data | [`ad6cf26`](https://github.com/DrA1ex/klipper-ad5m/commit/ad6cf263b62dbf02e0b317a79bb486aa64852a74), [`6ce567d`](https://github.com/DrA1ex/klipper-ad5m/commit/6ce567d42c8708bbe8774f513e3fa77e6806aab7), [`ef171c9`](https://github.com/DrA1ex/klipper-ad5m/commit/ef171c903df563d352b269f6b31d82c726b7032f), [`db4ecb8`](https://github.com/DrA1ex/klipper-ad5m/commit/db4ecb8c5602369d7954328363f7ce384709831d) |
+| `kinematics/extruder.py`, `chelper/`: dynamic pressure advance (c84d78f3) | [`f75b42d`](https://github.com/DrA1ex/klipper-ad5m/commit/f75b42d053b9c9733c2e09dc9fdc47cd9b40a0c7) |
+| `gcode.py`: command names (5493c60), regex (0087f04), status (6676c1d) | [`b684880`](https://github.com/DrA1ex/klipper-ad5m/commit/b6848803ed3e63fa09d20a81de1a3af5c8a390b6), [`f9580e8`](https://github.com/DrA1ex/klipper-ad5m/commit/f9580e8e549b5fe3ad0c4ff96085345ef998c512), [`9512876`](https://github.com/DrA1ex/klipper-ad5m/commit/95128762cf0188d50e20b696639c467dfee40a57), [`69e18ca`](https://github.com/DrA1ex/klipper-ad5m/commit/69e18ca700c54e46628c6322f7c299cd3d6c301f) |
+| `gcode.py`: error reporting, immediate commands, pipe input | [`8fa6abb`](https://github.com/DrA1ex/klipper-ad5m/commit/8fa6abb17451c5266ee07a9a643bbd6ff7c1cc4a), [`e71e28b`](https://github.com/DrA1ex/klipper-ad5m/commit/e71e28b05b8d6b6aaad16b2223cc2f1f4edd433e), [`a383eb0`](https://github.com/DrA1ex/klipper-ad5m/commit/a383eb088fb9f828a5a1f7f125b8299ef5260b06) |
+| `gcode_move.py`: `base_position`, restore log, `RESET_GCODE_ORIGIN` | [`06d31c1`](https://github.com/DrA1ex/klipper-ad5m/commit/06d31c1cf2b7541824fd7a0b23c7049b289b441a), [`ae45352`](https://github.com/DrA1ex/klipper-ad5m/commit/ae453523da7ae29c44266db9deb1819a4c7dfb71), [`364f552`](https://github.com/DrA1ex/klipper-ad5m/commit/364f552ae71fa541b48a94fa52af9ae1c5a43c09) |
+| `homing.py`: logging | [`66c91a9`](https://github.com/DrA1ex/klipper-ad5m/commit/66c91a9cce5f7aab7c9886c17479dcd8a394ecd0) |
+| `temperature_sensor.py`: threshold G-code | [`a20c2ae`](https://github.com/DrA1ex/klipper-ad5m/commit/a20c2aeeb513614d0ea3530797f004a6f32e08d5) |
+| `gcode_shell_command.py` | [`3fa2b0f`](https://github.com/DrA1ex/klipper-ad5m/commit/3fa2b0f97ce3dda8253518ff52e14544a7d026da) |
+| `configfile.py`, `led.py`, `statistics.py` | [`c2516bb`](https://github.com/DrA1ex/klipper-ad5m/commit/c2516bb140cc98fe2aa3deb3744cf5414de86542), [`e11ec5b`](https://github.com/DrA1ex/klipper-ad5m/commit/e11ec5b327b917eb037162d3b83d3638d535bc27), [`6137800`](https://github.com/DrA1ex/klipper-ad5m/commit/6137800612d25500bb7ef481667ceaf90a97a0d0) |
+| `chelper/__init__.py`: library path | [`ef95592`](https://github.com/DrA1ex/klipper-ad5m/commit/ef955923d5aef700982b05bf1f024cc4fd5d3ba0) |
 
 ## Design approach
 
@@ -54,7 +104,7 @@ The key fix is a semantic backport of upstream Klipper commit [50cb362 — “to
 
 The patched `toolhead.py` periodically yields to the reactor while buffering dense motion. This prevents long stretches of move processing from starving MCU communication, timers, and other reactor work.
 
-Forge-X also yields while loading chunks from virtual SD, and carries newer reactor event-dispatch fixes described below. Together, these changes address the host scheduling failure mode that caused heavy files to reproduce `Timer too close` on the AD5M.
+Forge-X also carries the newer reactor event-dispatch fixes described below. Together, these changes address the host scheduling failure mode that caused heavy files to reproduce `Timer too close` on the AD5M.
 
 The original reproducer from issue #40 was later marked fixed in Forge-X 1.4.2 Beta 3.
 
@@ -83,6 +133,8 @@ The following fixes are taken from newer upstream Klipper and adapted to the Fla
 | Input-shaper calibration parameters | Uses `square_corner_velocity` from the printer configuration when calculating shaper recommendations. | [72b301a](https://github.com/Klipper3d/klipper/commit/72b301a2859c3f7ed26d802dd52fc495eef6c353) |
 | Input-shaper background-process deadlock | Drains a large calibration result from the multiprocessing pipe before waiting for the child process to exit, preventing `SHAPER_CALIBRATE` from hanging when the result exceeds the OS pipe buffer. Forge-X carried this fix before it later appeared upstream. | [baf188bd](https://github.com/Klipper3d/klipper/commit/baf188bd62bb9c82775d679cf0db30a72f9e9173) |
 | Dynamic pressure advance | Backports the host-side support that allows pressure-advance values to change at an exact print time while queued motion already exists. The backport includes matching Python/CFFI pieces and a compatible `c_helper.so`. | [c84d78f3](https://github.com/Klipper3d/klipper/commit/c84d78f3f169bc5163d11b74837f9880b0b7dba4) |
+| G-code command names | Rejects invalid extended command names at registration. | [5493c60](https://github.com/Klipper3d/klipper/commit/5493c60) |
+| G-code regular expression | Uses a raw string for the `M112` pattern, which removes a Python warning. | [0087f04](https://github.com/Klipper3d/klipper/commit/0087f04) |
 
 ## AD5M-specific Klipper fixes and adaptations
 
@@ -91,13 +143,14 @@ Not every Forge-X replacement is a literal upstream cherry-pick. Some changes ad
 | Area | Forge-X behavior |
 | --- | --- |
 | Lookahead tuning / E0017 | The FlashForge Klipper tree uses a `0.5 s` lookahead flush time. Modern upstream Klipper later reduced this to `0.150 s` in [16fc46fe](https://github.com/Klipper3d/klipper/commit/16fc46fe5ff0dbbc5188ee6a7829eee5976c1eb9), specifically to improve responsiveness and make print stalls less likely. Forge-X can select that modern `0.150 s` behavior through `tune_klipper`. On the resource-constrained AD5M, keeping a much larger amount of motion buffered can increase queue pressure and contribute to the familiar `E0017 / Move queue overflow` failure mode. |
+| Buffer time | `toolhead.py` uses `buffer_time_high` = 1.5 s by default instead of the 2.0 s of Klipper 0.11. This value was chosen by testing on the printer. A `buffer_time_high` set in the printer configuration still takes priority. Newer Klipper no longer has this mechanism in the same form, because its toolhead was reworked around a separate motion-queuing module. |
 | TRSYNC timeout / E0011 | The AD5M uses two MCUs, so homing and probing depend heavily on reliable TRSYNC communication. Forge-X backports the newer upstream multi-MCU improvements that stagger reports and improve report timing ([dab39c02](https://github.com/Klipper3d/klipper/commit/dab39c02cd5681d530388fbaa82d0dc7f31d2e26), [1ea9f3aa](https://github.com/Klipper3d/klipper/commit/1ea9f3aa35d7232ee5d106541c5a98c4348c6e47), [8e6e467](https://github.com/Klipper3d/klipper/commit/8e6e467ebc16f93ab01ed63c55d24af52b020b54)). In addition, `tune_klipper` uses an AD5M-specific `0.05 s` multi-MCU timeout instead of the stock `0.025 s`: a compromise that gives this hardware more communication margin without making timeout detection excessively slow. |
-| Virtual-SD cooperative yielding | `virtual_sdcard.py` explicitly yields to the reactor after reading G-code chunks and while another G-code mutex user is pending. This reduces the chance that long file-processing bursts monopolize Klippy and complements the upstream `toolhead` starvation fix used for heavy-file `Timer too close` failures. |
+| Virtual-SD file loading | `virtual_sdcard.py` has `load_file()`, which selects a file without starting the print. The Power Loss Recovery plugin uses it to select the interrupted file again before the position is restored. |
 | Homing diagnostics | `homing.py` retains the vendor-era homing calculations but records the details needed to investigate real AD5M incidents: homing/probing moves, start/trigger/halt step positions, retract and second-pass setup, and final toolhead coordinates. This is especially useful because the printer has two MCUs and the synchronization path is a recurring source of hard-to-diagnose homing/probing failures. |
 | MCU / TRSYNC diagnostics | `mcu.py` logs homing setup, endstop trigger timestamps, and final TRSYNC stop reasons without flooding logs with every periodic report. These diagnostics are specifically intended to make intermittent two-MCU synchronization and homing incidents on the AD5M observable after the fact. |
 | G-code coordinate safeguard | `gcode_move.py` adds `RESET_GCODE_ORIGIN`, which clears temporary `G92` coordinate shifts while preserving configured offsets. This provides a safe recovery path for rare cases where a stale coordinate shift survives into a later workflow and would otherwise produce incorrect movement or a bad print. |
 | Coordinate diagnostics | `gcode_move.py` exposes and logs base/origin state around homing and `RESTORE_GCODE_STATE`. The AD5M has a comparatively complex motion/synchronization path, and users occasionally encounter coordinate-state incidents that are impossible to diagnose from normal Klipper logs alone. |
-| G-code command discovery | `gcode.py` backports the newer `gcode/commands` status interface expected by current Moonraker/Mainsail integrations. |
+| G-code command discovery | `gcode.py` backports the newer `gcode/commands` status interface expected by current Moonraker/Mainsail integrations (upstream commit [6676c1d](https://github.com/Klipper3d/klipper/commit/6676c1d)). |
 | G-code error handling | The Forge-X G-code replacement avoids repeated error output in selected exception paths and contains AD5M/Forge-X immediate-command handling changes. |
 | Statistics with logging disabled | `statistics.py` continues calling subsystem stats callbacks even when periodic stats logging is disabled. This prevents internal producers from accumulating undrained state while still allowing expensive/noisy periodic log output to be disabled on a low-resource host. |
 | Shaper calculation path | The resonance/shaper replacements pass the correct calibration parameters and reuse already calculated shaper data instead of repeating unnecessary calculations. This reduces work and noticeably speeds up shaper calculation/plot generation on the AD5M's slow host CPU. |
@@ -111,7 +164,7 @@ Not every Forge-X replacement is a literal upstream cherry-pick. Some changes ad
 
 ## Complete replacement inventory
 
-Forge-X 1.4.2 overlays the following existing Klipper files on a supported AD5M installation:
+Forge-X 1.4.2 overlays the following Klipper files on a supported AD5M installation. All of them replace a stock file, except `klippy/extras/gcode_shell_command.py`, which is not part of the stock firmware and is added through the same mechanism:
 
 ```text
 klippy/configfile.py
