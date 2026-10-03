@@ -36,7 +36,7 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 
 - Fully interactive **Feather** screen
 - **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
-- **Klipper** with many patches/fixes/plugins specially adapted for AD5M
+- **Klipper** with [bug fixes and hardening specially adapted for AD5M](/docs/KLIPPER.md)
 - **Moonraker**
 - **Fluidd** & **Mainsail**
 - Adapted **Guppy** screen
