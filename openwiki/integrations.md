@@ -18,10 +18,9 @@ Fluidd and Mainsail are available through the printer HTTP service; the README d
 [`.shell/S98camera`](../.shell/S98camera) owns the Forge-X camera service on port 8080.
 The camera implementation is maintained separately as **forge-x-streamer**:
 [DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
-The installed executable may still retain the historical `mjpg_streamer` filename for compatibility; that filename does not describe the current implementation.
 
 `forge-x-streamer` is a single-process V4L2-to-HTTP MJPEG service designed for the AD5M's 128 MiB host.
-It combines capture, bounded frame publication, HTTP serving, camera controls, and recovery in one executable instead of loading the traditional mjpg-streamer plugin stack.
+It combines capture, bounded frame publication, HTTP serving, camera controls, and recovery in one executable instead of relying on a runtime plugin stack.
 Normal MJPEG/JPEG operation does not link libjpeg. The default capture request is one V4L2 buffer, while publisher/client memory, client count, and worker stacks are bounded.
 
 `S98camera` creates the persistent camera configuration when needed and passes resolution/FPS, memory limits, the controls-file path, and explicit or automatic device selection to the streamer.
