@@ -22,6 +22,69 @@ For the implementation details, commands, artifact formats, telemetry, and
 individual printer suites, see the
 [Testing and change guide](/openwiki/testing-and-change-guide.md).
 
+## Stock firmware integration and lifecycle safety
+
+Forge-X is integrated into the FlashForge firmware as a reversible layer rather
+than as an all-or-nothing replacement. The stock firmware remains a deliberate
+fallback path, while the mod adds its chroot runtime, Moonraker, Klipper
+extensions, display modes, and printer-specific configuration on top.
+
+Configuration changes are applied through the same managed
+[`cfg_backup.py`](/.py/cfg_backup.py) mechanism used for backup and restore.
+Forge-X does not depend on ad-hoc edits to `printer.cfg` for its display
+profiles. The repository carries explicit configuration deltas for Stock,
+Feather, Guppy, and Headless modes under `.cfg/init.display.*.cfg`, together
+with restore profiles used during uninstall and recovery. Mode switching,
+normal boot repair, and uninstall therefore operate on the same reviewed
+configuration model.
+
+The early boot path is also intentionally fail-safe. The installed
+`/etc/init.d/S00init` file is treated as the **last-known-good boot guard**.
+An OTA/source update may replace the mod files, but routine runtime reload does
+not replace this installed guard. During the next normal boot, the new
+initializer must complete successfully and publish its readiness flag before
+the guard is updated. The candidate guard is syntax-checked, copied to a
+temporary file, synced, and atomically renamed into place only after that
+successful initialization. If initialization is interrupted or returns without
+readiness, Forge-X records the failed boot and the next boot bypasses the mod
+and continues with the stock firmware instead of repeatedly executing the new
+broken boot path.
+
+This gives updates a two-stage lifecycle:
+
+1. update the mutable Forge-X runtime;
+2. boot it while the previous boot guard is still installed;
+3. confirm that normal initialization reached its ready state;
+4. only then commit the new boot guard.
+
+The same boot boundary arms durable recovery/failure markers before optional
+mod work begins. An interrupted normal initialization falls back to Stock; an
+interrupted Recovery session also falls back to Stock rather than repeatedly
+entering a half-completed recovery path.
+
+Rollback exists at several additional layers:
+
+- stock Klipper modules replaced by Forge-X keep `.bak` copies and are restored
+  by uninstall;
+- display/configuration mutations have explicit restore profiles;
+- settings can be backed up and restored through the managed configuration
+  tooling;
+- the Recovery environment can diagnose the filesystem, create backups, reset
+  settings, uninstall Forge-X, and invoke firmware restore paths;
+- uninstall restores printer configuration and Klipper replacements before
+  deleting the mod runtime.
+
+These mechanisms are regression-tested along with boot recovery, firmware image
+installation, configuration migration, and uninstall-sensitive behavior. The
+goal is that a failed update or configuration change should normally leave a
+stock or Recovery route available instead of requiring immediate UART/FEL
+repair.
+
+For the exact trust boundary and source flow, see the
+[Architecture overview](/openwiki/architecture.md), the
+[Operations and recovery guide](/openwiki/workflows/operations-and-recovery.md),
+and the operator-facing [Firmware Recovery guide](/docs/RECOVERY.md).
+
 ## Validation layers
 
 ### Automated host tests
