@@ -6,7 +6,7 @@
       "sha256": "1f80f81bee9e9a75669842ff3d42e4b41432c22095e2d35783277f057fb0b5e4"
     }
   },
-  "commit": "28f856e4246501c961b94a98bda6dd58eb399158",
+  "commit": "ddeca615afd2bcd3d6be900759cfbd2fbaf5b8b3",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -98,5 +98,5 @@
       "sha256": "08b4325e0bcdc6807ea5ae7518db12c1f4d7ae3615b53f25b6f61f867e6adc35"
     }
   },
-  "stock_commit": "182e96ab8394201923e095ede450f2468f293d16"
+  "stock_commit": "c6e78dffa3d16a25710942a379b019debbacd5af"
 }

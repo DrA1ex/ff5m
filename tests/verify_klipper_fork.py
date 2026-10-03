@@ -31,7 +31,7 @@ PATCHES = ROOT / ".py" / "klipper" / "patches"
 MANIFEST = ROOT / "docs" / "klipper-ad5m-manifest.json"
 FORK_URL = "https://github.com/DrA1ex/klipper-ad5m"
 BASE_COMMIT = "e02b725602067a2cd098a62be9a4bb10fc74a9bd"
-STOCK_COMMIT = "182e96ab8394201923e095ede450f2468f293d16"
+STOCK_COMMIT = "c6e78dffa3d16a25710942a379b019debbacd5af"
 SKIPPED_PARTS = {"__pycache__"}
 
 
