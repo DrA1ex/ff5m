@@ -55,7 +55,7 @@ Yes. Forge-X is installed as a layer on top of the stock firmware and is designe
 After installing or uninstalling, always recalibrate the bed mesh and Z offset.
 
 ### Which Klipper version does Forge-X use?
-Forge-X keeps the Klipper host that FlashForge ships with the AD5M (0.11 generation) and backports selected fixes and features from newer upstream Klipper. The MCU firmware is not reflashed. This keeps the stack compatible with the printer's hardware and its 128 MiB of RAM. The complete list of backports and AD5M-specific changes is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
+Forge-X keeps the Klipper host that FlashForge ships with the AD5M (0.11 generation) and backports selected fixes and features from newer upstream Klipper. The MCU firmware is not reflashed. The complete list of backports and AD5M-specific changes is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
 
 ### Which web interfaces and screens are available?
 - **Web:** Fluidd at `http://<printer_ip>/fluidd/`, Mainsail at `http://<printer_ip>/mainsail/`, and the Moonraker API at `http://<printer_ip>:7125/`.
@@ -68,12 +68,9 @@ Forge-X uploads G-code through Moonraker, so slicers that support a Moonraker/Kl
 Forge-X is built for one printer family, so each decision can be based on its real hardware: 128 MiB of RAM, the FlashForge Klipper 0.11 base, two MCUs, the load-cell bed sensor, and the stock boot process. Memory use, recovery, and testing are designed and verified on the AD5M and AD5M Pro. Other printers would need their own port, design work, and hardware testing.
 
 ### Why doesn't Forge-X use Klipper 0.13?
-Forge-X keeps the Klipper host and MCU firmware that FlashForge ships with the printer and backports newer fixes and features into it. The reasons:
+The AD5M is an older printer with older hardware. Klipper 0.13 is a good release, but you should know why you want it. For most tasks, the Klipper that FlashForge ships, together with the fixes and features that Forge-X backports from newer Klipper, is enough. Staying on it also means the MCU firmware is not reflashed and uninstall stays simple.
 
-- the MCU firmware is not reflashed, so there is no host/MCU version mismatch to manage and the stock firmware keeps working;
-- uninstall and recovery stay simple, because every replaced Klipper file has a `.bak` original;
-- a different Klipper host would have to be validated again on the printer's 128 MiB of RAM, so Forge-X keeps the host that has been tested there;
-- each backport is reviewed and covered by tests before a release.
+At the moment there is no need for a full Klipper 0.13. If a real need appears, Forge-X can move to it. If you see one, tell us in the [Telegram group](https://t.me/+ihE2Ry8kBNkwYzhi) or on [Discord](https://discord.gg/K7MH4hAfeX).
 
 Backported items include the `Timer too close` starvation fix, multi-MCU homing fixes, Adaptive Pressure Advance (so recent OrcaSlicer adaptive PA profiles can be used), and fixes for buttons, heaters, servos, and input shaper calibration. The full list, with upstream commit links, is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
 

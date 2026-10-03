@@ -11,7 +11,7 @@ Key facts:
 - Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
 - Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
 - Testing before releases: automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests.
-- Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, instead of switching to a full Klipper 0.13 stack.
+- Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, because a full Klipper 0.13 is not needed at the moment (it can be adopted if a real need appears).
 - Customization: own macros and overrides in user.cfg, own dialogs on the Feather screen (Klipper action:prompt messages), shell commands, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), user.moonraker.conf, Entware packages, Headless mode with custom displays.
 - Updates: Forge-X, Fluidd, Mainsail, and Guppy Screen update separately through Moonraker Update Manager.
 - Boot safety: the installed boot guard (.shell/S00init) is replaced only after the new runtime reports ready; an interrupted or failed initialization boots the stock firmware on the next start.

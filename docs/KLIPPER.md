@@ -33,7 +33,7 @@ Forge-X deliberately keeps the FlashForge host Klipper shipped with the Adventur
 
 This is a deliberate engineering choice for the AD5M.
 
-The printer has very limited host resources, including only 128 MiB of RAM. A complete newer Klipper userspace and the surrounding services increase the resource budget on hardware that already operates close to its practical limits during demanding prints. Forge-X therefore takes the narrower approach: keep the vendor-compatible Klipper/MCU protocol and bring over the fixes that matter for this printer.
+The AD5M is an older printer with older hardware. Klipper 0.13 is a good release, but for most tasks the Klipper that FlashForge ships, together with the fixes and features backported by Forge-X, is enough. At the moment there is no need for a full 0.13. Forge-X therefore keeps the vendor-compatible Klipper/MCU protocol and brings over the fixes that matter for this printer. If a real need for 0.13 appears, Forge-X can move to it.
 
 This choice also reflects repeated feedback from Forge-X users who prefer improving the existing AD5M stack instead of requiring a Klipper 0.13 MCU migration.
 
