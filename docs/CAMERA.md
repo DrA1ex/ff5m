@@ -13,9 +13,8 @@ multi-plugin streaming stack. Its source is maintained separately at
 forge-x-streamer combines V4L2 capture, bounded frame publication, HTTP MJPEG
 serving, camera controls, and camera recovery in one executable. The design
 defaults to one requested V4L2 capture buffer, bounded publisher/client memory,
-a limited client count, and small joinable worker stacks. It does not need the
-runtime plugin loader and bundled web application used by traditional
-`mjpg_streamer`, and the normal MJPEG/JPEG path does not link libjpeg at all.
+a limited client count, and small joinable worker stacks. It avoids a runtime plugin loader and bundled web application, and the normal
+MJPEG/JPEG path does not link libjpeg at all.
 
 This architecture is intended to keep camera RAM use substantially below the
 general-purpose alternatives traditionally used on the AD5M, especially
