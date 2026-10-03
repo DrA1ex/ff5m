@@ -72,7 +72,7 @@ Forge-X keeps the Klipper host and MCU firmware that FlashForge ships with the p
 
 - the MCU firmware is not reflashed, so there is no host/MCU version mismatch to manage and the stock firmware keeps working;
 - uninstall and recovery stay simple, because every replaced Klipper file has a `.bak` original;
-- the printer has only 128 MiB of RAM, so a larger Klipper host and its services leave less room for printing;
+- a different Klipper host would have to be validated again on the printer's 128 MiB of RAM, so Forge-X keeps the host that has been tested there;
 - each backport is reviewed and covered by tests before a release.
 
 Backported items include the `Timer too close` starvation fix, multi-MCU homing fixes, Adaptive Pressure Advance (so recent OrcaSlicer adaptive PA profiles can be used), and fixes for buttons, heaters, servos, and input shaper calibration. The full list, with upstream commit links, is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
@@ -91,7 +91,7 @@ Yes. You can customize Forge-X without editing the mod's own files:
 Details and examples are in [Customizing and extending Forge-X](EXTENDING.md). Every added service uses some of the printer's 128 MiB of RAM, so check the result with the `MEM` macro.
 
 ### How are Forge-X updates delivered?
-Forge-X releases contain changes to Forge-X itself: fixes, features, and reviewed Klipper patches. Updates are installed from **Configuration → Software Update** (Moonraker Update Manager):
+Forge-X releases contain changes to Forge-X itself: fixes, features, reviewed Klipper patches, or a dependency change that Forge-X needs. A new upstream version of Moonraker, Klipper, Fluidd, or Mainsail is not a reason for a release by itself (see the [release policy](DEVELOPMENT.md#release-policy)). Updates are installed from **Configuration → Software Update** (Moonraker Update Manager):
 
 - **Forge-X** updates within the same major version (for example, 1.4.1 → 1.4.2) over OTA. A new major version is flashed over the existing installation, and your settings and calibration are kept.
 - **Fluidd, Mainsail, and Guppy Screen** have their own update entries and update independently, so a new web interface version does not need a new Forge-X release.

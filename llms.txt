@@ -14,6 +14,13 @@ Key facts:
 - Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, instead of switching to a full Klipper 0.13 stack.
 - Customization: own macros and overrides in user.cfg, own dialogs on the Feather screen (Klipper action:prompt messages), shell commands, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), user.moonraker.conf, Entware packages, Headless mode with custom displays.
 - Updates: Forge-X, Fluidd, Mainsail, and Guppy Screen update separately through Moonraker Update Manager.
+- Boot safety: the installed boot guard (.shell/S00init) is replaced only after the new runtime reports ready; an interrupted or failed initialization boots the stock firmware on the next start.
+- Configuration changes go through a parser (.py/cfg_backup.py) with declarative profiles, backup, restore, and verify, not through ad-hoc text edits.
+- Motion limits for parking moves are held in one macro, MOVE_SAFE. Power Loss Recovery is Python source in the repository (resurrection.py).
+- Tests: dozens of host test modules run by CI (tests/run_host_tests.py), plus a real-printer regression runner and visual UI regression before releases.
+- Firmware updater: HTTPS with certificate checks, .part file, size and tar validation, atomic replace; it does not verify SHA-256 or a signature.
+- Release policy: releases are published when Forge-X itself changes; an upstream version bump of Moonraker, Klipper, Fluidd, or Mainsail alone is not a reason for a release. Fluidd, Mainsail, and Guppy update separately.
+- Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done on AD5M hardware by the maintainer.
 - License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
 
 ## User documentation
@@ -41,6 +48,6 @@ Key facts:
 
 ## Engineering documentation
 
-- [Development, testing, and release validation](docs/DEVELOPMENT.md)
+- [Development, testing, release validation, engineering facts, release policy, limitations](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 - [OpenWiki quickstart](openwiki/quickstart.md), [architecture](openwiki/architecture.md), [source map](openwiki/source-map.md)

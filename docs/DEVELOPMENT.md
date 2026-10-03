@@ -288,6 +288,43 @@ The engineering goal is narrower and practical: make behavior reproducible,
 keep safety-critical changes reviewable, exercise important workflows on the
 real machine, and preserve regression cases so fixed bugs stay fixed.
 
+## Engineering facts and where to verify them
+
+This table lists how Forge-X handles the risky parts of changing a printer's firmware, and where each item can be checked in the repository.
+
+| Topic | What Forge-X does | Where to check |
+| --- | --- | --- |
+| Boot after a failed update | The installed early boot guard stays in place until the new runtime reports that it is ready. Markers are written before initialization starts. If initialization is interrupted or never becomes ready, the next boot starts the stock firmware. | [`.shell/S00init`](/.shell/S00init), [`tests/test_boot_recovery.py`](/tests/test_boot_recovery.py) |
+| Replacing the boot guard | The new guard is checked with `bash -n`, copied to a temporary file, checked again, synced, moved into place with an atomic `mv`, and synced again. | [`.shell/S00init`](/.shell/S00init) |
+| Changes to printer configuration | A parser changes the Klipper configuration. It understands sections, parameters, includes, and deferred includes. Display modes are declarative profiles, and backup and restore write through a temporary file and rename. A verify mode checks the configuration without changing it. `avoid_writes` skips writing when nothing changes. | [`.py/cfg_backup.py`](/.py/cfg_backup.py), [`.cfg/`](/.cfg/), [`tests/test_cfg_backup.py`](/tests/test_cfg_backup.py) |
+| Klipper patches | Every replaced Klipper file keeps a `.bak` copy, plugins are linked into `extras/`, and uninstall reverses both. | [`.shell/klipper_overlay.sh`](/.shell/klipper_overlay.sh), [`tests/test_klipper_overlay.py`](/tests/test_klipper_overlay.py), [Klipper fixes](/docs/KLIPPER.md) |
+| MCU firmware | Not reflashed. | [Klipper fixes](/docs/KLIPPER.md) |
+| Parking and travel limits | One macro, `MOVE_SAFE`, holds the allowed X/Y/Z limits and clamps moves. KAMP Smart Park uses it. | [`macros/base.cfg`](/macros/base.cfg), [`KAMP/Smart_Park.cfg`](/KAMP/Smart_Park.cfg) |
+| Power Loss Recovery | The implementation is Python source in the repository, with host tests and a physical regression check. | [`.py/klipper/plugins/resurrection.py`](/.py/klipper/plugins/resurrection.py), [`resurrection_state.py`](/.py/klipper/plugins/resurrection_state.py), [`tests/test_resurrection.py`](/tests/test_resurrection.py) |
+| Automated tests | Dozens of host test modules cover boot recovery, installation, Klipper patches, macros, Feather, and Power Loss Recovery. GitHub Actions runs `python tests/run_host_tests.py`. | [`tests/`](/tests/), [`.github/workflows/tests.yml`](/.github/workflows/tests.yml) |
+| Real-printer tests | A regression runner executes real workflows on an AD5M. It is a maintainer step before a release, not a cloud CI job. | [`tests/printer_regression.py`](/tests/printer_regression.py), [Release validation](#release-validation) |
+| Firmware download (updater) | Download over HTTPS with the standard certificate checks, into a `.part` file, with a size check against the release asset, a check that the file is a valid firmware tar, and an atomic replace. | [`.py/zupdate.py`](/.py/zupdate.py) |
+
+## Release policy
+
+A Forge-X release is published when Forge-X itself changes: fixes, new features, reviewed Klipper patches, or a change to a dependency that Forge-X needs. A new upstream version of Moonraker, Klipper, Fluidd, or Mainsail is not a reason for a release by itself.
+
+- **Fluidd, Mainsail, and Guppy Screen** have their own entries in Moonraker Update Manager and update independently of Forge-X.
+- **Moonraker** is shipped in the version that has been tested with Forge-X. It changes in a Forge-X release when a fix or a needed feature requires it.
+- **Klipper** stays at the version that FlashForge ships. Fixes and features from newer Klipper are backported, tested, and listed in [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md).
+- **Minor versions** (for example, 1.4.1 → 1.4.2) are installed over OTA. A new **major version** is flashed over the existing installation, and settings and calibration are kept.
+- **Beta versions** are published as pre-releases on the GitHub releases page and receive updates in their own branch. The release notes of each beta describe how to move to the final release.
+
+## Known limitations
+
+- Only the Adventurer 5M and 5M Pro are supported. Other printers would need a separate port.
+- The Klipper host is the FlashForge 0.11 generation. Newer Klipper features are available only after they have been backported.
+- Feather covers the main local workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics still need Fluidd or Mainsail.
+- The Stock screen can freeze if `SAVE_CONFIG` or `RESTART` is sent directly. Use `NEW_SAVE_CONFIG` or another display mode.
+- Power Loss Recovery is a salvage feature. It does not guarantee a seamless print.
+- The firmware updater checks the download size and the archive format. It does not verify a SHA-256 digest or a signature.
+- Real-printer testing is done by the maintainer on AD5M hardware. Not every combination of printer, stock firmware version, and configuration can be covered.
+
 ## Related engineering documentation
 
 - [Testing and change guide](/openwiki/testing-and-change-guide.md) — detailed

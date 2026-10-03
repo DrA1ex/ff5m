@@ -200,6 +200,8 @@ In short, Forge-X exists to make better use of the hardware already in the AD5M,
 ### Engineering documentation
 
 - [Development, testing, and release validation](/docs/DEVELOPMENT.md)
+- [Engineering facts and where to verify them](/docs/DEVELOPMENT.md#engineering-facts-and-where-to-verify-them)
+- [Release policy](/docs/DEVELOPMENT.md#release-policy)
 - [Contributor guidelines](CONTRIBUTING.md)
 
 The [OpenWiki](openwiki/quickstart.md) is a code-oriented guide for contributors and advanced users. It complements the user guides above; for installation, calibration, and recovery procedures, follow the user guides.
@@ -228,6 +230,16 @@ The [OpenWiki](openwiki/quickstart.md) is a code-oriented guide for contributors
 - [x] Power Loss Recovery for non-Stock screens
 - [x] Integration and adaptation of Guppy Screen for the AD5M
 - [x] A custom interactive Feather screen built specifically for the AD5M running Forge-X
+
+## Known limitations
+
+- Only the Adventurer 5M and 5M Pro are supported.
+- The Klipper host is the FlashForge 0.11 generation. Newer Klipper features are available after they have been backported ([list](/docs/KLIPPER.md)).
+- Feather covers the main local workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail.
+- Power Loss Recovery is a salvage feature, not a guarantee of a seamless print.
+- Real-printer testing is done on AD5M hardware by the maintainer, so not every combination of stock firmware and configuration can be covered.
+
+More details are in [Known limitations](/docs/DEVELOPMENT.md#known-limitations) and the [release policy](/docs/DEVELOPMENT.md#release-policy).
 
 ## Support Forge-X
 
