@@ -3,6 +3,31 @@
 > [!NOTE]
 > This page is about recovering the **printer/firmware** itself. To resume an interrupted print after power loss or a crash, see the [Power Loss Recovery guide](POWER_LOSS_RECOVERY.md).
 
+## Recovery is part of the boot design
+
+Forge-X keeps recovery outside the normal mutable runtime path. The installed
+early boot guard is treated as the last-known-good entry point: updated mod
+files are allowed to initialize first, and the installed guard is replaced only
+after the new normal initializer reports a successful ready state. The new
+guard is syntax-checked and committed with a temporary-file + atomic-rename
+sequence.
+
+If normal initialization is interrupted, a durable failure marker causes the
+next boot to bypass Forge-X and continue with the stock firmware. Recovery has
+its own interruption marker; if a Recovery session itself is interrupted, the
+next boot also selects Stock instead of automatically returning to the
+incomplete recovery attempt.
+
+This is separate from Power Loss Recovery for a print. Its purpose is to keep
+the **printer itself recoverable** after an unsuccessful update, damaged
+configuration, failed service startup, or other mod-level problem. In normal
+failure cases, use the Stock/Recovery route before resorting to UART, U-Boot, or
+FEL.
+
+The same lifecycle is covered by the project's boot/configuration regression
+tests. See [Development, testing, and release validation](DEVELOPMENT.md) for
+the engineering guarantees and limitations.
+
 ## Forge-X Recovery Menu
 
 Early Forge-X Recovery groups the available operations by purpose:
