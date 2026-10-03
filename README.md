@@ -37,6 +37,7 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - Fully interactive **Feather** screen
 - **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
 - **Klipper** with [bug fixes and hardening specially adapted for AD5M](/docs/KLIPPER.md)
+- **Regression-tested development and release process** with automated host tests, visual UI regression, and real-printer physical regression before releases ([details](/docs/DEVELOPMENT.md))
 - **Moonraker**
 - **Fluidd** & **Mainsail**
 - Adapted **Guppy** screen
@@ -150,9 +151,13 @@ The existing Klipper implementation for the AD5M is outdated and plagued with bu
 - [Uninstall](/docs/UNINSTALL.md)
 - [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)
 - [Firmware Recovery guide](/docs/RECOVERY.md)
+- [Development, testing, and release validation](/docs/DEVELOPMENT.md)
+- [Contributing](CONTRIBUTING.md)
 
 ### Engineering documentation
 
+- [Development and release validation](/docs/DEVELOPMENT.md)
+- [Contributor guidelines](CONTRIBUTING.md)
 The [OpenWiki](openwiki/quickstart.md) provides a code-oriented guide for contributors and advanced users. It complements the operator documentation above; follow the operator guides for installation, calibration, and recovery procedures.
 
 - [Architecture overview](openwiki/architecture.md)

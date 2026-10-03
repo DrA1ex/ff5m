@@ -1,5 +1,10 @@
 # Testing and change guide
 
+> [!NOTE]
+> This page documents the test tooling and execution details. For the project-wide
+> validation policy, release gate, and contributor expectations, see
+> [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+
 ## Validation posture
 
 The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
