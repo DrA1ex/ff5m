@@ -1,18 +1,73 @@
 ## Camera Configuration Documentation
 ### Purpose of Alternative Camera Configuration
 
-The stock camera implementation on the Flashforge AD5M (Pro) consumes significant system resources, particularly RAM. Given the printer's limited 128MiB of RAM, this can lead to performance degradation during operation. To address this, the mod provides an optimized camera implementation with reduced RAM usage, achieved through specific patches to `mjpg_streamer`.
+The Adventurer 5M has only 128 MiB of RAM, so camera buffering and extra
+camera-server processes can directly reduce the memory available to Klipper,
+Moonraker, the local UI, and user extensions.
 
-While the stock camera remains available, the mod's camera is optimized for minimal resource consumption, making it the preferred choice for stable printing.  
+Forge-X therefore uses a dedicated camera implementation, **ForgeXstream**,
+designed around the constraints of this printer rather than a generic
+multi-plugin streaming stack. Its source is maintained separately at
+[DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
+
+ForgeXstream combines V4L2 capture, bounded frame publication, HTTP MJPEG
+serving, camera controls, and camera recovery in one executable. The design
+defaults to one requested V4L2 capture buffer, bounded publisher/client memory,
+a limited client count, and small joinable worker stacks. It does not need the
+runtime plugin loader and bundled web application used by traditional
+`mjpg_streamer`, and the normal MJPEG/JPEG path does not link libjpeg at all.
+
+This architecture is intended to keep camera RAM use substantially below the
+general-purpose alternatives traditionally used on the AD5M, especially
+`ustreamer`. Exact RSS depends on the camera driver, negotiated format,
+resolution, connected clients, and whether raw input encoding is enabled, so
+use the `MEM` macro when comparing a specific setup instead of relying on a
+single fixed number.
+
+ForgeXstream also handles several AD5M camera failure modes directly:
+
+- `VIDEO=auto` scans `/dev/video0..63` and selects a device that actually
+  reports V4L2 streaming capability;
+- a capture timeout, disconnect, bad device state, or I/O failure closes the
+  camera and enters a bounded retry/rediscovery loop instead of requiring the
+  whole Forge-X runtime to be restarted;
+- existing HTTP streams remain alive during camera recovery and receive a
+  generated **NO SIGNAL** frame until the real camera returns;
+- cameras that start in an unsupported/stale format are retried and asked to
+  switch into a supported JPEG/raw mode across reopen cycles;
+- capture buffers are returned to the driver before logging or client socket
+  writes, so a slow browser does not hold the camera buffer;
+- excess clients and malformed/oversized frames are bounded and rejected
+  instead of growing resource usage without limit.
+
+#### Image controls and effects
+
+ForgeXstream exposes the camera's own V4L2 image controls through the built-in
+`/control.htm` page and `/controls` API. Supported devices can expose
+brightness, contrast, gain, gamma, hue, saturation, sharpness, power-line
+frequency, white-balance temperature, backlight compensation, and exposure
+controls.
+
+The control page detects the ranges and menu values reported by the active
+camera instead of assuming that every UVC device implements the same controls.
+Changes can be applied live. **Save** atomically updates the corresponding
+entries in `camera.conf`, while `CAMERA_RELOAD`/`SIGHUP` can reload the
+saved control set without restarting the HTTP service. Saved controls are
+applied after the first completed frame on every camera open/reconnect so UVC
+initialization cannot immediately overwrite them.
+
+While the stock camera remains available in Stock display mode, Forge-X's
+camera path is designed to preserve substantially more of the printer's memory
+budget for Moonraker, Klipper, the UI, and optional user modifications.
 
 > [!NOTE]
-> If you choose to use the alternative display implementation (e.g., Feather Screen), the stock camera will not be available, as the stock firmware is completely disabled in this mode. In such cases, the mod's camera is the only option.
-
-If you still want to use stock camera functionality, read the next section.
+> With Feather, Guppy, or Headless mode the FlashForge UI/services are not
+> responsible for the camera, so use the Forge-X camera implementation.
 
 On boot with Feather, Guppy, or Headless, Forge-X enables the mod camera if
 `camera` has never been set and a working video device is found. An explicit
-`camera=0` is respected. The normal boot log records whether a device was found.
+`camera=0` is respected. The normal boot log records whether a device was
+found.
 
 ### Using the Stock Camera
 
