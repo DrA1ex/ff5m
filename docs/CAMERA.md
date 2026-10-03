@@ -70,7 +70,7 @@ found.
 
 ### Using the Stock Camera
 
-If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. However, be aware that the stock camera consumes significantly more resources, which may impact overall printer performance and could lead to print failures, such as unexpected print stoppages. You have been warned. Proceed at your own risk.
+If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. However, the stock camera consumes significantly more resources, which can affect overall printer performance and may cause print failures, such as unexpected print stoppages. Use it at your own risk.
 
 
 ### Configuring the Mod's Camera
@@ -167,7 +167,7 @@ To ensure the mod's camera is used, you need to disable the stock camera functio
 1. Go to the printer's on-screen settings.
 2. Disable both camera photo and camera video.
 
-This step is crucial to avoid conflicts between the stock and mod camera implementations.
+This step prevents conflicts between the stock and mod camera implementations.
 
 #### Step 3: Enable Mod's Camera
 Once the stock camera is disabled, enable the mod's camera by running the following command in the console:
@@ -182,4 +182,4 @@ This command activates the mod's camera implementation.
 After completing the configuration, reload the Fluidd page. The camera should now be operational, and you should be able to view the stream and take snapshots.
 
 #### Notes for Mainsail Users
-If you’re using Mainsail, the configuration process is nearly identical to Fluidd. Simply follow the steps above, and you’ll be good to go. If you run into any issues, double-check the URLs and ensure the stock camera is disabled.
+If you’re using Mainsail, the configuration process is nearly identical to Fluidd. Follow the same steps. If something does not work, check the URLs and make sure the stock camera is disabled.

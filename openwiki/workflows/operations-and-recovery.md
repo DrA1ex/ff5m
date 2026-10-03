@@ -71,7 +71,7 @@ This path intentionally depends on kernel block metadata rather than partition-t
 
 ### Operational caveat: release channels
 
-`moonraker.conf` currently configures Forge-X as a Git updater on `channel: dev`, while `version.txt` states 1.4.1. The inspected repository does not establish whether every released device should consume that channel. Do not “fix” this discrepancy without an explicit release-policy decision.
+`moonraker.conf` currently configures Forge-X as a Git updater on `channel: dev` with `primary_branch: 1.4.2`, and `version.txt` states 1.4.2. The inspected repository does not establish whether every released device should consume that channel. Do not “fix” this discrepancy without an explicit release-policy decision.
 
 ## Diagnostic order
 

@@ -265,7 +265,7 @@ Forge-X provides several priming and cleaning controls:
 
 These are described in [Configuration](CONFIGURATION.md).
 
-## Fixing Communication Timeout (E0011) / Move Queue Overflow (EO017) Error
+## Fixing Communication Timeout (E0011) / Move Queue Overflow (E0017) Error
 
 The Stock Klipper build uses communication and move-queue values that can trigger E0011 or E0017 under some workloads. Enable the Forge-X patch with:
 

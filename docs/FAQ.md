@@ -8,31 +8,73 @@ To quickly find answers, use the GitHub navigation button at the top-right corne
 
 ## General Questions
 
-### What is the Forge-X mod?
-The Forge-X mod is an advanced firmware modification for the Flashforge Adventurer 5M (AD5M) 3D printer, built upon the Klipper firmware and extending the ZMod project. It enhances printer functionality with features like improved macros, optimized resource usage, and support for custom screens (e.g., Feather). The mod aims to provide a stable and extensible platform for advanced 3D printing, including tools for recovery, firmware management, and performance optimization.
+### What is Forge-X?
+Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It runs on top of the stock firmware and adds:
 
-### How do I install the Forge-X mod?
-To install the Forge-X mod:
-1. **Download the Latest Release**: Visit the [Forge-X GitHub releases page](https://github.com/DrA1ex/ff5m/releases) to download the latest firmware image (e.g., Forge-X 1.3.3).
-2. **Prepare a USB Drive**: Format a USB drive to FAT32 and copy the firmware image (e.g., `.tgz` file) to the root directory. Ensure files like `klipper_mod_skip` or `SKIP_MOD_SOFT` are included if needed.
-3. **Flash the Mod**: Insert the USB drive into the printer, power it on, and follow the on-screen prompts to flash the firmware. The process typically takes a few minutes.
-4. **Verify Installation**: After rebooting, check if the printer boots into the expected interface (e.g., GuppyScreen or Feather). If issues occur, refer to recovery steps.
-5. **Update Configurations**: Configure settings via Mainsail, Fluidd, or the printer’s interface. Check the [Forge-X documentation](https://github.com/DrA1ex/ff5m) for macro and configuration details.
+- **Klipper** with [fixes and hardening adapted for the AD5M](KLIPPER.md), plus **Moonraker**, **Fluidd**, and **Mainsail**;
+- **Feather**, a built-in lightweight touchscreen interface, along with Stock, Guppy, and Headless display modes;
+- guided calibration (bed screws, bed mesh, Z offset, extruder, PID, Input Shaper), KAMP adaptive meshing, and print-safety features such as bed collision protection and bed mesh validation;
+- [Power Loss Recovery](POWER_LOSS_RECOVERY.md) for non-Stock screens;
+- [forge-x-streamer](CAMERA.md), a camera service designed for the printer's 128 MiB of RAM;
+- OTA updates, backup and restore, and a [recovery system](RECOVERY.md) with a boot guard, a recovery menu, and fallback to the stock firmware.
 
-### What should I do if I encounter issues with the mod?
-If you encounter issues:
-1. **Check Logs**: Review logs like `clean.log` or `recovery.log` generated during flashing.
-2. **Use Recovery Tools**: Try the uninstaller or recovery images to restore the printer.
-3. **Consult Documentation**: Refer to the [Forge-X GitHub documentation](https://github.com/DrA1ex/ff5m) for troubleshooting guides.
-4. **Ask for Support**: Post in the Forge-X Telegram support group with details like error messages, logs, or photos.
-5. **Update Firmware**: Ensure both the stock firmware and Forge-X mod are updated to the latest versions.
-6. **Monitor Resources**: Run the `MEM` macro to check memory usage and free up resources if needed.
+The project focuses on reliability on constrained hardware: memory and CPU use, predictable failure handling, recovery, and regression testing are part of the design. See [Why Forge-X Was Developed](../README.md#why-forge-x-was-developed) and [Development, testing, and release validation](DEVELOPMENT.md).
 
-### Do I need to uninstall the earlier Klipper mod before installing the new mod?
-It is recommended to uninstall the earlier Klipper mod before installing the new mod. However, the two mods can work together in a dual-boot setup. By default, the printer boots into the Klipper mod. To boot into the Forge-X mod, insert a USB drive containing the file `klipper_mod_skip`, as described in the Klipper mod documentation under [Dual Boot](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot).
+### Which printers and firmware versions does Forge-X support?
+Forge-X supports only the **Flashforge Adventurer 5M** and **Adventurer 5M Pro**. Other Flashforge models are not supported.
 
-### Can I install the Klipper Mod over the Forge-X mod?
-Yes, you can. The Klipper Mod does not interfere with the Forge-X mod, and you can use it alongside the Dual Boot feature. To boot into the Forge-X mod, insert a USB drive containing the file `klipper_mod_skip`, as described in the Klipper Mod documentation under [Dual Boot](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot).
+The supported stock firmware range is **2.6.5 up to 5.1.x**. See [Installation → Prerequisites](INSTALL.md#prerequisites) for the exact verified versions and notes.
+
+### Is Forge-X reversible? Can I go back to the stock firmware?
+Yes. Forge-X is installed as a layer on top of the stock firmware and is designed to be removed at any time:
+
+- the `REMOVE_MOD` / `REMOVE_MOD_SOFT` macros or USB files uninstall it (see [Uninstall](UNINSTALL.md));
+- every stock Klipper file that Forge-X replaces keeps a `.bak` copy, which uninstall restores;
+- the [Dual Boot and recovery menu](DUAL_BOOT.md) lets you start the stock firmware without Forge-X services;
+- if an update or initialization is interrupted, the next boot falls back to the stock firmware instead of repeating a broken start;
+- recovery, uninstall, and factory images are available for severe cases (see the [Recovery guide](RECOVERY.md)).
+
+After installing or uninstalling, always recalibrate the bed mesh and Z offset.
+
+### Which Klipper version does Forge-X use?
+Forge-X keeps the Klipper host that FlashForge ships with the AD5M (0.11 generation) and backports selected fixes and features from newer upstream Klipper. The MCU firmware is not reflashed. This keeps the stack compatible with the printer's hardware and its 128 MiB of RAM. The complete list of backports and AD5M-specific changes is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
+
+### Which web interfaces and screens are available?
+- **Web:** Fluidd at `http://<printer_ip>/fluidd/`, Mainsail at `http://<printer_ip>/mainsail/`, and the Moonraker API at `http://<printer_ip>:7125/`.
+- **Local screen:** Feather (default after a fresh installation), Stock, Guppy, or Headless. See [Screen Configuration](SCREEN.md). HelixScreen is available from its own project and is not an internal Forge-X display mode.
+
+### Which slicers can I use with Forge-X?
+Forge-X uploads G-code through Moonraker, so slicers that support a Moonraker/Klipper host work, such as OrcaSlicer. The start and end G-code, and the Moonraker host settings, are described in [Slicing](SLICING.md). KAMP requires object labels, with examples for OrcaSlicer and PrusaSlicer in [Printing](PRINTING.md#kamp).
+
+### Is Forge-X free?
+Yes. Forge-X is open source under the GPL-3.0 license and free to use. Donations are optional; see [Support Forge-X](../README.md#support-forge-x).
+
+### Where can I get help?
+Read this FAQ and the documentation first. If that does not solve the problem, ask in the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or in the [Discord server](https://discord.gg/K7MH4hAfeX) (Forums → mods-and-projects → Forge-X). Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are sure it is a bug.
+
+### How do I install Forge-X?
+In short:
+1. **Uninstall any other mods** first and back up your settings.
+2. **Download the image** from the [Forge-X releases page](https://github.com/DrA1ex/ff5m/releases). Do not unpack it.
+3. **Prepare a USB drive** formatted as FAT32 and copy the image to its root. For the Pro model, rename the file to `Adventurer5MPro-ForgeX-x.x.x.tgz`.
+4. **Insert the USB drive before powering on** the printer. The printer installs the update automatically and shows a message when it finishes.
+5. **Eject the drive, reboot, and recalibrate** the bed mesh and Z offset.
+
+The full procedure, prerequisites, and OTA update rules are in the [Installation guide](INSTALL.md).
+
+### What should I do if I run into problems with the mod?
+1. **Check the logs.** Review logs such as `clean.log` or `recovery.log` that are written to the USB drive during flashing.
+2. **Use the recovery tools.** Use the [recovery menu](DUAL_BOOT.md), the uninstaller, or the recovery images to restore the printer.
+3. **Read the documentation.** Start with the [Recovery guide](RECOVERY.md) and the troubleshooting sections below.
+4. **Ask for help.** Post in the Forge-X Telegram group with error messages, logs, or photos.
+5. **Keep everything up to date.** Use the latest Forge-X release and a supported stock firmware version.
+6. **Monitor resources.** Run the `MEM` macro to check memory usage and free up resources if needed.
+
+### Do I need to uninstall another mod before installing Forge-X?
+Yes, uninstall other mods first and make a backup. The one exception is Klipper Mod's dual-boot feature: Klipper Mod stays the default, and a USB drive with a `klipper_mod_skip` file boots Forge-X instead. See the [Klipper Mod dual-boot documentation](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot). Do not flash different mods over each other unless you clearly understand what you are doing.
+
+### Can I install Klipper Mod over Forge-X?
+Yes. Klipper Mod does not interfere with Forge-X, and the two can be used together through Klipper Mod's dual-boot feature. To boot into Forge-X, insert a USB drive that contains a `klipper_mod_skip` file, as described in the [Klipper Mod dual-boot documentation](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot).
 
 ---
 
@@ -54,7 +96,7 @@ A bricked printer (unable to boot or stuck on a frozen spinner) can be restored 
 1. **Uninstaller**: Flash the uninstaller image to remove Forge-X/ZMod files and restore the original configuration.
 2. **Recovery Image**: Use the full recovery image (`Adventurer5M-3.x.x-2.2.3-recovery-full.tgz`) to restore system files. Start with a dry run (`Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz`) to verify compatibility.
 3. **Factory Firmware**: Flash a verified Flashforge factory image to reset the printer to its original state.
-4. **Debugging Port**: As a last resort, use the motherboard’s debugging port to revive the printer (not detailed in the log).
+4. **Debugging port (UART/FEL)**: As a last resort, use the motherboard’s debugging port to revive the printer. See the [Recovery guide](RECOVERY.md#recovery-using-uart).
 
 **Steps**:
 - Download the recovery or uninstaller images from the support group or GitHub.
@@ -210,12 +252,12 @@ The **Feather Screen** behaves differently. A saved network is marked in its sca
 ## Resource and Performance Issues
 
 ### What causes “Timer Too Close” or MCU errors (E0011)?
-Complex prints (not necessarily large, but with intricate movement patterns like gyroid infill or fuzzy skin) can overload the printer and cause MCU shutdowns. This isn't fixable - it's an MCU processing overload issue, not memory or CPU-related.    
+`Timer too close` is a generic Klipper shutdown reason: the MCU received work scheduled too close to its current clock because the host or the MCU connection fell behind. Complex prints (not necessarily large, but with intricate movement patterns like gyroid infill or fuzzy skin) can overload the printer and cause MCU shutdowns.   
 
-Flashforge explicitly advises against such prints, so this isn't covered under warranty.    
-The mod (especially Moonraker) may increase resource overhead, potentially making these shutdowns more frequent.   
+Forge-X 1.4.2 fixes the reproducible case in which very dense G-code starves Klipper's host-side scheduling (see [Klipper fixes and AD5M-specific hardening](KLIPPER.md#the-timer-too-close-problem)). Other causes, such as hardware faults, remain possible.   
+The mod (especially Moonraker) adds some resource overhead, which can make shutdowns more likely on a printer that is already close to its limits.   
 
-Some units experience this more often due to defective components (like toolhead electronics). The only fixes are replacing the toolhead circuit or motherboard - but even this doesn't guarantee anything.   
+Some units experience this more often because of defective components (like toolhead electronics). In that case, the only fixes are replacing the toolhead board or the motherboard, and even that is not guaranteed to help.   
 
 “Timer Too Close” or MCU errors occur due to:
 - **Resource Exhaustion**: High memory or CPU usage, often from running resource-intensive features like Spoolman, or KAMP with “exclude objects” in the slicer.
@@ -225,16 +267,16 @@ Some units experience this more often due to defective components (like toolhead
 
 **Solutions**:
 - **Check Memory Usage**: Run the `MEM` macro after boot to monitor memory consumption. Aim for usage below 75–80%.
-- **Enable `tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration, which may reduce MCU usage and thereby decrease error rates..
-- **Reduce Resource Usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode for lower resource usage (10–15x less than Stock screen).
-- **Update Firmware**: Ensure the stock firmware (e.g., 3.1.4 or later) and Forge-X mod are updated.
+- **Enable `tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration, which can reduce MCU load and lower the error rate.
+- **Reduce Resource Usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode for lower resource usage (Feather typically needs around a tenth of the memory of the Stock screen).
+- **Update Firmware**: Make sure the stock firmware (for example, 3.1.4 or later) and Forge-X are up to date.
 - **Check Hardware**: Inspect and reattach wiring, especially for the toolhead. Verify the driver fan is operational by removing the printer’s back plate.
 - **Optimize G-Code**: Avoid complex infill patterns like Gyroid and Fuzzy Skin option if errors persist. Test simpler infills or print single objects to isolate issues.
 
 ### How can I reduce memory usage on my printer?
 To reduce memory usage:
 - **Run the `MEM` Macro**: Execute the `MEM` macro in the console after boot to check memory usage.
-- **Switch to Feather or Headless Mode**: The Feather screen uses ~10MB less memory, and Headless mode uses ~12MB less than the Stock screen.
+- **Switch to Feather or Headless Mode**: The Stock screen normally uses roughly 10–20 MB of RAM, while Feather uses roughly 1–2 MB and Headless mode uses none. See [Reducing resource usage](PRINTING.md#reducing-resource-usage).
 - **Disable Resource-Intensive Features**: Spoolman, or KAMP’s “exclude objects” feature.
 - **Optimize Camera Settings**: Use the mod’s camera implementation for lower resource usage.
 - **Follow the Resource Guide**: Refer to [Reliability and resources](PRINTING.md#reducing-resource-usage).
@@ -260,7 +302,7 @@ This occurs when the printer’s weight sensor fails to respond within the reque
 **Solutions**:
 - **Check Connections**: Reattach all wiring, especially for the weight sensor.
 - **Reduce Resource Usage**: Follow [Reliability and resources](PRINTING.md#reducing-resource-usage) and use Feather or Headless mode.
-- **Update Firmware**: Use stock firmware 3.1.4+ or later and Forge-X 1.3.3+ for optimized performance.
+- **Update Firmware**: Use stock firmware 3.1.4 or later and the latest Forge-X release.
 
 
 ### Why am I Getting "Shutdown due to sensor value exceeding the limit"?
@@ -362,7 +404,7 @@ Errors during printing, especially with complex objects or infill patterns like 
 **Solutions**:
 - **Check Memory Usage**: Run the `MEM` macro to ensure memory usage is below 75–80%.
 - **Simplify G-Code**: Use simpler infill patterns (e.g., Grid instead of Gyroid) or print single objects to reduce resource demands.
-- **Update Firmware**: Use stock firmware 3.1.4 or later and Forge-X 1.3.3 for optimizations.
+- **Update Firmware**: Use stock firmware 3.1.4 or later and the latest Forge-X release.
 - **Switch to Feather**: Reduces resource usage significantly.
 
 ### How do I use macros for calibration or other tasks?
@@ -373,7 +415,7 @@ Forge-X provides various macros for calibration and management, accessible via F
 - **NEW_SAVE_CONFIG**: Saves configurations without freezing the Stock screen (compatibility varies).
 - **SET_MOD**: Adjusts parameters like `weight_check` or `weight_check_max`.
 
-For a complete list, refer to the [Macro Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/MACROS.md). Update to Forge-X 1.3.3 to ensure all macros are available in both Fluidd and Mainsail.
+For a complete list, see the [Macro Documentation](MACROS.md). Use the latest Forge-X release to make sure all macros are available in both Fluidd and Mainsail.
 
 ### What changes are needed to the G-code start and end commands when migrating from the old Klipper mod?
 For the Stock screen, update the G-code start commands as outlined in [Slicing Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/SLICING.md):
@@ -471,12 +513,12 @@ Here’s how to update your configuration (example for a 20mm longer nozzle):
 The thumbnail display feature, contributed by the community, shows print previews on the Feather screen, adding ~1 second to print start time. Download the script and instructions from the provided zip file in the support group. Follow the setup guide to enable it: https://t.me/FF_ForgeX/1906
 
 ### How do I stay updated on new Forge-X releases?
-- Monitor the [Forge-X GitHub releases page](https://github.com/DrA1ex/ff5m/releases) for updates (e.g., Forge-X 1.3.3).
-- Join the Forge-X Telegram support group for announcements and support.
+- Watch the [Forge-X GitHub releases page](https://github.com/DrA1ex/ff5m/releases) for new versions.
+- Join the Forge-X Telegram support group for announcements and help.
 - Check the [Macro Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/MACROS.md) and [Feather Drawing Utility Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/TYPER.md) for new features.
 
 ### Can I use third-party tools like Obico with Forge-X?
-Obico, a Python-based tool, may work as a standalone application (not a Moonraker plugin) but consumes 5–10MB of memory. Test it with the `MEM` macro to ensure it doesn’t cause resource issues. Consider using Feather or Headless mode to free up resources.
+Obico, a Python-based tool, may work as a standalone application (not as a Moonraker plugin), but it uses 5–10 MB of memory. Test it with the `MEM` macro to ensure it doesn’t cause resource issues. Consider using Feather or Headless mode to free up resources.
 
 ---
 
