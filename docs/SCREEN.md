@@ -1,13 +1,6 @@
 # Screens
 
-Forge-X supports four display modes:
-
-| Mode | Use it when |
-| --- | --- |
-| `FEATHER` (default) | You want Forge-X's own lightweight touchscreen controls. |
-| `STOCK` | You want the original FlashForge screen, upload path, and vendor workflow. |
-| `GUPPY` | You prefer the separate Guppy touchscreen interface. |
-| `HEADLESS` | You control the printer remotely or provide your own display process. |
+Forge-X supports four display modes: `FEATHER` (default), `STOCK`, `GUPPY`, and `HEADLESS`.
 
 HelixScreen is also available for the AD5M and the Pro, but it is not an internal Forge-X display mode. The [official HelixScreen project](https://github.com/prestonbrown/helixscreen) publishes a ready-made AD5M image based on Forge-X and documents a manual [installation](https://github.com/prestonbrown/helixscreen/blob/main/docs/user/INSTALL.md) on an existing Forge-X setup.
 
@@ -16,13 +9,12 @@ HelixScreen is also available for the AD5M and the Pro, but it is not an interna
 
 ## Which screen to use
 
-| | Feather | Stock | Guppy | Headless |
-| --- | --- | --- | --- | --- |
-| RAM used | roughly 1–2 MB | roughly 10–20 MB | less than Stock | none |
-| Needs the FlashForge services | no | yes (LAN-mode for Fluidd, Mainsail, and upload) | no | no |
-| Local controls | main everyday workflows, guided calibration | the full vendor interface | its own interface | none |
-| Power Loss Recovery | Forge-X | FlashForge's own | Forge-X | Forge-X |
-| Bed-mesh profile | `auto` | `MESH_DATA` | `auto` | `auto` |
+- **Feather** uses roughly 1–2 MB of RAM, does not need the FlashForge services, and covers the everyday workflows.
+- **Stock** uses roughly 10–20 MB of RAM and gives the full vendor interface. Fluidd, Mainsail, and upload need LAN-mode.
+- **Guppy** has its own interface, needs no FlashForge services, and uses less RAM than Stock.
+- **Headless** has no local screen and uses no RAM.
+
+Forge-X Power Loss Recovery is used with Feather, Guppy, and Headless. The Stock screen uses the FlashForge implementation. The bed-mesh profile is `MESH_DATA` with Stock and `auto` with the other modes.
 
 ### Why Feather is the default
 
