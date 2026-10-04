@@ -627,3 +627,5 @@ class FileBrowserPagesMixin:
         )))
         self.file_confirm_rebuild_mesh = False
         self.file_confirm_auto_mesh = False
+        # Render before the virtual-SD timer can begin START_PRINT and homing.
+        self._reconcile_print_state(self.reactor.monotonic())

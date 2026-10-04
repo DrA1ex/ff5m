@@ -2317,6 +2317,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         phase = (self._timelapse_phase() if stats["state"] in ("printing", "paused")
                  else TimelapsePhase.NONE)
         state = phase.print_state(stats["state"])
+        if state == "standby" and self.virtual_sdcard.is_active():
+            # do_resume queues work before work_handler calls note_start().
+            state = "printing"
         if state == "printing":
             new_state = (PrintState.PREPARING
                          if (stats["print_duration"] == 0

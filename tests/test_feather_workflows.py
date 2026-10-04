@@ -1474,6 +1474,48 @@ class FileWorkflowTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no longer available"):
                 controller._start_selected_file()
 
+    def test_start_file_switches_page_before_virtual_sd_consumes_the_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller("standby")
+            controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = FILES.FileEntry("part.gcode", path)
+            rendered = []
+            controller._render_screen = lambda **kwargs: rendered.append(controller.page)
+
+            def accept(_script):
+                controller.virtual_sdcard.active = True
+                controller.virtual_sdcard.current_path = path
+
+            controller.gcode.run_script = accept
+            controller._handle_file_action("file.start")
+
+            self.assertEqual(controller.page, FEATHER.ScreenPage.PRINTING)
+            self.assertEqual(controller.print_state, FEATHER.PrintState.PREPARING)
+            self.assertEqual(controller.print_stats.status["state"], "standby")
+            self.assertEqual(rendered, [FEATHER.ScreenPage.PRINTING])
+            controller.print_stats.status["state"] = "printing"
+            controller._reconcile_print_state(controller.reactor.monotonic())
+            self.assertEqual(rendered, [FEATHER.ScreenPage.PRINTING])
+
+    def test_rejected_start_file_keeps_confirmation_page_and_print_state(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "part.gcode")
+            pathlib.Path(path).write_text("G28\n", encoding="utf-8")
+            controller = base_controller("standby")
+            controller.page = FEATHER.ScreenPage.FILE_CONFIRM
+            controller.virtual_sdcard = VirtualSD(root)
+            controller.selected_file = FILES.FileEntry("part.gcode", path)
+            controller.gcode.run_script = mock.Mock(side_effect=RuntimeError("SD busy"))
+            controller._render_screen = mock.Mock()
+            with self.assertRaisesRegex(RuntimeError, "SD busy"):
+                controller._handle_file_action("file.start")
+            self.assertEqual(controller.page, FEATHER.ScreenPage.FILE_CONFIRM)
+            self.assertEqual(controller.print_state, FEATHER.PrintState.IDLE)
+            controller._render_screen.assert_not_called()
+
     def test_start_file_passes_one_print_mesh_options_after_file_load(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "part.gcode")
