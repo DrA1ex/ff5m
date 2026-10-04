@@ -27,7 +27,7 @@ All questions are grouped below: [General](#general-questions) · [Firmware and 
 ## General Questions
 
 ### What is Forge-X?
-Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It runs on top of the stock firmware and adds:
+Forge-X is a free, unofficial firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It runs on top of the stock firmware and adds:
 
 - **Klipper** with [fixes and hardening adapted for the AD5M](KLIPPER.md), plus **Moonraker**, **Fluidd**, and **Mainsail**;
 - **Feather**, a built-in lightweight touchscreen interface, along with Stock, Guppy, and Headless display modes;
@@ -94,7 +94,7 @@ Forge-X releases contain changes to Forge-X itself: fixes, features, reviewed Kl
 - **Fluidd, Mainsail, and Guppy Screen** have their own update entries and update independently, so a new web interface version does not need a new Forge-X release.
 
 ### Is Forge-X free?
-Yes. Forge-X is open source under the GPL-3.0 license and free to use. Donations are optional; see [Support Forge-X](../README.md#support-forge-x).
+Yes. Forge-X is free to use, including for commercial use of a printer. Forge-X itself and its Klipper components are under the GPL-3.0 license, and the native binary components have a separate free-to-use [license](../LICENSE-BINARIES.md) (see [License](../README.md#license)). Donations are optional; see [Support Forge-X](../README.md#support-forge-x).
 
 ### Where can I get help?
 Read this FAQ and the documentation first. If that does not solve the problem, ask in the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or in the [Discord server](https://discord.gg/K7MH4hAfeX) (Forums → mods-and-projects → Forge-X). Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are sure it is a bug.

@@ -4,7 +4,7 @@
 
 # Forge-X: Klipper Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
-**Forge-X** is a free, open-source (GPL-3.0), _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** stack with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a built-in lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools.
+**Forge-X** is a free, _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** stack with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a built-in lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools.
 
 Forge-X is designed for this printer's limits: the host has only **128 MiB of RAM**. The mod can be fully removed, it is tested before each release, and it comes with documentation for users and contributors.
 
@@ -26,7 +26,7 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 - **Updates**: OTA through Moonraker Update Manager for Forge-X (minor versions), Fluidd, Mainsail, and Guppy Screen. Major versions are flashed over the existing installation without losing settings ([details](/docs/FAQ.md#how-are-forge-x-updates-delivered)).
 - **Customization**: own macros, overrides, Feather dialogs, shell commands, startup services, and Entware packages ([details](/docs/EXTENDING.md)).
 - **Access**: SSH as `root` / `root`.
-- **License**: GPL-3.0.
+- **License**: GPL-3.0 for Forge-X and its Klipper components; the native binary components are free to use under a separate [license](/LICENSE-BINARIES.md) (see [License](#license)).
 
 **Jump to:** [Quick start](#tldr) · [Features](#features) · [How Forge-X is built](#how-forge-x-is-built) · [Why Forge-X was developed](#why-forge-x-was-developed) · [Documentation](#documentation) · [Support](#community-and-support)
 
@@ -242,11 +242,22 @@ More details are in [Known limitations](/docs/DEVELOPMENT.md#known-limitations) 
 
 ## Support Forge-X
 
-Forge-X is free and open source, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
+Forge-X is free, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
 
 - **[Boosty (Donate)](https://boosty.to/dra1ex/donate)**
 - **[Boosty (Subscribe)](https://boosty.to/dra1ex)**
 - **[Cryptocurrency donations](https://telegra.ph/FORGE-X-10-24)**
+
+## License
+
+Forge-X is free to use, including for commercial use of a printer. Different parts have different licenses:
+
+| Part | License |
+| --- | --- |
+| Forge-X itself: scripts, Python code, macros, configuration, documentation | [GNU GPLv3](/LICENSE) |
+| Klipper modules and patches, including `c_helper.so` | GNU GPLv3. The source is in [DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m) |
+| forge-x-streamer (camera service) | GNU GPL-2.0-or-later |
+| Native binary components in `.bin/exec` (`boot_mcu`, `demo`, `logged`, `netd`, `netd-cli`, `splash`, `typer`) | [Forge-X Binary Components License](/LICENSE-BINARIES.md): free to use, including commercially, as part of Forge-X. Unchanged copies can be passed on with Forge-X. Modifying them, or using them in other products or projects, needs permission. The source is not published |
 
 ## Credits
 

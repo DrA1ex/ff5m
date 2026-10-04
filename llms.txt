@@ -1,6 +1,6 @@
 # Forge-X
 
-> Forge-X is a free, open-source (GPL-3.0), unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and recovery tools. It is designed for the printer's 128 MiB of RAM and can be fully removed.
+> Forge-X is a free, unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and recovery tools. It is designed for the printer's 128 MiB of RAM and can be fully removed.
 
 Key facts:
 - Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
@@ -22,7 +22,7 @@ Key facts:
 - Firmware updater: HTTPS with certificate checks, .part file, size and tar validation, atomic replace; it does not verify SHA-256 or a signature.
 - Release policy: releases are published when Forge-X itself changes; an upstream version bump of Moonraker, Klipper, Fluidd, or Mainsail alone is not a reason for a release. Fluidd, Mainsail, and Guppy update separately.
 - Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done by the maintainer before releases; not every combination of printer, stock firmware version, and configuration can be covered.
-- License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
+- License: GPL-3.0 for Forge-X and its Klipper components (LICENSE); the native binary components in .bin/exec (boot_mcu, demo, logged, netd, netd-cli, splash, typer) have a separate free-to-use license (LICENSE-BINARIES.md): free to use including commercially as part of Forge-X, unchanged copies may be passed on with Forge-X, modification and use in other products need permission, source not published; forge-x-streamer is GPL-2.0-or-later. Repository: https://github.com/DrA1ex/ff5m
 
 ## User documentation
 

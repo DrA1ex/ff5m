@@ -251,5 +251,5 @@ ordinary custom screens normally only need `--list-fonts`.
 
 ## Copyright
 
-Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. Distributed
-under the GNU GPLv3 license.
+Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. `typer` is
+distributed under the [Forge-X Binary Components License](../LICENSE-BINARIES.md).
