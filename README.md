@@ -238,7 +238,7 @@ The [OpenWiki](openwiki/quickstart.md) is a code-oriented guide for contributors
 - The Klipper host is the FlashForge 0.11 generation. Newer Klipper features are available after they have been backported ([list](/docs/KLIPPER.md)).
 - Feather covers the main local workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail.
 - Power Loss Recovery is a salvage feature, not a guarantee of a seamless print.
-- Real-printer testing is done by the maintainer on an AD5M with stock firmware 3.1.3 and the Feather screen. The other combinations are supported, but are not run separately; see the [compatibility matrix](/docs/COMPATIBILITY.md#compatibility-and-test-matrix).
+- Real-printer testing is done by the maintainer before releases, so not every combination of printer, stock firmware version, and configuration can be covered.
 
 More details are in [Known limitations](/docs/DEVELOPMENT.md#known-limitations) and the [release policy](/docs/DEVELOPMENT.md#release-policy).
 

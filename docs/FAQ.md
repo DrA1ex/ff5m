@@ -41,7 +41,7 @@ The project focuses on reliability on limited hardware: memory and CPU use, hand
 ### Which printers and firmware versions does Forge-X support?
 Forge-X supports only the **Flashforge Adventurer 5M** and **Adventurer 5M Pro**. Other Flashforge models are not supported.
 
-Every stock firmware version from **2.6.5 up to 5.1.7** (the newest checked) is supported. The stock firmware version does not matter unless you use the Stock screen, so there is no need to update or downgrade it for Forge-X. See [Compatibility](COMPATIBILITY.md) for the reasons and the test matrix, and [Installation → Prerequisites](INSTALL.md#prerequisites) for the verified versions.
+Every stock firmware version from **2.6.5 up to 5.1.7** (the newest checked) is supported. The stock firmware version does not matter unless you use the Stock screen, so there is no need to update or downgrade it for Forge-X. See [Compatibility](COMPATIBILITY.md) for the reasons, and [Installation → Prerequisites](INSTALL.md#prerequisites) for the verified versions.
 
 ### Is Forge-X reversible? Can I go back to the stock firmware?
 Yes. Forge-X is installed as a layer on top of the stock firmware and is designed to be removed at any time:

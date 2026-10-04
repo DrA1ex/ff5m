@@ -10,7 +10,7 @@
 [Why the firmware version rarely matters](#why-the-firmware-version-rarely-matters) ·
 [What does depend on the firmware version](#what-does-depend-on-the-firmware-version) ·
 [Adventurer 5M and 5M Pro](#adventurer-5m-and-5m-pro) ·
-[Compatibility and test matrix](#compatibility-and-test-matrix)
+[Supported combinations](#supported-combinations)
 
 ## Why the firmware version rarely matters
 
@@ -42,18 +42,14 @@ According to the maintainer, the hardware differs in a couple of fans, the enclo
 
 The only difference when installing is the file name: for the Pro the image is renamed to `Adventurer5MPro-ForgeX-x.x.x.tgz` ([Installation](INSTALL.md#flashing-the-firmware-image)).
 
-## Compatibility and test matrix
+## Supported combinations
 
-The table lists what is supported and what has been run on a real printer. It is kept honest on purpose: "supported" and "physically tested" are different things.
+| | Supported |
+| --- | --- |
+| Printers | Adventurer 5M, Adventurer 5M Pro |
+| Stock firmware | Every version from 2.6.5 up to 5.1.7 (the newest checked) |
+| Screens | Feather (default), Guppy Screen, Headless, and the Stock screen. The Stock screen is the vendor application, so its behavior follows the stock firmware version |
 
-| Combination | Supported | Physical regression before a release |
-| --- | --- | --- |
-| 5M, stock firmware 3.1.3, Feather | Yes | **Yes**, on every release |
-| 5M, other stock firmware (2.6.5–5.1.7) | Yes | No. The parts Forge-X uses are the same; 5.1.x was test-flashed |
-| 5M Pro, any stock firmware | Yes | No, not run separately. Same platform and identical default configuration |
-| Stock screen | Yes | Not tested separately. It is the vendor application and Forge-X does not modify it |
-| Guppy Screen, Headless | Yes | Not recorded |
+The automated host tests run without a printer and do not depend on the firmware version. Real-printer testing is a maintainer step before a release, see [Release validation](DEVELOPMENT.md#release-validation).
 
-The physical regression is a maintainer step before a release. See [Release validation](DEVELOPMENT.md#release-validation). The automated host tests run without a printer and do not depend on the firmware version.
-
-A report from a user with a combination that is not marked as physically tested is useful. Include the printer model, the stock firmware version, the display mode and the Forge-X version, and send it to the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or the [Discord server](https://discord.gg/K7MH4hAfeX).
+A report from a user is useful for any combination, and especially if something does not work. Include the printer model, the stock firmware version, the display mode and the Forge-X version, and send it to the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or the [Discord server](https://discord.gg/K7MH4hAfeX).
