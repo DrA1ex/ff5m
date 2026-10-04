@@ -83,7 +83,6 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 ### Klipper and reliability
 
 - [Fixes and hardening for the AD5M](/docs/KLIPPER.md), including the E0017 (move queue overflow) and E0011 (communication timeout) mitigations and a fix for the `Timer too close` shutdowns caused by dense G-code
-- Boot guard with fallback to the stock firmware, and a recovery menu ([details](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety))
 - [Dual boot](/docs/DUAL_BOOT.md) with the stock FlashForge software
 - Backup and restore of the printer configuration
 
@@ -109,20 +108,14 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 - Buzzer support, including melodies from MIDI files or notes
 - Your own macros, dialogs, shell commands, and startup services ([details](/docs/EXTENDING.md))
 
-## How Forge-X is built
+## Why Forge-X and how it is built
 
-- **Klipper.** Forge-X keeps the Klipper host and MCU firmware that FlashForge ships and backports fixes and features from newer upstream Klipper into the host code. See [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md) and [Why doesn't Forge-X use Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013)
+The AD5M has 128 MiB of RAM and ships with a 0.11-era Klipper. The stock firmware exposes only part of Klipper and leaves some long-standing errors unfixed. Forge-X keeps the stock base, backports fixes, and keeps every change reversible.
+
+- **Klipper.** Fixes and features from newer upstream Klipper are backported into the FlashForge host code instead of moving to Klipper 0.13. See [Klipper fixes](/docs/KLIPPER.md) and [Why doesn't Forge-X use Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013)
 - **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores them. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
-- **Memory.** The host has 128 MiB of RAM. Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
+- **Memory.** Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen, and the camera service is written for the same limit. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
 - **Testing.** Each release goes through automated host tests, visual UI tests, and physical tests on a printer. The tests are in [`tests/`](/tests), and the process is in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
-
-## Why Forge-X Was Developed
-
-Forge-X was developed to give the Adventurer 5M a reliable, maintainable, and complete software environment while staying compatible with the printer's hardware and firmware base.
-
-The platform has limits: the host has only **128 MiB of RAM**, the bundled Klipper is from the older 0.11 generation, and the stock firmware exposes only a small part of what users expect from a Klipper-based printer. Forge-X is designed around these limits. Memory, CPU load, background services, UI, camera streaming, and Klipper behavior are all treated as reliability concerns, and newer software is adapted to fit the hardware.
-
-The project also covers gaps that are not about performance: missing Klipper workflows, platform-specific bugs, limited recovery options, weak diagnostics, and no extensible environment. Testing, failure handling, recovery, and documentation are part of the implementation, so additional integrations and ports to other platforms can be built without relying on undocumented internals.
 
 ## Documentation
 
