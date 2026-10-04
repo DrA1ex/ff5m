@@ -27,9 +27,9 @@ If the stream stops or looks wrong, run `CAMERA_RESTART`. After editing `camera.
 **Details:**
 [Configure the camera](#configuring-the-mods-camera) ·
 [Use the stock camera](#using-the-stock-camera) ·
-[Why a dedicated camera service](#purpose-of-alternative-camera-configuration) ·
-[Features](#forge-x-streamer-features) ·
-[Image controls](#image-controls-and-effects) ·
+[Why a dedicated camera service](#why-a-separate-camera-service) ·
+[How it behaves](#how-it-behaves) ·
+[Image settings](#image-settings-page) ·
 [Camera questions in the FAQ](FAQ.md#how-do-i-adjust-the-camera-settings)
 
 ## Configuring the Mod's Camera
@@ -86,41 +86,18 @@ You can adjust these parameters to suit your camera. Increasing resolution or
 FPS can increase memory use, so check the result with the `MEM` macro under the
 same workload used while printing.
 
-Open `http://printer_ip:8080/control.htm` to see the live MJPEG stream and the
-current image controls. The image updates continuously over one stream
-connection and reconnects if camera recovery closes that connection.
+#### Image settings page
 
-- Every edit is applied to the running camera automatically after a short
-  delay, without writing `camera.conf`. Temporary values remain active across
-  an in-process camera recovery, but are replaced by the file on
-  `CAMERA_RELOAD` or service restart. While an arrow key is held, intermediate
-  values are applied at least once per second; the final value is applied
-  shortly after the key is released.
-- The panel reads supported ranges, current values, and menu entries from the
-  active V4L2 driver. Camera menus and small discrete integer ranges are shown
-  as selectors, so invalid intermediate values cannot be entered. A numeric
-  selector whose advertised minimum is above zero also includes `0 (special)`
-  for camera drivers that accept zero as an undocumented off value. Hold
-  `Shift` while pressing an arrow key to move a numeric control by ten steps.
-- **Save** atomically updates the image-control entries in `camera.conf` and
-  preserves unrelated settings and comments. Saving is available because
-  `S98camera` passes the configuration path through `--controls-file`.
-- After editing `camera.conf` manually, run `CAMERA_RELOAD`. The streamer
-  rereads the file without restarting the HTTP service.
+Open `http://<printer_ip>:8080/control.htm` to see the stream and the camera's image settings.
 
-The panel, controls API, and MJPEG stream share the streamer's existing HTTP
-listener. Opening the panel does not start another HTTP server or allocate a
-second server-side frame buffer; its `<img>` connects to the existing MJPEG
-route. A controls request uses one bounded HTTP client slot only while the
-request is active.
+- Changes apply to the running camera after a short delay. They are not written to `camera.conf` until you press **Save**, and are replaced by the file on `CAMERA_RELOAD` or a service restart.
+- The page shows only the settings your camera reports, with its own ranges and options. Hold `Shift` with an arrow key to change a number by ten steps. Some settings include `0 (special)` for cameras that use zero as "off".
+- **Save** writes the image settings to `camera.conf` and keeps the rest of the file unchanged.
+- After editing `camera.conf` by hand, run `CAMERA_RELOAD`. The service rereads the file without restarting.
+- Saved settings are applied again every time the camera starts or reconnects.
+- Changing resolution, FPS, video device, or `REDUCE_MEMORY` requires `CAMERA_RESTART`.
 
-On every service start and camera recovery, saved controls are applied after
-the first completed frame so UVC initialization cannot immediately overwrite
-them. Changes to resolution, FPS, video device, or memory-reduction mode still
-require `CAMERA_RESTART`.
-
-The control page has no separate authentication layer. Treat port 8080 as a
-trusted-LAN interface and do not expose it directly to an untrusted network.
+The page uses the same HTTP server and stream as the camera, so opening it does not add a second server or frame buffer.
 
 ### Step 2: Disable Stock Camera
 To ensure the mod's camera is used, you need to disable the stock camera functionality. Here’s how:
@@ -147,89 +124,33 @@ If you’re using Mainsail, the configuration process is nearly identical to Flu
 
 ## Using the Stock Camera
 
-If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. However, the stock camera consumes significantly more resources, which can affect overall printer performance and may cause print failures, such as unexpected print stoppages. Use it at your own risk.
+If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. The stock camera uses noticeably more memory, which can lead to print failures such as unexpected stops on heavy prints.
 
 ## About forge-x-streamer
 
 This section explains how the camera service works. You do not need it to set up the camera.
 
-### Purpose of Alternative Camera Configuration
+### Why a separate camera service
 
-The Adventurer 5M has only 128 MiB of RAM, so camera buffering and extra
-camera-server processes can directly reduce the memory available to Klipper,
-Moonraker, the local UI, and user extensions.
+The printer has 128 MiB of RAM, and every megabyte used by the camera is taken from Klipper, Moonraker, the screen, and your own additions. forge-x-streamer is written for this limit: capture, HTTP streaming, image controls, and reconnect logic are in one small program with fixed limits on buffers and clients. It uses less memory than general-purpose streamers such as `ustreamer` that were used on the AD5M before.
 
-Forge-X therefore uses a dedicated camera implementation, **forge-x-streamer**,
-designed around the constraints of this printer rather than a generic
-multi-plugin streaming stack. Its source is maintained separately at
-[DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
+Actual memory use depends on the camera, format, resolution, and number of viewers. Use the `MEM` macro to check your own setup. The source is at [DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
 
-forge-x-streamer combines V4L2 capture, bounded frame publication, HTTP MJPEG
-serving, camera controls, and camera recovery in one executable. The design
-defaults to one requested V4L2 capture buffer, bounded publisher/client memory,
-a limited client count, and small joinable worker stacks. It avoids a runtime plugin loader and bundled web application, and the normal
-MJPEG/JPEG path does not link libjpeg at all.
+### How it behaves
 
-This architecture is intended to keep camera RAM use substantially below the
-general-purpose alternatives traditionally used on the AD5M, especially
-`ustreamer`. Exact RSS depends on the camera driver, negotiated format,
-resolution, connected clients, and whether raw input encoding is enabled, so
-use the `MEM` macro when comparing a specific setup instead of relying on a
-single fixed number.
+- `VIDEO=auto` scans `/dev/video0..63` and picks a device that can stream.
+- If the camera times out, disconnects, or returns errors, the service closes it and keeps trying to reopen or find it again. Forge-X does not need to be restarted.
+- While the camera is offline, open streams and snapshots get a generated **NO SIGNAL** image (streams at 2 FPS). A single bad frame is dropped without switching to NO SIGNAL.
+- A camera that starts in an unsupported format is asked to switch to a supported one when it is reopened.
+- A slow browser cannot hold the camera's capture buffer.
+- Extra clients and oversized or broken frames are rejected instead of using more memory.
+- A failed `CAMERA_RELOAD` keeps the last valid settings.
 
-forge-x-streamer also handles several AD5M camera failure modes directly:
+### Technical details
 
-- `VIDEO=auto` scans `/dev/video0..63` and selects a device that actually
-  reports V4L2 streaming capability;
-- a capture timeout, disconnect, bad device state, or I/O failure closes the
-  camera and enters a bounded retry/rediscovery loop instead of requiring the
-  whole Forge-X runtime to be restarted;
-- existing HTTP streams remain alive during camera recovery and receive a
-  generated **NO SIGNAL** frame until the real camera returns;
-- cameras that start in an unsupported/stale format are retried and asked to
-  switch into a supported JPEG/raw mode across reopen cycles;
-- capture buffers are returned to the driver before logging or client socket
-  writes, so a slow browser does not hold the camera buffer;
-- excess clients and malformed/oversized frames are bounded and rejected
-  instead of growing resource usage without limit.
-
-#### forge-x-streamer features
-
-- **One executable, no plugin loader:** capture, frame publication, HTTP serving, image controls, and recovery are all in a single program. The MJPEG stream, snapshots, health check, and control panel share one HTTP listener (port `8080` in Forge-X).
-- **Endpoints:** `/?action=stream` (MJPEG stream; `POST /stream` also works), `/?action=snapshot` (JPEG snapshot), `/healthz` (camera readiness; returns `503` while the camera is offline), `/control.htm` (control panel), and `/controls` (read, apply, and save image controls). The multipart boundary and timestamp header keep the format of the previous MJPEG streamer, so existing clients keep working.
-- **Streamer defaults:** 640×480, 15 FPS requested, one V4L2 capture buffer, and three simultaneous video clients. One extra HTTP worker is reserved for snapshots and controls when all stream slots are busy. Requests beyond the limit receive HTTP `429`.
-- **Bounded memory:** every client worker and the capture and accept threads use a 128 KiB stack. Client frame buffers and publisher storage grow only to the largest frame actually seen. The control panel is a 6 KiB read-only page with a 1 KiB limit for control metadata, and it does not start a second server.
-- **Low-memory frame cap:** the `REDUCE_MEMORY` option in `camera.conf` maps to the streamer's `--frame-cap`, which limits the mapped capture buffer for cameras that report a 1080p-sized buffer at every resolution.
-- **Offline behavior:** while the camera is disconnected, stream clients and snapshot requests receive a generated NO SIGNAL image at the camera's resolution (streams at 2 FPS) until real frames resume. A single bad frame is dropped without switching to NO SIGNAL.
-- **Live controls:** edits on `/control.htm` are applied after a short delay (about 180 ms, and at least once per second while a key is held). **Save** writes `camera.conf` atomically and preserves unrelated keys and comments. A failed reload keeps the last valid settings.
-- **Raw camera formats:** when built with libjpeg support (`WITH_RAW_INPUT`), YUYV, UYVY, RGB24, and RGB565 input can be encoded to JPEG. The MJPEG-only build does not link libjpeg.
-- **Standalone project:** forge-x-streamer can also be built for other Linux systems with V4L2. It is licensed under GPL-2.0-or-later. Its CI builds the raw-enabled and MJPEG-only variants and runs the test suite, and ASan/UBSan builds are supported. See the [forge-x-streamer repository](https://github.com/DrA1ex/forge-x-streamer) for build and runtime options.
-
-#### Image controls and effects
-
-forge-x-streamer exposes the camera's own V4L2 image controls through the built-in
-`/control.htm` page and `/controls` API. Supported devices can expose
-brightness, contrast, gain, gamma, hue, saturation, sharpness, power-line
-frequency, white-balance temperature, backlight compensation, and exposure
-controls.
-
-The control page detects the ranges and menu values reported by the active
-camera instead of assuming that every UVC device implements the same controls.
-Changes can be applied live. **Save** atomically updates the corresponding
-entries in `camera.conf`, while `CAMERA_RELOAD`/`SIGHUP` can reload the
-saved control set without restarting the HTTP service. Saved controls are
-applied after the first completed frame on every camera open/reconnect so UVC
-initialization cannot immediately overwrite them.
-
-While the stock camera remains available in Stock display mode, Forge-X's
-camera path is designed to preserve substantially more of the printer's memory
-budget for Moonraker, Klipper, the UI, and optional user modifications.
-
-> [!NOTE]
-> With Feather, Guppy, or Headless mode the FlashForge UI/services are not
-> responsible for the camera, so use the Forge-X camera implementation.
-
-On boot with Feather, Guppy, or Headless, Forge-X enables the mod camera if
-`camera` has never been set and a working video device is found. An explicit
-`camera=0` is respected. The normal boot log records whether a device was
-found.
+- **Endpoints:** `/?action=stream` (MJPEG; `POST /stream` also works), `/?action=snapshot` (JPEG), `/healthz` (returns `503` while the camera is offline), `/control.htm` (control page), and `/controls` (read, apply, and save image controls). The stream format matches the previous MJPEG streamer, so existing clients keep working.
+- **Defaults:** 640×480, 15 FPS, one V4L2 capture buffer, and three video clients. One extra worker is kept for snapshots and controls. Requests over the limit get HTTP `429`.
+- **Memory limits:** each worker thread has a 128 KiB stack. Frame buffers grow only to the largest frame actually seen. The control page is a 6 KiB static page.
+- **`REDUCE_MEMORY`:** maps to `--frame-cap`, which limits the capture buffer for cameras that report a 1080p-sized buffer at every resolution.
+- **Raw formats:** when built with libjpeg (`WITH_RAW_INPUT`), YUYV, UYVY, RGB24, and RGB565 input is encoded to JPEG. The MJPEG-only build does not link libjpeg.
+- **Standalone use:** forge-x-streamer builds on other Linux systems with V4L2 and is licensed under GPL-2.0-or-later. Its CI builds both variants and runs the tests. See its [repository](https://github.com/DrA1ex/forge-x-streamer) for build and runtime options.
