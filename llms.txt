@@ -31,7 +31,8 @@ Key facts:
 - [Compatibility](docs/COMPATIBILITY.md): printers, stock firmware versions, screens
 - [FAQ](docs/FAQ.md): what Forge-X is, compatibility, reversibility, troubleshooting
 - [Klipper fixes and AD5M-specific hardening](docs/KLIPPER.md): backported upstream fixes, Timer too close, E0011/E0017
-- [Screens](docs/SCREEN.md): Feather, Stock, Guppy, Headless
+- [Screens](docs/SCREEN.md): Feather, Stock, Guppy, Headless, and why Feather is the default
+- [Feather guide](docs/FEATHER.md): what the Feather screen can do
 - [Camera](docs/CAMERA.md): forge-x-streamer
 - [Power Loss Recovery](docs/POWER_LOSS_RECOVERY.md)
 - [Calibration](docs/CALIBRATION.md)

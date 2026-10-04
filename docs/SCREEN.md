@@ -1,25 +1,39 @@
-# Screen Configuration
-
-The FlashForge Stock screen is tightly coupled to the vendor services. It is convenient for the original workflow, but direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze the vendor application, and the screen consumes considerably more memory than the lightweight alternatives.
+# Screens
 
 Forge-X supports four display modes:
 
 | Mode | Use it when |
 | --- | --- |
+| `FEATHER` (default) | You want Forge-X's own lightweight touchscreen controls. |
 | `STOCK` | You want the original FlashForge screen, upload path, and vendor workflow. |
-| `FEATHER` (default) | You want Forge-X's lightweight local touchscreen controls. |
 | `GUPPY` | You prefer the separate Guppy touchscreen interface. |
 | `HEADLESS` | You control the printer remotely or provide your own display process. |
 
-HelixScreen is also available for AD5M/Pro, but it is not an internal Forge-X
-display mode. The official HelixScreen project publishes a ready-made AD5M
-firmware image based on Forge-X and also documents manual installation on an
-existing Forge-X setup. See the
-[official HelixScreen project](https://github.com/prestonbrown/helixscreen) and
-its [installation guide](https://github.com/prestonbrown/helixscreen/blob/main/docs/user/INSTALL.md).
+HelixScreen is also available for the AD5M and the Pro, but it is not an internal Forge-X display mode. The [official HelixScreen project](https://github.com/prestonbrown/helixscreen) publishes a ready-made AD5M image based on Forge-X and documents a manual [installation](https://github.com/prestonbrown/helixscreen/blob/main/docs/user/INSTALL.md) on an existing Forge-X setup.
 
 > [!WARNING]
 > Do not change display mode during a print. Before switching, make sure you have a working network connection or a recovery route through [Dual Boot](DUAL_BOOT.md).
+
+## Which screen to use
+
+| | Feather | Stock | Guppy | Headless |
+| --- | --- | --- | --- | --- |
+| RAM used | roughly 1–2 MB | roughly 10–20 MB | less than Stock | none |
+| Needs the FlashForge services | no | yes (LAN-mode for Fluidd, Mainsail, and upload) | no | no |
+| Local controls | main everyday workflows, guided calibration | the full vendor interface | its own interface | none |
+| Power Loss Recovery | Forge-X | FlashForge's own | Forge-X | Forge-X |
+| Bed-mesh profile | `auto` | `MESH_DATA` | `auto` | `auto` |
+
+### Why Feather is the default
+
+- **It uses little memory.** The printer has 128 MiB of RAM, and Moonraker alone takes roughly 30 MB. Feather needs roughly 1–2 MB, the Stock screen roughly 10–20 MB. The memory that Feather does not use stays available to Klipper, the camera, and your own additions. See [Reducing resource usage](PRINTING.md#reducing-resource-usage).
+- **It does not depend on the vendor application.** The Stock screen is tightly coupled to the FlashForge services: direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze it, and its behavior and bugs change with the stock firmware version. Feather runs inside Klipper and is not affected by them.
+- **It is part of Forge-X.** Feather is a Klipper extension that draws with the small [Typer](TYPER.md) renderer. It has no separate UI application or second copy of the printer state, and its calibration, material presets, Wi-Fi setup, and update notifications work directly with Forge-X.
+- **It works without a network** once it is configured.
+
+Feather covers the everyday workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail. The list of what it can do is in the [Feather guide](FEATHER.md).
+
+Choose Stock if you want the original FlashForge workflow, Guppy if you prefer its interface, and Headless if you control the printer remotely or run your own display process.
 
 ## Quick start
 
@@ -53,67 +67,7 @@ When using the Stock screen:
 
 ### Feather Screen
 
-Feather is Forge-X's first-party low-resource touchscreen, designed
-specifically for the AD5M's limited 128 MiB system rather than adapted from a
-general-purpose Linux touchscreen stack. It runs as a Forge-X Klipper extension
-and uses the small Typer renderer, avoiding a separate full UI application and
-its duplicate printer-state/runtime layers.
-
-That resource budget matters on this printer: Moonraker alone uses tens of MiB
-of RAM (the current resource guide describes roughly 30 MiB), before the camera,
-web services, Klipper, and any user extensions are counted. Feather is designed
-to leave as much of that constrained memory budget as possible available to the
-printing stack and to optional services or user modifications.
-
-Unlike the early display-only implementation, current Feather versions provide
-the main local workflows needed for everyday printing. Stock mode remains fully
-supported for users who prefer the original FlashForge workflow, while Feather
-provides deeper Forge-X-specific integration without requiring the stock UI
-processes.
-
-#### Home screen and navigation
-
-The home screen shows the current job, nozzle and bed state, material, toolhead, network, and the previous print. The main menu provides direct access to printing, printer controls, filament handling, calibration, networking, and settings.
-
-The first touch after the panel dims only wakes the display; it does not activate the control under the finger.
-
-#### Local files and print control
-
-Feather can browse G-code stored on the printer or on a connected USB drive. It supports folders, multi-page file lists, refresh, file information, print confirmation, and a recent-print list.
-
-Before starting a file, you can ask Feather to measure a fresh full-bed mesh for that print. If KAMP is enabled, the screen explains that the full mesh will run instead. You can also choose to save the new mesh for future prints. Feather waits until the print succeeds and then asks for confirmation. Confirming saves the mesh permanently and restarts Klipper; postponing leaves it available only for the current session.
-
-During a print, Feather shows progress, elapsed and remaining time, layer and height information. It provides pause, resume, filament change, live Z adjustment, and guarded cancellation. Preparation reports the separate context path and current state, for example `PRINT PREP -> MESH VALIDATION -> HEATING NOZZLE`, instead of relying on a caller-provided `CONTEXT`/`STAGE` string.
-
-Cancellation is also available while the printer is preparing a job. Normal **Cancel** accepts `interruptible` work and uses the nearest explicit `cancelable` cleanup domain when one exists; homing, probing, and motion remain atomic until the next context boundary. Managed temperature waits are interrupted immediately through `M108`. A pending request offers **Continue Operation** or immediate `M112`, while `non_interruptible` work offers only Continue or `M112`.
-
-#### Movement, heating, and lighting
-
-Feather provides both step movement and joystick movement. The printer must be in an appropriate idle state, and movement is kept within the configured limits. Separate controls are available for homing, nozzle and bed heating, material preheat, cooldown, the part-cooling fan, and chamber-light brightness. Hardware-active pages provide emergency-stop access.
-
-#### Filament and calibration
-
-Material presets are shared with the Forge-X filament macros. Feather remembers the selected material and provides guided loading, unloading, purging, and filament-change actions, including during a paused print.
-
-The Calibration page includes guided workflows for bed screws, bed mesh, Safe Z, Z offset, extruder feed, PID, and Input Shaper. Follow the instructions on the screen and review the result before saving it.
-
-#### Update notifications
-
-When Moonraker reports that a newer Forge-X version is available, Feather can show the new version and a short, scrollable list of changes while the printer is idle. Select **UPDATE** to start the normal Forge-X OTA update, or **LATER** to hide that version until the printer or Klipper restarts. If a print starts, the notification closes immediately and may return after the printer is idle again.
-
-#### Network, settings, and themes
-
-Feather can scan for 2.4 and 5 GHz Wi-Fi networks, enter normal WPA/WPA2-PSK credentials with the on-screen keyboard, configure DHCP Ethernet, and show the live connection state, signal, and IP address. Its Wi-Fi list presents the band, SSID, and signal in separate columns. A saved network is marked in the scan list and reconnects immediately when selected; use **RESET PASSWORD** to replace its credential.
-
-Feather starts without waiting for the saved network. While that startup connection is active, the dashboard shows **CONNECTING** and the Network page can either keep waiting or cancel it before choosing another network. The screen keeps the connection state current while the printer reconnects. Any network change may briefly take the printer offline. If a Wi-Fi change fails, Feather returns to the previous saved Wi-Fi network when possible.
-
-Static addressing and enterprise Wi-Fi still require advanced configuration outside Feather.
-
-Feather Settings provides display brightness, chamber-light level, sound feedback, Forge-X parameters, and theme selection. Settings that require a Klipper or printer restart are identified before they are applied.
-
-Advanced operations such as unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics remain in Fluidd or Mainsail.
-
-Feather can operate without a network after configuration. It uses the `auto` bed-mesh profile. Recreate or rename the persistent mesh after switching from Stock mode.
+Feather is the default screen and the first-party touchscreen of Forge-X, written for the 128 MiB system of the AD5M. It shows the current job and printer state, browses local and USB G-code, controls prints, moves and heats the printer, loads filament, runs the guided calibrations, and sets up Wi-Fi and Ethernet. See the [Feather guide](FEATHER.md) for details.
 
 ### Guppy Screen
 

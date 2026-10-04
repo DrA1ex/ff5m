@@ -132,7 +132,7 @@ The project also covers gaps that are not about performance: missing Klipper wor
 
 **Using the printer**
 
-- [Printing](/docs/PRINTING.md) · [Calibration](/docs/CALIBRATION.md) · [Macros](/docs/MACROS.md) · [Screens](/docs/SCREEN.md) · [Camera](/docs/CAMERA.md) · [Telegram bot and timelapse](/docs/TELEGRAM.md) · [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)
+- [Printing](/docs/PRINTING.md) · [Calibration](/docs/CALIBRATION.md) · [Macros](/docs/MACROS.md) · [Screens](/docs/SCREEN.md) · [Feather](/docs/FEATHER.md) · [Camera](/docs/CAMERA.md) · [Telegram bot and timelapse](/docs/TELEGRAM.md) · [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)
 
 **Maintenance and recovery**
 
