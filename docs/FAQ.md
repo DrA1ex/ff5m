@@ -118,10 +118,10 @@ The full procedure, prerequisites, and OTA update rules are in the [Installation
 6. **Monitor resources.** Run the `MEM` macro to check memory usage and free up resources if needed.
 
 ### Do I need to uninstall another mod before installing Forge-X?
-Yes, uninstall other mods first and make a backup. The one exception is Klipper Mod's dual-boot feature: Klipper Mod stays the default, and a USB drive with a `klipper_mod_skip` file boots Forge-X instead. See the [Klipper Mod dual-boot documentation](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot). Do not flash different mods over each other unless you clearly understand what you are doing.
+Yes. Uninstall all other mods, including Klipper Mod, and make a backup first. Do not flash different mods over each other.
 
 ### Can I install Klipper Mod over Forge-X?
-Yes. Klipper Mod does not interfere with Forge-X, and the two can be used together through Klipper Mod's dual-boot feature. To boot into Forge-X, insert a USB drive that contains a `klipper_mod_skip` file, as described in the [Klipper Mod dual-boot documentation](https://github.com/xblax/flashforge_ad5m_klipper_mod/blob/master/docs/INSTALL.md#dual-boot).
+No. Running Forge-X together with Klipper Mod is not supported. [Uninstall](UNINSTALL.md) Forge-X before installing another mod.
 
 ---
 
