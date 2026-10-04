@@ -57,6 +57,6 @@ The only difference when installing is the file name: for the Pro the image is r
 | Stock firmware | Every version from 2.6.5 up to 5.1.7 (the newest checked) |
 | Screens | Feather (default), Guppy Screen, Headless, and the Stock screen. The Stock screen is the vendor application, so its behavior follows the stock firmware version |
 
-The automated host tests run without a printer and do not depend on the firmware version. Real-printer testing is a maintainer step before a release, see [Release validation](DEVELOPMENT.md#release-validation).
+The automated host tests run without a printer and do not depend on the firmware version. Real-printer testing is run by the maintainer before a release and is required for pull requests that touch hardware-related code, see [Release validation](DEVELOPMENT.md#release-validation) and [Testing](DEVELOPMENT.md#testing).
 
 A report from a user is useful for any combination, and especially if something does not work. Include the printer model, the stock firmware version, the display mode and the Forge-X version, and send it to the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or the [Discord server](https://discord.gg/K7MH4hAfeX).

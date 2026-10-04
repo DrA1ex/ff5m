@@ -31,7 +31,16 @@ Failure markers are written before optional mod work starts. If normal initializ
 
 Boot recovery, firmware installation, configuration migration, and uninstall are covered by host tests. In normal failure cases, a Stock or Recovery boot stays available without UART or FEL. The exact steps and source files are in the [engineering facts](#engineering-facts-and-where-to-verify-them) table below. See also the [Architecture overview](/openwiki/architecture.md), [Operations and recovery](/openwiki/workflows/operations-and-recovery.md), and the [Firmware Recovery guide](/docs/RECOVERY.md).
 
-## Validation layers
+## Testing
+
+Every pull request goes through the same checks, and the [pull request template](/.github/pull_request_template.md) asks for their results:
+
+- **every change:** [host tests](#host-tests);
+- **motion, heating, probing, bed mesh, Z-offset, filament, pause/resume/cancel, Power Loss Recovery, Klipper timing, boot, installation, update, or recovery:** [printer regression](#printer-regression), attached as an archive;
+- **anything visible on the Feather screen:** [visual regression](#visual-regression), attached as an archive;
+- **a new mechanism, or behavior that no existing test covers:** [new coverage](#adding-test-coverage).
+
+If you cannot run a check (for example, you have no printer), say so in the pull request. A maintainer runs it before the change is merged.
 
 ### Host tests
 
@@ -71,15 +80,128 @@ The printer regression runs real workflows on an Adventurer 5M through Klipper, 
 - creating and restoring a Power Loss Recovery checkpoint;
 - filament load, purge, unload, and cold pull.
 
-During the run it can record motion-buffer data, MCU statistics, temperatures, print state, operation context, memory, CPU, scheduler data, and per-process usage. A workflow that finishes but causes reactor stalls or memory pressure is still a regression.
+During the run it records motion-buffer data, MCU statistics, temperatures, print state, operation context, memory, CPU, scheduler data, and per-process usage. A workflow that finishes but causes reactor stalls or memory pressure is still a regression.
 
-The maintainer runs it before every release. Pull requests that touch hardware-related code must include a run as well; see [Contributing](/CONTRIBUTING.md#printer-regression) for when and how.
+The maintainer runs it before every release. Pull requests that touch hardware-related code must include a run as well.
 
-The suites move and heat the printer, so they have explicit preconditions and confirmation levels. Details are in the [Testing and change guide](/openwiki/testing-and-change-guide.md).
+#### Before you start
+
+- The printer is calibrated, idle, in Feather mode, and the bed is empty.
+- Someone watches the printer for the whole run. The tests move and heat it.
+- Your changes are deployed to the printer. After changing Feather Python modules, restart the Klipper process completely (a normal `RESTART` can keep the old module loaded):
+
+  ```sh
+  /opt/config/mod/.shell/restart_klipper.sh --hard
+  ```
+
+- The computer that runs the command has Python 3, `ssh`, and `scp`, and can log in to the printer over SSH.
+
+#### Run without video (enough for a pull request)
+
+A video recording is not required for a pull request. Run from the repository root:
+
+```bash
+python3 -m tests.printer_regression \
+  --printer <printer-host> \
+  --suite core \
+  --no-video \
+  --confirm-unattended-physical-test
+```
+
+`--no-video` skips camera recording and video assembly, so FFmpeg is not needed. The report, telemetry, resource data, screenshots, and printer logs are still collected.
+
+Choose the suites that match your change:
+
+- `core`: the main physical suite (homing, movement, heating, bed screws, mesh, Z-offset). This is the default for most changes.
+- `all`: `core`, then a real test print with pause, resume, cancel, and a Power Loss Recovery checkpoint. Use it for changes that can affect printing or recovery. The printed model stays on the bed.
+- `material`: filament load, purge, unload, and cold pull. Run it separately, on a clear bed.
+- Single parts: `motion`, `heat`, `screws`, `mesh`, `z`, or the screen-only `ui`, `component`, and `render`.
+
+The command prints the path of the run directory, by default `tests/artifacts/printer-runs/<timestamp>/`. Pack the whole directory and attach it to the pull request:
+
+```bash
+cd tests/artifacts/printer-runs
+zip -r printer-regression.zip <timestamp>
+```
+
+If the archive is too large to attach, upload it elsewhere and add the link.
+
+#### Run from the printer console
+
+If you cannot run the command from a computer, start the main suite from the Fluidd or Mainsail console:
+
+```gcode
+_FEATHER_UI_TEST ACTION=RUN SUITE=FULL CONFIRM=1
+```
+
+Single phases: `SUITE=UI`, `RENDER`, `MOTION`, `HEAT`, `SCREWS`, `MESH`, or `Z`. Check progress with `_FEATHER_UI_TEST ACTION=STATUS`, stop with `_FEATHER_UI_TEST ACTION=ABORT`.
+
+The results are saved on the printer in `/data/feather-ui-tests/<timestamp>-<suite>/`. Download that directory (for example with `scp -r` or from Fluidd), pack it as a `.zip`, and attach it. This run does not collect the telemetry and per-process resource data that the computer run adds, so the computer run is preferred.
+
+All options, safety checks, and output formats are in the [Testing and change guide](/openwiki/testing-and-change-guide.md).
 
 ### Visual regression
 
-Feather changes are also checked on screenshots of stable pages and important non-default states. A screen that looks right can still behave wrongly, and correct logic can still produce a broken layout, so visual checks complement the logic tests rather than replace them.
+Feather changes are also checked on screenshots: every stable page, plus the important non-default states listed in [`tests/visual_checks/scenarios.json`](/tests/visual_checks/scenarios.json). A vision model compares each screenshot with its text description in [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) and reports layout and content problems. A screen that looks right can still behave wrongly, so visual checks complement the logic tests rather than replace them.
+
+Any change that is visible on the Feather screen needs a visual regression run. You need:
+
+- a checkout of the `feather-ui-designer` repository, the source of Feather's UI framework (see [Feather runtime](/openwiki/workflows/feather-runtime.md#framework-dependency-and-updates));
+- for the model review, a local OpenAI-compatible server with a vision model (for example LM Studio). Without it, the run still collects the screenshots, and the maintainer runs the review.
+
+Run against the printer (idle, Feather mode, your changes deployed):
+
+```bash
+python3 -m tests.visual_checks.regression \
+  --mode hybrid \
+  --designer-root /path/to/feather-ui-designer \
+  --printer-host <printer-host> \
+  --confirm-printer-idle \
+  --model <loaded-vision-model> \
+  --enable
+```
+
+Without a vision model, leave out `--model` and `--enable`. Without a printer, use `--mode designer` and leave out `--printer-host` and `--confirm-printer-idle`.
+
+The command prints the run directory, by default `tests/artifacts/ui-regression/<timestamp>/`. Pack the whole directory and attach it to the pull request:
+
+```bash
+cd tests/artifacts/ui-regression
+zip -r visual-regression.zip <timestamp>
+```
+
+How to read the report is described in the [Testing and change guide](/openwiki/testing-and-change-guide.md#development-only-semantic-screenshot-checks).
+
+### Adding test coverage
+
+A new mechanism, or behavior that no existing test covers, needs new tests in the same pull request:
+
+- **Logic:** add a host test in `tests/` that fails without your change. Name it `tests/test_<area>.py` so `python tests/run_host_tests.py` picks it up, and use the existing modules for the same area as examples.
+- **Hardware workflow:** if the change adds a workflow the printer regression does not exercise, add a phase or scenario to the Feather test runner in [`.py/klipper/plugins/feather_ui_test/`](/.py/klipper/plugins/feather_ui_test/). Keep the existing safety checks: idle printer, explicit confirmation, and cleanup of heaters, motors, and temporary state.
+- **New Feather page:** the visual regression finds it automatically, but it has no description yet. The run stops with `needs_baseline` and writes `expectations.candidate.json` to the run directory. Copy the new case into [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) and edit it so that it describes what must be on the screen:
+
+  ```json
+  "default-my-page": {
+    "description": "One sentence about the page and its state.",
+    "required": [
+      "title and BACK action",
+      "the main values or controls the page must show"
+    ],
+    "forbidden": [
+      "blank frame",
+      "overlapping controls",
+      "clipped important text"
+    ],
+    "allowed_variations": [
+      "theme colors",
+      "font rasterization"
+    ]
+  }
+  ```
+
+  The model checks the screenshot against `required` and `forbidden`. Write each item as something visible on the screen, not as an implementation detail.
+
+- **New state of a page** (a dialog, a warning, an active or finished workflow): add a case to [`tests/visual_checks/scenarios.json`](/tests/visual_checks/scenarios.json) with the page key and the state values, then add its description to `expectations.json` as above.
 
 ## Release validation
 
