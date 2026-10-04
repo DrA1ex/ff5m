@@ -1,292 +1,84 @@
 # Development, testing, and release validation
 
-Forge-X modifies a real printer: changes may affect motion, heaters, probing,
-configuration, recovery, storage, and the local UI. For that reason, testing is
-treated as part of the implementation and release process rather than as a
-separate cleanup step.
+Forge-X changes a real printer: motion, heaters, probing, configuration, recovery, storage, and the local UI. Testing is part of every change and every release. CI alone is not enough for code that can move or heat the printer.
 
-The project uses several validation layers together:
-
-- automated host-side unit and regression tests;
-- rendered G-code macro regression tests;
-- visual UI regression;
-- on-printer regression that executes real workflows on Adventurer 5M hardware;
-- physical print regression, including pause/resume/cancel and power-loss
-  recovery paths;
-- release validation performed before publishing a release.
-
-CI is important, but **CI alone is not considered sufficient release
-validation** for code that can move or heat the printer.
-
-For the implementation details, commands, artifact formats, telemetry, and
-individual printer suites, see the
-[Testing and change guide](/openwiki/testing-and-change-guide.md).
-
-For user-level customization (`user.cfg` overrides, own macros, dialogs, services), see [Customizing and extending Forge-X](EXTENDING.md).
+- Commands, test formats, telemetry, and individual printer suites: [Testing and change guide](/openwiki/testing-and-change-guide.md).
+- Requirements for pull requests: [Contributor guidelines](/CONTRIBUTING.md).
+- User-level customization (`user.cfg` overrides, own macros, dialogs, services): [Customizing and extending Forge-X](EXTENDING.md).
 
 ## Stock firmware integration and lifecycle safety
 
-Forge-X is integrated into the FlashForge firmware as a reversible layer rather
-than as an all-or-nothing replacement. The stock firmware remains a deliberate
-fallback path, while the mod adds its chroot runtime, Moonraker, Klipper
-extensions, display modes, and printer-specific configuration on top.
+Forge-X is a reversible layer on top of the FlashForge firmware. The stock firmware stays available as a fallback, and the mod adds its chroot runtime, Moonraker, Klipper extensions, display modes, and printer configuration on top.
 
-Configuration changes are applied through the same managed
-[`cfg_backup.py`](/.py/cfg_backup.py) mechanism used for backup and restore.
-Forge-X does not depend on ad-hoc edits to `printer.cfg` for its display
-profiles. The repository carries explicit configuration deltas for Stock,
-Feather, Guppy, and Headless modes under `.cfg/init.display.*.cfg`, together
-with restore profiles used during uninstall and recovery. Mode switching,
-normal boot repair, and uninstall therefore operate on the same reviewed
-configuration model.
+**Boot guard.** The installed `/etc/init.d/S00init` is the last-known-good boot guard. An update replaces the mod files, but not the guard:
 
-The early boot path is also intentionally fail-safe. The installed
-`/etc/init.d/S00init` file is treated as the **last-known-good boot guard**.
-An OTA/source update may replace the mod files, but routine runtime reload does
-not replace this installed guard. During the next normal boot, the new
-initializer must complete successfully and publish its readiness flag before
-the guard is updated. The candidate guard is syntax-checked, copied to a
-temporary file, synced, and atomically renamed into place only after that
-successful initialization. If initialization is interrupted or returns without
-readiness, Forge-X records the failed boot and the next boot bypasses the mod
-and continues with the stock firmware instead of repeatedly executing the new
-broken boot path.
+1. the update installs the new Forge-X runtime;
+2. the next boot starts it through the old guard;
+3. the new initializer reports that it is ready;
+4. only then is the new guard committed.
 
-This gives updates a two-stage lifecycle:
+Failure markers are written before optional mod work starts. If normal initialization is interrupted or never reports ready, the next boot starts the stock firmware instead of repeating the broken start. An interrupted Recovery session also falls back to Stock.
 
-1. update the mutable Forge-X runtime;
-2. boot it while the previous boot guard is still installed;
-3. confirm that normal initialization reached its ready state;
-4. only then commit the new boot guard.
+**Configuration.** Changes go through [`cfg_backup.py`](/.py/cfg_backup.py), the same tool used for backup and restore, not through ad-hoc edits to `printer.cfg`. Each display mode (Stock, Feather, Guppy, Headless) has a configuration delta in `.cfg/init.display.*.cfg` and a restore profile, so mode switching, boot repair, and uninstall use the same files.
 
-The same boot boundary arms durable recovery/failure markers before optional
-mod work begins. An interrupted normal initialization falls back to Stock; an
-interrupted Recovery session also falls back to Stock rather than repeatedly
-entering a half-completed recovery path.
+**Rollback.**
 
-Rollback exists at several additional layers:
+- Replaced stock Klipper modules keep `.bak` copies, and uninstall restores them.
+- Display and configuration changes have restore profiles.
+- Settings can be backed up and restored.
+- The Recovery menu can check the filesystem, create backups, reset settings, uninstall Forge-X, and flash firmware images.
+- Uninstall restores the printer configuration and Klipper files before it removes the mod.
 
-- stock Klipper modules replaced by Forge-X keep `.bak` copies and are restored
-  by uninstall;
-- display/configuration mutations have explicit restore profiles;
-- settings can be backed up and restored through the managed configuration
-  tooling;
-- the Recovery environment can diagnose the filesystem, create backups, reset
-  settings, uninstall Forge-X, and invoke firmware restore paths;
-- uninstall restores printer configuration and Klipper replacements before
-  deleting the mod runtime.
-
-These mechanisms are regression-tested along with boot recovery, firmware image
-installation, configuration migration, and uninstall-sensitive behavior. The
-goal is that a failed update or configuration change should normally leave a
-stock or Recovery route available instead of requiring immediate UART/FEL
-repair.
-
-For the exact trust boundary and source flow, see the
-[Architecture overview](/openwiki/architecture.md), the
-[Operations and recovery guide](/openwiki/workflows/operations-and-recovery.md),
-and the operator-facing [Firmware Recovery guide](/docs/RECOVERY.md).
+Boot recovery, firmware installation, configuration migration, and uninstall are covered by host tests. In normal failure cases, a Stock or Recovery boot stays available without UART or FEL. The exact steps and source files are in the [engineering facts](#engineering-facts-and-where-to-verify-them) table below. See also the [Architecture overview](/openwiki/architecture.md), [Operations and recovery](/openwiki/workflows/operations-and-recovery.md), and the [Firmware Recovery guide](/docs/RECOVERY.md).
 
 ## Validation layers
 
-### Automated host tests
+| Layer | What it checks | Who runs it |
+| --- | --- | --- |
+| Host tests | Macros, Klipper overlays and backports, Power Loss Recovery state, boot recovery, configuration migration, backup and restore, firmware installation, Feather logic, operation contexts, network and Moonraker integration. | GitHub Actions and developers |
+| Macro rendering | Macros are rendered against Klipper status snapshots and the generated commands are checked, not only the template syntax. | GitHub Actions and developers |
+| Visual regression | Feather screenshots of stable pages and important non-default states. A correct-looking screen can still behave wrongly, so it complements the logic tests. | Maintainer |
+| Printer regression | Real workflows on an Adventurer 5M (list below). | Maintainer |
 
-The 1.4.2 development tree contains dozens of dedicated host-side test modules
-under `tests/`. They cover project-specific behavior rather than only upstream
-dependencies.
-
-Current coverage includes, among other areas:
-
-- G-code macro rendering and behavior;
-- Klipper overlays, backports, and reactor patches;
-- Power Loss Recovery / Resurrection state handling;
-- boot recovery, configuration migration, backup, and restore;
-- firmware image installation and update paths;
-- Feather state, actions, workflows, safety checks, rendering, and input;
-- operation-context behavior;
-- network and Moonraker integration;
-- resource-monitoring helpers and printer-regression tooling.
-
-The host suite is run by CI for the 1.4.2 development branch:
+Run the host tests with:
 
 ```bash
 python tests/run_host_tests.py --verbose
 ```
 
-A passing host suite means the covered behavior remains internally consistent.
-It does **not** replace real-printer validation for changes that interact with
-motion, heaters, probing, the display, or hardware timing.
+Passing host tests do not replace a printer run for changes that affect motion, heaters, probing, the display, or timing.
 
-### Macro regression is more than syntax checking
+### Printer regression
 
-Forge-X does not treat a macro as validated merely because the Jinja template
-parses or because the generated G-code looks plausible.
-
-Host tests render macros against explicit Klipper status snapshots and inspect
-the generated commands. In addition, the on-printer regression runner executes
-representative workflows through the real Klipper/Moonraker/Feather stack.
-
-That distinction is important for safety-sensitive behavior: movement bounds,
-homing, probing, heating, parking, pause/resume/cancel, mesh workflows, and
-recovery paths are exercised as actual printer operations during hardware
-regression rather than being accepted on static review alone.
-
-### Real-printer physical regression
-
-Forge-X includes an opt-in printer regression runner for controlled testing on
-real Adventurer 5M hardware.
-
-The physical suites cover workflows such as:
+An opt-in runner executes workflows through the real Klipper, Moonraker, and Feather stack:
 
 - homing and reversible XYZ movement;
 - heating and cooling;
-- bed screw tuning;
-- full bed mesh generation;
-- probe-based Z-offset calibration flows;
-- KAMP and nozzle-cleaning interaction;
+- bed screw tuning and full bed mesh;
+- probe-based Z-offset calibration;
+- KAMP and nozzle cleaning;
 - mesh validation;
-- an actual sliced print fixture;
-- UI-driven pause and resume;
-- cancel and terminal-dialog behavior;
-- creation and restoration of a Resurrection checkpoint;
-- filament load, purge, unload, and cold-pull workflows.
+- a real sliced print, with UI pause, resume, and cancel;
+- creating and restoring a Power Loss Recovery checkpoint;
+- filament load, purge, unload, and cold pull.
 
-The print regression deliberately performs a real print and then exercises the
-recovery path so that release validation covers the interaction between G-code,
-printer state, UI state, and the physical machine.
+During the run it can record motion-buffer data, MCU statistics, temperatures, print state, operation context, memory, CPU, scheduler data, and per-process usage. A workflow that finishes but causes reactor stalls or memory pressure is still a regression.
 
-These suites have explicit preconditions and confirmation levels because they
-can move or heat the printer. The detailed safety contract and exact commands
-are documented in the
-[Testing and change guide](/openwiki/testing-and-change-guide.md).
-
-### Visual regression
-
-Feather changes are also validated visually.
-
-The test infrastructure can capture semantic screenshots from the real
-framebuffer and produce a time-aligned record of UI state during printer
-regression. A separate development-only visual-check pipeline covers stable
-pages and meaningful non-default states.
-
-Visual regression supplements deterministic tests; it does not replace them.
-A screen that looks correct can still have incorrect behavior, and correct
-logic can still produce a broken layout. Both classes of regression are
-checked.
-
-### Runtime and resource evidence
-
-Physical regression can record printer telemetry and host resource data while
-the suite is running. This includes motion-buffer information, MCU statistics,
-temperatures, print state, operation context, memory, CPU, scheduler data, and
-per-process resource usage.
-
-This is particularly useful for AD5M-specific stability work: a change should
-not be considered successful merely because the visible workflow completed if
-it introduced reactor stalls, memory pressure, or scheduling regressions.
+The suites move and heat the printer, so they have explicit preconditions and confirmation levels. See the [Testing and change guide](/openwiki/testing-and-change-guide.md).
 
 ## Release validation
 
-Before a Forge-X release is published, maintainers perform a full regression
-pass appropriate to the release. The release gate includes:
+Before a release, the maintainer runs:
 
-1. the automated host regression suite;
-2. visual regression for UI-affecting changes;
-3. full physical regression on real printer hardware;
-4. real print-flow validation for changes that can affect printing or recovery;
-5. review of failures and collected artifacts before the release is accepted.
+1. the host test suite;
+2. visual regression for UI changes;
+3. full printer regression;
+4. a real print for changes that can affect printing or recovery;
+5. a review of failures and collected logs.
 
-This process is intentionally broader than GitHub Actions. Hardware regression
-and visual inspection are maintainer release-validation steps and are not
-presented as cloud-CI jobs.
+Printer and visual regression are maintainer steps, not GitHub Actions jobs.
 
-The purpose is to catch regressions before they reach normal users, especially
-bugs that only appear when multiple systems interact on the actual printer.
-
-## Contributor and maintainer expectations
-
-Changes should include evidence proportional to the behavior they modify.
-
-### Behavior changes require regression coverage
-
-A pull request that fixes a bug or changes observable behavior should normally
-add or update a regression test that would fail without the change.
-
-When a bug can be reproduced in a host test, keep that reproduction in the
-suite. A fix without a regression case makes it easier for the same failure to
-return later.
-
-### Safety-sensitive changes require hardware validation
-
-Changes that can affect any of the following require real-printer validation
-before release:
-
-- toolhead or bed motion;
-- homing or probing;
-- Z-offset or bed mesh behavior;
-- heaters, fans, or filament handling;
-- pause, resume, cancel, or parking;
-- Power Loss Recovery / Resurrection;
-- Klipper scheduling or timing behavior;
-- boot, update, recovery, or rollback paths that can leave the printer in an
-  unsafe or unbootable state.
-
-A contributor does not need to own compatible hardware to propose a change,
-but the limitation must be stated in the pull request. Required hardware
-validation must then be completed by a maintainer before release.
-
-### UI changes require visual regression
-
-Changes to Feather layout, navigation, dialogs, controls, or workflow state
-must be checked with the relevant deterministic UI tests and visual regression.
-
-For stateful workflows, test the meaningful states, not only the default page.
-
-### Installation and migration changes must preserve recovery
-
-Changes to installation, update, configuration migration, patching, backup, or
-uninstall behavior must preserve a tested recovery/rollback path.
-
-Where Forge-X hot-patches stock files, the original must remain recoverable.
-A change that cannot be safely rolled back needs explicit design review before
-it is accepted.
-
-### Pull requests should report validation evidence
-
-For non-trivial changes, include in the pull request:
-
-- what behavior changed;
-- which automated tests were added or updated;
-- which host suites were run;
-- whether real-printer validation was performed;
-- whether visual regression was required and performed;
-- any known validation gap or hardware path that was not exercised.
-
-"Works for me" is useful information, but it is not a substitute for a
-repeatable regression case.
-
-### Do not weaken safety contracts casually
-
-Bounds checks, preconditions, recovery guards, explicit confirmations, and
-cleanup paths exist because the software controls real hardware.
-
-A pull request that removes or relaxes one of these protections should explain
-why the old constraint is incorrect and include regression coverage for the new
-behavior.
-
-## What this process does — and does not — guarantee
-
-Extensive regression testing reduces the chance that users become the first
-people to encounter a known class of bug. Real-printer testing also catches
-failures that mocks and static analysis cannot reproduce.
-
-It does **not** prove that every printer, filament, slicer configuration, or
-future firmware combination is safe. Forge-X remains an unofficial firmware
-mod, and hardware validation cannot eliminate all risk.
-
-The engineering goal is narrower and practical: make behavior reproducible,
-keep safety-critical changes reviewable, exercise important workflows on the
-real machine, and preserve regression cases so fixed bugs stay fixed.
+This reduces the chance that users are the first to hit a known class of bug, but it does not prove that every printer, filament, slicer profile, or firmware combination works. Forge-X is still an unofficial mod.
 
 ## Engineering facts and where to verify them
 
@@ -328,8 +120,8 @@ A Forge-X release is published when Forge-X itself changes: fixes, new features,
 
 ## Related engineering documentation
 
-- [Testing and change guide](/openwiki/testing-and-change-guide.md) — detailed
-  host, visual, and on-printer test tooling.
+- [Testing and change guide](/openwiki/testing-and-change-guide.md): commands and details of the host, visual, and printer tests.
+- [Contributor guidelines](/CONTRIBUTING.md)
 - [Architecture overview](/openwiki/architecture.md)
 - [Source map](/openwiki/source-map.md)
 - [Built-in Klipper patching](/openwiki/workflows/klipper-patching.md)
