@@ -138,9 +138,3 @@ You can show your own dialogs on the Feather screen with Klipper `action:prompt_
 Feather uses the `typer` renderer at `/root/printer_data/bin/typer`. The renderer supports text, shapes, buffered batches, and touch regions; see the [Typer documentation](TYPER.md).
 
 Do not start a second Typer process while Feather is active. Concurrent framebuffer or pipe access can corrupt the UI. For a custom full-screen implementation, switch to `HEADLESS` and test it while the printer is idle.
-
-Useful implementation references in the full repository include:
-
-- `/.py/klipper/plugins/feather_screen.py` — Feather controller and UI integration;
-- `/config/feather.cfg` — related macros and configuration;
-- `/.shell/screen.sh` — display startup integration.
