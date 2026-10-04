@@ -15,20 +15,18 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 
 ## Quick facts
 
-| | |
-| --- | --- |
-| **Supported printers** | Flashforge Adventurer 5M and Adventurer 5M Pro only |
-| **Supported stock firmware** | Every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md) |
-| **What it is** | A reversible mod layered on top of the stock firmware, not a replacement of the whole system |
-| **Klipper** | The FlashForge host Klipper (0.11 generation) with [reviewed fixes and backports from newer upstream Klipper](/docs/KLIPPER.md); the stock MCU firmware is not reflashed |
-| **Web interfaces** | Fluidd (`http://<printer_ip>/fluidd/`) and Mainsail (`http://<printer_ip>/mainsail/`), Moonraker API on port `7125` |
-| **Local screen** | Feather (default, built in), Stock, Guppy Screen, or Headless; [HelixScreen](/docs/SCREEN.md) is available as an external option |
-| **Camera** | [forge-x-streamer](/docs/CAMERA.md): a dedicated low-memory MJPEG service for the AD5M |
-| **Recovery** | [Last-known-good boot guard, recovery menu, fallback to Stock, uninstaller and recovery images](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety) |
-| **Updates** | OTA through Moonraker Update Manager for Forge-X (minor versions), Fluidd, Mainsail, and Guppy Screen; major versions are flashed over the existing installation without losing settings ([details](/docs/FAQ.md#how-are-forge-x-updates-delivered)) |
-| **Customization** | Own macros, overrides, Feather dialogs, shell commands, startup services, and Entware packages ([details](/docs/EXTENDING.md)) |
-| **Access** | SSH as `root` / `root` |
-| **License** | GPL-3.0 |
+- **Printers**: Flashforge Adventurer 5M and Adventurer 5M Pro only.
+- **Stock firmware**: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md).
+- **What it is**: a reversible mod layered on top of the stock firmware, not a replacement of the whole system.
+- **Klipper**: the FlashForge host Klipper (0.11 generation) with [reviewed fixes and backports from newer upstream Klipper](/docs/KLIPPER.md); the stock MCU firmware is not reflashed.
+- **Web interfaces**: Fluidd (`http://<printer_ip>/fluidd/`) and Mainsail (`http://<printer_ip>/mainsail/`), Moonraker API on port `7125`.
+- **Local screen**: Feather (default, built in), Stock, Guppy Screen, or Headless; [HelixScreen](/docs/SCREEN.md) is available as an external option.
+- **Camera**: [forge-x-streamer](/docs/CAMERA.md), a dedicated low-memory MJPEG service for the AD5M.
+- **Recovery**: [last-known-good boot guard, recovery menu, fallback to Stock, uninstaller and recovery images](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
+- **Updates**: OTA through Moonraker Update Manager for Forge-X (minor versions), Fluidd, Mainsail, and Guppy Screen. Major versions are flashed over the existing installation without losing settings ([details](/docs/FAQ.md#how-are-forge-x-updates-delivered)).
+- **Customization**: own macros, overrides, Feather dialogs, shell commands, startup services, and Entware packages ([details](/docs/EXTENDING.md)).
+- **Access**: SSH as `root` / `root`.
+- **License**: GPL-3.0.
 
 **Jump to:** [Quick start](#tldr) · [Features](#features) · [How Forge-X is built](#how-forge-x-is-built) · [Why Forge-X was developed](#why-forge-x-was-developed) · [Documentation](#documentation) · [Support](#community-and-support)
 
@@ -66,7 +64,7 @@ The printer runs Linux, but not the Linux you may be used to. It is **not** Ubun
 15. **Optional**: Switch to the [Feather or Guppy screen](/docs/SCREEN.md#switching-to-feather-screen).
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
 17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
-18. **Optional**: Review and enable [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md).
+18. **Optional**: Review [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md). It is enabled by default.
 
 ## Get Started
 
