@@ -55,6 +55,17 @@ class RuntimeSd:
 
 
 class PreviewReactor(Reactor):
+    def __init__(self):
+        super().__init__()
+        self.callbacks = []
+
+    def register_callback(self, callback, when=None):
+        self.callbacks.append(callback)
+
+    def flush_callbacks(self):
+        while self.callbacks:
+            self.callbacks.pop(0)(self.now)
+
     NEVER = float("inf")
 
     def register_timer(self, callback, when):
@@ -305,6 +316,34 @@ class PrintStatusUpdateTest(unittest.TestCase):
 
 
 class PrintPreviewLayoutTest(unittest.TestCase):
+    def test_preview_decode_starts_after_the_page_frame_unless_cancelled(self):
+        worker = DeferredPreviewWorker()
+        controller = _controller("/data/part.gcode", worker)
+        controller._render_print_page()
+        self.assertEqual(worker.submitted, [])
+        controller.reactor.flush_callbacks()
+        self.assertEqual(len(worker.submitted), 1)
+
+        controller._cancel_gcode_preview()
+        controller._render_print_page()
+        controller._cancel_gcode_preview()
+        controller.reactor.flush_callbacks()
+        self.assertEqual(len(worker.submitted), 1)
+
+    def test_worker_refusal_after_loading_frame_repaints_without_preview(self):
+        worker = mock.Mock()
+        worker.submit.return_value = False
+        controller = _controller("/data/part.gcode", worker)
+        controller._render_print_page()
+        painted = len(controller.batches)
+
+        with self.assertLogs(level="INFO"):
+            controller.reactor.flush_callbacks()
+
+        self.assertEqual(controller._gcode_preview["status"], "failed")
+        self.assertGreater(len(controller.batches), painted)
+        self.assertNotIn("--batch image ", "\n".join(controller.batches[-1]))
+
     def test_ready_preview_redraw_skips_unchanged_metrics_and_styles(self):
         with PreviewHelper():
             path = _write_gcode()
@@ -312,6 +351,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
                 worker = DeferredPreviewWorker()
                 controller = _controller(path, worker)
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
                 page = printing_ui.get_page()
                 elapsed = page.node(printing_ui.PrintingRef.ELAPSED)
 
@@ -329,6 +369,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_incomplete_full_redraw_values_use_regular_update(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         page = printing_ui.get_page()
 
         with mock.patch.object(page.styles, "apply", wraps=page.styles.apply) as apply:
@@ -347,6 +388,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
                 worker = DeferredPreviewWorker()
                 controller = _controller(path, worker)
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
                 layout = printing_ui.get_page().layout
                 worker.finish(0)
             finally:
@@ -362,6 +404,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_first_draw_contains_current_progress_without_a_second_paint(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         drawing = "\n".join(controller.batches[0])
         self.assertEqual(drawing.count('-t "00:01:40"'), 1)
         self.assertEqual(drawing.count('-t "4.50 MM"'), 1)
@@ -370,6 +413,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_unchanged_progress_skips_command_construction(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         controller.batches.clear()
         with mock.patch.object(printing_ui, "update_progress", wraps=printing_ui.update_progress) as update:
             controller._update_print_progress(100)
@@ -382,6 +426,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         controller.start_print_macro = type("Start", (), {
             "variables": {"print_started": False}})()
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         controller.batches.clear()
         controller.print_stats.status["print_duration"] = 101
         page = printing_ui.get_page()
@@ -396,6 +441,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_height_only_update_does_not_repaint_other_metrics(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         controller.batches.clear()
         controller.toolhead.status["position"] = (10.0, 20.0, 6.25, 0.0)
         elapsed = printing_ui.get_page().node(printing_ui.PrintingRef.ELAPSED)
@@ -409,6 +455,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_progress_change_updates_track_and_percentage(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         controller.batches.clear()
         controller.print_stats.status["print_duration"] = 200
         controller._update_print_progress(101)
@@ -420,6 +467,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
     def test_page_keeps_controls_left_and_panel_right(self):
         controller = _controller("/data/missing.gcode")
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         drawing = "\n".join(controller.batches[0])
 
         panel = printing_ui.rect(printing_ui.PrintingRef.PREVIEW)
@@ -456,6 +504,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         controller.print_stats.status["info"] = {}
         controller.toolhead.status["position"] = (0, 0, 0, 0)
         controller._render_print_page()
+        controller.reactor.flush_callbacks()
         controller.batches.clear()
         controller.print_stats.status["print_duration"] = 100
         controller.print_stats.status["info"] = {"current_layer": 5, "total_layer": 90}
@@ -506,6 +555,7 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                     PAGES, "_render_gcode_preview",
                     side_effect=AssertionError("preview helper was called")):
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
         finally:
             pathlib.Path(path).unlink()
 
@@ -544,6 +594,7 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                     return_value=decode_fxi1(
                         _preview_fixture_blob())) as render_preview:
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
         finally:
             pathlib.Path(path).unlink()
 
@@ -594,7 +645,9 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                     path, file_stat.st_size, file_stat.st_mtime,
                     width, height)
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
             finally:
                 pathlib.Path(path).unlink()
 
@@ -626,6 +679,7 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                     "current_layer": 1, "total_layer": 2,
                 }
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
             finally:
                 pathlib.Path(path).unlink()
 
@@ -633,9 +687,8 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
             command for batch in controller.batches for command in batch
             if command.startswith("--batch image ")
         ]
-        # The synchronous worker completes during the first page build, so
-        # both that build and its completion redraw carry the cached pair.
-        self.assertEqual(len(images), 4)
+        # Completion paints the pair once, after the initial loading frame.
+        self.assertEqual(len(images), 2)
         images = images[-2:]
         pending = decode_fxi1(images[0].payload)
         printed = decode_fxi1(images[1].payload)
@@ -708,6 +761,7 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                     "current_layer": 1, "total_layer": 2,
                 }
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
                 worker = DeferredPreviewWorker()
                 controller.file_worker = worker
                 before = len(controller.batches)
@@ -749,7 +803,9 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 worker = SynchronousPreviewWorker()
                 controller = _controller(path, worker)
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
                 controller._render_print_page()
+                controller.reactor.flush_callbacks()
             finally:
                 pathlib.Path(path).unlink()
 
@@ -766,8 +822,10 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 worker = DeferredPreviewWorker()
                 controller = _controller(first, worker)
                 controller._prepare_gcode_preview()
+                controller.reactor.flush_callbacks()
                 controller.virtual_sdcard.path = second
                 controller._prepare_gcode_preview()
+                controller.reactor.flush_callbacks()
                 second_key = controller._gcode_preview["key"]
                 worker.finish(0)
             finally:
@@ -784,9 +842,11 @@ class PrintPreviewLifecycleTest(unittest.TestCase):
                 worker = DeferredPreviewWorker()
                 controller = _controller(path, worker)
                 controller._prepare_gcode_preview()
+                controller.reactor.flush_callbacks()
                 first_preview = controller._gcode_preview
                 controller._cancel_gcode_preview()
                 controller._prepare_gcode_preview()
+                controller.reactor.flush_callbacks()
                 current_preview = controller._gcode_preview
                 worker.finish(0)
             finally:

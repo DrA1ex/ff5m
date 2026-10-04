@@ -2655,11 +2655,11 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(paused_elapsed, 5.0)
         self.assertEqual(paused_remaining, 80.0)
 
-    def test_update_cycle_enters_recovered_print_before_extrusion(self):
+    def _recovered_print_update_controller(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.print_state = FEATHER.PrintState.IDLE
         controller.page = FEATHER.ScreenPage.PRINTING
-        controller.reactor = Reactor()
+        controller.reactor = DeferredReactor(now=1.0)
         controller.renderer = type("Renderer", (), {
             "set_theme": lambda self, name: False,
             "footer": lambda self, temperatures, status, paint=True: None,
@@ -2695,6 +2695,11 @@ class ControllerSafetyTest(unittest.TestCase):
             "temperature": 21.0, "target": 0.0})
         controller.network_status = {"ip": "Offline"}
         controller.toast_until = 0.0
+        controller.timer = object()
+        return controller
+
+    def test_update_cycle_enters_recovered_print_before_extrusion(self):
+        controller = self._recovered_print_update_controller()
 
         wake = controller._update_cycle(1.0)
 
@@ -2704,8 +2709,19 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIsNone(controller._progress_source)
         self.assertFalse(controller._m73_active)
         self.assertFalse(controller.cancel_requested)
+        controller._update_print_progress.assert_not_called()
+        controller.reactor.run_until(1.0)
         controller._update_print_progress.assert_called_once_with(1.0)
         self.assertEqual(wake, 1.0 + FEATHER.REFRESH_TIME)
+
+    def test_transition_continuation_stops_with_the_periodic_timer(self):
+        controller = self._recovered_print_update_controller()
+
+        controller._update_cycle(1.0)
+        controller.timer = None
+        controller.reactor.run_until(1.0)
+
+        controller._update_print_progress.assert_not_called()
 
     def test_first_observed_pause_starts_clean_progress(self):
         for restored, expected_start in (

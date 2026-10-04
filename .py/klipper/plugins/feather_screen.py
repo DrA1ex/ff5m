@@ -2255,7 +2255,20 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._update_eco_backlight(eventtime)
         stats = self.print_stats.get_status(eventtime)
         virtual_sd_active = self.virtual_sdcard.is_active()
+        previous_state = self.print_state
         state = self._reconcile_print_state(eventtime, stats)
+        if self.print_state != previous_state:
+            # A transition may paint a whole page. Run the rest of the cycle
+            # in a later reactor dispatch, so motion timers due in between
+            # (homing step replenishment) are not delayed by both halves.
+            # The nested _update re-observes state under its error boundary.
+            def continue_update(now):
+                # Deactivation and restart remove the periodic timer.
+                if getattr(self, "timer", None) is not None:
+                    self._update(now)
+
+            self.reactor.register_callback(continue_update)
+            return eventtime + REFRESH_TIME
         self._sync_timelapse_wait_page()
         self._poll_usb_storage(eventtime)
         self._update_operation_context(eventtime)

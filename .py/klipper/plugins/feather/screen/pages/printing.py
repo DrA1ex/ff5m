@@ -132,7 +132,7 @@ class PrintingPagesMixin:
                  if print_stats is not None else None)
         commands = self.renderer.begin_page(
             "PAUSED" if paused else "PRINTING")
-        preview = self._prepare_gcode_preview(stats)
+        preview = self._prepare_gcode_preview()
         filename = self.virtual_sdcard.file_path() or "Unknown"
         filename = os.path.basename(filename)
         values = {
@@ -191,7 +191,7 @@ class PrintingPagesMixin:
                      else (layer_state[0], layer_state[1]))
         return (layer_key, pending, printed), layer_state, pending, printed
 
-    def _prepare_gcode_preview(self, stats=None):
+    def _prepare_gcode_preview(self):
         self._cancel_file_preview()
         path = self.virtual_sdcard.file_path()
         key = self._gcode_preview_key_for(path)
@@ -221,7 +221,25 @@ class PrintingPagesMixin:
             "loading_phase": 0,
         }
         self._gcode_preview = preview
+        if self.file_worker is None:
+            preview["status"] = "failed"
+            self._stop_gcode_preview_loader()
+            return preview
+        # Decoding competes with the reactor thread for the GIL. Submit it in
+        # a later reactor dispatch so the page frame that needs it, and any
+        # motion timer due after that frame, run first.
+        self.reactor.register_callback(
+            lambda _eventtime: self._submit_gcode_preview(preview))
+        self._start_gcode_preview_loader()
+        return preview
 
+    def _submit_gcode_preview(self, preview):
+        if getattr(self, "_gcode_preview", None) is not preview:
+            return
+        path = preview["key"][0]
+        print_stats = getattr(self, "print_stats", None)
+        stats = (print_stats.get_status(self.reactor.monotonic())
+                 if print_stats is not None else None)
         render_spec = self._gcode_preview_render_spec(stats)
         render_key, layer_state, pending, printed = render_spec
         cached_image = self._cached_gcode_preview_image(
@@ -242,20 +260,13 @@ class PrintingPagesMixin:
             return image, render_key, blobs, printed, cache_blob
 
         worker = self.file_worker
-        if worker is None:
-            preview["status"] = "failed"
-            self._stop_gcode_preview_loader()
-            return preview
-
-        submitted = worker.submit(
-            task, lambda value, error:
-            self._gcode_preview_ready(preview, value, error))
-        if submitted:
-            self._start_gcode_preview_loader()
-        else:
-            preview["status"] = "failed"
-            self._stop_gcode_preview_loader()
-        return preview
+        if worker is None or not worker.submit(
+                task, lambda value, error:
+                self._gcode_preview_ready(preview, value, error)):
+            # The worker stopped after the loading frame was published; report
+            # the failure through the regular completion path.
+            self._gcode_preview_ready(
+                preview, None, RuntimeError("File worker stopped"))
 
     def _cancel_gcode_preview(self):
         preview = getattr(self, "_gcode_preview", None)

@@ -278,7 +278,7 @@ and the two-second TERM/KILL escalation occur only in the worker.
 
 While the printer is idle, Feather subscribes a non-blocking `NETLINK_KOBJECT_UEVENT` socket and filters kernel `add`, `remove`, `change`, and `move` events to the USB block subsystem. The existing `FileWorker` thread services USB alongside file scans and previews; USB adds no thread, init service, udev rule, persistent helper, or periodic sysfs scan. The worker drains queued kernel events at 200 ms intervals while active. Event bursts are coalesced for 400 ms before [`.shell/commands/zusb_mount.sh`](../../.shell/commands/zusb_mount.sh) starts as a child. Socket operations, helper launch, result collection, process cancellation, and mount checks all run on that worker. The reactor only requests the desired monitoring mode and consumes completed availability snapshots on its normal UI tick. The helper is terminated after a bounded timeout, and failed or lock-contended attaches use bounded backoff.
 
-The shared worker has separate contracts for replaceable file requests and resource lifecycles: a newer queued file request can supersede an older one, but it cannot evict USB servicing or cleanup. Services run before the next file request, return their next polling deadline, and are closed on worker shutdown. An already running file request must finish first; this can delay USB detection or cleanup, but the reactor never waits for either. The worker sleeps when no service has a deadline and no file request is pending.
+The shared worker has separate contracts for replaceable file requests and resource lifecycles: a newer queued file request can supersede an older one, but it cannot evict USB servicing or cleanup. Services run before the next file request, return their next polling deadline, and are closed on worker shutdown. An already running file request must finish first; this can delay USB detection or cleanup, but the reactor never waits for either. The worker sleeps when no service has a deadline and no file request is pending. Print history persistence is a third contract: `submit_write` queues a snapshot in FIFO order, ahead of the replaceable file request, and accepted writes still drain after stop. A write refused by a stopped worker is logged and dropped rather than performed synchronously on the reactor.
 
 Netlink delivery is best-effort. If the kernel reports that the event queue overflowed, Feather keeps the subscription and immediately runs a complete helper reconciliation so the filesystem remains the source of truth.
 
@@ -578,6 +578,31 @@ with a before/after PSS profile demonstrating a net process-total reduction.
 - New UI actions require a hitbox plus page/state validation in the Klipper plugin; do not treat Typer events as trusted printer commands.
 - Preserve padding through the shared hint/dialog primitives. Dynamic hint widths include their horizontal inset, and dialog lines are clipped to the padded content area.
 - For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/guppy`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
+
+### Reactor budget during homing and probing
+
+Homing and probing moves run in Klipper's drip mode, which keeps only about
+100-150 ms of steps queued on the MCU (`DRIP_TIME` plus `move_flush_time`).
+Any reactor callback, or chain of callbacks without a yield, that holds the
+reactor longer than that makes the next step packet late and the MCU shuts
+down with "Timer too close". Ordinary printing has seconds of lookahead, so the
+same callback is harmless there. A full PRINTING page paint costs about
+50 ms of CPU on the printer, so one-time print-start work must not pile up in a
+single callback:
+
+- Starting a print from the screen reconciles print state immediately after
+  `SDCARD_PRINT_FILE`, before the virtual-SD timer can run `START_PRINT` and
+  its first `G28`. Until `work_handler` calls `note_start()`, an active virtual
+  SD with `standby` print stats is treated as printing.
+- When the periodic update observes a print-state transition, the rest of that
+  cycle runs in a later reactor dispatch, so motion timers can run between the
+  page paint and status, USB, and feature work.
+- G-code preview decoding is submitted after the page frame that requested it,
+  because the decoding worker competes with the reactor for the GIL.
+- Print history writes run on the shared file worker.
+
+Measure such work on the printer per callback, not as a sum: the limit applies
+to the longest uninterrupted reactor callback during a drip move.
 
 ### Print page rendering
 
