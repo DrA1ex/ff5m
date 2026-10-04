@@ -110,12 +110,19 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 ## Why Forge-X and how it is built
 
-The AD5M has 128 MiB of RAM and ships with a 0.11-era Klipper. The stock firmware exposes only part of Klipper and leaves some long-standing errors unfixed. Forge-X keeps the stock base, backports fixes, and keeps every change reversible.
+The AD5M hardware can produce good prints, but its software limits it. The host has only **128 MiB of RAM**, the bundled Klipper is from the older 0.11 generation, and the stock firmware exposes only a small part of what users expect from a Klipper-based printer.
+
+Forge-X is built around these limits instead of assuming the resources of a newer printer. Memory, CPU load, background services, the screen, the camera, and Klipper timing are treated as one reliability problem: a service that takes too much memory or CPU can stop a print just as a Klipper bug can. Newer software is adapted to fit the hardware rather than added as it is.
+
+Other problems are not about performance: missing Klipper workflows, long-standing AD5M-specific bugs, few ways to recover a printer that fails to boot, little diagnostic information, and no clean way to extend the system. Forge-X treats testing, failure handling, recovery, and documentation as part of the work itself. The goal is a system that can be maintained over time, where every change can be undone, and where others can add integrations or ports without relying on undocumented internals.
+
+In practice:
 
 - **Klipper.** Fixes and features from newer upstream Klipper are backported into the FlashForge host code instead of moving to Klipper 0.13. See [Klipper fixes](/docs/KLIPPER.md) and [Why doesn't Forge-X use Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013)
 - **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores them. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
 - **Memory.** Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen, and the camera service is written for the same limit. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
 - **Testing.** Each release goes through automated host tests, visual UI tests, and physical tests on a printer. The tests are in [`tests/`](/tests), and the process is in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+- **Extensibility.** Your own macros, dialogs, shell commands, and startup services can be added without editing Forge-X files, so they survive updates. See [Customizing and extending Forge-X](/docs/EXTENDING.md).
 
 ## Documentation
 
