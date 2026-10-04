@@ -215,7 +215,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.z_adjust_warning_threshold = config.getfloat(
             "z_adjust_warning_threshold", 0.3, minval=0.05)
         self.print_history = PrintHistory(
-            config.get("print_history_path", DEFAULT_HISTORY_PATH))
+            config.get("print_history_path", DEFAULT_HISTORY_PATH),
+            schedule_write=self._queue_print_history_write)
         self.preview_cache_kb = config.getfloat(
             "preview_cache_kb", DEFAULT_PREVIEW_CACHE_KB,
             minval=MIN_PREVIEW_CACHE_KB)

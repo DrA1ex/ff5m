@@ -174,6 +174,10 @@ class FileBrowserPagesMixin:
             if message is not None:
                 self._toast(message)
 
+    def _queue_print_history_write(self, task):
+        worker = getattr(self, "file_worker", None)
+        return worker is not None and worker.submit_write(task)
+
     def _record_current_print(self):
         history = getattr(self, "print_history", None)
         virtual_sdcard = getattr(self, "virtual_sdcard", None)

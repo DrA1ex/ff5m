@@ -6365,6 +6365,29 @@ class ActionPromptProtocolTest(unittest.TestCase):
 
 
 class PrintHistoryPersistenceTests(unittest.TestCase):
+    def test_async_saves_use_ordered_snapshots_without_reactor_file_io(self):
+        with tempfile.TemporaryDirectory() as root:
+            tasks = []
+            def schedule(task):
+                tasks.append(task)
+                return True
+            history = FILES.PrintHistory(os.path.join(root, "history.json"), schedule)
+            history.record(root, os.path.join(root, "first.gcode"), 1)
+            history.record(root, os.path.join(root, "second.gcode"), 2)
+            self.assertFalse(os.path.exists(history.path))
+            self.assertEqual(history.latest_path(), "second.gcode")
+            tasks.pop(0)()
+            self.assertEqual(FILES.PrintHistory(history.path).timestamps, {"first.gcode": 1.0})
+            tasks.pop(0)()
+            self.assertEqual(FILES.PrintHistory(history.path).timestamps, history.timestamps)
+
+    def test_stopped_worker_does_not_fall_back_to_synchronous_file_io(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = FILES.PrintHistory(os.path.join(root, "history.json"), lambda task: False)
+            with self.assertLogs(level="ERROR"):
+                self.assertTrue(history.record(root, os.path.join(root, "part.gcode"), 1))
+            self.assertFalse(os.path.exists(history.path))
+
     def test_unicode_paths_reload_and_old_entries_are_pruned(self):
         with tempfile.TemporaryDirectory() as root:
             history = FILES.PrintHistory(os.path.join(root, "history.json"))

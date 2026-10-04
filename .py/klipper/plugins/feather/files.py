@@ -5,6 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import errno
+from collections import deque
 import json
 import logging
 import os
@@ -38,18 +39,21 @@ class FileTaskSuperseded(RuntimeError):
 class FileWorker:
     """Share one background thread for file tasks and resource lifecycles.
 
-    Only the newest queued request is retained. A displaced queued request is
+    Only the newest queued file request is retained. A displaced request is
     completed with FileTaskSuperseded. A task already in progress is allowed
     to finish, but its controller token can discard the stale result.
 
     Services are not queued tasks: poll(now) returns their next deadline (or
     None), and close() always runs on worker shutdown. Service I/O never holds
     the caller's lock. A running file task finishes before services run again.
+    Persistence writes are a separate FIFO: a newer scan or preview never
+    replaces them, they run before queued file requests, and they drain on stop.
     """
 
     def __init__(self, schedule_async):
         self._schedule_async = schedule_async
         self._pending = None
+        self._writes = deque()
         self._services = []
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -81,6 +85,15 @@ class FileWorker:
             self._wake.set()
         return True
 
+    def submit_write(self, task):
+        """Queue a persistence write; writes run in order and drain on stop."""
+        with self._lock:
+            if self._stopped:
+                return False
+            self._writes.append(task)
+            self._wake.set()
+        return True
+
     def wake(self):
         self._wake.set()
 
@@ -99,13 +112,7 @@ class FileWorker:
                 stopped = self._stopped
                 services = tuple(self._services)
             if stopped:
-                for service in services:
-                    try:
-                        service.close()
-                    except Exception:
-                        logging.exception(
-                            "[feather_screen] background service cleanup failed")
-                return
+                break
 
             deadline = None
             for service in services:
@@ -122,8 +129,14 @@ class FileWorker:
             with self._lock:
                 if self._stopped:
                     continue
-                request = self._pending
-                self._pending = None
+                if self._writes:
+                    write, request = self._writes.popleft(), None
+                else:
+                    write, request = None, self._pending
+                    self._pending = None
+            if write is not None:
+                self._run_write(write)
+                continue
             if request is None:
                 timeout = (None if deadline is None
                            else max(0.0, deadline - time.monotonic()))
@@ -143,6 +156,28 @@ class FileWorker:
                     continue
 
             self._deliver(callback, result, error)
+
+        for service in services:
+            try:
+                service.close()
+            except Exception:
+                logging.exception(
+                    "[feather_screen] background service cleanup failed")
+        # Results are no longer delivered after stop, but accepted writes are
+        # durable user data and still reach the disk in submission order.
+        while True:
+            with self._lock:
+                if not self._writes:
+                    return
+                write = self._writes.popleft()
+            self._run_write(write)
+
+    @staticmethod
+    def _run_write(write):
+        try:
+            write()
+        except Exception:
+            logging.exception("[feather_screen] background write failed")
 
     def _deliver(self, callback, result, error):
         def deliver(_eventtime, value=result, failure=error, done=callback):
@@ -188,8 +223,9 @@ def _relative_path_resolved(root, path):
 class PrintHistory:
     """Persistent last-print timestamps keyed by virtual-SD relative path."""
 
-    def __init__(self, path=DEFAULT_HISTORY_PATH):
+    def __init__(self, path=DEFAULT_HISTORY_PATH, schedule_write=None):
         self.path = path
+        self._schedule_write = schedule_write
         self.timestamps = {}
         self._load()
 
@@ -244,6 +280,17 @@ class PrintHistory:
     def _save(self):
         if not self.path:
             return
+        # Mutable history belongs to the caller; worker I/O owns this snapshot.
+        # A refused write means the worker is stopping. Falling back to a
+        # synchronous write would put file I/O back on the reactor.
+        timestamps = dict(self.timestamps)
+        if self._schedule_write is not None:
+            if not self._schedule_write(lambda: self._write(timestamps)):
+                logging.error("[feather_screen] unable to queue print history write")
+            return
+        self._write(timestamps)
+
+    def _write(self, timestamps):
         temporary_path = self.path + ".tmp"
         try:
             directory = os.path.dirname(self.path)
@@ -251,7 +298,7 @@ class PrintHistory:
                 os.makedirs(directory)
             with open(temporary_path, "w") as stream:
                 stream.write(json.dumps(
-                    self.timestamps, ensure_ascii=False,
+                    timestamps, ensure_ascii=False,
                     separators=(",", ":"), sort_keys=True))
             os.replace(temporary_path, self.path)
         except (IOError, OSError):

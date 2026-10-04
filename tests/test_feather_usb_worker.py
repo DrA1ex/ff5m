@@ -215,6 +215,47 @@ class UsbWorkerTest(unittest.TestCase):
 
 
 class ServiceSchedulingTest(unittest.TestCase):
+    def test_failed_write_is_logged_and_later_writes_still_run(self):
+        done = threading.Event()
+        worker = FILES.FileWorker(lambda callback: None)
+        try:
+            def fail():
+                raise OSError("disk full")
+
+            with self.assertLogs(level="ERROR"):
+                worker.submit_write(fail)
+                worker.submit_write(done.set)
+                self.assertTrue(done.wait(3.0))
+        finally:
+            worker.stop()
+            worker._thread.join(3.0)
+
+    def test_writes_survive_preview_replacement_and_drain_on_stop(self):
+        entered, release = threading.Event(), threading.Event()
+        writes = []
+        worker = FILES.FileWorker(lambda callback: None)
+        try:
+            def busy():
+                entered.set()
+                release.wait(3.0)
+
+            worker.submit(busy, lambda *args: None)
+            self.assertTrue(entered.wait(3.0))
+            worker.submit_write(lambda: writes.append((1, threading.get_ident())))
+            worker.submit(lambda: writes.append(("old preview", 0)), lambda *args: None)
+            worker.submit_write(lambda: writes.append((2, threading.get_ident())))
+            worker.submit(lambda: writes.append(("new preview", 0)), lambda *args: None)
+            worker.stop()
+            self.assertFalse(worker.submit_write(lambda: None))
+            release.set()
+            worker._thread.join(3.0)
+            self.assertFalse(worker._thread.is_alive())
+            self.assertEqual(writes, [(1, worker._thread.ident), (2, worker._thread.ident)])
+        finally:
+            release.set()
+            worker.stop()
+            worker._thread.join(3.0)
+
     def test_deadline_wakes_an_idle_worker_and_shutdown_closes_each_service(self):
         calls = queue.Queue()
 
