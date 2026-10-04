@@ -16,8 +16,8 @@
 
 Forge-X runs on the system that is already installed on the printer. That system does not change between stock firmware versions:
 
-- The Linux system, the kernel and the base libraries are put on the printer at the factory. The AD5M kernel is byte-identical across stock firmware 2.6.5–5.1.x (the Forge-X zram modules are built for it and load on every one of these versions, see [`.shell/boot/zram/README.md`](/.shell/boot/zram/README.md)). For 5.1.x, the kernel, the MCU firmware and the partition layout are also byte-identical to 3.1.3 ([Installation → Prerequisites](INSTALL.md#prerequisites)).
-- A stock firmware update mainly replaces the **Stock screen application**. A `-Factory` image differs from a regular image only in that it also flashes both MCUs and resets the printer configuration.
+- The Linux system, the kernel and the base libraries are put on the printer at the factory. The AD5M kernel is byte-identical across stock firmware 2.6.5–5.1.x (the Forge-X zram modules are built for it and load on every one of these versions, see [`.shell/boot/zram/README.md`](/.shell/boot/zram/README.md)). The MCU firmware is the same in all supported versions (confirmed), so a stock update does not change what Forge-X talks to. For 5.1.x, the kernel, the MCU firmware and the partition layout are also byte-identical to 3.1.3 ([Installation → Prerequisites](INSTALL.md#prerequisites)).
+- A stock firmware update mainly replaces the **Stock screen application**. A `-Factory` image differs from a regular image only in that it also flashes both MCUs (with the same MCU firmware) and resets the printer configuration.
 - Forge-X uses what is preinstalled. It does not use the parts that change from one firmware version to the next.
 
 So a newer stock firmware brings a newer Stock screen, not a different platform for Forge-X. A version being new, or being old, is not a compatibility problem by itself.

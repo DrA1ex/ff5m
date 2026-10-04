@@ -316,7 +316,7 @@ Some units experience this more often because of defective components (like tool
 - **Check Memory Usage**: Run the `MEM` macro after boot to monitor memory consumption. Aim for usage below 75–80%.
 - **Enable `tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration, which can reduce MCU load and lower the error rate.
 - **Reduce Resource Usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode for lower resource usage (Feather typically needs around a tenth of the memory of the Stock screen).
-- **Update Firmware**: Make sure the stock firmware (for example, 3.1.4 or later) and Forge-X are up to date.
+- **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error: the MCU firmware is the same in all supported versions ([Compatibility](COMPATIBILITY.md)).
 - **Check Hardware**: Inspect and reattach wiring, especially for the toolhead. Verify the driver fan is operational by removing the printer’s back plate.
 - **Optimize G-Code**: Avoid complex infill patterns like Gyroid and Fuzzy Skin option if errors persist. Test simpler infills or print single objects to isolate issues.
 
@@ -349,7 +349,7 @@ This occurs when the printer’s weight sensor fails to respond within the reque
 **Solutions**:
 - **Check Connections**: Reattach all wiring, especially for the weight sensor.
 - **Reduce Resource Usage**: Follow [Reliability and resources](PRINTING.md#reducing-resource-usage) and use Feather or Headless mode.
-- **Update Firmware**: Use stock firmware 3.1.4 or later and the latest Forge-X release.
+- **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error.
 
 
 ### Why am I Getting "Shutdown due to sensor value exceeding the limit"?
@@ -451,7 +451,7 @@ Errors during printing, especially with complex objects or infill patterns like 
 **Solutions**:
 - **Check Memory Usage**: Run the `MEM` macro to ensure memory usage is below 75–80%.
 - **Simplify G-Code**: Use simpler infill patterns (e.g., Grid instead of Gyroid) or print single objects to reduce resource demands.
-- **Update Firmware**: Use stock firmware 3.1.4 or later and the latest Forge-X release.
+- **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error.
 - **Switch to Feather**: Reduces resource usage significantly.
 
 ### How do I use macros for calibration or other tasks?
