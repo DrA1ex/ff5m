@@ -207,6 +207,8 @@ Bed mesh validation checks the current geometry before printing and can cancel a
 Relevant [configuration parameters](CONFIGURATION.md):
 
 - `bed_mesh_validation` — enables validation;
+- `bed_mesh_validation_action` — `CANCEL` (default), `RECALIBRATE`, or `Z_OFFSET`; shown when validation is enabled;
+- `bed_mesh_validation_z_offset_mode` — `ADJUST` (default) or `REPLACE`; shown only for `Z_OFFSET`;
 - `bed_mesh_validation_clear` — cleans the nozzle before validation;
 - `bed_mesh_validation_tolerance` — maximum allowed difference in millimetres; default `0.2`.
 
@@ -217,7 +219,30 @@ This can catch scenarios such as the wrong plate, a missing plate, a stale mesh,
 
 ### How it works:
 
-Before the print begins, Forge-X probes the expected position and compares it with the active mesh. If the difference exceeds `bed_mesh_validation_tolerance`, the print is cancelled and the user is asked to inspect the setup or recreate the mesh.
+Before the print begins, Forge-X probes five points and compares their measured heights with the active mesh. The probe reports physical toolhead heights independently of the active G-code offset and mesh; validation leaves both in place. The configured probe calibration offset is still accounted for. Travel between points uses `safe_z`.
+
+If any point reaches or exceeds the tolerance, the selected action runs:
+
+- **CANCEL** cancels the print and reports the average absolute difference.
+- **RECALIBRATE** uses the normal bed-leveling workflow, including nozzle preparation, cooling and load-cell tare, to create a new mesh under the same profile name. An existing `auto` mesh is backed up as `auto_prev` on non-Stock displays. Printing then resumes heating. It preserves the user offset and does not save configuration or restart Klipper.
+- **Z_OFFSET** applies the signed average of all five differences (`measured - expected`) only when their spread (`maximum - minimum`) is strictly below the selected tolerance. Otherwise, it cancels the print because an offset cannot correct a change in bed shape. It also cancels if the correction or resulting offset exceeds the Live Z safety limit (`z_offset_limit`, normally 2.0 mm). **ADJUST** adds it to the current offset; **REPLACE** uses it as the complete offset.
+
+Choose ADJUST if the existing offset is a calibration adjustment that should remain active. Choose REPLACE if it compensates for an old mesh height error. With an existing offset of `+0.05` mm and a measured difference of `-0.20` mm, the result is `-0.15` mm in ADJUST or `-0.20` mm in REPLACE.
+
+The correction lasts until the print ends. When the print finishes or is canceled, Forge-X restores the Z-offset that was active before validation. The next print preparation does the same if the previous print stopped with an error. The correction is never saved.
+
+While the correction is active, any Z-offset change — Live Z on the screen, Fluidd, Mainsail or console `SET_GCODE_OFFSET` — applies to the current print only and is not saved. Feather's Live Z **Save** button is disabled. These changes are undone when the original offset is restored. To change the saved offset, adjust it in a print without a correction.
+
+> [!NOTE]
+> If power is lost during a print with an active correction, power-loss recovery restores the total offset, including the correction. After that print, Forge-X no longer knows that part of the offset was temporary. Avoid saving the Z-offset after such a print; start the next print to load the saved offset again, or use `LOAD_GCODE_OFFSET`.
+
+```gcode
+SET_MOD PARAM=bed_mesh_validation VALUE=1
+SET_MOD PARAM=bed_mesh_validation_action VALUE=Z_OFFSET
+SET_MOD PARAM=bed_mesh_validation_z_offset_mode VALUE=REPLACE
+```
+
+A temporary Z-offset can compensate for a uniform height shift caused by inconsistent Z positioning. It cannot correct a changed bed shape or a missing plate; use cancellation or recalibration where appropriate.
 
 ## Z-Offset
 

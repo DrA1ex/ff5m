@@ -569,6 +569,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "gcode_macro _START_PRINT", None)
         self.cancel_print_macro = self.printer.lookup_object(
             "gcode_macro CANCEL_PRINT", None)
+        self.mesh_check_macro = self.printer.lookup_object(
+            "gcode_macro _CHECK_BED_MESH", None)
         self.bed_mesh = self.printer.lookup_object("bed_mesh", None)
         self.probe = self.printer.lookup_object("probe")
         self.weight_sensor = self.printer.lookup_object(

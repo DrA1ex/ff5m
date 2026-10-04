@@ -569,6 +569,7 @@ class FeatherUtilitiesTest(unittest.TestCase):
             "camera": True, "timelapse": True, "display_eco": True,
             "weight_check": True,
             "bed_mesh_validation": True, "disable_cleaning": False,
+            "bed_mesh_validation_action": manager.params_map["bed_mesh_validation_action"].type["Z_OFFSET"].value,
             "use_swap": manager.params_map["use_swap"].type["ZRAM"].value,
         })
         drawn = {}
@@ -861,6 +862,29 @@ class FeatherUtilitiesTest(unittest.TestCase):
                 self.assertIn(
                     child, [param.key for param in
                             MOD_UI.visible_parameters(manager)])
+
+    def test_mesh_validation_settings_follow_enablement_and_action(self):
+        manager = MOD_PARAMS.ModParamManagement.__new__(MOD_PARAMS.ModParamManagement)
+        manager.declaration = str(pathlib.Path(__file__).parents[1] / "mod_params.json")
+        manager.printer = type("Printer", (), {
+            "command_error": staticmethod(RuntimeError)})()
+        manager._load_declaration()
+        manager.variables = {param.key: manager._load_param(param, None)
+                             for param in manager.params}
+        action = manager.params_map["bed_mesh_validation_action"]
+        mode = manager.params_map["bed_mesh_validation_z_offset_mode"]
+        self.assertEqual(MOD_UI.parameter_category(manager, action),
+                         MOD_UI.parameter_category(manager, manager.params_map["bed_mesh_validation"]))
+        self.assertEqual(MOD_UI.parameter_category(manager, mode),
+                         MOD_UI.parameter_category(manager, action))
+        for enabled in (False, True):
+            for selected_action in action.type:
+                with self.subTest(enabled=enabled, action=selected_action.name):
+                    manager.variables.update(bed_mesh_validation=enabled,
+                                             bed_mesh_validation_action=selected_action.value)
+                    visible = {param.key for param in MOD_UI.visible_parameters(manager)}
+                    self.assertEqual(action.key in visible, enabled)
+                    self.assertEqual(mode.key in visible, enabled and selected_action.name == "Z_OFFSET")
 
     def test_collision_modes_fit_settings_and_option_buttons(self):
         manager = MOD_PARAMS.ModParamManagement.__new__(

@@ -17,6 +17,24 @@ The G-code macro tests use the same Jinja delimiters and config-comment rules
 as Klipper. They render macros against explicit status snapshots and inspect
 the resulting G-code. They do not emulate motion, heaters, or the MCU.
 
+The bed mesh validation tests in `tests/test_bed_mesh_validation.py` execute
+the shared templates with Klipper's shipped `GCodeMove` and the current
+`mod_params` persistence implementation. They cover actions, signed averages,
+ADJUST/REPLACE, rejection of changed bed shape and oversized offsets, probe-error
+state preservation, canonical recalibration, repeated checks, cleanup with
+validation disabled, and safe Z travel. Macro tests cover that Z-offset changes from any
+client are not saved while compensation is active and are undone when it ends,
+and that a print aborted without `_STOP` is restored by the next print. Feather
+tests also cover transitive setting dependencies, the disabled Live Z Save
+during compensation, and the following print without duplicate compensation. Recalibration breadcrumbs are included in the
+visual context fixtures and checked against the print status text bounds. Recovery tests cover checkpoint persistence
+and restoration of the current offset. These host tests do not simulate load-cell
+accuracy or mechanics.
+
+```bash
+.venv/bin/python -m pytest tests/test_bed_mesh_validation.py tests/test_gcode_macros.py tests/test_resurrection.py tests/test_feather_screen.py tests/test_feather_screen_controller.py tests/test_feather_workflows.py tests/test_operation_context.py
+```
+
 ## Interactive renderer benchmarks
 
 On an idle Feather screen, tap the **Settings** title five times within two

@@ -1031,7 +1031,8 @@ class RunnerContractTest(unittest.TestCase):
         described = [item["type"] for item in specifications]
 
         self.assertEqual(set(described), set(CONTEXT_FIXTURES.CONTEXT_TYPES))
-        self.assertEqual(len(described), len(set(described)))
+        labels = [label for specification, state, label in CONTEXT_FIXTURES.visual_context_cases()]
+        self.assertEqual(len(labels), len(set(labels)))
         for item in specifications:
             self.assertEqual(item["path"][-1], item["type"])
             self.assertEqual(len(item["states"]), len(set(item["states"])))

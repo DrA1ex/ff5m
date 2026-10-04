@@ -2728,6 +2728,24 @@ class PrintWorkflowTest(unittest.TestCase):
 
         self.assertEqual(status["ui_test"]["step"], "ui-home")
 
+    def test_mesh_recalibration_breadcrumb_fits_print_status(self):
+        from feather_ui_test.context_fixtures import VISUAL_CONTEXTS
+        from feather_ui_test.scenarios import ScenarioCatalog
+
+        specifications = [item for item in VISUAL_CONTEXTS if item.get('label_type', '').startswith('mesh_recalibration')]
+        for specification in specifications:
+            for state in specification['states']:
+                with self.subTest(path=specification['path'], state=state):
+                    controller = base_controller('printing')
+                    controller.renderer = FEATHER.FeatherRenderer()
+                    capture = RenderCapture(controller.renderer)
+                    operation = ScenarioCatalog._operation_context_snapshot(specification, state)
+                    label = controller._display_status_text(status=operation)
+                    controller._draw_print_status(label)
+                    text = capture.latest.text(label)
+                    height = get_font_metrics().text_height(text.value, text.font, text.max_width, wrap=text.wrap)
+                    self.assertLessEqual(height, text.max_height)
+
     def test_operation_revision_redraws_print_status_once(self):
         controller = base_controller("printing")
         controller.page = FEATHER.ScreenPage.PRINTING

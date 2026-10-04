@@ -84,6 +84,18 @@ VISUAL_CONTEXTS = (
         ),
     },
     {
+        "type": "bed_level", "label_type": "mesh_recalibration",
+        "path": ("print", "mesh_validation", "bed_level"),
+        "surface": "printing",
+        "states": (None, "HEATING", "COOLING NOZZLE", "LEVELING", "FINISHING"),
+    },
+    {
+        "type": "nozzle_clean", "label_type": "mesh_recalibration_clean",
+        "path": ("print", "mesh_validation", "bed_level", "nozzle_clean"),
+        "surface": "printing",
+        "states": (None, "HEATING", "COOLING NOZZLE", "PREPARING TO CLEAN", "CLEANING", "FINISHING"),
+    },
+    {
         "type": "filament", "path": ("filament",),
         "surface": "filament",
         "states": (
@@ -149,7 +161,7 @@ def visual_context_cases():
                           str(state).lower().replace(
                               "_", "-").replace(" ", "-"))
             label = "ui-context-%s-%s" % (
-                specification["type"].replace("_", "-"), state_slug)
+                specification.get("label_type", specification["type"]).replace("_", "-"), state_slug)
             yield specification, state, label
 
 WAIT_VARIANTS = ("HEATING", "COOLING", "NONE")

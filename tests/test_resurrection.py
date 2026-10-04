@@ -12,6 +12,8 @@ import tempfile
 import threading
 import time
 import unittest
+from itertools import product
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -379,9 +381,94 @@ class ResurrectorLifecycleTest(unittest.TestCase):
                 "file_path", "file_position", "file_size", "position",
                 "extruder_temp", "z_offset", "bed_temp", "mesh",
             })
+            self.assertEqual(checkpoint["z_offset"], .2)
             self.assertEqual(checkpoint["file_position"], 8)
             self.assertEqual(checkpoint["position"], [1., 2., 3., 4.])
             self.assertEqual(resurrector._checkpoint_cache, checkpoint)
+
+    def test_checkpoint_round_trip_preserves_total_offset_after_mesh_compensation(self):
+        from tests.test_bed_mesh_validation import Harness
+
+        cases = product((0, 1), (-.3, .3), (0., .02), (0, 1))
+        for mode, shift, manual_adjustment, load_saved_offset in cases:
+            with self.subTest(mode=mode, shift=shift,
+                              manual_adjustment=manual_adjustment,
+                              load_saved_offset=load_saved_offset), tempfile.TemporaryDirectory() as directory:
+                live = Harness(directory, action=2, offset_mode=mode,
+                               shifts=[shift] * 5)
+                live.run('_CHECK_BED_MESH')
+                if manual_adjustment:
+                    live.run('SET_GCODE_OFFSET', Z_ADJUST=str(manual_adjustment))
+                expected = (shift if mode == 1 else .05 + shift) + manual_adjustment
+                self.assertAlmostEqual(live.offset, expected)
+                # Z changes are not saved while compensation is active.
+                self.assertAlmostEqual(live.mod.variables['z_offset'], .05)
+
+                gcode_path = pathlib.Path(directory) / 'part.gcode'
+                gcode_path.write_text('G90\nM82\nG1 X10 Y10 E1\n')
+                stats = dict(file_path=str(gcode_path), file_position=gcode_path.stat().st_size,
+                             file_size=gcode_path.stat().st_size)
+                recovery = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
+                recovery.file_path = str(pathlib.Path(directory) / 'resurrection.json')
+                recovery.virtual_sdcard = VirtualSDRecorder()
+                recovery.virtual_sdcard.sdcard_dirname = directory
+                recovery.virtual_sdcard.get_status = lambda eventtime: stats
+                recovery.virtual_sdcard.is_cmd_from_sd = lambda: False
+                recovery.toolhead = SimpleNamespace(
+                    get_status=lambda eventtime: {'position': [10., 10., .3, 1.]})
+                recovery.extruder = SimpleNamespace(
+                    get_status=lambda eventtime: {'target': 220.})
+                recovery.heater_bed = SimpleNamespace(
+                    get_status=lambda eventtime: {'target': 60.})
+                recovery.bed_mesh = SimpleNamespace(
+                    get_status=lambda eventtime: {'profile_name': 'auto', 'profiles': ['auto']})
+                recovery.gcode_move = live.move
+                recovery._dump(0.)
+                checkpoint = json.loads(pathlib.Path(recovery.file_path).read_text())
+                self.assertAlmostEqual(checkpoint['z_offset'], expected)
+                self.assertEqual(set(checkpoint), {
+                    'file_path', 'file_position', 'file_size', 'position',
+                    'extruder_temp', 'z_offset', 'bed_temp', 'mesh'})
+
+                # A fresh Klipper session does not know about the compensation
+                # (documented limitation): the total offset stays until restored.
+                rebooted = Harness(directory, action=2, offset_mode=mode,
+                                   offset=live.mod.variables['z_offset'])
+                rebooted.mod.variables['load_zoffset'] = load_saved_offset
+                saved_config = pathlib.Path(rebooted.mod.filename).read_bytes()
+                recovery.gcode_move = rebooted.move
+                recovery.reactor = CooperativeReactor()
+                recovery.state = RESURRECTION.ResurrectorState.RESURRECTION
+                recovery._recovery_active = False
+                recovery._worker = recovery._worker_cancel = None
+                recovery.printer = SimpleNamespace(
+                    lookup_object=lambda name, default=None: default)
+                recovery.gcode = SimpleNamespace(
+                    run_script_from_command=lambda script: [
+                        rebooted.execute(line) for line in script.splitlines()],
+                    respond_raw=lambda message: None)
+                restored_positions = []
+
+                def restore_position(position):
+                    self.assertAlmostEqual(rebooted.offset, expected)
+                    restored_positions.append(position)
+                recovery._restore_physical_position = restore_position
+
+                recovery.cmd_RESURRECT(Command())
+
+                self.assertEqual(recovery.state, RESURRECTION.ResurrectorState.PRINTING)
+                self.assertTrue(recovery.virtual_sdcard.resumed)
+                self.assertEqual(restored_positions, [[10., 10., .3, 1.]])
+                self.assertAlmostEqual(rebooted.offset, expected)
+                self.assertIsNone(rebooted.offset_before)
+                self.assertFalse(any(name in {'PROBE', 'BED_MESH_CALIBRATE'}
+                                     for name, params in rebooted.trace))
+                recovery._dump(0.)
+                updated_checkpoint = json.loads(pathlib.Path(recovery.file_path).read_text())
+                self.assertAlmostEqual(updated_checkpoint['z_offset'], expected)
+                rebooted.run('_STOP')
+                self.assertAlmostEqual(rebooted.offset, expected)
+                self.assertEqual(pathlib.Path(rebooted.mod.filename).read_bytes(), saved_config)
 
     def test_pause_freezes_pre_park_checkpoint_until_position_is_restored(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -658,6 +745,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             line for script in resurrector.gcode.commands
             for line in script.splitlines()
         ]
+        self.assertIn("_SET_GCODE_OFFSET Z=-0.08", lines)
         self.assertIn('_CONTEXT_BEGIN TYPE=recovery', lines)
         self.assertIn('_CONTEXT_STATE NAME="LOADING STATE"', lines)
         self.assertLess(

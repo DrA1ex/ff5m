@@ -977,13 +977,14 @@ class FeatherControlsMixin:
         outside_warning = (
             abs(unsaved) > self.z_adjust_warning_threshold + 0.0001)
         value_color = ThemeColor.DANGER if outside_warning else ThemeColor.BRIGHT
+        save_locked = self._z_offset_save_locked()
         commands = self.renderer.begin_page(
             "Live Z offset", back=True)
 
         cards = (
             ("SAVED", saved, 20, ThemeColor.PRIMARY),
             ("CURRENT", current, 245, value_color),
-            ("UNSAVED", unsaved, 470, value_color),
+            ("TEMPORARY" if save_locked else "UNSAVED", unsaved, 470, value_color),
         )
         for label, value, x, color in cards:
             commands += self.renderer.panel(
@@ -1023,6 +1024,7 @@ class FeatherControlsMixin:
             state=state, font="JetBrainsMono Bold 10pt")
         commands += self.renderer.button(
             "live_z.save", 470, 322, 220, 88, "SAVE",
+            state="disabled" if save_locked else "enabled",
             font="JetBrainsMono Bold 12pt")
         commands += self._z_weight_gauge_commands(now)
 
@@ -1060,7 +1062,7 @@ class FeatherControlsMixin:
                      else self.live_z_step)
             self._apply_live_z_adjust(delta)
         elif action == "live_z.save":
-            self._require_live_z_adjust()
+            self._require_z_offset_save()
             if self._setting("load_zoffset", 0):
                 self._save_live_z_offset(False)
             else:
@@ -1288,6 +1290,18 @@ class FeatherControlsMixin:
         if not self._live_z_adjust_allowed(self.reactor.monotonic()):
             raise RuntimeError("Z adjust is not available")
 
+    def _z_offset_save_locked(self):
+        # Bed mesh compensation makes Z changes temporary until the print ends.
+        macro = getattr(self, "mesh_check_macro", None)
+        return (macro is not None
+                and macro.variables.get("offset_before") is not None)
+
+    def _require_z_offset_save(self):
+        self._require_live_z_adjust()
+        if self._z_offset_save_locked():
+            raise RuntimeError(
+                "Z offset cannot be saved while bed mesh compensation is active")
+
     def _apply_live_z_adjust(self, delta):
         self._require_live_z_adjust()
         now = self.reactor.monotonic()
@@ -1309,7 +1323,7 @@ class FeatherControlsMixin:
         self._render_live_z_offset()
 
     def _save_live_z_offset(self, enable_auto_load):
-        self._require_live_z_adjust()
+        self._require_z_offset_save()
         current = float(self.gcode_move.get_status(
             self.reactor.monotonic())["homing_origin"][2])
         commands = ["SET_MOD PARAM=z_offset VALUE=%.3f" % current]

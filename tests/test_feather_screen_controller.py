@@ -11,6 +11,7 @@ import pathlib
 import re
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.test_feather_screen import (
@@ -799,6 +800,60 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertFalse(UI.rectangles_overlap(
             controller.renderer._buttons["global.abort"][:4],
             controller.renderer._buttons["live_z.save"][:4]))
+
+    def test_live_z_save_is_locked_while_mesh_compensation_is_active(self):
+        from tests.test_bed_mesh_validation import Harness
+
+        for mode in (0, 1):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                harness = Harness(directory, action=2, offset_mode=mode)
+                harness.mod.variables['load_zoffset'] = 1
+                harness.run('_CHECK_BED_MESH')
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.renderer = FEATHER.FeatherRenderer()
+                batches = RenderCapture(controller.renderer).batches
+                controller.reactor = Reactor()
+                controller.print_state = FEATHER.PrintState.PRINTING
+                controller.print_stats = StatusObject({"state": "printing"})
+                controller.toolhead = StatusObject({"homed_axes": "xyz"})
+                controller.gcode_move = harness.move
+                controller.params = harness.mod
+                controller.mesh_check_macro = SimpleNamespace(
+                    variables=harness.variables['gcode_macro _CHECK_BED_MESH'])
+                controller.live_z_step = .01
+                controller.live_z_dialog = None
+                controller.z_offset_limit = 2.
+                controller.z_adjust_warning_threshold = .5
+                controller.live_z_limit_warned = True
+                controller._run_blocking_gcode = lambda script, title: [
+                    harness.execute(line) for line in script.splitlines()]
+                messages = []
+                controller._toast = messages.append
+
+                controller._handle_live_z_action("live_z.farther")
+                compensated = harness.offset
+                self.assertIn("TEMPORARY", "\n".join(batches[-1]))
+                # A disabled button has no touch target.
+                self.assertNotIn("live_z.save", controller.renderer._buttons)
+                with self.assertRaisesRegex(RuntimeError, "compensation is active"):
+                    controller._handle_live_z_action("live_z.save")
+                self.assertAlmostEqual(harness.offset, compensated)
+                self.assertAlmostEqual(harness.mod.variables['z_offset'], .05)
+                self.assertEqual(messages, [])
+
+                harness.run('_STOP')
+                self.assertAlmostEqual(harness.offset, .05)
+                controller._handle_live_z_action("live_z.farther")
+                controller._handle_live_z_action("live_z.save")
+                self.assertIn("live_z.save", controller.renderer._buttons)
+                self.assertEqual(messages, ['Z offset saved +0.060 mm'])
+                harness.mod._reload()
+                self.assertAlmostEqual(harness.mod.variables['z_offset'], .06)
+
+                harness.run('_START_PRINT_PREPARE')
+                harness.shifts = [-.3] * 5
+                harness.run('_CHECK_BED_MESH')
+                self.assertAlmostEqual(harness.offset, -.3 if mode else -.24)
 
     def test_live_z_offset_load_warning_has_explicit_choice(self):
         controller = ScenarioController.__new__(ScenarioController)

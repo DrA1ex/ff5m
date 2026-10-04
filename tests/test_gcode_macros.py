@@ -1171,6 +1171,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
             printer={
                 "mod_params": {"variables": {"z_offset": 0.1}},
                 "gcode_move": {"homing_origin": {"z": 0.25}},
+                "gcode_macro _CHECK_BED_MESH": macro_status(BASE, "_CHECK_BED_MESH"),
             },
             params={"Z_ADJUST": -0.01}, rawparams="Z_ADJUST=-0.01")
 
@@ -2259,29 +2260,28 @@ class BedMeshValidationMacroTest(unittest.TestCase):
             printer=self._printer(self.MESH, [-100, -100], [100, 100]),
             params={"RETRACT": 1})
 
-        # Points are inset 5mm from the mesh bounds and skip the middle
-        # column/row to keep plastic traces off the print area; every
-        # verification expects the mesh cell its probe is standing on.
+        # Edge points are expanded by 5mm; intermediate coordinates remain
+        # on the original grid. The minimum-Y edge uses the first mesh row.
         self.assertEqual(
             tuple(command for command in result.commands
                   if command.startswith(("_CHECK_BED_MESH_PROBE",
                                          "_CHECK_BED_MESH_VERIFY"))),
             (
-                "_CHECK_BED_MESH_PROBE X=-105 Y=52.5 RETRACT=1",
+                "_CHECK_BED_MESH_PROBE X=-105 Y=50.0 RETRACT=1",
                 "_CHECK_BED_MESH_VERIFY EXPECTED=0.16 TOLERANCE=0.2",
                 "_CHECK_BED_MESH_PROBE X=-105 Y=-105 RETRACT=1",
-                "_CHECK_BED_MESH_VERIFY EXPECTED=0.21 TOLERANCE=0.2",
-                "_CHECK_BED_MESH_PROBE X=52.5 Y=-105 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.01 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=50.0 Y=-105 RETRACT=1",
                 "_CHECK_BED_MESH_VERIFY EXPECTED=0.04 TOLERANCE=0.2",
                 "_CHECK_BED_MESH_PROBE X=105 Y=-105 RETRACT=1",
-                "_CHECK_BED_MESH_VERIFY EXPECTED=0.25 TOLERANCE=0.2",
-                "_CHECK_BED_MESH_PROBE X=105 Y=52.5 RETRACT=1",
+                "_CHECK_BED_MESH_VERIFY EXPECTED=0.05 TOLERANCE=0.2",
+                "_CHECK_BED_MESH_PROBE X=105 Y=50.0 RETRACT=1",
                 "_CHECK_BED_MESH_VERIFY EXPECTED=0.2 TOLERANCE=0.2",
             ))
         assert_order(self, result.commands, (
             "SAVE_GCODE_STATE NAME=_check_bed_mesh",
             "RESTORE_GCODE_STATE NAME=_check_bed_mesh",
-            "_CHECK_BED_MESH_HANDLE_FAIL COUNT=5",
+            "_CHECK_BED_MESH_HANDLE_FAIL COUNT=5 TOLERANCE=0.2",
         ))
 
     def test_probes_stay_within_the_physical_bed(self):
@@ -2313,14 +2313,22 @@ class BedMeshValidationMacroTest(unittest.TestCase):
         # probed 0.5 leaves a 0.25mm deviation.
         self.assertEqual(verify(0, 0.3).commands, (
             "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
-            "VARIABLE='probe_diff_sum' VALUE=0.25",
+            "VARIABLE='probe_diff_sum' VALUE=-0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
+            "VARIABLE='probe_abs_diff_sum' VALUE=0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH VARIABLE=probe_diff_min VALUE=-0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH VARIABLE=probe_diff_max VALUE=-0.25",
             'RESPOND PREFIX="//" MSG="Probe result match. '
             'Difference: 0.25 mm."',
         ))
 
         self.assertEqual(verify(0.5, 0.2).commands, (
             "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
-            "VARIABLE='probe_diff_sum' VALUE=0.75",
+            "VARIABLE='probe_diff_sum' VALUE=0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
+            "VARIABLE='probe_abs_diff_sum' VALUE=0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH VARIABLE=probe_diff_min VALUE=-0.25",
+            "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH VARIABLE=probe_diff_max VALUE=-0.25",
             "SET_GCODE_VARIABLE MACRO=_CHECK_BED_MESH "
             "VARIABLE='check_failed' VALUE=True",
             'RESPOND PREFIX="!!" MSG="Probe result doesn\'t match. '
@@ -2331,7 +2339,8 @@ class BedMeshValidationMacroTest(unittest.TestCase):
         failed = render_macro(BASE, "_CHECK_BED_MESH_HANDLE_FAIL", printer={
             "gcode_macro _CHECK_BED_MESH": macro_status(
                 BASE, "_CHECK_BED_MESH", check_failed=True,
-                probe_diff_sum=0.75),
+                probe_diff_sum=0.75, probe_abs_diff_sum=0.75),
+            "mod_params": {"variables": {"bed_mesh_validation_action": 0}},
         }, params={"COUNT": 5})
         self.assertEqual(failed.commands, (
             '_RAISE_WITH_PRINT_CANCEL MSG="Bed mesh checking is failed. '
@@ -2340,7 +2349,8 @@ class BedMeshValidationMacroTest(unittest.TestCase):
         passed = render_macro(BASE, "_CHECK_BED_MESH_HANDLE_FAIL", printer={
             "gcode_macro _CHECK_BED_MESH": macro_status(
                 BASE, "_CHECK_BED_MESH", check_failed=False,
-                probe_diff_sum=0.5),
+                probe_diff_sum=0.5, probe_abs_diff_sum=0.5),
+            "mod_params": {"variables": {"bed_mesh_validation_action": 0}},
         }, params={"COUNT": 5})
         self.assertEqual(passed.commands, (
             'RESPOND PREFIX="//" MSG="Bed Mesh is within tolerance: '
