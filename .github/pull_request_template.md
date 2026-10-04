@@ -45,11 +45,12 @@ Attach the whole run directory as a .zip archive. -->
 
 ## Visual regression
 
-<!-- Required for any change visible on the Feather screen:
-https://github.com/DrA1ex/ff5m/blob/main/docs/DEVELOPMENT.md#visual-regression
-Attach the whole run directory as a .zip archive. A new page or state also needs a description in tests/visual_checks/expectations.json. -->
+<!-- Required for any change visible on the Feather screen. Collect screenshots from the printer with
+`python3 -m tests.printer_regression --printer <host> --suite ui component --no-video`:
+https://github.com/DrA1ex/ff5m/blob/main/docs/DEVELOPMENT.md#collect-screenshots-from-the-printer
+Attach the whole run directory as a .zip archive. A new screen or state also needs a description in tests/visual_checks/expectations.json. -->
 
-- [ ] Attached as `.zip`
+- [ ] Screenshots attached as `.zip`
 - [ ] Not needed: no visible changes
 - [ ] Not run (reason):
 

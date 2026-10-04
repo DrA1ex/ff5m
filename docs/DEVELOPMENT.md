@@ -142,32 +142,60 @@ All options, safety checks, and output formats are in the [Testing and change gu
 
 ### Visual regression
 
-Feather changes are also checked on screenshots: every stable page, plus the important non-default states listed in [`tests/visual_checks/scenarios.json`](/tests/visual_checks/scenarios.json). A vision model compares each screenshot with its text description in [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) and reports layout and content problems. A screen that looks right can still behave wrongly, so visual checks complement the logic tests rather than replace them.
+Feather changes are also checked on screenshots. A vision model compares each screen with its text description in [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) and reports layout and content problems. A screen that looks right can still behave wrongly, so visual checks complement the logic tests rather than replace them.
 
-Any change that is visible on the Feather screen needs a visual regression run. You need:
+Any change that is visible on the Feather screen needs a screenshot run from the printer, attached to the pull request.
 
-- a checkout of the `feather-ui-designer` repository, the source of Feather's UI framework (see [Feather runtime](/openwiki/workflows/feather-runtime.md#framework-dependency-and-updates));
-- for the model review, a local OpenAI-compatible server with a vision model (for example LM Studio). Without it, the run still collects the screenshots, and the maintainer runs the review.
+#### Collect screenshots from the printer
 
-Run against the printer (idle, Feather mode, your changes deployed):
+The screenshots are collected by the same printer regression runner, with its two screen-only suites. They do not move or heat the printer, so `--confirm-unattended-physical-test` is not needed. The printer must still be idle, in Feather mode, with your changes deployed (see [Before you start](#before-you-start)).
+
+```bash
+python3 -m tests.printer_regression \
+  --printer <printer-host> \
+  --suite ui component \
+  --no-video
+```
+
+- `ui` walks through the Feather pages with synthetic taps and captures each screen, including a worst-case home screen with long values.
+- `component` renders every declarative page in its default state through the real renderer, without running any actions.
+
+The screenshots and their `manifest.json` are saved below `suites/ui/` and `suites/component/` in the run directory. Pack the whole run directory and attach it:
+
+```bash
+cd tests/artifacts/printer-runs
+zip -r visual-regression.zip <timestamp>
+```
+
+If the change is also covered by the physical printer regression, the two runs can be combined into one: `--suite ui component core`.
+
+From the printer console, the same screenshots are collected with `_FEATHER_UI_TEST ACTION=RUN SUITE=UI CONFIRM=1` and `SUITE=COMPONENT`. Download the result directories from `/data/feather-ui-tests/` as described above.
+
+#### Optional: check the screenshots with a vision model
+
+If you have a local OpenAI-compatible server with a vision model (for example LM Studio), you can run a quick check of the collected screenshots for clipping, overlaps, blank frames, and layout problems:
+
+```bash
+python3 -m tests.visual_checks.run \
+  tests/artifacts/printer-runs/<timestamp>/suites/ui/<run-id> \
+  --enable \
+  --model <loaded-vision-model>
+```
+
+The result is written as `visual-checks.json` next to the screenshots and is included in the archive. This check does not compare the screens with `expectations.json`.
+
+#### Full comparison (maintainer)
+
+The full review compares the printer screenshots with the Feather UI Designer renderings and with the text descriptions in `expectations.json`, including the extra page states from [`tests/visual_checks/scenarios.json`](/tests/visual_checks/scenarios.json). The Designer is not published yet, so the maintainer runs this step from the attached archive without contacting the printer:
 
 ```bash
 python3 -m tests.visual_checks.regression \
   --mode hybrid \
   --designer-root /path/to/feather-ui-designer \
-  --printer-host <printer-host> \
-  --confirm-printer-idle \
+  --printer-artifacts <run>/suites/ui/<run-id> \
+  --printer-artifacts <run>/suites/component/<run-id> \
   --model <loaded-vision-model> \
   --enable
-```
-
-Without a vision model, leave out `--model` and `--enable`. Without a printer, use `--mode designer` and leave out `--printer-host` and `--confirm-printer-idle`.
-
-The command prints the run directory, by default `tests/artifacts/ui-regression/<timestamp>/`. Pack the whole directory and attach it to the pull request:
-
-```bash
-cd tests/artifacts/ui-regression
-zip -r visual-regression.zip <timestamp>
 ```
 
 How to read the report is described in the [Testing and change guide](/openwiki/testing-and-change-guide.md#development-only-semantic-screenshot-checks).
@@ -178,30 +206,31 @@ A new mechanism, or behavior that no existing test covers, needs new tests in th
 
 - **Logic:** add a host test in `tests/` that fails without your change. Name it `tests/test_<area>.py` so `python tests/run_host_tests.py` picks it up, and use the existing modules for the same area as examples.
 - **Hardware workflow:** if the change adds a workflow the printer regression does not exercise, add a phase or scenario to the Feather test runner in [`.py/klipper/plugins/feather_ui_test/`](/.py/klipper/plugins/feather_ui_test/). Keep the existing safety checks: idle printer, explicit confirmation, and cleanup of heaters, motors, and temporary state.
-- **New Feather page:** the visual regression finds it automatically, but it has no description yet. The run stops with `needs_baseline` and writes `expectations.candidate.json` to the run directory. Copy the new case into [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) and edit it so that it describes what must be on the screen:
+- **New Feather screen or state:** make sure the screenshot run captures it, and describe it for the vision model:
+  1. If the `ui` suite does not reach the new screen or state, add a capture step to the UI scenarios in [`.py/klipper/plugins/feather_ui_test/scenarios.py`](/.py/klipper/plugins/feather_ui_test/scenarios.py), next to similar steps, for example `self._add_capture(steps, "ui-my-page")`. A new declarative page is also captured in its default state by the `component` suite automatically.
+  2. Add a description to [`tests/visual_checks/expectations.json`](/tests/visual_checks/expectations.json) under `cases`. Use `printer:<capture label>` for a `ui` capture (for example `printer:ui-my-page`) and `default-<page key>` for the default state of a declarative page (for example `default-move-step`):
 
-  ```json
-  "default-my-page": {
-    "description": "One sentence about the page and its state.",
-    "required": [
-      "title and BACK action",
-      "the main values or controls the page must show"
-    ],
-    "forbidden": [
-      "blank frame",
-      "overlapping controls",
-      "clipped important text"
-    ],
-    "allowed_variations": [
-      "theme colors",
-      "font rasterization"
-    ]
-  }
-  ```
+     ```json
+     "printer:ui-my-page": {
+       "description": "One sentence about the screen and its state.",
+       "required": [
+         "title and BACK action",
+         "the main values or controls the screen must show"
+       ],
+       "forbidden": [
+         "blank frame",
+         "overlapping controls",
+         "clipped important text"
+       ],
+       "allowed_variations": [
+         "theme colors",
+         "font rasterization"
+       ]
+     }
+     ```
 
-  The model checks the screenshot against `required` and `forbidden`. Write each item as something visible on the screen, not as an implementation detail.
-
-- **New state of a page** (a dialog, a warning, an active or finished workflow): add a case to [`tests/visual_checks/scenarios.json`](/tests/visual_checks/scenarios.json) with the page key and the state values, then add its description to `expectations.json` as above.
+     The model checks the screenshot against `required` and `forbidden`. Write each item as something visible on the screen, not as an implementation detail. A screen without a description stops the maintainer's full comparison with `needs_baseline`.
+  3. Run the [screenshot collection](#collect-screenshots-from-the-printer) and check that the new screen is in the archive.
 
 ## Release validation
 

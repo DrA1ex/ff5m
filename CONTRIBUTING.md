@@ -31,10 +31,10 @@ results. How to run each check is described in
   - Power Loss Recovery;
   - Klipper scheduling or timing;
   - boot, installation, update, recovery, or rollback.
-- **Feather / UI changes:** attach a
-  [visual regression](/docs/DEVELOPMENT.md#visual-regression) run as a `.zip`
-  archive. For workflows with several states, cover the important states, not
-  only the default page.
+- **Feather / UI changes:** collect
+  [screenshots from the printer](/docs/DEVELOPMENT.md#collect-screenshots-from-the-printer)
+  and attach them as a `.zip` archive. For workflows with several states, cover
+  the important states, not only the default page.
 - **New mechanisms or uncovered behavior:** add
   [test coverage](/docs/DEVELOPMENT.md#adding-test-coverage) in the same pull
   request. A new Feather page or state also needs a text description for the
