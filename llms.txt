@@ -4,7 +4,7 @@
 
 Key facts:
 - Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
-- Supported stock firmware: 2.6.5 up to 5.1.x.
+- Supported stock firmware: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless the Stock screen is used: the Linux system, kernel and base libraries are factory-installed and the same across versions, and a firmware update mainly replaces the Stock screen application (docs/COMPATIBILITY.md).
 - Klipper: the FlashForge host Klipper (0.11 generation) with reviewed backports of upstream Klipper fixes; MCU firmware is not reflashed.
 - Web interfaces: Fluidd (/fluidd/), Mainsail (/mainsail/), Moonraker API on port 7125. SSH: root / root.
 - Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
@@ -21,13 +21,14 @@ Key facts:
 - Tests: dozens of host test modules run by CI (tests/run_host_tests.py), plus a real-printer regression runner and visual UI regression before releases.
 - Firmware updater: HTTPS with certificate checks, .part file, size and tar validation, atomic replace; it does not verify SHA-256 or a signature.
 - Release policy: releases are published when Forge-X itself changes; an upstream version bump of Moonraker, Klipper, Fluidd, or Mainsail alone is not a reason for a release. Fluidd, Mainsail, and Guppy update separately.
-- Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done on AD5M hardware by the maintainer.
+- Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done by the maintainer on an AD5M with stock firmware 3.1.3 and the Feather screen; other combinations are supported but not run separately (docs/COMPATIBILITY.md).
 - License: GPL-3.0. Repository: https://github.com/DrA1ex/ff5m
 
 ## User documentation
 
 - [README](README.md): overview, features, quick start
 - [Installation](docs/INSTALL.md): prerequisites, flashing, OTA updates
+- [Compatibility](docs/COMPATIBILITY.md): printers, stock firmware versions, screens, physical test matrix
 - [FAQ](docs/FAQ.md): what Forge-X is, compatibility, reversibility, troubleshooting
 - [Klipper fixes and AD5M-specific hardening](docs/KLIPPER.md): backported upstream fixes, Timer too close, E0011/E0017
 - [Screens](docs/SCREEN.md): Feather, Stock, Guppy, Headless

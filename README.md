@@ -18,7 +18,7 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 | | |
 | --- | --- |
 | **Supported printers** | Flashforge Adventurer 5M and Adventurer 5M Pro only |
-| **Supported stock firmware** | 2.6.5 up to 5.1.x (see [Installation](/docs/INSTALL.md#prerequisites)) |
+| **Supported stock firmware** | Every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md) |
 | **What it is** | A reversible mod layered on top of the stock firmware, not a replacement of the whole system |
 | **Klipper** | The FlashForge host Klipper (0.11 generation) with [reviewed fixes and backports from newer upstream Klipper](/docs/KLIPPER.md); the stock MCU firmware is not reflashed |
 | **Web interfaces** | Fluidd (`http://<printer_ip>/fluidd/`) and Mainsail (`http://<printer_ip>/mainsail/`), Moonraker API on port `7125` |
@@ -181,6 +181,7 @@ In short, Forge-X exists to make better use of the hardware already in the AD5M,
 ### User guides
 
 - [Installation](/docs/INSTALL.md)
+- [Compatibility: printers, stock firmware, screens](/docs/COMPATIBILITY.md)
 - [Configuration](/docs/CONFIGURATION.md)
 - [Customizing and extending Forge-X](/docs/EXTENDING.md)
 - [Slicing](/docs/SLICING.md)
@@ -237,7 +238,7 @@ The [OpenWiki](openwiki/quickstart.md) is a code-oriented guide for contributors
 - The Klipper host is the FlashForge 0.11 generation. Newer Klipper features are available after they have been backported ([list](/docs/KLIPPER.md)).
 - Feather covers the main local workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail.
 - Power Loss Recovery is a salvage feature, not a guarantee of a seamless print.
-- Real-printer testing is done on AD5M hardware by the maintainer, so not every combination of stock firmware and configuration can be covered.
+- Real-printer testing is done by the maintainer on an AD5M with stock firmware 3.1.3 and the Feather screen. The other combinations are supported, but are not run separately; see the [compatibility matrix](/docs/COMPATIBILITY.md#compatibility-and-test-matrix).
 
 More details are in [Known limitations](/docs/DEVELOPMENT.md#known-limitations) and the [release policy](/docs/DEVELOPMENT.md#release-policy).
 

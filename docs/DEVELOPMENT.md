@@ -324,7 +324,7 @@ A Forge-X release is published when Forge-X itself changes: fixes, new features,
 - The Stock screen can freeze if `SAVE_CONFIG` or `RESTART` is sent directly. Use `NEW_SAVE_CONFIG` or another display mode.
 - Power Loss Recovery is a salvage feature. It does not guarantee a seamless print.
 - The firmware updater checks the download size and the archive format. It does not verify a SHA-256 digest or a signature.
-- Real-printer testing is done by the maintainer on AD5M hardware. Not every combination of printer, stock firmware version, and configuration can be covered.
+- Real-printer testing is done by the maintainer on an AD5M with stock firmware 3.1.3 and the Feather screen. The 5M Pro, other firmware versions and other screens are supported but not run separately. The [compatibility matrix](COMPATIBILITY.md#compatibility-and-test-matrix) lists this.
 
 ## Related engineering documentation
 
