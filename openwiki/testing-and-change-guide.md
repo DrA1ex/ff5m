@@ -2,6 +2,17 @@
 
 ## Validation posture
 
+The [user Klipper package tests](../tests/test_klipper_plugins.py) exercise optional
+components, 50-package batching, actual config parsing, collisions, patch priority,
+file deletion and complete uninstall. They also execute config repair and stock
+restoration with hardware operations stubbed, checking that a missing
+`plugins.cfg` exists before its include is installed and that stock preparation
+clears it even when display restoration fails. Write-error regressions check
+that optional plugin preparation cannot block the core config batch or stock
+display restoration. A repeated boot with unchanged packages must not write to
+the filesystem, and simulated power loss after every switch step must keep modules
+present and converge. Focused plugin checks use `.venv/bin/python -m pytest`. See [User Klipper plugins](workflows/user-klipper-plugins.md).
+
 The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
 
 Create a local virtual environment and install the host-test dependency before

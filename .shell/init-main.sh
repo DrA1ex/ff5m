@@ -428,6 +428,22 @@ fix_config() {
         }," >> $BATCH_FILE
     fi
 
+    # An optional plugin include must not prevent the other config repairs.
+    if mkdir -p /opt/config/mod_data &&
+        { [ -f "$KLIPPER_USER_CONFIG" ] || : > "$KLIPPER_USER_CONFIG"; } &&
+        { [ -f /opt/config/mod_data/user.cfg ] || touch /opt/config/mod_data/user.cfg; }; then
+        echo '
+        {
+            "mode": "restore",
+            "config": "/opt/config/mod_data/user.cfg",
+            "params": "/opt/config/mod/.cfg/init.plugins.cfg",
+            "no_data": true,
+            "avoid_writes": true
+        },' >> "$BATCH_FILE"
+    else
+        echo "@@ Cannot prepare user plugin config; skipping its include."
+    fi
+
     # Finalize the batch file (remove last comma and close array)
     sed -i '$s/,$//' $BATCH_FILE
     echo "]" >> $BATCH_FILE

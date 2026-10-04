@@ -7,34 +7,10 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 source /opt/config/mod/.shell/common.sh
+source "$SCRIPTS/klipper_overlay.sh"
 
 revert_klipper_patches() {
-    local SRC_DIR="/opt/config/mod/.py/klipper"
-    local TARGET_DIR="/opt/klipper/klippy"
-    
-    # Klipper extensions
-    echo "Remove klipper plugins: "
-    echo $SRC_DIR/plugins/*
-    echo
-    
-    find $SRC_DIR/plugins/ -type f | while read -r file; do
-        local rel_file=${file#"$SRC_DIR/plugins/"}
-        
-        rm -f "$TARGET_DIR/extras/$rel_file"
-        
-        echo "?? Removed \"$rel_file\""
-    done
-    
-    # Klipper patches
-    find $SRC_DIR/patches -type f | while read -r file; do
-        local rel_file=${file#"$SRC_DIR/patches/"}
-        local target="$TARGET_DIR/$rel_file"
-        
-        if [ -f "$target.bak" ]; then
-            mv -f "$target.bak" "$target"
-            echo "?? Restored \"$target\""
-        fi
-    done
+    klipper_overlay_clean_links "$KLIPPER_OVERLAY_SRC" "$KLIPPER_OVERLAY_TARGET" remove
 }
 
 fail() {
@@ -74,12 +50,21 @@ uninstall() {
         --data /opt/config/mod/.cfg/data.restore.base.cfg \
         || fail "@@ Failed to restore printer.base.cfg"
     
+    if [ -f "$MOD_DATA/user.cfg" ]; then
+        chroot "$MOD" /bin/python3 "$PY/cfg_backup.py" \
+            --mode restore --avoid_writes --no_data \
+            --config "$MOD_DATA/user.cfg" \
+            --params /opt/config/mod/.cfg/restore.plugins.cfg \
+            || fail "@@ Failed to restore user.cfg plugin include"
+    fi
+
     echo "127.0.0.1       localhost" > /etc/hosts
     echo "127.0.1.1       kunos" >> /etc/hosts
     
     echo "// Restore klipper..."
     
-    revert_klipper_patches
+    revert_klipper_patches || fail "@@ Failed to restore Klipper overlays"
+    rm -f "$KLIPPER_USER_CONFIG"
     
     echo "// Remove mod..."
     
@@ -135,7 +120,10 @@ uninstall() {
         rm -rf /etc/init.d/S50sshd /etc/init.d/S55date /bin/dropbearmulti /bin/dropbear /bin/dropbearkey /bin/dbclient /bin/scp /usr/libexec/sftp-server /etc/dropbear /etc/init.d/S60dropbear
         
         echo "// Removing Beep util..."
-        rm -f /usr/bin/audio /usr/lib/python3.7/site-packages/audio.py /usr/bin/audio_midi.sh /opt/klipper/klippy/extras/gcode_shell_command.py
+        rm -f /usr/bin/audio /usr/lib/python3.7/site-packages/audio.py /usr/bin/audio_midi.sh
+        # Remove this nonstock extra even after generic .bak restoration.
+        klipper_overlay_clear_user_cache "$KLIPPER_OVERLAY_TARGET/extras/gcode_shell_command.py"
+        rm -f "$KLIPPER_OVERLAY_TARGET/extras/gcode_shell_command.py"
         rm -rf /usr/lib/python3.7/site-packages/mido/
     else
         echo "// Preserve root..."

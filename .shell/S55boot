@@ -71,6 +71,10 @@ restore_stock_config() {
     echo "// This prevents display conflicts."
 
     mount | grep -q '/dev/mmcblk0p7' && data_was_mounted=1
+    # The managed include stays in user.cfg; disable only package configs.
+    if ! { mkdir -p /opt/config/mod_data && : > /opt/config/mod_data/plugins.cfg; }; then
+        echo "@@ Cannot clear user plugin config; continuing stock preparation."
+    fi
     run_stock_restore || restore_status=$?
 
     echo "// Cleaning up..."

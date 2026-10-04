@@ -2493,6 +2493,7 @@ commit_boot_guard
             "S55boot-hard-stock-{}".format(restore_status), {
                 "/opt/config/mod/.shell/common.sh": str(common),
                 "/opt/config/mod_data/log/skip.log": str(skip_log),
+                "/opt/config/mod_data": str(run_root / "mod_data"),
                 "/opt/config/printer.cfg.tmp": str(config_tmp),
                 "STOCK_RESTORE_TIMEOUT_SECONDS=15":
                     "STOCK_RESTORE_TIMEOUT_SECONDS=1",

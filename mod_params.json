@@ -184,7 +184,8 @@
         "order": 5,
         "parameters": [
           "klipper_rt",
-          "zram_algo"
+          "zram_algo",
+          "user_plugins_override_patches"
         ]
       },
       {
@@ -328,6 +329,16 @@
     ]
   },
   "parameters": [
+    {
+      "key": "user_plugins_override_patches",
+      "type": "bool",
+      "default": 0,
+      "label": "User patch overrides",
+      "description": "Allow replacing Forge-X patches.",
+      "restart": "printer",
+      "order": 90000,
+      "warning": "Stock Klipper modules can always be patched. Enable this to also replace Forge-X patches. Forge-X plugins remain protected.\nA conflicting package is skipped. Reboot to apply."
+    },
     {
       "key": "auto_reboot",
       "type": "AutoRebootEnum",

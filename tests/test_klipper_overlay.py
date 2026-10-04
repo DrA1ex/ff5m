@@ -55,6 +55,7 @@ class OverlayTree:
             if source.count(old) != 1:
                 raise AssertionError("expected one %r in klipper_overlay.sh" % old)
             source = source.replace(old, replacement, 1)
+        source = source.replace("/opt/config/mod_data", str(self.root / "mod_data"))
         script.write_text(source, encoding="utf-8")
         script.chmod(OVERLAY.stat().st_mode & 0o777)
         return subprocess.run(
@@ -182,6 +183,7 @@ class KlipperOverlayTest(unittest.TestCase):
             for old, replacement in replacements.items():
                 self.assertEqual(overlay_source.count(old), 1)
                 overlay_source = overlay_source.replace(old, replacement, 1)
+            overlay_source = overlay_source.replace("/opt/config/mod_data", str(root / "mod_data"))
             overlay.write_text(overlay_source, encoding="utf-8")
             overlay.chmod(OVERLAY.stat().st_mode & 0o777)
             result = subprocess.run(

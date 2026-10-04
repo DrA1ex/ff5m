@@ -74,6 +74,10 @@ case "$key" in
         chroot "$MOD" /opt/config/mod/.root/S65moonraker restart
     ;;
     
+    user_plugins_override_patches)
+        message "Reboot the printer to apply user plugin patch priority."
+    ;;
+
     tune_klipper)
         message "Klipper will be restarted to apply tuning."
         "$SCRIPTS"/restart_klipper.sh --hard

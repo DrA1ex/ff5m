@@ -9,6 +9,7 @@ Installation uses a FAT32 USB drive and an intact release archive named for the 
 ## Normal boot and updates
 
 - `.shell/S00init` is the small start-only stock-init guard. It resolves durable boot flags before optional mod code and invokes `.shell/init-main.sh` for normal runtime preparation. Reloads call `init-main.sh` directly.
+- Stock boot preparation in `S55boot` creates or empties `mod_data/plugins.cfg` before restoring stock display configuration. Other user settings and Python links remain intact. See [User Klipper plugins](user-klipper-plugins.md).
 - `.shell/boot/boot_mode.sh` gives mutable boot scripts one canonical view of temporary mod/stock state and one normalized stock-mode publication operation.
 - `.shell/boot/boot.sh` starts `netd` directly for non-Stock modes. Feather continues offline-capable without waiting; Guppy/headless use the thin `netd-cli wait --timeout 180` and retain the Stock fallback. The wait timeout is boot policy only; `netd` itself keeps the configured network reconnecting indefinitely.
 - `.shell/S99root` creates/migrates Moonraker state on first run and starts the chroot stack.

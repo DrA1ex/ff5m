@@ -16,10 +16,17 @@ Repository overlay                    Stock host tree
 .py/klipper/patches/**    ──symlink→ /opt/klipper/klippy/**
                                           └─ original replacement: <file>.bak
 
-boot: cleanup stale overlay → link plugins → back up/replace patch files
-      → start Klipper later in boot
-uninstall: remove linked plugins → restore each .bak
+boot: plan user packages (read-only) → cleanup stale and unplanned user links
+      → link built-in files → add or retarget only differing user links
+      → write the config aggregate only if it changed → start Klipper later
+uninstall: restore adjacent backups via owned links, even without sources
 ```
+
+[User packages](user-klipper-plugins.md) in `mod_data/plugins/` are layered after
+the built-in overlay through the existing overlay library. Their optional configs,
+extras and permitted Forge-X patch overrides are independent. Override priority
+does not modify stock backups. Stock boot preparation clears only the generated user config aggregate;
+Python links are left in place.
 
 The process is idempotent in the normal supported case:
 
@@ -70,8 +77,10 @@ Both replacement modules read `[Variables] tune_klipper` from `/opt/config/mod_d
 
 [`.shell/uninstall.sh`](../../.shell/uninstall.sh) implements the inverse operation before removing the mod:
 
-1. Remove each plugin corresponding to a file currently under `plugins/` from stock `klippy/extras/`.
-2. For each file currently under `patches/`, move `<target>.bak` back to `<target>` if that backup exists.
+1. Remove the managed plugin include from `user.cfg` through the existing config restore tool.
+2. Use the overlay's cleanup in removal mode to remove owned user/built-in symlinks and restore their adjacent backups even when the sources are gone, including compiled host helpers. When a target link is missing but its Forge-X patch source survives, removal mode restores its `.bak` only if the target is absent. There is no global `.bak` scan, and regular files are not replaced by cleanup. Backups without either an ownership link or a surviving patch source are retained.
+3. Remove the generated aggregate. Soft uninstall retains other user settings and package sources; hard uninstall removes `mod_data`.
+4. Hard uninstall removes the nonstock `gcode_shell_command.py` and its bytecode caches even if generic rollback restored it from `.bak`.
 
 That reversal relies on the backup convention created by the patcher. Never delete or overwrite `<target>.bak` in an installed system without a verified recovery plan. The normal dual-boot/recovery procedures remain the operator safety route; see [`docs/UNINSTALL.md`](../../docs/UNINSTALL.md), [`docs/DUAL_BOOT.md`](../../docs/DUAL_BOOT.md), and [`docs/RECOVERY.md`](../../docs/RECOVERY.md).
 

@@ -30,6 +30,7 @@ COMMON_CFG_PARAMS=(
 )
 
 TAR_BACKUP_PARAMS=(
+    ./mod_data/plugins
     "${PRIVATE_PARAMS[@]}"
     "${COMMON_CFG_PARAMS[@]}"
 )
