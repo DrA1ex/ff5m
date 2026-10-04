@@ -33,28 +33,37 @@ Boot recovery, firmware installation, configuration migration, and uninstall are
 
 ## Validation layers
 
-| Layer | What it checks | Who runs it |
-| --- | --- | --- |
-| Host tests | Macros, Klipper overlays and backports, Power Loss Recovery state, boot recovery, configuration migration, backup and restore, firmware installation, Feather logic, operation contexts, network and Moonraker integration. | GitHub Actions and developers |
-| Macro rendering | Macros are rendered against Klipper status snapshots and the generated commands are checked, not only the template syntax. | GitHub Actions and developers |
-| Visual regression | Feather screenshots of stable pages and important non-default states. A correct-looking screen can still behave wrongly, so it complements the logic tests. | Maintainer |
-| Printer regression | Real workflows on an Adventurer 5M (list below). | Maintainer |
+### Host tests
 
-Run the host tests with:
+The `tests/` directory contains dozens of host test modules for Forge-X's own code:
+
+- G-code macros;
+- Klipper overlays, backports, and reactor patches;
+- Power Loss Recovery state handling;
+- boot recovery, configuration migration, backup, and restore;
+- firmware installation and update paths;
+- Feather state, actions, workflows, safety checks, rendering, and input;
+- operation contexts;
+- network and Moonraker integration;
+- resource monitoring and the printer-regression tooling.
+
+GitHub Actions runs them on every push. Run them locally with:
 
 ```bash
 python tests/run_host_tests.py --verbose
 ```
 
+Macros are not considered tested just because the template parses. The tests render them against Klipper status snapshots and check the generated commands.
+
 Passing host tests do not replace a printer run for changes that affect motion, heaters, probing, the display, or timing.
 
 ### Printer regression
 
-An opt-in runner executes workflows through the real Klipper, Moonraker, and Feather stack:
+The printer regression runs real workflows on an Adventurer 5M through Klipper, Moonraker, and Feather:
 
 - homing and reversible XYZ movement;
 - heating and cooling;
-- bed screw tuning and full bed mesh;
+- bed screw tuning and a full bed mesh;
 - probe-based Z-offset calibration;
 - KAMP and nozzle cleaning;
 - mesh validation;
@@ -64,7 +73,13 @@ An opt-in runner executes workflows through the real Klipper, Moonraker, and Fea
 
 During the run it can record motion-buffer data, MCU statistics, temperatures, print state, operation context, memory, CPU, scheduler data, and per-process usage. A workflow that finishes but causes reactor stalls or memory pressure is still a regression.
 
-The suites move and heat the printer, so they have explicit preconditions and confirmation levels. See the [Testing and change guide](/openwiki/testing-and-change-guide.md).
+The maintainer runs it before every release. Pull requests that touch hardware-related code must include a run as well; see [Contributing](/CONTRIBUTING.md#printer-regression) for when and how.
+
+The suites move and heat the printer, so they have explicit preconditions and confirmation levels. Details are in the [Testing and change guide](/openwiki/testing-and-change-guide.md).
+
+### Visual regression
+
+Feather changes are also checked on screenshots of stable pages and important non-default states. A screen that looks right can still behave wrongly, and correct logic can still produce a broken layout, so visual checks complement the logic tests rather than replace them.
 
 ## Release validation
 
@@ -76,7 +91,7 @@ Before a release, the maintainer runs:
 4. a real print for changes that can affect printing or recovery;
 5. a review of failures and collected logs.
 
-Printer and visual regression are maintainer steps, not GitHub Actions jobs.
+Printer and visual regression need a real printer, so they run outside GitHub Actions.
 
 This reduces the chance that users are the first to hit a known class of bug, but it does not prove that every printer, filament, slicer profile, or firmware combination works. Forge-X is still an unofficial mod.
 
@@ -95,7 +110,7 @@ This table lists how Forge-X handles the risky parts of changing a printer's fir
 | Parking and travel limits | One macro, `MOVE_SAFE`, holds the allowed X/Y/Z limits and clamps moves. KAMP Smart Park uses it. | [`macros/base.cfg`](/macros/base.cfg), [`KAMP/Smart_Park.cfg`](/KAMP/Smart_Park.cfg) |
 | Power Loss Recovery | The implementation is Python source in the repository, with host tests and a physical regression check. | [`.py/klipper/plugins/resurrection.py`](/.py/klipper/plugins/resurrection.py), [`resurrection_state.py`](/.py/klipper/plugins/resurrection_state.py), [`tests/test_resurrection.py`](/tests/test_resurrection.py) |
 | Automated tests | Dozens of host test modules cover boot recovery, installation, Klipper patches, macros, Feather, and Power Loss Recovery. GitHub Actions runs `python tests/run_host_tests.py`. | [`tests/`](/tests/), [`.github/workflows/tests.yml`](/.github/workflows/tests.yml) |
-| Real-printer tests | A regression runner executes real workflows on an AD5M. It is a maintainer step before a release, not a cloud CI job. | [`tests/printer_regression.py`](/tests/printer_regression.py), [Release validation](#release-validation) |
+| Real-printer tests | A regression runner executes real workflows on an AD5M. It runs before every release and for pull requests that touch hardware-related code, not as a cloud CI job. | [`tests/printer_regression.py`](/tests/printer_regression.py), [Release validation](#release-validation) |
 | Firmware download (updater) | Download over HTTPS with the standard certificate checks, into a `.part` file, with a size check against the release asset, a check that the file is a valid firmware tar, and an atomic replace. | [`.py/zupdate.py`](/.py/zupdate.py) |
 
 ## Release policy
