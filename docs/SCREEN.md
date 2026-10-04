@@ -21,7 +21,6 @@ Forge-X Power Loss Recovery is used with Feather, Guppy, and Headless. The Stock
 - **It uses little memory.** The printer has 128 MiB of RAM, and Moonraker alone takes roughly 30 MB. Feather needs roughly 1–2 MB, the Stock screen roughly 10–20 MB. The memory that Feather does not use stays available to Klipper, the camera, and your own additions. See [Reducing resource usage](PRINTING.md#reducing-resource-usage).
 - **It does not depend on the vendor application.** The Stock screen is tightly coupled to the FlashForge services: direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze it, and its behavior and bugs change with the stock firmware version. Feather runs inside Klipper and is not affected by them.
 - **It is part of Forge-X.** Feather is a Klipper extension that draws with the small [Typer](TYPER.md) renderer. It has no separate UI application or second copy of the printer state, and its calibration, material presets, Wi-Fi setup, and update notifications work directly with Forge-X.
-- **It works without a network** once it is configured.
 
 Feather covers the everyday workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail. The list of what it can do is in the [Feather guide](FEATHER.md).
 

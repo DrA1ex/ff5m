@@ -46,4 +46,4 @@ Feather Settings provides display brightness, chamber-light level, sound feedbac
 
 Advanced operations such as unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics remain in Fluidd or Mainsail.
 
-Feather can operate without a network after configuration. It uses the `auto` bed-mesh profile. Recreate or rename the persistent mesh after switching from Stock mode.
+Feather uses the `auto` bed-mesh profile. Recreate or rename the persistent mesh after switching from Stock mode.
