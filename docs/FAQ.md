@@ -118,7 +118,7 @@ The full procedure, prerequisites, and OTA update rules are in the [Installation
 6. **Monitor resources.** Run the `MEM` macro to check memory usage and free up resources if needed.
 
 ### Do I need to uninstall another mod before installing Forge-X?
-Yes. Uninstall all other mods, including Klipper Mod, and make a backup first. Do not flash different mods over each other.
+Yes. Uninstall any other mod and make a backup before installing Forge-X. Installing over another mod can cause conflicts, so this is not supported.
 
 ### Can I install Klipper Mod over Forge-X?
 No. Running Forge-X together with Klipper Mod is not supported. [Uninstall](UNINSTALL.md) Forge-X before installing another mod.

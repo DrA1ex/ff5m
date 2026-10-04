@@ -9,7 +9,7 @@ Forge-X can be removed at any time, and the stock firmware stays available:
 
 
 > [!CAUTION]
-> - Uninstall all other mods, including Klipper Mod, before installing Forge-X. Make a backup first.
+> - Uninstall any other mod before installing Forge-X, and make a backup first. Installing over another mod can cause conflicts, so this is not supported.
 > - After installing or uninstalling, run all calibrations again. The mod changes some parameters, so the previous calibration may no longer be valid. Printing without recalibration can damage the printer or the bed surface, or reduce print quality.
 > - Proceed at your own risk.
 
