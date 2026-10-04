@@ -1328,12 +1328,13 @@ class MediaPipeline:
 
 
 def _host_preflight(output, suite_count, run_timeout, which=None,
-                    disk_usage=None):
+                    disk_usage=None, video=True):
     which = which or shutil.which
     disk_usage = disk_usage or shutil.disk_usage
     output = pathlib.Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    missing = [name for name in ("ffmpeg", "ssh", "scp") if not which(name)]
+    tools = ("ffmpeg", "ssh", "scp") if video else ("ssh", "scp")
+    missing = [name for name in tools if not which(name)]
     if missing:
         suffix = (
             " Install FFmpeg with `brew install ffmpeg`."
@@ -1347,8 +1348,9 @@ def _host_preflight(output, suite_count, run_timeout, which=None,
         probe.unlink()
     except OSError as exc:
         raise RegressionError("local artifact root is not writable") from exc
-    required = 256 * 1024 * 1024 + int(
-        max(1, suite_count) * max(1, run_timeout) * 1_000_000)
+    required = 256 * 1024 * 1024
+    if video:
+        required += int(max(1, suite_count) * max(1, run_timeout) * 1_000_000)
     if disk_usage(output).free < required:
         raise RegressionError(
             "insufficient local disk space (need about %.1f GiB free)" %
@@ -1700,7 +1702,8 @@ class RegressionRun:
         self.progress("preflight")
         try:
             _host_preflight(
-                self.output, len(self.specs), self.args.run_timeout)
+                self.output, len(self.specs), self.args.run_timeout,
+                video=not self.args.no_video)
         except (RegressionError, OSError) as exc:
             self._fail(type(exc).__name__, exc)
             return self._finalize(started_wall, media=False)
@@ -1726,8 +1729,9 @@ class RegressionRun:
             self._skip_remaining(0, str(exc))
             return self._finalize(started_wall, media=False)
 
+        no_camera = self.args.no_camera or self.args.no_video
         camera = None
-        if not self.args.no_camera:
+        if not no_camera:
             try:
                 camera = self.client.discover_camera()
             except (PrinterConnectionError, RegressionError, OSError):
@@ -1766,7 +1770,7 @@ class RegressionRun:
                 self._skip_remaining(0, message)
                 return self._finalize(started_wall, media=False)
         self.telemetry.start(self.started_monotonic, self._telemetry_test)
-        if self.args.no_camera:
+        if no_camera:
             self.media.camera = {"status": "disabled", "metadata": None}
         else:
             self.media.start_camera(camera)
@@ -1822,7 +1826,9 @@ class RegressionRun:
         duration = max(0.0, finished_wall - started_wall)
         self.report["finished_at"] = _utc_time(finished_wall)
         self.report["duration_seconds"] = duration
-        if media:
+        if media and self.args.no_video:
+            self.report["media"] = {"status": "disabled", "recording": None}
+        elif media:
             self.progress("video: finalizing")
             try:
                 media_duration = max(
@@ -1927,6 +1933,10 @@ def _arguments(argv=None):
         "--connection-timeout", type=_positive_seconds, default=10)
     parser.add_argument("--output")
     parser.add_argument("--no-camera", action="store_true")
+    parser.add_argument(
+        "--no-video", action="store_true",
+        help="skip camera recording and video assembly; FFmpeg is not "
+             "required, the report, telemetry and printer artifacts are kept")
     parser.add_argument(
         "--no-resource-monitor", action="store_true",
         help="skip the printer-side /proc sampler; it is the only observer "

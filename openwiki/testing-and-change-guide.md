@@ -223,6 +223,8 @@ python3 -m tests.printer_regression \
   --confirm-unattended-physical-test
 ```
 
+`--no-video` skips camera recording and media assembly: FFmpeg is not required, `report.json`/`report.html`, telemetry, resource data, and verified printer artifacts are still written, and `media.status` is `disabled`. This is the expected mode for pull-request runs.
+
 `--suite` may also be repeated. `all` expands in place to `core`, then `print`.
 If a name appears more than once, directly or through `all`, only its first
 position is kept. The host performs one preflight, recording lifecycle, report,
