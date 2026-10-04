@@ -162,6 +162,8 @@ A bricked printer (unable to boot or stuck on a frozen spinner) can be restored 
 
 ### How do I update the stock firmware?
 
+You usually do not need to. The stock firmware version does not matter unless you use the Stock screen. If you do, version 3.1.x is the recommended one (the most stable), and a newer version is only needed if you use the FlashForge cloud services. See [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen).
+
 Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed via the Stock screen interface using Over-The-Air (OTA) updates or by flashing a firmware image via USB.
 
 **Updating via OTA**:

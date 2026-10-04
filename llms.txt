@@ -4,7 +4,7 @@
 
 Key facts:
 - Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
-- Supported stock firmware: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless the Stock screen is used: the Linux system, kernel, base libraries and the MCU firmware are the same across versions, and a firmware update mainly replaces the Stock screen application (docs/COMPATIBILITY.md).
+- Supported stock firmware: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless the Stock screen is used: the Linux system, kernel, base libraries and the MCU firmware are the same across versions, and a firmware update mainly replaces the Stock screen application (docs/COMPATIBILITY.md). For the Stock screen, firmware 3.1.x is recommended as the most stable; versions newer than 3.1.x are needed only for the FlashForge cloud services.
 - Klipper: the FlashForge host Klipper (0.11 generation) with reviewed backports of upstream Klipper fixes; MCU firmware is not reflashed.
 - Web interfaces: Fluidd (/fluidd/), Mainsail (/mainsail/), Moonraker API on port 7125. SSH: root / root.
 - Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
