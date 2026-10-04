@@ -3,7 +3,9 @@
 Forge-X includes its own **Power Loss Recovery** system, internally called **Resurrection**, for Feather, Guppy, and Headless modes. It periodically saves enough print state to offer a recovery attempt after an unexpected power loss, reboot, Klipper crash, or MCU shutdown.
 
 > [!IMPORTANT]
-> Power Loss Recovery is a **salvage feature**, not a guarantee of a seamless print. It is most useful when losing a long print would be worse than accepting a possible mark, weak seam, or other defect around the recovery point. For important prints, stable power or a UPS is still the preferred protection.
+> Power Loss Recovery is a way to **save a long print that would otherwise be lost**. It does not produce a seamless print: expect a mark, seam, or weaker spot at the recovery point. For important prints, a UPS is more reliable.
+>
+> If the part is safety-critical, needs exact dimensions, or will carry a high load, consider reprinting it instead of using a recovered result.
 
 The Stock screen uses the FlashForge recovery implementation. This page describes the Forge-X Resurrection implementation used by the non-Stock modes.
 
@@ -55,10 +57,10 @@ Forge-X handles this case specially:
 3. The parked toolhead position therefore does not overwrite the actual print position.
 4. After a normal `RESUME`, checkpoint updates are enabled again.
 
-This makes a controlled pause much more deterministic than cutting power during active printing. Once the visible pause/parking operation has finished, the printer has completed the queued print moves that precede the pause, while the saved recovery point still refers to the pre-park print position.
+Once the pause and parking move have finished, all print moves before the pause have been executed, and the saved point still refers to the print position before parking. This is much more predictable than cutting power during printing.
 
 > [!NOTE]
-> This is the preferred Forge-X workflow for a planned shutdown, but it is still not an absolute mechanical guarantee. Re-homing repeatability, a shifted part, thermal contraction, loss of bed adhesion, or other physical changes can still affect the resumed layer.
+> This is the recommended way to handle a planned shutdown, but the result can still be affected by physical changes. Re-homing repeatability, a shifted part, thermal contraction, loss of bed adhesion, or other physical changes can still affect the resumed layer.
 
 ## Why an unexpected outage cannot be restored with perfect precision
 
@@ -82,7 +84,7 @@ Forge-X saves both the G-code file position and the Klipper toolhead position, b
 
 This is why a recovered print may show a small artifact around the resume area. Depending on the timing, a short section may be replayed or the printer may have to return to the saved position without reproducing every extrusion move that existed between the saved state and the physical loss of power. Possible results include a small blob, line, gap, visible seam, or weaker local bonding.
 
-That limitation is inherent to recovering a buffered motion system after power has already disappeared; it is not something a more frequent JSON write can completely remove.
+Saving checkpoints more often does not remove this: it comes from the motion queue, not from the save interval.
 
 ## What Forge-X saves
 
@@ -115,7 +117,7 @@ Forge-X also re-parses the G-code from the beginning up to the saved file positi
 
 ## Validation before Forge-X moves the printer
 
-Recovery does not blindly load `resurrection.json` and start moving. Before the recovery sequence begins, Forge-X checks the saved state and the G-code it refers to.
+Before the printer moves, Forge-X checks the saved state and the G-code file it refers to.
 
 Among other checks, recovery is rejected when:
 
@@ -190,26 +192,6 @@ For UPS sizing:
 - actual runtime depends heavily on whether the bed and hotend are heating, so do not estimate runtime from the 350 W rating alone.
 
 A UPS with modest battery capacity but sufficient output power can be enough for brief interruptions. For longer outages, either size the battery for the required runtime or use the controlled **PAUSE → wait for parking → power off** workflow described above.
-
-## What Power Loss Recovery is for
-
-Power Loss Recovery is best treated as a way to **save a long print that would otherwise certainly be lost**.
-
-It is particularly useful after:
-
-- an unexpected mains outage;
-- an accidental power-off;
-- a system reboot/crash;
-- an MCU shutdown that interrupted a long job.
-
-It should not be treated as a substitute for:
-
-- reliable mains power;
-- a UPS for critical prints;
-- good bed adhesion;
-- monitoring the first movements after recovery.
-
-A successfully resumed print can still have a visible or structural defect around the recovery point. If the part is safety-critical, dimensionally critical, or will be mechanically highly loaded, inspect it carefully and consider restarting the print instead of accepting a recovered result.
 
 ## Related documentation
 
