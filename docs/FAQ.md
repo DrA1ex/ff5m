@@ -162,7 +162,7 @@ A bricked printer (unable to boot or stuck on a frozen spinner) can be restored 
 
 ### How do I update the stock firmware?
 
-You usually do not need to. The stock firmware version does not matter unless you use the Stock screen. If you do, version 3.1.x is the recommended one (the most stable), and a newer version is only needed if you use the FlashForge cloud services. See [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen).
+You usually do not need to. The stock firmware version does not matter unless you use the Stock screen. If you do, version 3.1.x is the recommended one (the most stable while printing), and a newer version is only needed if you use the FlashForge cloud services. See [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen).
 
 Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed via the Stock screen interface using Over-The-Air (OTA) updates or by flashing a firmware image via USB.
 
@@ -184,7 +184,7 @@ Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed 
 7. Switch back to Feather or Headless mode if desired.
 
 ### My printer is stuck on the Stock initialization screen. How can I fix it?
-This issue is likely caused by a bug in the newer Flashforge firmware (version `3.1.*`), where the firmware freezes if it fails to connect to a network during initialization. Reboot the printer by powering it off and back on. To avoid this issue, downgrade to firmware version `2.7.*` or switch to the Feather screen, which operates independently of the problematic firmware.
+This issue is likely caused by a bug in the Flashforge firmware (seen in `3.1.*`), where the Stock screen freezes if it fails to connect to a network during initialization. It only concerns the start of the printer and does not affect printing: `3.1.x` is still the recommended version for the Stock screen because it is the most stable one **while printing**. Reboot the printer by powering it off and back on, and make sure the printer can connect to the network at startup. To avoid this issue completely, switch to the Feather screen, which operates independently of the Stock screen, or use firmware version `2.7.*`.
 
 ### My printer is stuck on the screen with a black-and-white Flashforge logo. How can I fix it?
 This indicates a hardware or software issue preventing proper booting, not related to the mod. Try flashing the [Factory image](https://github.com/DrA1ex/ff5m/blob/main/docs/UNINSTALL.md#flashing-factory-firmware). If unsuccessful, flash the [Uninstall image](https://github.com/DrA1ex/ff5m/blob/main/docs/UNINSTALL.md#using-uninstall-image), then the [Recovery image](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md#recovery-using-flashing-image), and finally the Factory image again. Refer to the [Recovery Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md). If the issue persists, contact Flashforge support without mentioning mods to avoid warranty issues.

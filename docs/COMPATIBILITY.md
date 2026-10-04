@@ -29,13 +29,13 @@ So a newer stock firmware brings a newer Stock screen, not a different platform 
 
 Only things that belong to the stock firmware itself:
 
-- **The Stock screen.** Its look, its workflows and its bugs change with the firmware version. For example, some `3.1.*` versions can freeze on the initialization screen if the printer cannot connect to a network ([FAQ](FAQ.md#my-printer-is-stuck-on-the-stock-initialization-screen-how-can-i-fix-it)). Feather, Guppy Screen and Headless mode do not use the Stock screen, so they are not affected. See [Screens](SCREEN.md).
+- **The Stock screen.** Its look, its workflows and its bugs change with the firmware version. For example, some `3.1.*` versions can freeze on the initialization screen if the printer cannot connect to a network. This affects only the start of the printer, not printing ([FAQ](FAQ.md#my-printer-is-stuck-on-the-stock-initialization-screen-how-can-i-fix-it)). Feather, Guppy Screen and Headless mode do not use the Stock screen, so they are not affected. See [Screens](SCREEN.md).
 - **Stock cloud services.** The optional `block_cloud` setting blocks the vendor cloud hosts by name. The cloud hosts appeared in 5.0.x and were changed in 5.1.4, and the list in Forge-X covers both the old and the new hosts ([`.shell/init-main.sh`](/.shell/init-main.sh)).
 - **Printer configuration values.** A stock update or a `-Factory` image can reset some parameters in `printer.base.cfg`. Forge-X has a [backup and restore](CONFIGURATION.md) for this.
 
 ### Which firmware to use with the Stock screen
 
-If you use the Stock screen, **3.1.x is the recommended version**, because it is the most stable one. If you do not use the FlashForge services (the vendor cloud, video streaming and model sharing), you do not need a version newer than 3.1.x. The cloud services come with the 5.0.x and 5.1.x versions. Newer versions are supported, but for Forge-X they offer nothing beyond those services.
+If you use the Stock screen, **3.1.x is the recommended version**, because it is the most stable one while printing. If you do not use the FlashForge services (the vendor cloud, video streaming and model sharing), you do not need a version newer than 3.1.x. The cloud services come with the 5.0.x and 5.1.x versions. Newer versions are supported, but for Forge-X they offer nothing beyond those services.
 
 If you use Feather, Guppy Screen or Headless mode, ignore this: the version does not matter.
 

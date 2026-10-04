@@ -43,7 +43,7 @@ Use `FEATHER`, `GUPPY`, `HEADLESS`, or `STOCK`. Switching away from Stock stops 
 
 ### Stock screen
 
-The Stock screen keeps the original FlashForge services and workflows. If you use it, stock firmware 3.1.x is the recommended version, the most stable one; a newer version is only needed for the FlashForge cloud services (see [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen)). Enable **Settings → Network → Network Mode → LAN-mode** if you use Fluidd, Mainsail, slicer upload, or Forge-X features that communicate with the vendor API.
+The Stock screen keeps the original FlashForge services and workflows. If you use it, stock firmware 3.1.x is the recommended version, the most stable one while printing; a newer version is only needed for the FlashForge cloud services (see [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen)). Enable **Settings → Network → Network Mode → LAN-mode** if you use Fluidd, Mainsail, slicer upload, or Forge-X features that communicate with the vendor API.
 
 When using the Stock screen:
 
