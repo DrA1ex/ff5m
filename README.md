@@ -15,7 +15,7 @@ Forge-X is designed for this printer's limits: the host has only **128 MiB of RA
 
 ## Quick facts
 
-- **Printers**: Flashforge Adventurer 5M and Adventurer 5M Pro only.
+- **Printers**: Flashforge Adventurer 5M and Adventurer 5M Pro.
 - **Stock firmware**: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md).
 - **What it is**: a reversible mod layered on top of the stock firmware, not a replacement of the whole system.
 - **Klipper**: the FlashForge host Klipper (0.11 generation) with [reviewed fixes and backports from newer upstream Klipper](/docs/KLIPPER.md); the stock MCU firmware is not reflashed.
@@ -152,7 +152,7 @@ If you run into problems:
 
 ## How Forge-X is built
 
-- **Supported hardware.** Forge-X supports only the Adventurer 5M and 5M Pro. It is designed around this hardware: 128 MiB of RAM, the FlashForge Klipper 0.11 base, two MCUs, the load-cell bed sensor, and the stock boot process.
+- **Hardware.** Forge-X is designed around the AD5M hardware: 128 MiB of RAM, the FlashForge Klipper 0.11 base, two MCUs, the load-cell bed sensor, and the stock boot process.
 - **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the Recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores the configuration and Klipper files before removing the runtime. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
 - **Testing.** Before each release Forge-X goes through automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests. The tests are in the [`tests/`](/tests) directory, and the process is described in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
 - **Memory.** Feather uses roughly 1–2 MB of RAM, compared with roughly 10–20 MB for the Stock screen. The camera service, the swap and ZRAM options, and Moonraker startup are also tuned for low memory. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
@@ -230,16 +230,6 @@ The [OpenWiki](openwiki/quickstart.md) is a code-oriented guide for contributors
 - [x] Integration and adaptation of Guppy Screen for the AD5M
 - [x] A custom interactive Feather screen built specifically for the AD5M running Forge-X
 
-## Known limitations
-
-- Only the Adventurer 5M and 5M Pro are supported.
-- The Klipper host is the FlashForge 0.11 generation. Newer Klipper features are available after they have been backported ([list](/docs/KLIPPER.md)).
-- Feather covers the main local workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail.
-- Power Loss Recovery is a salvage feature, not a guarantee of a seamless print.
-- Real-printer testing is done by the maintainer before releases, so not every combination of printer, stock firmware version, and configuration can be covered.
-
-More details are in [Known limitations](/docs/DEVELOPMENT.md#known-limitations) and the [release policy](/docs/DEVELOPMENT.md#release-policy).
-
 ## Support Forge-X
 
 Forge-X is free, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
@@ -264,7 +254,7 @@ Forge-X is free to use, including for commercial use of a printer. Different par
 Forge-X builds on the work of many people and projects:
 
 - Thanks to the [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) developers for their excellent work.
-- Forge-X is based on ZMod by [ghzserg](https://github.com/ghzserg).
+- The integration with the Stock screen is based on the implementation from [ZMod](https://github.com/ghzserg/zmod) by [ghzserg](https://github.com/ghzserg).
 - Thanks to the Klipper and Moonraker communities for their ongoing development.
 - Thanks to the Russian-speaking FlashForge Adventurer 5M Telegram community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro).
 - Thanks to [@Zero](https://www.youtube.com/@zerodotcmd) for the logo.
