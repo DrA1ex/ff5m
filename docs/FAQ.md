@@ -299,26 +299,22 @@ The **Feather Screen** behaves differently. A saved network is marked in its sca
 ## Resource and Performance Issues
 
 ### What causes “Timer Too Close” or MCU errors (E0011)?
-`Timer too close` is a generic Klipper shutdown reason: the MCU received work scheduled too close to its current clock because the host or the MCU connection fell behind. Complex prints (not necessarily large, but with intricate movement patterns like gyroid infill or fuzzy skin) can overload the printer and cause MCU shutdowns.   
+`Timer too close` is a generic Klipper shutdown reason: the MCU received work scheduled too close to its current clock because the host or the MCU connection fell behind.
 
-Forge-X 1.4.2 fixes the reproducible case in which very dense G-code starves Klipper's host-side scheduling (see [Klipper fixes and AD5M-specific hardening](KLIPPER.md#the-timer-too-close-problem)). Other causes, such as hardware faults, remain possible.   
-The mod (especially Moonraker) adds some resource overhead, which can make shutdowns more likely on a printer that is already close to its limits.   
+**The most common cause is fixed in Forge-X 1.4.2.** Very dense G-code (for example gyroid infill or fuzzy skin) could keep the Klipper host busy for so long that it did not talk to the MCU in time. This is a host scheduling problem, and Forge-X 1.4.2 and newer fix it in Klipper itself (see [Klipper fixes and AD5M-specific hardening](KLIPPER.md#the-timer-too-close-problem)). The reproducer from [issue #40](https://github.com/DrA1ex/ff5m/issues/40) was marked fixed in 1.4.2 Beta 3. Avoiding these infill patterns is no longer the recommended workaround.
 
-Some units experience this more often because of defective components (like toolhead electronics). In that case, the only fixes are replacing the toolhead board or the motherboard, and even that is not guaranteed to help.   
+If you see the error on an older Forge-X version, update first. The stock firmware version does not matter for this error: the MCU firmware is the same in all supported versions ([Compatibility](COMPATIBILITY.md)).
 
-“Timer Too Close” or MCU errors occur due to:
-- **Resource Exhaustion**: High memory or CPU usage, often from running resource-intensive features like Spoolman, or KAMP with “exclude objects” in the slicer.
-- **MCU Issues**: Internal sensor read/write issues or loose wiring.
-- **Overheating**: Malfunctioning driver fan on the motherboard.
-- **Complex G-Code**: Features like Fuzzy Skin or advanced infill patterns (e.g., Gyroid) can significantly increase resource usage, potentially causing indirect errors.
+**If the error still happens on 1.4.2 or newer**, the cause is something else. Typical causes:
+- **MCU or hardware issues**: loose wiring (especially the toolhead), internal sensor read or write problems, or a malfunctioning driver fan on the motherboard. Some units have defective components (such as the toolhead electronics), and then the only fixes are replacing the toolhead board or the motherboard, and even that is not guaranteed to help.
+- **Resource exhaustion**: high memory or CPU usage, often from resource-intensive features such as Spoolman, or KAMP with “exclude objects” in the slicer. The mod (especially Moonraker) adds some overhead, which matters on a printer that is already close to its limits.
 
-**Solutions**:
-- **Check Memory Usage**: Run the `MEM` macro after boot to monitor memory consumption. Aim for usage below 75–80%.
-- **Enable `tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration, which can reduce MCU load and lower the error rate.
-- **Reduce Resource Usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode for lower resource usage (Feather typically needs around a tenth of the memory of the Stock screen).
-- **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error: the MCU firmware is the same in all supported versions ([Compatibility](COMPATIBILITY.md)).
-- **Check Hardware**: Inspect and reattach wiring, especially for the toolhead. Verify the driver fan is operational by removing the printer’s back plate.
-- **Optimize G-Code**: Avoid complex infill patterns like Gyroid and Fuzzy Skin option if errors persist. Test simpler infills or print single objects to isolate issues.
+**What to check:**
+- **Hardware**: Reattach the wiring, especially for the toolhead. Verify that the driver fan works by removing the printer’s back plate.
+- **Memory usage**: Run the `MEM` macro after boot and while reproducing the problem. Aim for usage below 75–80%.
+- **`tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration for E0011 and E0017 and can lower the error rate.
+- **Resource usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode (Feather typically needs around a tenth of the memory of the Stock screen).
+- **Isolate the print**: Only if the error persists, try a simpler infill or print a single object to see whether a particular file causes it.
 
 ### How can I reduce memory usage on my printer?
 To reduce memory usage:
