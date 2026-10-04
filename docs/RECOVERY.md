@@ -185,7 +185,7 @@ cd /mnt/usb
 
 # 2. Copy the image to a temporary folder.
 # You can flash any other firmware image using this method.
-# For example, here we run the Forge-X Recovery
+# For example, this runs the Forge-X Recovery
 mkdir -p /data/tmp
 cp ./Adventurer5M-3.x.x-2.2.3-recovery-full.tgz /data/tmp/
 

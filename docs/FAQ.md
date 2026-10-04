@@ -70,7 +70,7 @@ Forge-X is built for one printer family, so each decision can be based on its re
 ### Why doesn't Forge-X use Klipper 0.13?
 The AD5M is an older printer with older hardware. Klipper 0.13 is a good release, but you should know why you want it. For most tasks, the Klipper that FlashForge ships, together with the fixes and features that Forge-X backports from newer Klipper, is enough. Staying on it also means the MCU firmware is not reflashed and uninstall stays simple.
 
-At the moment there is no need for a full Klipper 0.13. If a real need appears, Forge-X can move to it. If you see one, tell us in the [Telegram group](https://t.me/+ihE2Ry8kBNkwYzhi) or on [Discord](https://discord.gg/K7MH4hAfeX).
+At the moment there is no need for a full Klipper 0.13. If a real need appears, Forge-X can move to it. If you see one, tell the project in the [Telegram group](https://t.me/+ihE2Ry8kBNkwYzhi) or on [Discord](https://discord.gg/K7MH4hAfeX).
 
 Backported items include the `Timer too close` starvation fix, multi-MCU homing fixes, Adaptive Pressure Advance (so recent OrcaSlicer adaptive PA profiles can be used), and fixes for buttons, heaters, servos, and input shaper calibration. The full list, with upstream commit links, is in [Klipper fixes and AD5M-specific hardening](KLIPPER.md).
 
@@ -94,7 +94,7 @@ Forge-X releases contain changes to Forge-X itself: fixes, features, reviewed Kl
 - **Fluidd, Mainsail, and Guppy Screen** have their own update entries and update independently, so a new web interface version does not need a new Forge-X release.
 
 ### Is Forge-X free?
-Yes. Forge-X is free to use, including for commercial use of a printer. Forge-X itself and its Klipper components are under the GPL-3.0 license, and the native binary components have a separate free-to-use [license](../LICENSE-BINARIES.md) (see [License](../README.md#license)). Donations are optional; see [Support Forge-X](../README.md#support-forge-x).
+Yes. Forge-X is free to use, including for commercial use of a printer. Forge-X itself and its Klipper components are under the GPL-3.0 license, and the native binary components have a separate free-to-use [license](../LICENSE-BINARIES.md). Donations are optional; see [Support Forge-X](../README.md#support-forge-x).
 
 ### Where can I get help?
 Read this FAQ and the documentation first. If that does not solve the problem, ask in the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or in the [Discord server](https://discord.gg/K7MH4hAfeX) (Forums → mods-and-projects → Forge-X). Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are sure it is a bug.
