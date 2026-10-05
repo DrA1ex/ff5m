@@ -87,7 +87,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`bed_mesh_validation`**: Enables bed mesh validation protection if set to `1`.  
 
-- **`bed_mesh_validation_action`**: On a mismatch, cancel the print (`CANCEL`, default), generate a new mesh (`RECALIBRATE`), or apply a temporary height correction (`Z_OFFSET`). Height correction requires a uniform shift (spread below the validation tolerance) and an offset within the Live Z safety limit; otherwise the print is canceled. Shown when validation is enabled.
+- **`bed_mesh_validation_action`**: On a mismatch, cancel the print (`CANCEL`, default) or generate a new mesh (`RECALIBRATE`). With `Z_OFFSET`, apply a temporary height correction whenever the signed average shift exceeds 0.05 mm in magnitude, even within the validation tolerance. Height correction requires a uniform shift (spread below the validation tolerance) and an offset within the Live Z safety limit; otherwise the print is canceled. Shown when validation is enabled.
 
 - **`bed_mesh_validation_z_offset_mode`**: `ADJUST` (default) adds the correction to the current Z-offset; `REPLACE` uses the correction as the complete offset. Shown only for the `Z_OFFSET` action. The correction is never saved, and Z-offset changes are not saved while it is active. See [Printing](PRINTING.md#bed-mesh-validation).
 

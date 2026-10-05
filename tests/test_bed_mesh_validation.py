@@ -435,7 +435,7 @@ class ValidationTests(unittest.TestCase):
         harness.mod._reload()
         self.assertAlmostEqual(harness.mod.variables['z_offset'], 0.07)
 
-    def test_replace_mode_only_affects_failed_z_offset_action(self):
+    def test_replace_mode_only_affects_z_offset_action(self):
         for action in [0, 1, 2]:
             harness = self.harness(action=action, offset_mode=1, shifts=[0.05] * 5)
             harness.run('_CHECK_BED_MESH')
@@ -460,13 +460,47 @@ class ValidationTests(unittest.TestCase):
         self.assertAlmostEqual(harness.offset, 0.05)
         self.assertIsNone(harness.offset_before)
 
-    def test_within_tolerance_never_applies_action(self):
-        for action in [0, 1, 2]:
-            harness = self.harness(action=action, shifts=[0.05] * 5)
+    def test_within_tolerance_does_not_cancel_or_recalibrate(self):
+        for action in [0, 1]:
+            harness = self.harness(action=action, shifts=[0.1] * 5)
             harness.run('_CHECK_BED_MESH')
             self.assertAlmostEqual(harness.offset, 0.05)
             self.assertIsNone(harness.offset_before)
             self.assertEqual(harness.calibrated_profiles, [])
+
+    def test_correction_threshold_is_independent_of_validation_tolerance(self):
+        for mode in (0, 1):
+            for shift in (-.3, -.1, -.050001, -.05, -.049999, 0., .049999, .05, .050001, .1, .3):
+                with self.subTest(mode=mode, shift=shift):
+                    harness = self.harness(action=2, offset_mode=mode, offset=.2, shifts=[shift] * 5)
+                    harness.run('_CHECK_BED_MESH')
+                    applied = abs(shift) > .05
+                    expected = (shift if mode else .2 + shift) if applied else .2
+                    self.assertAlmostEqual(harness.offset, expected)
+                    self.assertEqual(harness.offset_before, .2 if applied else None)
+                    self.assertEqual(harness.calibrated_profiles, [])
+                    self.assertEqual(Path(harness.mod.filename).read_bytes(), harness.initial_file)
+                    harness.run('_RESET_BED_MESH_OFFSET')
+                    self.assertAlmostEqual(harness.offset, .2)
+                    self.assertIsNone(harness.offset_before)
+
+    def test_correction_threshold_uses_signed_mean_of_all_points(self):
+        for shifts, correction in (([.04, .06, .08, .1, .12], .08),
+                                   ([-.08, -.06, 0., .06, .08], None)):
+            with self.subTest(shifts=shifts):
+                harness = self.harness(action=2, shifts=shifts)
+                harness.run('_CHECK_BED_MESH')
+                self.assertAlmostEqual(harness.offset, .05 + (correction or 0.))
+                self.assertEqual(harness.offset_before, .05 if correction is not None else None)
+
+    def test_nonuniform_shift_within_point_tolerance_still_cancels(self):
+        for mode in (0, 1):
+            with self.subTest(mode=mode):
+                harness = self.harness(action=2, offset_mode=mode, shifts=[-.15, .15, 0., 0., 0.])
+                with self.assertRaisesRegex(Cancelled, 'shape changed'):
+                    harness.run('_CHECK_BED_MESH')
+                self.assertAlmostEqual(harness.offset, .05)
+                self.assertIsNone(harness.offset_before)
 
     def test_tolerance_boundary_and_small_mesh(self):
         harness = self.harness(action=2, shifts=[0.25] * 5, matrix=[[0.] * 3 for _ in range(3)])

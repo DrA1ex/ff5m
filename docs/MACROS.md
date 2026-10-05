@@ -35,7 +35,7 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
   - **Parameters**:
     - `TOLERANCE` (float, default: `printer.mod_params.variables.bed_mesh_validation_tolerance`): Maximum allowable deviation (mm).
     - `RETRACT` (int, default: 0): Whether to retract filament during probing (1 = yes, 0 = no).
-  - **Defaults**: Probes five edge points and uses the configured `safe_z` between probes. On a mismatch, follows `bed_mesh_validation_action`: cancellation (default), recalibration, or a temporary Z-offset correction. The correction can add to or replace the current offset using `bed_mesh_validation_z_offset_mode`. It is allowed only for a uniform shift within the Z-offset safety limit; a changed shape cancels the print. Recalibration uses the standard nozzle-preparation and leveling workflow.
+  - **Defaults**: Probes five edge points and uses the configured `safe_z` between probes. `bed_mesh_validation_action` selects cancellation (default) or recalibration on a mismatch, or a temporary Z-offset correction whenever the signed average shift exceeds 0.05 mm in magnitude, independently of the validation tolerance. The correction can add to or replace the current offset using `bed_mesh_validation_z_offset_mode`. It is allowed only for a uniform shift within the Z-offset safety limit; a changed shape cancels the print. Recalibration uses the standard nozzle-preparation and leveling workflow.
   - **Z-offset**: Measurement ignores the active G-code offset. A correction lasts until the print ends: print completion/cancellation, or the next print preparation, restores the offset that was active before validation. While it is active, `SET_GCODE_OFFSET` changes the current offset but does not save it.
 
 - **AUTO_FULL_BED_LEVEL**

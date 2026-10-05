@@ -221,11 +221,11 @@ This can catch scenarios such as the wrong plate, a missing plate, a stale mesh,
 
 Before the print begins, Forge-X probes five points and compares their measured heights with the active mesh. The probe reports physical toolhead heights independently of the active G-code offset and mesh; validation leaves both in place. The configured probe calibration offset is still accounted for. Travel between points uses `safe_z`.
 
-If any point reaches or exceeds the tolerance, the selected action runs:
+The selected action determines how validation handles these measurements:
 
-- **CANCEL** cancels the print and reports the average absolute difference.
-- **RECALIBRATE** uses the normal bed-leveling workflow, including nozzle preparation, cooling and load-cell tare, to create a new mesh under the same profile name. An existing `auto` mesh is backed up as `auto_prev` on non-Stock displays. Printing then resumes heating. It preserves the user offset and does not save configuration or restart Klipper.
-- **Z_OFFSET** applies the signed average of all five differences (`measured - expected`) only when their spread (`maximum - minimum`) is strictly below the selected tolerance. Otherwise, it cancels the print because an offset cannot correct a change in bed shape. It also cancels if the correction or resulting offset exceeds the Live Z safety limit (`z_offset_limit`, normally 2.0 mm). **ADJUST** adds it to the current offset; **REPLACE** uses it as the complete offset.
+- **CANCEL** cancels the print and reports the average absolute difference if any point reaches or exceeds the tolerance.
+- **RECALIBRATE** runs if any point reaches or exceeds the tolerance. It uses the normal bed-leveling workflow, including nozzle preparation, cooling and load-cell tare, to create a new mesh under the same profile name. An existing `auto` mesh is backed up as `auto_prev` on non-Stock displays. Printing then resumes heating. It preserves the user offset and does not save configuration or restart Klipper.
+- **Z_OFFSET** applies the signed average of all five differences (`measured - expected`) whenever its magnitude exceeds 0.05 mm, even if all points are within tolerance. A shift of 0.05 mm or less leaves the current offset unchanged. Their spread (`maximum - minimum`) must be strictly below the selected tolerance. Otherwise, it cancels the print because an offset cannot correct a change in bed shape. It also cancels if the correction or resulting offset exceeds the Live Z safety limit (`z_offset_limit`, normally 2.0 mm). **ADJUST** adds the correction to the current offset; **REPLACE** uses it as the complete offset.
 
 Choose ADJUST if the existing offset is a calibration adjustment that should remain active. Choose REPLACE if it compensates for an old mesh height error. With an existing offset of `+0.05` mm and a measured difference of `-0.20` mm, the result is `-0.15` mm in ADJUST or `-0.20` mm in REPLACE.
 
