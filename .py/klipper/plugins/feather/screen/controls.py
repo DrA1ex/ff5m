@@ -1017,17 +1017,17 @@ class FeatherControlsMixin:
         controls_enabled = self._live_z_adjust_allowed(now)
         state = "enabled" if controls_enabled else "disabled"
         commands += self.renderer.button(
-            "live_z.closer", 20, 322, 215, 88,
+            "live_z.closer", 20, 322, 260, 88,
             "CLOSER  -%.3f" % self.live_z_step,
             state=state, font="JetBrainsMono Bold 10pt")
         commands += self.renderer.button(
-            "live_z.farther", 245, 322, 215, 88,
+            "live_z.farther", 290, 322, 260, 88,
             "FARTHER  +%.3f" % self.live_z_step,
             state=state, font="JetBrainsMono Bold 10pt")
         commands += self.renderer.button(
-            "live_z.save", 470, 322, 220, 88, "SAVE",
+            "live_z.save", 560, 322, 130, 88, "SAVE",
             state="disabled" if save_locked else "enabled",
-            font="JetBrainsMono Bold 12pt")
+            font="JetBrainsMono Bold 10pt")
         commands += self._z_weight_gauge_commands(now)
 
         if self.live_z_dialog == "limit":

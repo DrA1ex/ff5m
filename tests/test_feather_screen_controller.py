@@ -785,6 +785,66 @@ class ControllerSafetyTest(unittest.TestCase):
             controller.renderer._buttons["global.abort"][:4],
             controller.renderer._buttons["live_z.save"][:4]))
 
+    def test_live_z_adjustment_labels_and_steps_fit_enabled_and_disabled_buttons(self):
+        from ui.font_metrics import get_font_metrics
+        from tests.visual_checks.composition_scenes import drawing_operations
+
+        controller = ScenarioController.__new__(ScenarioController)
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        controller.reactor = Reactor()
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller.print_stats = StatusObject({"state": "printing"})
+        controller.gcode_move = StatusObject({"homing_origin": (0., 0., -.057)})
+        controller.params = SimpleNamespace(variables={"z_offset": -.077})
+        controller.live_z_dialog = None
+        controller.z_adjust_warning_threshold = .3
+
+        for enabled in (True, False):
+            controller.toolhead = StatusObject({"homed_axes": "xyz" if enabled else ""})
+            for step in (.005, .010, .050):
+                with self.subTest(enabled=enabled, step=step):
+                    controller.live_z_step = step
+                    controller._render_live_z_offset()
+                    frame = capture.latest
+                    operations = drawing_operations(capture.batches[-1])
+                    control_bounds = []
+                    for label, sign, action in (
+                            ("CLOSER", "-", "live_z.closer"),
+                            ("FARTHER", "+", "live_z.farther"),
+                            ("SAVE", None, "live_z.save")):
+                        value = label if sign is None else "%s  %s%.3f" % (label, sign, step)
+                        matches = [op for op in operations
+                                   if op["type"] == "text" and op["value"] == value]
+                        self.assertEqual(len(matches), 1, "Expected a complete single-line label: " + value)
+                        text = matches[0]
+                        bounds = min((Bounds(op["x"], op["y"], op["width"], op["height"])
+                                      for op in operations if op["type"] == "fill"
+                                      and op["x"] <= text["x"] < op["x"] + op["width"]
+                                      and op["y"] <= text["y"] < op["y"] + op["height"]),
+                                     key=lambda item: item.width * item.height)
+                        width = controller.renderer.text_width(text["value"], text["font"])
+                        metric = get_font_metrics().metric(text["font"])
+                        self.assertLessEqual(width, text["max_width"])
+                        self.assertFalse(text["wrap"])
+                        self.assertGreaterEqual(text["x"] - width // 2, bounds.x)
+                        self.assertLessEqual(text["x"] + width // 2, bounds.right)
+                        self.assertGreaterEqual(text["y"] - metric.glyph_height // 2, bounds.y)
+                        self.assertLessEqual(text["y"] + metric.glyph_height // 2, bounds.bottom)
+                        self.assertEqual(frame.has_action(action), enabled if sign else True)
+                        control_bounds.append((bounds.x, bounds.y, bounds.width, bounds.height))
+                    gauge_label = frame.text("FORCE")
+                    gauge = min((shape.bounds for shape in frame.shapes
+                                 if shape.kind == "fill"
+                                 and shape.bounds.x <= gauge_label.x < shape.bounds.right
+                                 and shape.bounds.y <= gauge_label.y < shape.bounds.bottom),
+                                key=lambda item: item.width * item.height)
+                    for index, bounds in enumerate(control_bounds):
+                        self.assertFalse(UI.rectangles_overlap(
+                            bounds, (gauge.x, gauge.y, gauge.width, gauge.height)))
+                        for other in control_bounds[index + 1:]:
+                            self.assertFalse(UI.rectangles_overlap(bounds, other))
+
     def test_live_z_save_is_locked_while_mesh_compensation_is_active(self):
         from tests.test_bed_mesh_validation import Harness
 
