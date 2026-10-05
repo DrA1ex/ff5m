@@ -1,11 +1,45 @@
 # Code for reading and writing the Klipper config file
 #
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+#
+# Changes:
+# - Store the static config/settings status trees as immutable snapshots so
+#   gcode_macro can deepcopy a status without rebuilding the full config graph.
+#   The legacy snapshot/deepcopy contract is kept unchanged:
+#   https://github.com/Klipper3d/klipper/blob/v0.11.0/klippy/extras/gcode_macro.py
 import sys, os, glob, re, time, logging, configparser, io
 
 error = configparser.Error
+
+class FrozenStatusDict(dict):
+    """Immutable status mapping whose deepcopy is the same snapshot."""
+    def _immutable(self, *args, **kwargs):
+        raise TypeError("status snapshot is immutable")
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    def __copy__(self):
+        return self
+    def __deepcopy__(self, memo):
+        memo[id(self)] = self
+        return self
+
+def freeze_status(value):
+    if isinstance(value, dict):
+        return FrozenStatusDict(
+            (key, freeze_status(val)) for key, val in value.items())
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_status(val) for val in value)
+    if isinstance(value, set):
+        return frozenset(freeze_status(val) for val in value)
+    return value
 
 class sentinel:
     pass
@@ -311,14 +345,19 @@ class PrinterConfig:
     def deprecate(self, section, option, value=None, msg=None):
         self.deprecated[(section, option, value)] = msg
     def _build_status(self, config):
-        self.status_raw_config.clear()
+        raw_config = {}
         for section in config.get_prefix_sections(''):
-            self.status_raw_config[section.get_name()] = section_status = {}
+            raw_config[section.get_name()] = section_status = {}
             for option in section.get_prefix_options(''):
                 section_status[option] = section.get(option, note_valid=False)
-        self.status_settings = {}
+        settings = {}
         for (section, option), value in config.access_tracking.items():
-            self.status_settings.setdefault(section, {})[option] = value
+            settings.setdefault(section, {})[option] = value
+        # These trees are rebuilt only when config is loaded. Make them
+        # immutable so gcode_macro's deepcopy can safely reuse them instead of
+        # recreating hundreds of nested containers for a single setting read.
+        self.status_raw_config = freeze_status(raw_config)
+        self.status_settings = freeze_status(settings)
         self.status_warnings = []
         for (section, option, value), msg in self.deprecated.items():
             if value is None:

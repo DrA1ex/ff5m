@@ -8,6 +8,8 @@
 # Changes:
 # - Backported Klipper commit 50cb362: yield periodically while buffering so
 #   dense G-code cannot starve other reactor tasks.
+# - Backported Klipper commit d57fe439: freeze the long-lived startup object
+#   graph after klippy:ready so later generation-2 collections scan less data.
 # - Read optional lookahead tuning from mod_data/variables.cfg without
 #   modifying this repository-backed file at runtime.
 # - Python-only patch; no MCU firmware or host binary rebuild is required.
@@ -312,7 +314,7 @@ class ToolHead:
         gcode.register_command('M204', self.cmd_M204)
         # Load some default modules
         modules = ["gcode_move", "homing", "idle_timeout", "statistics",
-                   "manual_probe", "tuning_tower"]
+                   "manual_probe", "tuning_tower", "garbage_collection"]
         for module_name in modules:
             self.printer.load_object(config, module_name)
     # Print time tracking
