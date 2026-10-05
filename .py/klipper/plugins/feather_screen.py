@@ -358,7 +358,6 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._m73_start_expiry = 0.0
         self._m73_active = False
         self._last_time = None
-        self._last_print_controls_ready = None
         self._last_filename = None
         self._last_heat = None
         self.heat_return_page = ScreenPage.CONTROL_HOME
@@ -2378,7 +2377,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                         "", "Print cancelled" if state == "cancelled"
                         else "Print stopped")
                 elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
-                    self._show_page(self.page)
+                    self._update_print_controls()
             elif (eventtime >= self.pending_until
                   and not self._blocking_operation_active()):
                 if self.pending_action == "print.cancel.confirm":
@@ -2388,7 +2387,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     self.pending_until = eventtime + 30.0
                 elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                     self.pending_action = None
-                    self._show_page(self.page)
+                    self._update_print_controls()
 
     def _poll_usb_storage(self, eventtime):
         monitor = getattr(self, "usb_storage", None)

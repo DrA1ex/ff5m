@@ -53,6 +53,20 @@ def _render_gcode_preview(path, cancel=None):
 
 
 class PrintingPagesMixin:
+    def _print_control_values(self, eventtime):
+        return {
+            printing_ui.PrintingState.CONTROLS_READY: self._print_controls_ready(),
+            printing_ui.PrintingState.PENDING_ACTION: self.pending_action or "",
+            printing_ui.PrintingState.LIVE_Z_ALLOWED: self._live_z_adjust_allowed(eventtime),
+        }
+
+    def _update_print_controls(self):
+        if self._page_paint_allowed(ScreenPage.PRINTING, ScreenPage.PAUSED):
+            commands = printing_ui.update(
+                self.renderer, self._print_control_values(self.reactor.monotonic()))
+            if commands:
+                self.renderer.send(commands)
+
     def _timelapse_wait_text(self):
         if getattr(self, "pending_action", None) == "print.cancel.confirm":
             return "CANCELLING PRINT", "PLEASE WAIT WHILE THE PRINT STOPS"
@@ -125,7 +139,6 @@ class PrintingPagesMixin:
 
     def _render_print_page(self):
         paused = self.page_for_print_state() == ScreenPage.PAUSED
-        controls_ready = self._print_controls_ready()
         eventtime = self.reactor.monotonic()
         print_stats = getattr(self, "print_stats", None)
         stats = (print_stats.get_status(eventtime)
@@ -140,11 +153,6 @@ class PrintingPagesMixin:
             printing_ui.PrintingState.STATUS:
                 self._display_status_text(eventtime),
             printing_ui.PrintingState.PAUSED: paused,
-            printing_ui.PrintingState.CONTROLS_READY: controls_ready,
-            printing_ui.PrintingState.PENDING_ACTION:
-                self.pending_action or "",
-            printing_ui.PrintingState.LIVE_Z_ALLOWED:
-                self._live_z_adjust_allowed(eventtime),
             printing_ui.PrintingState.PREVIEW_STATUS:
                 "none" if preview is None else preview["status"],
         }
@@ -153,6 +161,7 @@ class PrintingPagesMixin:
         else:
             progress, progress_values = self._current_print_progress_values(
                 eventtime, stats)
+        values.update(self._print_control_values(eventtime))
         values.update(_progress_state(progress, progress_values))
         commands += printing_ui.render(
             self.renderer, values, reuse_layout=True)
@@ -171,7 +180,6 @@ class PrintingPagesMixin:
             preview["painted_render_key"] = preview.get("render_key")
             preview["redraw_after"] = (
                 eventtime + GCODE_PREVIEW_REDRAW_PERIOD)
-        self._last_print_controls_ready = controls_ready
         self._last_progress = progress
         self._last_time = progress_values
 
@@ -480,16 +488,12 @@ class PrintingPagesMixin:
     def _update_print_progress(self, eventtime):
         if self.page not in (ScreenPage.PRINTING, ScreenPage.PAUSED):
             return
-        controls_ready = self._print_controls_ready()
-        if controls_ready != getattr(
-                self, "_last_print_controls_ready", controls_ready):
-            self._render_print_page()
-            return
         stats = self.print_stats.get_status(eventtime)
         progress, values = self._current_print_progress_values(eventtime, stats)
-        commands = []
+        commands = printing_ui.update(
+            self.renderer, self._print_control_values(eventtime))
         if progress != self._last_progress or values != self._last_time:
-            commands = printing_ui.update_progress(
+            commands += printing_ui.update_progress(
                 self.renderer, _progress_state(progress, values))
 
         preview = getattr(self, "_gcode_preview", None)

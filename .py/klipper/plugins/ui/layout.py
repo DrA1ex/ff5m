@@ -2976,25 +2976,43 @@ class DeclarativePage(Tree):
         return self._render_updates(renderer)
 
     def _render_updates(self, renderer):
-        if self.root._actions_dirty or self.root._dirty >= Dirty.LAYOUT:
+        refresh_input = self.root._actions_dirty
+        replay_input = (refresh_input and hasattr(renderer, "rebuild_page_input")
+                        and all(type(node).interaction_commands is not Node.interaction_commands
+                                or not any(name in node.__dict__ for name in ("action", "actions", "buttons"))
+                                for node in self.root.walk()))
+        if self.root._dirty >= Dirty.LAYOUT or (refresh_input and not replay_input):
             prepared_layout = None
-            if not self.root._actions_dirty:
+            if not refresh_input:
                 partial, prepared_layout = self._render_layout_regions(renderer)
                 if partial is not None:
                     return partial
             commands = renderer.redraw_page()
             commands.extend(self._render_full(
-                renderer, arrange=True, refresh_actions=True,
+                renderer, arrange=True, refresh_actions=refresh_input,
                 prepared_layout=prepared_layout))
             return commands
+        if refresh_input:
+            self._refresh_actions()
         roots = self._dirty_roots()
         commands = []
-        for root in roots:
-            commands.extend(self._background_repair(renderer, root))
-            commands.extend(
-                root.render_dirty(
-                    renderer, self._paint_state(root), self.layout))
-            root.clear_dirty()
+        try:
+            for root in roots:
+                commands.extend(self._background_repair(renderer, root))
+                commands.extend(
+                    root.render_dirty(
+                        renderer, self._paint_state(root), self.layout))
+            if replay_input:
+                # Typer removes hitboxes per layer. Replay input in paint order
+                # while keeping unchanged pixels and geometry intact.
+                with renderer.rebuild_page_input() as input_commands:
+                    self.root.render_interactions(renderer, self.state, self.layout)
+                commands.extend(input_commands)
+        except Exception:
+            # A partially prepared input layer needs a complete retry.
+            if replay_input:
+                self.root.invalidate_layout()
+            raise
         self.root.clear_dirty()
         self.state.clear_changes()
         return commands

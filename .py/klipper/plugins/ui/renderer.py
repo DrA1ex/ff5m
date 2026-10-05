@@ -1640,6 +1640,22 @@ class FeatherRenderer:
                 commands.append(self.action_hitbox(action, 648, 7, 132, 46))
         return commands
 
+    @contextmanager
+    def rebuild_page_input(self):
+        """Replace page input and feedback without repainting unchanged pixels."""
+        self.invalidate_input_generation()
+        self.redraw_page_hitboxes()
+        commands = []
+        yield commands
+        active = {action for action, _spec in self._hitboxes + self._overlay_hitboxes}
+        self._buttons = {action: spec for action, spec in self._buttons.items() if action in active}
+        self._toggles = {action: spec for action, spec in self._toggles.items() if action in active}
+        self._pressed_buttons.intersection_update(active)
+        # Paint commands may contain old IDs. Final replay replaces all of
+        # them, including retained overlay regions, with this generation.
+        commands.extend(self._input_commands())
+        self.prioritize_next_batch("state")
+
     def begin_page(self, title, back=False):
         if not self._prepare_surface():
             return []

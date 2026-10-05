@@ -94,7 +94,7 @@ class PrintCancelPagesMixin:
         if action == "print.pause" and stats == "printing":
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
-            self._render_print_page()
+            self._update_print_controls()
             try:
                 self._run_script("PAUSE")
             except Exception:
@@ -104,7 +104,7 @@ class PrintCancelPagesMixin:
         elif action == "print.resume" and stats == "paused":
             self.pending_action = action
             self.pending_until = self.reactor.monotonic() + 10.0
-            self._render_print_page()
+            self._update_print_controls()
             try:
                 self._run_blocking_gcode("RESUME", "RESUMING PRINT...")
             except Exception:

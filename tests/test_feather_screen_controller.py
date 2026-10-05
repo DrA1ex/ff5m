@@ -2470,6 +2470,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.renderer = FEATHER.FeatherRenderer()
         batches = RenderCapture(controller.renderer).batches
         controller.page = FEATHER.ScreenPage.PRINTING
+        controller.pending_action = None
+        controller._live_z_adjust_allowed = lambda eventtime: False
         controller._last_progress = None
         controller._progress_floor = 0.0
         controller._last_time = None

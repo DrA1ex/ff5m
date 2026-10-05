@@ -30,7 +30,7 @@ from ui.font_metrics import get_font_metrics  # noqa: E402
 
 from tests.feather_timelapse_test_helper import make_timelapse_state
 from tests.test_feather_screen import Reactor, StatusObject  # noqa: E402
-from tests.feather_render_test_helper import RenderCapture  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture, full_render_queue  # noqa: E402
 
 
 class ScenarioController(FEATHER.FeatherScreen):
@@ -297,22 +297,26 @@ class PrintStatusUpdateTest(unittest.TestCase):
         self.assertNotIn("ELAPSED", drawing)
         self.assertNotIn("PREVIEW", drawing)
 
-    def test_long_status_reflows_to_match_a_fresh_full_draw(self):
+    def test_status_reserves_two_lines_without_moving_other_content(self):
         printing_ui.render(self.renderer, self.values, reuse_layout=True)
-        original = self.page.rect(printing_ui.PrintingRef.STATUS)
+        original = {key: self.page.rect(key) for key in self.page.layout.keys()}
         status = "PRINT -> WAITING FOR THE BED AND NOZZLE TO REACH THE REQUESTED TEMPERATURE"
-        for value in (status, "PRINT -> HOMING"):
+        for value in (status, "PRINT -> HOMING", ""):
             commands = printing_ui.update(self.renderer, {printing_ui.PrintingState.STATUS: value})
             self.values[printing_ui.PrintingState.STATUS] = value
             fresh = PRINTING_PAGE.create_page()
             fresh.draw(FEATHER.FeatherRenderer(), self.values)
             for key in self.page.layout.keys():
                 self.assertEqual(self.page.rect(key), fresh.rect(key))
+                self.assertEqual(self.page.rect(key), original[key])
             self.assertTrue(commands)
-            if value == status:
-                self.assertGreater(self.page.rect(printing_ui.PrintingRef.STATUS).height, original.height)
-            else:
-                self.assertEqual(self.page.rect(printing_ui.PrintingRef.STATUS), original)
+            drawing = "\n".join(commands)
+            self.assertNotIn("--batch fill -p 0 0 -s 800 442", drawing)
+            for text in ("PROGRESS", "ELAPSED", "PREVIEW"):
+                self.assertNotIn(text, drawing)
+        status_bounds = self.page.rect(printing_ui.PrintingRef.STATUS)
+        font = self.page.node(printing_ui.PrintingRef.STATUS).font
+        self.assertGreaterEqual(status_bounds.height, 2 * get_font_metrics().metric(font).glyph_height)
 
 
 class PrintPreviewLayoutTest(unittest.TestCase):
@@ -451,6 +455,50 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         self.assertIn('6.25 MM', drawing)
         for text in ('00:01:40', '00:05:00', '5 / 90', 'PROGRESS'):
             self.assertNotIn(text, drawing)
+
+    def test_ready_controls_and_live_z_update_without_restarting_preview(self):
+        controller = _controller("/data/missing.gcode", DeferredPreviewWorker())
+        controller.print_state = PrintState.PREPARING
+        controller._live_z_adjust_allowed = lambda _eventtime: False
+        controller._render_print_page()
+        controller.reactor.flush_callbacks()
+        preview = controller._gcode_preview
+        controller.batches.clear()
+        controller.print_state = PrintState.PRINTING
+        controller._live_z_adjust_allowed = lambda _eventtime: True
+        with mock.patch.object(controller, "_render_print_page", side_effect=AssertionError("full page paint")):
+            controller._update_print_progress(101)
+        self.assertIs(controller._gcode_preview, preview)
+        self.assertFalse(preview["cancel"].is_set())
+        self.assertEqual(len(controller.file_worker.submitted), 1)
+        drawing = "\n".join(controller.batches[0])
+        for text in ("PAUSE", "FILAMENT", "Z ADJUST"):
+            self.assertIn(text, drawing)
+        for text in ("PREVIEW", "missing.gcode", "ELAPSED", "CANCEL"):
+            self.assertNotIn(text, drawing)
+        actions = {region.action for region in controller.renderer.hitboxes}
+        self.assertTrue({"print.pause", "print.filament", "print.z", "print.cancel"} <= actions)
+
+    def test_pending_button_refresh_and_queue_refusal_preserve_visible_input(self):
+        controller = _controller("/data/missing.gcode")
+        controller._render_print_page()
+        controller.reactor.flush_callbacks()
+        generation = controller.renderer.generation
+        controller.pending_action = "print.pause"
+        with full_render_queue(controller.renderer):
+            controller._update_print_controls()
+        self.assertEqual(controller.renderer.generation, generation)
+        self.assertTrue(any(region.action == "print.pause" for region in controller.renderer.hitboxes))
+        controller._render_print_page()
+        self.assertFalse(any(region.action == "print.pause" for region in controller.renderer.hitboxes))
+        controller.batches.clear()
+        controller.pending_action = None
+        controller._update_print_controls()
+        drawing = "\n".join(controller.batches[0])
+        self.assertIn("PAUSE", drawing)
+        for text in ("PREVIEW", "ELAPSED", "CANCEL", "FILAMENT", "Z ADJUST"):
+            self.assertNotIn(text, drawing)
+        self.assertTrue(any(region.action == "print.pause" for region in controller.renderer.hitboxes))
 
     def test_progress_change_updates_track_and_percentage(self):
         controller = _controller("/data/missing.gcode")

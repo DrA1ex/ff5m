@@ -109,7 +109,7 @@ def _details(compact=False):
             max_height=46,
             wrap=True,
             truncate=True,
-        ).style(UiStyle.TEXT).height("content").ref(PrintingRef.STATUS),
+        ).style(UiStyle.TEXT).height(46).ref(PrintingRef.STATUS),
         gap=8,
     ).padding(top=4).height("content")
 

@@ -244,6 +244,7 @@ def base_controller(state="idle"):
     controller.toast_message = ""
     controller._toast = lambda message: None
     controller._render_print_page = lambda: None
+    controller._update_print_controls = lambda: None
     controller._render_cancel_confirm = lambda: None
     controller.file_page = 0
     controller.file_view = "list"
@@ -2516,6 +2517,8 @@ class PrintWorkflowTest(unittest.TestCase):
             controller.print_stats.status["state"] = "paused"
 
         controller._show_page = show
+        controller._update_print_controls = lambda: pages.append(
+            (controller.page, controller.pending_action))
         controller._run_script = pause
         controller._handle_print_action("print.pause")
 
@@ -2539,6 +2542,8 @@ class PrintWorkflowTest(unittest.TestCase):
                 state="printing", print_duration=1.0)
 
         controller._show_page = show
+        controller._update_print_controls = lambda: pages.append(
+            (controller.page, controller.pending_action))
         controller._run_blocking_gcode = resume
         controller._handle_print_action("print.resume")
 
