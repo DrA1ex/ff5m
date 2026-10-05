@@ -8,8 +8,7 @@ import contextlib
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
+import unittest
 
 from tests.gcode_macro_harness import render_macro
 
@@ -52,7 +51,7 @@ class Printer:
         return SimpleNamespace(mutex=contextlib.nullcontext)
 
     def invoke_shutdown(self, message):
-        pytest.fail(message)
+        raise AssertionError(message)
 
 
 class Toolhead:
@@ -125,111 +124,118 @@ class HomingHarness:
         return self.move.get_status()
 
 
-def assert_preserved(before, after):
-    for field in ("homing_origin", "absolute_coordinates", "absolute_extrude",
-                  "speed", "speed_factor", "extrude_factor"):
-        assert after[field] == before[field]
-    assert after["gcode_position"].e == before["gcode_position"].e
+class GcodeOriginTest(unittest.TestCase):
+    def assert_preserved(self, before, after):
+        for field in ("homing_origin", "absolute_coordinates", "absolute_extrude",
+                      "speed", "speed_factor", "extrude_factor"):
+            self.assertEqual(after[field], before[field])
+        self.assertEqual(after["gcode_position"].e, before["gcode_position"].e)
 
+    def test_reset_clears_xyz_g92_without_motion_and_preserves_modal_state(self):
+        cases = ["RESET_GCODE_ORIGIN", "G28", "G28 X Y Z"]
+        for command in cases:
+            with self.subTest(command=command):
+                harness = HomingHarness()
+                before = harness.shifted_state()
+                harness.run(command)
+                after = harness.move.get_status()
+                self.assertEqual(after["gcode_position"][:3], (119., 128., 17.))
+                self.assert_preserved(before, after)
+                self.assertEqual(harness.toolhead.moves, [])
+                self.assertEqual(harness.toolhead.homes, [])
+                harness.run(command)
+                self.assertEqual(harness.move.get_status(), after)
 
-@pytest.mark.parametrize("command", ["RESET_GCODE_ORIGIN", "G28", "G28 X Y Z"])
-def test_reset_clears_xyz_g92_without_motion_and_preserves_modal_state(command):
-    harness = HomingHarness()
-    before = harness.shifted_state()
-    harness.run(command)
-    after = harness.move.get_status()
-    assert after["gcode_position"][:3] == (119., 128., 17.)
-    assert_preserved(before, after)
-    assert harness.toolhead.moves == []
-    assert harness.toolhead.homes == []
-    harness.run(command)
-    assert harness.move.get_status() == after
+    def test_partial_reset_preserves_unselected_axis_shifts(self):
+        cases = [
+            ("RESET_GCODE_ORIGIN AXES=xz", (119., 20., 17.)),
+            ("G28 X", (119., 20., 30.)),
+            ("G28 Y", (10., 128., 30.)),
+            ("G28 Z", (10., 20., 17.)),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command, expected=expected):
+                harness = HomingHarness()
+                before = harness.shifted_state()
+                harness.run(command)
+                after = harness.move.get_status()
+                self.assertEqual(after["gcode_position"][:3], expected)
+                self.assert_preserved(before, after)
+                self.assertEqual(harness.toolhead.homes, harness.toolhead.moves)
+                self.assertEqual(harness.toolhead.moves, [])
 
+    def test_invalid_axis_selection_fails_without_changing_coordinates(self):
+        cases = ['""', "E", "XYZE", "XX", "X,Y", '"X Y"']
+        for axes in cases:
+            with self.subTest(axes=axes):
+                harness = HomingHarness()
+                before = harness.shifted_state()
+                with self.assertRaisesRegex(GCODE.CommandError, "AXES must"):
+                    harness.run("RESET_GCODE_ORIGIN AXES=" + axes)
+                self.assertEqual(harness.move.get_status(), before)
+                self.assertEqual(harness.toolhead.homes, harness.toolhead.moves)
+                self.assertEqual(harness.toolhead.moves, [])
 
-@pytest.mark.parametrize("command, expected", [
-    ("RESET_GCODE_ORIGIN AXES=xz", (119., 20., 17.)),
-    ("G28 X", (119., 20., 30.)),
-    ("G28 Y", (10., 128., 30.)),
-    ("G28 Z", (10., 20., 17.)),
-])
-def test_partial_reset_preserves_unselected_axis_shifts(command, expected):
-    harness = HomingHarness()
-    before = harness.shifted_state()
-    harness.run(command)
-    after = harness.move.get_status()
-    assert after["gcode_position"][:3] == expected
-    assert_preserved(before, after)
-    assert harness.toolhead.homes == harness.toolhead.moves == []
+    def test_actual_homing_and_skipped_homing_have_the_same_origin_semantics(self):
+        harness = HomingHarness("")
+        before = harness.shifted_state()
+        harness.run("G28")
+        after = harness.move.get_status()
+        self.assertEqual(harness.toolhead.homes, ["Z", "X", "Y"])
+        self.assertEqual(after["gcode_position"][:3], (109., 108., 217.))
+        self.assert_preserved(before, after)
+        self.assertEqual(harness.toolhead.homed_axes, "xyz")
+        harness.run("G28")
+        self.assertEqual(harness.move.get_status(), after)
+        self.assertEqual(harness.toolhead.homes, ["Z", "X", "Y"])
 
+    def test_partial_homing_also_resets_axes_homed_for_clearance(self):
+        cases = [
+            ("G28 Y", 0., ["Z", "X", "Y"], (109., 108., 217.)),
+            ("G28 X", 0., ["Z", "X"], (109., 20., 217.)),
+            ("G28 Y", 20., ["X", "Y"], (109., 108., 30.)),
+        ]
+        for command, z, homes, expected in cases:
+            with self.subTest(command=command, z=z, homes=homes, expected=expected):
+                harness = HomingHarness("")
+                harness.toolhead.position[2] = z
+                harness.printer.send_event("toolhead:set_position")
+                before = harness.shifted_state()
+                harness.run(command)
+                after = harness.move.get_status()
+                self.assertEqual(harness.toolhead.homes, homes)
+                self.assertEqual(after["gcode_position"][:3], expected)
+                self.assert_preserved(before, after)
 
-@pytest.mark.parametrize("axes", ['""', "E", "XYZE", "XX", "X,Y", '"X Y"'])
-def test_invalid_axis_selection_fails_without_changing_coordinates(axes):
-    harness = HomingHarness()
-    before = harness.shifted_state()
-    with pytest.raises(GCODE.CommandError, match="AXES must"):
-        harness.run("RESET_GCODE_ORIGIN AXES=" + axes)
-    assert harness.move.get_status() == before
-    assert harness.toolhead.homes == harness.toolhead.moves == []
-
-
-def test_actual_homing_and_skipped_homing_have_the_same_origin_semantics():
-    harness = HomingHarness("")
-    before = harness.shifted_state()
-    harness.run("G28")
-    after = harness.move.get_status()
-    assert harness.toolhead.homes == ["Z", "X", "Y"]
-    assert after["gcode_position"][:3] == (109., 108., 217.)
-    assert_preserved(before, after)
-    assert harness.toolhead.homed_axes == "xyz"
-    harness.run("G28")
-    assert harness.move.get_status() == after
-    assert harness.toolhead.homes == ["Z", "X", "Y"]
-
-
-@pytest.mark.parametrize("command, z, homes, expected", [
-    ("G28 Y", 0., ["Z", "X", "Y"], (109., 108., 217.)),
-    ("G28 X", 0., ["Z", "X"], (109., 20., 217.)),
-    ("G28 Y", 20., ["X", "Y"], (109., 108., 30.)),
-])
-def test_partial_homing_also_resets_axes_homed_for_clearance(command, z, homes, expected):
-    harness = HomingHarness("")
-    harness.toolhead.position[2] = z
-    harness.printer.send_event("toolhead:set_position")
-    before = harness.shifted_state()
-    harness.run(command)
-    after = harness.move.get_status()
-    assert harness.toolhead.homes == homes
-    assert after["gcode_position"][:3] == expected
-    assert_preserved(before, after)
-
-
-def test_partial_homing_preserves_shifts_on_other_already_homed_axes():
-    harness = HomingHarness("xz")
-    before = harness.shifted_state()
-    harness.run("G28 Y")
-    after = harness.move.get_status()
-    assert harness.toolhead.homes == ["Y"]
-    assert after["gcode_position"][:3] == (10., 108., 30.)
-    assert_preserved(before, after)
-
-
-def test_reset_uses_current_transform_position_without_claiming_axes_homed():
-    harness = HomingHarness("")
-    harness.shifted_state()
-    harness.move.set_move_transform(SimpleNamespace(
-        get_position=lambda: [125., 135., 25., 40.],
-        move=lambda *args: pytest.fail("origin reset must not move")))
-    harness.run("RESET_GCODE_ORIGIN")
-    assert harness.move.get_status()["gcode_position"][:3] == (124., 133., 22.)
-    assert harness.toolhead.homed_axes == ""
-
-
-def test_failed_homing_does_not_run_the_final_origin_reset():
-    harness = HomingHarness("xz")
-    before = harness.shifted_state()
-    harness.toolhead.fail_axis = "Y"
-    with pytest.raises(GCODE.CommandError, match="Homing failed on Y"):
+    def test_partial_homing_preserves_shifts_on_other_already_homed_axes(self):
+        harness = HomingHarness("xz")
+        before = harness.shifted_state()
         harness.run("G28 Y")
-    assert harness.move.get_status() == before
-    assert harness.toolhead.homed_axes == "xz"
-    assert harness.toolhead.homes == []
+        after = harness.move.get_status()
+        self.assertEqual(harness.toolhead.homes, ["Y"])
+        self.assertEqual(after["gcode_position"][:3], (10., 108., 30.))
+        self.assert_preserved(before, after)
+
+    def test_reset_uses_current_transform_position_without_claiming_axes_homed(self):
+        harness = HomingHarness("")
+        harness.shifted_state()
+        harness.move.set_move_transform(SimpleNamespace(
+            get_position=lambda: [125., 135., 25., 40.],
+            move=lambda *args: self.fail("origin reset must not move")))
+        harness.run("RESET_GCODE_ORIGIN")
+        self.assertEqual(harness.move.get_status()["gcode_position"][:3], (124., 133., 22.))
+        self.assertEqual(harness.toolhead.homed_axes, "")
+
+    def test_failed_homing_does_not_run_the_final_origin_reset(self):
+        harness = HomingHarness("xz")
+        before = harness.shifted_state()
+        harness.toolhead.fail_axis = "Y"
+        with self.assertRaisesRegex(GCODE.CommandError, "Homing failed on Y"):
+            harness.run("G28 Y")
+        self.assertEqual(harness.move.get_status(), before)
+        self.assertEqual(harness.toolhead.homed_axes, "xz")
+        self.assertEqual(harness.toolhead.homes, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

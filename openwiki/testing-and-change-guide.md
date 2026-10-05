@@ -11,7 +11,7 @@ clears it even when display restoration fails. Write-error regressions check
 that optional plugin preparation cannot block the core config batch or stock
 display restoration. A repeated boot with unchanged packages must not write to
 the filesystem, and simulated power loss after every switch step must keep modules
-present and converge. Focused plugin checks use `.venv/bin/python -m pytest`. See [User Klipper plugins](workflows/user-klipper-plugins.md).
+present and converge. Focused plugin checks use `.venv/bin/python -m unittest tests.test_klipper_plugins`. See [User Klipper plugins](workflows/user-klipper-plugins.md).
 
 The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
 
@@ -43,7 +43,7 @@ and restoration of the current offset. These host tests do not simulate load-cel
 accuracy or mechanics.
 
 ```bash
-.venv/bin/python -m pytest tests/test_bed_mesh_validation.py tests/test_gcode_macros.py tests/test_resurrection.py tests/test_feather_screen.py tests/test_feather_screen_controller.py tests/test_feather_workflows.py tests/test_operation_context.py
+.venv/bin/python -m unittest tests.test_bed_mesh_validation tests.test_gcode_macros tests.test_resurrection tests.test_feather_screen tests.test_feather_screen_controller tests.test_feather_workflows tests.test_operation_context
 ```
 
 ## Interactive renderer benchmarks

@@ -148,14 +148,12 @@ NETD_CHANGED=0
 NETD_PID=""
 EXPECTED_NETD="$(pwd)/mod/.bin/exec/netd"
 
-# These package trees are fully managed by the project. Remove Python sources
+# These source trees are fully managed by the project. Remove Python sources
 # absent from the incoming archive before init-main reload cleans their matching
-# Klipper extras symlinks.
+# Klipper symlinks. User packages live separately under mod_data/plugins.
 for package in \
-    ".py/klipper/plugins/ui" \
-    ".py/klipper/plugins/ff5m_ui" \
-    ".py/klipper/plugins/feather" \
-    ".py/klipper/plugins/feather_ui_test"; do
+    ".py/klipper/plugins" \
+    ".py/klipper/patches"; do
     SRC_PACKAGE="./.sync/${package}"
     DEST_PACKAGE="./mod/${package}"
     if [ ! -d "$SRC_PACKAGE" ] || [ ! -d "$DEST_PACKAGE" ]; then
