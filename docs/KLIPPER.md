@@ -10,6 +10,7 @@ Forge-X keeps the Klipper that FlashForge ships with the AD5M (0.11 generation) 
 - Correct G-code file positions for files with non-ASCII characters, such as non-English object names.
 - Adaptive Pressure Advance (dynamic pressure advance backported from Klipper 0.13), so the adaptive PA profiles from recent OrcaSlicer versions can be used.
 - A faster input shaper calculation and extra diagnostic logs for homing and probing.
+- Less garbage-collector work after startup and fewer configuration copies while rendering macros.
 
 **What you need to do:** nothing for most fixes, they are applied automatically. To enable the timing tuning for E0011 / E0017, run:
 
@@ -70,10 +71,11 @@ Each row is one topic. "Based on" is the upstream Klipper commit, where there is
 | Shell commands | `gcode_shell_command.py` is added (it is not in the stock firmware). Besides synchronous commands it has background, queued, streaming, and daemon modes, timeouts, and clean shutdown. | Forge-X | [`8c4aea3`](https://github.com/DrA1ex/klipper-ad5m/commit/8c4aea3614fe772a921171e2217004437ceb20ee) |
 | Configuration, LEDs, statistics | `configfile.py`: `log_config` option. `led.py`: `invert` option. `statistics.py`: `disabled` option, while the stats callbacks keep running. | Forge-X | [`1f6df92`](https://github.com/DrA1ex/klipper-ad5m/commit/1f6df922e612376d28b117633d58e284e815c9ac), [`298c195`](https://github.com/DrA1ex/klipper-ad5m/commit/298c1959e24951c205edbd27452d23cab42e3f31), [`0ff264c`](https://github.com/DrA1ex/klipper-ad5m/commit/0ff264c7f5249b44e786efb364ee5d5a6ebd3fd2) |
 | Library path | `chelper/__init__.py` finds `c_helper.so` next to the stock module, without following the symlink to the Forge-X directory. | Forge-X | [`802d965`](https://github.com/DrA1ex/klipper-ad5m/commit/802d96588e9051bb6661db61259db2b9f3c25cce) |
+| Garbage collection and configuration copies | Startup objects are frozen after Klipper becomes ready and unfrozen on disconnect. Static configuration snapshots are immutable and reused during macro status copying; changing warnings and pending-save items remain isolated. | [d57fe439](https://github.com/Klipper3d/klipper/commit/d57fe4395e77b0b6f5eabccf890498049fabbcfe) (freeze); Forge-X (configuration snapshots) | [`1c21f43`](https://github.com/DrA1ex/klipper-ad5m/commit/1c21f43b9938345b70efcbb66f6ec4b27eee3f23) |
 
 ## Source history of the patches
 
-The files in `.py/klipper/patches/` are also published as a Git history in [DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m), a copy of Klipper with these commits on top of each other:
+The Klipper backports in `.py/klipper/patches/`, together with the startup garbage-collection module in `.py/klipper/plugins/`, are published as a Git history in [DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m), a copy of Klipper with these commits on top of each other:
 
 1. upstream Klipper `v0.11.0` (`e02b7256`), the base of the FlashForge Klipper;
 2. one commit with the changes the stock FlashForge firmware makes to it;
@@ -85,14 +87,18 @@ You can read the exact diff of every change there. Upstream commits that apply c
 - [What the stock firmware changes compared with upstream `v0.11.0`](https://github.com/DrA1ex/klipper-ad5m/compare/e02b725602067a2cd098a62be9a4bb10fc74a9bd...c6e78dffa3d16a25710942a379b019debbacd5af)
 - [Description of the repository](https://github.com/DrA1ex/klipper-ad5m/blob/main/AD5M.md)
 
+The startup garbage-collection and immutable-configuration changes are combined in [`1c21f43`](https://github.com/DrA1ex/klipper-ad5m/commit/1c21f43b9938345b70efcbb66f6ec4b27eee3f23). Their original commits remain available on `experimental-gc`: [freeze startup objects](https://github.com/DrA1ex/klipper-ad5m/commit/fdf28b66445e378ed0eeada64a7cfdeaaed1a09c) and [reuse immutable configuration snapshots](https://github.com/DrA1ex/klipper-ad5m/commit/fb218ab088b35d0b331bb0fa1a8f07bf55e97122).
+
 > [!NOTE]
-> The patches were written as whole files, not as a series of commits on top of Klipper. The history was reconstructed by topic afterwards, so the order of the commits is chosen for reading and is not the order of the original work. What is exact: the final files are byte-identical to the files in this repository, and the stock commit has the same MD5 sums as the stock firmware for the four files it covers. The stock `virtual_sdcard.py` from a printer is identical to upstream `v0.11.0`, so it is not part of the stock commit; the repository description explains the difference to the stock file list.
+> The patches were written as whole files, not as a series of commits on top of Klipper. The history was reconstructed by topic afterwards, so the order of the commits is chosen for reading and is not the order of the original work. What is exact: the replacement files at the manifest-pinned commit are byte-identical to the files in this documentation branch, and the stock commit has the same MD5 sums as the stock firmware for the four files it covers. The stock `virtual_sdcard.py` from a printer is identical to upstream `v0.11.0`, so it is not part of the stock commit; the repository description explains the difference to the stock file list.
+
+The GC changes described above are prepared for Forge-X 1.4.2. The manifest currently records the earlier source snapshot shipped in this documentation branch, before those changes; it does not track the tip of Klipper `main`.
 
 To check it yourself, run `python3 tests/verify_klipper_fork.py --fork https://github.com/DrA1ex/klipper-ad5m`. It clones the commit recorded in [`docs/klipper-ad5m-manifest.json`](klipper-ad5m-manifest.json) and compares every Python file with `.py/klipper/patches/`. Without `--fork` it only checks the SHA-256 sums in the manifest, which is also done by the host tests (`tests/test_klipper_fork_manifest.py`). The prebuilt `c_helper.so` is listed in the manifest with its SHA-256. The C sources in the history repository are the sources it is built from.
 
 ## Replaced files
 
-Forge-X overlays Klipper files on a supported AD5M installation. They are all in the table above, and the full list with SHA-256 sums is in [`docs/klipper-ad5m-manifest.json`](klipper-ad5m-manifest.json). All of them replace a stock file, except `klippy/extras/gcode_shell_command.py`, which is not part of the stock firmware and is added through the same mechanism.
+Forge-X overlays Klipper files on a supported AD5M installation. The table above describes the changes, and the replacement-file inventory with SHA-256 sums is in [`docs/klipper-ad5m-manifest.json`](klipper-ad5m-manifest.json). The replacement modules overwrite stock paths, except `klippy/extras/gcode_shell_command.py`, which is added through the same mechanism. The new `garbage_collection.py` module lives under `.py/klipper/plugins/` and is loaded by Klipper during startup.
 
 The Python pressure-advance backport and `c_helper.so` are one matched change. Forge-X plugins (Feather, power-loss recovery, load-cell tare, `mod_params`, checksum support) are separate additions under `.py/klipper/plugins/`; they do not replace Klipper modules.
 
