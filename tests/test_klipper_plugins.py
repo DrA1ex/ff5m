@@ -112,18 +112,34 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual(parsed.get("stepper_x", "rotation_distance"), "39.9")
         self.assertEqual(user.read_text(), "[stepper_x]\nrotation_distance: 39.9\n[include plugins.cfg]\n")
 
-    def test_missing_plugins_root_creates_empty_aggregate_and_keeps_user_tuning(self):
+    def test_missing_plugins_root_is_created_and_keeps_user_tuning(self):
         shutil.rmtree(self.packages)
         user = self.write(self.data / "user.cfg", "[stepper_x]\nrotation_distance: 39.9\n[include plugins.cfg]\n")
         self.shell("apply_klipper_patches")
-        self.assertFalse(self.packages.exists())
+        self.assertTrue(self.packages.is_dir())
         self.assertEqual(self.aggregate(), "")
         parser = configfile.PrinterConfig.__new__(configfile.PrinterConfig)
         parser.printer = None
         self.assertEqual(parser.read_config(str(user)).fileconfig.get("stepper_x", "rotation_distance"), "39.9")
         (self.data / "plugins.cfg").unlink()
         self.shell("apply_klipper_patches")
+        self.assertTrue(self.packages.is_dir())
         self.assertEqual(self.aggregate(), "")
+
+    def test_unavailable_plugins_directory_does_not_block_builtin_overlay(self):
+        self.packages.rmdir()
+        self.packages.write_text("blocked")
+        output = self.shell("apply_klipper_patches")
+        self.assertIn("@@ Cannot create user plugins directory", output)
+        self.assertEqual(self.packages.read_text(), "blocked")
+        self.assertEqual((self.target / "extras/mod_params.py").read_text(), "forge params")
+        self.assertEqual((self.target / "extras/virtual_sdcard.py").read_text(), "forge sd")
+        self.assertEqual((self.target / "gcode.py").read_text(), "forge core")
+        self.assertEqual((self.target / "gcode.py.bak").read_text(), "stock core")
+        self.assertEqual(self.aggregate(), "")
+        self.packages.unlink()
+        self.shell("apply_klipper_patches")
+        self.assertTrue(self.packages.is_dir())
 
     def test_removed_component_directories_restore_only_their_files(self):
         package = self.package("mine", {"custom.py": "extra"}, {"gcode.py": "user core"}, "[custom]\n")

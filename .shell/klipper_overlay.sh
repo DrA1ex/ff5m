@@ -329,6 +329,8 @@ apply_klipper_patches() {
         }
     fi
 
+    mkdir -p "$KLIPPER_USER_DIR" || echo "@@ Cannot create user plugins directory; continuing mod initialization."
+
     # Decide user ownership before touching links: unchanged packages keep
     # their links, so a normal boot does not rewrite the Klipper tree.
     klipper_overlay_plan_user_plugins "$overwrite"
