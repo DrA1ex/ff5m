@@ -160,8 +160,8 @@ class ModParamManagement:
 
         dependency_by_parameter = {}
         for dependency in declaration_ui.get("strict_visibility_dependencies", []):
-            # "depends_on" is one parameter, or a list of parameters where any
-            # match makes the dependent visible.
+            # Parent and expected-value lists are alternatives: any match
+            # makes the dependent visible.
             parents = dependency.get("depends_on") if isinstance(dependency, dict) else None
             if isinstance(parents, str):
                 parents = [parents]
@@ -171,12 +171,15 @@ class ModParamManagement:
                     or not all(isinstance(parent, str) for parent in parents)
                     or dependency.get("operator") != "equals"
                     or "value" not in dependency
+                    or dependency["value"] == []
                     or dependency["parameter"] in dependency_by_parameter):
                 raise ValueError("[mod_params]: Invalid UI visibility dependency!")
+            values = dependency["value"]
+            values = values if isinstance(values, list) else [values]
             conditions = [{"parameter": parent, "operator": dependency["operator"],
-                           "value": dependency["value"]} for parent in parents]
+                           "value": value} for parent in parents for value in values]
             dependency_by_parameter[dependency["parameter"]] = (
-                conditions[0] if isinstance(dependency["depends_on"], str)
+                conditions[0] if len(conditions) == 1
                 else {"any_of": conditions})
 
         for enum_name, enum_data in data.get("enums", {}).items():

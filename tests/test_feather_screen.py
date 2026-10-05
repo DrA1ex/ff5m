@@ -570,19 +570,19 @@ class FeatherUtilitiesTest(unittest.TestCase):
 
         variables = dict(
             (param.key, loaded_default(param)) for param in manager.params)
-        # Reveal every conditional parameter at once; hidden rows are never
-        # drawn and would escape the measurement.
+        # Reveal conditional parameters across their mutually exclusive modes;
+        # hidden rows are never drawn and would escape the measurement.
         variables.update({
             "camera": True, "timelapse": True, "display_eco": True,
             "weight_check": True,
             "bed_mesh_validation": True, "disable_cleaning": False,
-            "bed_mesh_validation_action": manager.params_map["bed_mesh_validation_action"].type["Z_OFFSET"].value,
             "use_swap": manager.params_map["use_swap"].type["ZRAM"].value,
         })
         drawn = {}
         all_visible = {}
-        for mode in ("LAYER", "TIME", "PERCENT"):
+        for mode, action in (("LAYER", "CANCEL"), ("TIME", "RECALIBRATE"), ("PERCENT", "Z_OFFSET")):
             variables["timelapse_mode"] = mode
+            variables["bed_mesh_validation_action"] = manager.params_map["bed_mesh_validation_action"].type[action].value
             feature = mod_controller(manager.params, variables)
             expected = MOD_UI.visible_parameters(feature.params)
             all_visible.update((param.key, param) for param in expected)
@@ -847,8 +847,8 @@ class FeatherUtilitiesTest(unittest.TestCase):
         manager.printer = type("Printer", (), {
             "command_error": staticmethod(RuntimeError)})()
         manager._load_declaration()
-        manager.variables = dict((param.key, param.default)
-                                 for param in manager.params)
+        manager.variables = {param.key: manager._load_param(param, None)
+                             for param in manager.params}
         cases = (
             ("timelapse", "camera", False, True),
             ("mod_check_update_interval", "mod_check_update", False, True),
@@ -892,6 +892,8 @@ class FeatherUtilitiesTest(unittest.TestCase):
                     visible = {param.key for param in MOD_UI.visible_parameters(manager)}
                     self.assertEqual(action.key in visible, enabled)
                     self.assertEqual(mode.key in visible, enabled and selected_action.name == "Z_OFFSET")
+                    self.assertEqual("bed_mesh_validation_tolerance" in visible,
+                                     enabled and selected_action.name in ("CANCEL", "RECALIBRATE"))
 
     def test_collision_modes_fit_settings_and_option_buttons(self):
         manager = MOD_PARAMS.ModParamManagement.__new__(

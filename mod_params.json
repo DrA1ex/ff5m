@@ -293,9 +293,9 @@
       },
       {
         "parameter": "bed_mesh_validation_tolerance",
-        "depends_on": "bed_mesh_validation",
+        "depends_on": "bed_mesh_validation_action",
         "operator": "equals",
-        "value": true
+        "value": ["CANCEL", "RECALIBRATE"]
       },
       {
         "parameter": "zram_algo",
@@ -827,9 +827,9 @@
       "label": "Collision action",
       "description": "Pause print, stop printer, or warn.",
       "options": {
-        "EMERGENCY": "Emergency",
-        "PAUSE": "Pause",
-        "WARNING": "Warning"
+        "EMERGENCY": "Emergency shutdown",
+        "PAUSE": "Pause while printing, shutdown otherwise",
+        "WARNING": "Print message only"
       },
       "order": 10
     },
@@ -862,7 +862,7 @@
       "type": "BedMeshValidationActionEnum",
       "default": "CANCEL",
       "label": "Bed Mesh Validation Action",
-      "description": "Choose how to handle a mesh mismatch.",
+      "description": "Choose mesh validation behavior.",
       "options": {
         "CANCEL": "Cancel print",
         "RECALIBRATE": "Generate a new bed mesh",

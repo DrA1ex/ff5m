@@ -35,7 +35,7 @@ The handler selects CANCEL, RECALIBRATE, or Z_OFFSET. Recalibration calls `_FULL
 
 While `offset_before` is set, every Z-offset change is temporary: the absolute restore undoes Live Z, `SET_GCODE_OFFSET` and `LOAD_GCODE_OFFSET` changes made during the print. `SET_GCODE_OFFSET` keeps its original persistence rule but skips `SET_MOD` while compensation is active, which covers Fluidd, Mainsail, Guppy, Moonraker and console clients. Feather disables Live Z Save and labels the difference as TEMPORARY; Save otherwise persists the current offset as before. Resurrection saves and restores the total current offset through its existing checkpoint and does not know about compensation. After a power-loss restart, `offset_before` is lost, so the restored total offset is no longer marked as temporary; this rare case is a documented limitation.
 
-The declaration makes Action dependent on validation and offset mode dependent on Action=Z_OFFSET. The existing transitive visibility evaluation hides both when validation is off; no new UI dependency machinery is needed.
+The declaration makes Action dependent on validation, offset mode dependent on Action=Z_OFFSET, and tolerance dependent on Action=CANCEL or RECALIBRATE. Tolerance remains the existing persisted `bed_mesh_validation_tolerance` parameter with a 0.2 mm default. Its value still limits probe spread in Z_OFFSET mode. Strict visibility dependencies accept a list of expected values, expanded into the existing `any_of` conditions; transitive visibility hides all these settings when validation is off.
 
 ### USB swap and drive preparation
 

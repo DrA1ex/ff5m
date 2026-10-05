@@ -91,6 +91,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`bed_mesh_validation_z_offset_mode`**: `ADJUST` (default) adds the correction to the current Z-offset; `REPLACE` uses the correction as the complete offset. Shown only for the `Z_OFFSET` action. The correction is never saved, and Z-offset changes are not saved while it is active. See [Printing](PRINTING.md#bed-mesh-validation).
 
+- **`bed_mesh_validation_tolerance`**: Allowed difference in millimetres; default `0.2`. Shown when validation is enabled and the action is `CANCEL` or `RECALIBRATE`. In `Z_OFFSET`, this value still limits the spread between probe differences; the correction threshold remains 0.05 mm.
+
 - **`tune_config`**: Enables firmware parameter tuning for optimized settings (motors, extruder rotation distance, probing, Z-parking, etc.).  
   **Warning**: After enabling, recreate the bed mesh, adjust Z-offset, and optionally recalibrate flow and Pressure Advance.  
   See changed parameters here: [tuning.cfg](/tuning.cfg)

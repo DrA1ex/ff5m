@@ -210,7 +210,7 @@ Relevant [configuration parameters](CONFIGURATION.md):
 - `bed_mesh_validation_action` — `CANCEL` (default), `RECALIBRATE`, or `Z_OFFSET`; shown when validation is enabled;
 - `bed_mesh_validation_z_offset_mode` — `ADJUST` (default) or `REPLACE`; shown only for `Z_OFFSET`;
 - `bed_mesh_validation_clear` — cleans the nozzle before validation;
-- `bed_mesh_validation_tolerance` — maximum allowed difference in millimetres; default `0.2`.
+- `bed_mesh_validation_tolerance` — maximum allowed difference in millimetres; default `0.2`. Shown when validation is enabled and the action is `CANCEL` or `RECALIBRATE`.
 
 This can catch scenarios such as the wrong plate, a missing plate, a stale mesh, or motion parameters changed after calibration.
 
