@@ -30,7 +30,7 @@ from ui.font_metrics import get_font_metrics  # noqa: E402
 
 from tests.feather_timelapse_test_helper import make_timelapse_state
 from tests.test_feather_screen import Reactor, StatusObject  # noqa: E402
-from tests.feather_render_test_helper import RenderCapture, full_render_queue  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture, RenderFrame, full_render_queue  # noqa: E402
 
 
 class ScenarioController(FEATHER.FeatherScreen):
@@ -297,7 +297,7 @@ class PrintStatusUpdateTest(unittest.TestCase):
         self.assertNotIn("ELAPSED", drawing)
         self.assertNotIn("PREVIEW", drawing)
 
-    def test_status_reserves_two_lines_without_moving_other_content(self):
+    def test_status_keeps_one_line_without_moving_other_content(self):
         printing_ui.render(self.renderer, self.values, reuse_layout=True)
         original = {key: self.page.rect(key) for key in self.page.layout.keys()}
         status = "PRINT -> WAITING FOR THE BED AND NOZZLE TO REACH THE REQUESTED TEMPERATURE"
@@ -316,7 +316,45 @@ class PrintStatusUpdateTest(unittest.TestCase):
                 self.assertNotIn(text, drawing)
         status_bounds = self.page.rect(printing_ui.PrintingRef.STATUS)
         font = self.page.node(printing_ui.PrintingRef.STATUS).font
-        self.assertGreaterEqual(status_bounds.height, 2 * get_font_metrics().metric(font).glyph_height)
+        self.assertEqual(status_bounds.height, get_font_metrics().metric(font).glyph_height)
+
+    def test_status_drops_leading_nodes_only_until_the_remaining_chain_fits(self):
+        prefix = "PRINTING " * 10
+        middle = "BED HEATING " * 10
+        for value, expected in (
+                ("PRINT -> HOMING", "PRINT -> HOMING"),
+                (prefix + " -> HOMING", "-> HOMING"),
+                (prefix + " -> PREPARING -> HOMING", "-> PREPARING -> HOMING"),
+                (prefix + " -> " + middle + " -> HOMING", "-> HOMING"),
+                ("PRINT -> HEATING", "PRINT -> HEATING"),
+                ("", "")):
+            self.values[printing_ui.PrintingState.STATUS] = value
+            commands = printing_ui.render(self.renderer, self.values, reuse_layout=True)
+            frame = RenderFrame(commands, self.renderer)
+            status = next(text for text in frame.texts if text.value.lstrip() == expected)
+            self.assertFalse(status.wrap)
+            self.assertTrue(status.truncate)
+            self.assertEqual(self.page.state[printing_ui.PrintingState.STATUS], value)
+            bounds = self.page.rect(printing_ui.PrintingRef.STATUS)
+            self.assertLessEqual(get_font_metrics().text_width(expected, status.font), bounds.width)
+
+    def test_single_oversized_status_uses_one_line_truncation(self):
+        status = "WAITING FOR THE BED AND NOZZLE TO REACH THE REQUESTED TEMPERATURE"
+        self.values[printing_ui.PrintingState.STATUS] = status
+        commands = printing_ui.render(self.renderer, self.values, reuse_layout=True)
+        frame = RenderFrame(commands, self.renderer)
+        text = frame.text(status)
+        self.assertFalse(text.wrap)
+        self.assertTrue(text.truncate)
+        self.assertLess(text.max_width, get_font_metrics().text_width(status, text.font))
+
+    def test_status_respects_a_narrower_text_limit(self):
+        node = self.page.node(printing_ui.PrintingRef.STATUS)
+        node.kwargs["max_width"] = get_font_metrics().text_width("-> HOMING", node.font)
+        self.values[printing_ui.PrintingState.STATUS] = "PRINT -> PREPARING -> HOMING"
+        commands = self.page.draw(self.renderer, self.values)
+        frame = RenderFrame(commands, self.renderer)
+        self.assertTrue(any(text.value.lstrip() == "-> HOMING" for text in frame.texts))
 
 
 class PrintPreviewLayoutTest(unittest.TestCase):

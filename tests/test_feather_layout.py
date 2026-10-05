@@ -476,7 +476,7 @@ class PrintingLayoutTest(unittest.TestCase):
             for shape in frame.shapes))
         self.assertTrue(frame.has_text("READY"))
 
-    def test_print_status_wraps_to_two_lines_without_overlapping_progress(self):
+    def test_print_status_stays_on_one_line_without_overlapping_progress(self):
         from ui.font_metrics import get_font_metrics
 
         metrics = get_font_metrics()
@@ -488,11 +488,11 @@ class PrintingLayoutTest(unittest.TestCase):
                 frame = RenderFrame(page.draw(renderer, {
                     printing.PrintingState.STATUS: value,
                 }), renderer)
-                text = frame.text(value)
                 status = page.rect(printing.PrintingRef.STATUS)
-                self.assertTrue(text.wrap)
+                text = next(text for text in frame.texts if text.y == status.y)
+                self.assertFalse(text.wrap)
                 self.assertTrue(text.truncate)
-                self.assertLessEqual(status.height, metrics.text_height("X\nX", text.font))
+                self.assertEqual(status.height, metrics.metric(text.font).glyph_height)
                 self.assertLessEqual(status.bottom, page.rect(printing.PrintingRef.PROGRESS).y)
                 self.assertLessEqual(page.rect(printing.PrintingRef.HEIGHT).bottom,
                                      page.rect(printing.PrintingRef.BUTTONS).y)

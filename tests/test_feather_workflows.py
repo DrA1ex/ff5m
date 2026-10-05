@@ -2941,6 +2941,7 @@ class PrintWorkflowTest(unittest.TestCase):
     def test_mesh_recalibration_breadcrumb_fits_print_status(self):
         from feather_ui_test.context_fixtures import VISUAL_CONTEXTS
         from feather_ui_test.scenarios import ScenarioCatalog
+        from ff5m_ui.printing import runtime as printing_ui
 
         specifications = [item for item in VISUAL_CONTEXTS if item.get('label_type', '').startswith('mesh_recalibration')]
         for specification in specifications:
@@ -2952,9 +2953,14 @@ class PrintWorkflowTest(unittest.TestCase):
                     operation = ScenarioCatalog._operation_context_snapshot(specification, state)
                     label = controller._display_status_text(status=operation)
                     controller._draw_print_status(label)
-                    text = capture.latest.text(label)
-                    height = get_font_metrics().text_height(text.value, text.font, text.max_width, wrap=text.wrap)
-                    self.assertLessEqual(height, text.max_height)
+                    bounds = printing_ui.rect(printing_ui.PrintingRef.STATUS)
+                    text = next(text for text in capture.latest.texts if text.y == bounds.y)
+                    metrics = get_font_metrics()
+                    self.assertFalse(text.wrap)
+                    self.assertTrue(text.value.rstrip().endswith(label.rsplit(" -> ", 1)[-1]))
+                    self.assertLessEqual(metrics.text_width(text.value.strip(), text.font), text.max_width)
+                    self.assertEqual(bounds.height, metrics.metric(text.font).glyph_height)
+                    self.assertEqual(printing_ui.get_page().state[printing_ui.PrintingState.STATUS], label)
 
     def test_operation_revision_redraws_print_status_once(self):
         controller = base_controller("printing")

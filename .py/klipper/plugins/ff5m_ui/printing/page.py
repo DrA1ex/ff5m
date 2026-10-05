@@ -9,6 +9,7 @@ from enum import Enum
 from ui import ThemeColor
 from ui.bindings import bind, derived, resolve
 from ui.components import Button, Component, Fill, Frame, Text
+from ui.font_metrics import get_font_metrics
 from ui.layout import FLEX, Column, Equal, Flex, Grid, Overlay, PageTree, Rect, Spacer, StateCase
 
 from ..keys import AppPage
@@ -72,6 +73,19 @@ class PrintProgress(Component):
         return commands
 
 
+class PrintStatus(Text):
+    def _display_value(self, state, bounds, font):
+        value = super()._display_value(state, bounds, font)
+        metrics = get_font_metrics()
+        width = min(bounds.width, resolve(self.kwargs.get("max_width"), state) or bounds.width)
+        while metrics.text_width(value, font) > width:
+            _parent, separator, tail = value.partition(" -> ")
+            if not separator:
+                break
+            value = "-> " + tail
+        return value
+
+
 def _button_state(ready, pending, action):
     if not ready:
         return "disabled"
@@ -102,14 +116,12 @@ def _details(compact=False):
             vertical="top",
             truncate=True,
         ).height("content").ref(PrintingRef.FILENAME),
-        Text(
+        PrintStatus(
             bind(PrintingState.STATUS),
             horizontal="left",
             vertical="top",
-            max_height=46,
-            wrap=True,
             truncate=True,
-        ).style(UiStyle.TEXT).height(46).ref(PrintingRef.STATUS),
+        ).style(UiStyle.TEXT).height("content").ref(PrintingRef.STATUS),
         gap=8,
     ).padding(top=4).height("content")
 

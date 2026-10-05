@@ -676,6 +676,10 @@ class Text(Component):
         if size_changed:
             self.invalidate(Dirty.LAYOUT)
 
+    def _display_value(self, state, bounds, font):
+        """Format painted text within its bounds without changing source state."""
+        return resolve(self.value, state)
+
     def draw(self, renderer, state, bounds):
         horizontal = resolve(self.horizontal, state)
         vertical = resolve(self.vertical, state)
@@ -700,11 +704,11 @@ class Text(Component):
             kwargs.setdefault("max_height", max(1, bounds.height))
         elif kwargs.get("truncate"):
             kwargs.setdefault("max_width", max(1, bounds.width))
+        font = (resolve(self.font, state) if self.font is not None
+                else "JetBrainsMono 8pt")
         return renderer.text(
-            x, y, resolve(self.value, state), resolve(self.color, state),
-            resolve(self.font, state) if self.font is not None
-            else "JetBrainsMono 8pt",
-            horizontal, renderer_vertical, **kwargs)
+            x, y, self._display_value(state, bounds, font), resolve(self.color, state),
+            font, horizontal, renderer_vertical, **kwargs)
 
 
 class Metric(Component):
