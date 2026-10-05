@@ -702,25 +702,22 @@ class TemperatureMacroTest(unittest.TestCase):
             "VARIABLE=temporary_state VALUE=False",
             ready.commands)
 
-    def test_wait_check_clears_state_before_context_cancel_point(self):
-        result = render_macro(BASE, "_WAIT_TEMPERATURE_CHECK", printer={
-            "gcode_macro _WAIT_TEMPERATURE": {
-                "temperature_reached": False,
-                "cancel": False,
-            },
-            "operation_context": {
-                "context_path": ["print"],
-                "cancel_pending": True,
-            },
-            "extruder": {"temperature": 150},
-        }, params={"CMD": "M104", "VALUE": 200, "DELAY": 1000})
-
-        assert_order(self, result.commands, (
-            "_WAIT_TEMPERATURE_RESET_STATE",
-            "_CONTEXT_CANCEL_POINT",
-            "M104 S200",
-            "WAIT TIME=1000",
-        ))
+    def test_wait_passes_normalized_parameters_to_polling_command(self):
+        for bounds, expected in (
+                ({}, {"MINIMUM": "198.0", "MAXIMUM": "203.0"}),
+                ({"MINIMUM": 195}, {"MINIMUM": "195.0"}),
+                ({"MAXIMUM": 210}, {"MAXIMUM": "210.0"})):
+            with self.subTest(bounds=bounds):
+                result = render_macro(
+                    BASE, "_WAIT_TEMPERATURE", printer=self._wait_printer(200),
+                    params={"CMD": "M104", "VALUE": 200.5,
+                            "BELOW": 2, "ABOVE": 3, **bounds})
+                poll = next(command for command in result.commands
+                            if command.startswith("_WAIT_TEMPERATURE_POLL "))
+                actual = dict(arg.split("=", 1) for arg in shlex.split(poll)[1:])
+                self.assertEqual(actual, {
+                    "CMD": "M104", "VALUE": "200", "CHECKS": "300",
+                    "DELAY": "3000", **expected})
 
     def test_cancelled_wait_restores_context_and_routes_cancellation(self):
         result = render_macro(BASE, "_WAIT_TEMPERATURE_FINAL_CHECK", printer={
