@@ -1,13 +1,14 @@
 # Screen Configuration
 
-The stock screen implementation on the Flashforge AD5M (Pro) is not optimized for direct interaction with Fluidd or Moonraker. 
-This is because FlashForge's firmware is designed to work exclusively with its own services and does not handle external control well.
-
-For example, you can't just do `RESTART` or `SAVE_CONFIG` via Klipper's console — it freezes the screen, and you have to reboot the printer afterward because you can't do anything with a frozen firmware application.
+The Stock screen on the Flashforge AD5M (Pro) is tightly coupled to the vendor services and keeps the original FlashForge workflow.
 
 Also, the screen consumes a lot of RAM — about 7-15 MiB—and with the printer's limited memory of just 128 MiB, it's a dealbreaker.
 
 However, we don't have to use the stock screen. To free up resources, we can run the printer headless (in early mod builds) or use the alternative Feather screen implementation.
+
+### Klipper restart and saving
+
+Stock-screen `SAVE_CONFIG`, `RESTART`, and `FIRMWARE_RESTART` work in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**. On older builds, use `NEW_SAVE_CONFIG` / `NEW_RESTART` or update first.
 
 ## Alternative Screens
 

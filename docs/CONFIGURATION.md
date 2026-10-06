@@ -125,7 +125,7 @@ To preserve all your custom parameters and configurations within the mod, you ca
 The mod allows you to customize and extend functionality by defining your own macros or overriding existing printer parameters. This override any printer configuration, including `tuning.cfg`. Additionally, you can adjust Moonraker-specific parameters.
 
 > [!NOTE]
-> Changes to `user.cfg` and `user.moonraker.conf` are applied after a restart or configuration reload.
+> Changes to `user.cfg` and `user.moonraker.conf` are applied after a restart or configuration reload. Stock-screen `RESTART` requires Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_RESTART`.
 
 ### Customizing Printer Parameters
 

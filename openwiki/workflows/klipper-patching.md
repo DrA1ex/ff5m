@@ -42,6 +42,8 @@ A replacement must retain the exact stock module path expected by the target fir
 
 ### Patch intent is source-local
 
+[`patches/webhooks.py`](../../.py/klipper/patches/webhooks.py) keeps the Stock screen connected across `RESTART`, `FIRMWARE_RESTART`, and `SAVE_CONFIG`.
+
 The replacement files carry short `Changes:` headers where applicable. Examples include:
 
 - [`patches/gcode.py`](../../.py/klipper/patches/gcode.py) normalizes the raw command used for `M117`/`M118`, and its history includes non-ASCII object-name fixes.

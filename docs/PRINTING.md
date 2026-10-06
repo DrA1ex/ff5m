@@ -25,9 +25,7 @@ To calibrate the printer, use only these macros (or the Stock screen).
 > [!CAUTION]
 > Read about [how bed mesh works](/docs/CALIBRATION.md#before-you-start) before trying to calibrate the printer.
 
-> [!WARNING]  
-> The Stock Screen doesn’t support the `SAVE_CONFIG` macro, which will cause freezing. A reboot is required afterward.
-> Learn how to work around this [here](/docs/FAQ.md#stock-screen-freezes-i-cant-print-anything).
+Stock screen: use `SAVE_CONFIG` / `RESTART` in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds require `NEW_SAVE_CONFIG` / `NEW_RESTART`.
 
 All of these macros are available in the Fluidd/Mainsail main screen in the section **Calibration**:
 

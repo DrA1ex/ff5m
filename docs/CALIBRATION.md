@@ -14,7 +14,7 @@ This AI-generated guide is based on Forge-X documentation and general 3D printin
 ## Configuration Overrides
 Edit `user.cfg` via Fluidd/Mainsail (port 80) or manually. Backup config using Forge-X Backup and Restore before changes.
 
-**Notice**: For STOCK screen users, use `NEW_SAVE_CONFIG` instead of `SAVE_CONFIG` or `RESTART` to save changes.
+Stock-screen `SAVE_CONFIG` requires Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_SAVE_CONFIG`.
 
 ## BEFORE YOU START
 
@@ -77,7 +77,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
    - If your bed height variation exceeds 1 mm, you must perform load cell tare calibration after adjusting the bed screws (see [Forge-X FAQ](https://github.com/DrA1ex/ff5m/blob/main/docs/FAQ.md#resolving-the-issue-by-calibrating-the-load-cell)).
 4. **Recalibrate Load Cells**: Follow the official Flashforge [guide](https://docs.google.com/document/d/1Oou4A56g5HTrxBAMoH-bTnTZZ3IZyGr_3jL9tUYYiow/edit?usp=drivesdk). If you're not using the Stock screen, temporarily reload it with `SKIP_MOD`.   
 5. **Recalibrate Mesh** ⚠️
-6. **Save**: `NEW_SAVE_CONFIG`.
+6. **Save**: `SAVE_CONFIG`.
 
 ---
 
@@ -90,7 +90,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
    - Use correct mesh `PROFILE` for your setup (`MESH_DATA` - for Stock or `auto` - for others)
 2. **Save**:
    ```
-   NEW_SAVE_CONFIG
+   SAVE_CONFIG
    ```
 
 ---
@@ -120,7 +120,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
      [extruder]
      rotation_distance: 4.6
      ```
-   - Run `NEW_SAVE_CONFIG`.
+   - Run `SAVE_CONFIG`.
 5. **Note**: `tuning.cfg` has a near-accurate baseline.
 
 ---
@@ -133,7 +133,7 @@ START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_tempe
    - Plots generated in Fluidd/Mainsail.
 2. **Save**:
    ```
-   NEW_SAVE_CONFIG
+   SAVE_CONFIG
    ```
 3. **Verify** (Optionally): Print ringing test model.
 
@@ -174,16 +174,16 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
      [stepper_z]
      rotation_distance: 7.96
      ```
-   - Run `NEW_SAVE_CONFIG` (or `SAVE_CONFIG` for non-STOCK screens).
+   - Run `SAVE_CONFIG`.
 
 ### Skew Distortion
 - Use the Calilantern model (or similar) to measure and correct skew. Upload the model via Fluidd/Mainsail, print, and follow its instructions for skew compensation. The printer will load a profile named `skew_profile` automatically, so save the profile with this name:
   ```
   SET_SKEW XY=140.4,142.8,99.8 XZ=141.6,141.4,99.8 YZ=142.4,140.5,99.5
   SKEW_PROFILE SAVE=skew_profile
-  NEW_SAVE_CONFIG
+  SAVE_CONFIG
   ```
-- Alternatively, add a `[skew_correction]` section in `user.cfg` with the skew values, then run `NEW_SAVE_CONFIG` to save the configuration.
+- Alternatively, add a `[skew_correction]` section in `user.cfg` with the skew values, then run `SAVE_CONFIG` to save the configuration.
 - Set `disable_skew` mod parameter to '0', to automatically apply `skew_profile` before print:
   ```
   SET_MOD PARAM="disable_skew" VALUE=0
@@ -202,7 +202,7 @@ Follow these steps for manual calibration if you don't have (or prefer not to us
    PID_TUNE_BED TEMPERATURE=60
    ```
    - Adjust `TEMPERATURE` (e.g., 60°C for PLA).
-3. **Save**: `NEW_SAVE_CONFIG`.
+3. **Save**: `SAVE_CONFIG`.
 4. **Verify**: Check temperature stability in Fluidd/Mainsail.
 
 ---
