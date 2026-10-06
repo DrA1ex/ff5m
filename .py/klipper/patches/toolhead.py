@@ -12,6 +12,8 @@
 #   graph after klippy:ready so later generation-2 collections scan less data.
 # - Read optional lookahead tuning from mod_data/variables.cfg without
 #   modifying this repository-backed file at runtime.
+# - Require 20 ms of dispatch work before the extra buffering yield so short
+#   segmented moves can be queued without a premature full flush.
 # - Python-only patch; no MCU firmware or host binary rebuild is required.
 
 import math, logging, importlib
@@ -228,6 +230,7 @@ class MoveQueue:
 
 MIN_KIN_TIME = 0.100
 MOVE_BATCH_TIME = 0.500
+MIN_STALL_YIELD_INTERVAL = 0.020
 SDS_CHECK_TIME = 0.001 # step+dir+step filter in stepcompress.c
 
 DRIP_SEGMENT_TIME = 0.050
@@ -430,8 +433,10 @@ class ToolHead:
             self.need_check_stall = self.print_time
         if not did_pause and not getattr(
                 self, 'low_latency_stream_submission', False):
-            # May be falling behind - yield to avoid starving other tasks.
-            self.reactor.pause(self.reactor.NOW)
+            # Let short segmented moves finish before servicing other tasks.
+            if (self.reactor.monotonic() - self.reactor.get_dispatch_time()
+                    >= MIN_STALL_YIELD_INTERVAL):
+                self.reactor.pause(self.reactor.NOW)
     def _flush_handler(self, eventtime):
         try:
             print_time = self.print_time
@@ -450,7 +455,7 @@ class ToolHead:
                 buffer_time, self.buffer_time_low,
                 len(self.move_queue.queue),
                 self.special_queuing_state)
-            
+
             # Under ran low buffer mark - flush lookahead queue
             self.flush_step_generation()
             if print_time != self.print_time:

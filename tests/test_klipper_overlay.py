@@ -505,6 +505,7 @@ class ToolheadTuningTest(unittest.TestCase):
         reactor.NOW = object()
         reactor.NEVER = object()
         reactor.monotonic.return_value = 10.0
+        reactor.get_dispatch_time.return_value = 9.970
         reactor.pause.side_effect = lambda waketime: waketime
         mcu = mock.Mock()
         mcu.estimated_print_time.return_value = 10.0

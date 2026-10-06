@@ -13,6 +13,7 @@
 # - Include prerequisite SelectReactor spelling fixes from upstream commits
 #   136283bd and 0d5b96a6, and the EPollReactor registration/wakeup fixes
 #   from bb88985. Keep the legacy timer, greenlet, and handle.fileno() APIs.
+# - Track the current dispatch slice for cooperative motion yielding.
 # Sources:
 # https://github.com/Klipper3d/klipper/commit/bb88985b8d48fa7505fee116eec1c4902361f95d
 # https://github.com/Klipper3d/klipper/commit/136283bd144530f53e96604957d11d8d1b5fe1da
@@ -118,6 +119,7 @@ class SelectReactor:
         # Timers
         self._timers = []
         self._next_timer = self.NEVER
+        self._dispatch_time = self.monotonic()
         # Callbacks
         self._pipe_fds = None
         self._async_queue = queue.Queue()
@@ -133,6 +135,8 @@ class SelectReactor:
         self._all_greenlets = []
     def get_gc_stats(self):
         return tuple(self._last_gc_times)
+    def get_dispatch_time(self):
+        return self._dispatch_time
     # Timers
     def update_timer(self, timer_handler, waketime):
         timer_handler.waketime = waketime
@@ -150,6 +154,7 @@ class SelectReactor:
         timers.pop(timers.index(timer_handler))
         self._timers = timers
     def _check_timers(self, eventtime, busy):
+        self._dispatch_time = self.monotonic()
         if eventtime < self._next_timer:
             if busy:
                 return 0.
@@ -172,6 +177,7 @@ class SelectReactor:
             waketime = t.waketime
             if eventtime >= waketime:
                 t.waketime = self.NEVER
+                self._dispatch_time = self.monotonic()
                 t.waketime = waketime = t.callback(eventtime)
                 if g_dispatch is not self._g_dispatch:
                     self._next_timer = min(self._next_timer, waketime)
@@ -285,12 +291,14 @@ class SelectReactor:
                 continue
 
             if event & self._READ:
+                self._dispatch_time = self.monotonic()
                 hdl.read_callback(eventtime)
                 if g_dispatch is not self._g_dispatch:
                     self._end_greenlet(g_dispatch)
                     return self.monotonic()
 
             if event & self._WRITE and self._fds.get(hdl.fd) is hdl:
+                self._dispatch_time = self.monotonic()
                 hdl.write_callback(eventtime)
                 if g_dispatch is not self._g_dispatch:
                     self._end_greenlet(g_dispatch)

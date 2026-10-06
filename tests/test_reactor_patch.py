@@ -247,5 +247,45 @@ class ReactorDispatchTest(unittest.TestCase):
                 self.assertEqual(calls, ["yield", "resume", "next-batch"])
 
 
+class ReactorDispatchTimeTest(unittest.TestCase):
+    def setUp(self):
+        self.now = 10.0
+        self.reactor = REACTOR.SelectReactor()
+        self.reactor.monotonic = mock.Mock(side_effect=lambda: self.now)
+
+    def test_timer_callbacks_and_resumption_have_fresh_wall_time(self):
+        seen = []
+
+        def first(eventtime):
+            seen.append(self.reactor.get_dispatch_time())
+            self.now = 10.250
+            return self.reactor.NEVER
+
+        def resumed(eventtime):
+            seen.append(self.reactor.get_dispatch_time())
+            return self.reactor.NEVER
+
+        self.reactor.register_timer(first, 10.0)
+        self.reactor.register_timer(resumed, 10.0)
+        self.reactor._check_timers(10.0, True)
+
+        self.assertEqual(seen, [10.0, 10.250])
+        self.assertEqual(self.reactor.get_dispatch_time(), 10.250)
+
+    def test_io_after_idle_and_write_after_read_are_new_dispatch_boundaries(self):
+        seen = []
+        self.now = 70.0
+
+        def read(eventtime):
+            seen.append(self.reactor.get_dispatch_time())
+            self.now = 70.030
+
+        self.reactor.register_fd(
+            17, read, lambda t: seen.append(self.reactor.get_dispatch_time()))
+        self.reactor._check_fds(70.0, [(17, self.reactor._READ | self.reactor._WRITE)])
+
+        self.assertEqual(seen, [70.0, 70.030])
+
+
 if __name__ == "__main__":
     unittest.main()
