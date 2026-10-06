@@ -1,6 +1,6 @@
 # Screen Configuration
 
-The FlashForge Stock screen is tightly coupled to the vendor services. It is convenient for the original workflow, but direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze the vendor application, and the screen consumes considerably more memory than the lightweight alternatives.
+The FlashForge Stock screen is tightly coupled to the vendor services. It keeps the original workflow and consumes considerably more memory than the lightweight alternatives.
 
 Forge-X supports four display modes:
 
@@ -24,7 +24,12 @@ When using the Stock screen:
 
 - the persistent bed-mesh profile is `MESH_DATA`;
 - Z offset is managed by the vendor workflow;
-- use `NEW_SAVE_CONFIG`, not `SAVE_CONFIG` or `RESTART`.
+- use `SAVE_CONFIG` to save calibration results and `RESTART` to reload configuration;
+- use `FIRMWARE_RESTART` when MCU recovery requires it.
+
+### Klipper restart and saving
+
+Stock-screen `SAVE_CONFIG`, `RESTART`, and `FIRMWARE_RESTART` work in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**. On older builds, use `NEW_SAVE_CONFIG` / `NEW_RESTART` or update first.
 
 ### Feather Screen
 

@@ -274,9 +274,9 @@ validation, and persistent override examples.
   - **Defaults**: Runs `S99root start` command.
 
 - **NEW_SAVE_CONFIG**
-  - **Description**: Saves configuration, using an alternative method for stock screens.
+  - **Description**: Deprecated; use `SAVE_CONFIG` ([supported versions](SCREEN.md#klipper-restart-and-saving)).
   - **Parameters**: None.
-  - **Defaults**: Uses `restart_klipper` command for stock screens.
+  - **Behavior**: Displays a deprecation message only.
 
 - **_MAYBE_AUTO_REBOOT**
   - **Description**: Schedules an automatic reboot after a delay if enabled.
@@ -289,9 +289,9 @@ validation, and persistent override examples.
   - **Defaults**: Cancels if reboot is active.
 
 - **NEW_RESTART**
-  - **Description**: Reloads Klipper configuration, using a shell command for stock screens.
+  - **Description**: Deprecated; use `RESTART` ([supported versions](SCREEN.md#klipper-restart-and-saving)).
   - **Parameters**: None.
-  - **Defaults**: Runs `restart_klipper` for stock screens.
+  - **Behavior**: Displays a deprecation message only.
 
 ### Configuration and Backup
 
@@ -572,7 +572,7 @@ validation, and persistent override examples.
 - The `headless.cfg` file extends `base.cfg` with macros tailored for alternative display implementations, such as Mainsail/Fluidd.
 - Macros like `_START_PRINT` and `_CHECK_BED_MESH` include extensive logic for safety and validation, ensuring robust printer operation.
 - Audio feedback (tones, MIDI) enhances user interaction, configurable via sound settings.
-- System control macros (e.g., `SHUTDOWN`, `REBOOT`, `NEW_RESTART`) provide seamless integration with the printer’s operating system.
+- System control macros (e.g., `SHUTDOWN`, `REBOOT`) provide integration with the printer’s operating system.
 - Stock screen-specific macros (`LEVELING_PRINT_FILE`, `NOLEVELING_PRINT_FILE`) enable printing directly from the stock interface with optional bed leveling.
 
 For detailed implementation, refer to the `base.cfg`, `headless.cfg`, and `stock.cfg` files.

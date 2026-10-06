@@ -344,6 +344,20 @@ class BedCollisionProtectionTest(unittest.TestCase):
 
 
 class WorkflowMacroTest(unittest.TestCase):
+    def test_legacy_restart_macros_only_report_the_standard_command(self):
+        for path, name, replacement in (
+                (BASE, "NEW_SAVE_CONFIG", "SAVE_CONFIG"),
+                (STOCK, "NEW_RESTART", "RESTART")):
+            with self.subTest(name=name):
+                commands = render_macro(path, name).commands
+                self.assertEqual(len(commands), 1)
+                command, *arguments = shlex.split(commands[0])
+                self.assertEqual(command, "RESPOND")
+                options = dict(argument.split("=", 1) for argument in arguments)
+                self.assertEqual(options["TYPE"], "error")
+                self.assertIn("deprecated", options["MSG"].lower())
+                self.assertIn("Use " + replacement, options["MSG"])
+
     def test_start_print_rejects_nonfinite_or_malformed_z_offset(self):
         for path in (STOCK, HEADLESS):
             for value in ("broken", "nan", "inf", "-inf", "1e309"):

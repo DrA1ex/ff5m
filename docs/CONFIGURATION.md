@@ -207,7 +207,7 @@ variable_material_1_cold_pull: {
 }
 ```
 
-Restart Klipper through the supported workflow after changing the override. With the Stock screen, reboot the printer rather than issuing `RESTART` directly.
+Run `RESTART` after changing the override. Stock screen: Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_RESTART`.
 
 - `heating_slots` controls the order and membership of heating, filament-loading, and calibration selectors.
 - `cold_pull_slots` controls the cold-pull selector.

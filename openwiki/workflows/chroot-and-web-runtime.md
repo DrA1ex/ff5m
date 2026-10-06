@@ -47,7 +47,7 @@ It also links the vendored Moonraker application into the chroot Python environm
 | Web server | [`.root/S70httpd`](../../.root/S70httpd) | BusyBox `httpd` serves static UI assets from `/root/www` on TCP port 80. | Skipped only when `disable_web=1`. |
 | User services | `/etc/init.d/S*` inside the chroot | Extension point for user-installed runtime service scripts. | Started after the core services; stop uses reverse lexical traversal. |
 
-The stock-side boot script separately chooses the display/network path and starts the MCU/Klipper path for non-stock display modes. In stock mode, restart logic normally asks the vendor application to restart Klipper; if that application is unavailable, [`.shell/restart_klipper.sh`](../../.shell/restart_klipper.sh) falls back to Moonraker’s printer-restart API. A `--hard` restart kills `klippy.py` and invokes the stock Klipper start script directly.
+The stock-side boot script selects the display/network and MCU/Klipper startup paths. Standard reloads preserve the Stock-screen connection with the [WebHooks fix](klipper-patching.md#patch-intent-is-source-local). [`.shell/restart_klipper.sh`](../../.shell/restart_klipper.sh) remains for legacy shell callers; `--hard` replaces the Klipper process.
 
 ## Available commands and tooling
 
@@ -57,7 +57,7 @@ The chroot is a minimal appliance environment, not a general development worksta
 - **Git:** the runtime start script explicitly sets `HOME=/root` so Git uses the chroot user’s `.gitconfig`. Forge-X version/update paths also use the repository at `/root/printer_data/config/mod/` (the bound `/opt/config/mod/`). Thus `git` is an available and intentional maintenance tool in this environment, particularly for Moonraker’s configured Forge-X updater.
 - **Python:** Moonraker is executed by `/root/moonraker-env/bin/python3`. The repository’s helper Python sources are exposed at `/root/printer_data/py`, but they are not a general package installation contract.
 - **BusyBox/process controls:** the tracked launchers rely on `httpd`, `ntpd`, `start-stop-daemon`, `curl`, `find`, `sed`, and standard shell utilities. Use the shipped scripts rather than assuming Debian/systemd tooling exists.
-- **Forge-X controls:** run `/opt/config/mod/.root/S45ntpd`, `S65moonraker`, `S70httpd`, `S35tslib`, or `S80guppyscreen` with `start`, `stop`, or (where implemented) `restart`. The stock-side `/etc/init.d/S99root` coordinates the complete chroot environment. `zmoon.sh` sends selected local Moonraker requests, and `restart_klipper.sh` selects the safe stock/Moonraker restart route.
+- **Forge-X controls:** run `/opt/config/mod/.root/S45ntpd`, `S65moonraker`, `S70httpd`, `S35tslib`, or `S80guppyscreen` with `start`, `stop`, or (where implemented) `restart`. The stock-side `/etc/init.d/S99root` coordinates the complete chroot environment. `zmoon.sh` sends local Moonraker requests; `restart_klipper.sh` handles shell and hard restarts.
 
 Do not document an exhaustive binary list from these sources: the actual command set depends on the flashed Buildroot image and optional `/opt` packages. On a printer, verify a command with `command -v <name>` inside the intended environment before making operational dependencies on it.
 

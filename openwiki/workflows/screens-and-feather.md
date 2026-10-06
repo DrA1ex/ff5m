@@ -10,7 +10,7 @@ Forge-X supports four mutually exclusive display modes: **STOCK**, **FEATHER**, 
 
 | Mode | Active root config | Local panel behavior | Main interactive control path | Runtime implications |
 |---|---|---|---|---|
-| `STOCK` | [`config/stock.cfg`](../../config/stock.cfg) | Vendor FlashForge application and touch UI | Stock UI/apps, plus Forge-X/Moonraker where compatible | Vendor app starts Klipper and owns stock-screen-specific behavior. It consumes more RAM and can freeze when unsupported direct Klipper actions such as `RESTART` or `SAVE_CONFIG` are used. |
+| `STOCK` | [`config/stock.cfg`](../../config/stock.cfg) | Vendor FlashForge application and touch UI | Stock UI/apps, plus Forge-X/Moonraker where compatible | Vendor app starts Klipper and owns stock-screen-specific behavior. It consumes more RAM. Standard reloads work in [updated builds](../../docs/SCREEN.md#klipper-restart-and-saving). |
 | `FEATHER` (default) | [`config/feather.cfg`](../../config/feather.cfg) | Forge-X interactive status/control display | Feather for essential local actions; Fluidd/Mainsail for advanced work | First-party, low-resource display. Forge-X starts touchscreen, MCU, and Klipper even while offline; vendor app is stopped. |
 | `GUPPY` | [`config/guppy.cfg`](../../config/guppy.cfg) | Interactive Guppy touchscreen | Guppy plus Fluidd/Mainsail/Moonraker | Separate Guppy/tslib processes are started in the chroot. |
 | `HEADLESS` | [`config/headless.cfg`](../../config/headless.cfg) | No normal local display UI | Fluidd/Mainsail/Moonraker | Lowest UI footprint; intended for remote operation or a custom display implementation. |

@@ -35,8 +35,7 @@ Use the Stock screen's supported workflow, Feather's **Control → Calibration**
 > [!CAUTION]
 > Read [Before you start](CALIBRATION.md#before-you-start) before changing the mesh or Z geometry.
 
-> [!WARNING]
-> The Stock screen can freeze when given `SAVE_CONFIG` or `RESTART`. Use `NEW_SAVE_CONFIG` instead. See the [FAQ](FAQ.md#stock-screen-freezes-i-cant-print-anything) if it has already frozen.
+Stock screen: use `SAVE_CONFIG` / `RESTART` in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds require `NEW_SAVE_CONFIG` / `NEW_RESTART`.
 
 Do not substitute generic Klipper probing macros. The AD5M requires Forge-X preparation such as load-cell tare and printer-specific movement handling. See the full [Calibration guide](CALIBRATION.md).
 

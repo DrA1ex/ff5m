@@ -15,8 +15,7 @@ Calibrate only while the printer is idle. An incorrect mesh, Z offset, or motion
 - If you enable `tune_klipper` or `tune_config`, do so before calibration. Recreate the bed mesh and verify Z offset afterward.
 - Use the Stock screen for its normal calibration workflow. In Feather, open **Control → Calibration**. Guppy and Headless users can run the Forge-X macros from Fluidd or Mainsail.
 
-> [!WARNING]
-> On the Stock screen, use `NEW_SAVE_CONFIG`, not `SAVE_CONFIG` or `RESTART`. The latter commands can freeze the vendor application.
+Stock-screen `SAVE_CONFIG` requires Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_SAVE_CONFIG`.
 
 ## Configuration Overrides
 
@@ -44,14 +43,14 @@ To create the normal persistent mesh:
 
 ```gcode
 AUTO_FULL_BED_LEVEL PROFILE=MESH_DATA BED_TEMP=60 EXTRUDER_TEMP=220
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 **Feather, Guppy, or Headless:**
 
 ```gcode
 AUTO_FULL_BED_LEVEL PROFILE=auto BED_TEMP=60 EXTRUDER_TEMP=220
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 Adjust the temperatures for the material and nozzle condition.
@@ -85,7 +84,7 @@ Make sure every referenced profile actually exists before relying on this setup.
    - In Feather, press **Repeat**.
    - From the console, use `BED_LEVEL_SCREWS_PROBE` only while the printer remains homed and at the required temperatures.
 4. Recreate the bed mesh after changing the screws.
-5. Save the result with `NEW_SAVE_CONFIG` when required.
+5. Save the result with `SAVE_CONFIG` when required.
 
 If the bed-height variation was greater than about 1 mm, recalibrate the load-cell tare after the mechanical adjustment. See the [load-cell instructions in the FAQ](FAQ.md#resolving-the-issue-by-calibrating-the-load-cell). If the Stock screen is not active, you can temporarily boot it through `SKIP_MOD` to use the official FlashForge workflow.
 
@@ -95,7 +94,7 @@ Run the Forge-X mesh workflow with the correct profile and realistic temperature
 
 ```gcode
 AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=220 BED_TEMP=60 PROFILE=auto
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 Use `PROFILE=MESH_DATA` for the Stock screen. Inspect the resulting mesh in Fluidd or Mainsail and verify the first layer with a small test print.
@@ -185,7 +184,7 @@ In Feather, open **Control → Calibration → PID** and follow the guided prepa
 ```gcode
 PID_TUNE_EXTRUDER TEMPERATURE=220
 PID_TUNE_BED TEMPERATURE=60
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 After saving, check that both temperatures remain stable.
@@ -201,7 +200,7 @@ ZSHAPER
 Inspect the generated graphs before accepting the result, then save it:
 
 ```gcode
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 A ringing test print is useful for confirming the selected values.
@@ -247,7 +246,7 @@ Use a Calilantern or another suitable model to measure skew. Save the correction
 ```gcode
 SET_SKEW XY=140.4,142.8,99.8 XZ=141.6,141.4,99.8 YZ=142.4,140.5,99.5
 SKEW_PROFILE SAVE=skew_profile
-NEW_SAVE_CONFIG
+SAVE_CONFIG
 ```
 
 Enable automatic loading of the profile:

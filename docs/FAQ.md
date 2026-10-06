@@ -372,7 +372,7 @@ Forge-X provides various macros for calibration and management, accessible via F
 - **Calibration Macros**: Check the “calibration macros group” in Fluidd for macros like auto bed leveling.
 - **MEM Macro**: Run in the console to check memory usage.
 - **CAMERA_RELOAD**: Applies camera settings manually.
-- **NEW_SAVE_CONFIG**: Saves configurations without freezing the Stock screen (compatibility varies).
+- **SAVE_CONFIG**: Saves calibration results and restarts Klipper. For Stock-screen version requirements, see [restart and saving](SCREEN.md#klipper-restart-and-saving).
 - **SET_MOD**: Adjusts parameters like `weight_check` or `weight_check_max`.
 
 For a complete list, refer to the [Macro Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/MACROS.md). Update to Forge-X 1.3.3 to ensure all macros are available in both Fluidd and Mainsail.
@@ -393,7 +393,7 @@ Yes, calibration via the Stock screen works, as it interacts directly with Klipp
 Use a stylus or thin object to press the console button more precisely.
 
 ### Stock screen freezes: I can’t print anything
-The Stock screen does not support Moonraker external control, causing freezes when running `SAVE_CONFIG`, `RESTART`, or `FIRMWARE_RESTART`. Reboot the printer to resolve. Use the `NEW_SAVE_CONFIG` macro for graceful configuration saving. Consider switching to the Feather/Guppy screen to avoid this issue, as detailed in the [Screen Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/SCREEN.md).
+Fixed in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**: use standard `SAVE_CONFIG`, `RESTART`, and `FIRMWARE_RESTART`. Older builds need `NEW_SAVE_CONFIG` / `NEW_RESTART` or an update. If already frozen, reboot after any print finishes.
 
 ### Feather screen stuck on “Finishing boot...”
 This occurs if Klipper or the MCU fails to become ready, often due to a broken configuration or an unreset MCU after a `reboot` command. Perform a `FIRMWARE_RESET` or power cycle the printer. Access Fluidd or SSH to diagnose the issue.
@@ -407,7 +407,7 @@ Nozzle gouging, where the nozzle scrapes or digs into the build plate during the
 
 **Solutions**:
 - **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset guidance](CALIBRATION.md#z-offset-calibration). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
-- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `NEW_SAVE_CONFIG` (Stock screen) or through the supported Forge-X workflow (or use SAVE_CONFIG).
+- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `SAVE_CONFIG`. See [Stock-screen version requirements](SCREEN.md#klipper-restart-and-saving).
 - **Check Weight Sensor**: Recalibrate the load cell following Flashforge’s guide.
 - **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see Uninstall Guide).
 - Refer to the [Printing Page](/docs/PRINTING.md) for calibration details.
