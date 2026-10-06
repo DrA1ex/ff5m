@@ -713,6 +713,10 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_z_paper_controls_are_disabled_until_probe_or_manual_start(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.toolhead = StatusObject({
+            "axis_minimum": (-125, -125, -10),
+            "axis_maximum": (125, 125, 230),
+        })
         controller.renderer = FEATHER.FeatherRenderer()
         batches = RenderCapture(controller.renderer).batches
         controller.reactor = Reactor()
@@ -730,6 +734,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_safe_z_pages_explain_measurement_and_gate_adjustment_until_probe(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
+        controller.toolhead = StatusObject({
+            "axis_minimum": (-125, -125, -10),
+            "axis_maximum": (125, 125, 230),
+        })
         controller.renderer = FEATHER.FeatherRenderer()
         batches = RenderCapture(controller.renderer).batches
         controller.z_calibration = ZCalibrationSession()
@@ -1264,6 +1273,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_z_preparation_has_clean_and_no_clean_command_paths(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
+        controller.toolhead = StatusObject({
+            "axis_minimum": (-125, -125, -10),
+            "axis_maximum": (125, 125, 230),
+        })
         controller.calibration_material = "ABS-PC"
         controller._limited_preheat = lambda material: (270, 105)
         controller.params = type("Params", (), {

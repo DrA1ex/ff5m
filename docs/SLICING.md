@@ -28,6 +28,14 @@ End Gcode
 END_PRINT
 ```
 
+### Bed coordinates
+
+The default FlashForge AD5M profiles in OrcaSlicer already place the X/Y origin at the bed center (`0, 0`), as Forge-X expects. No change to the printable area is needed for these profiles.
+
+If you create a custom profile or change the bed geometry, keep the origin at the bed center. In **Printer Settings → Basic information → Printable area**, use the corners `-110x-110`, `110x-110`, `110x110`, and `-110x110`.
+
+Replace the default start block with the commands above, omit `G92 X0 Y0 Z0`, and re-slice existing files after changing the profile.
+
 ### Configuring Moonraker / Klipper connection
 
 Forge-X connects to the printer through Moonraker, so OrcaSlicer should be configured to upload regular G-code files directly to the printer.

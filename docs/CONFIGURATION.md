@@ -45,7 +45,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`zram_algo`**: Selects the compression algorithm used when `use_swap=ZRAM`. `zstd` provides the best compression ratio, while `lzo-rle` and `lzo` reduce compression CPU cost.  
 
-- **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. The default is `10` mm.
+- **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. Default: `10` mm; minimum: `1` mm.
 
   > [!WARNING]
   > The real nozzle-to-bed clearance can be smaller than this value because bed leveling changes the effective bed position, and a non-standard nozzle can extend farther toward the bed. Choose a height that safely clears the bed on your printer, and verify Z-offset calibration after changing the bed setup or nozzle.

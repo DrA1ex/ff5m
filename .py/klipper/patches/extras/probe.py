@@ -1,12 +1,14 @@
 # Z-Probe support
 #
 # Copyright (C) 2017-2021  Kevin O'Connor <kevin@koconnor.net>
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
 # Changes:
 # - Backported Klipper commit a353efa: return to the starting XY position
 #   after each PROBE_ACCURACY attempt instead of retracting only in Z.
+# - Close locally owned multi-probe lifecycles on sampling or retract errors.
 # - Python-only patch; no MCU firmware or host binary rebuild is required.
 import logging
 import pins
@@ -163,30 +165,35 @@ class PrinterProbe:
         must_notify_multi_probe = not self.multi_probe_pending
         if must_notify_multi_probe:
             self.multi_probe_begin()
-        probexy = self.printer.lookup_object('toolhead').get_position()[:2]
-        retries = 0
-        positions = []
-        while len(positions) < sample_count:
-            # Probe position
-            pos = self._probe(speed)
-            positions.append(pos)
-            # Check samples tolerance
-            z_positions = [p[2] for p in positions]
-            if max(z_positions) - min(z_positions) > samples_tolerance:
-                if retries >= samples_retries:
-                    raise gcmd.error("Probe samples exceed samples_tolerance")
-                gcmd.respond_info("Probe samples exceed tolerance. Retrying...")
-                retries += 1
-                positions = []
-            # Retract
-            if len(positions) < sample_count:
-                self._move(probexy + [pos[2] + sample_retract_dist], lift_speed)
-        if must_notify_multi_probe:
-            self.multi_probe_end()
-        # Calculate and return result
-        if samples_result == 'median':
-            return self._calc_median(positions)
-        return self._calc_mean(positions)
+        try:
+            probexy = self.printer.lookup_object('toolhead').get_position()[:2]
+            retries = 0
+            positions = []
+            while len(positions) < sample_count:
+                # Probe position
+                pos = self._probe(speed)
+                positions.append(pos)
+                # Check samples tolerance
+                z_positions = [p[2] for p in positions]
+                if max(z_positions) - min(z_positions) > samples_tolerance:
+                    if retries >= samples_retries:
+                        raise gcmd.error(
+                            "Probe samples exceed samples_tolerance")
+                    gcmd.respond_info(
+                        "Probe samples exceed tolerance. Retrying...")
+                    retries += 1
+                    positions = []
+                # Retract
+                if len(positions) < sample_count:
+                    self._move(probexy + [pos[2] + sample_retract_dist],
+                               lift_speed)
+            # Calculate and return result
+            if samples_result == 'median':
+                return self._calc_median(positions)
+            return self._calc_mean(positions)
+        finally:
+            if must_notify_multi_probe:
+                self.multi_probe_end()
     cmd_PROBE_help = "Probe Z-height at current XY position"
     def cmd_PROBE(self, gcmd):
         pos = self.run_probe(gcmd)
@@ -219,16 +226,18 @@ class PrinterProbe:
                              speed, lift_speed))
         # Probe bed sample_count times
         self.multi_probe_begin()
-        positions = []
-        while len(positions) < sample_count:
-            # Probe position
-            pos = self._probe(speed)
-            positions.append(pos)
-            # Retract
-            lift_z = toolhead.get_position()[2] + sample_retract_dist
-            liftpos = [start_pos[0], start_pos[1], lift_z]
-            self._move(liftpos, lift_speed)
-        self.multi_probe_end()
+        try:
+            positions = []
+            while len(positions) < sample_count:
+                # Probe position
+                pos = self._probe(speed)
+                positions.append(pos)
+                # Retract
+                lift_z = toolhead.get_position()[2] + sample_retract_dist
+                liftpos = [start_pos[0], start_pos[1], lift_z]
+                self._move(liftpos, lift_speed)
+        finally:
+            self.multi_probe_end()
         # Calculate maximum, minimum and average values
         max_value = max([p[2] for p in positions])
         min_value = min([p[2] for p in positions])

@@ -43,6 +43,12 @@ class ZCalibrationStateTest(unittest.TestCase):
 
         self.assertAlmostEqual(session.adjust_safe_z(-100.0), 1.2)
 
+    def test_safe_z_candidate_and_adjustment_respect_setting_minimum(self):
+        session = ZCAL.ZCalibrationSession()
+        self.assertEqual(session.set_safe_z_trigger(-4.5), 1.0)
+        self.assertEqual(session.adjust_safe_z(-1.0), 1.0)
+        self.assertEqual(session.accept_safe_z(), 1.0)
+
     def test_formula_supports_negative_configured_probe_offset(self):
         self.assertAlmostEqual(
             ZCAL.calculate_z_offset(0.125, -0.500, -0.250), 0.375)

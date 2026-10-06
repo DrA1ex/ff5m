@@ -266,6 +266,12 @@ host = Host()
 host.renderer = FeatherRenderer()
 RenderCapture(host.renderer)
 host._setting = lambda key, default: default
+from types import SimpleNamespace
+host.reactor = SimpleNamespace(monotonic=lambda: 0)
+host.toolhead = SimpleNamespace(get_status=lambda eventtime: {
+    "axis_minimum": (-125, -125, -10),
+    "axis_maximum": (125, 125, 230),
+})
 host.feature_manager = LazyFeatureManager(host, feather_screen.FEATURE_SPECS)
 manager = host.feature_manager
 filament = manager.get('filament')

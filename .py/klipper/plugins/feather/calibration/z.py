@@ -27,6 +27,7 @@ PRESSURE_WARN = 800.0
 PRESSURE_REARM = 600.0
 SAFE_Z_CLEARANCE = 5.0
 SAFE_Z_ADJUST_STEP = 1.0
+SAFE_Z_MINIMUM = 1.0
 
 
 def calculate_z_offset(paper_contact_z, probe_trigger_z,
@@ -109,7 +110,7 @@ class ZCalibrationSession:
         self.original_mesh_profile = str(mesh_profile or "")
         self.probe_z_offset = float(probe_z_offset)
         self.load_zoffset = bool(load_zoffset)
-        self.safe_z = abs(float(safe_z))
+        self.safe_z = float(safe_z)
 
     def clear(self):
         self.__init__()
@@ -120,15 +121,16 @@ class ZCalibrationSession:
                 and self.safe_z_candidate is not None
                 and not self.safe_z_probing)
 
-    def set_safe_z_trigger(self, trigger_z, clearance=SAFE_Z_CLEARANCE):
+    def set_safe_z_trigger(self, trigger_z):
         self.safe_z_trigger = float(trigger_z)
-        self.safe_z_candidate = self.safe_z_trigger + abs(float(clearance))
+        self.safe_z_candidate = max(
+            SAFE_Z_MINIMUM, self.safe_z_trigger + SAFE_Z_CLEARANCE)
         return self.safe_z_candidate
 
     def adjust_safe_z(self, delta):
         if self.safe_z_candidate is None:
             raise ValueError("Probe the bed before adjusting Safe Z")
-        minimum = self.safe_z_trigger + SAFE_Z_ADJUST_STEP
+        minimum = max(SAFE_Z_MINIMUM, self.safe_z_trigger + SAFE_Z_ADJUST_STEP)
         self.safe_z_candidate = max(
             minimum, self.safe_z_candidate + float(delta))
         return self.safe_z_candidate
@@ -257,8 +259,8 @@ class FeatherZCalibrationMixin:
     def _safe_z(self):
         session = getattr(self, "z_calibration", None)
         if session is not None and session.active:
-            return abs(float(session.safe_z))
-        return abs(float(self._setting("safe_z", 10.0)))
+            return session.safe_z
+        return self._setting("safe_z", 10.0)
 
     def _safe_z_preparation_height(self):
         return self._safe_z() * 2.0

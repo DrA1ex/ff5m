@@ -489,6 +489,7 @@
       "default": 0,
       "label": "Z-OFFSET",
       "description": "Set the saved nozzle-to-bed Z offset.",
+      "fraction_digits": 3,
       "order": 10002
     },
     {
@@ -497,6 +498,8 @@
       "default": 10.0,
       "label": "Safe Z height, mm",
       "description": "Set the Z height before lateral moves.",
+      "minimum": 1.0,
+      "fraction_digits": 3,
       "warning": "Bed leveling and a non-standard nozzle can reduce the real nozzle-to-bed clearance. Use a value that is safe for your printer and verify Z-offset calibration after changing the bed or nozzle.",
       "order": 10003
     },

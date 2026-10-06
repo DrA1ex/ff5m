@@ -22,7 +22,11 @@ The normal shared configuration, [`macros/base.cfg`](../../macros/base.cfg), inc
 
 ## `mod_params`: persistent Forge-X settings
 
-[`mod_params.py`](../../.py/klipper/plugins/mod_params.py) reads the declared parameter schema from [`mod_params.json`](../../mod_params.json), loads/saves values in `/opt/config/mod_data/variables.cfg`, applies defaults and deprecation migrations, and exposes values as `printer.mod_params.variables` to Jinja macros. It validates type and enum values before saving.
+[`mod_params.py`](../../.py/klipper/plugins/mod_params.py) reads the declared parameter schema from [`mod_params.json`](../../mod_params.json), loads/saves values in `/opt/config/mod_data/variables.cfg`, applies defaults and deprecation migrations, and exposes values as `printer.mod_params.variables` to Jinja macros. It validates types, enum values, finite numbers, and declared numeric bounds for both saved settings and incoming G-code/UI changes.
+
+A damaged individual value falls back to its declared default without discarding valid neighboring settings. Explicit current keys take precedence over deprecated keys, even when the current value needs that fallback. INI interpolation is disabled so percent characters remain literal. A structurally invalid INI file still reports a load error.
+
+The parameter store writes a complete adjacent temporary file before replacing the variables file. Failed writes or replacements preserve the previous file; the existing serialized change path also rolls back the in-memory value and schedules change hooks only after success. This protects against partial file writes; it does not promise durability through a power loss.
 
 A `deprecated` block names the retired key and translates its stored values through `mapping`; a value the mapping does not list is refused. `carry_over: true` relaxes that for a pure rename, keeping any other stored value as it was — the mapping then only translates the values that must change, such as a retired default. A value already stored under the current key always wins over the deprecated leftover.
 

@@ -5,7 +5,7 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 
-import ast, configparser, logging, threading
+import ast, configparser, logging, math, os, threading
 import json
 
 from dataclasses import dataclass
@@ -299,44 +299,10 @@ class ModParamManagement:
             raise self.printer.command_error(msg)
 
     def _reload(self):
-        result = dict()
-        parser = configparser.ConfigParser()
-
         try:
-            parser.read(self.filename)
-            if not parser.has_section("Variables"):
-                parser.add_section("Variables")
-
-            parsed = dict()
-            for key, value in parser.items("Variables"):
-                if key in self.params_map:
-                    parsed[key] = ast.literal_eval(value)
-                elif key in self.migration_map:
-                    migration = self.migration_map[key]
-
-                    if migration.new_key in parsed:
-                        logging.info(f'[mod_params]: Ignoring deprecated "{key}"; "{migration.new_key}" is already set.')
-                        continue
-
-                    literal = migration.mapping.get(value, value if migration.carry_over else None)
-                    if literal is not None:
-                        parsed[migration.new_key] = ast.literal_eval(literal)
-                        logging.info(f'[mod_params]: Migrated "{key}" -> "{migration.new_key}": {parsed[migration.new_key]}')
-                    else:
-                        logging.error(f'[mod_params]: Unable to migrate deprecated parameter: "{key}"')
-                else:
-                    logging.error(f'[mod_params]: Read unknown parameter while parsing: "{key}"')
-
-            for param in self.params:
-                key = param.key
-                value = parsed.get(key)
-
-                try:
-                    result[key] = self._load_param(param, value)
-                except:
-                    logging.error(f'[mod_params]: Unable to parse {key} value: "{value}"; Expected type: {param.type}')
-                    result[key] = self._load_param(param, param.default)
-
+            parsed = self._read_stored_values()
+            result = {param.key: self._load_stored_param(param, parsed.get(param.key))
+                      for param in self.params}
         except Exception:
             msg = "[mod_params] Unable to parse variable file."
             logging.exception(msg)
@@ -344,16 +310,76 @@ class ModParamManagement:
 
         self.variables = result
 
+    def _read_stored_values(self):
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(self.filename)
+        if not parser.has_section("Variables"):
+            parser.add_section("Variables")
+
+        items = list(parser.items("Variables"))
+        current_keys = {key for key, _ in items if key in self.params_map}
+        parsed = {}
+        for key, value in items:
+            try:
+                entry = self._parse_stored_value(key, value, current_keys)
+            except (SyntaxError, TypeError, ValueError):
+                logging.error('[mod_params]: Unable to parse stored parameter "%s"; using its default.', key)
+                continue
+
+            if entry is not None:
+                stored_key, stored_value = entry
+                parsed[stored_key] = stored_value
+        return parsed
+
+    def _parse_stored_value(self, key, value, current_keys):
+        if key in self.params_map:
+            return key, ast.literal_eval(value)
+        if key not in self.migration_map:
+            logging.error(f'[mod_params]: Read unknown parameter while parsing: "{key}"')
+            return None
+
+        migration = self.migration_map[key]
+        # An explicit current value wins even if it is damaged;
+        # validation then restores its declared default.
+        if migration.new_key in current_keys:
+            logging.info(f'[mod_params]: Ignoring deprecated "{key}"; "{migration.new_key}" is already set.')
+            return None
+
+        literal = migration.mapping.get(value, value if migration.carry_over else None)
+        if literal is None:
+            logging.error(f'[mod_params]: Unable to migrate deprecated parameter: "{key}"')
+            return None
+
+        loaded = ast.literal_eval(literal)
+        logging.info(f'[mod_params]: Migrated "{key}" -> "{migration.new_key}": {loaded}')
+        return migration.new_key, loaded
+
+    def _load_stored_param(self, param, value):
+        try:
+            return self._load_param(param, value)
+        except Exception:
+            logging.error(f'[mod_params]: Unable to parse {param.key} value: "{value}"; Expected type: {param.type}')
+            return self._load_param(param, param.default)
+
     def _load_param(self, param: Parameter, value: Optional[str]):
+        source = param.default if value is None else value
         if issubclass(param.type, Enum):
             # Defaults and persisted enum values both use member names.
-            name = value if value is not None else param.default
+            name = source
             return param.type[name.strip()].value
 
         if param.type == bool:
-            return param.type(int(value)) if value is not None else param.default
+            return param.type(int(source))
 
-        return param.type(value) if value is not None else param.default
+        loaded = param.type(source)
+        if param.type in (int, float):
+            if not math.isfinite(loaded):
+                raise ValueError('%s must be finite' % param.key)
+            if param.minimum is not None and loaded < param.minimum:
+                raise ValueError('%s must be at least %s' % (param.key, param.minimum))
+            if param.maximum is not None and loaded > param.maximum:
+                raise ValueError('%s must be at most %s' % (param.key, param.maximum))
+        return loaded
 
     def _transform(self, param: Parameter, value: Optional[Any]):
         if issubclass(param.type, Enum):
@@ -365,7 +391,7 @@ class ModParamManagement:
         return value if value is not None else param.default
 
     def _save_all(self):
-        parser = configparser.ConfigParser()
+        parser = configparser.ConfigParser(interpolation=None)
         parser.add_section("Variables")
 
         for param in self.params:
@@ -373,10 +399,16 @@ class ModParamManagement:
             value_to_save = self._transform(param, value)
             parser.set("Variables", param.key, repr(value_to_save))
 
+        temporary_filename = self.filename + ".tmp"
         try:
-            with open(self.filename, "w") as f:
+            with open(temporary_filename, "w", encoding="utf-8") as f:
                 parser.write(f)
-        except:
+            os.replace(temporary_filename, self.filename)
+        except Exception:
+            try:
+                os.unlink(temporary_filename)
+            except OSError:
+                pass
             msg = "Unable to save variable"
             logging.exception(msg)
             raise self.gcode.error(msg)

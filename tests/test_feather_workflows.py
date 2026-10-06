@@ -181,6 +181,11 @@ def base_controller(state="idle"):
     controller.reactor.register_fd = lambda fd, callback: "netd-fd"
     controller.reactor.unregister_fd = lambda handle: None
     controller.gcode = GCodeRecorder()
+    controller.toolhead = StatusObject({
+        "homed_axes": "xyz", "position": (0.0, 0.0, 10.0, 0.0),
+        "axis_minimum": (-125.0, -125.0, -10.0),
+        "axis_maximum": (125.0, 125.0, 230.0),
+    })
     controller.print_stats = StatusObject(
         {"state": state,
          "print_duration": 1.0 if state in ("printing", "paused") else 0.0,
@@ -4189,6 +4194,38 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
         self.assertEqual(callbacks,
                          [controller._run_z_calibration_preparation])
+
+    def test_safe_z_adjustment_rolls_back_failed_move(self):
+        controller = base_controller()
+        controller.z_calibration = ZCalibrationSession()
+        controller.z_calibration.begin(0, None, "", -0.25, False)
+        controller.z_calibration.set_safe_z_trigger(0)
+        controller._render_safe_z = lambda: None
+
+        controller._adjust_safe_z(1)
+        self.assertEqual(controller.gcode.commands,
+                         ["MOVE_SAFE Z=6.000000 ABSOLUTE=1 F=300"])
+        self.assertEqual(controller.z_calibration.safe_z_candidate, 6)
+
+        controller._run_script = mock.Mock(side_effect=RuntimeError("move failed"))
+        with self.assertRaisesRegex(RuntimeError, "move failed"):
+            controller._adjust_safe_z(-1)
+        self.assertEqual(controller.z_calibration.safe_z_candidate, 6)
+
+    def test_safe_z_probe_failure_resets_busy_state_without_a_followup_move(self):
+        controller = base_controller()
+        controller.z_calibration = ZCalibrationSession()
+        controller.z_calibration.begin(0, None, "", -0.25, False)
+        controller.probe = StatusObject({"last_z_result": -0.4})
+        controller._render_safe_z = lambda: None
+        controller._run_blocking_gcode = mock.Mock(side_effect=RuntimeError("probe failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "probe failed"):
+            controller._probe_safe_z()
+
+        self.assertFalse(controller.z_calibration.safe_z_probing)
+        self.assertFalse(controller.z_calibration.safe_z_ready)
+        self.assertEqual(controller.gcode.commands, [])
 
     def test_zone_selection_back_returns_to_saved_safe_z_without_repreparing(self):
         controller = base_controller()

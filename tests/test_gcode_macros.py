@@ -344,6 +344,54 @@ class BedCollisionProtectionTest(unittest.TestCase):
 
 
 class WorkflowMacroTest(unittest.TestCase):
+    def test_start_print_rejects_nonfinite_or_malformed_z_offset(self):
+        for path in (STOCK, HEADLESS):
+            for value in ("broken", "nan", "inf", "-inf", "1e309"):
+                with self.subTest(path=path.name, value=value):
+                    with self.assertRaisesRegex(MacroActionError, "Invalid Z_OFFSET"):
+                        render_macro(path, "START_PRINT", params={
+                            "EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                            "Z_OFFSET": value})
+
+    def test_start_print_accepts_finite_offsets_outside_two_mm(self):
+        for path in (STOCK, HEADLESS):
+            for value in (-5.0, 5.0):
+                with self.subTest(path=path.name, value=value):
+                    result = render_macro(path, "START_PRINT", params={
+                        "EXTRUDER_TEMP": 230, "BED_TEMP": 65,
+                        "Z_OFFSET": value}, printer={
+                            "gcode_macro START_PRINT": macro_status(path, "START_PRINT"),
+                            "mod_params": {"variables": {"filament_switch_sensor": False}},
+                            "bed_mesh": {"profiles": {}},
+                        })
+                    self.assertIn("SET_GCODE_VARIABLE MACRO=_START_PRINT "
+                                  "VARIABLE=zzoffset VALUE=%s" % value,
+                                  result.commands)
+
+    def test_set_gcode_offset_rejects_invalid_input_before_applying_it(self):
+        printer = {
+            "mod_params": {"variables": {"z_offset": 0.0}},
+            "gcode_move": {"homing_origin": {"z": 0.5}},
+            "gcode_macro _CHECK_BED_MESH": {"offset_before": None},
+        }
+        for key in ("Z", "Z_ADJUST"):
+            for value in ("broken", "nan", "inf", "-inf"):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(MacroActionError, "Invalid Z-offset"):
+                        render_macro(BASE, "SET_GCODE_OFFSET", printer=printer,
+                                     params={key: value, "MOVE": 1},
+                                     rawparams="%s=%s MOVE=1" % (key, value))
+        for params, expected in (({"Z": 5}, 5.0),
+                                 ({"Z_ADJUST": 5}, 5.5),
+                                 ({"Z": 5, "Z_ADJUST": 100}, 5.0)):
+            with self.subTest(params=params):
+                raw = " ".join("%s=%s" % item for item in params.items())
+                result = render_macro(BASE, "SET_GCODE_OFFSET", printer=printer,
+                                      params=params, rawparams=raw)
+                self.assertEqual(result.commands[0], "_SET_GCODE_OFFSET " + raw)
+                self.assertEqual(result.commands[1],
+                                 'SET_MOD PARAM="z_offset" VALUE=\'%s\'' % expected)
+
     def test_system_power_macros_prepare_hardware_before_action(self):
         macros = (
             (BASE, "_PREPARE_SYSTEM_POWER"),
