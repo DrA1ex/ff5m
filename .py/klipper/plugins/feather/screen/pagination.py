@@ -43,10 +43,10 @@ class Pagination:
 
 
 def pagination_footer(renderer, pagination, previous_action, next_action,
-                      y=390, previous_x=210, next_x=440,
+                      y=384, previous_x=210, next_x=440,
                       button_width=150, button_height=50,
                       previous_label="< PAGE", next_label="PAGE >",
-                      center_x=400, center_y=415):
+                      center_x=400, center_y=409):
     commands = renderer.button(
         previous_action, previous_x, y, button_width, button_height,
         previous_label, active=pagination.has_previous)

@@ -1839,8 +1839,8 @@ class FeatherRenderer:
         self._footer_drawn = False
 
     def toast(self, message):
-        y = 397
         height = 44
+        y = CONTENT_BOTTOM - height - 8
         _label, _font, _available, x, width = self._hint_box_geometry(
             message, 400, 740, 180, "JetBrainsMono 8pt")
         commands = self.hint_box(
