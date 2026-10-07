@@ -279,6 +279,7 @@ def run_checks(settings, images, evaluator=None, progress=None, clock=None):
 
     artifact = evaluator.artifact(records)
     artifact["summary"] = evaluator.summary(records)
+    artifact["summary"]["review_elapsed_seconds"] = round(elapsed, 6)
     statuses = [item["status"] for item in records]
     artifact["status"] = (
         "disabled" if not settings.enabled else

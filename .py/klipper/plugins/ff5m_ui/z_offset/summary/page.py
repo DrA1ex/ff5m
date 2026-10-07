@@ -112,7 +112,7 @@ def _content():
             _zone_button("rear_right"),
         ),),
         columns=Equal(3), rows=Equal(1), gap=(10, 0),
-    ).padding(left=75, right=75).ref(SummaryRef.REAR)
+    ).padding(left=35, right=35).ref(SummaryRef.REAR)
     front = Grid(
         matrix=((_zone_button("front_left"), _zone_button("front_right")),),
         columns=Equal(2), rows=Equal(1), gap=(20, 0),

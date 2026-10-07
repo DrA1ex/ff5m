@@ -359,6 +359,8 @@ class ParallelReviewTest(unittest.TestCase):
                 self.assertNotEqual(events[1]["case_id"], "0")
                 self.assertEqual(set(callback_threads), {threading.get_ident()})
                 self.assertEqual(events[-1]["eta_seconds"], 0)
+                self.assertAlmostEqual(artifact["summary"]["review_elapsed_seconds"],
+                                       events[-1]["elapsed_seconds"], places=5)
                 self.assertEqual([event["elapsed_seconds"] for event in events],
                                  sorted(event["elapsed_seconds"] for event in events))
 

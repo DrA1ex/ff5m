@@ -106,6 +106,12 @@ _VISION_TERMS = re.compile(
     r"(vision|image(?:_url)?|multimodal|modality|visual input|"
     r"does not support (?:images|image input)|unsupported (?:image|content))",
     re.IGNORECASE)
+_MODAL_LAYER_RULE = (
+    "A foreground modal or overlay intentionally covers background UI. "
+    "Background text and controls partially hidden by that foreground panel "
+    "are deliberate occlusion, not clipping, overlap, or clearance defects. "
+    "Inspect the foreground dialog's own text, borders, padding, and controls "
+    "normally; clipping or overlap within that active layer still fails. ")
 
 
 class VisualCheckConfigurationError(ValueError):
@@ -431,7 +437,7 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
         "messages": [
             {
                 "role": "system",
-                "content": (
+                "content": _MODAL_LAYER_RULE + (
                     "Return exactly one JSON object and no markdown. Focus "
                     "on obvious boundary defects involving visible text or "
                     "controls, prioritizing the boundary below the header. "
@@ -492,6 +498,7 @@ def _completion_payload(model, image_bytes, mime_type, context,
         "checklist": CHECKLIST,
         "evaluation_order": ["standalone_quality_each_image"],
         "standalone_quality_policy": {
+            "layering_rule": _MODAL_LAYER_RULE,
             "scope": (
                 "Independently inspect every supplied image, including an "
                 "ordinary screenshot with no Designer reference."),
@@ -653,7 +660,7 @@ def _completion_payload(model, image_bytes, mime_type, context,
                     base64.b64encode(comparison_bytes).decode("ascii")),
             },
         })
-    system_instruction = (
+    system_instruction = _MODAL_LAYER_RULE + (
         "Return exactly one JSON object and no markdown. "
         "TOP-PRIORITY OBVIOUS-DEFECT GATE: before any overall judgment, "
         "inspect the first visible body text or control below the header "

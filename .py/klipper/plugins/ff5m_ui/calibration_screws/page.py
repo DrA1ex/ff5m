@@ -45,7 +45,7 @@ orientation = Column(
     Spacer(),
     Text("FRONT", color=ThemeColor.DIM, font=FONT).height(20),
     gap=0,
-).padding(top=46, bottom=84)
+).padding(top=46, bottom=72)
 instruction = Text(
     "ADJUST FROM BELOW", color=ThemeColor.WARNING,
     font="Roboto Bold 10pt",
@@ -83,7 +83,7 @@ legend_rows = Column(
         gap=20,
     ).width("content").align(horizontal="center"),
     gap=0,
-).padding(top=5)
+).padding(top=5, bottom=12)
 
 
 
@@ -160,11 +160,11 @@ legend = Column(
     Stroke(ThemeColor.BORDER, line_width=1).height(1),
     legend_rows,
     gap=0,
-).height(63).padding(left=15, right=15).ref(ScrewResultRef.LEGEND)
+).height(75).padding(left=15, right=15).ref(ScrewResultRef.LEGEND)
 diagram = Frame(
     Grid(
         matrix=((visual,), (legend,)),
-        columns=(FLEX,), rows=(FLEX, 63), gap=0,
+        columns=(FLEX,), rows=(FLEX, 75), gap=0,
     ),
     border=ThemeColor.BORDER,
     background=ThemeColor.BACKGROUND,

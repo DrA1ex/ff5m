@@ -758,6 +758,7 @@ def _run(report, views, names):
     coverage = report.get("coverage") or {}
     reviewed = [item for item in views if item["elapsed"]]
     total = sum(item["elapsed"] for item in reviewed)
+    review_time = (report.get("summary") or {}).get("review_elapsed_seconds", total)
     settings = (
         ("Model", configuration.get("model") or "disabled"),
         ("Backend", configuration.get("backend", "openai-compatible")),
@@ -770,7 +771,8 @@ def _run(report, views, names):
         ("Printer retained", coverage.get("legacy_printer", 0)),
         ("Replaced by Designer", coverage.get("replaced", 0)),
         ("Reviewed frames", len(reviewed)),
-        ("Review time", "%.1f s" % total if reviewed else None),
+        ("Review time", "%.1f s" % review_time if reviewed else None),
+        ("Summed frame time", "%.1f s" % total if reviewed else None),
         ("Mean per frame", "%.2f s" % (total / len(reviewed))
          if reviewed else None),
         ("Retried frames", sum(

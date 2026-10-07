@@ -10,6 +10,7 @@ from feather.screen.pagination import Pagination
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.screen import ScreenPage
 from ui import ThemeColor
+from ui.font_metrics import get_font_metrics
 from ui.layout_helpers import DIALOG_BUTTON_FONT, DIALOG_LIST_FONT
 
 
@@ -447,9 +448,7 @@ class ForgeXUpdateNotification:
         if self.recovery_files:
             self._render_recovery()
             return
-        pagination = Pagination(
-            self.changes or ("CHANGELOG UNAVAILABLE",),
-            self.change_page, CHANGE_PAGE_SIZE)
+        pagination = self._change_pagination()
         self.change_page = pagination.page
         version = self.available_version or "UNKNOWN"
         commands = self.host.renderer.begin_page("Forge-X update")
@@ -465,14 +464,24 @@ class ForgeXUpdateNotification:
             max_width=570, truncate=True))
         for index, subject in enumerate(pagination.visible):
             commands.append(self.host.renderer.text(
-                78, 194 + index * 36, "- " + subject,
+                78, 194 + index * 36, subject,
                 ThemeColor.TEXT, DIALOG_LIST_FONT,
-                max_width=570, truncate=True))
+                max_width=570))
         if pagination.page_count > 1:
             commands += self.host.renderer.dialog_pager(
                 pagination.page, pagination.page_count,
                 ("update.prev", "update.next"), *UPDATE_DIALOG_BOUNDS)
         self.host.renderer.send(commands)
+
+    def _change_pagination(self):
+        metrics = get_font_metrics()
+        lines = []
+        for subject in self.changes or ("CHANGELOG UNAVAILABLE",):
+            font = self.host.renderer.normalize_font_for_text(DIALOG_LIST_FONT, subject)
+            wrapped = metrics.wrap_text(subject, font, 570 - self.host.renderer.text_width(" - ", font))
+            lines.extend((" - " if index == 0 else "   ") + line
+                         for index, line in enumerate(wrapped))
+        return Pagination(lines, self.change_page, CHANGE_PAGE_SIZE)
 
     def _render_restart_notice(self):
         commands = self.host.renderer.begin_page("Forge-X update")
@@ -621,9 +630,8 @@ class ForgeXUpdateNotification:
 
     def handle_action(self, action):
         if action in ("update.prev", "update.next"):
-            pagination = Pagination(
-                self.recovery_files or self.changes,
-                self.change_page, CHANGE_PAGE_SIZE)
+            pagination = (Pagination(self.recovery_files, self.change_page, CHANGE_PAGE_SIZE)
+                          if self.recovery_files else self._change_pagination())
             delta = -1 if action == "update.prev" else 1
             target = max(
                 0, min(pagination.page + delta, pagination.page_count - 1))

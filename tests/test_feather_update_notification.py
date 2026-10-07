@@ -541,6 +541,34 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertNotIn("update.prev", self.host.renderer._buttons)
         self.assertNotIn("update.next", self.host.renderer._buttons)
 
+    def test_long_release_notes_wrap_and_remain_readable_across_all_pages(self):
+        changes = ["CHANGE %02d: EXERCISE PAGINATED RELEASE NOTES" % index
+                   for index in range(7)]
+        self.request_and_respond(changes=changes)
+        visible = []
+        while True:
+            frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+            rows = [text for text in frame.texts
+                    if text.value.lstrip().startswith("- ") or text.value.startswith("   ")]
+            for text in rows:
+                self.assertLessEqual(self.host.renderer.text_width(text.value, text.font), text.max_width)
+                visible.append(text.value)
+            self.assertIn("update.later", frame.buttons)
+            self.assertIn("update.install", frame.buttons)
+            previous = self.notification.change_page
+            self.notification.handle_action("update.next")
+            if self.notification.change_page == previous:
+                break
+        recovered = []
+        for line in visible:
+            if line.lstrip().startswith("- "):
+                recovered.append(line.lstrip()[2:])
+            else:
+                recovered[-1] += " " + line.strip()
+        self.assertEqual(recovered, changes)
+        self.notification.handle_action("update.prev")
+        self.assertEqual(self.notification.change_page, previous - 1)
+
     def test_missing_changelog_falls_back_to_available_version_message(self):
         self.request_and_respond(changes=[])
         drawing = "\n".join(self.host.draw_batches[-1])

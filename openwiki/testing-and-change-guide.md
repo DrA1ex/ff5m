@@ -788,6 +788,9 @@ normalized errors. Configuration records the backend, model, reasoning
 effort, and review worker count. Reviews run concurrently up to the selected
 limit, while each screenshot's spacing audit and verdict remain sequential.
 The report retains input order even when reviews finish in a different order.
+`summary.review_elapsed_seconds` and the HTML run page's `Review time` record
+elapsed wall time; `Summed frame time` and `Mean per frame` describe individual
+model durations, which overlap during parallel review.
 Model preflight is shared across workers. Cancelling a parallel Codex run
 stops active CLI processes and discards queued reviews before returning;
 an active HTTP request finishes or reaches its configured timeout before

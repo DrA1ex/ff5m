@@ -794,6 +794,18 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             instructions.y - instruction_height // 2 + instruction_height)
         self.assertIn("nav.back", frame.buttons)
 
+    def test_cooling_heater_warning_fits_and_blocks_the_removal_step(self):
+        controller = calibration_controller()
+        capture = RenderCapture(controller.renderer)
+        controller.extruder_calibration.phase = "cooling"
+        controller.extruder.status.update(temperature=45.0, target=200.0)
+
+        controller._poll_extruder_calibration(10.0, force=True)
+
+        warning = capture.latest.text("TURN OFF THE NOZZLE HEATER")
+        self.assertLessEqual(controller.renderer.text_width(warning.value, warning.font), warning.max_width)
+        self.assertEqual(controller.extruder_calibration.phase, "cooling")
+
     def test_cooling_repaints_when_rounded_temperature_changes(self):
         controller = calibration_controller()
         capture = RenderCapture(controller.renderer)

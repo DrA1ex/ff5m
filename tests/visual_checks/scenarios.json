@@ -167,7 +167,7 @@
           "rear_left": -0.124,
           "rear_right": -0.123
         },
-        "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center",
+        "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "average",
         "ui.pages.z_offset.summary.state.SummaryState.SPREAD": 0.004
       }
     },
@@ -196,6 +196,7 @@
       "state": {
         "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.125,
         "ui.pages.z_offset.summary.state.SummaryState.LOAD_ZOFFSET": true,
+        "ui.pages.z_offset.summary.state.SummaryState.RESULTS": {"center": -0.125},
         "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center"
       }
     },

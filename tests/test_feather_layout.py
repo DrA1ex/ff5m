@@ -307,6 +307,16 @@ class ScrewResultLayoutTest(unittest.TestCase):
         self.assertEqual(repeat.x, diagram.x)
         self.assertEqual(done.right, diagram.right)
 
+    def test_legend_last_line_has_clearance_from_the_panel_border(self):
+        from ui.font_metrics import get_font_metrics
+
+        renderer = FeatherRenderer()
+        frame = RenderFrame(screw_result.render(renderer, self.results), renderer)
+        legend = screw_result.PAGE.rect(screw_result.ScrewResultRef.LEGEND)
+        last = frame.text("00:30 = HALF TURN")
+        self.assertGreaterEqual(
+            legend.bottom - last.y - get_font_metrics().metric(last.font).glyph_height // 2, 10)
+
     def test_compact_adjustments_and_legend_remain_readable(self):
         for width, height in ((640, 306), (700, 350)):
             with self.subTest(width=width):
@@ -1241,6 +1251,20 @@ class MovementLayoutTest(unittest.TestCase):
 
 
 class ZOffsetLayoutTest(unittest.TestCase):
+    def test_summary_measurements_fit_without_losing_the_sign_or_precision(self):
+        renderer = FeatherRenderer()
+        results = dict(zip(z_offset.ZONE_ACTIONS, (-0.124, -0.125, 0.123, -0.121, -0.122)))
+        frame = RenderFrame(z_offset.render_summary(renderer, {
+            z_offset.SummaryState.RESULTS: results,
+            z_offset.SummaryState.SELECTED: "average",
+            z_offset.SummaryState.AVERAGE: -0.123,
+        }), renderer)
+        for key, value in results.items():
+            label = "%s  %+.3f" % (key.replace("_", " ").upper(), value)
+            button = next(button for button in frame.buttons.values() if button.label == label)
+            self.assertLessEqual(renderer.text_width(label, button.font),
+                                 button.bounds.width - 2 * renderer.BUTTON_TEXT_PADDING)
+
     def test_safe_z_briefing_text_has_sufficient_non_overlapping_layout(self):
         page = z_offset.SAFE_BRIEFING_PAGE
         static_text = [

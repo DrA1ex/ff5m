@@ -105,7 +105,8 @@ def _start():
     return Grid(
         matrix=((
             Button(
-                PROBE, "PROBE",
+                PROBE, derived(lambda probing: "PROBING..." if probing else "PROBE",
+                               bind(PaperState.PROBING)),
                 state=derived(
                     _probe_state,
                     bind(PaperState.PROBING),
@@ -113,8 +114,9 @@ def _start():
             ).style(UiStyle.BUTTON_BOLD_12).ref(PaperRef.PROBE),
             Button(
                 MOVE_SAFE_HALF,
-                derived(lambda height: "MOVE TO %.3f MM" % height,
-                        bind(PaperState.MANUAL_START)),
+                derived(lambda height, moving: "%s %.3f MM" % (
+                    "MOVING TO" if moving else "MOVE TO", height),
+                    bind(PaperState.MANUAL_START), bind(PaperState.MOVING_TO_START)),
                 state=derived(
                     _move_state,
                     bind(PaperState.PROBING),

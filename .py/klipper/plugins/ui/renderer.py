@@ -958,8 +958,8 @@ class FeatherRenderer:
         def number(sample):
             sample = float(sample)
             if abs(sample) < 10000:
-                return "%+.1f" % sample
-            return "%+.0e" % sample
+                return str(round(sample))
+            return "%.0e" % sample
 
         value_y = gauge_y(value)
         commands = self.panel(
@@ -969,7 +969,7 @@ class FeatherRenderer:
             self.text(x + width // 2, y + 20, str(title).upper(),
                       ThemeColor.PRIMARY, "JetBrainsMono 8pt", "center", "middle"),
             self.text(x + width // 2, y + 48, number(value),
-                      ThemeColor.TEXT, "JetBrainsMono Bold 10pt",
+                      ThemeColor.TEXT, "JetBrainsMono Bold 8pt",
                       "center", "middle"),
         ]
         commands += [

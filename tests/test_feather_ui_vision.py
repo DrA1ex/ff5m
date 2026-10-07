@@ -2332,6 +2332,13 @@ class HtmlReportTest(unittest.TestCase):
             "report-baselines.html", "report-run.html",
         ]))
 
+    def test_parallel_run_reports_wall_time_separately_from_summed_frame_time(self):
+        report = dict(self.report, summary={"review_elapsed_seconds": 4.0})
+        page = HTML_REPORT.render(report)["report-run.html"]
+        self.assertIn("<dt>Review time</dt><dd>4.0 s</dd>", page)
+        self.assertIn("<dt>Summed frame time</dt>", page)
+        self.assertIn("Mean per frame", page)
+
     def test_written_pages_link_only_to_files_that_exist(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = pathlib.Path(temporary)

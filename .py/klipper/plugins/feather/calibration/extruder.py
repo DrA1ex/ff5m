@@ -762,7 +762,7 @@ class FeatherExtruderCalibrationMixin:
                        else "%.0f" % session.temperature)
         session.temperature = temperature
         if target != 0.0:
-            session.cooling_message = "NOZZLE HEATER WAS TURNED ON, TURN IT OFF"
+            session.cooling_message = "TURN OFF THE NOZZLE HEATER"
             if ((force or old_display != "%.0f" % temperature)
                     and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
                 self._render_extruder_calibration()

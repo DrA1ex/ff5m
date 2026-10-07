@@ -787,8 +787,7 @@ class ScenarioCatalog:
         session = ExtruderCalibrationSession("/tmp/feather-ui-test-user.cfg")
         session.begin(7.550)
         session.phase = phase
-        session.temperature = 42.4
-        session.cooling_message = "COOLING SAFELY"
+        session.temperature = 130.4 if phase == "cooling" else 42.4
         session.input_text = "98.750"
         if phase == "warning":
             session.set_measurement("130.000")
