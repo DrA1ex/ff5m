@@ -86,6 +86,32 @@ header action restores the complete composition to remove exposed old pixels.
 Changes to touch regions replace their event IDs after preparing the frame
 once; changes to button text or colors preserve compatible crossing taps.
 
+Use `FeatherRenderer.status_dialog` for a short operation status. Its fixed
+slots are a bold 16 pt heading, an optional 12 pt `detail`, a wrapped 8 pt
+`description`, and a 12 pt `note`. Empty slots occupy no space; `note_color`
+can mark a warning. The renderer measures the text and places it between
+the heading and the standard footer buttons, expanding the panel within
+the screen's content area. An oversized description is truncated to keep
+the note and actions visible. Modal callers keep the `ScreenDialog`
+lifecycle; `modal=False` can render the same panel within an existing page.
+Long text, choice groups, paginated instructions, and more than two rows
+of footer actions continue to use `dialog`.
+
+Feather draws a status panel only for prompts from its own macros. Each one
+declares its kind after `prompt_begin`, because a user macro may reuse the
+same title:
+
+```gcode
+RESPOND TYPE=command MSG="action:prompt_feather_kind heating_nozzle"
+```
+
+The kinds are `cold_pull`, `heating_nozzle`, and `filament_change`. Every
+other prompt uses the ordinary `dialog`. Other clients ignore this unknown
+prompt type. The `cold_pull` panel shows the operation stage, the nozzle
+temperature, and a cancel button that opens the shared confirmation page.
+Guided extruder calibration runs `_COLDPULL_LOAD_MATERIAL` without a prompt
+and draws the same panel as its `cold_pull` page phase.
+
 FF5M's `PaintSurface` adapter retains the existing page painters. A direct
 renderer submission may remain a delta when the page allows it and has no
 active layers. With a modal dialog, a background submission is rejected and

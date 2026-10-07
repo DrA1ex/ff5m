@@ -9,8 +9,17 @@ from feather.screen import prompt_titles
 class ActionPromptPagesMixin:
     def _render_action_prompt(self, instance):
         prompt = instance.content
-        if prompt_titles.is_cold_pull(prompt):
-            self._render_cold_pull_prompt(instance)
+        if prompt["kind"] == prompt_titles.COLD_PULL:
+            self.renderer.send(self._cold_pull_status_dialog("coldpull.cancel"))
+            return
+        if prompt["kind"] == prompt_titles.HEATING_NOZZLE:
+            temperature, target = self._nozzle_temperature_display()
+            self.renderer.send(self.renderer.status_dialog(
+                "HEATING NOZZLE", "NOZZLE %s / %s C" % (temperature, target)))
+            return
+        if prompt["kind"] == prompt_titles.FILAMENT_CHANGE:
+            self.renderer.send(self.renderer.status_dialog(
+                "WORKING WITH FILAMENT", "PLEASE WAIT..."))
             return
         commands = self.renderer.dialog(
             prompt["title"], tuple(prompt["text"]),
@@ -19,7 +28,7 @@ class ActionPromptPagesMixin:
             button_groups=tuple(
                 tuple((button["action"], button["label"], button["state"])
                       for button in row) for row in prompt["rows"]),
-            x=50, y=130, width=700, height=220, tone="info",
+            tone="info",
             page=instance.page,
             page_actions=("prompt.prev", "prompt.next"))
         self.renderer.send(commands)

@@ -18,9 +18,12 @@ from .font_metrics import (
 )
 from .layout_helpers import (
     DIALOG_BODY_FONT, DIALOG_BODY_Y, DIALOG_BUTTON_BOTTOM,
+    DIALOG_MIN_HEIGHT, DIALOG_MIN_WIDTH,
     DIALOG_BUTTON_HEIGHT, DIALOG_BUTTON_GAP, DIALOG_COMPACT_BUTTON_BOTTOM,
     DIALOG_LINE_SPACING, DIALOG_PAGER_RESERVE, DIALOG_TITLE_FONT,
-    DIALOG_TITLE_TOP, dialog_horizontal_bounds, dialog_pager_bounds,
+    DIALOG_TITLE_TOP, DIALOG_TOP, DIALOG_BOTTOM_INSET,
+    DIALOG_STATUS_FONT, DIALOG_STATUS_GAP,
+    dialog_horizontal_bounds, dialog_vertical_bounds, dialog_pager_bounds,
     dialog_button_layout, dialog_button_rows, layout_dialog_body,
     layout_title_only_dialog,
 )
@@ -1440,11 +1443,14 @@ class FeatherRenderer:
         button_specs = tuple(buttons)
         button_groups = tuple(tuple(group) for group in button_groups if group)
         if modal and not custom_body:
+            height = max(height, DIALOG_MIN_HEIGHT)
             x, width = dialog_horizontal_bounds(
                 width, title, (item[1] for item in button_specs + tuple(
                     button for group in button_groups for button in group)),
                 measure_text=self.text_width, body_lines=lines,
-                text_padding=self.DIALOG_TEXT_PADDING)
+                text_padding=self.DIALOG_TEXT_PADDING,
+                button_groups=button_groups,
+                group_button_padding=self.BUTTON_TEXT_PADDING)
             y = (SCREEN_HEIGHT - height) // 2
         footer_rows = dialog_button_rows(
             button_specs, width, measure_text=self.text_width,
@@ -1525,6 +1531,82 @@ class FeatherRenderer:
                     action, *target, label, state=state, font=font)
         if modal and show_header_action:
             commands += self._header_action_commands()
+        return commands
+
+    def status_dialog(self, title, detail=None, buttons=(), *, description=None,
+                      note=None, note_color=ThemeColor.TEXT, tone="warning",
+                      width=DIALOG_MIN_WIDTH, height=DIALOG_MIN_HEIGHT,
+                      modal=True, preserve_header_action=True):
+        """Render optional value, wrapped explanation, and note below a status.
+
+        Empty slots take no space. The explanation may be truncated to keep
+        the note and standard footer actions visible. Use ``dialog`` for
+        instructions that need pagination or more than two rows of actions.
+        """
+        buttons = tuple(buttons)
+        screen_width = getattr(self, "screen_width", SCREEN_WIDTH)
+        screen_height = getattr(self, "screen_height", SCREEN_HEIGHT)
+        x, width = dialog_horizontal_bounds(
+            width, title, (button[1] for button in buttons),
+            measure_text=self.text_width, screen_width=screen_width)
+        footer_rows = dialog_button_rows(
+            buttons, width, measure_text=self.text_width,
+            normalize_font=self.normalize_font, padding=self.BUTTON_TEXT_PADDING)
+        if len(footer_rows) > 2:
+            raise ValueError("Status dialog needs a paginated dialog for more than two action rows")
+        footer_height = (len(footer_rows) * DIALOG_BUTTON_HEIGHT
+                         + max(0, len(footer_rows) - 1) * DIALOG_BUTTON_GAP)
+
+        text_width = width - 2 * self.DIALOG_TEXT_PADDING
+        metrics = get_font_metrics()
+        slots = []
+        for value, font, color, wrap in (
+                (detail, DIALOG_STATUS_FONT, ThemeColor.TEXT, False),
+                (description, DIALOG_BODY_FONT, ThemeColor.TEXT, True),
+                (note, DIALOG_STATUS_FONT, note_color, False)):
+            if value is None or not str(value).strip():
+                continue
+            value = str(value)
+            font = self.normalize_font_for_text(font, value)
+            text_height = metrics.text_height(value, font, max_width=text_width, wrap=wrap)
+            slots.append((value, font, color, wrap, text_height))
+
+        title_bottom = DIALOG_TITLE_TOP + metrics.metric(DIALOG_TITLE_FONT).glyph_height
+        bottom_space = DIALOG_BUTTON_BOTTOM + footer_height
+        if footer_rows:
+            bottom_space += DIALOG_STATUS_GAP
+        body_limit = (screen_height - DIALOG_TOP - DIALOG_BOTTOM_INSET
+                      - title_bottom - DIALOG_STATUS_GAP - bottom_space)
+        body_height = sum(slot[4] for slot in slots) + DIALOG_STATUS_GAP * max(0, len(slots) - 1)
+        for index, (value, font, color, wrap, text_height) in enumerate(slots):
+            if wrap and body_height > body_limit:
+                available = text_height - (body_height - body_limit)
+                if available >= metrics.metric(font).glyph_height:
+                    slots[index] = (value, font, color, wrap, available)
+                    body_height = body_limit
+        if body_height > body_limit:
+            raise ValueError("Status dialog content does not fit; use a paginated dialog")
+
+        height = max(DIALOG_MIN_HEIGHT, int(height))
+        y, height = dialog_vertical_bounds(
+            (screen_height - height) // 2, height, 0, bool(footer_rows),
+            screen_height, minimum_height=title_bottom + DIALOG_STATUS_GAP + body_height + bottom_space,
+            footer_height=footer_height)
+        commands = self.dialog(
+            title, (), buttons, x=x, y=y, width=width, height=height,
+            tone=tone, modal=modal, custom_body=True,
+            preserve_header_action=preserve_header_action)
+        if not commands:
+            return commands
+
+        body_top = y + title_bottom + DIALOG_STATUS_GAP
+        body_bottom = y + height - bottom_space
+        cursor = body_top + (body_bottom - body_top - body_height) // 2
+        for value, font, color, wrap, text_height in slots:
+            commands.append(self.text(
+                x + width // 2, cursor + text_height // 2, value, color, font, "center", "middle",
+                max_width=text_width, max_height=text_height, wrap=wrap, truncate=True))
+            cursor += text_height + DIALOG_STATUS_GAP
         return commands
 
     def dialog_pager(self, page, page_count, actions, x, y, width, height,

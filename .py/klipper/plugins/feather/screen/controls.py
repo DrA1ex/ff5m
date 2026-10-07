@@ -29,9 +29,7 @@ from feather.control import joystick as joystick_ui
 from feather.control import motion as joystick_motion
 from feather.screen.pagination import Pagination, pagination_footer
 from feather.screen import prompt_titles
-from feather.materials import (
-        adaptive_grid_columns, render_material_selector,
-    )
+from feather.materials import render_material_selector
 
 
 home_ui = LazyModule("ff5m_ui.home.page")
@@ -1821,6 +1819,7 @@ class FeatherControlsMixin:
             "footer": [],
             "group": None,
             "buttons": {},
+            "kind": None,
         }
 
     def _append_action_prompt_button(self, payload, footer=False):
@@ -1852,6 +1851,10 @@ class FeatherControlsMixin:
         current = self._find_dialog(ScreenDialog.ACTION_PROMPT)
         prompt = current.content if current is not None else self._prompt_draft or {}
         return prompt_titles.is_cold_pull(prompt)
+
+    def _action_prompt_has_temperature_status(self):
+        current = self._find_dialog(ScreenDialog.ACTION_PROMPT)
+        return current is not None and prompt_titles.has_temperature_status(current.content)
 
     def _show_action_prompt(self):
         if self._prompt_draft is None:
@@ -1895,7 +1898,7 @@ class FeatherControlsMixin:
         if layer is not None and cold_pull and self.page == ScreenPage.OPERATION_CANCEL:
             return_page = self.operation_cancel_return_page
             self._reset_operation_cancel()
-            self._show_page(return_page or ScreenPage.EXTRUDER_CALIBRATION)
+            self._show_page(return_page or self.page_for_print_state())
         if mirrored_recovery:
             self.recovery_action = None
             self._show_page(self.page_for_print_state())
@@ -1908,6 +1911,8 @@ class FeatherControlsMixin:
             self._start_action_prompt(payload)
         elif action == "text" and self._prompt_draft is not None:
             self._prompt_draft["text"].append(payload)
+        elif action == "feather_kind" and self._prompt_draft is not None:
+            self._prompt_draft["kind"] = payload.strip()
         elif action == "button":
             self._append_action_prompt_button(payload)
         elif action == "footer_button":
@@ -1974,93 +1979,39 @@ class FeatherControlsMixin:
             if button is not None and button["command"]:
                 self._run_script(button["command"])
 
+    def _nozzle_temperature_display(self):
+        status = self.extruder.get_status(self.reactor.monotonic())
+        return ("%.0f" % float(status.get("temperature", 0.0)),
+                "%.0f" % float(status.get("target", 0.0)))
+
     def _cold_pull_display(self, operation=None):
         eventtime = self.reactor.monotonic()
         operation = self._operation_context_status(eventtime) if operation is None else operation
-        status = self.extruder.get_status(eventtime)
+        temperature, target = self._nozzle_temperature_display()
         return (
             str(operation.get("current_state") or "").strip().upper(),
-            "%.1f" % float(status.get("temperature", 0.0)),
-            "%.0f" % float(status.get("target", 0.0)),
+            temperature, target,
             bool(operation.get("cancel_available")), bool(operation.get("cancel_pending")),
         )
 
     def _dialog_paint_key(self, dialog, content):
-        if dialog == ScreenDialog.ACTION_PROMPT and prompt_titles.is_cold_pull(content):
-            return self._cold_pull_prompt_key
+        if dialog != ScreenDialog.ACTION_PROMPT:
+            return None
+        if content["kind"] == prompt_titles.COLD_PULL:
+            return lambda instance: self._cold_pull_display()
+        if content["kind"] == prompt_titles.HEATING_NOZZLE:
+            return lambda instance: self._nozzle_temperature_display()
         return None
 
-    def _cold_pull_prompt_key(self, instance):
-        operation = self._operation_context_status(self.reactor.monotonic())
-        if "cold_pull" in operation.get("context_types", ()):
-            return ("operation", self._cold_pull_display(operation))
-        return ("prompt", instance.page)
-
-    def _render_operation_cold_pull(self, title, cancel_action):
+    def _cold_pull_status_dialog(self, cancel_action, modal=True):
+        """Build the cold-pull progress shared by the prompt and calibration."""
         stage, temperature, target, cancel_available, cancel_pending = self._cold_pull_display()
-        hint = {
-            "HOMING": "HOMING AND POSITIONING THE TOOLHEAD",
-            "HEATING NOZZLE": "HEATING THE NOZZLE",
-            "EXTRUDING": "EXTRUDING FILAMENT",
-            "COOLING NOZZLE": "COOLING THE NOZZLE",
-            "PULLING": "PULLING FILAMENT BACK",
-        }.get(stage, "STARTING COLD PULL")
-        commands = self.renderer.dialog(
-            title, (), (), x=24, y=65, width=752, height=370,
-            tone="warning", custom_body=True)
-        commands += [
-            self.renderer.text(
-                400, 155, stage or "COLD PULL", ThemeColor.WARNING,
-                "JetBrainsMono Bold 12pt", "center", "middle",
-                max_width=690, truncate=True),
-            self.renderer.text(
-                400, 245, "%s\n\nNOZZLE %s / %s C" % (
-                    hint, temperature, target),
-                ThemeColor.TEXT, "JetBrainsMono 8pt", "center", "middle",
-                max_width=680, max_height=110, wrap=True, truncate=True),
-        ]
-        if cancel_available:
-            commands += self.renderer.button(
-                cancel_action, 235, 368, 330, 45,
-                "CANCELLING..." if cancel_pending else "CANCEL",
-                state=("busy" if cancel_pending else "danger"),
-                font="JetBrainsMono Bold 8pt")
-        self.renderer.send(commands)
-
-    def _render_cold_pull_prompt(self, instance):
-        operation = self._operation_context_status(
-            self.reactor.monotonic())
-        if "cold_pull" in operation.get("context_types", ()):
-            self._render_operation_cold_pull("Cold Pull", "coldpull.cancel")
-            return
-        prompt = instance.content
-        buttons = [button for row in prompt["rows"] for button in row]
-        columns = adaptive_grid_columns(len(buttons)) if buttons else 1
-        gap = 20
-        width = min(295, (690 - gap * (columns - 1)) // columns)
-        commands = self.renderer.dialog(
-            "Cold Pull", (), (), x=24, y=65, width=752, height=370,
-            tone="info", custom_body=True)
-        commands.append(self.renderer.text(
-            400, 170, "\n".join(prompt["text"]), ThemeColor.TEXT,
-            "JetBrainsMono 8pt", "center", "middle", max_width=690,
-            max_height=65, wrap=True, truncate=True))
-        for row_start in range(0, len(buttons), columns):
-            row = buttons[row_start:row_start + columns]
-            row_width = len(row) * width + max(0, len(row) - 1) * gap
-            x = 55 + (690 - row_width) // 2
-            for column, button in enumerate(row):
-                commands += self.renderer.button(
-                    button["action"], x + column * (width + gap),
-                    215 + (row_start // columns) * 75, width, 62,
-                    button["label"], state=button["state"],
-                    font="JetBrainsMono Bold 12pt")
-        if prompt["footer"]:
-            button = prompt["footer"][0]
-            commands += self.renderer.button(
-                button["action"], 235, 368, 330, 45, button["label"],
-                state=button["state"], font="JetBrainsMono Bold 8pt")
-        self.renderer.send(commands)
+        buttons = ((cancel_action,
+                    "CANCELLING..." if cancel_pending else "CANCEL",
+                    "busy" if cancel_pending else "danger"),) if cancel_available else ()
+        return self.renderer.status_dialog(
+            stage or "STARTING COLD PULL", "NOZZLE %s / %s C" % (temperature, target),
+            buttons, tone="warning", modal=modal)
 
     def _render_calibration_result(self):
         commands = self.renderer.begin_page("Calibration result")

@@ -2276,7 +2276,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         emergency_refreshed = self._refresh_emergency_stop(eventtime)
         self._reconcile_pending_action(eventtime, state, virtual_sd_active)
         if self._current_dialog() == ScreenDialog.ACTION_PROMPT:
-            if self._action_prompt_is_cold_pull() and not emergency_refreshed:
+            if self._action_prompt_has_temperature_status() and not emergency_refreshed:
                 self._render_dialog()
         # Keep polling printer state, but defer hidden page preparation.
         if self._current_dialog() is None:

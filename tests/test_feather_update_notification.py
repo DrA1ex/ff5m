@@ -741,6 +741,12 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertIsNone(self.host.busy_message)
         loader.assert_not_called()
         dialog.assert_called_once()
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        self.assertEqual(frame.text("UPDATE COMPLETE").font, "JetBrainsMono Bold 16pt")
+        self.assertEqual(frame.text("PRINTER WILL RESTART NOW").font, "JetBrainsMono 12pt")
+        self.assertTrue(frame.has_text("RESTART MANUALLY IF NEEDED"))
+        self.assertGreater(frame.text("RESTART MANUALLY IF NEEDED").y,
+                           frame.text("PRINTER WILL RESTART NOW").y)
 
 
 if __name__ == "__main__":

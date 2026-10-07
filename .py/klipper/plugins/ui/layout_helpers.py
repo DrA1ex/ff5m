@@ -13,12 +13,14 @@ DIALOG_TOP = 74
 DIALOG_BOTTOM_INSET = 58
 DIALOG_TITLE_FONT = "JetBrainsMono Bold 16pt"
 DIALOG_BODY_FONT = "JetBrainsMono 8pt"
+DIALOG_STATUS_FONT = "JetBrainsMono 12pt"
+DIALOG_STATUS_GAP = 20
 DIALOG_LIST_FONT = "JetBrainsMono 10pt"
 DIALOG_BUTTON_FONT = "JetBrainsMono Bold 12pt"
 DIALOG_BUTTON_MEDIUM_FONT = "JetBrainsMono Bold 10pt"
 DIALOG_BUTTON_COMPACT_FONT = "JetBrainsMono Bold 8pt"
-DIALOG_MIN_WIDTH = 480
-DIALOG_MIN_HEIGHT = 220
+DIALOG_MIN_WIDTH = 530
+DIALOG_MIN_HEIGHT = 240
 DIALOG_TITLE_TOP = 22
 DIALOG_BODY_Y = 99
 DIALOG_LINE_SPACING = 24
@@ -31,9 +33,7 @@ DIALOG_BUTTON_BOTTOM = 24
 DIALOG_ONE_LINE_GAP = 50
 DIALOG_MULTILINE_GAP = 30
 # Preserve the action-prompt inset from the original one-line, one-row panel.
-DIALOG_GROUP_BUTTON_BOTTOM = (DIALOG_MIN_HEIGHT - DIALOG_BODY_Y
-                              - DIALOG_BODY_HALF_HEIGHT - DIALOG_MULTILINE_GAP
-                              - DIALOG_BUTTON_HEIGHT)
+DIALOG_GROUP_BUTTON_BOTTOM = 30
 DIALOG_COMPACT_TITLE_TOP = 32
 DIALOG_COMPACT_GAP = 38
 DIALOG_COMPACT_BUTTON_BOTTOM = 30
@@ -42,23 +42,43 @@ DIALOG_PAGER_ABOVE_BODY = 2
 DIALOG_PAGER_MIN_HEIGHT = 334
 
 
+def _button_row_width(buttons, font, measure_text, padding):
+    minimum = 96 if len(buttons) > 2 else 144
+    widths = (max(minimum, measure_text(str(label), font) + 2 * padding)
+              for _, label, _ in buttons)
+    return sum(widths) + DIALOG_BUTTON_GAP * max(0, len(buttons) - 1)
+
+
+def _wrap_dialog_lines(lines, width, font, metrics):
+    return tuple(segment for line in lines
+                 for segment in metrics.wrap_text(str(line), font, max(1, width)))
+
+
+def dialog_button_group_width(groups, *, measure_text, padding=16, margin=24):
+    """Measure complete choice rows before deciding to wrap or paginate them."""
+    return max((_button_row_width(group, DIALOG_BUTTON_FONT, measure_text, padding) + 2 * margin
+                for group in groups if group), default=0)
+
+
 def dialog_horizontal_bounds(width, title, labels, *, measure_text,
                              title_padding=40, button_padding=30,
                              button_margin=24, screen_width=800,
-                             body_lines=(), text_padding=28):
+                             body_lines=(), text_padding=28,
+                             button_groups=(), group_button_padding=16):
     """Keep the panel centered while fitting its title, actions, and body."""
     body_width = max((measure_text(segment, DIALOG_BODY_FONT)
                       for line in body_lines
                       for segment in str(line).split("\n")), default=0)
-    required = min(max(DIALOG_MIN_WIDTH, int(screen_width) - 100), max(
-        DIALOG_MIN_WIDTH, int(width),
-        measure_text(str(title).upper(), DIALOG_TITLE_FONT) + 2 * title_padding,
-        max((measure_text(str(label), DIALOG_BUTTON_FONT)
-             + 2 * button_padding + 2 * button_margin for label in labels),
-            default=0),
-        body_width + 2 * text_padding,
-    ))
-    return (int(screen_width) - required) // 2, required
+    group_width = dialog_button_group_width(
+        button_groups, measure_text=measure_text,
+        padding=group_button_padding, margin=button_margin)
+    title_width = measure_text(str(title).upper(), DIALOG_TITLE_FONT) + 2 * title_padding
+    button_width = max((measure_text(str(label), DIALOG_BUTTON_FONT)
+                        + 2 * (button_padding + button_margin) for label in labels), default=0)
+    required = max(DIALOG_MIN_WIDTH, int(width), title_width, button_width,
+                   body_width + 2 * text_padding, group_width)
+    panel_width = min(required, max(DIALOG_MIN_WIDTH, int(screen_width) - 100))
+    return (int(screen_width) - panel_width) // 2, panel_width
 
 
 def centered_button_row(labels, x, y, width, *, measure_text,
@@ -77,8 +97,9 @@ def centered_button_row(labels, x, y, width, *, measure_text,
         weights = [max(0, item - floor) for item in widths]
         total = sum(weights)
         widths = [floor + remaining * item // total for item in weights]
-        for index in range(remaining - sum(item - floor for item in widths)):
-            widths[index % len(widths)] += 1
+        # Integer division leaves fewer than one pixel per button undistributed.
+        for index in range(available - sum(widths)):
+            widths[index] += 1
     group_width = sum(widths) + gap * (len(labels) - 1)
     first_x = x + (width - group_width) // 2
     bounds = []
@@ -98,14 +119,13 @@ def dialog_vertical_bounds(y, height, line_count, has_buttons,
         last_line_bottom = (DIALOG_BODY_Y + (line_count - 1) *
                             DIALOG_LINE_SPACING + DIALOG_BODY_HALF_HEIGHT)
         gap = DIALOG_ONE_LINE_GAP if line_count == 1 else DIALOG_MULTILINE_GAP
-        needed_height = last_line_bottom + (
-            gap + footer_height + DIALOG_BUTTON_BOTTOM
-            if has_buttons else 16)
+        bottom_space = gap + footer_height + DIALOG_BUTTON_BOTTOM if has_buttons else 16
+        needed_height = last_line_bottom + bottom_space
     else:
         needed_height = 140 if has_buttons else 68
-    new_height = min(max(int(height), needed_height, minimum_height,
-                         DIALOG_MIN_HEIGHT if line_count else 0),
-                     bottom - top)
+    desired_height = max(int(height), needed_height, minimum_height,
+                         DIALOG_MIN_HEIGHT if line_count else 0)
+    new_height = min(desired_height, bottom - top)
     new_y = int(y) - max(0, new_height - int(height)) // 2
     new_y = max(top, min(new_y, bottom - new_height))
     return new_y, new_height
@@ -146,36 +166,26 @@ def layout_dialog_text(lines, y, width, height, has_buttons, *, page=0,
     """Measure wrapped lines and return bounds, visible text, and page count."""
     metrics = metrics or get_font_metrics()
     text_width = max(1, int(width) - 2 * text_padding)
-    wrapped = tuple(
-        segment for value in lines
-        for segment in metrics.wrap_text(str(value), font, text_width))
+    wrapped = _wrap_dialog_lines(lines, text_width, font, metrics)
     max_height = screen_height - DIALOG_TOP - DIALOG_BOTTOM_INSET
     first_line_bottom = DIALOG_BODY_Y + DIALOG_BODY_HALF_HEIGHT
-    vertical_capacity = max(1, (
-        max_height - ((DIALOG_MULTILINE_GAP + footer_height
-                       + DIALOG_BUTTON_BOTTOM) if has_buttons else 16)
-        - first_line_bottom
-    ) // DIALOG_LINE_SPACING + 1)
-    if len(wrapped) > vertical_capacity:
+    bottom_space = DIALOG_MULTILINE_GAP + footer_height + DIALOG_BUTTON_BOTTOM if has_buttons else 16
+    page_size = max(1, (max_height - bottom_space - first_line_bottom) // DIALOG_LINE_SPACING + 1)
+    page_count, visible, minimum_height = 1, wrapped, 0
+    if len(wrapped) > page_size:
         text_width = max(1, text_width - DIALOG_PAGER_RESERVE)
-        wrapped = tuple(
-            segment for value in lines
-            for segment in metrics.wrap_text(str(value), font, text_width))
-        page_size = vertical_capacity
+        wrapped = _wrap_dialog_lines(lines, text_width, font, metrics)
         page_count = (len(wrapped) + page_size - 1) // page_size
         page = max(0, min(int(page), page_count - 1))
         visible = wrapped[page * page_size:(page + 1) * page_size]
         # The page controls need the same vertical room on every page.
-        y, height = dialog_vertical_bounds(
-            y, height, len(visible), has_buttons, screen_height,
-            minimum_height=(DIALOG_PAGER_MIN_HEIGHT + footer_height
-                            - DIALOG_BUTTON_HEIGHT) if has_buttons else 0,
-            footer_height=footer_height)
+        if has_buttons:
+            minimum_height = DIALOG_PAGER_MIN_HEIGHT + footer_height - DIALOG_BUTTON_HEIGHT
     else:
-        page_count, page, visible = 1, 0, wrapped
-        y, height = dialog_vertical_bounds(
-            y, height, len(visible), has_buttons, screen_height,
-            footer_height=footer_height)
+        page = 0
+    y, height = dialog_vertical_bounds(
+        y, height, len(visible), has_buttons, screen_height,
+        minimum_height=minimum_height, footer_height=footer_height)
     return y, height, visible, page, page_count
 
 
@@ -213,36 +223,37 @@ def layout_dialog_body(lines, button_groups, y, width, height, has_buttons, *,
     body_bottom = max_height - bottom_space
 
     def paginate(text_width):
-        rows = tuple(row for group in groups for row in (
-            dialog_button_rows(
-                group, text_width + 2 * text_padding,
-                measure_text=measure_text, normalize_font=normalize_font,
-                padding=button_padding) if measure_text is not None else (group,)))
-        wrapped = tuple(segment for value in lines
-                        for segment in metrics.wrap_text(
-                            str(value), DIALOG_BODY_FONT, text_width))
-        pages, text_rows, group_rows = [], [], []
-        end = DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
-        for kind, value in ([("text", line) for line in wrapped]
-                            + [("group", group) for group in rows]):
-            if kind == "text":
-                top = (DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
-                       + len(text_rows) * DIALOG_LINE_SPACING)
-                item_height = 2 * DIALOG_BODY_HALF_HEIGHT
+        rows = []
+        for group in groups:
+            if measure_text is None:
+                rows.append(group)
             else:
-                gap = (DIALOG_MULTILINE_GAP if text_rows and not group_rows
-                       else DIALOG_BUTTON_GAP if group_rows else 0)
-                top, item_height = end + gap, DIALOG_BUTTON_HEIGHT
-            if top + item_height > body_bottom and (text_rows or group_rows):
-                pages.append((tuple(text_rows), tuple(group_rows), end))
-                text_rows, group_rows = [], []
-                top = DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
-            if kind == "text":
-                text_rows.append(value)
-            else:
-                group_rows.append((value, top))
-            end = top + item_height
-        pages.append((tuple(text_rows), tuple(group_rows), end))
+                rows.extend(dialog_button_rows(
+                    group, text_width + 2 * text_padding,
+                    measure_text=measure_text, normalize_font=normalize_font, padding=button_padding))
+
+        wrapped = _wrap_dialog_lines(lines, text_width, DIALOG_BODY_FONT, metrics)
+        body_top = DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
+        line_height = 2 * DIALOG_BODY_HALF_HEIGHT
+        page_size = max(1, (body_bottom - body_top - line_height) // DIALOG_LINE_SPACING + 1)
+        pages = []
+        for start in range(0, max(1, len(wrapped)), page_size):
+            text_rows = wrapped[start:start + page_size]
+            end = body_top + (len(text_rows) - 1) * DIALOG_LINE_SPACING + line_height if text_rows else body_top
+            pages.append((text_rows, (), end))
+
+        # Choices continue on the last text page and then fill further pages.
+        text_rows, _, end = pages.pop()
+        group_rows = []
+        for row in rows:
+            gap = DIALOG_BUTTON_GAP if group_rows else DIALOG_MULTILINE_GAP if text_rows else 0
+            top = end + gap
+            if top + DIALOG_BUTTON_HEIGHT > body_bottom and (text_rows or group_rows):
+                pages.append((text_rows, tuple(group_rows), end))
+                text_rows, group_rows, top = (), [], body_top
+            group_rows.append((row, top))
+            end = top + DIALOG_BUTTON_HEIGHT
+        pages.append((text_rows, tuple(group_rows), end))
         return pages
 
     pages = paginate(max(1, width - 2 * text_padding))
@@ -267,13 +278,11 @@ def dialog_button_layout(buttons, x, y, width, *, measure_text,
     """Use the largest readable font that fits the complete action row."""
     font = DIALOG_BUTTON_FONT
     if buttons:
-        available = width - 48 - 12 * (len(buttons) - 1)
+        available = width - 48
         for candidate in (DIALOG_BUTTON_FONT, DIALOG_BUTTON_MEDIUM_FONT,
                           DIALOG_BUTTON_COMPACT_FONT):
             font = normalize_font(candidate)
-            if sum(max(96 if len(buttons) > 2 else 144,
-                       measure_text(label, font) + 2 * padding)
-                   for _, label, _ in buttons) <= available:
+            if _button_row_width(buttons, font, measure_text, padding) <= available:
                 break
     bounds = centered_button_row(
         (item[1] for item in buttons), x, y, width,
@@ -291,19 +300,13 @@ def dialog_button_rows(buttons, width, *, measure_text, normalize_font, padding)
     """
     available = max(1, int(width) - 48)
     compact_font = normalize_font(DIALOG_BUTTON_COMPACT_FONT)
-    minimum = 96 if len(buttons) > 2 else 144
-    if sum(max(minimum, measure_text(str(item[1]), compact_font) + 2 * padding)
-           for item in buttons) + DIALOG_BUTTON_GAP * (len(buttons) - 1) <= available:
+    if _button_row_width(buttons, compact_font, measure_text, padding) <= available:
         return (tuple(buttons),) if buttons else ()
     font = normalize_font(DIALOG_BUTTON_FONT)
     rows, row = [], []
     for button in buttons:
         candidate = row + [button]
-        minimum = 96 if len(candidate) > 2 else 144
-        needed = sum(max(minimum, measure_text(str(item[1]), font) + 2 * padding)
-                     for item in candidate)
-        needed += DIALOG_BUTTON_GAP * (len(candidate) - 1)
-        if row and needed > available:
+        if row and _button_row_width(candidate, font, measure_text, padding) > available:
             rows.append(tuple(row))
             row = []
         row.append(button)

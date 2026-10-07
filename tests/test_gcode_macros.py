@@ -878,6 +878,41 @@ class MaterialMacroTest(unittest.TestCase):
         ))
 
 
+    def test_cold_pull_extrudes_from_the_current_position_after_a_cancelled_run(self):
+        from tests.test_gcode_origin import HomingHarness
+
+        harness = HomingHarness()
+        for command in ("_CONTEXT_BEGIN", "_CONTEXT_STATE", "_CONTEXT_END", "_HOME_IF_NEEDED",
+                        "_WAIT_TEMPERATURE", "M104", "M106", "M107", "BEEP",
+                        "SET_GCODE_VARIABLE"):
+            harness.gcode.register_command(command, lambda gcmd: None)
+        printer = self._printer()
+        printer["gcode_macro _COLDPULL_LOAD_MATERIAL"] = {"prompt_active": False}
+        cold_pull = render_macro(
+            MATERIAL, "_COLDPULL_LOAD_MATERIAL", printer=printer,
+            params={"TEMP": 250, "COLD": 100}).text.splitlines()
+        pulling = next(index for index, line in enumerate(cold_pull)
+                       if "_CONTEXT_STATE NAME=PULLING" in line)
+        cancel = render_macro(MATERIAL, "_COLDPULL_CANCEL", printer=printer).text
+
+        def extrusion(script):
+            start = harness.toolhead.position[3]
+            harness.toolhead.moves.clear()
+            harness.run(script)
+            positions = [start] + [position[3] for position, _speed in harness.toolhead.moves]
+            return [after - before for before, after in zip(positions, positions[1:])
+                    if after != before]
+
+        harness.run("G90\nM82")
+        # The operation is cancelled while the extruded filament cools.
+        self.assertEqual(extrusion("\n".join(cold_pull[:pulling])), [100])
+        harness.run(cancel)
+        self.assertTrue(harness.move.get_status()["absolute_extrude"])
+
+        self.assertEqual(extrusion("\n".join(cold_pull)), [100, -70])
+        self.assertTrue(harness.move.get_status()["absolute_extrude"])
+
+
 class MotionAndIntegrationMacroTest(unittest.TestCase):
     @staticmethod
     def _motion_printer(current_z, *, origin=0, safe_z=10,

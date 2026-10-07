@@ -372,8 +372,8 @@ class ExtruderCalibrationSession:
         self.exit_return_phase = None
         self.cold_pull_cancel_requested = False
         self.cold_pull_cancel_dispatched = False
-        self.cold_pull_material = None
-        self.cold_pull_progress_signature = None
+        # The operation stage, temperatures, and cancel state last drawn.
+        self.cold_pull_progress = None
 
     def begin(self, rotation_distance):
         path = self.user_cfg_path
@@ -496,7 +496,10 @@ class FeatherExtruderCalibrationMixin:
                     "JetBrainsMono Bold 10pt", "center", "middle"))
             self.renderer.send(commands)
         elif phase == "cold_pull":
-            self._render_cold_pull_progress()
+            session.cold_pull_progress = self._cold_pull_display()
+            commands = self.renderer.begin_page("Cold pull")
+            commands += self._cold_pull_status_dialog("extruder.coldpull.cancel", modal=False)
+            self.renderer.send(commands)
         elif phase == "cut":
             self._extruder_simple_page(
                 "Prepare filament", "REMOVE AND CUT FILAMENT",
@@ -505,14 +508,16 @@ class FeatherExtruderCalibrationMixin:
                 (("extruder.prepared", "FILAMENT READY", "enabled"),))
         elif phase == "cooling":
             temperature = ("--" if session.temperature is None
-                           else "%.1f C" % session.temperature)
-            self._extruder_simple_page(
-                "Cool nozzle", "COOLING: %s" % temperature,
-                "The heater target is zero and the head fan is at 100%. "
-                "Wait until the temperature is below 50 C. Feather will "
-                "stop the fan and beep when it is safe.",
-                (), tone=ThemeColor.WARNING, note=(session.cooling_message or
-                                           "DO NOT REMOVE THE NOZZLE YET"))
+                           else "%.0f C" % session.temperature)
+            commands = self.renderer.begin_page("Cool nozzle", back=True)
+            commands += self.renderer.status_dialog(
+                "COOLING NOZZLE", temperature, width=700, height=320, modal=False,
+                description=("The heater target is zero and the head fan is at 100%. "
+                             "Wait until the temperature is below 50 C. Feather will "
+                             "stop the fan and beep when it is safe."),
+                note=session.cooling_message or "DO NOT REMOVE THE NOZZLE YET",
+                note_color=ThemeColor.WARNING)
+            self.renderer.send(commands)
         elif phase == "remove":
             self._extruder_simple_page(
                 "Remove nozzle", "TEMPERATURE BELOW 50 C",
@@ -593,12 +598,6 @@ class FeatherExtruderCalibrationMixin:
             session.input_text, actions, subtitle="mm",
             mode=MEASUREMENT_INPUT, confirm_label="CALCULATE")
         self.renderer.send(commands)
-
-    def _render_cold_pull_progress(self):
-        session = self.extruder_calibration
-        material = session.cold_pull_material or "MATERIAL"
-        getattr(self, "_host", self)._render_operation_cold_pull(
-            "Cold pull: %s" % material, "extruder.coldpull.cancel")
 
     def _refresh_extruder_file_snapshot(self):
         session = self.extruder_calibration
@@ -748,7 +747,9 @@ class FeatherExtruderCalibrationMixin:
         if session is None or not session.active:
             return
         if session.phase == "cold_pull":
-            self._poll_cold_pull_progress(eventtime, force=force)
+            if ((force or self._cold_pull_display() != session.cold_pull_progress)
+                    and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
+                self._render_extruder_calibration()
             return
         if session.phase != "cooling":
             return
@@ -756,11 +757,11 @@ class FeatherExtruderCalibrationMixin:
         temperature = float(status.get("temperature", 0.0))
         target = float(status.get("target", 0.0))
         old_display = (None if session.temperature is None
-                       else int(session.temperature))
+                       else "%.0f" % session.temperature)
         session.temperature = temperature
         if target != 0.0:
             session.cooling_message = "SET THE HEATER TARGET BACK TO 0 C"
-            if ((force or old_display != int(temperature))
+            if ((force or old_display != "%.0f" % temperature)
                     and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
                 self._render_extruder_calibration()
             return
@@ -776,34 +777,14 @@ class FeatherExtruderCalibrationMixin:
             self._show_page(ScreenPage.EXTRUDER_CALIBRATION)
             if should_beep:
                 self._run_script("BEEP", show_notice=False)
-        elif ((force or old_display != int(temperature))
+        elif ((force or old_display != "%.0f" % temperature)
               and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
             self._render_extruder_calibration()
 
-    def _poll_cold_pull_progress(self, eventtime, force=False):
-        session = self.extruder_calibration
-        status = self.extruder.get_status(eventtime)
-        operation = self._operation_context_status(eventtime)
-        signature = (
-            operation.get("revision", 0),
-            operation.get("current_state"),
-            operation.get("cancel_available"),
-            operation.get("cancel_pending"),
-            int(float(status.get("temperature", 0.0))),
-            int(float(status.get("target", 0.0))),
-        )
-        if force or signature != session.cold_pull_progress_signature:
-            session.cold_pull_progress_signature = signature
-            if (self.page == ScreenPage.EXTRUDER_CALIBRATION
-                    and self._current_dialog() is None):
-                self._render_extruder_calibration()
-
-    def _run_cold_pull_material(self, material, hot, cold):
+    def _run_cold_pull_material(self, hot, cold):
         session = self.extruder_calibration
         controller = getattr(self, "_host", self)
         session.phase = "cold_pull"
-        session.cold_pull_material = material
-        session.cold_pull_progress_signature = None
         session.cold_pull_cancel_requested = False
         session.cold_pull_cancel_dispatched = False
         safety_lease = controller._ensure_safety_registry().activity(
@@ -928,25 +909,26 @@ class FeatherExtruderCalibrationMixin:
                 raise ValueError("Unknown cold-pull material")
             hot, cold = self.cold_pull_profiles[material]
             try:
-                self._run_cold_pull_material(material, hot, cold)
+                self._run_cold_pull_material(hot, cold)
             except Exception:
                 cancelled = (session.cold_pull_cancel_requested
                              and session.cold_pull_cancel_dispatched)
                 session.cold_pull_cancel_requested = False
                 session.cold_pull_cancel_dispatched = False
-                session.cold_pull_material = None
-                session.cold_pull_progress_signature = None
                 session.phase = "material"
-                if cancelled:
-                    getattr(self, "_host", self)._reset_operation_cancel()
-                    logging.info(
-                        "[feather_screen] cold pull temperature wait cancelled")
+                if not cancelled:
                     self._show_page(ScreenPage.EXTRUDER_CALIBRATION)
-                    return
-                raise
-            session.cold_pull_material = None
-            session.cold_pull_progress_signature = None
+                    raise
+                getattr(self, "_host", self)._reset_operation_cancel()
+                logging.info(
+                    "[feather_screen] cold pull temperature wait cancelled")
+                self._show_page(ScreenPage.EXTRUDER_CALIBRATION)
+                return
             session.phase = "cut"
+            # The command can finish while its cancel confirmation is open.
+            if self.page == ScreenPage.OPERATION_CANCEL:
+                self._close_operation_cancel()
+                return
         elif action == "extruder.prepared":
             self._prepare_extruder_calibration()
             return

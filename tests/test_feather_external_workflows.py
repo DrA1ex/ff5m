@@ -32,6 +32,7 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.host._show_message = mock.Mock()
         self.host._run_script = mock.Mock()
         self.host.print_stats = StatusObject({"state": "standby"})
+        self.host.extruder = StatusObject({"temperature": 25.0, "target": 0.0})
         self.host.virtual_sdcard = mock.Mock(is_active=lambda: False)
         self.host.resurrection = StatusObject({"state": "resurrection", "available": True})
         self.callbacks = []
@@ -199,7 +200,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                 self.host._clear_dialogs()
                 content = {
                     Dialog.ACTION_PROMPT: {"title": "Other operation", "text": [], "rows": [],
-                                          "footer": [], "buttons": {}},
+                                          "footer": [], "buttons": {}, "kind": None},
                     Dialog.MESSAGE: {"message": "Notice", "title": None,
                                      "actions": (("message.ok", "OK", "enabled"),)},
                     Dialog.ERROR: {"message": "Configuration failed", "category": "error",

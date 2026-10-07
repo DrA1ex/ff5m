@@ -1504,8 +1504,8 @@ class RendererStateTest(unittest.TestCase):
 
         self.assertEqual(
             commands[0], "--batch clear-hitboxes --layer base")
-        self.assertIn("--batch fill -p 160 97 -s 480 285", drawing)
-        self.assertIn("--batch stroke -p 160 97 -s 480 285", drawing)
+        self.assertIn("--batch fill -p 135 97 -s 530 285", drawing)
+        self.assertIn("--batch stroke -p 135 97 -s 530 285", drawing)
         self.assertIn("CAUTION", drawing)
         self.assertIn("FIRST LINE", drawing)
         self.assertIn("--id 0:dialog.close", drawing)
@@ -1543,7 +1543,7 @@ class RendererStateTest(unittest.TestCase):
         two = renderer._buttons["two"]
         self.assertEqual((one.width, two.width), (144, 144))
         self.assertEqual(one.x + one.width + 12, two.x)
-        self.assertEqual(one.y + one.height, 320)
+        self.assertEqual(one.y + one.height, 330)
 
     def test_title_only_dialog_moves_title_and_preserves_multiline_heading(self):
         renderer = FEATHER.FeatherRenderer()
@@ -1585,7 +1585,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(frame.button("prompt.button.0").bounds.width, 144)
         self.assertLess(frame.button("prompt.button.0").bounds.y, 370)
         self.assertTrue(any(
-            shape.kind == "fill" and shape.bounds.width == 700
+            shape.kind == "fill" and 480 <= shape.bounds.width < 700
             and shape.bounds.height < 365 for shape in frame.shapes))
 
     def test_replaced_prompt_rejects_old_button_event(self):
@@ -1941,7 +1941,7 @@ class RendererStateTest(unittest.TestCase):
             "Full dialog", lines, (("continue", "CONTINUE", "enabled"),),
             x=160, y=130, width=480, height=220))
 
-        self.assertIn("--batch fill -p 160 85 -s 480 310", drawing)
+        self.assertIn("--batch fill -p 135 85 -s 530 310", drawing)
         self.assertIn("-p 400 280", drawing)
         self.assertEqual(renderer._buttons["continue"].y, 321)
         self.assertEqual(dialog_vertical_bounds(350, 220, 5, True),

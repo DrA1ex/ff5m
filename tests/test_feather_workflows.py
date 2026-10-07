@@ -353,6 +353,31 @@ def composed_controller_surface(controller, painter):
 
 
 class ScreenCompositionWorkflowTest(unittest.TestCase):
+    def test_heating_prompt_tick_updates_temperature_without_reapplying_scrim(self):
+        controller, _ = ActionPromptProtocolTest.controller_with_navigation()
+        rendering = RenderCapture(controller.renderer)
+        del controller._apply_safety_visibility
+        controller.page = FEATHER.ScreenPage.CONTROL_HOME
+        controller.extruder = StatusObject({"temperature": 130, "target": 250})
+        controller.heater_bed = StatusObject({"temperature": 30, "target": 0})
+        controller.filament_sensor = None
+        controller.busy_message = None
+        controller.network_client = mock.Mock(spec=["service"])
+        controller.dimmed, controller.last_touch_time, controller.dim_timeout = False, 0, 10000
+        controller._handle_gcode_output("\n".join((
+            "// action:prompt_begin Heating nozzle", "// action:prompt_feather_kind heating_nozzle", "// action:prompt_show")))
+        controller._update_cycle(100)
+        submitted = len(rendering.frames)
+
+        controller.extruder.status["temperature"] = 200
+        controller._update_cycle(101)
+
+        self.assertEqual(len(rendering.frames), submitted + 1)
+        self.assertTrue(rendering.latest.has_text("NOZZLE 200 / 250 C"))
+        self.assertNotIn(controller.renderer.modal_scrim(), rendering.batches[-1])
+        controller._update_cycle(102)
+        self.assertEqual(len(rendering.frames), submitted + 1)
+
     def test_cold_pull_tick_does_not_repeat_an_emergency_control_refresh(self):
         controller, _ = ActionPromptProtocolTest.controller_with_navigation()
         rendering = RenderCapture(controller.renderer)
@@ -368,7 +393,7 @@ class ScreenCompositionWorkflowTest(unittest.TestCase):
             context_types=("cold_pull",), current_state="HOMING",
             cancel_available=True, cancel_pending=False)
         controller._handle_gcode_output("\n".join((
-            "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+            "// action:prompt_begin Cold Pull", "// action:prompt_feather_kind cold_pull", "// action:prompt_show")))
         submitted = len(rendering.frames)
         controller._update_cycle(100)
         self.assertEqual(len(rendering.frames), submitted + 1)
@@ -6181,6 +6206,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
             cancel_target_mode="cancelable", revision=1)
         controller._handle_gcode_output("\n".join([
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
             "// action:prompt_show",
@@ -6205,7 +6231,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
             context_types=("cold_pull",), current_state="COOLING NOZZLE",
             cancel_available=True, cancel_pending=False)
         controller._handle_gcode_output("\n".join((
-            "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+            "// action:prompt_begin Cold Pull", "// action:prompt_feather_kind cold_pull", "// action:prompt_show")))
         controller._render_home.assert_not_called()
         self.assertIn(renderer.modal_scrim(), rendering.batches[-1])
         tap = renderer._wire_action("coldpull.cancel")
@@ -6219,7 +6245,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         self.assertEqual(renderer.generation, generation)
         self.assertEqual(renderer.decode_action(tap), "coldpull.cancel")
         self.assertTrue(rendering.latest.has_text("PULLING"))
-        self.assertTrue(any("180.0" in text.value for text in rendering.latest.texts))
+        self.assertTrue(rendering.latest.has_text("NOZZLE 180 / 100 C"))
         controller.operation_context.status["cancel_pending"] = True
         submitted = len(rendering.frames)
         FEATHER.FeatherScreen._render_dialog(controller)
@@ -6236,7 +6262,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
             context_types=("cold_pull",), current_state="HOMING",
             cancel_available=True, cancel_pending=False)
         controller._handle_gcode_output("\n".join((
-            "// action:prompt_begin Cold Pull", "// action:prompt_show")))
+            "// action:prompt_begin Cold Pull", "// action:prompt_feather_kind cold_pull", "// action:prompt_show")))
         submitted = len(rendering.frames)
         for _ in range(20):
             controller.extruder.status.update(temperature=190.02, target=100.02)
@@ -6245,10 +6271,10 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller.operation_context.status["revision"] += 1
         FEATHER.FeatherScreen._render_dialog(controller)
         self.assertEqual(len(rendering.frames), submitted)
-        controller.extruder.status["temperature"] = 190.12
+        controller.extruder.status["temperature"] = 191.2
         FEATHER.FeatherScreen._render_dialog(controller)
         self.assertEqual(len(rendering.frames), submitted + 1)
-        self.assertTrue(any('190.1' in text.value for text in rendering.latest.texts))
+        self.assertTrue(rendering.latest.has_text("NOZZLE 191 / 100 C"))
         controller.operation_context.status["cancel_available"] = False
         FEATHER.FeatherScreen._render_dialog(controller)
         self.assertFalse(rendering.latest.has_action("coldpull.cancel"))
@@ -6266,6 +6292,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, shown = self.controller()
         controller._handle_gcode_output("\n".join([
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
             "// action:prompt_show",
@@ -6300,6 +6327,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, _ = self.controller()
         controller._handle_gcode_output("\n".join((
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull is in progress.",
             "// action:prompt_show")))
         controller.operation_context.status.update(
@@ -6320,6 +6348,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, shown = self.controller()
         controller._handle_gcode_output("\n".join([
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_show",
         ]))
@@ -6346,6 +6375,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, shown = self.controller()
         controller._handle_gcode_output("\n".join([
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_footer_button Cancel|_CONTEXT_CANCEL|secondary",
             "// action:prompt_show",
@@ -6373,6 +6403,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
         controller, shown = self.controller()
         controller._handle_gcode_output("\n".join([
             "// action:prompt_begin Cold Pull",
+            "// action:prompt_feather_kind cold_pull",
             "// action:prompt_text Cold pull for PLA is in progress.",
             "// action:prompt_show",
         ]))

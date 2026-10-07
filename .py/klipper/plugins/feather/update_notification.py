@@ -476,11 +476,11 @@ class ForgeXUpdateNotification:
 
     def _render_restart_notice(self):
         commands = self.host.renderer.begin_page("Forge-X update")
-        commands += self.host.renderer.dialog(
+        commands += self.host.renderer.status_dialog(
             "UPDATE COMPLETE",
-            ("PRINTER WILL RESTART NOW",
-             "RESTART MANUALLY IF NEEDED"),
-            (), x=70, y=105, width=660, height=280, tone="info",
+            "PRINTER WILL RESTART NOW",
+            note="RESTART MANUALLY IF NEEDED",
+            width=660, height=280, tone="info",
             preserve_header_action=False)
         self.host.renderer.send(commands)
 

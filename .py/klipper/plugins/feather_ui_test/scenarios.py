@@ -790,9 +790,6 @@ class ScenarioCatalog:
         session.temperature = 42.4
         session.cooling_message = "COOLING SAFELY"
         session.input_text = "98.750"
-        session.cold_pull_material = (
-            self.host.cold_pull_materials[0]
-            if self.host.cold_pull_materials else "PLA")
         if phase == "warning":
             session.set_measurement("130.000")
         elif phase == "result":
@@ -1060,6 +1057,7 @@ class ScenarioCatalog:
         self._show(ScreenDialog.ACTION_PROMPT, content={
             "title": "Printer command", "text": ["Action completed."], "rows": [],
             "footer": [button], "buttons": {button["action"]: button}, "group": None,
+            "kind": None,
         })
 
     def _render_two_action_message(self):
@@ -1301,7 +1299,7 @@ class ScenarioCatalog:
         }):
             self._show(ScreenDialog.ACTION_PROMPT, content={
                 "title": "Cold Pull", "text": [], "rows": [], "footer": [],
-                "buttons": {}, "group": None,
+                "buttons": {}, "group": None, "kind": "cold_pull",
             })
 
     def _render_cancel_snapshot(self, kind):
