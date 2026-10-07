@@ -28,6 +28,16 @@ End Gcode
 END_PRINT
 ```
 
+### Print preview thumbnails
+
+For a clear model preview on the Feather screen, set the thumbnail size to
+**512 × 512 pixels** in your OrcaSlicer printer profile:
+
+1. In **Prepare**, click **Edit preset** next to the printer profile name.
+2. Open **Basic information → Advanced** (enable **Advanced** mode if needed).
+3. Set **G-code thumbnails** to `512x512/PNG`.
+4. Save the profile and re-slice the model before exporting or uploading it.
+
 ### Bed coordinates
 
 The default FlashForge AD5M profiles in OrcaSlicer already place the X/Y origin at the bed center (`0, 0`), as Forge-X expects. No change to the printable area is needed for these profiles.
