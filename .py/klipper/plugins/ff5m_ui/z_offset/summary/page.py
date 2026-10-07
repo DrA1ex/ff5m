@@ -68,7 +68,7 @@ def _zone_state(results, key):
 
 def _status(spread, positional_warning, results):
     if spread > positional_warning:
-        return "POSITIONAL SPREAD %.3f MM - CHECK BED / PROBE" % spread
+        return "ZONES DIFFER BY %.3f MM - CHECK THE BED AND PROBE" % spread
     count = len(results)
     if count:
         return "%d ZONE%s MEASURED" % (count, "" if count == 1 else "S")
@@ -181,7 +181,7 @@ def _content():
             "DISCARD Z CALIBRATION?",
             (
                 "ALL MEASURED ZONE RESULTS WILL BE LOST.",
-                "THE ORIGINAL MESH AND RUNTIME OFFSET WILL BE RESTORED.",
+                "THE ORIGINAL BED MESH AND Z OFFSET WILL BE RESTORED.",
             ),
             (
                 (SetValue(SummaryState.DIALOG, None), "KEEP", "enabled"),

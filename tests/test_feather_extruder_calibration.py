@@ -403,7 +403,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         drawing = "\n".join(batches[-1])
         self.assertNotIn("--id 1:extruder.coldpull", drawing)
         self.assertIn("extruder.skip", drawing)
-        with self.assertRaisesRegex(RuntimeError, "No cold-pull"):
+        with self.assertRaisesRegex(RuntimeError, "No materials are enabled"):
             controller._handle_extruder_calibration_action(
                 "extruder.coldpull")
 
@@ -783,7 +783,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         self.assertEqual(frame.text("COOLING NOZZLE").font, DIALOG_TITLE_FONT)
         self.assertEqual(frame.text("130 C").font, DIALOG_STATUS_FONT)
         self.assertTrue(frame.has_text("DO NOT REMOVE THE NOZZLE YET"))
-        instructions = next(text for text in frame.texts if "stop the fan and beep" in text.value)
+        instructions = next(text for text in frame.texts if "You will hear a beep" in text.value)
         metrics = get_font_metrics()
         instruction_height = metrics.text_height(
             instructions.value, instructions.font, max_width=instructions.max_width, wrap=True)

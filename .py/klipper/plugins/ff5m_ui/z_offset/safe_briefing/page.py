@@ -28,7 +28,7 @@ class SafeBriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "SAFE Z DEFINES HOW HIGH THE TOOLHEAD MOVES BEFORE PARKING OR MAKING XY MOVES.",
+            "SAFE Z IS THE HEIGHT THE TOOLHEAD LIFTS TO BEFORE PARKING OR MOVING IN X/Y.",
             wrap=True, auto_height=True).style(UiStyle.PRIMARY),
         Text(
             "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",

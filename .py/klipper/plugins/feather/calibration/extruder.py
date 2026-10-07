@@ -68,7 +68,7 @@ def round_rotation_distance(value):
         ROTATION_QUANTUM, rounding=ROUND_HALF_UP)
     if rounded <= 0:
         raise ValueError(
-            "Measurement produces an unusable rotation_distance")
+            "This measurement gives an unusable rotation distance")
     return float(rounded)
 
 
@@ -408,7 +408,7 @@ class ExtruderCalibrationSession:
 
     def apply_candidate_for_verification(self):
         if self.candidate is None:
-            raise RuntimeError("Measure filament before verification")
+            raise RuntimeError("Measure the filament first")
         self.current_rotation = self.candidate
         self.verifying = True
         self.begin_measurement()
@@ -423,7 +423,7 @@ class FeatherExtruderCalibrationMixin:
             value = value[0]
         value = float(value)
         if not math.isfinite(value) or value <= 0:
-            raise RuntimeError("Runtime rotation_distance is invalid")
+            raise RuntimeError("The extruder rotation distance is invalid")
         return value
 
     def _start_extruder_calibration(self):
@@ -464,17 +464,17 @@ class FeatherExtruderCalibrationMixin:
         phase = session.phase
         if phase == "intro":
             self._extruder_simple_page(
-                "Extruder calibration", "ROTATION DISTANCE %.3f" %
+                "Extruder calibration", "CURRENT ROTATION DISTANCE %.3f" %
                 session.original_rotation,
-                "You need a caliper and marker. COLD PULL completely cleans "
-                "the nozzle and is required if filament is loaded, after a "
-                "material change, or if residue may remain. Choose FILAMENT "
-                "READY only after cleaning. Feather then moves exactly 100 "
-                "mm and calculates the setting.",
+                "You will need a caliper and a marker. First clean the "
+                "nozzle with COLD PULL: this is required if filament is "
+                "loaded, the material was changed, or residue may remain. "
+                "Then tap FILAMENT READY. The extruder feeds exactly 100 mm "
+                "and the correction is calculated from your measurement.",
                 (("extruder.coldpull", "COLD PULL",
                   "enabled" if self.cold_pull_materials else "disabled"),
                  ("extruder.skip", "FILAMENT READY", "enabled")),
-                note="NOZZLE REMOVAL IS REQUIRED")
+                note="YOU WILL HAVE TO REMOVE THE NOZZLE")
         elif phase == "material":
             commands = self.renderer.begin_page("Cold pull material", back=True)
             commands.append(self.renderer.text(
@@ -492,7 +492,7 @@ class FeatherExtruderCalibrationMixin:
                     font="JetBrainsMono Bold 12pt")
             else:
                 commands.append(self.renderer.text(
-                    400, 230, "NO COLD PULL MATERIALS ENABLED", ThemeColor.DIM,
+                    400, 230, "NO MATERIALS ARE ENABLED FOR COLD PULL", ThemeColor.DIM,
                     "JetBrainsMono Bold 10pt", "center", "middle"))
             self.renderer.send(commands)
         elif phase == "cold_pull":
@@ -503,8 +503,8 @@ class FeatherExtruderCalibrationMixin:
         elif phase == "cut":
             self._extruder_simple_page(
                 "Prepare filament", "REMOVE AND CUT FILAMENT",
-                "Pull out the remaining filament by hand. Cut away every "
-                "melted or deformed section so the end is straight and clean.",
+                "Pull the remaining filament out by hand. Cut off any melted "
+                "or deformed part so the end is straight and clean.",
                 (("extruder.prepared", "FILAMENT READY", "enabled"),))
         elif phase == "cooling":
             temperature = ("--" if session.temperature is None
@@ -512,46 +512,45 @@ class FeatherExtruderCalibrationMixin:
             commands = self.renderer.begin_page("Cool nozzle", back=True)
             commands += self.renderer.status_dialog(
                 "COOLING NOZZLE", temperature, width=700, height=320, modal=False,
-                description=("The heater target is zero and the head fan is at 100%. "
-                             "Wait until the temperature is below 50 C. Feather will "
-                             "stop the fan and beep when it is safe."),
+                description=("Wait until the nozzle cools below 50 C. "
+                             "You will hear a beep when it is safe to continue."),
                 note=session.cooling_message or "DO NOT REMOVE THE NOZZLE YET",
                 note_color=ThemeColor.WARNING)
             self.renderer.send(commands)
         elif phase == "remove":
             self._extruder_simple_page(
-                "Remove nozzle", "TEMPERATURE BELOW 50 C",
-                "Release both nozzle levers and carefully pull the nozzle "
-                "module downward. Feather cannot detect whether it is removed.",
+                "Remove nozzle", "NOZZLE HAS COOLED DOWN",
+                "Release both nozzle levers and pull the nozzle module down. "
+                "Tap NOZZLE REMOVED when it is out.",
                 (("extruder.nozzle_removed", "NOZZLE REMOVED", "warning"),),
                 tone=ThemeColor.WARNING)
         elif phase == "load":
             self._extruder_simple_page(
-                "Seat filament", "INSERT FILAMENT DIRECTLY",
-                "Bypass the PTFE tube and guide the clean filament into the "
-                "extruder. Press FEED while holding it straight.",
+                "Insert filament", "INSERT FILAMENT INTO THE EXTRUDER",
+                "Skip the PTFE tube and guide the clean filament straight "
+                "into the extruder. Hold it straight and tap FEED 50 MM.",
                 (("extruder.feed50", "FEED 50 MM", "enabled"),))
         elif phase == "mark_first":
             self._extruder_simple_page(
-                "First mark", "MARK THE ENTRY POINT",
-                "If the filament did not seat, use FEED 50 MORE as often as "
-                "needed. When it moves reliably, mark the exact entry point; "
-                "the next action advances exactly 100 mm.",
+                "First mark", "MARK THE FILAMENT",
+                "If the extruder does not grab the filament, tap FEED 50 MORE "
+                "until it feeds steadily. Then mark the filament exactly where "
+                "it enters the extruder and tap FEED 100 MM.",
                 (("extruder.feed50", "FEED 50 MORE", "enabled"),
-                 ("extruder.feed100", "MARKED / FEED 100", "enabled")))
+                 ("extruder.feed100", "MARKED, FEED 100 MM", "enabled")))
         elif phase == "mark_second":
             self._extruder_simple_page(
-                "Second mark", "MARK THE NEW ENTRY POINT",
-                "Make the second mark at the extruder entrance. Feather will "
-                "then retract 160 mm. Extra unload is available if the "
-                "filament is still held by the gears.",
-                (("extruder.unload", "MARKED / UNLOAD", "enabled"),))
+                "Second mark", "MAKE THE SECOND MARK",
+                "Mark the filament again where it now enters the extruder. "
+                "Then tap UNLOAD: the filament is pulled back so you can "
+                "take it out.",
+                (("extruder.unload", "MARKED, UNLOAD", "enabled"),))
         elif phase == "measure_ready":
             self._extruder_simple_page(
                 "Remove and measure", "REMOVE FILAMENT AND MEASURE",
-                "If the filament is still held by the gears, use UNLOAD 50 "
-                "MORE. Once it is free, pull it out and measure the distance "
-                "between the marks with a caliper.",
+                "If the gears still hold the filament, tap UNLOAD 50 MORE. "
+                "When it is free, pull it out and measure the distance "
+                "between the two marks with a caliper.",
                 (("extruder.unload_more", "UNLOAD 50 MORE", "enabled"),
                  ("extruder.measure_ready", "ENTER MEASUREMENT", "enabled")))
         elif phase == "input":
@@ -559,8 +558,9 @@ class FeatherExtruderCalibrationMixin:
         elif phase == "warning":
             self._extruder_simple_page(
                 "Check measurement", "UNUSUAL VALUE: %.3f MM" % session.measured,
-                "This differs from 100 mm by more than 20 percent. Check the "
-                "marks and your input. You may continue if the value is real.",
+                "This differs from 100 mm by more than 20%. Check the marks "
+                "and the number you entered. If the value is correct, tap "
+                "USE ANYWAY.",
                 (("extruder.edit", "EDIT", "enabled"),
                  ("extruder.warning_accept", "USE ANYWAY", "warning")),
                 tone=ThemeColor.WARNING)
@@ -569,19 +569,20 @@ class FeatherExtruderCalibrationMixin:
         elif phase == "exit_warning":
             self._extruder_simple_page(
                 "Before leaving", "INSTALL THE NOZZLE",
-                "If it is still removed, push the nozzle module fully into "
-                "place until both levers click. Unsaved calibration is discarded.",
+                "If the nozzle is removed, push the module fully into place "
+                "until both levers click. Unsaved results will be lost.",
                 (("extruder.stay", "STAY", "enabled"),
                  ("extruder.exit", "EXIT", "danger")), tone=ThemeColor.DANGER)
         elif phase == "saved":
             self._extruder_simple_page(
                 "Calibration saved", "ROTATION DISTANCE %.3f" %
                 session.current_rotation,
-                "Install the nozzle until both levers click. You must calibrate "
-                "Flow / Flow Ratio, then Pressure Advance. Bed Mesh and Z "
-                "Offset do not need recalibration.",
+                "Install the nozzle until both levers click. Then recalibrate "
+                "Flow Ratio and Pressure Advance. Bed mesh and Z offset do "
+                "not need to be redone.",
                 (("extruder.done", "DONE", "enabled"),),
-                tone=ThemeColor.SUCCESS, note="NO KLIPPER RESTART WAS PERFORMED")
+                tone=ThemeColor.SUCCESS,
+                note="THE NEW VALUE IS ACTIVE, NO RESTART NEEDED")
 
     def _render_extruder_measurement_input(self):
         session = self.extruder_calibration
@@ -616,7 +617,8 @@ class FeatherExtruderCalibrationMixin:
         tested = session.current_rotation
         candidate = session.candidate
         change = session.feed_change
-        direction = "MORE" if change > 0 else "LESS" if change < 0 else "THE SAME"
+        effect = ("EXTRUDES MORE" if change > 0
+                  else "EXTRUDES LESS" if change < 0 else "NO CHANGE")
         commands = self.renderer.begin_page("Calibration result", back=True)
         commands += self.renderer.panel(
             24, 68, 752, 282, border=ThemeColor.BORDER, background=ThemeColor.PANEL)
@@ -626,8 +628,8 @@ class FeatherExtruderCalibrationMixin:
              "%.3f" % tested),
             (("NEXT CORRECTION" if session.verifying else "NEW DISTANCE"),
              "%.3f" % candidate),
-            (("IF CORRECTED" if session.verifying else "MOTOR FEED"),
-             "%s // %+.2f%%" % (direction, change)),
+            (("FURTHER CHANGE" if session.verifying else "FEED CHANGE"),
+             "%+.2f%% (%s)" % (change, effect)),
         )
         for index, (label, value) in enumerate(rows):
             commands += self.renderer.metric_row(
@@ -637,13 +639,13 @@ class FeatherExtruderCalibrationMixin:
                         abs(float(existing) - session.original_rotation) > 0.0005)
         file_text = ("NOT SET" if existing is None else "%.3f" % existing)
         if file_differs:
-            file_text += " // DIFFERS FROM RUNTIME %.3f" % session.original_rotation
+            file_text += " (ACTIVE VALUE IS %.3f)" % session.original_rotation
         color = ThemeColor.WARNING if file_differs else ThemeColor.DIM
         commands.append(self.renderer.text(
-            55, 278, "USER.CFG NOW: %s" % file_text, color,
+            55, 278, "SAVED IN USER.CFG: %s" % file_text, color,
             "JetBrainsMono 8pt", "left", "middle"))
         note = (session.save_error or
-                "AFTER SAVING: CALIBRATE FLOW, THEN PRESSURE ADVANCE")
+                "AFTER SAVING, RECALIBRATE FLOW RATIO, THEN PRESSURE ADVANCE")
         commands.append(self.renderer.text(
             400, 322, note, ThemeColor.DANGER if session.save_error else ThemeColor.WARNING,
             "JetBrainsMono 8pt", "center", "middle",
@@ -651,9 +653,9 @@ class FeatherExtruderCalibrationMixin:
         save_state = "disabled" if session.file_snapshot is None else "enabled"
         if session.verifying:
             buttons = (("extruder.save_tested", "SAVE TESTED", save_state),
-                       ("extruder.refine", "REFINE / RETEST", "enabled"))
+                       ("extruder.refine", "MEASURE AGAIN", "enabled"))
         else:
-            buttons = (("extruder.save", "SAVE NOW", save_state),
+            buttons = (("extruder.save", "SAVE", save_state),
                        ("extruder.verify", "VERIFY", "enabled"))
         width = 369
         for index, (action, label, state) in enumerate(buttons):
@@ -664,19 +666,19 @@ class FeatherExtruderCalibrationMixin:
             value_text = ("--" if session.candidate is None
                           else "%.3f" % session.candidate)
             if session.save_file_written:
-                title = "RUNTIME APPLY FAILED"
+                title = "SAVED, BUT NOT APPLIED"
                 lines = (
-                    "ROTATION_DISTANCE %s" % value_text,
-                    "USER.CFG IS SAVED.",
-                    "RESTART KLIPPER TO LOAD THE VALUE.",
+                    "NEW ROTATION DISTANCE: %s" % value_text,
+                    "THE VALUE IS SAVED IN USER.CFG BUT COULD NOT BE APPLIED.",
+                    "RESTART KLIPPER TO START USING IT.",
                     session.save_error,
                 )
             else:
                 title = "SAVE FAILED"
                 lines = (
-                    "ROTATION_DISTANCE %s" % value_text,
-                    "USER.CFG WAS NOT UPDATED.",
-                    "WRITE THIS VALUE MANUALLY.",
+                    "NEW ROTATION DISTANCE: %s" % value_text,
+                    "USER.CFG WAS NOT CHANGED.",
+                    "YOU CAN ENTER THIS VALUE IN USER.CFG MANUALLY.",
                     session.save_error,
                 )
             commands += self.renderer.dialog(
@@ -720,7 +722,7 @@ class FeatherExtruderCalibrationMixin:
             "POSITIONING HEAD...")
         status = self.extruder.get_status(self.reactor.monotonic())
         if float(status.get("target", 0.0)) != 0.0:
-            raise RuntimeError("Extruder heater target did not reach zero")
+            raise RuntimeError("Unable to turn off the nozzle heater")
         session.temperature = float(status.get("temperature", 0.0))
         self._set_extruder_cooling_fan(True)
         session.phase = "cooling"
@@ -760,7 +762,7 @@ class FeatherExtruderCalibrationMixin:
                        else "%.0f" % session.temperature)
         session.temperature = temperature
         if target != 0.0:
-            session.cooling_message = "SET THE HEATER TARGET BACK TO 0 C"
+            session.cooling_message = "NOZZLE HEATER WAS TURNED ON, TURN IT OFF"
             if ((force or old_display != "%.0f" % temperature)
                     and self._page_paint_allowed(ScreenPage.EXTRUDER_CALIBRATION)):
                 self._render_extruder_calibration()
@@ -899,14 +901,14 @@ class FeatherExtruderCalibrationMixin:
         session = self.extruder_calibration
         if action == "extruder.coldpull":
             if not self.cold_pull_materials:
-                raise RuntimeError("No cold-pull materials are enabled")
+                raise RuntimeError("No materials are enabled for cold pull")
             session.phase = "material"
         elif action == "extruder.skip":
             session.phase = "cut"
         elif action.startswith("extruder.material."):
             material = action.rsplit(".", 1)[1]
             if material not in self.cold_pull_profiles:
-                raise ValueError("Unknown cold-pull material")
+                raise ValueError("Unknown cold pull material")
             hot, cold = self.cold_pull_profiles[material]
             try:
                 self._run_cold_pull_material(hot, cold)

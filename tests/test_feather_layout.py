@@ -1359,7 +1359,7 @@ class ZOffsetLayoutTest(unittest.TestCase):
         frame = RenderFrame(z_offset.render_paper(renderer, values), renderer)
 
         first = frame.text("CURRENT LOAD: 0 G")
-        second = frame.text("MOVE FARTHER AND CHECK THE PAPER / NOZZLE.")
+        second = frame.text("MOVE THE NOZZLE FARTHER AWAY AND CHECK THE PAPER.")
         self.assertEqual(first.font, "JetBrainsMono 8pt")
         self.assertEqual(second.font, first.font)
         self.assertEqual(second.y - first.y, 24)

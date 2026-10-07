@@ -39,21 +39,21 @@ class PaperBriefingRef(Enum):
 
 def _content():
     text = Column(
-        Text("PLACE NORMAL PRINTER PAPER UNDER THE CLEAN NOZZLE.")
+        Text("PLACE A SHEET OF PRINTER PAPER UNDER THE CLEAN NOZZLE.")
         .style(UiStyle.PRIMARY).height(16).allow_overflow().ref(PaperBriefingRef.LINE_1),
-        Text("PRESS PROBE: IT FINDS THE LOAD-CELL TRIGGER, THEN LIFTS 0.5 MM.")
+        Text("PROBE FINDS THE BED, THEN LIFTS THE NOZZLE 0.5 MM.")
         .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_2),
         Text(
             derived(lambda height:
-                    "MOVE TO %.3f MM USES HALF OF SAFE Z AS REFERENCE, SO YOU" %
+                    "OR USE MOVE TO %.3f MM (HALF OF SAFE Z) TO SKIP PROBING" %
                     height,
                     bind(PaperBriefingState.MANUAL_START)),
         ).style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_3),
-        Text("CAN DO THE PAPER TEST WITH THE SAME CONTROLS WITHOUT PROBING.")
+        Text("AND DO THE PAPER TEST FROM THERE WITH THE SAME CONTROLS.")
         .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_4),
-        Text("SELECT A STEP: CLOSER INCREASES DRAG; FARTHER REDUCES IT.")
+        Text("CHOOSE A STEP. CLOSER INCREASES THE DRAG, FARTHER REDUCES IT.")
         .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_5),
-        Text("WHEN THE PAPER HAS LIGHT, EVEN DRAG, ACCEPT THE ZONE.")
+        Text("WHEN THE PAPER MOVES WITH LIGHT, EVEN DRAG, TAP ACCEPT ZONE.")
         .style(UiStyle.TEXT).height(16).allow_overflow().ref(PaperBriefingRef.LINE_6),
         gap=20,
     ).height(196).ref(PaperBriefingRef.TEXT)

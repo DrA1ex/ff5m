@@ -51,7 +51,7 @@ CALIBRATION_ITEMS = (
     ("cal.mesh", "BED MESH",
      ("PROBE BED AND CREATE", "PROFILE AUTO")),
     ("cal.extruder", "EXTRUDER",
-     ("PRINT, MEASURE AND", "UPDATE USER.CFG")),
+     ("MEASURE FILAMENT FEED", "AND CORRECT IT")),
     ("cal.shaper", "SHAPER",
      ("MEASURE X/Y RESONANCE", "GENERATE CSV RESULTS")),
     ("cal.axes", "AXIS",
@@ -964,7 +964,7 @@ class FeatherControlsMixin:
                 "JetBrainsMono 8pt", "left", "middle",
                 max_width=680, max_height=48, wrap=True, truncate=True))
         commands.append(self.renderer.text(
-            400, 410, "MEASUREMENT AND USER.CFG EDITING REQUIRED",
+            400, 410, "YOU WILL NEED CALIPERS AND HAVE TO EDIT USER.CFG",
             ThemeColor.WARNING, "JetBrainsMono Bold 8pt", "center", "middle"))
         self.renderer.send(commands)
 
@@ -1342,11 +1342,11 @@ class FeatherControlsMixin:
         }.get(kind, "Confirm calibration")
         commands = self.renderer.begin_page(title, back=True)
         if kind == "screws":
-            text = ("Select material to run CLEAR_NOZZLE before probing, "
-                    "or continue without cleaning.")
+            text = ("Select a material to clean the nozzle before probing, "
+                    "or choose WITHOUT CLEANING.")
         elif kind == "z":
-            text = ("Select the material temperature for nozzle cleaning, "
-                    "or start without an initial nozzle cleaning.")
+            text = ("Select a material to clean the nozzle first, "
+                    "or choose WITHOUT CLEANING.")
         elif kind == "pid_bed":
             text = ("Select the bed target temperature used for PID tuning. "
                     "The printer will home before heating.")
@@ -1357,7 +1357,8 @@ class FeatherControlsMixin:
             text = ("The toolhead will home and vibrate rapidly on both axes. "
                     "Clear the bed and keep away from the printer.")
         else:
-            text = "Printer will heat, clean, home and replace mesh profile 'auto'."
+            text = ("The printer will heat up, clean the nozzle, home, "
+                    "and replace the 'auto' mesh profile.")
         commands.append(self.renderer.text(
             400, 85, text, ThemeColor.BRIGHT, "Roboto 10pt", "center", "middle",
             max_width=572, max_height=70, wrap=True, truncate=True))
@@ -1399,7 +1400,7 @@ class FeatherControlsMixin:
                 self.calibration_material)
             target = bed if kind == "pid_bed" else nozzle
             commands.append(self.renderer.text(
-                400, 255, "TARGET %.0f C // %s" % (
+                400, 255, "TARGET: %.0f C (%s)" % (
                     target, self.calibration_material),
                 ThemeColor.WARNING, "JetBrainsMono Bold 10pt", "center"))
         elif kind == "shaper":

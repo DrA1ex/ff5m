@@ -205,7 +205,7 @@ def _content():
             derived(
                 lambda weight: (
                     "CURRENT LOAD: %.0F G" % weight,
-                    "MOVE FARTHER AND CHECK THE PAPER / NOZZLE.",
+                    "MOVE THE NOZZLE FARTHER AWAY AND CHECK THE PAPER.",
                 ),
                 bind(PaperState.DIALOG_WEIGHT)),
             ((SetValue(PaperState.DIALOG, None), "OK", "danger"),),

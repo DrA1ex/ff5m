@@ -63,7 +63,7 @@ def _content():
 
     return Column(
         Text(
-            "PROBE FINDS THE CLEAN BED TRIGGER AT CENTER. THE INITIAL SAFE Z IS TRIGGER + 5 MM.",
+            "PROBE TOUCHES THE CLEAN BED AT THE CENTER. THE STARTING SAFE Z IS THE TRIGGER HEIGHT + 5 MM.",
             wrap=True, auto_height=True,
         ).style(UiStyle.TEXT).ref(SafeRef.HELP),
         Spacer().grow(12),
