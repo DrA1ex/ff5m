@@ -101,15 +101,15 @@ def _job_panel():
         ).style(UiStyle.TEXT).size(137, 24).offset(590, 6),
         Text(
             derived(_job_detail, active, bind(HomeState.JOB_DETAIL)),
-            max_width=330, truncate=True,
-        ).style(UiStyle.DIM_LEFT).size(330, 24).offset(15, 43),
+            max_width=290, truncate=True,
+        ).style(UiStyle.DIM_LEFT).size(290, 24).offset(15, 43),
         Text(
             derived(
                 _job_progress, active, bind(HomeState.JOB_PROGRESS),
                 bind(HomeState.JOB_ELAPSED), bind(HomeState.JOB_REMAINING)),
             horizontal="right",
-            max_width=350, truncate=True,
-        ).style(UiStyle.TEXT).size(350, 24).offset(377, 43),
+            max_width=390, truncate=True,
+        ).style(UiStyle.TEXT).size(390, 24).offset(337, 43),
     ).size(742, 76).offset(4, 32).repaint_boundary()
 
     return Frame(

@@ -699,6 +699,47 @@ class FileWorkflowTest(unittest.TestCase):
             len(controller.file_worker.requests),
             requests_before_page_change + 1)
 
+    def test_loading_survives_root_repaint_and_recovers_after_scan(self):
+        for cached in (False, True):
+            for error in (None, RuntimeError("scan failed")):
+                with self.subTest(cached=cached, error=error):
+                    controller = base_controller()
+                    controller.page = FEATHER.ScreenPage.FILE_BROWSER
+                    controller.renderer = FEATHER.FeatherRenderer()
+                    capture = RenderCapture(controller.renderer)
+                    controller.file_worker = mock.Mock()
+                    controller.file_worker.submit.return_value = True
+                    controller._build_file_scan_task = lambda source: lambda: []
+                    controller._toast = mock.Mock()
+                    if cached:
+                        controller.file_entry_cache["internal"] = [
+                            FILES.FileEntry("old.gcode", "/data/old.gcode")]
+                    controller._paint_page = controller._render_file_browser
+                    root = controller._ensure_screen_root()
+
+                    controller._start_file_scan("internal")
+                    self.assertTrue(capture.latest.has_text("LOADING PRINT FILES..."))
+                    self.assertFalse(capture.latest.has_action("file.refresh"))
+                    controller.file_scan_phase = 2
+                    root.invalidate()
+                    root.paint()
+                    self.assertTrue(capture.latest.has_text("LOADING PRINT FILES..."))
+                    self.assertEqual(controller.file_scan_phase, 2)
+                    self.assertEqual(controller.file_worker.submit.call_count, 1)
+
+                    callback = controller.file_worker.submit.call_args.args[1]
+                    entries = [FILES.FileEntry("new.gcode", "/data/new.gcode")]
+                    callback(entries, error)
+                    self.assertFalse(controller.file_scan_loading)
+                    self.assertFalse(capture.latest.has_text("LOADING PRINT FILES..."))
+                    self.assertTrue(capture.latest.has_action("file.refresh"))
+                    if error is None:
+                        self.assertEqual(capture.latest.button("file.item0").label, "new.gcode")
+                        controller._toast.assert_not_called()
+                    else:
+                        self.assertTrue(capture.latest.has_text("No G-code files"))
+                        controller._toast.assert_called_once_with("Unable to load print files")
+
     def test_file_scan_drops_failures_for_changed_non_preloaded_files(self):
         controller = base_controller()
         entries = [
@@ -2932,6 +2973,37 @@ class PrintWorkflowTest(unittest.TestCase):
             context_path=(), current_state=None, revision=4)
         self.assertEqual(controller._cancel_progress_label(),
                          "INTERRUPTING TEMPERATURE WAIT...")
+
+    def test_pending_cancel_shows_complete_stage_on_render_and_update(self):
+        controller = base_controller("printing")
+        controller.page = FEATHER.ScreenPage.OPERATION_CANCEL
+        controller.cancel_mode = "pending"
+        controller.busy_phase = 0
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        controller.operation_context.status.update(current_state="PROBING POINT 12 OF 25")
+        FEATHER.FeatherScreen._render_cancel_confirm(controller)
+        metrics = get_font_metrics()
+        accepted = capture.latest.text("CANCEL REQUEST ACCEPTED")
+        accepted_top = accepted.y - metrics.text_height(accepted.value, accepted.font) / 2
+
+        for stage in ("PROBING POINT 12 OF 25", "LEVELING", "PROBING POINT 25 OF 25"):
+            with self.subTest(stage=stage):
+                controller.operation_context.status.update(current_state=stage)
+                if stage != "PROBING POINT 12 OF 25":
+                    controller._update_cancel_progress()
+                label = capture.latest.text("WILL STOP AFTER " + stage)
+                self.assertTrue(label.wrap)
+                height = metrics.text_height(
+                    label.value, label.font, label.max_width, wrap=label.wrap)
+                self.assertLessEqual(height, label.max_height)
+                self.assertLess(label.y, accepted_top)
+                if stage != "PROBING POINT 12 OF 25":
+                    clears = [shape.bounds for shape in capture.latest.shapes
+                              if shape.kind == "fill" and shape.bounds.width >= label.max_width]
+                    self.assertTrue(any(
+                        bounds.y <= label.y - label.max_height
+                        and label.y <= bounds.bottom < accepted_top for bounds in clears))
 
     def test_operation_context_status_is_semantic_and_formatted_only_for_ui(self):
         controller = base_controller("printing")

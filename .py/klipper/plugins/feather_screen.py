@@ -2288,10 +2288,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             elif (getattr(self, "file_scan_loading", False)
                     and self.page == ScreenPage.FILE_BROWSER):
                 self.file_scan_phase = (self.file_scan_phase + 1) % 5
-                label = ("LOADING USB FILES..."
-                         if getattr(self, "file_scan_source", None) == "usb"
-                         else "LOADING PRINT FILES...")
-                self.renderer.loader(label, self.file_scan_phase)
+                self._paint_file_loading(self.file_scan_source)
             elif self.busy_message is not None:
                 self.busy_phase = (self.busy_phase + 1) % 5
                 self.renderer.loader(self.busy_message, self.busy_phase)

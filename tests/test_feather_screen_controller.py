@@ -529,7 +529,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.print_state = FEATHER.PrintState.PREPARING
         controller.renderer = FEATHER.FeatherRenderer()
         controller.reactor = Reactor()
-        batches = RenderCapture(controller.renderer).batches
+        capture = RenderCapture(controller.renderer)
+        batches = capture.batches
         controller.extruder = StatusObject(
             {"temperature": 299.0, "target": 300.0})
         controller.heater_bed = StatusObject(
@@ -579,6 +580,13 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertIsNotNone(match)
             self.assertGreater(int(match.group(1)), 0)
             self.assertLessEqual(int(match.group(1)), UI.SCREEN_WIDTH)
+
+        from ui.font_metrics import get_font_metrics
+        progress = next(text for text in capture.latest.texts if "100% //" in text.value)
+        self.assertIn("4d 03:59:59 / 4d 03:59:59", progress.value)
+        self.assertLessEqual(
+            get_font_metrics().text_width(progress.value, progress.font),
+            progress.max_width)
 
 
     def test_calibration_menu_paginates_available_workflows(self):

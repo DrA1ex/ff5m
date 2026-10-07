@@ -118,6 +118,9 @@ class FileBrowserPagesMixin:
         self.file_scan_loading = True
         self.file_scan_source = source
         self.file_scan_phase = 0
+        self._paint_file_loading(source)
+
+    def _paint_file_loading(self, source):
         label = ("LOADING USB FILES..." if source == "usb"
                  else "LOADING PRINT FILES...")
         self.renderer.loader(label, self.file_scan_phase)
@@ -196,10 +199,11 @@ class FileBrowserPagesMixin:
 
     def _render_file_browser(self):
         source = self._normalize_file_source()
+        if self.file_scan_loading and self.file_scan_source == source:
+            self._paint_file_loading(source)
+            return
         if source not in self.file_entry_cache:
-            if not (self.file_scan_loading
-                    and self.file_scan_source == source):
-                self._start_file_scan(source)
+            self._start_file_scan(source)
             return
         self.file_entries = self.file_entry_cache[source]
         self._render_file_entries()

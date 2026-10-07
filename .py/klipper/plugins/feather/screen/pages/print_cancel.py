@@ -312,10 +312,7 @@ class PrintCancelPagesMixin:
                 "%s %s" % (
                     "INTERRUPTING" if interrupt else "CANCELLING",
                     target.upper()))
-            commands.append(self.renderer.text(
-                400, 170, label, ThemeColor.WARNING,
-                "JetBrainsMono Bold 16pt", "center", "middle",
-                max_width=700, truncate=True))
+            commands.append(self._cancel_progress_text(label))
             commands.append(self.renderer.text(
                 400, 225,
                 ("INTERRUPT REQUEST ACCEPTED" if interrupt
@@ -366,6 +363,12 @@ class PrintCancelPagesMixin:
             return "WILL STOP AFTER %s" % (state,)
         return "WILL STOP AT THE NEXT STEP"
 
+    def _cancel_progress_text(self, label):
+        return self.renderer.text(
+            400, 195, label, ThemeColor.WARNING,
+            "JetBrainsMono Bold 16pt", "center", "bottom",
+            max_width=700, max_height=93, wrap=True, truncate=True)
+
     def _update_cancel_progress(self):
         if (self.page != ScreenPage.OPERATION_CANCEL
                 or self.cancel_mode != "pending"):
@@ -376,11 +379,8 @@ class PrintCancelPagesMixin:
             commands = []
         else:
             self._last_cancel_label = label
-            commands = [self.renderer.fill(100, 140, 600, 65, ThemeColor.BACKGROUND),
-                        self.renderer.text(400, 170, label, ThemeColor.WARNING,
-                                           "JetBrainsMono Bold 16pt", "center",
-                                           "middle", max_width=700,
-                                           truncate=True)]
+            commands = [self.renderer.fill(40, 100, 720, 100, ThemeColor.BACKGROUND),
+                        self._cancel_progress_text(label)]
         loader_y = 385
         for index in range(5):
             commands.append(self.renderer.fill(
