@@ -16,6 +16,8 @@ h1,h2,h3,h4,h5{margin:.2em 0 .55em}
 h1{font-size:23px}h2{font-size:18px}h3{font-size:15px}
 a{color:var(--link)}
 code{overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:var(--panel);
+border:1px solid var(--line);border-radius:7px}
 .empty{color:var(--muted)}
 .muted{color:var(--muted)}
 

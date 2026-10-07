@@ -124,7 +124,9 @@ def _view(frame, number):
         "references": shot.get("expectation_references") or (),
         "reasons": list(case.get("reasons") or model.get("reasons") or ()),
         "error": error if isinstance(error, dict) else None,
-        "summary": response.get("summary"),
+        "summary": response.get("summary") or (
+            "Skipped: textual baseline missing."
+            if frame.get("skip_reason") == "missing_baseline" else None),
         "checks": response.get("checks") or (),
         "validation": (
             case.get("json_validation") or model.get("json_validation")
@@ -820,14 +822,21 @@ def _run(report, views, names):
     files = "".join(
         '<li><a href="%s">%s</a></li>' % (_text(name), _text(name))
         for name in ("report.json", "report.md"))
+    repeat = report.get("repeat_review")
+    repeat_html = (
+        "<section><h2>Repeat LLM review</h2><p>Run from <code>%s</code>. "
+        "Reuse these screenshots and write a new report without contacting the printer.</p>"
+        "<pre><code>%s</code></pre></section>"
+        % (_text(repeat["working_directory"]), _text(repeat["command"]))
+        if repeat else "")
     return (
         "<section><h2>Configuration</h2>%s</section>"
         '<section><h2>Collection stages</h2><div class="pipeline-grid">%s'
         '</div></section><section class="two-column"><div>%s</div>'
         "<div>%s</div></section><section>%s</section>"
-        "<section><h2>Artifacts</h2><ul>%s</ul></section>" % (
+        "<section><h2>Artifacts</h2><ul>%s</ul></section>%s" % (
             config_html, "".join(stages) or '<p class="empty">No stages '
-            "recorded.</p>", statistics, slowest_html, checklist_html, files))
+            "recorded.</p>", statistics, slowest_html, checklist_html, files, repeat_html))
 
 
 # --- assembly ---------------------------------------------------------------
@@ -887,8 +896,9 @@ def _alerts(report):
     missing = report.get("missing_expectations") or ()
     if missing:
         alerts.append(
-            '<section class="alert warn"><h2>Baselines required</h2>'
-            "<p>%d case(s) need a reviewed textual baseline.</p></section>"
+            '<section class="alert warn"><h2>Skipped without baselines</h2>'
+            "<p>%d case(s) were skipped because their textual baseline is missing. "
+            "Other cases remain eligible for model review.</p></section>"
             % len(missing))
     return "".join(alerts)
 

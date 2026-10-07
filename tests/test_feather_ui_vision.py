@@ -12,6 +12,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import struct
 import subprocess
@@ -1785,6 +1786,141 @@ class NativeDialogContractTest(unittest.TestCase):
 
 
 class RegressionOrchestratorTest(unittest.TestCase):
+    def saved_printer(self, root):
+        saved = root / "saved"
+        saved.mkdir()
+        (saved / "frame.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        (saved / "environment.json").write_text(json.dumps({
+            "suite": "UI", "ui_fingerprint": HYBRID.ui_fingerprint(ROOT),
+            "theme": "INDUSTRIAL",
+        }), encoding="utf-8")
+        manifest = [{"label": label, "file": "frame.png"}
+                    for label in sorted(HYBRID.UI_SUITE_LABELS)]
+        (saved / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        expectation = {"description": "Readable frame", "required": ["content"],
+                       "forbidden": ["blank frame"], "allowed_variations": []}
+        expectations = root / "expectations.json"
+        expectations.write_text(json.dumps({
+            "schema_version": 1,
+            "cases": {"printer:" + label: expectation for label in HYBRID.UI_SUITE_LABELS},
+        }), encoding="utf-8")
+        return saved, expectations, manifest
+
+    def test_missing_baselines_skip_only_their_frames(self):
+        for outcome, status in (("pass", "partial"), ("fail", "fail")):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:
+                root = pathlib.Path(temporary)
+                saved, expectations, manifest = self.saved_printer(root)
+                manifest.insert(1, {"label": "new-screen", "file": "frame.png"})
+                (saved / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                args = REGRESSION._arguments([
+                    "--printer-artifacts", str(saved), "--expectations", str(expectations),
+                    "--enable", "--backend", "openai-compatible", "--model", "vision-a",
+                    "--base-url", "http://fake-openai.invalid/v1", "--output", str(root / "output"),
+                ])
+                server = FakeOpenAIEndpoint(("vision-a",), {"vision-a": verdict(outcome)})
+                evaluator = server.evaluator(REGRESSION._visual_settings(args))
+                with mock.patch.object(PIPELINE.vision, "VisualCheckEvaluator", return_value=evaluator), \
+                        mock.patch.object(PRINTER, "PrinterCollector") as collector:
+                    report, output = REGRESSION.execute(args)
+                collector.assert_not_called()
+                self.assertEqual(report["status"], status)
+                frames = report["screenshots"]
+                self.assertEqual([f["screenshot"]["label"] for f in frames],
+                                 [f["label"] for f in manifest])
+                self.assertEqual(frames[1]["skip_reason"], "missing_baseline")
+                self.assertEqual(frames[1]["models"], [])
+                self.assertEqual(frames[1]["case_result"]["verdict"], "not_run")
+                self.assertEqual(sum(bool(frame["models"]) for frame in frames), len(manifest) - 1)
+                self.assertEqual(report["pipeline"][-1]["status"], "completed")
+                self.assertEqual(report["pipeline"][-1]["counts"]["submitted_frames"], len(manifest) - 1)
+                self.assertEqual(report["summary"]["skipped_missing_baseline"], 1)
+                candidate = json.loads((output / "expectations.candidate.json").read_text())
+                self.assertEqual(list(candidate["cases"]), ["printer-new-screen"])
+                self.assertTrue(server.requests)
+
+    def test_repeat_review_reuses_frames_and_keeps_previous_reports(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            saved, expectations, manifest = self.saved_printer(root)
+            first, original = REGRESSION.execute(REGRESSION._arguments([
+                "--printer-artifacts", str(saved), "--expectations", str(expectations),
+                "--output", str(root / "original"),
+            ]))
+            original_bytes = {p.relative_to(original): p.read_bytes()
+                              for p in original.rglob("*") if p.is_file()}
+            source = original
+            previous = first
+            for index, model in enumerate(("vision-a", "vision-b")):
+                args = REGRESSION._arguments(shlex.split(previous["repeat_review"]["command"])[3:] + [
+                    "--expectations", str(expectations),
+                    "--enable", "--backend", "openai-compatible", "--model", model,
+                    "--base-url", "http://fake-openai.invalid/v1", "--output", str(root / str(index)),
+                ])
+                server = FakeOpenAIEndpoint((model,), {model: verdict()})
+                evaluator = server.evaluator(REGRESSION._visual_settings(args))
+                with mock.patch.object(PIPELINE.vision, "VisualCheckEvaluator", return_value=evaluator), \
+                        mock.patch.object(PRINTER, "PrinterCollector") as collector, \
+                        mock.patch.object(HYBRID, "DesignerCapture") as capture:
+                    report, output = REGRESSION.execute(args)
+                collector.assert_not_called()
+                capture.assert_not_called()
+                self.assertEqual(report["status"], "pass")
+                self.assertEqual(report["configuration"]["model"], model)
+                self.assertEqual(report["review_source_run"], str(source))
+                self.assertEqual(len(report["screenshots"]), len(manifest))
+                for frame in report["screenshots"]:
+                    image = output / frame["screenshot"]["artifact"]
+                    self.assertEqual(image.read_bytes(), (saved / "frame.png").read_bytes())
+                self.assertEqual({p.relative_to(original): p.read_bytes()
+                                  for p in original.rglob("*") if p.is_file()}, original_bytes)
+                source = output
+                previous = report
+            self.assertEqual(first["status"], "disabled")
+
+    def test_repeat_review_rejects_invalid_or_unsafe_sources_before_model_requests(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            saved, expectations, manifest = self.saved_printer(root)
+            _, original = REGRESSION.execute(REGRESSION._arguments([
+                "--printer-artifacts", str(saved), "--expectations", str(expectations),
+                "--output", str(root / "original"),
+            ]))
+            args = REGRESSION._arguments(["--review-run", str(original), "--enable",
+                                        "--expectations", str(expectations)])
+            report_file = original / "report.json"
+            artifact = original / "printer" / "saved-01"
+            backups = {p: p.read_bytes() for p in (
+                report_file, artifact / "environment.json", artifact / "manifest.json")}
+            with mock.patch.object(PIPELINE, "run_checks") as review, \
+                    mock.patch.object(PRINTER, "PrinterCollector") as collector:
+                for defect in ("invalid-json", "wrong-mode", "empty", "escape", "stale", "incomplete", "same-output"):
+                    with self.subTest(defect=defect):
+                        for path, data in backups.items():
+                            path.write_bytes(data)
+                        report = json.loads(backups[report_file])
+                        if defect == "invalid-json":
+                            report_file.write_text("{", encoding="utf-8")
+                        elif defect in ("wrong-mode", "empty", "escape"):
+                            if defect == "wrong-mode":
+                                report["mode"] = "designer"
+                            elif defect == "empty":
+                                report["pipeline"] = []
+                            else:
+                                report["pipeline"][1]["runs"][0]["artifact"] = str(saved)
+                            report_file.write_text(json.dumps(report), encoding="utf-8")
+                        elif defect == "stale":
+                            (artifact / "environment.json").write_text(json.dumps({
+                                "suite": "UI", "ui_fingerprint": "stale"}), encoding="utf-8")
+                        elif defect == "incomplete":
+                            (artifact / "manifest.json").write_text(json.dumps(manifest[1:]), encoding="utf-8")
+                        before = report_file.read_bytes()
+                        with self.assertRaises(HYBRID.RegressionConfigurationError):
+                            REGRESSION.execute(args, output=original if defect == "same-output" else root / defect)
+                        self.assertEqual(report_file.read_bytes(), before)
+                review.assert_not_called()
+                collector.assert_not_called()
+
     def test_printer_source_reviews_every_frame_without_designer_or_network(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -112,6 +113,9 @@ def _arguments(argv=None):
     parser.add_argument("--designer-root")
     parser.add_argument("--printer-host")
     parser.add_argument("--printer-artifacts", action="append", default=[])
+    parser.add_argument(
+        "--review-run",
+        help="repeat LLM review of a saved printer UI-regression report directory; no printer connection")
     parser.add_argument("--confirm-printer-idle", action="store_true")
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--expectations", default=str(DEFAULT_EXPECTATIONS))
@@ -142,6 +146,13 @@ def _arguments(argv=None):
     parser.add_argument("--enable", action="store_true")
     parser.add_argument("--output")
     args = parser.parse_args(argv)
+    if args.review_run and (args.mode != "printer" or args.printer_host or args.printer_artifacts):
+        parser.error("--review-run requires printer mode without other printer sources")
+    if args.review_run and args.output:
+        source = pathlib.Path(args.review_run).resolve()
+        output = pathlib.Path(args.output).resolve()
+        if source == output or source in output.parents or output in source.parents:
+            parser.error("repeat review output must be separate from the saved run")
     if args.mode != "printer" and not args.designer_root:
         parser.error("--designer-root is required for designer, hybrid and parity modes")
     if args.mode == "designer" and (args.printer_host or args.printer_artifacts):
@@ -177,8 +188,10 @@ def _output_directory(value):
 
 def _printer_directories(args, output, component_cases):
     directories = []
-    if args.printer_artifacts:
-        for index, value in enumerate(args.printer_artifacts, 1):
+    saved = (_review_run_directories(args.review_run, output)
+             if args.review_run else args.printer_artifacts)
+    if saved:
+        for index, value in enumerate(saved, 1):
             source = pathlib.Path(value).resolve()
             if not source.is_dir():
                 raise hybrid.RegressionConfigurationError(
@@ -210,6 +223,35 @@ def _printer_directories(args, output, component_cases):
     if args.mode == "parity":
         directories.append(collector.collect(
             "COMPONENT", root, component_cases=component_cases))
+    return directories
+
+
+def _review_run_directories(value, output):
+    source = pathlib.Path(value).resolve()
+    if source == output or source in output.parents or output in source.parents:
+        raise hybrid.RegressionConfigurationError(
+            "repeat review output must be separate from the saved run")
+    try:
+        report = json.loads((source / "report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise hybrid.RegressionConfigurationError(
+            "saved run must contain a readable report.json") from exc
+    if not isinstance(report, dict) or report.get("mode") != "printer":
+        raise hybrid.RegressionConfigurationError(
+            "--review-run requires a printer UI-regression report")
+    directories = []
+    for stage in report.get("pipeline", ()):
+        if stage.get("id") != "printer":
+            continue
+        for run in stage.get("runs", ()):
+            directory = (source / str(run.get("artifact", ""))).resolve()
+            if source not in directory.parents or not directory.is_dir():
+                raise hybrid.RegressionConfigurationError(
+                    "saved printer artifact is missing or escapes the run directory")
+            directories.append(directory)
+    if not directories:
+        raise hybrid.RegressionConfigurationError(
+            "saved run contains no printer artifact directories")
     return directories
 
 
@@ -393,34 +435,37 @@ def _pipeline_stages(mode, designer_records, printer_runs, merged,
             "review_corpus": len(merged["records"]),
         },
     })
-    if missing:
+    if missing and artifact is None:
         stages.append({
             "id": "llm",
             "status": "not_run",
             "title": "LLM visual review",
             "summary": (
-                "Not started because %d textual baseline(s) are missing."
+                "No frames have textual baselines; skipped %d frame(s)."
                 % len(missing)),
-            "counts": {"submitted_frames": 0},
+            "counts": {"submitted_frames": 0, "skipped_missing_baseline": len(missing)},
         })
         return stages
     summary = (artifact or {}).get("summary", {})
     statuses = summary.get("statuses", {})
     completed = int(statuses.get("completed", 0))
     enabled = bool(summary.get("enabled"))
+    eligible = len(merged["records"]) - len(missing or ())
     stages.append({
         "id": "llm",
         "status": (
-            "completed" if enabled and completed == len(merged["records"])
+            "completed" if enabled and completed == eligible
             else "disabled" if not enabled else "failed"),
         "title": "LLM visual review",
         "summary": (
-            "%d of %d merged frames received a structured model result."
-            % (completed, len(merged["records"]))
+            "%d of %d eligible frames received a structured model result; "
+            "%d frame(s) skipped without textual baselines."
+            % (completed, eligible, len(missing or ()))
             if enabled else
             "Disabled; no images were submitted to a model."),
         "counts": {
-            "submitted_frames": len(merged["records"]) if enabled else 0,
+            "submitted_frames": eligible if enabled else 0,
+            "skipped_missing_baseline": len(missing or ()),
             "completed_results": completed,
             "json_valid_results": sum(
                 1 for frame in (artifact or {}).get("screenshots", ())
@@ -537,7 +582,7 @@ def _markdown_report(report):
     ]
     if report.get("missing_expectations"):
         lines.extend([
-            "The run needs approved textual baselines for %d cases."
+            "Skipped %d cases without textual baselines; other cases remain eligible for review."
             % len(report["missing_expectations"]),
             "",
         ])
@@ -550,10 +595,32 @@ def _markdown_report(report):
             "- Message: %s" % error.get("message", ""),
             "",
         ])
+    repeat = report.get("repeat_review")
+    if repeat:
+        lines.extend([
+            "## Repeat LLM review",
+            "",
+            "Run from `%s`; the saved screenshots are reused in a new report directory."
+            % repeat["working_directory"],
+            "",
+            "```bash", repeat["command"], "```", "",
+        ])
     return "\n".join(lines)
 
 
 def _write_reports(output, report):
+    if report.get("mode") == "printer" and any(
+            stage.get("id") == "printer" and stage.get("runs")
+            for stage in report.get("pipeline", ())):
+        command = [".venv/bin/python", "-m", "tests.visual_checks.regression",
+                   "--review-run", str(output), "--enable"]
+        configuration = report.get("configuration", {})
+        for option in ("backend", "model", "reasoning_effort", "review_workers", "timeout"):
+            if configuration.get(option) is not None and configuration[option] != "":
+                command.extend(["--" + option.replace("_", "-"), str(configuration[option])])
+        report["repeat_review"] = {
+            "working_directory": str(ROOT), "command": shlex.join(command),
+        }
     image_runner.write_artifact(output / "report.json", report)
     (output / "report.md").write_text(
         _markdown_report(report), encoding="utf-8")
@@ -562,6 +629,8 @@ def _write_reports(output, report):
 
 def execute(args, output=None, progress=None):
     output = pathlib.Path(output or _output_directory(args.output)).resolve()
+    if args.review_run:
+        _review_run_directories(args.review_run, output)
     output.mkdir(parents=True, exist_ok=True)
     settings = _visual_settings(args)
     if progress is not None:
@@ -591,7 +660,7 @@ def execute(args, output=None, progress=None):
         progress.stage(
             2, 6,
             "Preparing saved printer artifacts"
-            if args.printer_artifacts else
+            if args.printer_artifacts or args.review_run else
             "Collecting printer artifacts"
             if args.mode != "designer" else
             "Printer artifacts are not required")
@@ -652,12 +721,10 @@ def execute(args, output=None, progress=None):
     ready, missing = hybrid.attach_expectations(
         merged["records"], expectations)
     if missing:
-        if progress is not None:
-            progress.stage(
-                5, 6,
-                "Skipping model review: %d baselines are missing"
-                % len(missing))
         hybrid.write_candidates(output / "expectations.candidate.json", missing)
+    if not ready:
+        if progress is not None:
+            progress.stage(5, 6, "No frames have baselines; skipping model review")
         report = {
             "schema_version": 1,
             "status": "needs_baseline",
@@ -679,7 +746,8 @@ def execute(args, output=None, progress=None):
     else:
         if progress is not None:
             progress.stage(
-                5, 6, "Reviewing %d screenshots" % len(ready))
+                5, 6, "Reviewing %d screenshots; skipping %d without baselines"
+                % (len(ready), len(missing)))
         artifact = image_runner.run_checks(
             settings, _image_inputs(ready),
             progress=progress.review if progress is not None else None)
@@ -701,11 +769,41 @@ def execute(args, output=None, progress=None):
                 "parity_pairs": len(merged["pairs"]),
             },
             "discovered_page_ids": merged["discovered_page_ids"],
-            "missing_expectations": [],
+            "missing_expectations": missing,
             "pipeline": _pipeline_stages(
                 args.mode, designer_records, printer_runs, merged,
-                artifact=artifact),
+                artifact=artifact, missing=missing),
         })
+        if missing and report["status"] in ("pass", "review"):
+            report["status"] = "partial"
+    if missing:
+        reviewed = iter(report.get("screenshots", ()))
+        missing_ids = {item["case_id"] for item in missing}
+        frames = []
+        for record in merged["records"]:
+            if record["case_id"] not in missing_ids:
+                frames.append(next(reviewed))
+                continue
+            frames.append({
+                "status": "not_run", "models": [],
+                "skip_reason": "missing_baseline",
+                "screenshot": {
+                    **{key: record.get(key) for key in (
+                        "number", "label", "page", "case_id", "semantic_page_id", "source")},
+                    "file": pathlib.Path(record["path"]).name,
+                    "sha256": hybrid.file_sha256(record["path"]),
+                    "artifact": _relative_artifact(output, record["path"]),
+                    "comparison_artifact": _relative_artifact(output, record.get("comparison_path")),
+                },
+            })
+        report["screenshots"] = frames
+        _flatten_case_results(report)
+        if report.get("summary"):
+            report["summary"]["screenshots"] = len(frames)
+            report["summary"]["skipped_missing_baseline"] = len(missing)
+            report["summary"].setdefault("statuses", {})["not_run"] = len(missing)
+    if args.review_run:
+        report["review_source_run"] = str(pathlib.Path(args.review_run).resolve())
     if not report.get("screenshots"):
         report["screenshots"] = _unreviewed_artifacts(output)
     if progress is not None:

@@ -711,6 +711,34 @@
                 "theme colors"
             ]
         },
+        "printer-idle-stage-idle":
+        {
+            "description": "Real-printer home dashboard at the idle stage before the UI suite.",
+            "required":
+            [
+                "FORGE-X // FEATHER header with clock and MENU action",
+                "NOZZLE and BED cards with zero targets and OFF status",
+                "NETWORK card with connection status",
+                "JOB STATUS with NO ACTIVE JOB and READY",
+                "LAST JOB, MATERIAL and TOOLHEAD summaries",
+                "bottom status bar with temperatures, network address and STANDBY"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "active print progress or heating targets",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "live temperatures and clock",
+                "network address and connection type",
+                "last job name, material and toolhead homing status",
+                "theme colors",
+                "intentional ellipsis in the last job filename"
+            ]
+        },
         "printer:baseline":
         {
             "description": "Initial real-printer UI frame before the UI suite.",

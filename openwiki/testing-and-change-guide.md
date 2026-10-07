@@ -852,7 +852,9 @@ already have printer captures. Their textual expectations remain in the
 printer corpus. Live collection checks idle
 state before the suite and again after downloading its artifacts. Incomplete
 captures or a fingerprint mismatch stop before any model request and retain
-an HTML failure report. Missing textual expectations produce `needs_baseline`.
+an HTML failure report. Frames with missing textual expectations are skipped;
+the remaining frames are reviewed. The report retains skipped frames and writes
+`expectations.candidate.json` for their missing descriptions.
 
 Before a Designer scenario is accepted, the runner applies mutable
 values through the Designer host state API so simulator-owned roles (for
@@ -864,8 +866,8 @@ before capture and before any model request.
 For the bed-screw result, confirm that the default and
 `calibration-screws-adjustments` cases are both present. In parity mode, the
 same explicit state must also appear as a `COMPONENT` capture and as a
-Designer/real-renderer pair. Missing textual expectations stop the run with
-`needs_baseline`; do not accept coverage based only on the default example.
+Designer/real-renderer pair. Missing textual expectations skip their frames;
+do not accept coverage based only on the default example.
 
 In `hybrid` and `parity`, the runner reads the active theme from the downloaded
 printer artifact and uses that exact theme for Designer capture. UI and
@@ -887,6 +889,26 @@ To review the complete printer UI corpus:
 For saved captures, replace the printer host and idle-confirmation flags with
 `--printer-artifacts /path/to/UI-run`. No printer connection is made. A stale
 fingerprint still fails; do not rewrite artifact metadata to bypass it.
+
+To repeat LLM review of the same screenshots from an existing printer report:
+
+```bash
+.venv/bin/python -m tests.visual_checks.regression \
+  --review-run tests/artifacts/ui-regression/<run-directory> \
+  --backend codex --model gpt-6-luna --reasoning-effort high \
+  --enable
+```
+
+Run this from the repository root. The command copies the saved captures into
+a new timestamped report directory and makes no printer connection. The source
+report and screenshots remain unchanged. Use `--model`, `--backend`,
+`--base-url`, `--reasoning-effort`, or `--review-workers` to change review settings.
+Current textual expectations are applied, so adding an omitted description makes
+its frame eligible on the next review. The fingerprint and complete-corpus checks
+still apply. `--review-run` accepts printer reports; it cannot be combined with
+`--printer-host` or `--printer-artifacts`. An explicit `--output` must be separate
+from the saved run. Each new printer report includes a ready-to-run command on
+its Run page and in `report.md`.
 
 #### Local dialog composition suite
 
@@ -942,8 +964,8 @@ is the normal first check after UI changes:
 Before enabling model review, the same command without `--enable` is a quick
 deterministic coverage check. It still discovers every declarative page,
 applies all checked-in scenarios, renders the complete Designer corpus, and
-validates that every frame has a textual expectation. A successful run reports
-`disabled`; `needs_baseline` means a discovered default or explicit scenario
+reports frames without textual expectations as skipped. A successful run reports
+`disabled`; `needs_baseline` means every discovered default or explicit scenario
 is missing from `expectations.json`.
 
 For the same local corpus with a local LLM, replace the backend and model
@@ -1077,9 +1099,12 @@ Read the result in this order:
 4. Each `screenshots[]` record has `source`, `case_id`, source-artifact hash,
    textual-expectation references, and `case_result` with verdict, reasons,
    JSON-validation status, elapsed time, and normalized error.
-5. `needs_baseline` means a newly discovered page or scenario has no approved
-   textual expectation. The candidate file is written locally; add a reviewed
-   text expectation before enabling model review again.
+5. Frames without textual expectations have `not_run` and
+   `skip_reason: missing_baseline`. Eligible frames are still reviewed. A clean
+   or warning-only review with skipped frames reports `partial`; a model failure
+   remains `fail`. `needs_baseline` means no frames were eligible. The candidate
+   file is written locally; add a text expectation and repeat review to include
+   the skipped frames.
 
 Use `--check-mode strict` only when an explicit CI/release gate is intended.
 The usual local run is advisory; deterministic contract and UI tests remain the
@@ -1117,8 +1142,10 @@ portable and never depends on the original artifact location.
 Textual structured expectations and the fixed checklist are the only
 checked-in baselines. Captured PNG/BMP files, model responses, reports, and
 candidate baselines go under the ignored `tests/artifacts/` tree. If any
-automatically discovered case lacks an expectation, no model request is made:
-the run writes `expectations.candidate.json` and returns `needs_baseline`.
+automatically discovered case lacks an expectation, only that case is skipped.
+The run writes `expectations.candidate.json` and reviews the eligible cases.
+If every case lacks an expectation, no model request is made and the status is
+`needs_baseline`.
 
 Only one model is accepted in a run. To choose between local models, rerun the
 same saved corpus once per model, then compare reports without making requests:
