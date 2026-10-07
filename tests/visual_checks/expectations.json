@@ -847,7 +847,8 @@
             [
                 "selected file context",
                 "enabled bed mesh rebuild switch",
-                "profile auto switch",
+                "SAVE MESH FOR FUTURE PRINTS switch in its off state",
+                "YOU'LL BE ASKED AFTER PRINT notice",
                 "confirmation and cancellation actions"
             ],
             "forbidden":
@@ -865,12 +866,12 @@
         },
         "printer:ui-file-confirm-mesh-save":
         {
-            "description": "File confirmation with a session auto bed mesh selected.",
+            "description": "File confirmation with bed mesh rebuild and saving for future prints enabled.",
             "required":
             [
                 "selected file context",
                 "enabled bed mesh rebuild switch",
-                "enabled profile auto switch",
+                "enabled SAVE MESH FOR FUTURE PRINTS switch",
                 "save-after-print notice",
                 "confirmation and cancellation actions"
             ],
@@ -918,7 +919,7 @@
                 "selected file context",
                 "repeat-print title and action",
                 "enabled bed mesh rebuild switch",
-                "enabled profile auto switch",
+                "enabled SAVE MESH FOR FUTURE PRINTS switch",
                 "save-after-print notice",
                 "confirmation and cancellation actions"
             ],
@@ -1062,11 +1063,12 @@
         },
         "printer:ui-filament-materials":
         {
-            "description": "Real-printer filament material selection.",
+            "description": "Filament material selection before choosing a load, unload or purge action.",
             "required":
             [
-                "material choices",
-                "clear load or unload flow"
+                "SELECT MATERIAL title",
+                "material choices with target temperatures",
+                "BACK and ABORT actions"
             ],
             "forbidden":
             [
@@ -1276,7 +1278,7 @@
         "printer:ui-mod-value-numeric": {"description": "Numeric Mod Settings editor.", "required": ["parameter value field", "numeric keypad", "SAVE action"], "forbidden": ["alphabetic keyboard", "overlapping keys", "clipped important content"], "allowed_variations": ["parameter label and value", "theme colors"]},
         "printer:ui-mod-value-text": {"description": "Text Mod Settings editor.", "required": ["parameter label and value field", "text keyboard", "CANCEL and SAVE actions"], "forbidden": ["numeric-only keypad", "overlapping keys", "clipped important content"], "allowed_variations": ["parameter label and value", "theme colors"]},
         "printer:ui-applying-changes": {"description": "Non-interactive settings apply modal.", "required": ["APPLYING CHANGES message", "PLEASE WAIT state", "progress accent"], "forbidden": ["active underlying controls", "blank modal", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-render-benchmark-populated": {"description": "Render benchmark with accumulated metrics.", "required": ["glyph stress area", "populated FPS, latency and CPU metrics", "LIVE benchmark status"], "forbidden": ["all metrics blank", "unintended overlap outside stress area", "clipped metrics"], "allowed_variations": ["metric values", "glyph pattern", "theme colors"]},
+        "printer:ui-render-benchmark-populated": {"description": "Render benchmark with accumulated metrics.", "required": ["glyph stress area", "populated FPS, latency and CPU metrics", "TARGET 60 FPS benchmark status"], "forbidden": ["all metrics blank", "unintended overlap outside stress area", "clipped metrics"], "allowed_variations": ["metric values", "glyph pattern", "theme colors"]},
         "printer:ui-network-offline": {"description": "Available network daemon with no connection.", "required": ["OFFLINE or DISCONNECTED status", "Offline IP state", "available Wi-Fi and Ethernet controls"], "forbidden": ["daemon unavailable warning", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-network-unavailable": {"description": "Unavailable network daemon state.", "required": ["Network daemon unavailable message", "disabled Wi-Fi and Ethernet controls", "offline connection details"], "forbidden": ["enabled connection controls", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-wifi-scan": {"description": "Populated Wi-Fi scan results.", "required": ["saved and unsaved network rows", "band and signal details", "rescan and paging controls"], "forbidden": ["empty-state message over rows", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
@@ -1289,17 +1291,17 @@
         "printer:ui-network-progress-cancel": {"description": "Network cancellation pending.", "required": ["Cancelling network operation state", "disabled cancellation action", "KEEP WAITING action"], "forbidden": ["second active cancel request", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-message-ok": {"description": "Single-action Moonraker error message.", "required": ["Moonraker connection error message", "centered OK action with compact width and comfortable touch height"], "forbidden": ["full-width OK action", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-message-over-menu": {"description": "Message dialog over Main menu before navigation.", "required": ["MESSAGE DIALOG CHECK dialog with OK action", "MAIN MENU heading and visible portions of its tiles behind the dialog"], "forbidden": ["dialog hidden by the menu", "blank background", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
-        "printer:ui-message-background-held": {"description": "The message holds the original background while Control menu becomes the pending page.", "required": ["MESSAGE DIALOG CHECK dialog with OK action", "MAIN MENU heading still visible behind the dialog"], "forbidden": ["CONTROL MENU painted before dismissal", "dialog hidden by the page", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
+        "printer:ui-message-background-held": {"description": "The message remains visible over the newly selected Control menu.", "required": ["MESSAGE DIALOG CHECK dialog with OK action", "CONTROL MENU heading visible behind the dialog"], "forbidden": ["dialog hidden by the page", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
         "printer:ui-message-dismissed-control": {"description": "Closing the message reveals the current Control menu.", "required": ["CONTROL MENU with its four tiles and BACK action"], "forbidden": ["MESSAGE DIALOG CHECK dialog", "MAIN MENU page", "blank frame"], "allowed_variations": ["theme colors", "live status values"]},
         "printer:ui-prompt-over-menu": {"description": "Action prompt over Main menu before navigation.", "required": ["G-CODE PROMPT CHECK prompt and Dismiss action", "MAIN MENU visible behind the prompt"], "forbidden": ["prompt hidden by the menu", "blank background", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
-        "printer:ui-prompt-background-held": {"description": "The action prompt holds the original background while Control menu becomes the pending page.", "required": ["G-CODE PROMPT CHECK prompt and Dismiss action", "MAIN MENU heading still visible behind the prompt"], "forbidden": ["CONTROL MENU painted before dismissal", "prompt hidden by the page", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
+        "printer:ui-prompt-background-held": {"description": "The action prompt remains visible over the newly selected Control menu.", "required": ["G-CODE PROMPT CHECK prompt and Dismiss action", "CONTROL MENU heading visible behind the prompt"], "forbidden": ["prompt hidden by the page", "clipped important content"], "allowed_variations": ["theme colors", "live status values"]},
         "printer:ui-prompt-dismissed-control": {"description": "Ending the action prompt reveals the current Control menu.", "required": ["CONTROL MENU with its four tiles and BACK action"], "forbidden": ["G-CODE PROMPT CHECK prompt", "MAIN MENU page", "blank frame"], "allowed_variations": ["theme colors", "live status values"]},
         "printer:ui-dialog-short": {"description": "Generic dialog with one message line and a short action.", "required": ["SHORT MESSAGE title", "one message line", "centered compact OK button"], "forbidden": ["full-width OK button", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-dialog-five-lines": {"description": "Generic dialog with five visible message lines.", "required": ["FIVE LINE MESSAGE title", "five separate visible message lines", "CONTINUE button below the fifth line with clear spacing", "dialog panel fully within the screen"], "forbidden": ["fifth line hidden behind the button", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-dialog-six-lines": {"description": "Six-line dialog fitting on one page.", "required": ["SIX LINE MESSAGE title", "all six message lines", "CONTINUE below the text"], "forbidden": ["page controls", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
         "printer:ui-dialog-wrapped": {"description": "Long sentence wrapping across several lines.", "required": ["WRAPPED MESSAGE title", "multiple readable wrapped text lines", "OK action below the text"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
-        "printer:ui-dialog-paged-first": {"description": "First page of a long dialog.", "required": ["PAGED MESSAGE title", "1 above a short divider above 3", "vertical page controls on the right", "first eight message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
-        "printer:ui-dialog-paged-second": {"description": "Second page of a long dialog.", "required": ["PAGED MESSAGE title", "2 above a short divider above 3", "vertical page controls on the right", "following eight message lines"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-paged-first": {"description": "First page of a long dialog.", "required": ["PAGED MESSAGE title", "1 above a short divider above 3", "vertical page controls on the right", "MESSAGE LINE 1 through MESSAGE LINE 6"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
+        "printer:ui-dialog-paged-second": {"description": "Second page of a long dialog.", "required": ["PAGED MESSAGE title", "2 above a short divider above 3", "vertical page controls on the right", "MESSAGE LINE 7 through MESSAGE LINE 12"], "forbidden": ["overlapping controls", "clipped important content"], "allowed_variations": ["theme colors", "font rasterization"]},
         "printer:ui-dialog-long-action": {"description": "Generic dialog with a long action label.", "required": ["LONG ACTION LABEL title", "two message lines", "SAVE SETTINGS AND RESTART button whose full label is visible", "centered button wider than a short OK button"], "forbidden": ["truncated action label", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-action-prompt-footer": {"description": "Printer action prompt with one footer action.", "required": ["PRINTER COMMAND title", "Action completed message", "centered OK footer action with compact width and comfortable touch height"], "forbidden": ["full-width OK footer", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-message-two-actions": {"description": "Message dialog with a recovery choice.", "required": ["Wi-Fi password rejection message", "centered CANCEL and RESET PASSWORD actions with comfortable touch height"], "forbidden": ["full-width actions", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
