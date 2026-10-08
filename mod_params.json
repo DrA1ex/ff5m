@@ -360,8 +360,8 @@
       "description": "Choose how stock dialogs are closed.",
       "options": {
         "OFF": "do not close",
-        "SLOW": "close after 20 seconds (slowly)",
-        "FAST": "close after 20 seconds (quickly)"
+        "SLOW": "close after 20 seconds (legacy)",
+        "FAST": "close after 20 seconds (API)"
       },
       "order": 30000
     },

@@ -1,61 +1,52 @@
 #!/bin/bash
 
-# "lanCode"
-# "printerSerialNumber"
-# Adventurer5M.json
+##
+## Stock FlashForge print file preparation and LAN API wrapper
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
-if [ $# -ne 2 ]; then 
-    echo "Usage: $0 (PRINT|CLOSE) FILE"; 
-    exit 1; 
+# Prepare local G-code for a stock-screen print, then use the LAN API.
+API_SCRIPT=/root/printer_data/py/flashforge_api.py
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 PRINT|CLOSE FILE" >&2
+    exit 1
 fi
 
-# Define the path to cURL
-CURL="/opt/cloud/curl-7.55.1-https/bin/curl"
+unset LD_PRELOAD
+unset LD_LIBRARY_PATH
 
-# Extract current device's IP address based on wlan0 or eth0 interface.
-ip=$(ip addr | grep inet | grep wlan0 | awk -F" " '{print $2}'| sed -e 's/\/.*$//')
-if [ "$ip" == "" ]; then 
-    ip=$(ip addr | grep inet | grep eth0 | awk -F" " '{print $2}'| sed -e 's/\/.*$//'); 
-fi
-
-# Parse the serial number and LAN code from configuration file.
-serialNumber=$(< "/opt/config/Adventurer5M.json" grep "printerSerialNumber"| cut  -d ":" -f2| awk '{print $1}' | sed 's|[",]||g')
-checkCode=$(< "/opt/config/Adventurer5M.json" grep "lanCode"| cut  -d ":" -f2| awk '{print $1}' | sed 's|[",]||g')
-
-# If the first argument is "CLOSE".
-if [ "$1" == "CLOSE" ]; then
-    $CURL -s \
-        http://$ip:8898/control \
-        -H 'Content-Type: application/json' \
-        -d "{\"serialNumber\":\"$serialNumber\",\"checkCode\":\"$checkCode\",\"payload\":{\"cmd\":\"stateCtrl_cmd\",\"args\":{\"action\":\"setClearPlatform\"}}}" || \
-        echo "No response from the printer with IP $ip. Please configure the printer. On the printer screen: 'Settings' -> 'WiFi Icon' -> 'Network Mode' -> enable the 'Local Networks Only' toggle."
-else
-    # If the first argument is "PRINT"
-    if [ "$1" == "PRINT" ]; then
-        # Initialize temporary printer file for EXCLUDE_OBJECT_DEFINE.
-        echo "EXCLUDE_OBJECT_DEFINE RESET=1" >/tmp/printer 2>/dev/null
-        head -1000 "/data/$2" | grep ^EXCLUDE_OBJECT_DEFINE >/tmp/printer 2>/dev/null
-
-        # Parse M109 and M190 commands (nozzle and bed heating commands) from the provided file.
-        M109=$(head -1000 "/data/$2" | grep "^M109" | head -1)
-        [ "$M109" == "" ] && M109=$(head -1000 "/data/$2" | grep "^M104" | head -1 | sed 's|M104|M109|')
-        M190=$(head -1000 "/data/$2" | grep "^M190" | head -1)
-        [ "$M190" == "" ] && M190=$(head -1000 "/data/$2" | grep "^M140" | head -1 | sed 's|M140|M190|')
-
-        # Check if both M190 (bed heating) and M109 (nozzle heating) commands are present.
-        if [ "$M190" == "" ] || [ "$M109" == "" ]; then
-            echo "RESPOND TYPE=error MSG=\"The file $2 does not contain bed heating commands (M140/M190) or nozzle heating commands (M104/M109).\"" >/tmp/printer
+case "$1" in
+    CLOSE)
+        exec /usr/bin/python "$API_SCRIPT" close
+        ;;
+    PRINT)
+        file="/data/$2"
+        if [ ! -f "$file" ]; then
+            echo "Print file not found: $file" >&2
             exit 1
         fi
 
-        $CURL -s \
-            http://$ip:8898/printGcode \
-            -H 'Content-Type: application/json' \
-            -d "{\"serialNumber\":\"$serialNumber\",\"checkCode\":\"$checkCode\",\"fileName\":\"$2\",\"levelingBeforePrint\":true}'" || \
-            echo "No response from the printer with IP $ip. Please configure the printer. On the printer screen: 'Settings' -> 'WiFi Icon' -> 'Network Mode' -> enable the 'Local Networks Only' toggle."
-    else
-        # If the command does not match "PRINT" or "CLOSE", provide usage instructions.
-        echo "Usage: $0 PRINT|CLOSE FILE"
+        # Restore object definitions for EXCLUDE_OBJECT before the print.
+        {
+            echo 'EXCLUDE_OBJECT_DEFINE RESET=1'
+            head -n 1000 "$file" | grep '^EXCLUDE_OBJECT_DEFINE' || true
+        } >/tmp/printer
+
+        # Stock firmware needs both nozzle and bed heating commands.
+        if ! head -n 1000 "$file" | grep -qE '^M(109|104)' || \
+           ! head -n 1000 "$file" | grep -qE '^M(190|140)'; then
+            echo "Missing nozzle (M104/M109) or bed (M140/M190) heating command in $file" >&2
+            echo 'RESPOND TYPE=error MSG="Missing nozzle or bed heating command in print file"' >/tmp/printer
+            exit 1
+        fi
+
+        exec /usr/bin/python "$API_SCRIPT" print "$2"
+        ;;
+    *)
+        echo "Usage: $0 PRINT|CLOSE FILE" >&2
         exit 1
-    fi
-fi
+        ;;
+esac
