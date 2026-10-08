@@ -107,7 +107,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 - **Telegram bot** for remote printer control and timelapse videos ([setup](/docs/TELEGRAM.md)); runs on a separate computer or server.
 - Root access with zsh and oh-my-zsh, and the Entware package manager
 - Buzzer support, including melodies from MIDI files or notes
-- Your own macros, dialogs, shell commands, and startup services ([details](/docs/EXTENDING.md))
+- Your own macros, dialogs, Klipper packages, shell commands, and startup services ([details](/docs/EXTENDING.md))
 
 ## Why Forge-X and how it is built
 

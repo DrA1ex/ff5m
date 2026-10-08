@@ -21,7 +21,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 - **`close_dialogs`**: Controls dialog timeout behavior.   
   - `OFF`: Dialogs remain open   
   - `SLOW`: Closes after 20s (GDB method, may not work in all firmware versions)     
-  - `FAST`: Closes after 20s (API method; enable LAN-mode when using the Stock screen).
+  - `FAST`: Closes after 20s and clears the previous dialog before starting another Stock print (API method; enable LAN-mode when using the Stock screen).
 
 - **`disable_priming`**: Disables nozzle cleaning by line if set to `1`.  
 

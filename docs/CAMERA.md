@@ -146,8 +146,10 @@ the finished print with the head parked. Turn it off to skip that photo.
 To skip photos for one print, add `TIMELAPSE=0` to its `START_PRINT` line. This
 does not change the setting for later prints.
 
-Find finished videos in Mainsail's Timelapse view. Video creation can take
-time; starting another print stops an unfinished video.
+Find finished videos in Mainsail's Timelapse view. In Feather, Guppy, and
+Headless modes, if the previous timelapse is still being converted before a
+new print starts, you will be offered a choice: wait for it to finish or
+cancel the timelapse and start printing.
 
 ## Using the Stock Camera
 

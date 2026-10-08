@@ -6,6 +6,7 @@ You can add your own macros, change almost any Forge-X or Klipper setting, show 
 [Where your changes are stored](#where-your-changes-are-stored) ·
 [Add or override settings and macros (`user.cfg`)](#add-or-override-settings-and-macros-usercfg) ·
 [Your own dialogs on the Feather screen](#your-own-dialogs-on-the-feather-screen) ·
+[Your own Klipper packages](#your-own-klipper-packages) ·
 [Run your own programs from G-code](#run-your-own-programs-from-g-code) ·
 [Your own startup services](#your-own-startup-services) ·
 [Moonraker settings](#moonraker-settings) ·
@@ -19,10 +20,11 @@ You can add your own macros, change almost any Forge-X or Klipper setting, show 
 | What | Where | When it is applied |
 | --- | --- | --- |
 | Klipper settings and macros | `mod_data/user.cfg` (Fluidd/Mainsail: **Configuration → mod_data**) | After a Klipper restart |
+| User Klipper packages | `mod_data/plugins/<package>/` | At the next normal Forge-X boot |
 | Moonraker settings | `mod_data/user.moonraker.conf` | After a Moonraker restart |
 | Startup services | `/data/.mod/.forge-x/etc/init.d/S*` (over SSH) | At boot |
 
-With the Stock screen, do not use `RESTART` or `SAVE_CONFIG`. Reboot the printer instead (see the [FAQ](FAQ.md#stock-screen-freezes-i-cant-print-anything)).
+With the Stock screen, standard `RESTART`, `SAVE_CONFIG`, and `FIRMWARE_RESTART` work in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**. Older builds need the legacy commands or an update (see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving)).
 
 Files in `mod_data` are kept when you update Forge-X. Make a copy with `TAR_BACKUP` before uninstalling (see [Backup Management](CONFIGURATION.md#backup-management)).
 
@@ -61,12 +63,12 @@ For material presets, see [Material slots](CONFIGURATION.md#material-slots). For
 
 ## Your own dialogs on the Feather screen
 
-Feather shows standard Klipper action prompts (the same `action:prompt_*` messages that Fluidd and Mainsail use) as a **KLIPPER PROMPT** page. A macro sends the messages with `RESPOND`, one message per line:
+Feather shows standard Klipper action prompts (the same `action:prompt_*` messages that Fluidd and Mainsail use) as a modal dialog. A macro sends the messages with `RESPOND`, one message per line:
 
 | Message | What it does |
 | --- | --- |
 | `action:prompt_begin <title>` | Starts a dialog with this title. |
-| `action:prompt_text <text>` | Adds a line of text. Keep it short, long text is cut off. |
+| `action:prompt_text <text>` | Adds a line of text. Text wraps, and longer dialogs have page controls. |
 | `action:prompt_button <label>\|<G-code>\|<color>` | Adds a button on its own row. |
 | `action:prompt_button_group_start` / `action:prompt_button_group_end` | Puts the buttons between them on one row. |
 | `action:prompt_footer_button <label>\|<G-code>\|<color>` | Adds a button to the bottom row. |
@@ -78,8 +80,8 @@ Buttons:
 - The G-code after the first `|` runs when the button is pressed. If you leave it out, the label is used as the G-code. The G-code itself cannot contain `|`.
 - The color is optional: `error`, `warning`, or `secondary` give the button a different style. Anything else, or no color, gives a normal button.
 - Pressing a button does **not** close the dialog. Close it with `RESPOND TYPE=command MSG=action:prompt_end` in the button's G-code, or by calling a macro that does this.
-- Three button rows are shown per page. If there are more, Feather adds `<` and `>` buttons.
-- The titles `Resurrection` and `Cold Pull` are used by Forge-X itself. Do not use them.
+- Button labels and rows wrap when needed. Longer dialogs have page controls; large footer groups can continue in the paged body.
+- The titles `Resurrection` and `Previous timelapse` are used by Forge-X itself. Do not use them. Cold Pull is identified by an internal prompt kind, so its title is no longer reserved.
 
 **Example: a menu for choosing a lane layout** (this is the kind of dialog one user built to control a multi-material unit):
 
@@ -108,6 +110,32 @@ Run `LANE_LAYOUT_MENU` from the Fluidd/Mainsail console, from a macro button, or
 
 A script started with `RUN_SHELL_COMMAND` can also show a dialog. Set `linewise: True` for the command (see the next section) and have the script print the lines starting with `// `, for example `// action:prompt_begin My title`.
 
+## Your own Klipper packages
+
+Forge-X 1.4.2 loads optional packages from `mod_data/plugins/<package>/`:
+
+- `config.cfg`: package configuration, with relative includes supported;
+- `plugins/*.py`: new Klipper extra modules; add any required config section to `config.cfg`;
+- `patches/**/*.py`: replacements for existing Klipper modules.
+
+A package can contain any of these parts. Keep configuration that requires a
+module inside the package, so disabling it also removes that configuration.
+Forge-X generates `mod_data/plugins.cfg`; do not edit it yourself.
+
+Reboot the idle printer after installing, changing, or removing a package.
+A normal Klipper `RESTART` does not apply Python links. To disable a package,
+create an empty `disabled` file in its directory and reboot. Remove that file
+and reboot to enable it again. Packages survive Forge-X updates; `TAR_BACKUP`
+includes their files.
+
+Forge-X skips a whole package if its paths are invalid or it conflicts with a
+protected module or another package. Python or config errors can still prevent
+Klipper from starting; disable the package and reboot through [Dual Boot](DUAL_BOOT.md).
+Forge-X patches are protected by default. The experimental
+`user_plugins_override_patches` option permits replacing them; see
+[User Klipper plugins](../openwiki/workflows/user-klipper-plugins.md) for the
+package rules and rollback behavior.
+
 ## Run your own programs from G-code
 
 Define a shell command in `user.cfg`, then run it from any macro or from the console:
@@ -133,6 +161,8 @@ Options:
 | `mode` | `sync` (default, Klipper waits for the program), `background`, `stream`, `queue`, or `daemon`. The other modes do not block Klipper. |
 | `linewise` | Send each output line as a separate message. Needed when the script prints `action:` messages. |
 | `debug` | Print extra information about each run. |
+
+A synchronous command exposes its exit code as `printer['gcode_shell_command my_script'].returncode`. It is `None` before completion or after a timeout.
 
 Put scripts in `mod_data` so they survive updates. Make them executable with `chmod +x`.
 
