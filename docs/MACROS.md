@@ -3,7 +3,7 @@
 > [!NOTE]
 > This reference was generated with the help of an AI model. The macro definitions in `macros/base.cfg`, `macros/headless.cfg`, and `config/stock.cfg` are the authoritative source, so check them if a description and the actual behavior differ.
 
-This document provides a concise overview of the G-code macros defined in the `base.cfg`, `headless.cfg`, and `stock.cfg` configuration files for the Flashforge Adventurer 5M / 5M Pro running the Klipper-based Forge-X firmware mod. They cover bed leveling, filament management, system control, user-interface interactions, and stock screen integration. Each macro is described with its parameters and default values where applicable.
+This document provides a concise overview of the G-code macros defined in `macros/` (`base.cfg`, `headless.cfg`, `client.cfg`, `timelapse.cfg`), `config/` (`stock.cfg`, `material.cfg`, `feather.cfg`), and `KAMP/` for the Flashforge Adventurer 5M / 5M Pro running the Klipper-based Forge-X firmware mod. They cover bed leveling, filament management, system control, user-interface interactions, and stock screen integration. Each macro is described with its parameters and default values where applicable.
 
 ## Operation Contexts
 
@@ -44,7 +44,7 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
   - **Parameters**:
     - `EXTRUDER_TEMP` (float, default: 240): Target extruder temperature (°C).
     - `BED_TEMP` (float, default: 80): Target bed temperature (°C).
-    - `PROFILE` (string, default: "auto"): Bed mesh profile name.
+    - `PROFILE` (string, default: `auto` with Feather, Guppy, and Headless; `MESH_DATA` with the Stock screen): Bed mesh profile name.
   - **Defaults**: Calls `_FULL_BED_LEVEL` and stops heaters.
 
 - **ZSHAPER**
@@ -58,6 +58,20 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
     - `EXTRUDER_TEMP` (float, default: 240): Target extruder temperature (°C).
     - `BED_TEMP` (float, default: 80): Target bed temperature (°C).
   - **Defaults**: Clears bed mesh and performs KAMP calibration.
+
+- **KAMP_DEFINE_AREA**
+  - **Description**: Sets the print area used by KAMP adaptive meshing and `LINE_PURGE`. Put it in the slicer start G-code before `START_PRINT` (see [KAMP](PRINTING.md#kamp)).
+  - **Parameters**:
+    - `MIN` (`x,y`, required): Lower-left corner of the first layer.
+    - `MAX` (`x,y`, required): Upper-right corner of the first layer.
+
+- **LINE_PURGE**
+  - **Description**: Draws the KAMP purge line next to the print area. Called by the print start when KAMP is used.
+  - **Parameters**: None. The purge amount is set by `_KAMP_Settings.purge_amount` (see the [FAQ](FAQ.md#how-do-i-customize-the-kamp-purge-line-length)).
+
+- **SMART_PARK**
+  - **Description**: Parks the print head near the print area, within the `MOVE_SAFE` limits. Used by the KAMP print start with Feather, Guppy, and Headless.
+  - **Parameters**: None.
 
 ### Filament Management
 
@@ -147,7 +161,7 @@ validation, and persistent override examples.
     - `F` (float, optional): Feed rate (mm/min).
     - `ABSOLUTE` (int, default: 0): Use absolute coordinates (1 = yes).
     - `ABSOLUTE_E` (int, default: 0): Use absolute extrusion (1 = yes).
-  - **Defaults**: Ensures movements stay within X:[-110, 110], Y:[-110, 110], Z:[0, 220].
+  - **Defaults**: Keeps moves within X:[-110, 110], Y:[-110, 110], and Z from 0 to 10 mm below the configured Klipper Z maximum. A clamped relative move never goes past the requested position.
 
 ### Temperature Control
 
@@ -175,6 +189,11 @@ validation, and persistent override examples.
     - `TEMPERATURE` (int, default: 245): Target extruder temperature (°C).
   - **Defaults**: Homes and positions nozzle before calibration.
 
+- **M357**
+  - **Description**: Bed PID calibration (FlashForge-compatible G-code).
+  - **Parameters**:
+    - `E` (int, default: 80): Target bed temperature (°C).
+
 ### Air Circulation
 
 > [!NOTE]  
@@ -184,12 +203,12 @@ validation, and persistent override examples.
 - **AIR_CIRCULATION_INTERNAL**
   - **Description**: Turns on internal air circulation with fan and servo control.
   - **Parameters**: None.
-  - **Defaults**: Sets internal fan to full speed, external fan off, servo angle to 95°.
+  - **Defaults**: Sets `internal_fan` off, `external_fan` to full speed, servo angle to 95°.
 
 - **AIR_CIRCULATION_EXTERNAL**
   - **Description**: Turns on external air circulation with fan and servo control.
   - **Parameters**: None.
-  - **Defaults**: Sets internal fan to full speed, external fan to 80%, servo angle to 180°.
+  - **Defaults**: Sets `internal_fan` to 80%, `external_fan` to full speed, servo angle to 180°.
 
 - **AIR_CIRCULATION_STOP**
   - **Description**: Stops all air circulation by disabling fans and resetting servo.
@@ -237,12 +256,12 @@ validation, and persistent override examples.
 - **SHUTDOWN**
   - **Description**: Shuts down the printer after clearing the bed mesh and syncing.
   - **Parameters**: None.
-  - **Defaults**: Resets power-off pin and runs `poweroff` command.
+  - **Defaults**: Resets the power button state, switches the power-off pin, and runs `poweroff`.
 
 - **REBOOT**
   - **Description**: Reboots the printer after clearing the bed mesh and syncing.
   - **Parameters**: None.
-  - **Defaults**: Resets power-off pin and runs `reboot` command.
+  - **Defaults**: Resets the power button state and runs `reboot`.
 
 - **REMOVE_MOD**
   - **Description**: Prompts to uninstall the mod, with an option for soft removal.
@@ -296,6 +315,10 @@ validation, and persistent override examples.
 
 ### Configuration and Backup
 
+- **LIST_MOD_PARAMS**
+  - **Description**: Lists all Forge-X parameters with their current values. Use `GET_MOD PARAM=<name>` and `SET_MOD PARAM=<name> VALUE=<value>` to read and change one (see [Configuration](CONFIGURATION.md)).
+  - **Parameters**: None.
+
 - **CONFIG_BACKUP**
   - **Description**: Initiates a configuration backup.
   - **Parameters**:
@@ -326,6 +349,19 @@ validation, and persistent override examples.
   - **Parameters**: None.
   - **Defaults**: Runs `zbackup --tar-debug`.
 
+### USB and Firmware Updates
+
+- **PREPARE_USB**
+  - **Description**: Inspects the connected USB drive and prepares it for G-code files or swap. Unavailable while printing.
+  - **Parameters**: None. The format is chosen in the dialog.
+  - **Defaults**: Shows two confirmation dialogs, then erases and reformats the selected drive. Connect only the drive you want to prepare.
+
+- **DOWNLOAD_FIRMWARE_UPDATE**
+  - **Description**: Downloads the latest full Forge-X firmware image from GitHub to a FAT32 USB drive, named correctly for the selected printer model. Useful for a major-version update without a computer: after the download, reboot with the drive inserted. Unavailable while printing.
+  - **Parameters**:
+    - `MODEL` (`5M` or `PRO`, optional): Printer model. Without it, a dialog asks for the model.
+  - **Defaults**: Requires exactly one USB drive with one FAT32 partition; run `PREPARE_USB` first if needed. Progress is shown in a dialog.
+
 ### Stock Screen Integration
 
 - **START_PRINT (stock.cfg)**
@@ -336,9 +372,10 @@ validation, and persistent override examples.
     - `FORCE_KAMP` (int, default: 0): Force KAMP bed leveling (1 = yes).
     - `FORCE_LEVELING` (int, default: 0): Force bed leveling (1 = yes).
     - `SKIP_LEVELING` (int, default: 0): Skip bed mesh creation (1 = yes).
-    - `SKIP_ZOFFSET` (int, default: 1): Skip Z-offset for stock screen (1 = yes).
-    - `Z_OFFSET` (float, default: 0.0): Z offset (mm).
+    - `SKIP_ZOFFSET` (int, default: 0): Do not apply a Z offset at print start (1 = yes).
+    - `Z_OFFSET` (float, default: 0.0): Z offset (mm). Ignored when `load_zoffset` is enabled.
     - `MESH` (string, default: ""): Bed mesh profile name.
+    - `TIMELAPSE` (`0` or `1`, default: 1): Set `0` to skip timelapse photos for this print.
   - **Defaults**: Validates parameters and calls `_START_PRINT`.
 
 - **END_PRINT (stock.cfg)**
@@ -504,7 +541,68 @@ validation, and persistent override examples.
   - **Parameters**: None.
   - **Defaults**: Runs `zmem` command.
 
-- **_G17, G18, G19**
+- **LED**
+  - **Description**: Sets the chamber light brightness.
+  - **Parameters**:
+    - `S` (int, 0–100, default: saved `chamber_light` value): Brightness in percent.
+
+- **LED_ON / LED_OFF**
+  - **Description**: Turns the chamber light on at the saved brightness, or off.
+  - **Parameters**: None.
+
+- **SUPPORT_FORGE_X**
+  - **Description**: Shows how to support Forge-X development.
+  - **Parameters**: None.
+
+### Layer Pauses
+
+Available with Feather, Guppy, and Headless. They need the layer information from the slicer (see [Slicing → Timelapse](SLICING.md#timelapse)).
+
+- **SET_PAUSE_AT_LAYER**
+  - **Description**: Pauses the print when the given layer is reached.
+  - **Parameters**:
+    - `LAYER` (int): Layer number. Giving `LAYER` enables the pause.
+    - `ENABLE` (`0` or `1`, optional): Enable or disable the pause.
+    - `MACRO` (string, default: `PAUSE`): Macro to run at that layer, for example `M600`.
+  - **Example**: `SET_PAUSE_AT_LAYER ENABLE=1 LAYER=20 MACRO=PAUSE`
+
+- **SET_PAUSE_NEXT_LAYER**
+  - **Description**: Pauses the print when the next layer starts.
+  - **Parameters**:
+    - `ENABLE` (`0` or `1`, default: 1): Enable or disable the pause.
+    - `MACRO` (string, default: `PAUSE`): Macro to run.
+
+- **SET_PRINT_STATS_INFO**
+  - **Description**: Standard Klipper command extended by Forge-X. Sent by the slicer with `TOTAL_LAYER` and `CURRENT_LAYER`; Forge-X uses `CURRENT_LAYER` for layer pauses and layer-mode timelapse photos.
+
+### Timelapse
+
+Timelapse must be enabled first (`SET_MOD PARAM=timelapse VALUE=1`, see [Timelapse](CAMERA.md#timelapse)). Photos are taken automatically; these macros are for manual control and troubleshooting.
+
+- **GET_TIMELAPSE_SETUP**
+  - **Description**: Prints the current timelapse settings.
+
+- **TIMELAPSE_PRINT**
+  - **Description**: Enables or disables timelapse photos for the current print.
+  - **Parameters**:
+    - `ENABLE` (`0` or `1`, required).
+
+- **TIMELAPSE_TAKE_FRAME**
+  - **Description**: Takes one timelapse photo. Do not add it to the slicer profile; photos are taken automatically.
+
+- **HYPERLAPSE**
+  - **Description**: Takes photos at a fixed time interval until stopped.
+  - **Parameters**:
+    - `ACTION` (`START` or `STOP`, required).
+    - `CYCLE` (int, default: 30): Interval in seconds.
+
+- **TIMELAPSE_RENDER**
+  - **Description**: Creates the video from the photos taken so far and waits for the result. Normally runs automatically at the end of a print.
+
+- **TEST_STREAM_DELAY**
+  - **Description**: Helper for tuning the photo parking delay: moves the head and takes a test photo. The nozzle must be above Z = 5 mm.
+
+- **G17, G18, G19**
   - **Description**: Warns about unsupported spiral/automatic Z-hop settings.
   - **Parameters**: None.
   - **Defaults**: Provides OrcaSlicer configuration advice.
@@ -519,15 +617,23 @@ validation, and persistent override examples.
     - `FORCE_KAMP` (int, default: 0): Force KAMP bed leveling (1 = yes).
     - `FORCE_LEVELING` (int, default: 0): Force bed leveling (1 = yes).
     - `SKIP_LEVELING` (int, default: 0): Skip bed mesh creation (1 = yes).
-    - `SKIP_ZOFFSET` (int, default: 1): Skip Z-offset (1 = yes).
-    - `Z_OFFSET` (float, default: 0.0): Z offset (mm).
+    - `SKIP_ZOFFSET` (int, default: 0): Do not apply a Z offset at print start (1 = yes).
+    - `Z_OFFSET` (float, default: 0.0): Z offset (mm). Ignored when `load_zoffset` is enabled.
     - `MESH` (string, default: ""): Bed mesh profile name.
-  - **Defaults**: Enables filament sensor if configured.
+  - **Defaults**: Enables or disables the filament sensor according to `filament_switch_sensor`, loads the `auto` mesh profile if it exists, and then runs the common print preparation. When Feather asked for a fresh full-bed mesh, that choice replaces `FORCE_LEVELING` and `MESH`. If the previous timelapse video is still being created, the start waits for your choice first (see [Timelapse](CAMERA.md#timelapse)).
 
 - **END_PRINT (headless.cfg)**
   - **Description**: Finalizes printing with filament retraction, parking, and optional MIDI playback.
   - **Parameters**: None.
-  - **Defaults**: Retracts 5 mm, parks at custom coordinates, plays MIDI or tone sequence.
+  - **Defaults**: Retracts 5 mm, lifts by `park_dz`, parks at the client park position, plays the `midi_end` file or a tone. With the final timelapse photo enabled, parks for that photo instead.
+
+- **PAUSE / RESUME / CANCEL_PRINT (client.cfg)**
+  - **Description**: Print control for Feather, Guppy, and Headless (based on the Mainsail/Fluidd client macros).
+  - **Parameters**:
+    - `PAUSE`: `X`, `Y` (optional) park position; `Z_MIN` (optional, default: `pause_z_min`) minimum park height.
+    - `RESUME`: `VELOCITY` (optional) speed of the return move.
+    - `CANCEL_PRINT`: `REASON` (optional) message shown with the cancellation.
+  - **Defaults**: `PAUSE` saves the heater targets and parks; `RESUME` checks the filament sensor, reheats, homes if needed, and continues (see [Printing](PRINTING.md)).
 
 - **_CANCEL_PRINT_WITH_AUDIO_WARNING**
   - **Description**: Cancels printing with an audio warning and common end-print logic.
@@ -556,6 +662,14 @@ validation, and persistent override examples.
     - `S` (int, default: `printer.mod_params.variables.backlight`): Brightness (0-100).
   - **Defaults**: Clamps to 0-100 range.
 
+- **RESURRECT / RESURRECT_ABORT**
+  - **Description**: Resume a print after a power loss, or discard the saved state. Normally started from the recovery dialog. See [Power Loss Recovery](POWER_LOSS_RECOVERY.md).
+  - **Parameters**: None.
+
+- **THEME_EDITOR** (Feather)
+  - **Description**: Starts the Feather theme editor on the local network and prints its URL in the console. Stop it with `_STOP_TM_EDITOR`.
+  - **Parameters**: None.
+
 - **M24**
   - **Description**: Resumes printing (alias for `RESUME`).
   - **Parameters**: None.
@@ -575,5 +689,6 @@ validation, and persistent override examples.
 - Audio feedback (tones and MIDI) is configurable through the sound settings.
 - System control macros (e.g., `SHUTDOWN`, `REBOOT`) integrate with the printer’s operating system.
 - Stock screen-specific macros (`LEVELING_PRINT_FILE`, `NOLEVELING_PRINT_FILE`) enable printing directly from the stock interface with optional bed leveling.
+- Material presets and filament macros are in `config/material.cfg`; timelapse macros are in `macros/timelapse.cfg`; KAMP macros are in `KAMP/`.
 
-For the exact implementation, see `macros/base.cfg`, `macros/headless.cfg`, and `config/stock.cfg`.
+For the exact implementation, see the files in `macros/`, `config/`, and `KAMP/`.

@@ -152,7 +152,7 @@ layer numbers arrive, layer-change photos cannot be taken. **Time** and
 
 ## Pause at Layer
 
-Pause at layer uses the same layer information configured above.
+Pause at layer uses the same layer information configured above. It is available with Feather, Guppy, and Headless.
 
 #### Example
 To make a pause at 20 layer use this command after print started:

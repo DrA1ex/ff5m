@@ -53,3 +53,5 @@ You can update over-the-air to any version that matches your major version. For 
 To do an OTA update, navigate to **Configuration -> Software Update**.  
 
 OTA updates are supported for Forge-X itself, Fluidd, Mainsail, and Guppy Screen. The web interfaces and Guppy Screen update independently of Forge-X releases.
+
+A new major version is installed by flashing its image over the existing installation, as described above; settings and calibration are kept. The printer can download the image itself: insert a FAT32 USB drive, run `DOWNLOAD_FIRMWARE_UPDATE` in the console, choose the printer model, and reboot with the drive inserted when the download finishes.
