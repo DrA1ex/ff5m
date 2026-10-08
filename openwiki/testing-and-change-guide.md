@@ -731,6 +731,14 @@ border, separator, or element. Passing or unlocalized findings use an empty
 array. The dedicated spacing audit uses the same contract; its boxes are
 assigned to the appropriate image before merging into the full review.
 
+A spacing audit may leave `subject` empty when it reports no defect. A defect
+must name the affected text or control. Invalid audit JSON receives one
+corrective retry on the same image, just like an invalid full-review response;
+an exhausted retry remains an integration error rather than a passing frame.
+Transport failures are not retried. Clipping findings must identify cut glyph
+strokes in the full supplied image; proximity to the screen edge or an issue
+region's crop boundary alone is insufficient evidence.
+
 The Problems page and Gallery frame details show these regions as enlarged
 2× crops of the original screenshot, with the finding and a link to the full
 image. Crops are rendered locally in the browser, including for BMP artifacts;

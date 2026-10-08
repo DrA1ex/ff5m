@@ -890,7 +890,7 @@
         },
         "printer:ui-file-repeat-off":
         {
-            "description": "Repeat-print confirmation with both optional mesh choices disabled.",
+            "description": "Repeat-print confirmation with bed mesh rebuilding disabled. SAVE MESH FOR FUTURE PRINTS is hidden until rebuilding is enabled.",
             "required":
             [
                 "selected file context",

@@ -153,12 +153,37 @@ if "missing" not in response:
         self.assertEqual(result["models"][0]["attempts"], 2)
         self.assertIn("previous response", self.requests()[-1]["prompt"])
 
+    def test_clear_audit_without_a_subject_continues_to_full_review(self):
+        for relation in ("clear", "uncertain"):
+            with self.subTest(relation=relation):
+                (self.root / "requests.jsonl").unlink(missing_ok=True)
+                audit = dict(spacing(), subject="", gap_relation=relation)
+                self.responses({"answer": audit}, {"answer": verdict()})
+                result = vision.VisualCheckEvaluator(self.settings()).evaluate(
+                    b"frame", "image/png", {})
+                self.assertEqual(result["status"], "passed")
+                self.assertEqual(len(self.requests()), 2)
+
+    def test_invalid_audit_retries_once_and_preserves_the_corrected_defect(self):
+        audit = dict(spacing(), defect=True, subject="footer text",
+                     gap_relation="clipped", reason="The bottom glyph strokes are cut off.")
+        self.responses({"answer": dict(audit, subject="")},
+                       {"answer": audit}, {"answer": verdict()})
+        result = vision.VisualCheckEvaluator(self.settings()).evaluate(b"frame", "image/png", {})
+        model = result["models"][0]
+        self.assertEqual(model["status"], "completed")
+        self.assertEqual(model["verdict"], "fail")
+        self.assertIn("bottom glyph strokes", model["reasons"][0]["reason"])
+        requests = self.requests()
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(requests[0]["images"], requests[1]["images"])
+
     def test_bad_audit_and_exhausted_verdict_retries_are_reported(self):
         cases = (
-            ({"raw": "not JSON"},),
-            ({"missing": True},),
-            ({"raw": "x" * (vision.MAX_RESPONSE_BYTES + 1)},),
-            ({"answer": {"unexpected": True}},),
+            ({"raw": "not JSON"}, {"raw": "not JSON"}),
+            ({"missing": True}, {"missing": True}),
+            ({"raw": "x" * (vision.MAX_RESPONSE_BYTES + 1)},) * 2,
+            ({"answer": {"unexpected": True}},) * 2,
             ({"answer": spacing()}, {"raw": "invalid"}, {"missing": True}),
         )
         for responses in cases:

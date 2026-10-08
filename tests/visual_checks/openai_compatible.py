@@ -457,7 +457,8 @@ def _response_json_schema(allow_design_mismatch=False):
     }
 
 
-def _spacing_audit_payload(model, image_bytes, mime_type, role):
+def _spacing_audit_payload(model, image_bytes, mime_type, role,
+                           corrective_retry=False):
     return {
         "model": model,
         "temperature": 0,
@@ -503,12 +504,20 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                     "on obvious boundary defects involving visible text or "
                     "controls, prioritizing the boundary below the header. "
                     "Identify the most suspicious subject and classify its "
-                    "condition. Set defect true only when the screenshot "
+                    "condition. An empty subject is allowed when defect is "
+                    "false and there is no suspicious element; when defect "
+                    "is true, name the affected text or control. "
+                    "Set defect true only when the screenshot "
                     "plainly shows glyphs or controls touching or almost "
                     "touching an unrelated separator, border, or element with "
                     "effectively no visible breathing room; text clipped or "
                     "cut off by a boundary; content extending outside its "
-                    "container or the screen; or elements overlapping. A "
+                    "container or the screen; or elements overlapping. "
+                    "Before declaring clipping, inspect the actual glyph "
+                    "strokes in the full supplied image. A footer label near "
+                    "the screen edge is not clipped when its complete glyphs "
+                    "and background clearance are visible below it. Do not "
+                    "infer clipping from a proposed region's crop boundary. A "
                     "hairline sliver that does not visually read as padding "
                     "counts as near_touching, even if a tiny background line "
                     "can technically be seen. A compact layout with a small "
@@ -518,7 +527,11 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                     "a pixel count or glyph-height ratio. If the defect is not "
                     "plainly visible or you are uncertain, set defect false "
                     "and gap_relation uncertain. Ignore empty space elsewhere "
-                    "on the screen."),
+                    "on the screen.") + (
+                        " A previous response violated the JSON contract. "
+                        "Re-evaluate the same image and return a valid object; "
+                        "name the affected subject when declaring a defect."
+                        if corrective_retry else ""),
             },
             {
                 "role": "user",
@@ -839,7 +852,7 @@ def validate_spacing_audit(value):
     reason = value["reason"]
     if not isinstance(defect, bool):
         raise ValueError("spacing audit defect must be boolean")
-    if (not isinstance(subject, str) or not subject.strip()
+    if (not isinstance(subject, str) or (defect and not subject.strip())
             or len(subject) > 160):
         raise ValueError("spacing audit subject must be a short string")
     defect_relations = frozenset((
@@ -1102,19 +1115,25 @@ class VisualCheckEvaluator:
             ]
         audits = []
         for image_index, (role, audit_bytes, audit_mime) in enumerate(audit_inputs):
-            self._check_cancelled()
-            try:
-                response = self.transport.complete(_spacing_audit_payload(
-                    model, audit_bytes, audit_mime, role))
-                audit = validate_spacing_audit(response)
-            except TransportFailure as exc:
+            for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+                self._check_cancelled()
+                try:
+                    response = self.transport.complete(_spacing_audit_payload(
+                        model, audit_bytes, audit_mime, role,
+                        corrective_retry=attempt > 1))
+                    audit = validate_spacing_audit(response)
+                    break
+                except TransportFailure as exc:
+                    return _error_result(
+                        model, exc.category, exc.message,
+                        self.clock() - started, attempts=attempt)
+                except ValueError as exc:
+                    last_validation_error = str(exc)
+            else:
                 return _error_result(
-                    model, exc.category, exc.message,
-                    self.clock() - started)
-            except ValueError as exc:
-                return _error_result(
-                    model, "invalid_response", str(exc),
-                    self.clock() - started, json_status="invalid")
+                    model, "invalid_response", last_validation_error,
+                    self.clock() - started, json_status="invalid",
+                    attempts=MAX_VALIDATION_ATTEMPTS)
             audits.append({"role": role, "audit": audit,
                            "image": "comparison" if image_index else "primary"})
         last_validation_error = None
