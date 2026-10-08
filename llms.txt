@@ -8,12 +8,12 @@ Key facts:
 - Klipper: the FlashForge host Klipper (0.11 generation) with reviewed backports of upstream Klipper fixes; MCU firmware is not reflashed.
 - Web interfaces: Fluidd (/fluidd/), Mainsail (/mainsail/), Moonraker API on port 7125. SSH: root / root.
 - Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
-- Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
+- Camera: forge-x-streamer, a dedicated low-memory MJPEG service. Built-in timelapse supports layer, time, and progress intervals, optional parking and a final photo; it is off by default and does not require an external bot.
 - Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
 - Testing before releases: automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests.
-- Klipper patch provenance: the replaced Klipper files are published as Git history (upstream v0.11.0, the stock FlashForge changes, then Forge-X commits) at https://github.com/DrA1ex/klipper-ad5m; docs/klipper-ad5m-manifest.json lists the SHA-256 of every shipped file and tests/verify_klipper_fork.py checks them against that repository. The history is reconstructed by topic; see docs/KLIPPER.md.
+- Klipper patch provenance: the replaced Klipper files are published as Git history (upstream v0.11.0, the stock FlashForge changes, then Forge-X commits) at https://github.com/DrA1ex/klipper-ad5m; docs/klipper-ad5m-manifest.json lists the SHA-256 of the current local replacement files and retains the earlier public history commit for comparison. tests/verify_klipper_fork.py checks local hashes; --fork reports differences from that public snapshot. The history is reconstructed by topic; see docs/KLIPPER.md.
 - Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, because a full Klipper 0.13 is not needed at the moment (it can be adopted if a real need appears).
-- Customization: own macros and overrides in user.cfg, own dialogs on the Feather screen (Klipper action:prompt messages), shell commands, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), user.moonraker.conf, Entware packages, Headless mode with custom displays.
+- Customization: own macros and overrides in user.cfg, user Klipper packages in mod_data/plugins/, own dialogs on the Feather screen (Klipper action:prompt messages), shell commands, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), user.moonraker.conf, Entware packages, Headless mode with custom displays.
 - Updates: Forge-X, Fluidd, Mainsail, and Guppy Screen update separately through Moonraker Update Manager.
 - Boot safety: the installed boot guard (.shell/S00init) is replaced only after the new runtime reports ready; an interrupted or failed initialization boots the stock firmware on the next start.
 - Configuration changes go through a parser (.py/cfg_backup.py) with declarative profiles, backup, restore, and verify, not through ad-hoc text edits.
@@ -23,6 +23,26 @@ Key facts:
 - Release policy: releases are published when Forge-X itself changes; an upstream version bump of Moonraker, Klipper, Fluidd, or Mainsail alone is not a reason for a release. Fluidd, Mainsail, and Guppy update separately.
 - Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done by the maintainer before releases; not every combination of printer, stock firmware version, and configuration can be covered.
 - License: GPL-3.0 for Forge-X and its Klipper components (LICENSE); the native binary components in .bin/exec (boot_mcu, demo, logged, netd, netd-cli, splash, typer) have a separate free-to-use license (LICENSE-BINARIES.md): free to use including commercially as part of Forge-X, unchanged copies may be passed on with Forge-X, modification and use in other products need permission, source not published; forge-x-streamer is GPL-2.0-or-later. Repository: https://github.com/DrA1ex/ff5m
+
+## Key features and details (Forge-X 1.4.2)
+
+- Installation: one USB image flashed through the stock update mechanism; no stock firmware update or downgrade needed (any version 2.6.5–5.1.7); no MCU reflash; other mods must be removed first, installing over them is not supported (docs/INSTALL.md, docs/COMPATIBILITY.md).
+- Removal and recovery: uninstall restores every replaced Klipper file from its .bak copy and the printer configuration; dual boot into the stock firmware; automatic stock fallback after a failed start; recovery menu; uninstall, recovery, and factory images; UART/FEL guide for the worst case (docs/UNINSTALL.md, docs/DUAL_BOOT.md, docs/RECOVERY.md).
+- Memory budget (128 MiB RAM): Feather screen roughly 1-2 MB, Stock screen roughly 10-20 MB, Moonraker roughly 30 MB; Moonraker and Guppy are limited to two glibc malloc arenas; a dedicated low-memory camera service; swap on eMMC (default), USB, or ZRAM (docs/PRINTING.md#reducing-resource-usage).
+- Local screen choice: Feather (built in, default), the original Stock screen, Guppy Screen, or Headless; HelixScreen is available from its own project as an external option (docs/SCREEN.md).
+- Feather screen: local and USB file browsing with list or preview-tile view, slicer thumbnails, print control with pause/resume/cancel and live Z adjust, cancel during print preparation, guided calibration (bed screws, bed mesh, safe Z, Z offset, extruder, PID, input shaper), filament load/unload/change and cold pull with material presets, Wi-Fi 2.4/5 GHz (WPA/WPA2-PSK) and DHCP Ethernet setup, Forge-X settings, themes, OTA update notifications, Power Loss Recovery dialog, and custom dialogs from macros (action:prompt). Not in Feather: file deletion, static IP, enterprise Wi-Fi, unrestricted G-code console (docs/FEATHER.md).
+- Stock screen support: the Stock screen can stay in use together with Fluidd, Mainsail, and Moonraker (LAN mode); SAVE_CONFIG, RESTART, and FIRMWARE_RESTART keep the Stock screen connected (docs/SCREEN.md#klipper-restart-and-saving).
+- Klipper improvements: fix for Timer too close shutdowns caused by dense G-code (reproducer from issue #40 fixed), multi-MCU homing/TRSYNC fixes, optional E0011/E0017 tuning (tune_klipper), optional real-time scheduling (klipper_rt), Adaptive Pressure Advance backport for OrcaSlicer adaptive PA profiles, input shaper fixes, UTF-8 file positions, all with links to upstream commits (docs/KLIPPER.md).
+- Print safety: load-cell bed collision protection with emergency stop, pause, or warning; nozzle contact check before every print (on by default); bed mesh validation before printing that can cancel, re-mesh, or apply a temporary Z-offset; MD5 check of G-code files (on by default, needs the slicer post-processing script; a corrupted file is cancelled and deleted) (docs/PRINTING.md, docs/SLICING.md#md5-checksum-validation).
+- Power Loss Recovery: Forge-X implementation for Feather, Guppy, and Headless, on by default in new configurations; the Stock screen uses the FlashForge implementation (docs/POWER_LOSS_RECOVERY.md).
+- Calibration and print features: KAMP adaptive meshing and purge, bed level screw tuning, input shaper with plots, PID, extruder, skew profiles, pause at layer, MIDI sounds, LED control (docs/CALIBRATION.md, docs/PRINTING.md).
+- Camera and timelapse: forge-x-streamer with auto-detection, reconnect, and an image settings page; built-in timelapse by layer, time, or progress, without an external bot; optional Telegram bot on a separate computer (docs/CAMERA.md, docs/TELEGRAM.md).
+- Slicer integration: upload through Moonraker from OrcaSlicer and other Moonraker-capable slicers; OrcaSlicer 2.4+ packaged .gcode.3mf files are supported (docs/SLICING.md).
+- Customization without editing Forge-X files: user.cfg overrides, own Klipper Python modules and stock-module replacements as packages in mod_data/plugins/ (new in 1.4.2), Feather dialogs, shell commands from G-code, startup services, user.moonraker.conf, Entware (docs/EXTENDING.md).
+- Updates: OTA within a major version; Fluidd, Mainsail, and Guppy Screen update independently; a new major version is flashed over the existing installation and keeps settings and calibration (docs/INSTALL.md#ota-updates).
+- Process: automated host tests in CI, visual UI regression, and on-printer regression before releases; Klipper patch history published by topic (docs/DEVELOPMENT.md).
+
+Related projects: Forge-X credits Klipper Mod (xblax/flashforge_ad5m_klipper_mod); its Stock screen integration is based on ZMod (ghzserg/zmod); Guppy Screen is included in an adapted form; HelixScreen publishes its own AD5M image based on Forge-X. Running Forge-X together with Klipper Mod, ZMod, or another mod is not supported.
 
 ## User documentation
 
@@ -37,11 +57,11 @@ Key facts:
 - [Power Loss Recovery](docs/POWER_LOSS_RECOVERY.md)
 - [Calibration](docs/CALIBRATION.md)
 - [Printing](docs/PRINTING.md): KAMP, bed collision protection, bed mesh validation, resource tuning
-- [Slicing](docs/SLICING.md): slicer G-code, Moonraker connection, MD5 validation
+- [Slicing](docs/SLICING.md): slicer start/end G-code, preview thumbnails, Moonraker connection, .gcode.3mf, timelapse layer info, MD5 validation
 - [Configuration](docs/CONFIGURATION.md): mod parameters
-- [Customizing and extending Forge-X](docs/EXTENDING.md): user.cfg overrides, own macros, Feather dialogs, shell commands, startup services
+- [Customizing and extending Forge-X](docs/EXTENDING.md): user.cfg overrides, own macros, Feather dialogs, own Klipper packages, shell commands, startup services
 - [Macros](docs/MACROS.md)
-- [Telegram bot and timelapse](docs/TELEGRAM.md)
+- [Telegram bot](docs/TELEGRAM.md): remote control and timelapse through an external bot
 
 ## Safety, recovery, and uninstall
 

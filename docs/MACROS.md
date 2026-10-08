@@ -344,7 +344,7 @@ validation, and persistent override examples.
 - **END_PRINT (stock.cfg)**
   - **Description**: Finalizes printing with filament retraction, parking, and optional MIDI playback.
   - **Parameters**: None.
-  - **Defaults**: Retracts 3 mm, moves to X105 Y105, plays MIDI if configured.
+  - **Defaults**: Retracts 3 mm, moves to X110 Y110, plays MIDI if configured. With the final timelapse photo enabled, uses the timelapse parking position instead.
 
 - **PAUSE**
   - **Description**: Pauses printing by sending an `M25` command to the stock firmware.

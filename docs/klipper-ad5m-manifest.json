@@ -15,7 +15,7 @@
     },
     "klippy/configfile.py": {
       "ff5m": ".py/klipper/patches/configfile.py",
-      "sha256": "941a1d1338054d16531ed6c4e394d6dd2e7c23c871c945e94023fc347452b881"
+      "sha256": "274d98b6e75054b83171243165d724c2787bcb690de4a64abd76e9046d0d7508"
     },
     "klippy/extras/buttons.py": {
       "ff5m": ".py/klipper/patches/extras/buttons.py",
@@ -31,7 +31,7 @@
     },
     "klippy/extras/gcode_shell_command.py": {
       "ff5m": ".py/klipper/patches/extras/gcode_shell_command.py",
-      "sha256": "1874d5574e1a975e8e75a7830a7a8f2863754cafbc758239602608bf059e4b1b"
+      "sha256": "1dd5de45f31e1fa33fb445258286e969c05b682022ce2e2e79035f7f9b49d72c"
     },
     "klippy/extras/heaters.py": {
       "ff5m": ".py/klipper/patches/extras/heaters.py",
@@ -47,7 +47,7 @@
     },
     "klippy/extras/probe.py": {
       "ff5m": ".py/klipper/patches/extras/probe.py",
-      "sha256": "c752523f553c3f62b7adbc8aaf961093092fa01e9a063cbc0e27f89968823726"
+      "sha256": "cc7dfc6be43bd5369ba2e9dcccecdbb9811e11cd8543fdbd4cc877ef2ee09c42"
     },
     "klippy/extras/resonance_tester.py": {
       "ff5m": ".py/klipper/patches/extras/resonance_tester.py",
@@ -67,7 +67,7 @@
     },
     "klippy/extras/temperature_sensor.py": {
       "ff5m": ".py/klipper/patches/extras/temperature_sensor.py",
-      "sha256": "c9cc182215f266a008c5166370eca14ec3b378b509cce8273ad899fdecf35fbb"
+      "sha256": "a12f6add9b38488d88a186c4849067cb3978203c3558773793bf0ec16ddf4c2e"
     },
     "klippy/extras/tmc.py": {
       "ff5m": ".py/klipper/patches/extras/tmc.py",
@@ -91,11 +91,15 @@
     },
     "klippy/reactor.py": {
       "ff5m": ".py/klipper/patches/reactor.py",
-      "sha256": "2bc562d0542e21695cd21793ae21aa237434fbf46b3b36001acfd713b57ea124"
+      "sha256": "9481fbecebe520c8367d792e523cc3f4ddd773801054f235329f725885c48780"
     },
     "klippy/toolhead.py": {
       "ff5m": ".py/klipper/patches/toolhead.py",
-      "sha256": "08b4325e0bcdc6807ea5ae7518db12c1f4d7ae3615b53f25b6f61f867e6adc35"
+      "sha256": "38f5e4a33143fef81387cabd81ceec1281fed6f0603f352dd751f732a8bc4b76"
+    },
+    "klippy/webhooks.py": {
+      "ff5m": ".py/klipper/patches/webhooks.py",
+      "sha256": "ed2cf9b2596accf7b9fc950b7ef899adcd0efb427ecf64610dfaf28483ae737d"
     }
   },
   "stock_commit": "c6e78dffa3d16a25710942a379b019debbacd5af"

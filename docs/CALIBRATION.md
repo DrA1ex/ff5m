@@ -15,7 +15,7 @@ Calibrate only while the printer is idle. An incorrect mesh, Z offset, or motion
 - If you enable `tune_klipper` or `tune_config`, do so before calibration. Recreate the bed mesh and verify Z offset afterward.
 - Use the Stock screen for its normal calibration workflow. In Feather, open **Control → Calibration**. Guppy and Headless users can run the Forge-X macros from Fluidd or Mainsail.
 
-Stock-screen `SAVE_CONFIG` requires Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_SAVE_CONFIG`.
+Save calibration results with the normal `SAVE_CONFIG` command, including with the Stock screen. Very old builds need an update first; see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving).
 
 ## Configuration Overrides
 

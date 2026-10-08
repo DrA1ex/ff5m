@@ -1,11 +1,12 @@
 # Customizing and extending Forge-X
 
-You can add your own macros, change almost any Forge-X or Klipper setting, show your own dialogs on the Feather screen, run your own programs, and start your own services. None of this requires editing Forge-X's own files, which are replaced when you update.
+You can add your own macros, change almost any Forge-X or Klipper setting, show your own dialogs on the Feather screen, add your own Klipper modules, run your own programs, and start your own services. None of this requires editing Forge-X's own files, which are replaced when you update.
 
 **Jump to:**
 [Where your changes are stored](#where-your-changes-are-stored) ·
 [Add or override settings and macros (`user.cfg`)](#add-or-override-settings-and-macros-usercfg) ·
 [Your own dialogs on the Feather screen](#your-own-dialogs-on-the-feather-screen) ·
+[Your own Klipper packages](#your-own-klipper-packages) ·
 [Run your own programs from G-code](#run-your-own-programs-from-g-code) ·
 [Your own startup services](#your-own-startup-services) ·
 [Moonraker settings](#moonraker-settings) ·
@@ -19,10 +20,11 @@ You can add your own macros, change almost any Forge-X or Klipper setting, show 
 | What | Where | When it is applied |
 | --- | --- | --- |
 | Klipper settings and macros | `mod_data/user.cfg` (Fluidd/Mainsail: **Configuration → mod_data**) | After a Klipper restart |
+| Your own Klipper packages (Python modules) | `mod_data/plugins/<package>/` | After a printer reboot |
 | Moonraker settings | `mod_data/user.moonraker.conf` | After a Moonraker restart |
 | Startup services | `/data/.mod/.forge-x/etc/init.d/S*` (over SSH) | At boot |
 
-With the Stock screen, do not use `RESTART` or `SAVE_CONFIG`. Reboot the printer instead (see the [FAQ](FAQ.md#stock-screen-freezes-i-cant-print-anything)).
+The normal `RESTART`, `SAVE_CONFIG`, and `FIRMWARE_RESTART` commands work with every screen, including Stock (see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving)).
 
 Files in `mod_data` are kept when you update Forge-X. Make a copy with `TAR_BACKUP` before uninstalling (see [Backup Management](CONFIGURATION.md#backup-management)).
 
@@ -61,12 +63,12 @@ For material presets, see [Material slots](CONFIGURATION.md#material-slots). For
 
 ## Your own dialogs on the Feather screen
 
-Feather shows standard Klipper action prompts (the same `action:prompt_*` messages that Fluidd and Mainsail use) as a **KLIPPER PROMPT** page. A macro sends the messages with `RESPOND`, one message per line:
+Feather shows standard Klipper action prompts (the same `action:prompt_*` messages that Fluidd and Mainsail use) as a modal dialog. A macro sends the messages with `RESPOND`, one message per line:
 
 | Message | What it does |
 | --- | --- |
 | `action:prompt_begin <title>` | Starts a dialog with this title. |
-| `action:prompt_text <text>` | Adds a line of text. Keep it short, long text is cut off. |
+| `action:prompt_text <text>` | Adds a line of text. Text wraps, and longer dialogs have page controls. |
 | `action:prompt_button <label>\|<G-code>\|<color>` | Adds a button on its own row. |
 | `action:prompt_button_group_start` / `action:prompt_button_group_end` | Puts the buttons between them on one row. |
 | `action:prompt_footer_button <label>\|<G-code>\|<color>` | Adds a button to the bottom row. |
@@ -78,8 +80,8 @@ Buttons:
 - The G-code after the first `|` runs when the button is pressed. If you leave it out, the label is used as the G-code. The G-code itself cannot contain `|`.
 - The color is optional: `error`, `warning`, or `secondary` give the button a different style. Anything else, or no color, gives a normal button.
 - Pressing a button does **not** close the dialog. Close it with `RESPOND TYPE=command MSG=action:prompt_end` in the button's G-code, or by calling a macro that does this.
-- Three button rows are shown per page. If there are more, Feather adds `<` and `>` buttons.
-- The titles `Resurrection` and `Cold Pull` are used by Forge-X itself. Do not use them.
+- Button labels and rows wrap when needed. Longer dialogs have page controls; large footer groups can continue in the paged body.
+- The titles `Resurrection` and `Previous timelapse` are used by Forge-X's own dialogs. Do not use them for your dialogs.
 
 **Example: a menu for choosing a lane layout** (this is the kind of dialog one user built to control a multi-material unit):
 
@@ -108,6 +110,64 @@ Run `LANE_LAYOUT_MENU` from the Fluidd/Mainsail console, from a macro button, or
 
 A script started with `RUN_SHELL_COMMAND` can also show a dialog. Set `linewise: True` for the command (see the next section) and have the script print the lines starting with `// `, for example `// action:prompt_begin My title`.
 
+## Your own Klipper packages
+
+Since Forge-X 1.4.2 you can add your own Klipper Python modules (extras), for example a driver for extra hardware or a plugin from another project, and even replace stock Klipper modules. Each package is a folder in `mod_data/plugins/` (Fluidd/Mainsail: **Configuration → mod_data**; over SSH: `/opt/config/mod_data/plugins/`). Forge-X links it into Klipper at boot, and it survives Forge-X updates.
+
+A package can contain any of these parts:
+
+```text
+mod_data/plugins/
+└── hello/                    # one folder per package
+    ├── config.cfg            # Klipper configuration for the package (optional)
+    ├── plugins/
+    │   └── hello_world.py    # new Klipper modules, loaded like files in klippy/extras/
+    └── patches/
+        └── extras/fan.py     # replacements for existing Klipper modules (advanced)
+```
+
+**Example: a minimal package with a new G-code command.**
+
+`mod_data/plugins/hello/plugins/hello_world.py`:
+
+```python
+class HelloWorld:
+    def __init__(self, config):
+        self.message = config.get('message', 'Hello!')
+        gcode = config.get_printer().lookup_object('gcode')
+        gcode.register_command('HELLO_WORLD', self.cmd_HELLO_WORLD,
+                               desc="Print a greeting")
+
+    def cmd_HELLO_WORLD(self, gcmd):
+        gcmd.respond_info(self.message)
+
+def load_config(config):
+    return HelloWorld(config)
+```
+
+`mod_data/plugins/hello/config.cfg`:
+
+```ini
+[hello_world]
+message: Hello from my package
+```
+
+Reboot the printer, then run `HELLO_WORLD` in the console.
+
+How it works:
+
+- **Apply changes with a reboot.** After adding, changing, or removing a package, reboot the printer while it is idle. A Klipper `RESTART` is not enough, because it does not relink the Python files.
+- **Keep the package's configuration in its `config.cfg`**, not in `user.cfg`. Then disabling the package also removes its configuration, and Klipper does not fail on a section whose module is gone. `config.cfg` may include other files from the same folder, for example `[include settings.cfg]`.
+- **Disable a package** by creating an empty file named `disabled` in its folder and rebooting. Delete the file and reboot to enable it again.
+- **`patches/`** follows the paths inside `klippy/`, for example `extras/fan.py` or `toolhead.py`. The original file is kept and restored when you remove the patch. Forge-X's own patches are protected: replacing them needs the experimental `user_plugins_override_patches` option.
+- **Conflicts.** If a package has invalid paths, or tries to replace a Forge-X module or a file that another package already replaces, Forge-X skips the whole package and writes an error to `mod_data/log/init.log`. Other packages still load.
+- **Errors in your own code** can still stop Klipper from starting. Disable the package (or delete it) and reboot; if the printer is not reachable, use the [Dual Boot recovery menu](DUAL_BOOT.md).
+- **Files copied with their original timestamps** (`cp -p`, `rsync -t`, archive extraction) can make Python keep using the old cached code if the size did not change. Run `touch` on the file or delete the `__pycache__` folder next to it, then reboot.
+- `mod_data/plugins.cfg` is generated by Forge-X; do not edit it. `TAR_BACKUP` includes your packages.
+- Before downgrading to a Forge-X version older than 1.4.2, disable packages that contain `patches/` and reboot once, so the original Klipper files are back in place.
+
+The full rules (naming, ordering between packages, uninstall behavior) are in [User Klipper plugins](../openwiki/workflows/user-klipper-plugins.md).
+
 ## Run your own programs from G-code
 
 Define a shell command in `user.cfg`, then run it from any macro or from the console:
@@ -133,6 +193,8 @@ Options:
 | `mode` | `sync` (default, Klipper waits for the program), `background`, `stream`, `queue`, or `daemon`. The other modes do not block Klipper. |
 | `linewise` | Send each output line as a separate message. Needed when the script prints `action:` messages. |
 | `debug` | Print extra information about each run. |
+
+A synchronous command exposes its exit code as `printer['gcode_shell_command my_script'].returncode`. It is `None` before completion or after a timeout.
 
 Put scripts in `mod_data` so they survive updates. Make them executable with `chmod +x`.
 

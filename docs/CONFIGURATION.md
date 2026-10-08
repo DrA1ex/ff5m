@@ -21,7 +21,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 - **`close_dialogs`**: Controls dialog timeout behavior.   
   - `OFF`: Dialogs remain open   
   - `SLOW`: Closes after 20s (GDB method, may not work in all firmware versions)     
-  - `FAST`: Closes after 20s (API method; enable LAN-mode when using the Stock screen).
+  - `FAST`: Closes after 20s and clears the previous dialog before starting another Stock print (API method; enable LAN-mode when using the Stock screen).
 
 - **`disable_priming`**: Disables nozzle cleaning by line if set to `1`.  
 
@@ -63,8 +63,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`timelapse`**: Takes photos during printing and creates a video. Off by default; see [Camera](CAMERA.md#timelapse) for setup.
 
-- **`filament_switch_sensor`**: Enables pause on filament runout if set to `1`.  
-  **Note**: Only works with Feather/Headless screen.   
+- **`filament_switch_sensor`**: Uses the filament sensor if set to `1` (default): the print pauses on runout, a print does not start without filament, and `RESUME` checks for filament first.  
+  **Note**: Used with Feather, Guppy, and Headless. It is not used with the Stock screen.   
 
 - **`weight_check`**: Enables bed collision protection if set to `1`.  
 
@@ -81,6 +81,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 - **`bed_mesh_validation_z_offset_mode`**: `ADJUST` (default) adds the correction to the current Z-offset; `REPLACE` uses the correction as the complete offset. Shown only for the `Z_OFFSET` action. The correction is never saved, and Z-offset changes are not saved while it is active. See [Printing](PRINTING.md#bed-mesh-validation).
 
 - **`bed_mesh_validation_tolerance`**: Allowed difference in millimetres; default `0.2`. Shown when validation is enabled and the action is `CANCEL` or `RECALIBRATE`. In `Z_OFFSET`, this value still limits the spread between probe differences; the correction threshold remains 0.05 mm.
+
+- **`user_plugins_override_patches`** (experimental): Lets [your own Klipper packages](EXTENDING.md#your-own-klipper-packages) replace Forge-X's own Klipper patches. Default `0`. Replacing stock Klipper modules does not need it. Reboot after changing it.
 
 - **`tune_config`**: Enables firmware parameter tuning for optimized settings (motors, extruder rotation distance, probing, Z-parking, etc.).  
   **Warning**: After enabling, recreate the bed mesh, adjust Z-offset, and optionally recalibrate flow and Pressure Advance.  
@@ -196,7 +198,7 @@ variable_material_1_cold_pull: {
 }
 ```
 
-Run `RESTART` after changing the override. Stock screen: Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds use `NEW_RESTART`.
+Run `RESTART` after changing the override (this also works with the Stock screen, see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving)).
 
 - `heating_slots` controls the order and membership of heating, filament-loading, and calibration selectors.
 - `cold_pull_slots` controls the cold-pull selector.
@@ -218,6 +220,10 @@ This file allows you to adjust Moonraker behavior, such as API settings, notific
 [authorization]
 force_logins: true  # Require login for all users
 
-[notifier]
+[notifier my_notifier]
 url: http://example.com/notify  # Custom notification endpoint
+events: complete
+body: Print finished
 ```
+
+See [Moonraker settings](EXTENDING.md#moonraker-settings) for more.

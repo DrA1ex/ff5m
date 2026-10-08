@@ -19,7 +19,7 @@ Forge-X Power Loss Recovery is used with Feather, Guppy, and Headless. The Stock
 ### Why Feather is the default
 
 - **It uses little memory.** The printer has 128 MiB of RAM, and Moonraker alone takes roughly 30 MB. Feather needs roughly 1–2 MB, the Stock screen roughly 10–20 MB. The memory that Feather does not use stays available to Klipper, the camera, and your own additions. See [Reducing resource usage](PRINTING.md#reducing-resource-usage).
-- **It does not depend on the vendor application.** The Stock screen is tightly coupled to the FlashForge services: direct Klipper commands such as `SAVE_CONFIG` or `RESTART` can freeze it, and its behavior and bugs change with the stock firmware version. Feather runs inside Klipper and is not affected by them.
+- **It does not depend on the vendor application.** The Stock screen is tightly coupled to the FlashForge services: older Forge-X builds can freeze it during `SAVE_CONFIG` or `RESTART`; current builds preserve its connection (see [Klipper restart and saving](#klipper-restart-and-saving)). Its behavior and bugs can still change with the stock firmware version. Feather runs inside Klipper and is not affected by them.
 - **It is part of Forge-X.** Feather is a Klipper extension that draws with the small [Typer](TYPER.md) renderer. It has no separate UI application or second copy of the printer state, and its calibration, material presets, Wi-Fi setup, and update notifications work directly with Forge-X.
 
 Feather covers the everyday workflows. Unrestricted G-code, file deletion, static or enterprise Wi-Fi, and detailed diagnostics need Fluidd or Mainsail. The list of what it can do is in the [Feather guide](FEATHER.md).
@@ -59,7 +59,9 @@ When using the Stock screen:
 
 ### Klipper restart and saving
 
-Stock-screen `SAVE_CONFIG`, `RESTART`, and `FIRMWARE_RESTART` work in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**. On older builds, use `NEW_SAVE_CONFIG` / `NEW_RESTART` or update first.
+With the Stock screen, use the normal Klipper commands: `SAVE_CONFIG` to save calibration results, `RESTART` to reload the configuration, and `FIRMWARE_RESTART` when the MCU needs it. The Stock screen stays connected and keeps working after them.
+
+This works in Forge-X **1.4.1-29 or newer** (for 1.4.2 betas, **beta-3-101 or newer**). Older builds could freeze the Stock screen after these commands, and the workaround there was `NEW_SAVE_CONFIG` / `NEW_RESTART`. In current builds those two commands only print a message that they are deprecated, so update instead of using them.
 
 ### Feather Screen
 
@@ -79,9 +81,9 @@ Headless mode also uses the `auto` bed-mesh profile. Z offset, camera, and print
 
 ### Switching to Alternative Screens / Headless
 
-#### Switching to Feather Screen
+#### Switching commands
 
-Run one of these commands from the console:
+Run one of these commands from the Fluidd or Mainsail console:
 
 ```gcode
 SET_MOD PARAM=display VALUE=FEATHER

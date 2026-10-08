@@ -51,7 +51,7 @@ Use the Stock screen's supported workflow, Feather's **Control → Calibration**
 > [!CAUTION]
 > Read [Before you start](CALIBRATION.md#before-you-start) before changing the mesh or Z geometry.
 
-Stock screen: use `SAVE_CONFIG` / `RESTART` in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**; older builds require `NEW_SAVE_CONFIG` / `NEW_RESTART`.
+Save the results with `SAVE_CONFIG`. This also works with the Stock screen (see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving)).
 
 Do not substitute generic Klipper probing macros. The AD5M requires Forge-X preparation such as load-cell tare and printer-specific movement handling. See the full [Calibration guide](CALIBRATION.md).
 
@@ -159,9 +159,10 @@ Because Klipper queues motion ahead of physical execution, and because the bed/m
 
 For setup, the controlled PAUSE-before-power-off workflow, UPS guidance, saved-state details, validation checks, heating order, and recovery limitations, see the dedicated **[Power Loss Recovery guide](POWER_LOSS_RECOVERY.md)**.
 
-Quick enable:
+It is enabled by default in new Forge-X 1.4.2 configurations; an existing configuration may keep its earlier value. Check it and turn it on (`1`) or off (`0`) with:
 
 ```gcode
+GET_MOD PARAM=power_loss_recovery
 SET_MOD PARAM=power_loss_recovery VALUE=1
 ```
 
@@ -389,9 +390,9 @@ Use these settings for timing/MCU errors, not merely because memory usage is hig
 
   Leave this off unless CPU contention is the suspected cause of *Timer too close* or MCU timeouts. It does not solve out-of-memory failures and cannot make an excessive MCU motion workload safe.
 
-#### Disable SWAP (Only if Moonraker is Disabled)
+#### Do not disable swap to save resources
 
-This was the earlier recommendation for very small Stock/Feather-only setups. Current Forge-X supports selectable `MMC`, `USB`, `ZRAM`, and `OFF` modes, so disabling swap is no longer recommended as a general resource optimization. Use `OFF` only after verifying the complete workload, including calibration and recovery paths.
+Older guides suggested turning swap off on very small setups without Moonraker. This is no longer recommended: keep swap enabled (see below) and use `OFF` only after testing your complete workload, including calibration and recovery.
 
 ### Swap and compressed memory
 

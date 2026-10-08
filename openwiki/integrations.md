@@ -112,8 +112,8 @@ are skipped while a print is paused. Frames and finished videos live under
 data partition. Capture has a 1,000-frame limit and requires 128 MiB free
 before each frame. A failed capture leaves no numbered partial frame. Render
 requires an idle virtual SD and completed, cancelled, or standby print status. Selecting
-another file leaves existing frames intact; print preparation cancels an active
-render and clears the old frames. The FFmpeg command uses one thread and the ultrafast
+another file leaves existing frames intact. The start guard waits for finalization
+or explicitly requests cancellation before preparation clears the old frames. The FFmpeg command uses one thread and the ultrafast
 x264 preset. Normal progress output is disabled so Moonraker does not buffer
 FFmpeg's carriage-return status stream during a long render.
 Moonraker reports when video generation starts and when it succeeds or fails
@@ -140,10 +140,11 @@ enables Resume after restoration, even before `print_started` becomes true.
 Rejected Resume attempts keep the file held. Cancel uses the standard forced
 SD release followed by cancellation; late capture callbacks cannot move or
 resume a stopped print, and completed captures cannot restore twice.
-Moonraker observes `_START_PRINT.print_active` to release the previous render and frames
-when print preparation begins. While the next file waits, Moonraker can finish
-the previous timelapse; continuing starts a new frame sequence immediately and
-stops the old finalization. Klipper's reactor remains responsive during the short check.
+Moonraker owns the previous print's finalization until it finishes or receives
+`timelapse_cancel_render` from the start guard. Changing the selected file or
+`_START_PRINT.print_active` cannot cancel it. While the next file waits, Moonraker
+can finish the previous timelapse. Cancellation invalidates old results before
+awaiting cleanup; the new print starts a separate frame sequence. Klipper's reactor remains responsive during the short check.
 [`timelapse_ffmpeg.sh`](../.root/timelapse_ffmpeg.sh) runs it at
 nice level 19. A render waits while the printer regression's
 `/tmp/feather-ui-test-timelapse-hold` flag exists (at most 10 minutes), so the

@@ -28,7 +28,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 - **Klipper**: the FlashForge host Klipper (0.11 generation) with [fixes and backports from newer upstream Klipper](/docs/KLIPPER.md). The stock MCU firmware is not reflashed.
 - **Web interfaces**: Fluidd (`http://<printer_ip>/fluidd/`), Mainsail (`http://<printer_ip>/mainsail/`), and the Moonraker API on port `7125`. SSH: `root` / `root`.
 - **Local screen**: Feather (default), Stock, Guppy Screen, or Headless. [HelixScreen](/docs/SCREEN.md) is available as an external option.
-- **Recovery**: boot guard with fallback to Stock, recovery menu, uninstaller, and recovery images ([details](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety)).
+- **Recovery**: if the mod fails to start, the next boot starts the stock firmware; plus a recovery menu, uninstaller, and recovery images ([details](/docs/RECOVERY.md#automatic-fallback-to-stock-firmware)).
 - **License**: GPL-3.0 for Forge-X and its Klipper components. The native binary components have a [separate license](/LICENSE-BINARIES.md).
 
 ## Quick start
@@ -40,7 +40,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 1. Uninstall any other installed mods first (⚠️ make a backup).
 2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.
-3. In the slicer, update the [Start and End G-code](/docs/SLICING.md#for-stock-screen) and the [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
+3. In the slicer, update the [Start and End G-code](/docs/SLICING.md#start-and-end-g-code) and the [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
 4. Stock screen only: enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod).
 5. Enable the [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
 6. ⚠️ Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start), then [recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset. Some settings change during installation, and printing without recalibration can damage the printer.
@@ -54,7 +54,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 - [Z-Offset](/docs/PRINTING.md#z-offset), [LED lighting](/docs/PRINTING.md#led-light-control), [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection), [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
 - The mod's [camera](/docs/CAMERA.md#step-3-enable-mods-camera).
-- The [Feather or Guppy screen](/docs/SCREEN.md#switching-to-feather-screen).
+- The [Feather or Guppy screen](/docs/SCREEN.md#switching-commands).
 - [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md) is enabled by default; review its settings.
 
 **Updates.** Forge-X, Fluidd, Mainsail, and Guppy Screen update over the air ([OTA](/docs/INSTALL.md#ota-updates)).
@@ -107,7 +107,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 - **Telegram bot** for remote printer control and timelapse videos ([setup](/docs/TELEGRAM.md)); runs on a separate computer or server.
 - Root access with zsh and oh-my-zsh, and the Entware package manager
 - Buzzer support, including melodies from MIDI files or notes
-- Your own macros, dialogs, shell commands, and startup services ([details](/docs/EXTENDING.md))
+- Your own macros, dialogs, Klipper packages, shell commands, and startup services ([details](/docs/EXTENDING.md))
 
 ## Why Forge-X and how it is built
 
@@ -123,7 +123,7 @@ In practice:
 - **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores them. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
 - **Memory.** Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen, and the camera service is written for the same limit. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
 - **Testing.** Each release goes through automated host tests, visual UI tests, and physical tests on a printer. The tests are in [`tests/`](/tests), and the process is in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
-- **Extensibility.** Your own macros, dialogs, shell commands, and startup services can be added without editing Forge-X files, so they survive updates. See [Customizing and extending Forge-X](/docs/EXTENDING.md).
+- **Extensibility.** Your own macros, dialogs, Klipper modules, shell commands, and startup services can be added without editing Forge-X files, so they survive updates. See [Customizing and extending Forge-X](/docs/EXTENDING.md).
 
 ## Documentation
 

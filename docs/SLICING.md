@@ -1,6 +1,19 @@
 # Slicing
 
-To use the mod, you need to replace your slicer's default start and end G-code with the following configurations. These snippets are for _OrcaSlicer_. If you use a different slicer, adjust the placeholders accordingly.
+To print with Forge-X, set up three things in your slicer: the start and end G-code, the connection to the printer, and (recommended) the MD5 checksum script. The examples are for _OrcaSlicer_. If you use a different slicer, adjust the placeholders accordingly.
+
+**Jump to:**
+[Start and end G-code](#start-and-end-g-code) ·
+[Preview thumbnails](#print-preview-thumbnails) ·
+[Bed coordinates](#bed-coordinates) ·
+[Connecting the slicer](#configuring-moonraker--klipper-connection) ·
+[`START_PRINT` parameters](#start_print) ·
+[Timelapse](#timelapse) ·
+[MD5 checksum](#md5-checksum-validation)
+
+## Start and End G-code
+
+Replace the default start and end G-code in your printer profile (**Printer settings → Machine G-code**). Keep `START_PRINT` on a single line. The start G-code depends on the screen you use.
 
 ### For Stock Screen
 
@@ -16,7 +29,7 @@ End Gcode
 END_PRINT
 ```
 
-### For Alternative Screen (Feather Screen)
+### For Feather, Guppy, or Headless
 
 Start Gcode
 ```
@@ -28,9 +41,10 @@ End Gcode
 END_PRINT
 ```
 
-### Print preview thumbnails
+## Print preview thumbnails
 
-For a clear model preview on the Feather screen, set the thumbnail size to
+Feather shows the slicer's preview image in its file list (tile view) and on the
+print screen. For a clear preview, set the thumbnail size to
 **512 × 512 pixels** in your OrcaSlicer printer profile:
 
 1. In **Prepare**, click **Edit preset** next to the printer profile name.
@@ -38,7 +52,7 @@ For a clear model preview on the Feather screen, set the thumbnail size to
 3. Set **G-code thumbnails** to `512x512/PNG`.
 4. Save the profile and re-slice the model before exporting or uploading it.
 
-### Bed coordinates
+## Bed coordinates
 
 The default FlashForge AD5M profiles in OrcaSlicer already place the X/Y origin at the bed center (`0, 0`), as Forge-X expects. No change to the printable area is needed for these profiles.
 
@@ -46,9 +60,9 @@ If you create a custom profile or change the bed geometry, keep the origin at th
 
 Replace the default start block with the commands above, omit `G92 X0 Y0 Z0`, and re-slice existing files after changing the profile.
 
-### Configuring Moonraker / Klipper connection
+## Configuring Moonraker / Klipper connection
 
-Forge-X connects to the printer through Moonraker, so OrcaSlicer should be configured to upload regular G-code files directly to the printer.
+OrcaSlicer uploads files to the printer through Moonraker, the same service that Fluidd and Mainsail use. This works with every screen mode.
 
 > [!TIP]
 > OrcaSlicer 2.4.0 and newer can send sliced jobs as packaged `.gcode.3mf` files.
@@ -72,7 +86,7 @@ Host type: Octo/Klipper
 
 This is also valid for Klipper printers that are accessed through Moonraker.
 
-Click **Test** to verify the connection. Once the test succeeds, OrcaSlicer can upload regular `.gcode` files directly to Forge-X after slicing.
+Click **Test** to verify the connection. Once the test succeeds, OrcaSlicer can upload sliced files directly to the printer and start them.
 
 
 

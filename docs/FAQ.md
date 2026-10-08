@@ -78,6 +78,7 @@ Backported items include the `Timer too close` starvation fix, multi-MCU homing 
 Yes. You can customize Forge-X without editing the mod's own files:
 
 - **Klipper:** add your own macros and sections, or override Forge-X macros and settings, in `mod_data/user.cfg`.
+- **Klipper modules:** add your own Python extras, or replace stock Klipper modules, as packages in `mod_data/plugins/` (Forge-X 1.4.2 and newer).
 - **Feather dialogs:** show your own dialogs on the Feather screen with standard Klipper `action:prompt_*` messages.
 - **Programs:** run your own scripts from G-code with `RUN_SHELL_COMMAND`.
 - **Services:** put a start/stop script named `S<number><name>` into `/etc/init.d` of the Forge-X environment, and Forge-X starts it at boot.
@@ -288,7 +289,7 @@ network={
 
 In the blocking Stock workflow, the stock screen loads if the mod still cannot connect within the configured retry period.
 
-If the mod doesn’t load at all, use [screen-mode recovery](SCREEN.md#switching-to-feather-screen) to switch back to the original stock screen.
+If the mod doesn’t load at all, use [screen-mode recovery](SCREEN.md#switching-commands) to switch back to the original stock screen.
 
 ### Why did the Wi-Fi credentials get forgotten?
 
@@ -446,20 +447,21 @@ This is separate from `safe_z`, which controls the absolute safe height used bef
 The final timelapse photo uses the same `park_dz` setting. The move is limited by the safe Z maximum, so tall prints may leave less room for lowering the bed.
 
 ### Why do I get errors when printing certain objects or using specific infill patterns?
-Errors during printing, especially with complex objects or infill patterns like Gyroid, are typically due to resource exhaustion rather than G-code issues. The same G-code may work multiple times but fail after a reboot due to memory constraints.
+Before Forge-X 1.4.2, very dense G-code (for example Gyroid infill or fuzzy skin) could cause `Timer too close`. This is fixed in Forge-X 1.4.2, so **update first** (see [What causes “Timer Too Close”](#what-causes-timer-too-close-or-mcu-errors-e0011)). The stock firmware version does not matter for this error.
+
+If errors still happen on 1.4.2 or newer, the usual cause is memory or CPU pressure: the same G-code may work several times and then fail after a reboot.
 
 **Solutions**:
 - **Check Memory Usage**: Run the `MEM` macro to ensure memory usage is below 75–80%.
-- **Simplify G-Code**: Use simpler infill patterns (e.g., Grid instead of Gyroid) or print single objects to reduce resource demands.
-- **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error.
 - **Switch to Feather**: Reduces resource usage significantly.
+- **Isolate the file**: Only if the error persists, try a simpler infill pattern or a single object to see whether a particular file causes it.
 
 ### How do I use macros for calibration or other tasks?
 Forge-X provides various macros for calibration and management, accessible via Fluidd or Mainsail:
 - **Calibration Macros**: Check the “calibration macros group” in Fluidd for macros like auto bed leveling.
 - **MEM Macro**: Run in the console to check memory usage.
 - **CAMERA_RELOAD**: Applies camera settings manually.
-- **SAVE_CONFIG**: Saves calibration results and restarts Klipper. For Stock-screen version requirements, see [restart and saving](SCREEN.md#klipper-restart-and-saving).
+- **SAVE_CONFIG**: Saves calibration results and restarts Klipper. It works with every screen, including Stock ([details](SCREEN.md#klipper-restart-and-saving)).
 - **SET_MOD**: Adjusts parameters like `weight_check` or `weight_check_max`.
 
 For a complete list, see the [Macro Documentation](MACROS.md). Use the latest Forge-X release to make sure all macros are available in both Fluidd and Mainsail.
@@ -480,10 +482,12 @@ Yes, calibration via the Stock screen works, as it interacts directly with Klipp
 Use a stylus or thin object to press the console button more precisely.
 
 ### Stock screen freezes: I can’t print anything
-Fixed in Forge-X **1.4.1-29+ / 1.4.2-beta-3-101+**: use standard `SAVE_CONFIG`, `RESTART`, and `FIRMWARE_RESTART`. Older builds need `NEW_SAVE_CONFIG` / `NEW_RESTART` or an update. If already frozen, reboot after any print finishes.
+On old Forge-X builds, the Stock screen could freeze after `SAVE_CONFIG`, `RESTART`, or `FIRMWARE_RESTART`. This is fixed in Forge-X 1.4.1-29 and newer, including 1.4.2: update and use these commands normally (see [Klipper restart and saving](SCREEN.md#klipper-restart-and-saving)).
+
+If the screen is already frozen, wait until the current print finishes and then reboot the printer.
 
 ### Feather screen stuck on “Finishing boot...”
-This occurs if Klipper or the MCU fails to become ready, often due to a broken configuration or an unreset MCU after a `reboot` command. Perform a `FIRMWARE_RESET` or power cycle the printer. Access Fluidd or SSH to diagnose the issue.
+This occurs if Klipper or the MCU fails to become ready, often due to a broken configuration or an unreset MCU after a `reboot` command. Run `FIRMWARE_RESTART` or power cycle the printer. Access Fluidd or SSH to diagnose the issue.
 
 ### Why does the printer boot in Failsafe mode but still show Feather?
 Failsafe mode skips all mod code execution to prevent bricking but may still display Feather if the mod partially loads. Use [Dual Boot](https://github.com/DrA1ex/ff5m/blob/main/docs/DUAL_BOOT.md) to skip the mod gracefully and boot into the stock system.
@@ -494,7 +498,7 @@ Nozzle gouging, where the nozzle scrapes or digs into the build plate during the
 
 **Solutions**:
 - **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset guidance](CALIBRATION.md#z-offset-calibration). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
-- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `SAVE_CONFIG`. See [Stock-screen version requirements](SCREEN.md#klipper-restart-and-saving).
+- **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `SAVE_CONFIG`.
 - **Check Weight Sensor**: Recalibrate the load cell following Flashforge’s guide.
 - **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see Uninstall Guide).
 - Refer to the [Printing Page](/docs/PRINTING.md) for calibration details.
@@ -556,8 +560,10 @@ Here’s how to update your configuration (example for a 20mm longer nozzle):
 
 ## Community Contributions and Updates
 
-### What is the thumbnail display feature, and how do I use it?
-The thumbnail display feature, contributed by the community, shows print previews on the Feather screen, adding ~1 second to print start time. Download the script and instructions from the provided zip file in the support group. Follow the setup guide to enable it: https://t.me/FF_ForgeX/1906
+### How do I get print previews (thumbnails) on the screen?
+Feather shows previews out of the box, in the tile view of the file list and on the print screen. No extra script is needed. The preview comes from the thumbnail that the slicer embeds in the G-code, so set the thumbnail size in your slicer profile as described in [Slicing → Print preview thumbnails](SLICING.md#print-preview-thumbnails) and slice the model again.
+
+The older community script from the support group is no longer needed.
 
 ### How do I stay updated on new Forge-X releases?
 - Watch the [Forge-X GitHub releases page](https://github.com/DrA1ex/ff5m/releases) for new versions.
