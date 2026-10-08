@@ -289,7 +289,7 @@ The system has two stages:
 To customize the warning limit, you can modify the `user.cfg` file by adding the following:
 
 ```cfg
-[temperature_sensor weight_value]
+[temperature_sensor weightValue]
 trigger_value: 700
 ```
 
@@ -297,6 +297,19 @@ Be careful: setting values greater than weight_check_max will increase the actua
 
 For more information, refer to the [Printing Page](https://github.com/DrA1ex/ff5m/blob/main/docs/PRINTING.md) and the [Configuration Page](https://github.com/DrA1ex/ff5m/blob/main/docs/CONFIGURATION.md).  
 
+
+#### Why does this trigger from a small print blob, and can it tell the difference from a real crash?
+
+The critical (error) stage runs `M112` — an immediate MCU shutdown — the moment a single load cell reading crosses `weight_check_max`, with no debounce. A genuine nozzle-into-bed/model collision keeps loading the sensor on every following reading, but so, briefly, can a blob, warped edge, or oozing corner that the nozzle merely brushes past. The sensor can't distinguish the two from one sample alone, so a harmless print artifact could trip the same hard, unrecoverable stop as a real crash.
+
+Forge-X's `[temperature_sensor weightValue]` now exposes `min_exceed_count`, which requires that many *consecutive* over-threshold readings before `exceed_gcode` (and therefore `M112`) runs at all — `macros/base.cfg` sets it to `3` by default. A real collision still trips within a few samples; an isolated spike from a print artifact does not. Raise it further in `user.cfg` if you still see false positives on a particular print style, or set it back to `1` to restore the old single-sample behavior:
+
+```cfg
+[temperature_sensor weightValue]
+min_exceed_count: 5
+```
+
+This only changes *when* the check fires, not what it protects against — it still stops the MCU immediately once triggered, it just insists the pressure is sustained first.
 
 #### Possible causes of this error include:  
 - **Weight cell calibration issues**: If you manually leveled the bed, it might require recalibration.  
