@@ -722,6 +722,24 @@ servers reject BMP vision input. The saved source artifact, its hash, and its
 byte count remain unchanged. Both backends use the same prompts and JSON
 schemas, and responses are independently validated again by the checker.
 
+Failing or warning checklist items may include `regions`: up to three boxes
+with `image` (`primary` or `comparison`) and normalized `x`, `y`, `width`,
+`height` coordinates. The origin is the top-left of the whole supplied image;
+all coordinates are fractions in `[0, 1]`. The model is asked to include enough
+context to show the affected text or control together with its neighboring
+border, separator, or element. Passing or unlocalized findings use an empty
+array. The dedicated spacing audit uses the same contract; its boxes are
+assigned to the appropriate image before merging into the full review.
+
+The Problems page and Gallery frame details show these regions as enlarged
+2× crops of the original screenshot, with the finding and a link to the full
+image. Crops are rendered locally in the browser, including for BMP artifacts;
+they do not require another model request or create modified source images.
+Narrow screens scale the crop to fit. Old reports without regions still open
+normally. Missing, malformed, outside-image, or unavailable-image regions are
+skipped without changing the verdict. If an image cannot load, its full-image
+link remains available.
+
 The Codex backend defaults to `gpt-6-luna` with reasoning effort `high`. It
 starts `codex exec` in a temporary directory, attaches screenshots with
 `--image`, supplies `--output-schema`, and reads the JSON final answer from

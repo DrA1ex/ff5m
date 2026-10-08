@@ -13,6 +13,7 @@ printer, Feather, Klipper, or deployment runtime.
 import base64
 from concurrent.futures import CancelledError
 import json
+import math
 import re
 import threading
 import time
@@ -333,6 +334,62 @@ class OpenAICompatibleHTTP:
         return "request_failed"
 
 
+_REGION_INSTRUCTION = (
+    "For each failing or warning check, provide up to three regions locating "
+    "the visible defect when it can be localized. Include the affected text "
+    "or control and enough surrounding context to see the relevant border, "
+    "separator, or neighboring element. Do not crop tightly around glyphs. "
+    "Use image='primary' for the first supplied image and 'comparison' for "
+    "the second. Coordinates x, y, width, height are fractions of the entire "
+    "image in [0,1], with the origin at its top-left. Width and height must "
+    "be positive and the rectangle must stay inside the image. For absent "
+    "content, locate its expected area only if that location is clear. Return "
+    "regions=[] for passing checks or when a defect cannot be localized. "
+    "Coordinates are supporting evidence and do not determine severity. "
+)
+
+
+def _regions_json_schema():
+    return {
+        "type": "array", "maxItems": 3,
+        "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["image", "x", "y", "width", "height"],
+            "properties": dict(
+                {"image": {"type": "string", "enum": ["primary", "comparison"]}},
+                **{key: {"type": "number", "minimum": 0, "maximum": 1}
+                   for key in ("x", "y", "width", "height")}),
+        },
+    }
+
+
+def normalize_regions(value, allow_comparison=True):
+    """Ignore unusable crop metadata without discarding a valid verdict."""
+    if not isinstance(value, list):
+        return []
+    regions = []
+    for region in value[:3]:
+        if not isinstance(region, dict) or set(region) != {
+                "image", "x", "y", "width", "height"}:
+            continue
+        if region["image"] not in ("primary", "comparison"):
+            continue
+        if region["image"] == "comparison" and not allow_comparison:
+            continue
+        coordinates = [region[key] for key in ("x", "y", "width", "height")]
+        if any(isinstance(item, bool) or not isinstance(item, (int, float))
+               or not 0 <= item <= 1 or not math.isfinite(item)
+               for item in coordinates):
+            continue
+        x, y, width, height = coordinates
+        if (width <= 0 or height <= 0 or x + width > 1 + 1e-9
+                or y + height > 1 + 1e-9):
+            continue
+        if region not in regions:
+            regions.append(dict(region))
+    return regions
+
+
 def _response_schema(allow_design_mismatch=False):
     evidence_classes = (
         EVIDENCE_CLASSES if allow_design_mismatch
@@ -345,7 +402,7 @@ def _response_schema(allow_design_mismatch=False):
         "checks": [
             {"id": item["id"], "status": "|".join(sorted(verdicts)),
              "evidence_class": "|".join(sorted(evidence_classes)),
-             "reason": "short factual reason"}
+             "reason": "short factual reason", "regions": []}
             for item in CHECKLIST
         ],
         "summary": "short overall summary",
@@ -373,7 +430,7 @@ def _response_json_schema(allow_design_mismatch=False):
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "id", "status", "evidence_class", "reason"],
+                        "id", "status", "evidence_class", "reason", "regions"],
                     "properties": {
                         "id": {"type": "string", "enum": list(_CHECK_IDS)},
                         "status": {
@@ -388,6 +445,7 @@ def _response_json_schema(allow_design_mismatch=False):
                             "type": "string",
                             "maxLength": MAX_REASON_LENGTH,
                         },
+                        "regions": _regions_json_schema(),
                     },
                 },
             },
@@ -403,7 +461,7 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
     return {
         "model": model,
         "temperature": 0,
-        "max_tokens": 300,
+        "max_tokens": 600,
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -413,7 +471,7 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "defect", "subject", "gap_relation", "reason"],
+                        "defect", "subject", "gap_relation", "reason", "regions"],
                     "properties": {
                         "defect": {"type": "boolean"},
                         "subject": {
@@ -430,6 +488,7 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
                             "type": "string",
                             "maxLength": MAX_REASON_LENGTH,
                         },
+                        "regions": _regions_json_schema(),
                     },
                 },
             },
@@ -437,7 +496,9 @@ def _spacing_audit_payload(model, image_bytes, mime_type, role):
         "messages": [
             {
                 "role": "system",
-                "content": _MODAL_LAYER_RULE + (
+                "content": _MODAL_LAYER_RULE + _REGION_INSTRUCTION + (
+                    "This audit supplies one image, so all regions use primary. "
+                    "Return regions=[] when defect is false. "
                     "Return exactly one JSON object and no markdown. Focus "
                     "on obvious boundary defects involving visible text or "
                     "controls, prioritizing the boundary below the header. "
@@ -660,7 +721,7 @@ def _completion_payload(model, image_bytes, mime_type, context,
                     base64.b64encode(comparison_bytes).decode("ascii")),
             },
         })
-    system_instruction = _MODAL_LAYER_RULE + (
+    system_instruction = _MODAL_LAYER_RULE + _REGION_INSTRUCTION + (
         "Return exactly one JSON object and no markdown. "
         "TOP-PRIORITY OBVIOUS-DEFECT GATE: before any overall judgment, "
         "inspect the first visible body text or control below the header "
@@ -766,11 +827,12 @@ def _completion_content(response):
 
 
 def validate_spacing_audit(value):
-    if not isinstance(value, dict) or set(value) != {
-            "defect", "subject", "gap_relation", "reason"}:
+    required = {"defect", "subject", "gap_relation", "reason"}
+    if (not isinstance(value, dict) or not required <= set(value)
+            or set(value) - required - {"regions"}):
         raise ValueError(
             "spacing audit must contain only defect, subject, gap_relation, "
-            "and reason")
+            "reason, and optional regions")
     defect = value["defect"]
     subject = value["subject"]
     relation = value["gap_relation"]
@@ -790,12 +852,16 @@ def validate_spacing_audit(value):
     if defect != (relation in defect_relations):
         raise ValueError(
             "spacing audit defect must match the gap relation")
-    return {
+    normalized = {
         "defect": defect,
         "subject": subject.strip(),
         "gap_relation": relation,
         "reason": reason.strip(),
     }
+    regions = normalize_regions(value.get("regions"), allow_comparison=False)
+    if defect and regions:
+        normalized["regions"] = regions
+    return normalized
 
 
 def _apply_spacing_audits(verdict, audits):
@@ -805,16 +871,21 @@ def _apply_spacing_audits(verdict, audits):
     checks = [dict(item) for item in verdict["checks"]]
     spacing = checks[_CHECK_IDS.index("spacing_and_clearance")]
     evidence = []
+    regions = []
     for item in defects:
         audit = item["audit"]
         evidence.append(
             "%s: %s — %s" % (
                 item["role"], audit["subject"], audit["reason"]))
+        regions.extend(dict(region, image=item["image"])
+                       for region in audit.get("regions", ()))
     spacing.update({
         "status": "fail",
         "evidence_class": "aesthetic_defect",
         "reason": _safe_text("; ".join(evidence), MAX_REASON_LENGTH),
     })
+    if regions:
+        spacing["regions"] = normalize_regions(regions)
     return {
         "verdict": "fail",
         "checks": checks,
@@ -840,12 +911,13 @@ def validate_verdict(value, allow_design_mismatch=False):
     if not isinstance(checks, list) or len(checks) != len(CHECKLIST):
         raise ValueError("verdict must contain every checklist item")
     normalized = []
+    required = {"id", "status", "evidence_class", "reason"}
     for expected_id, item in zip(_CHECK_IDS, checks):
-        if not isinstance(item, dict) or set(item) != {
-                "id", "status", "evidence_class", "reason"}:
+        if (not isinstance(item, dict) or not required <= set(item)
+                or set(item) - required - {"regions"}):
             raise ValueError(
                 "each check must contain only id, status, evidence_class, "
-                "and reason")
+                "reason, and optional regions")
         if item["id"] != expected_id:
             raise ValueError("checklist ids must appear once in fixed order")
         status = item["status"]
@@ -881,6 +953,9 @@ def validate_verdict(value, allow_design_mismatch=False):
             "evidence_class": evidence_class,
             "reason": reason.strip(),
         })
+        regions = normalize_regions(item.get("regions"), allow_design_mismatch)
+        if status != "pass" and regions:
+            normalized[-1]["regions"] = regions
     derived = max(normalized, key=lambda item: _SEVERITY[item["status"]])[
         "status"]
     return {
@@ -1026,7 +1101,7 @@ class VisualCheckEvaluator:
                 ("printer screenshot", comparison[0], comparison[1]),
             ]
         audits = []
-        for role, audit_bytes, audit_mime in audit_inputs:
+        for image_index, (role, audit_bytes, audit_mime) in enumerate(audit_inputs):
             self._check_cancelled()
             try:
                 response = self.transport.complete(_spacing_audit_payload(
@@ -1040,7 +1115,8 @@ class VisualCheckEvaluator:
                 return _error_result(
                     model, "invalid_response", str(exc),
                     self.clock() - started, json_status="invalid")
-            audits.append({"role": role, "audit": audit})
+            audits.append({"role": role, "audit": audit,
+                           "image": "comparison" if image_index else "primary"})
         last_validation_error = None
         for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
             self._check_cancelled()
@@ -1074,6 +1150,7 @@ class VisualCheckEvaluator:
                 "check_id": item["id"], "status": item["status"],
                 "evidence_class": item["evidence_class"],
                 "reason": item["reason"],
+                **({"regions": item["regions"]} if item.get("regions") else {}),
             }
             for item in verdict["checks"] if item["status"] != "pass"
         ]

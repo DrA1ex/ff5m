@@ -18,6 +18,41 @@
   var afterFilter = [];
   var afterStart = [];
 
+  function renderRegions(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("canvas.issue-crop"), function (canvas) {
+      if (canvas.dataset.started) return;
+      canvas.dataset.started = "true";
+      var status = canvas.parentNode.querySelector(".crop-status");
+      var image = new Image();
+      image.onload = function () {
+        var region = canvas.dataset.region.split(" ").map(Number);
+        var x = Math.floor(region[0] * image.naturalWidth);
+        var y = Math.floor(region[1] * image.naturalHeight);
+        var width = Math.min(image.naturalWidth - x,
+          Math.ceil((region[0] + region[2]) * image.naturalWidth) - x);
+        var height = Math.min(image.naturalHeight - y,
+          Math.ceil((region[1] + region[3]) * image.naturalHeight) - y);
+        if (width <= 0 || height <= 0) {
+          status.textContent = "Detail unavailable; open the full image.";
+          return;
+        }
+        canvas.width = width * 2;
+        canvas.height = height * 2;
+        var context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = false;
+        context.drawImage(image, x, y, width, height, 0, 0, canvas.width, canvas.height);
+        canvas.hidden = false;
+        status.textContent = "2× detail (scaled to fit on narrow screens)";
+      };
+      image.onerror = function () {
+        status.textContent = "Detail unavailable; open the full image.";
+      };
+      image.src = canvas.dataset.src;
+    });
+  }
+
+  renderRegions(document);
+
   function updateUrl() {
     var query = new URLSearchParams();
     Object.keys(state).forEach(function (name) {
@@ -131,6 +166,7 @@
       if (!template) return;
       current = number;
       content.replaceChildren(template.content.cloneNode(true));
+      renderRegions(content);
       var tiles = visibleItems(".shot-tile");
       var index = tiles.findIndex(function (tile) { return tile.dataset.frame === String(number); });
       position.textContent = index < 0 ? "" : (index + 1) + " / " + tiles.length;

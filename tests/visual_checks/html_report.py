@@ -17,6 +17,8 @@ import pathlib
 import shutil
 import urllib.parse
 
+from .openai_compatible import normalize_regions
+
 ASSETS = pathlib.Path(__file__).parents[1] / "report_assets"
 ASSET_NAMES = ("report.css", "report.js")
 
@@ -288,6 +290,33 @@ def _images_html(view):
     return "".join(images)
 
 
+def _regions_html(view):
+    crops, seen = [], set()
+    findings = list(view["reasons"]) + list(view["checks"])
+    for finding in findings:
+        if finding.get("status") not in ("warn", "fail"):
+            continue
+        for region in normalize_regions(finding.get("regions")):
+            source = view["comparison"] if region["image"] == "comparison" else view["image"]
+            key = tuple(region[name] for name in ("image", "x", "y", "width", "height"))
+            if not source or key in seen:
+                continue
+            seen.add(key)
+            coordinates = " ".join(str(region[name]) for name in ("x", "y", "width", "height"))
+            check = finding.get("check_id") or finding.get("id") or "Finding"
+            crops.append(
+                '<figure class="issue-region"><canvas class="issue-crop" '
+                'data-src="%s" data-region="%s" role="img" aria-label="%s" hidden></canvas>'
+                '<figcaption><code>%s</code> · %s · <a href="%s">Full image</a>'
+                '<p>%s</p><span class="crop-status">Loading detail…</span>'
+                '</figcaption></figure>' % (
+                    source, _text(coordinates), _text("Problem area: " + check),
+                    _text(check), _text(region["image"]), source,
+                    _text(finding.get("reason"), "")))
+    return ('<section class="issue-regions"><h4>Problem areas · enlarged detail</h4>'
+            '<div class="region-grid">%s</div></section>' % "".join(crops)) if crops else ""
+
+
 def _detail(view):
     references = view["references"]
     references_html = ""
@@ -301,9 +330,9 @@ def _detail(view):
     return (
         '<article class="frame %s"><header><div>'
         '<span class="index">#%d</span><h3>%s</h3></div>%s</header>'
-        '<div class="images">%s</div>%s%s%s%s%s%s%s%s</article>' % (
+        '<div class="images">%s</div>%s%s%s%s%s%s%s%s%s</article>' % (
             view["outcome"], view["number"], _text(view["title"]),
-            _badge(view["verdict"]), _images_html(view), _parity_html(view),
+            _badge(view["verdict"]), _images_html(view), _regions_html(view), _parity_html(view),
             _meta_html(view), _error_html(view), _summary_html(view),
             _reasons_html(view), _expectation_html(view["expectation"]),
             _checklist_html(view), references_html))
@@ -520,14 +549,14 @@ def _problem_row(view, names):
         'data-check="%s" data-evidence="%s" data-error="%s" data-page="%s" '
         'data-source="%s" data-search="%s"><div class="problem-images">%s'
         '</div><div><header><h3>%s</h3>%s<a href="%s">Open details</a>'
-        "</header><p>%s</p>%s%s%s</div></article>" % (
+        "</header><p>%s</p>%s%s%s%s</div></article>" % (
             view["outcome"], _tokens([view["outcome"]]), _tokens(checks),
             _tokens(evidence), _tokens(errors), _tokens([view["page"]]),
             _tokens([view["source"]]), _text(_search_text(view)),
             images or '<div class="image-missing">Image unavailable</div>',
             _text(view["title"]), _badge(view["verdict"]),
             _frame_link(names, view), tags, _summary_html(view),
-            _reasons_html(view), _error_html(view)))
+            _regions_html(view), _reasons_html(view), _error_html(view)))
 
 
 def _problems(views, names):

@@ -172,6 +172,16 @@ background:var(--panel);border:1px solid var(--line);border-left:4px solid var(-
 border:1px solid var(--line);font-size:11px;color:var(--muted)}
 
 /* Compare */
+.issue-regions{margin:14px 0}
+.region-grid{display:flex;flex-wrap:wrap;gap:12px;align-items:start}
+.issue-region{margin:0;max-width:100%;min-width:0;padding:10px;background:#070b0e;
+border:1px solid var(--line);border-radius:7px}
+.issue-crop{display:block;max-width:100%;height:auto;image-rendering:pixelated}
+.issue-crop[hidden]{display:none}
+.issue-region figcaption{max-width:680px;margin-top:8px;color:var(--muted);font-size:12px}
+.issue-region figcaption p{margin:6px 0;color:var(--text)}
+.crop-status{font-size:11px}
+
 .compare{display:grid;grid-template-columns:280px minmax(0,1fr);gap:14px;align-items:start}
 .compare>aside{position:sticky;top:64px;display:flex;flex-direction:column;gap:8px;min-width:0;
 max-height:calc(100vh - 80px)}
