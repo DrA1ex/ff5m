@@ -1,5 +1,10 @@
 # Testing and change guide
 
+> [!NOTE]
+> This page documents the test tooling and execution details. For the project-wide
+> validation policy, release gate, and contributor expectations, see
+> [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+
 ## Validation posture
 
 The [user Klipper package tests](../tests/test_klipper_plugins.py) exercise optional
@@ -389,6 +394,8 @@ python3 -m tests.printer_regression \
   --suite ui component core \
   --confirm-unattended-physical-test
 ```
+
+`--no-video` skips camera recording and media assembly: FFmpeg is not required, `report.json`/`report.html`, telemetry, resource data, and verified printer artifacts are still written, and `media.status` is `disabled`. This is the expected mode for pull-request runs.
 
 `--suite` may also be repeated. `all` expands in place to `core`, then `print`.
 If a name appears more than once, directly or through `all`, only its first

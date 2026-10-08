@@ -32,7 +32,8 @@ def arguments(output, suite="all", extra=()):
     ] + list(extra))
 
 
-def fake_host_preflight(output, _suite_count, _run_timeout):
+def fake_host_preflight(output, _suite_count, _run_timeout, video=True):
+    del video
     pathlib.Path(output).mkdir(parents=True)
 
 
@@ -766,6 +767,24 @@ class OrchestrationTest(unittest.TestCase):
 
         self.assertFalse(media.started)
         self.assertEqual(report["camera"]["status"], "disabled")
+        self.assertEqual(report["warnings"], [])
+
+    def test_no_video_option_skips_camera_and_media(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            media = FakeMedia()
+            client = FakeClient()
+            report, _output = self._run(
+                temporary, client, media, suite="core",
+                extra=("--no-video",))
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(client.launched, ["core"])
+        self.assertEqual(report["telemetry"]["status"], "recorded")
+        self.assertFalse(media.started)
+        self.assertEqual(report["camera"]["status"], "disabled")
+        self.assertIsNone(media.duration)
+        self.assertEqual(
+            report["media"], {"status": "disabled", "recording": None})
         self.assertEqual(report["warnings"], [])
 
     def test_no_resource_monitor_option_declares_the_missing_sampler(self):
@@ -1555,6 +1574,17 @@ class HostPreflightTest(unittest.TestCase):
                     output, 1, 10,
                     which=lambda name: available.get(name),
                     disk_usage=lambda _path: shutil.disk_usage(temporary))
+            self.assertTrue(output.exists())
+
+    def test_no_video_does_not_require_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "run"
+            available = {"ssh": "/usr/bin/ssh", "scp": "/usr/bin/scp"}
+            REGRESSION._host_preflight(
+                output, 1, 10,
+                which=lambda name: available.get(name),
+                disk_usage=lambda _path: shutil.disk_usage(temporary),
+                video=False)
             self.assertTrue(output.exists())
 
     def test_missing_ssh_or_scp_is_actionable(self):

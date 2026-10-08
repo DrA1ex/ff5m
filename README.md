@@ -2,27 +2,66 @@
    <img width="600" src="https://github.com/user-attachments/assets/4e443f9c-02a7-483a-a9da-9afa6db6be2a" />
 </p>
 
-# Flashforge Adventurer 5M (Pro) Firmware Mod
+# Forge-X: Klipper Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
-This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
-The mod is based on ZMod, which itself is derived from Klipper-mod.
+**Forge-X** is a free, _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools. The mod can be fully removed.
 
 > [!CAUTION]
-> *If you choose to install this mod on your AD5M (Pro), be aware that you risk voiding your warranty or damaging your printer.*
-> *After installation or uninstallation, ensure that you check all printer parameters and perform a full recalibration. Failing to do so may result in damage to your printer.*
+> *If you install this mod on your AD5M (Pro), you risk voiding your warranty or damaging your printer.*
+> *After installation or uninstallation, check all printer parameters and perform a full recalibration. Skipping this step may damage your printer.*
 > *Proceed at your own risk!*
 
-## DISCLAIMER
+## Before you install
 
-The printer has Linux, but it’s not the Linux you’re used to.  
-**It’s not** like Ubuntu, Debian, Fedora, or other Linux distributions.  
-The printer **isn’t a desktop**. It uses firmware with a Linux core as its base.
+The printer runs vendor firmware on a Linux kernel. It is **not** a general-purpose computer and not Ubuntu, Debian, or any other desktop or server distribution.
 
-So, **read the documentation** before doing anything. Because you risk **completely bricking** your printer.   
-It’s restorable though, but **it requires additional hardware** or soldering in exceptional cases.
+**Read the documentation** before changing anything. A mistake can leave the printer unable to boot. It can be restored, but in rare cases that **requires additional hardware** or soldering.
 
-**Don’t flash different mod's firmware over another** unless you clearly understand what you are doing.   
-**Don’t delete** installation, uninstallation, or recovery **logs** — it’s may help to restore your printer.
+- Do not flash another mod's firmware over Forge-X (or Forge-X over another mod) unless you clearly understand what you are doing.
+- Do not delete installation, uninstallation, or recovery logs. They can help you restore the printer.
+
+## Quick facts
+
+- **Printers**: Flashforge Adventurer 5M and Adventurer 5M Pro.
+- **Stock firmware**: every version from 2.6.5 up to 5.1.7 (the newest checked). The version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md).
+- **What it is**: a reversible mod on top of the stock firmware, not a replacement of the whole system.
+- **Klipper**: the FlashForge host Klipper (0.11 generation) with [fixes and backports from newer upstream Klipper](/docs/KLIPPER.md). The stock MCU firmware is not reflashed.
+- **Web interfaces**: Fluidd (`http://<printer_ip>/fluidd/`), Mainsail (`http://<printer_ip>/mainsail/`), and the Moonraker API on port `7125`. SSH: `root` / `root`.
+- **Local screen**: Feather (default), Stock, Guppy Screen, or Headless. [HelixScreen](/docs/SCREEN.md) is available as an external option.
+- **Recovery**: boot guard with fallback to Stock, recovery menu, uninstaller, and recovery images ([details](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety)).
+- **License**: GPL-3.0 for Forge-X and its Klipper components. The native binary components have a [separate license](/LICENSE-BINARIES.md).
+
+## Quick start
+
+> [!CAUTION]
+> Releases before **1.4.1-11** have a Smart Park / `MOVE_SAFE` bug. Do not use KAMP, and do not use `MOVE_SAFE` while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
+
+**Required**
+
+1. Uninstall any other installed mods first (⚠️ make a backup).
+2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.
+3. In the slicer, update the [Start and End G-code](/docs/SLICING.md#for-stock-screen) and the [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
+4. Stock screen only: enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod).
+5. Enable the [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
+6. ⚠️ Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start), then [recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset. Some settings change during installation, and printing without recalibration can damage the printer.
+
+**Recommended**
+
+- `SET_MOD PARAM=tune_klipper VALUE=1`: [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors.
+- `SET_MOD PARAM=tune_config VALUE=1`: [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer (⚠️ recalibrate afterward).
+
+**Optional**
+
+- [Z-Offset](/docs/PRINTING.md#z-offset), [LED lighting](/docs/PRINTING.md#led-light-control), [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection), [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
+- The mod's [camera](/docs/CAMERA.md#step-3-enable-mods-camera).
+- The [Feather or Guppy screen](/docs/SCREEN.md#switching-to-feather-screen).
+- [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md) is enabled by default; review its settings.
+
+**Updates.** Forge-X, Fluidd, Mainsail, and Guppy Screen update over the air ([OTA](/docs/INSTALL.md#ota-updates)).
+
+**Reading next.** The [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages cover the features beyond the basic setup. If the printer works reliably, do not change resource settings. If you see recurring memory pressure, E0011/E0017, or *Timer too close* errors, read [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
+
+**If you run into problems:** check the [F.A.Q.](/docs/FAQ.md), then ask in the [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi) or on the [Discord server](https://discord.gg/K7MH4hAfeX) (Forums → mods-and-projects → Forge-X). Open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) only if you are certain it is a bug.
 
 ## Features
 
@@ -34,185 +73,116 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 <img width="400" src="https://github.com/user-attachments/assets/28a0ef3f-e7cf-4648-aff8-7f273d2b055b" />
 </p>
 
-- Fully interactive **Feather** screen
-- **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
-- **Klipper** with many patches/fixes/plugins specially adapted for AD5M
-- **Moonraker**
-- **Fluidd** & **Mainsail**
-- Adapted **Guppy** screen
-- Local and USB G-code browsing and print control from Feather
-- GuidedZ-offset, bed, extruder, PID, and Input Shaper calibration
-- Originally developed **Power Loss Recovery** specially for AD5M
-- **OTA** updates for Firmware, Fluidd, Mainsall, Guppyscreen
-- **Root** access (with zsh/.oh-my-zsh)
-- **Buzzer** with ability to play monotonic melodies (midi / notes)
-- Patched **video streamer** with dramatically reduced memory usage
-- Built-in **Timelapse**: takes photos during printing and makes a video ([setup](/docs/CAMERA.md#timelapse)).
+### Screens and interface
+
+- **Feather**: local touchscreen with G-code browsing (local and USB) and print control
+- **Stock** screen, which can be switched off in favor of a lighter one to save memory
+- Adapted **Guppy Screen**
+- **Fluidd** and **Mainsail** web interfaces, **Moonraker** API
+
+### Klipper and reliability
+
+- [Fixes and hardening for the AD5M](/docs/KLIPPER.md), including the E0017 (move queue overflow) and E0011 (communication timeout) mitigations and a fix for the `Timer too close` shutdowns caused by dense G-code
+- [Dual boot](/docs/DUAL_BOOT.md) with the stock FlashForge software
+- Backup and restore of the printer configuration
+
+### Calibration and print quality
+
+- Guided Z-offset, bed mesh, extruder, PID, and input shaper calibration, with plots for shaper calibration
+- Bed level screw tuning
+- Adaptive bed meshing with **KAMP**, including Smart Park
+- Revised Clear Nozzle algorithm
+
+### Print safety
+
+- Bed collision protection and a nozzle contact check based on the load cell
+- Bed mesh validation before printing
+- MD5 checks for G-code files
+- [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md), written for the AD5M
+
+### Connectivity and extras
+
+- **[forge-x-streamer](/docs/CAMERA.md)**: a low-memory camera service with device autodetection, automatic reconnect, and live image controls
+- Built-in **Timelapse**: photos during printing and a finished video ([setup](/docs/CAMERA.md#timelapse)).
 - **Telegram bot** for remote printer control and timelapse videos ([setup](/docs/TELEGRAM.md)); runs on a separate computer or server.
-- Adaptive bed meshing with **KAMP** with Smart Parking.
-- Built-in **MD5** checks for gcode files.
-- **Backup** and **Restore** mechanism for printer's configuration
-- Fix for the **Move queue overflow (E0017)** error.
-- Fix for the **Communication Timeout (E0011)** error.
-- **Failsafe** mechanism to prevent nozzle collisions.
-- Better **Clear Nozzle** algorithm.
-- Enhanced **Shaper Calibration** with automatic plot generation.
-- Easy **Bed Level Screw Tuning**.
-- Customized dedicated Linux environment based on **Buildroot**
-- **Entware** package manager for additional software installation
-- **Dual boot** with stock Flashforge software / Klipper Mod
+- Root access with zsh and oh-my-zsh, and the Entware package manager
+- Buzzer support, including melodies from MIDI files or notes
+- Your own macros, dialogs, shell commands, and startup services ([details](/docs/EXTENDING.md))
 
-## TL;DR
+## Why Forge-X and how it is built
 
-> [!CAUTION]
-> Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug.   
-> Do **not** enable or use KAMP.   
-> Do **not** `MOVE_SAFE`, while relative positioning (`G91`) is active.   
-> Upgrade to **1.4.1-11 or later** first.
+The AD5M hardware can produce good prints, but its software limits it. The host has only **128 MiB of RAM**, the bundled Klipper is from the older 0.11 generation, and the stock firmware exposes only a small part of what users expect from a Klipper-based printer.
 
-1. Uninstall any other installed mods first (⚠️ make a backup!).   
-2. [Install](/docs/INSTALL.md#flashing-the-firmware-image) the mod.   
-3. Update slicer [Start and End G-code](/docs/SLICING.md#for-stock-screen).   
-4. Update slicer [Host Type](/docs/SLICING.md#configuring-moonraker--klipper-connection).
-5. Enable [LAN-mode](/docs/PRINTING.md#using-stock-firmware-with-mod)
-6. Enable [MD5 check](/docs/SLICING.md#enabling-md5-checksum-validation) for G-code files.
-7. Update the mod to new versions using [OTA](/docs/INSTALL.md#ota-updates).
-8. **⚠️ Mandatory**: Read about [bed mesh calibration](/docs/CALIBRATION.md#before-you-start)
-9. **Recommended**: Enable [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors: `SET_MOD PARAM=tune_klipper VALUE=1`
-10. **Recommended**: Enable [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer: `SET_MOD PARAM=tune_config VALUE=1` (⚠️ requires recalibration afterward).   
-11. ⚠️ [Recalibrate](/docs/PRINTING.md#calibration) the bed mesh, input shaper, and Z offset.
-12. **Optional**: Learn about [Z-Offset](/docs/PRINTING.md#z-offset)
-13. **Optional**: Enable the mod’s [Camera](/docs/CAMERA.md#step-3-enable-mods-camera) implementation.   
-14. **Optional**: Configure your [LED lighting](/docs/PRINTING.md#led-light-control)
-15. **Optional**: Enable [Feather/Guppy Screen](/docs/SCREEN.md#switching-to-feather-screen).
-16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).
-17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
-18. **Optional**: Enable [Power Loss Recovery](/docs/PRINTING.md#power-loss-recovery-resurrection).
+Forge-X is built around these limits instead of assuming the resources of a newer printer. Memory, CPU load, background services, the screen, the camera, and Klipper timing are treated as one reliability problem: a service that takes too much memory or CPU can stop a print just as a Klipper bug can. Newer software is adapted to fit the hardware rather than added as it is.
 
-## Get Started
+Other problems are not about performance: missing Klipper workflows, long-standing AD5M-specific bugs, few ways to recover a printer that fails to boot, little diagnostic information, and no clean way to extend the system. Forge-X treats testing, failure handling, recovery, and documentation as part of the work itself. The goal is a system that can be maintained over time, where every change can be undone, and where others can add integrations or ports without relying on undocumented internals.
 
-To begin, follow the instructions on the [Installation page](/docs/INSTALL.md). After the installation, you will need to update your slicer's starting and finishing G-code. Refer to the [Slicing page](/docs/SLICING.md) for guidance.
+In practice:
 
-> [!WARNING]   
-> **Important:** Make sure to review your printer settings and recalibrate the bed mesh and Z-offset. Some settings may change during installation, and failure to recalibrate could potentially damage your printer.
-
-This modification also includes additional features. It is highly recommended that you thoroughly read the [Printing](/docs/PRINTING.md) and [Configuration](/docs/CONFIGURATION.md) pages before getting started.
-
-> [!NOTE]
-> **Advanced: resource and stability tuning.** If the printer works reliably, do not change resource settings. For recurring memory-pressure, E0011/E0017, or *Timer too close* errors, see [Reliability and resources](/docs/PRINTING.md#reducing-resource-usage). It explains when to reduce running services, tune Klipper, or use ZRAM instead of relying on eMMC swap, along with the trade-offs.
-
-For additional help, check out the [F.A.Q.](/docs/FAQ.md).
-
-You can reach services using these addresses:  
-- **Moonraker**: `http://<printer_ip>:7125/`  
-- **Fluidd**: `http://<printer_ip>/fluidd/`  
-- **Mainsail**: `http://<printer_ip>/mainsail/`
-- **SSH credentials**: `root` / `root`  
-
-If you encounter issues:  
-1. First, consult the documentation.
-2. If the problem persists:
-   - Join the [Telegram Support](https://t.me/+ihE2Ry8kBNkwYzhi) group
-   - Or, Join the [Discord server](https://discord.gg/K7MH4hAfeX)    
-     → Navigate to: Forums → mods-and-projects → Forge-X
-   - Only open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) if you're **absolutely certain** this is a bug.
-
-## Why This Mod Was Developed
-This mod was created to address several critical limitations and challenges faced by users of the Flashforge AD5M (Pro) 3D printer. Here are the key reasons behind its development:
-
-**Instability and Resource Issues in Existing Klipper Mods:**
-The previous Klipper mod for the AD5M has stopped development and is no really stable. It consumes excessive RAM, leading to issues such as "Timer too close" errors and other performance problems. And some of typical AD5M issues not fixed at all. This mod aims to resolve these issues by optimizing resource usage and ensuring a stable, reliable experience.
-
-**Closed and Inflexible Development in ZMOD:**
-While ZMOD introduced significant improvements, it is not user-friendly for further enhancements or fixes. Its closed nature and unique development approach make it difficult to modify without deep knowledge of the entire system. This mod focuses on rewriting the foundation to provide advanced users with more control, making it easier to apply patches, additions, and customizations.
-
-**Lack of Essential Functionality in Stock Firmware:**
-The stock firmware lacks many essential features that modern 3D printing enthusiasts expect. For example:
-The camera functionality is poorly optimized, consuming excessive RAM and delivering subpar performance.
-Users are unable to perform standard tasks that Klipper users typically rely on, such as advanced calibration, macros, and real-time monitoring.
-This mod addresses these shortcomings by integrating modern tools and features.
-
-**Outdated Klipper with Unresolved Bugs:**
-The existing Klipper implementation for the AD5M is outdated and plagued with bugs. This mod focuses on fixing these long-standing issues, modifying Klipper plugins, and enhancing core functionality to better suit the specific requirements of the AD5M (Pro) printer. The goal is to provide a stable, feature-rich platform tailored to this printer's unique hardware and user needs.
-
+- **Klipper.** Fixes and features from newer upstream Klipper are backported into the FlashForge host code instead of moving to Klipper 0.13. See [Klipper fixes](/docs/KLIPPER.md) and [Why doesn't Forge-X use Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013)
+- **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores them. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
+- **Memory.** Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen, and the camera service is written for the same limit. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
+- **Testing.** Each release goes through automated host tests, visual UI tests, and physical tests on a printer. The tests are in [`tests/`](/tests), and the process is in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
+- **Extensibility.** Your own macros, dialogs, shell commands, and startup services can be added without editing Forge-X files, so they survive updates. See [Customizing and extending Forge-X](/docs/EXTENDING.md).
 
 ## Documentation
-- [Installation](/docs/INSTALL.md)
-- [Configuration](/docs/CONFIGURATION.md)
-- [Slicing](/docs/SLICING.md)
-- [Printing](/docs/PRINTING.md)
-- [Macros](/docs/MACROS.md)
-- [Calibration](/docs/CALIBRATION.md)
-- [F.A.Q](/docs/FAQ.md)
-- [Alternative Screen](/docs/SCREEN.md)
-- [Camera and Timelapse](/docs/CAMERA.md)
-- [Telegram Bot](/docs/TELEGRAM.md)
-- [Dual boot](/docs/DUAL_BOOT.md)
-- [Uninstall](/docs/UNINSTALL.md)
-- [Recovery guide](/docs/RECOVERY.md)
 
-### Engineering documentation
+**Setup**
 
-The [OpenWiki](openwiki/quickstart.md) provides a code-oriented guide for contributors and advanced users. It complements the operator documentation above; follow the operator guides for installation, calibration, and recovery procedures.
+- [Installation](/docs/INSTALL.md) · [Compatibility](/docs/COMPATIBILITY.md) · [Slicing](/docs/SLICING.md) · [Configuration](/docs/CONFIGURATION.md)
 
-- [Architecture overview](openwiki/architecture.md)
-- [Source map](openwiki/source-map.md)
-- [Chroot environment and web runtime](openwiki/workflows/chroot-and-web-runtime.md)
-- [Configuration and printing workflows](openwiki/workflows/configuration-and-printing.md)
-- [Screen modes and Feather](openwiki/workflows/screens-and-feather.md)
-- [Built-in Klipper patching](openwiki/workflows/klipper-patching.md)
-- [Forge-X Klipper extensions](openwiki/workflows/klipper-extensions.md)
-- [Operations and recovery](openwiki/workflows/operations-and-recovery.md)
-- [Integrations](openwiki/integrations.md)
-- [Testing and change guide](openwiki/testing-and-change-guide.md)
+**Using the printer**
 
-If you encounter any issues, feel free to join Telegram group for support: [Join here](https://t.me/+ihE2Ry8kBNkwYzhi).
-You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfeX) (Navigate to: Forums → mods-and-projects → Forge-X)
+- [Printing](/docs/PRINTING.md) · [Calibration](/docs/CALIBRATION.md) · [Macros](/docs/MACROS.md) · [Screens](/docs/SCREEN.md) · [Feather](/docs/FEATHER.md) · [Camera](/docs/CAMERA.md) · [Telegram bot and timelapse](/docs/TELEGRAM.md) · [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md)
 
-## TODO
+**Maintenance and recovery**
 
-- [x] Feather Screen: Ultra-lightweight interactive UI for essential local control
-- [x] Klipper bugfixes related to processing of G-Code containing Unicode symbols (specific for non-English symbols in object names)
-- [x] Mainsail OTA: Fixed and patched implementation to work correctly with navigation, with OTA updates
-- [x] Power-loss recovery for non-Stock screens
-- [x] Integration and adaptation of GuppyScreen for AD5M
-- [x] A custom interactive Feather screen built specifically for the AD5M printer running Forge-X.
+- [Dual boot and recovery menu](/docs/DUAL_BOOT.md) · [Firmware recovery guide](/docs/RECOVERY.md) · [Uninstall](/docs/UNINSTALL.md)
+
+**Reference**
+
+- [F.A.Q.](/docs/FAQ.md) · [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md) · [Customizing and extending Forge-X](/docs/EXTENDING.md)
+
+**For contributors**
+
+- [Development, testing, and release validation](/docs/DEVELOPMENT.md) · [Contributor guidelines](CONTRIBUTING.md)
+- [OpenWiki](openwiki/quickstart.md): a code-oriented guide ([architecture](openwiki/architecture.md), [source map](openwiki/source-map.md), [testing and change guide](openwiki/testing-and-change-guide.md)). For installation, calibration, and recovery, use the guides above.
+
+## Community and support
+
+- [Telegram support group](https://t.me/+ihE2Ry8kBNkwYzhi)
+- [Discord](https://discord.gg/K7MH4hAfeX) (Forums → mods-and-projects → Forge-X)
 
 ## Support Forge-X
 
-Forge-X is an open-source, free project built for the community, and everyone is welcome to use it without cost. However, developing new features, writing detailed documentation, and providing ongoing support through the community demands a significant amount of time and dedication. If you enjoy using Forge-X and appreciate the effort behind it, consider supporting the project with a donation. Your contributions help ensure the time needed to keep improving the mod, adding new features and maintaining active support.
+Forge-X is free, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
 
 - **[Boosty (Donate)](https://boosty.to/dra1ex/donate)**
-
 - **[Boosty (Subscribe)](https://boosty.to/dra1ex)**
-
-- **[Cryptocurrency Donations](https://telegra.ph/FORGE-X-10-24)**:
+- **[Cryptocurrency donations](https://telegra.ph/FORGE-X-10-24)**
 
 ## Credits
 
-Thanks [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) developers for their great work.
+Forge-X builds on the work of many people and projects:
 
-Thanks to the Klipper and Moonraker communities for their ongoing development.
+- Thanks to the [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) developers for their excellent work.
+- The integration with the Stock screen is based on the implementation from [ZMod](https://github.com/ghzserg/zmod) by [ghzserg](https://github.com/ghzserg).
+- Thanks to the Klipper and Moonraker communities for their ongoing development.
+- Thanks to the Russian-speaking FlashForge Adventurer 5M Telegram community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro).
+- Thanks to [@Zero](https://www.youtube.com/@zerodotcmd) for the logo.
 
-Thanks to the Russian FlashForge Adventurer 5M Telegram Community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro)
-
-Big thanks [@Zero](https://www.youtube.com/@zerodotcmd) for the awesome logo! 
-
-This mod is based on ZMod by [ghzserg](https://github.com/ghzserg).
-
-Thanks for the great open-source fonts:
+Thanks to the authors of these open-source fonts:
 - [Roboto Font](https://fonts.google.com/specimen/Roboto)
 - [JetBrains Mono Font](https://www.jetbrains.com/lp/mono)
 - [Typicons Icons Font](https://www.s-ings.com/typicons/)
 
 ### Special Thanks
 
-I’m truly thankful for everyone who has supported this project with their donations. Your contributions mean a lot to me and help make this work possible.
-Every contribution, no matter the size, makes a huge difference and shows the strength of our community.
+Thank you to everyone who has supported this project with a donation. Your support gives the project time to grow, and every contribution, whatever its size, is appreciated.
 
-Here are some of the wonderful people:   
+Supporters:
 **906Prints, MattArmfield, Stormage, Spud, Luigisvc, slydog43, Никита (motionpix), CHaucke, Andrew Popow, K3D // Dmitry Sorkin, D T, Kurt LaRue, jollyroger1789**
 
 #### Anonymous donations
 
-I also want to express my heartfelt gratitude to those who have supported the project anonymously through cryptocurrency.
+Thank you also to everyone who supported the project anonymously with cryptocurrency.

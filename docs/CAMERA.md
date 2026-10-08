@@ -1,27 +1,42 @@
-## Camera Configuration Documentation
-### Purpose of Alternative Camera Configuration
+# Camera
 
-The stock camera implementation on the Flashforge AD5M (Pro) consumes significant system resources, particularly RAM. Given the printer's limited 128MiB of RAM, this can lead to performance degradation during operation. To address this, the mod provides an optimized camera implementation with reduced RAM usage, achieved through specific patches to `mjpg_streamer`.
+Forge-X includes its own camera service, **forge-x-streamer**. It serves an MJPEG stream and snapshots from a USB camera while using as little of the printer's 128 MiB of RAM as possible. The stock camera service also works, but it uses much more memory.
 
-While the stock camera remains available, the mod's camera is optimized for minimal resource consumption, making it the preferred choice for stable printing.  
+## Quick start
 
-> [!NOTE]
-> If you choose to use the alternative display implementation (e.g., Feather Screen), the stock camera will not be available, as the stock firmware is completely disabled in this mode. In such cases, the mod's camera is the only option.
+1. **Feather, Guppy, or Headless mode:** nothing to do. On boot, Forge-X enables its camera if a working video device is found and the `camera` parameter has never been set.
+2. **Stock screen mode:** turn off both camera photo and camera video in the printer's on-screen settings, then run:
 
-If you still want to use stock camera functionality, read the next section.
+   ```gcode
+   SET_MOD PARAM="camera" VALUE=1
+   ```
 
-On boot with Feather, Guppy, or Headless, Forge-X enables the mod camera if
-`camera` has never been set and a working video device is found. An explicit
-`camera=0` is respected. The normal boot log records whether a device was found.
+3. Reload Fluidd or Mainsail. The camera should appear in the web interface.
 
-### Using the Stock Camera
+Useful addresses (port `8080`):
 
-If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. However, be aware that the stock camera consumes significantly more resources, which may impact overall printer performance and could lead to print failures, such as unexpected print stoppages. You have been warned. Proceed at your own risk.
+- Stream: `http://<printer_ip>:8080/?action=stream`
+- Snapshot: `http://<printer_ip>:8080/?action=snapshot`
+- Image settings: `http://<printer_ip>:8080/control.htm`
 
+If the stream stops or looks wrong, run `CAMERA_RESTART`. After editing `camera.conf` by hand, run `CAMERA_RELOAD`.
 
-### Configuring the Mod's Camera
+> [!WARNING]
+> Port `8080` and the control page have no password. Use them only on a trusted network.
 
-#### Step 1: Modify Camera Configuration
+**Details:**
+[Configure the camera](#configuring-the-mods-camera) ·
+[Use the stock camera](#using-the-stock-camera) ·
+[Why a dedicated camera service](#why-a-separate-camera-service) ·
+[How it behaves](#how-it-behaves) ·
+[Image settings](#image-settings-page) ·
+[Camera questions in the FAQ](FAQ.md#how-do-i-adjust-the-camera-settings)
+
+## Configuring the Mod's Camera
+
+Edit `camera.conf` to change the resolution, frame rate, or image settings. Steps 2 and 3 are needed only if you use the Stock screen mode.
+
+### Step 1: Modify Camera Configuration
 The camera settings are defined in the `camera.conf` file, located in Fluidd under _Configuration -> mod_data -> camera.conf_. Below is the default configuration:
 
 ```cfg
@@ -71,51 +86,28 @@ You can adjust these parameters to suit your camera. Increasing resolution or
 FPS can increase memory use, so check the result with the `MEM` macro under the
 same workload used while printing.
 
-Open `http://printer_ip:8080/control.htm` to see the live MJPEG stream and the
-current image controls. The image updates continuously over one stream
-connection and reconnects if camera recovery closes that connection.
+#### Image settings page
 
-- Every edit is applied to the running camera automatically after a short
-  delay, without writing `camera.conf`. Temporary values remain active across
-  an in-process camera recovery, but are replaced by the file on
-  `CAMERA_RELOAD` or service restart. While an arrow key is held, intermediate
-  values are applied at least once per second; the final value is applied
-  shortly after the key is released.
-- The panel reads supported ranges, current values, and menu entries from the
-  active V4L2 driver. Camera menus and small discrete integer ranges are shown
-  as selectors, so invalid intermediate values cannot be entered. A numeric
-  selector whose advertised minimum is above zero also includes `0 (special)`
-  for camera drivers that accept zero as an undocumented off value. Hold
-  `Shift` while pressing an arrow key to move a numeric control by ten steps.
-- **Save** atomically updates the image-control entries in `camera.conf` and
-  preserves unrelated settings and comments. Saving is available because
-  `S98camera` passes the configuration path through `--controls-file`.
-- After editing `camera.conf` manually, run `CAMERA_RELOAD`. The streamer
-  rereads the file without restarting the HTTP service.
+Open `http://<printer_ip>:8080/control.htm` to see the stream and the camera's image settings.
 
-The panel, controls API, and MJPEG stream share the streamer's existing HTTP
-listener. Opening the panel does not start another HTTP server or allocate a
-second server-side frame buffer; its `<img>` connects to the existing MJPEG
-route. A controls request uses one bounded HTTP client slot only while the
-request is active.
+- Changes apply to the running camera after a short delay. They are not written to `camera.conf` until you press **Save**, and are replaced by the file on `CAMERA_RELOAD` or a service restart.
+- The page shows only the settings your camera reports, with its own ranges and options. Hold `Shift` with an arrow key to change a number by ten steps. Some settings include `0 (special)` for cameras that use zero as "off".
+- **Save** writes the image settings to `camera.conf` and keeps the rest of the file unchanged.
+- After editing `camera.conf` by hand, run `CAMERA_RELOAD`. The service rereads the file without restarting.
+- Saved settings are applied again every time the camera starts or reconnects.
+- Changing resolution, FPS, video device, or `REDUCE_MEMORY` requires `CAMERA_RESTART`.
 
-On every service start and camera recovery, saved controls are applied after
-the first completed frame so UVC initialization cannot immediately overwrite
-them. Changes to resolution, FPS, video device, or memory-reduction mode still
-require `CAMERA_RESTART`.
+The page uses the same HTTP server and stream as the camera, so opening it does not add a second server or frame buffer.
 
-The control page has no separate authentication layer. Treat port 8080 as a
-trusted-LAN interface and do not expose it directly to an untrusted network.
-
-#### Step 2: Disable Stock Camera
+### Step 2: Disable Stock Camera
 To ensure the mod's camera is used, you need to disable the stock camera functionality. Here’s how:
 
 1. Go to the printer's on-screen settings.
 2. Disable both camera photo and camera video.
 
-This step is crucial to avoid conflicts between the stock and mod camera implementations.
+This step prevents conflicts between the stock and mod camera implementations.
 
-#### Step 3: Enable Mod's Camera
+### Step 3: Enable Mod's Camera
 Once the stock camera is disabled, enable the mod's camera by running the following command in the console:
 
 ```
@@ -124,11 +116,11 @@ SET_MOD PARAM="camera" VALUE=1
 
 This command activates the mod's camera implementation.
 
-#### Step 4: Reload Fluidd
+### Step 4: Reload Fluidd
 After completing the configuration, reload the Fluidd page. The camera should now be operational, and you should be able to view the stream and take snapshots.
 
-#### Notes for Mainsail Users
-If you’re using Mainsail, the configuration process is nearly identical to Fluidd. Simply follow the steps above, and you’ll be good to go. If you run into any issues, double-check the URLs and ensure the stock camera is disabled.
+### Notes for Mainsail Users
+If you’re using Mainsail, the configuration process is nearly identical to Fluidd. Follow the same steps. If something does not work, check the URLs and make sure the stock camera is disabled.
 
 ### Timelapse
 
@@ -156,3 +148,36 @@ does not change the setting for later prints.
 
 Find finished videos in Mainsail's Timelapse view. Video creation can take
 time; starting another print stops an unfinished video.
+
+## Using the Stock Camera
+
+If you prefer to use the stock camera functionality, you can skip Steps 1–3 and start directly with Step 4. Configure the camera settings in Fluidd or Mainsail as described, and ensure the stock camera is enabled in the printer's on-screen settings. The stock camera uses noticeably more memory, which can lead to print failures such as unexpected stops on heavy prints.
+
+## About forge-x-streamer
+
+This section explains how the camera service works. You do not need it to set up the camera.
+
+### Why a separate camera service
+
+The printer has 128 MiB of RAM, and every megabyte used by the camera is taken from Klipper, Moonraker, the screen, and your own additions. forge-x-streamer is written for this limit: capture, HTTP streaming, image controls, and reconnect logic are in one small program with fixed limits on buffers and clients. It uses less memory than general-purpose streamers such as `ustreamer` that were used on the AD5M before.
+
+Actual memory use depends on the camera, format, resolution, and number of viewers. Use the `MEM` macro to check your own setup. The source is at [DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
+
+### How it behaves
+
+- `VIDEO=auto` scans `/dev/video0..63` and picks a device that can stream.
+- If the camera times out, disconnects, or returns errors, the service closes it and keeps trying to reopen or find it again. Forge-X does not need to be restarted.
+- While the camera is offline, open streams and snapshots get a generated **NO SIGNAL** image (streams at 2 FPS). A single bad frame is dropped without switching to NO SIGNAL.
+- A camera that starts in an unsupported format is asked to switch to a supported one when it is reopened.
+- A slow browser cannot hold the camera's capture buffer.
+- Extra clients and oversized or broken frames are rejected instead of using more memory.
+- A failed `CAMERA_RELOAD` keeps the last valid settings.
+
+### Technical details
+
+- **Endpoints:** `/?action=stream` (MJPEG; `POST /stream` also works), `/?action=snapshot` (JPEG), `/healthz` (returns `503` while the camera is offline), `/control.htm` (control page), and `/controls` (read, apply, and save image controls). The stream format matches the previous MJPEG streamer, so existing clients keep working.
+- **Defaults:** 640×480, 15 FPS, one V4L2 capture buffer, and three video clients. One extra worker is kept for snapshots and controls. Requests over the limit get HTTP `429`.
+- **Memory limits:** each worker thread has a 128 KiB stack. Frame buffers grow only to the largest frame actually seen. The control page is a 6 KiB static page.
+- **`REDUCE_MEMORY`:** maps to `--frame-cap`, which limits the capture buffer for cameras that report a 1080p-sized buffer at every resolution.
+- **Raw formats:** when built with libjpeg (`WITH_RAW_INPUT`), YUYV, UYVY, RGB24, and RGB565 input is encoded to JPEG. The MJPEG-only build does not link libjpeg.
+- **Standalone use:** forge-x-streamer builds on other Linux systems with V4L2 and is licensed under GPL-2.0-or-later. Its CI builds both variants and runs the tests. See its [repository](https://github.com/DrA1ex/forge-x-streamer) for build and runtime options.

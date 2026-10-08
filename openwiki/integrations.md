@@ -15,31 +15,35 @@ Fluidd and Mainsail are available through the printer HTTP service; the README d
 
 ## Camera
 
-[`.shell/S98camera`](../.shell/S98camera) controls optional `mjpg_streamer` on port 8080. It creates a default persistent camera configuration when needed, passes the path through `--controls-file`, passes explicit V4L2 devices directly, and delegates `auto` selection and recovery to the streamer. Resolution/FPS and the optional frame cap are startup settings. The streamer owns visual controls: it reads them from the same configuration, applies them after the first completed frame of every camera open, and rereads them when the service sends `SIGHUP` for `CAMERA_RELOAD`.
+[`.shell/S98camera`](../.shell/S98camera) owns the Forge-X camera service on port 8080.
+The camera implementation is maintained separately as **forge-x-streamer**:
+[DrA1ex/forge-x-streamer](https://github.com/DrA1ex/forge-x-streamer).
 
-The streamer serves a compiled-in low-memory panel at `/control.htm`. Its
-`<img>` uses the existing MJPEG endpoint, so there is no second server-side
-frame buffer or second HTTP server. `GET /controls` returns the desired state
-plus ranges, current values, and menu entries queried from the active V4L2
-driver. The panel renders menus and small discrete ranges as selectors and
-automatically sends bounded temporary updates after each edit. Numeric
-selectors also expose a special zero when the advertised range starts above
-zero, while real V4L2 menus remain limited to their queried entries. The UI
-combines a short debounce with a one-second maximum wait, so held keys produce
-periodic feedback without flooding the controls endpoint. Its single
-**Save** button atomically updates the known `camera.conf` entries while
-preserving unrelated settings and comments. Persistence must fail when no
-controls-file path was supplied. HTTP client threads never issue V4L2 ioctls
-directly; they publish an update for the capture thread so device close/recovery
-cannot race control application. Controls requests use the existing bounded
-client threads only for their duration; no permanent panel worker is created.
+`forge-x-streamer` is a single-process V4L2-to-HTTP MJPEG service designed for the AD5M's 128 MiB host.
+It combines capture, bounded frame publication, HTTP serving, camera controls, and recovery in one executable instead of relying on a runtime plugin stack.
+Normal MJPEG/JPEG operation does not link libjpeg. The default capture request is one V4L2 buffer, while publisher/client memory, client count, and worker stacks are bounded.
 
-Camera is enabled through the persistent `camera` parameter; source comments and [`docs/CAMERA.md`](../docs/CAMERA.md) make two constraints clear:
+`S98camera` creates the persistent camera configuration when needed and passes resolution/FPS, memory limits, the controls-file path, and explicit or automatic device selection to the streamer.
+`VIDEO=auto` is resolved by forge-x-streamer itself: it scans `/dev/video0..63` and selects a device that exposes usable V4L2 streaming capability.
 
-- do not run stock and mod camera paths simultaneously;
-- higher image rate/resolution can consume scarce RAM, so verify memory under expected print load.
-- port 8080 and its write-capable control panel have no separate authentication,
-  so keep them on a trusted network or behind an authenticated proxy/tunnel.
+Camera recovery is owned by the streamer rather than by Klipper or the web UI.
+Capture timeouts, disconnects, I/O failures, and device changes close the capture side and enter a bounded reopen/rediscovery loop.
+The HTTP server remains alive and existing clients receive a generated **NO SIGNAL** image until a real frame source returns.
+Capture buffers are requeued before logging or client socket work, so a slow client cannot retain the camera's capture buffer.
+
+The built-in `/control.htm` page and `/controls` API expose V4L2 image controls supported by the active camera, including brightness, contrast, gain, gamma, hue, saturation, sharpness, power-line frequency, white balance, backlight compensation, and exposure controls.
+The active driver's valid ranges and menu values are queried instead of assumed.
+Changes can be applied live; **Save** atomically updates the known `camera.conf` entries while preserving unrelated content.
+`CAMERA_RELOAD` uses `SIGHUP` to reread saved controls without restarting the HTTP service, and saved controls are reapplied after the first completed frame on every camera open/reconnect.
+
+The separate forge-x-streamer repository contains tests for capture recovery and device rediscovery, JPEG bounds/normalization, HTTP backpressure and routes, control persistence, NO SIGNAL behavior, publisher lifecycle, optional raw-format encoding, and process shutdown.
+Actual RAM and CPU use still depends on camera mode, negotiated buffers, resolution, and connected clients, so target measurements should be used for performance claims.
+
+Camera is enabled through the persistent `camera` parameter. Keep these constraints explicit:
+
+- do not run stock and Forge-X camera paths simultaneously;
+- higher image rate/resolution can consume scarce RAM, so verify memory under expected print load;
+- port 8080 and its write-capable control panel have no separate authentication, so keep them on a trusted network or behind an authenticated proxy/tunnel.
 
 ## Timelapse
 

@@ -1,5 +1,20 @@
 # Firmware Recovery Guide
 
+> [!NOTE]
+> This page is about recovering the **printer/firmware** itself. To resume an interrupted print after power loss or a crash, see the [Power Loss Recovery guide](POWER_LOSS_RECOVERY.md).
+
+## Automatic fallback to stock firmware
+
+If Forge-X fails to start, you usually don't need special tools:
+
+- If normal startup is interrupted or does not finish, the next boot skips Forge-X and starts the stock firmware once.
+- If a Recovery session is interrupted, the next boot also starts the stock firmware instead of re-entering Recovery.
+- After an update, the new startup code must finish successfully once before it replaces the previous boot code. A broken update falls back to stock instead of failing on every boot.
+
+To fix or remove the mod, open the [Recovery menu](#forge-x-recovery-menu) by rebooting during the `REBOOT THE PRINTER NOW TO ENTER RECOVERY!` message (see [Dual Boot](DUAL_BOOT.md)). UART, U-Boot, and FEL (below) are needed only when this does not work.
+
+Technical details and tests: [Stock firmware integration and lifecycle safety](DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
+
 ## Forge-X Recovery Menu
 
 Early Forge-X Recovery groups the available operations by purpose:
@@ -48,11 +63,11 @@ In most cases, this should restore your printer's functionality.
 
 ## Recovery using UART
 
-If you’ve modified internal system files and something went wrong—your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen—don’t worry. This is fixable, and it doesn’t require advanced skills. Let’s start by diagnosing the issue.
+If you’ve modified internal system files and something went wrong—your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen—this is usually fixable and does not require advanced skills. Start by diagnosing the issue.
 
 ### Diagnostics
 
-To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Using a 5V adapter can **damage** the motherboard, so be careful. Alternatively, you can use an ESP8266/ESP32 (do not use an Arduino, as it operates at 5V and could **fry the CPU**). Flash the ESP with the MultiSerial example from the Arduino IDE `(Examples -> Communications -> MultiSerial)`, but change the `Serial` and `Serial1` Baud to `115200`.
+To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Using a 5V adapter can **damage** the motherboard, so be careful. Alternatively, you can use an ESP8266/ESP32 (do not use an Arduino, as it operates at 5V and could **permanently damage the CPU**). Flash the ESP with the MultiSerial example from the Arduino IDE `(Examples -> Communications -> MultiSerial)`, but change the `Serial` and `Serial1` Baud to `115200`.
 
 Next, connect the UART adapter to the motherboard near the processor (next to USB0).   
 Connect the wires as follows:
@@ -69,7 +84,7 @@ Connect the wires as follows:
 
 Connect the adapter to your PC and open a terminal program (e.g., PuTTY, Arduino IDE, or PlatformIO). 
 
-At Mac/Linux you can use `screeen`:
+On macOS or Linux you can use `screen`:
 ```bash
 screen /dev/<device> 115200
 ```
@@ -157,7 +172,7 @@ cd /mnt/usb
 
 # 2. Copy the image to a temporary folder.
 # You can flash any other firmware image using this method.
-# For example, here we run the Forge-X Recovery
+# For example, this runs the Forge-X Recovery
 mkdir -p /data/tmp
 cp ./Adventurer5M-3.x.x-2.2.3-recovery-full.tgz /data/tmp/
 
@@ -185,11 +200,11 @@ reboot -f
 
 The system should now boot normally. You can leave the UART connected if needed. If SSH isn’t working, you can log in via UART using the credentials root/root.   
 
-If this method doesn’t work, don’t lose hope. If the system partially boots, you might still be able to recover files via UART.
+If this method doesn’t work, the printer may still be recoverable. If the system partially boots, you might be able to recover files via UART.
 
 ### Recovery using FEL
 
-If the easy method doesn’t work and the system is completely unbootable, you’ll need to restore the firmware using FEL mode. This requires a firmware dump and some additional steps.
+If the previous method doesn’t work and the system is completely unbootable, restore the firmware using FEL mode. This requires a firmware dump and some additional steps.
 
 You can download the necessary files and access the guide from this link: [Firmware Recovery Files and Guide](https://disk.yandex.ru/d/ZBONCfNZEEiDMg).
 

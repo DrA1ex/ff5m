@@ -33,7 +33,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`block_cloud`**: Blocks the stock FlashForge cloud / telemetry endpoints (Flash Studio / MQTT, VoxelShare, stock OTA, NetEase IM) if set to `1`. Default `0` (off) — leave disabled if you use FlashForge cloud, video streaming or model sharing. Blocking is done at name-resolution level (`/etc/hosts`) only. Full air-gap additionally requires router-level blocking of AlibabaCloud OSS upload URLs.
 
-- **`tune_klipper`**: Enables a fix for Communication Timeout (E0011) / Move Queue Overflow (EO017) errors if set to `1`.  
+- **`tune_klipper`**: Enables a fix for Communication Timeout (E0011) / Move Queue Overflow (E0017) errors if set to `1`.
 
 - **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
 
@@ -47,20 +47,9 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`safe_z`**: Sets the absolute Z height used before lateral parking, cleaning, and calibration moves. Default: `10` mm; minimum: `1` mm.
 
-  > [!WARNING]
-  > The real nozzle-to-bed clearance can be smaller than this value because bed leveling changes the effective bed position, and a non-standard nozzle can extend farther toward the bed. Choose a height that safely clears the bed on your printer, and verify Z-offset calibration after changing the bed setup or nozzle.
-
-  ```gcode
-  SET_MOD PARAM=safe_z VALUE=10
-  ```
-
   Feather can calculate this value from the bed position in **Control → Calibration → Z Offset**. Re-run the Safe Z step after changing the nozzle or bed setup.
 
-- **`pause_z_min`**: Sets the minimum absolute Z position used when parking for a pause (`PAUSE`, `M600`, layer pauses). The default is `50` mm. The bed is never raised: a print that already sits lower keeps its height and only gets the normal pause lift. The final target is capped 10 mm below the configured Klipper Z maximum. This setting replaces `m600_z_min` and keeps its default, so a height you had tuned there stays in effect under the new name.
-
-  ```gcode
-  SET_MOD PARAM=pause_z_min VALUE=100
-  ```
+- **`pause_z_min`**: Sets the minimum absolute Z position used when parking for a pause (`PAUSE`, `M600`, layer pauses). The default is `50` mm.
 
 - **`check_md5`**: Enables MD5 checksum verification for G-code files.  
   **Note**: Requires a [post-processing script](/docs/SLICING.md#md5-checksum-validation) in your slicer. Scripts are available in *Configuration → mod* (`addMD5.sh` or `addMD5.bat`).  
@@ -161,7 +150,7 @@ To preserve all your custom parameters and configurations within the mod, you ca
 
 ## User-Defined Parameters
 
-The mod allows you to customize and extend functionality by defining your own macros or overriding existing printer parameters. This override any printer configuration, including `tuning.cfg`. Additionally, you can adjust Moonraker-specific parameters.
+The mod allows you to customize and extend functionality by defining your own macros or overriding existing printer parameters. See also [Customizing and extending Forge-X](EXTENDING.md) for more examples, including Feather dialogs and startup services. These settings override any printer configuration, including `tuning.cfg`. Additionally, you can adjust Moonraker-specific parameters.
 
 > [!NOTE]
 > Changes to `user.cfg` and `user.moonraker.conf` are applied after a restart or configuration reload.

@@ -1,0 +1,56 @@
+# Forge-X
+
+> Forge-X is a free, unofficial firmware mod for the Flashforge Adventurer 5M and 5M Pro (AD5M) 3D printers. It runs on top of the stock firmware and adds Klipper with AD5M-specific fixes, Moonraker, Fluidd, Mainsail, a built-in lightweight touchscreen (Feather), guided calibration, print-safety features, Power Loss Recovery, a low-memory camera service, OTA updates, and recovery tools. It is designed for the printer's 128 MiB of RAM and can be fully removed.
+
+Key facts:
+- Supported printers: Flashforge Adventurer 5M and Adventurer 5M Pro only.
+- Supported stock firmware: every version from 2.6.5 up to 5.1.7 (the newest checked). The stock firmware version does not matter unless the Stock screen is used: the Linux system, kernel, base libraries and the MCU firmware are the same across versions, and a firmware update mainly replaces the Stock screen application (docs/COMPATIBILITY.md). For the Stock screen, firmware 3.1.x is recommended as the most stable while printing; versions newer than 3.1.x are needed only for the FlashForge cloud services.
+- Klipper: the FlashForge host Klipper (0.11 generation) with reviewed backports of upstream Klipper fixes; MCU firmware is not reflashed.
+- Web interfaces: Fluidd (/fluidd/), Mainsail (/mainsail/), Moonraker API on port 7125. SSH: root / root.
+- Local screens: Feather (default, built in), Stock, Guppy Screen, Headless.
+- Camera: forge-x-streamer, a dedicated low-memory MJPEG service.
+- Safety and recovery: last-known-good boot guard, recovery menu, fallback to the stock firmware, uninstaller and recovery images, per-file .bak backups of patched Klipper files.
+- Testing before releases: automated host tests, rendered G-code macro tests, visual UI tests, on-printer tests, and physical print tests.
+- Klipper patch provenance: the replaced Klipper files are published as Git history (upstream v0.11.0, the stock FlashForge changes, then Forge-X commits) at https://github.com/DrA1ex/klipper-ad5m; docs/klipper-ad5m-manifest.json lists the SHA-256 of every shipped file and tests/verify_klipper_fork.py checks them against that repository. The history is reconstructed by topic; see docs/KLIPPER.md.
+- Design choice: Forge-X keeps the vendor-compatible Klipper host and MCU firmware (no MCU reflash) and backports newer upstream fixes and features, because a full Klipper 0.13 is not needed at the moment (it can be adopted if a real need appears).
+- Customization: own macros and overrides in user.cfg, own dialogs on the Feather screen (Klipper action:prompt messages), shell commands, own startup services (S* scripts in /etc/init.d of the Forge-X chroot), user.moonraker.conf, Entware packages, Headless mode with custom displays.
+- Updates: Forge-X, Fluidd, Mainsail, and Guppy Screen update separately through Moonraker Update Manager.
+- Boot safety: the installed boot guard (.shell/S00init) is replaced only after the new runtime reports ready; an interrupted or failed initialization boots the stock firmware on the next start.
+- Configuration changes go through a parser (.py/cfg_backup.py) with declarative profiles, backup, restore, and verify, not through ad-hoc text edits.
+- Motion limits for parking moves are held in one macro, MOVE_SAFE. Power Loss Recovery is Python source in the repository (resurrection.py).
+- Tests: dozens of host test modules run by CI (tests/run_host_tests.py), plus a real-printer regression runner and visual UI regression before releases.
+- Firmware updater: HTTPS with certificate checks, .part file, size and tar validation, atomic replace; it does not verify SHA-256 or a signature.
+- Release policy: releases are published when Forge-X itself changes; an upstream version bump of Moonraker, Klipper, Fluidd, or Mainsail alone is not a reason for a release. Fluidd, Mainsail, and Guppy update separately.
+- Limitations: AD5M/AD5M Pro only; FlashForge Klipper 0.11 base with backports; Feather does not cover every task; real-printer tests are done by the maintainer before releases; not every combination of printer, stock firmware version, and configuration can be covered.
+- License: GPL-3.0 for Forge-X and its Klipper components (LICENSE); the native binary components in .bin/exec (boot_mcu, demo, logged, netd, netd-cli, splash, typer) have a separate free-to-use license (LICENSE-BINARIES.md): free to use including commercially as part of Forge-X, unchanged copies may be passed on with Forge-X, modification and use in other products need permission, source not published; forge-x-streamer is GPL-2.0-or-later. Repository: https://github.com/DrA1ex/ff5m
+
+## User documentation
+
+- [README](README.md): overview, features, quick start
+- [Installation](docs/INSTALL.md): prerequisites, flashing, OTA updates
+- [Compatibility](docs/COMPATIBILITY.md): printers, stock firmware versions, screens
+- [FAQ](docs/FAQ.md): what Forge-X is, compatibility, reversibility, troubleshooting
+- [Klipper fixes and AD5M-specific hardening](docs/KLIPPER.md): backported upstream fixes, Timer too close, E0011/E0017
+- [Screens](docs/SCREEN.md): Feather, Stock, Guppy, Headless, and why Feather is the default
+- [Feather guide](docs/FEATHER.md): what the Feather screen can do
+- [Camera](docs/CAMERA.md): forge-x-streamer
+- [Power Loss Recovery](docs/POWER_LOSS_RECOVERY.md)
+- [Calibration](docs/CALIBRATION.md)
+- [Printing](docs/PRINTING.md): KAMP, bed collision protection, bed mesh validation, resource tuning
+- [Slicing](docs/SLICING.md): slicer G-code, Moonraker connection, MD5 validation
+- [Configuration](docs/CONFIGURATION.md): mod parameters
+- [Customizing and extending Forge-X](docs/EXTENDING.md): user.cfg overrides, own macros, Feather dialogs, shell commands, startup services
+- [Macros](docs/MACROS.md)
+- [Telegram bot and timelapse](docs/TELEGRAM.md)
+
+## Safety, recovery, and uninstall
+
+- [Dual boot and recovery menu](docs/DUAL_BOOT.md)
+- [Uninstall](docs/UNINSTALL.md)
+- [Firmware recovery guide](docs/RECOVERY.md)
+
+## Engineering documentation
+
+- [Development, testing, release validation, engineering facts, release policy, limitations](docs/DEVELOPMENT.md)
+- [Contributing](CONTRIBUTING.md)
+- [OpenWiki quickstart](openwiki/quickstart.md), [architecture](openwiki/architecture.md), [source map](openwiki/source-map.md)

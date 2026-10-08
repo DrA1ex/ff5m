@@ -42,5 +42,5 @@ The working tree contains generated OpenWiki files, including the local instruct
 
 ## Backlog
 
-- **Release/update-channel policy** — anchors: `version.txt`, `moonraker.conf`; `version.txt` is 1.4.1 while the Forge-X Moonraker updater selects `dev`. The intended release-management policy is not established by the inspected source.
+- **Release/update-channel policy** — anchors: `version.txt`, `moonraker.conf`; `version.txt` is 1.4.2, the Forge-X Moonraker updater tracks the `1.4.2` branch, and its channel is `dev`. The intended release-management policy is not established by the inspected source.
 - **External runtime helpers** — anchors: macro calls and `/opt/config/mod_data`; helper implementations such as `zchanges.sh`, `zsend.sh`, and `zprint.sh` are not all tracked in this repository, so their full on-device side effects need source evidence before further documentation.

@@ -1351,13 +1351,14 @@ class MediaPipeline:
 
 
 def _host_preflight(output, suite_count, run_timeout, which=None,
-                    disk_usage=None, runner=None):
+                    disk_usage=None, runner=None, video=True):
     which = which or shutil.which
     disk_usage = disk_usage or shutil.disk_usage
     runner = runner or subprocess.run
     output = pathlib.Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    paths = {name: which(name) for name in ("ffmpeg", "ssh", "scp")}
+    tools = ("ffmpeg", "ssh", "scp") if video else ("ssh", "scp")
+    paths = {name: which(name) for name in tools}
     missing = [name for name, path in paths.items() if not path]
     if missing:
         suffix = (
@@ -1366,24 +1367,26 @@ def _host_preflight(output, suite_count, run_timeout, which=None,
         raise RegressionError(
             "missing host dependencies: %s.%s" %
             (", ".join(missing), suffix))
-    try:
-        ffmpeg = runner(
-            [paths["ffmpeg"], "-version"], text=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RegressionError(
-            "host ffmpeg is not runnable; reinstall it before testing") from exc
-    if ffmpeg.returncode != 0:
-        raise RegressionError(
-            "host ffmpeg is not runnable; reinstall it before testing")
+    if video:
+        try:
+            ffmpeg = runner(
+                [paths["ffmpeg"], "-version"], text=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RegressionError(
+                "host ffmpeg is not runnable; reinstall it before testing") from exc
+        if ffmpeg.returncode != 0:
+            raise RegressionError(
+                "host ffmpeg is not runnable; reinstall it before testing")
     probe = output / ".write-probe"
     try:
         probe.write_bytes(b"ok")
         probe.unlink()
     except OSError as exc:
         raise RegressionError("local artifact root is not writable") from exc
-    required = 256 * 1024 * 1024 + int(
-        max(1, suite_count) * max(1, run_timeout) * 1_000_000)
+    required = 256 * 1024 * 1024
+    if video:
+        required += int(max(1, suite_count) * max(1, run_timeout) * 1_000_000)
     if disk_usage(output).free < required:
         raise RegressionError(
             "insufficient local disk space (need about %.1f GiB free)" %
@@ -1580,6 +1583,7 @@ class RegressionRun:
         self.progress(" | ".join(parts))
 
     def _run_suites(self):
+        no_camera = self.args.no_camera or self.args.no_video
         for index, spec in enumerate(self.specs):
             self.progress("%s: running" % spec["name"])
             started_wall = self.wall_clock()
@@ -1590,8 +1594,7 @@ class RegressionRun:
             marker = None
             timed_out = False
             try:
-                if (not self.args.no_camera
-                        and not self.media.camera_alive()):
+                if not no_camera and not self.media.camera_alive():
                     raise RegressionError(
                         "camera recording stopped before the printer suite")
                 marker = self.client.launch(
@@ -1611,7 +1614,7 @@ class RegressionRun:
                                if self.args.telemetry_rate else None),
                     events_alive=(self.telemetry.events_alive
                                   if self.args.telemetry_rate else None),
-                    camera_alive=(None if self.args.no_camera
+                    camera_alive=(None if no_camera
                                   else self.media.camera_alive),
                     progress=self._suite_progress)
                 self.progress("%s: downloading artifacts" % spec["name"])
@@ -1662,7 +1665,8 @@ class RegressionRun:
         self.progress("preflight")
         try:
             _host_preflight(
-                self.output, len(self.specs), self.args.run_timeout)
+                self.output, len(self.specs), self.args.run_timeout,
+                video=not self.args.no_video)
         except (RegressionError, OSError) as exc:
             self._fail(type(exc).__name__, exc)
             return self._finalize(started_wall, media=False)
@@ -1695,7 +1699,8 @@ class RegressionRun:
                 self.output, self.args.fps, sleeper=self.sleeper,
                 telemetry_rate=self.args.telemetry_rate)
         self.started_monotonic = self.clock()
-        if self.args.no_camera:
+        no_camera = self.args.no_camera or self.args.no_video
+        if no_camera:
             self.media.camera = {"status": "disabled", "metadata": None}
         else:
             try:
@@ -1733,7 +1738,7 @@ class RegressionRun:
                 message = "Printer resource monitor could not start: %s" % exc
                 self._fail(type(exc).__name__, message)
                 self._skip_remaining(0, message)
-                if not self.args.no_camera:
+                if not no_camera:
                     self.media.stop_camera()
                     self.report["camera"] = self.media.camera
                 return self._finalize(started_wall, media=False)
@@ -1789,7 +1794,9 @@ class RegressionRun:
         duration = max(0.0, finished_wall - started_wall)
         self.report["finished_at"] = _utc_time(finished_wall)
         self.report["duration_seconds"] = duration
-        if media:
+        if media and self.args.no_video:
+            self.report["media"] = {"status": "disabled", "recording": None}
+        elif media:
             self.progress("video: finalizing")
             try:
                 media_duration = max(
@@ -1896,6 +1903,10 @@ def _arguments(argv=None):
     parser.add_argument(
         "--no-camera", action="store_true",
         help="explicitly allow a regression run without camera recording")
+    parser.add_argument(
+        "--no-video", action="store_true",
+        help="skip camera recording and video assembly; FFmpeg is not "
+             "required, the report, telemetry and printer artifacts are kept")
     parser.add_argument(
         "--no-resource-monitor", action="store_true",
         help="skip the printer-side /proc sampler; it is the only observer "

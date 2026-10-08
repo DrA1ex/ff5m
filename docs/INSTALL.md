@@ -1,20 +1,17 @@
 ## Installation
 
-This mod is designed to be uninstalled at any time, completely and effortlessly.  
-If the mod encounters issues or you simply prefer to use the stock firmware, you can easily switch back without any complex procedures.   
-Additionally, the mod includes a **dual-boot** feature as a failsafe measure. This ensures that you can restore full functionality even if any part of the mod does not work as intended.  
-Lastly, in difficult cases, the mod includes recovery and uninstall firmware images, along with an advanced recovery guide, to revert anything that may not be working properly. So, it's relatively safe to try.
+Forge-X can be removed at any time, and the stock firmware stays available:
+
+- [Uninstall](/docs/UNINSTALL.md) restores the original Klipper files and printer configuration.
+- [Dual Boot](/docs/DUAL_BOOT.md) starts the stock firmware without the mod.
+- If the mod fails to start, the next boot falls back to the stock firmware.
+- For harder cases there are recovery and uninstall images and a [recovery guide](/docs/RECOVERY.md).
 
 
 > [!CAUTION]
-> *After mod installation or uninstallation, always run all calibrations, as the mod can affect certain parameters, invalidating previous calibration settings.*
-> *Printing without recalibration may damage the printer, the bed surface, or negatively impact print quality.*
-> *Proceed at your own risk!*
-
-
-> [!WARNING]
-> Uninstall other mods, if any are installed.   
-> You can leave the Klipper Mod, but make sure to read [this FAQ section](/docs/FAQ.md#do-i-need-to-uninstall-the-earlier-klipper-mod-before-installing-the-new-mod) first.
+> - Uninstall any other mod before installing Forge-X, and make a backup first. Installing over another mod can cause conflicts, so this is not supported.
+> - After installing or uninstalling, run all calibrations again. The mod changes some parameters, so the previous calibration may no longer be valid. Printing without recalibration can damage the printer or the bed surface, or reduce print quality.
+> - Proceed at your own risk.
 
 
 > [!TIP]
@@ -23,7 +20,7 @@ Lastly, in difficult cases, the mod includes recovery and uninstall firmware ima
 
 ## Prerequisites
 
-* Stock firmware version: minimum **2.6.5**, maximum **5.1.x**. Firmware versions up to **5.1.x** are verified, including **5.0.3/5.0.4** and **5.1.2–5.1.7**. The **5.1.x** range has been **test-flashed on hardware — the mod installs and runs**, and firmware analysis confirms its kernel, MCU firmware and partition layout are byte-identical to the supported 3.1.3 baseline.
+* Stock firmware version: any from **2.6.5** to **5.1.x**; you do not need to update or downgrade it (see [Compatibility](COMPATIBILITY.md)). Checked versions include **5.0.3/5.0.4** and **5.1.2–5.1.7**: 5.1.x was installed and tested on hardware, and its kernel, MCU firmware, and partition layout are identical to the 3.1.3 baseline.
   * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
   * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
 * A USB flash drive formatted to FAT32.
@@ -55,4 +52,4 @@ You can reach services using these addresses:
 You can update over-the-air to any version that matches your major version. For example, if you have `1.2.0`, you can update to any `1.2.x` version, but not to `1.3.x`.  
 To do an OTA update, navigate to **Configuration -> Software Update**.  
 
-OTA updates are supported for the mod itself and for Fluidd.
+OTA updates are supported for Forge-X itself, Fluidd, Mainsail, and Guppy Screen. The web interfaces and Guppy Screen update independently of Forge-X releases.

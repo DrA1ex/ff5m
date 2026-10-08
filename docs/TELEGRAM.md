@@ -71,7 +71,7 @@ bash <(wget --cache=off -q -O - https://raw.githubusercontent.com/DrA1ex/ff5m/re
 #### Manual setup
 
 ##### 1. Install Requirements
-Install Docker by following the [oficial documentation](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository).
+Install Docker by following the [official documentation](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository).
 
 ##### 2. Create Directory for Bot
 ```bash
@@ -134,7 +134,7 @@ To enable SSH tunneling, modify the mod parameter:
 SET_MOD PARAM="zssh" VALUE=1
 ```
 
-The mod will automatically manage the SSH tunnel and restart it if needed. For seamless operation, it is recommended to set the `REMOTE_RUN` parameter in `ssh.conf` to restart the bot container when the SSH tunnel is established.  
+The mod will automatically manage the SSH tunnel and restart it if needed. It is recommended to set the `REMOTE_RUN` parameter in `ssh.conf` to restart the bot container when the SSH tunnel is established.
 
 For example:
 ```
@@ -143,7 +143,7 @@ REMOTE_RUN="docker restart <container_id>"
 
 You can obtain the container ID by running `docker ps` on the server.
 
-## Telegram bot confuguration
+## Telegram bot configuration
 
 For additional configuration options and advanced settings for the Telegram bot, refer to the official moonraker-telegram-bot [GitHub repository](https://github.com/nlef/moonraker-telegram-bot)
 

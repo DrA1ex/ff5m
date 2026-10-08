@@ -1,0 +1,102 @@
+{
+  "base_commit": "e02b725602067a2cd098a62be9a4bb10fc74a9bd",
+  "binaries": {
+    "klippy/chelper/c_helper.so": {
+      "ff5m": ".py/klipper/patches/chelper/c_helper.so",
+      "sha256": "1f80f81bee9e9a75669842ff3d42e4b41432c22095e2d35783277f057fb0b5e4"
+    }
+  },
+  "commit": "78602795d93c23822f4f530fa8d0a7c3d183c6e9",
+  "fork": "https://github.com/DrA1ex/klipper-ad5m",
+  "sources": {
+    "klippy/chelper/__init__.py": {
+      "ff5m": ".py/klipper/patches/chelper/__init__.py",
+      "sha256": "4463b1188b6802e6ced5f7adbff93f526af1ed1b0c891807125916e0dc05d098"
+    },
+    "klippy/configfile.py": {
+      "ff5m": ".py/klipper/patches/configfile.py",
+      "sha256": "941a1d1338054d16531ed6c4e394d6dd2e7c23c871c945e94023fc347452b881"
+    },
+    "klippy/extras/buttons.py": {
+      "ff5m": ".py/klipper/patches/extras/buttons.py",
+      "sha256": "47b5a6e5533ad001c3938ce7c64a59df53c6d185316c478ec72636259b38deeb"
+    },
+    "klippy/extras/gcode_button.py": {
+      "ff5m": ".py/klipper/patches/extras/gcode_button.py",
+      "sha256": "6b1f62283185d85752eb3dc57604ddec1072ea653cb2cb2a3ad79ff23b499d0f"
+    },
+    "klippy/extras/gcode_move.py": {
+      "ff5m": ".py/klipper/patches/extras/gcode_move.py",
+      "sha256": "7fa7a91b5777ba578b221dca630a814563c5fc89e0325aa32a08dff7ed305b7a"
+    },
+    "klippy/extras/gcode_shell_command.py": {
+      "ff5m": ".py/klipper/patches/extras/gcode_shell_command.py",
+      "sha256": "1874d5574e1a975e8e75a7830a7a8f2863754cafbc758239602608bf059e4b1b"
+    },
+    "klippy/extras/heaters.py": {
+      "ff5m": ".py/klipper/patches/extras/heaters.py",
+      "sha256": "59c76c11eaedc491290ad46286936131a6c6f6c7abf4debb2dfc880f6f1e195b"
+    },
+    "klippy/extras/homing.py": {
+      "ff5m": ".py/klipper/patches/extras/homing.py",
+      "sha256": "493891a404d54504dfd70236559e8aab09efae807c4c4706cbb3e28b476b510b"
+    },
+    "klippy/extras/led.py": {
+      "ff5m": ".py/klipper/patches/extras/led.py",
+      "sha256": "8b41182ee471b099086512c793d44dc98342f28b032af31707884055da8937a0"
+    },
+    "klippy/extras/probe.py": {
+      "ff5m": ".py/klipper/patches/extras/probe.py",
+      "sha256": "c752523f553c3f62b7adbc8aaf961093092fa01e9a063cbc0e27f89968823726"
+    },
+    "klippy/extras/resonance_tester.py": {
+      "ff5m": ".py/klipper/patches/extras/resonance_tester.py",
+      "sha256": "05a1583361cee56fae2959db4636085f13b710d04f2730c8da80234d5079b0f0"
+    },
+    "klippy/extras/servo.py": {
+      "ff5m": ".py/klipper/patches/extras/servo.py",
+      "sha256": "af697a01c1c3cfa14e2665f8bd6460d99abadb86b512a3955459b17b11826961"
+    },
+    "klippy/extras/shaper_calibrate.py": {
+      "ff5m": ".py/klipper/patches/extras/shaper_calibrate.py",
+      "sha256": "ee146d663a6d24111591ea499020d698e8b8fd040a9a7e6baa4f39f6008c0cac"
+    },
+    "klippy/extras/statistics.py": {
+      "ff5m": ".py/klipper/patches/extras/statistics.py",
+      "sha256": "823971d79d40d8272a97b10266963d272510b28f7fcf2b74e484bb7790f50ba1"
+    },
+    "klippy/extras/temperature_sensor.py": {
+      "ff5m": ".py/klipper/patches/extras/temperature_sensor.py",
+      "sha256": "c9cc182215f266a008c5166370eca14ec3b378b509cce8273ad899fdecf35fbb"
+    },
+    "klippy/extras/tmc.py": {
+      "ff5m": ".py/klipper/patches/extras/tmc.py",
+      "sha256": "d89feda2d67c838a47e0d2e9b63883920dff3c7ae75bf4ba5629518f33ea7bd2"
+    },
+    "klippy/extras/virtual_sdcard.py": {
+      "ff5m": ".py/klipper/patches/extras/virtual_sdcard.py",
+      "sha256": "449a5d1bef1cf29533b4138d39739160b98ed36b5dcff7f9fd2dc918cddc3245"
+    },
+    "klippy/gcode.py": {
+      "ff5m": ".py/klipper/patches/gcode.py",
+      "sha256": "633e63cd426e0a8a60e676557501473143312870524e48a448b7549b7190cd2e"
+    },
+    "klippy/kinematics/extruder.py": {
+      "ff5m": ".py/klipper/patches/kinematics/extruder.py",
+      "sha256": "eb3df2c5399388018f277b0a6b103b4320c43b6a53312bb2a54b1c01b3fdbb09"
+    },
+    "klippy/mcu.py": {
+      "ff5m": ".py/klipper/patches/mcu.py",
+      "sha256": "3aecfd8e7b49ab941bda04ef01b83f6f224c44c6ab8a5b02341e29c95443542e"
+    },
+    "klippy/reactor.py": {
+      "ff5m": ".py/klipper/patches/reactor.py",
+      "sha256": "2bc562d0542e21695cd21793ae21aa237434fbf46b3b36001acfd713b57ea124"
+    },
+    "klippy/toolhead.py": {
+      "ff5m": ".py/klipper/patches/toolhead.py",
+      "sha256": "08b4325e0bcdc6807ea5ae7518db12c1f4d7ae3615b53f25b6f61f867e6adc35"
+    }
+  },
+  "stock_commit": "c6e78dffa3d16a25710942a379b019debbacd5af"
+}
