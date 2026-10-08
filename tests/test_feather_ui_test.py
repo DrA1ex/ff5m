@@ -1,4 +1,8 @@
 ## Host-side contracts for the lazy on-printer Feather UI runner.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 import configparser
 import copy
@@ -391,6 +395,37 @@ class ArtifactWorkerTest(unittest.TestCase):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_initial_idle_stage_capture_has_a_review_expectation(self):
+        host = type("Host", (), {
+            "_operation_context_status": lambda self, eventtime: {
+                "revision": 1, "context_types": (), "context_path": (),
+                "current_state": None},
+            "_operation_context_text": lambda self, **kwargs: "",
+            "page": FEATHER.ScreenPage.IDLE_HOME,
+        })()
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run.phase = SCENARIOS.ScenarioCatalog(run).build_steps("UI")[0]["phase"]
+        run.worker = mock.Mock()
+        run._screen_metadata = lambda: {"page": host.page.name}
+        run.update(1.0)
+
+        number, label, metadata, _callback = run.worker.capture.call_args.args
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            filename = "%03d-frame.bmp" % number
+            (directory / filename).write_bytes(b"saved frame")
+            (directory / "manifest.json").write_text(json.dumps([
+                dict(metadata, file=filename, label=label)]))
+            records = HYBRID.load_manifest(directory)
+            ready, missing = HYBRID.attach_expectations(
+                records, HYBRID.load_expectations(
+                    ROOT / "tests/visual_checks/expectations.json"))
+
+        self.assertEqual(missing, [])
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(ready[0]["path"], records[0]["path"])
+
     def test_stage_capture_follows_semantic_context_revisions(self):
         operation = {
             "revision": 1,

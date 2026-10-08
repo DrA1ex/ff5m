@@ -739,6 +739,33 @@
                 "intentional ellipsis in the last job filename"
             ]
         },
+        "printer:baseline-stage-IDLE":
+        {
+            "description": "Home dashboard captured when the operation context is initially idle. This queued stage capture can show the following filled-home UI fixture; IDLE describes the operation context, not the displayed job or heater fixture values.",
+            "required":
+            [
+                "home header with clock and MENU navigation",
+                "NOZZLE, BED and NETWORK cards",
+                "JOB STATUS panel",
+                "LAST JOB, MATERIAL and TOOLHEAD summaries",
+                "bottom status bar"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "idle or synthetic filled-home job state",
+                "live or synthetic temperatures, targets, progress and durations",
+                "clock, network connection and address",
+                "job filename, material and toolhead state",
+                "intentional ellipsis in long summary text",
+                "theme colors"
+            ]
+        },
         "printer:baseline":
         {
             "description": "Initial real-printer UI frame before the UI suite.",
