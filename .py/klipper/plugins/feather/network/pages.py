@@ -441,12 +441,12 @@ class FeatherNetworkPagesMixin:
                 ThemeColor.DIM, "JetBrainsMono 8pt", "right", "middle",
                 max_width=135, truncate=True))
         commands += self.renderer.button(
-            "net.prev", 25, 390, 190, 50, "< PAGE",
+            "net.prev", 25, 384, 190, 50, "< PAGE",
             active=pagination.has_previous)
         commands += self.renderer.button(
-            "net.rescan", 305, 390, 190, 50, "RESCAN")
+            "net.rescan", 305, 384, 190, 50, "RESCAN")
         commands += self.renderer.button(
-            "net.next", 585, 390, 190, 50, "PAGE >",
+            "net.next", 585, 384, 190, 50, "PAGE >",
             active=pagination.has_next)
         if not rows:
             commands.append(self.renderer.text(

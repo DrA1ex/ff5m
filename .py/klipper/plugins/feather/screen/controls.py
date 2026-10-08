@@ -944,8 +944,7 @@ class FeatherControlsMixin:
                 action, 30, 68 + row * 101, 740, 84, label,
                 font="JetBrainsMono 16pt", subtitle=subtitle, layout="row")
         commands += pagination_footer(
-            self.renderer, pagination, "cal.prev", "cal.next",
-            y=388, center_y=413)
+            self.renderer, pagination, "cal.prev", "cal.next")
         self.renderer.send(commands)
 
     def _render_calibration_guide(self):
