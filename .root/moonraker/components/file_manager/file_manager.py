@@ -1,6 +1,7 @@
 # Enhanced gcode file management and analysis
 #
 # Copyright (C) 2020 Eric Callahan <arksine.code@gmail.com>
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -20,7 +21,7 @@ from inotify_simple import INotify
 from inotify_simple import flags as iFlags
 from ...utils import source_info
 from ...utils import json_wrapper as jsonw
-from ...common import RequestType, TransportType
+from ...common import RequestType, TransportType, WebRequest
 from . import gcode_3mf
 
 # Annotation imports
@@ -44,7 +45,7 @@ from typing import (
 if TYPE_CHECKING:
     from inotify_simple import Event as InotifyEvent
     from ...confighelper import ConfigHelper
-    from ...common import WebRequest, UserInfo
+    from ...common import UserInfo
     from ..klippy_connection import KlippyConnection
     from ..job_queue import JobQueue
     from ..job_state import JobState
@@ -61,6 +62,85 @@ METADATA_SCRIPT = os.path.abspath(os.path.join(
 WATCH_FLAGS = iFlags.CREATE | iFlags.DELETE | iFlags.MODIFY \
     | iFlags.MOVED_TO | iFlags.MOVED_FROM | iFlags.ONLYDIR \
     | iFlags.CLOSE_WRITE
+
+class GCode3MFUploadPrompt:
+    """Best-effort UI for a packaged G-code upload.
+
+    A stage replaces the current prompt in one G-code request (no prompt_end
+    between stages).  Errors replace it with a dismissible prompt.  UI
+    delivery must never be able to fail the upload itself.
+    """
+
+    TITLE = "Preparing G-code 3MF"
+    ERROR_TITLE = "G-code 3MF preparation failed"
+
+    def __init__(self, server, filename: str) -> None:
+        self.server = server
+        self.filename = self._safe_text(os.path.basename(filename))
+        self.active = False
+
+    @staticmethod
+    def _safe_text(value: str) -> str:
+        # Keep user-controlled filenames/errors out of G-code syntax.
+        cleaned = ''.join(
+            ' ' if ord(ch) < 32 or ch in '\\";|#*' else ch
+            for ch in str(value)
+        )
+        return ' '.join(cleaned.split())[:180]
+
+    async def _send(self, *commands: str) -> bool:
+        script = '\n'.join(
+            'RESPOND TYPE=command MSG="%s"' % command
+            for command in commands
+        )
+        try:
+            api = self.server.lookup_component('klippy_apis')
+            # Match timelapse housekeeping: execute without command history.
+            klippy = api.klippy
+            if not klippy.is_connected():
+                return False
+            request = WebRequest('gcode/script', {'script': script}, transport=api)
+            await klippy._request_standard(request)
+            return True
+        except Exception:
+            logging.debug("Unable to show 3MF preparation dialog", exc_info=True)
+            return False
+
+    async def stage(self, description: str) -> None:
+        # Rebuild the existing prompt without closing it between stages.
+        # Delivery can be interrupted after Klipper has shown the prompt.
+        self.active = True
+        await self._send(
+            'action:prompt_begin ' + self.TITLE,
+            'action:prompt_text ' + self.filename,
+            'action:prompt_text ' + self._safe_text(description),
+            'action:prompt_show',
+        )
+
+    async def close(self) -> None:
+        if self.active:
+            self.active = False
+            await self._send('action:prompt_end ' + self.TITLE)
+
+    async def fail(self, description: str, detail: str = '') -> None:
+        commands = [
+            'action:prompt_begin ' + self.ERROR_TITLE,
+            'action:prompt_text ' + self.filename,
+            'action:prompt_text ' + self._safe_text(description),
+        ]
+        if detail:
+            commands.append('action:prompt_text ' + self._safe_text(detail))
+        commands.extend((
+            'action:prompt_footer_button '
+            'OK|RESPOND TYPE=command MSG=action:prompt_end|primary',
+            'action:prompt_show',
+        ))
+        if await self._send(*commands):
+            # Deliberately leave the error on screen until the user dismisses it.
+            self.active = False
+        else:
+            await self.close()
+
 
 class FileManager:
     def __init__(self, config: ConfigHelper) -> None:
@@ -891,6 +971,7 @@ class FileManager:
         return {
             'root': root,
             'filename': filename,
+            'source_filename': upload_args['filename'],
             'dir_path': dir_path,
             'dest_path': dest_path,
             'tmp_file_path': upload_args['tmp_file_path'],
@@ -906,43 +987,80 @@ class FileManager:
     async def _finish_gcode_upload(
         self, upload_info: Dict[str, Any]
     ) -> Dict[str, Any]:
-        # Verify that the operation can be done if attempting to upload a gcode
-        can_start: bool = False
+        # Only packaged G-code needs a preparation dialog.
+        prompt = None
+        start_error = None
         try:
-            check_path: str = upload_info['dest_path']
-            can_start = self._handle_operation_check(check_path)
-        except self.server.error as e:
-            if e.status_code == 403:
-                raise self.server.error(
-                    "File is loaded, upload not permitted", 403)
-        finfo = await self._process_uploaded_file(upload_info)
-        await self.gcode_metadata.parse_metadata(
-            upload_info['filename'], finfo).wait()
-        started: bool = False
-        queued: bool = False
-        if upload_info['start_print']:
-            user: Optional[UserInfo] = upload_info.get("user")
-            if can_start:
-                kapis: APIComp = self.server.lookup_component('klippy_apis')
-                try:
-                    await kapis.start_print(upload_info['filename'], user=user)
-                except self.server.error:
-                    # Attempt to start print failed
-                    pass
+            # Verify that the operation can be done if attempting to upload.
+            can_start: bool = False
+            try:
+                check_path: str = upload_info['dest_path']
+                can_start = self._handle_operation_check(check_path)
+            except self.server.error as e:
+                if e.status_code == 403:
+                    raise self.server.error(
+                        "File is loaded, upload not permitted", 403)
+
+            if upload_info['unzip_3mf']:
+                prompt = GCode3MFUploadPrompt(
+                    self.server, upload_info['source_filename'])
+                await prompt.stage("Extracting G-code from archive...")
+            finfo = await self._process_uploaded_file(upload_info)
+
+            if prompt:
+                await prompt.stage("Processing " + upload_info['filename'] + "...")
+            await self.gcode_metadata.parse_metadata(
+                upload_info['filename'], finfo).wait()
+
+            started: bool = False
+            queued: bool = False
+            if upload_info['start_print']:
+                user: Optional[UserInfo] = upload_info.get("user")
+                if can_start:
+                    kapis: APIComp = self.server.lookup_component('klippy_apis')
+                    if prompt:
+                        await prompt.stage("Starting print...")
+                        # The printing UI/macros may open their own prompts.
+                        # Never close those by dismissing ours afterwards.
+                        await prompt.close()
+                    try:
+                        await kapis.start_print(upload_info['filename'], user=user)
+                    except self.server.error as exc:
+                        # Preserve the existing upload-success behavior.
+                        start_error = str(exc)
+                    else:
+                        started = True
+                if self.queue_gcodes and not started:
+                    job_queue: JobQueue = self.server.lookup_component('job_queue')
+                    if prompt:
+                        await prompt.stage("Adding file to print queue...")
+                    await job_queue.queue_job(
+                        upload_info['filename'], check_exists=False, user=user)
+                    queued = True
+
+            self.fs_observer.on_item_create("gcodes", upload_info["dest_path"])
+            result = dict(self._sched_changed_event(
+                "create_file", "gcodes", upload_info["dest_path"],
+                immediate=upload_info["is_link"]
+            ))
+            result.update({"print_started": started, "print_queued": queued})
+
+            if prompt:
+                if upload_info['start_print'] and not started and not queued:
+                    await prompt.fail(
+                        "Print did not start. The file was saved.",
+                        start_error or "Printer is busy or not ready.")
                 else:
-                    started = True
-            if self.queue_gcodes and not started:
-                job_queue: JobQueue = self.server.lookup_component('job_queue')
-                await job_queue.queue_job(
-                    upload_info['filename'], check_exists=False, user=user)
-                queued = True
-        self.fs_observer.on_item_create("gcodes", upload_info["dest_path"])
-        result = dict(self._sched_changed_event(
-            "create_file", "gcodes", upload_info["dest_path"],
-            immediate=upload_info["is_link"]
-        ))
-        result.update({"print_started": started, "print_queued": queued})
-        return result
+                    await prompt.close()
+            return result
+        except asyncio.CancelledError:
+            if prompt:
+                await prompt.close()
+            raise
+        except Exception as exc:
+            if prompt:
+                await prompt.fail("Unable to prepare the file.", str(exc))
+            raise
 
     async def _finish_standard_upload(
         self, upload_info: Dict[str, Any]
@@ -1003,6 +1121,9 @@ class FileManager:
                     upload_info['tmp_file_path'], dest_path)
                 finfo = self.get_path_info(upload_info['dest_path'],
                                            upload_info['root'])
+        except self.server.error:
+            # Preserve specific 3MF errors (bad ZIP, plate, MD5) and HTTP 400.
+            raise
         except Exception:
             logging.exception("Upload Write Error")
             raise self.server.error("Unable to save file", 500)
