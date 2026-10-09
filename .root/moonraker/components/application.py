@@ -958,6 +958,7 @@ class FileUploadHandler(AuthorizedRequestHandler):
                 'print': ValueTarget(),
                 'path': ValueTarget(),
                 'checksum': ValueTarget(),
+                'plateindex': ValueTarget(),
             }
             self._file = FileTarget(tmpname)
             self._sha256_target = SHA256Target()

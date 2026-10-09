@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import ast
 import asyncio
 import enum
 import importlib.metadata
@@ -101,6 +102,63 @@ class GCode3MFUploadTest(unittest.IsolatedAsyncioTestCase):
     async def finish(self, **changes):
         self.upload.update(changes)
         return await self.manager._finish_gcode_upload(self.upload)
+
+    def test_http_upload_handler_registers_plateindex(self):
+        # Avoid importing application.py: it needs Tornado and streaming_form_data,
+        # while this regression only checks multipart field registration.
+        source = (ROOT / ".root/moonraker/components/application.py").read_text()
+        module = ast.parse(source)
+        handler = next(
+            cls for cls in module.body
+            if isinstance(cls, ast.ClassDef) and cls.name == "FileUploadHandler"
+        )
+        prepare = next(
+            method for method in handler.body
+            if isinstance(method, ast.AsyncFunctionDef) and method.name == "prepare"
+        )
+        assignments = [
+            node for node in ast.walk(prepare)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr == "_targets"
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(len(assignments), 1)
+        field_names = [
+            key.value for key in assignments[0].value.keys
+            if isinstance(key, ast.Constant)
+        ]
+        self.assertIn("plateindex", field_names)
+
+    async def test_multi_plate_upload_extracts_selected_plate_and_starts_print(self):
+        self.manager._process_uploaded_file = fm.FileManager._process_uploaded_file.__get__(self.manager)
+        self.server.get_event_loop.return_value.run_in_thread = mock.AsyncMock(
+            side_effect=asyncio.to_thread)
+        self.manager.get_path_info = mock.Mock(return_value={"size": 15})
+        with tempfile.TemporaryDirectory() as tmp:
+            self.manager.file_paths = {"gcodes": tmp}
+            source = pathlib.Path(tmp) / "upload.mru"
+            selected = b"; plate seven\nG28\n"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("Metadata/plate_1.gcode", "; plate one\n")
+                archive.writestr("Metadata/plate_7.gcode", selected)
+
+            self.upload = self.manager._parse_upload_args({
+                "filename": "job.gcode.3mf", "tmp_file_path": str(source),
+                "plateindex": "7", "print": "true",
+            })
+            self.assertEqual(self.upload["plate_index"], "7")
+            result = await self.finish()
+
+            self.assertEqual((pathlib.Path(tmp) / "job.gcode").read_bytes(), selected)
+            self.assertFalse(source.exists())
+            self.assertTrue(result["print_started"])
+            self.api.start_print.assert_awaited_once_with(
+                "job.gcode", user=self.upload["user"])
 
     async def test_upload_stages_are_delivered_without_console_command_history(self):
         result = await self.finish()
