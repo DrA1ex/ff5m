@@ -11,7 +11,10 @@ from ff5m_ui.print_state import PrintState
 from ff5m_ui.screen import ScreenPage
 from ui import ThemeColor
 from ui.font_metrics import get_font_metrics
-from ui.layout_helpers import DIALOG_BUTTON_FONT, DIALOG_LIST_FONT
+from ui.layout_helpers import (
+    DIALOG_BODY_FONT, DIALOG_BUTTON_FONT, DIALOG_LIST_FONT,
+    centered_button_row,
+)
 
 
 STARTUP_DELAY = 5.0
@@ -22,6 +25,12 @@ MAX_FAILURE_RETRY_INTERVAL = 21600.0
 SAFETY_RETRY_INTERVAL = 300.0
 DEFAULT_UPDATE_INTERVAL_MINUTES = 360
 CHANGE_PAGE_SIZE = 4
+CHANGELOG_PAGE_SIZE = 7
+CHANGELOG_X = 24
+CHANGELOG_TOP = 102
+CHANGELOG_LINE_SPACING = 35
+CHANGELOG_WIDTH = 680
+CHANGELOG_PAGER_X = 736
 MAX_CHANGE_ITEMS = 24
 MAX_RECOVERY_FILES = 64
 MAX_VERSION_LENGTH = 64
@@ -451,26 +460,38 @@ class ForgeXUpdateNotification:
         pagination = self._change_pagination()
         self.change_page = pagination.page
         version = self.available_version or "UNKNOWN"
-        commands = self.host.renderer.begin_page("Forge-X update")
-        commands += self.host.renderer.dialog(
-            "Forge-X %s available" % version, (),
-            (("update.later", "LATER", "enabled"),
-             ("update.install", "UPDATE", "warning")),
-            *UPDATE_DIALOG_BOUNDS, tone="info", custom_body=True)
-        commands.append(self.host.renderer.text(
-            72, 160, "CHANGES SINCE %s" %
-            (self.installed_version or "CURRENT VERSION"),
-            ThemeColor.PRIMARY, DIALOG_BUTTON_FONT,
-            max_width=570, truncate=True))
+        commands = self.host.renderer.begin_page("Forge-X update: %s" % version)
         for index, subject in enumerate(pagination.visible):
             commands.append(self.host.renderer.text(
-                78, 194 + index * 36, subject,
+                CHANGELOG_X, CHANGELOG_TOP + index * CHANGELOG_LINE_SPACING, subject,
                 ThemeColor.TEXT, DIALOG_LIST_FONT,
-                max_width=570))
+                max_width=CHANGELOG_WIDTH))
         if pagination.page_count > 1:
-            commands += self.host.renderer.dialog_pager(
-                pagination.page, pagination.page_count,
-                ("update.prev", "update.next"), *UPDATE_DIALOG_BOUNDS)
+            last_row_y = CHANGELOG_TOP + (CHANGELOG_PAGE_SIZE - 1) * CHANGELOG_LINE_SPACING
+            counter_y = (CHANGELOG_TOP + last_row_y) // 2
+            commands += self.host.renderer.arrow_button(
+                "update.prev", CHANGELOG_PAGER_X, CHANGELOG_TOP - 20, 40, 40, "up",
+                active=pagination.page > 0)
+            commands += self.host.renderer.arrow_button(
+                "update.next", CHANGELOG_PAGER_X, last_row_y - 20, 40, 40, "down",
+                active=pagination.page + 1 < pagination.page_count)
+            for y, value in ((counter_y - 24, pagination.page + 1),
+                             (counter_y + 24, pagination.page_count)):
+                commands.append(self.host.renderer.text(
+                    CHANGELOG_PAGER_X + 20, y, str(value), ThemeColor.DIM, DIALOG_BODY_FONT,
+                    "center", "middle", max_width=52))
+            commands.append(self.host.renderer.fill(
+                CHANGELOG_PAGER_X + 9, counter_y - 1, 22, 2, ThemeColor.DIM))
+        buttons = (("update.later", "LATER", "enabled"),
+                   ("update.install", "UPDATE", "warning"))
+        bounds = centered_button_row(
+            (button[1] for button in buttons), 40, 370, 720,
+            measure_text=self.host.renderer.text_width,
+            font=DIALOG_BUTTON_FONT)
+        for (action, label, state), button_bounds in zip(buttons, bounds):
+            commands += self.host.renderer.button(
+                action, *button_bounds, label, state=state,
+                font=DIALOG_BUTTON_FONT)
         self.host.renderer.send(commands)
 
     def _change_pagination(self):
@@ -478,10 +499,11 @@ class ForgeXUpdateNotification:
         lines = []
         for subject in self.changes or ("CHANGELOG UNAVAILABLE",):
             font = self.host.renderer.normalize_font_for_text(DIALOG_LIST_FONT, subject)
-            wrapped = metrics.wrap_text(subject, font, 570 - self.host.renderer.text_width(" - ", font))
+            wrapped = metrics.wrap_text(
+                subject, font, CHANGELOG_WIDTH - self.host.renderer.text_width(" - ", font))
             lines.extend((" - " if index == 0 else "   ") + line
                          for index, line in enumerate(wrapped))
-        return Pagination(lines, self.change_page, CHANGE_PAGE_SIZE)
+        return Pagination(lines, self.change_page, CHANGELOG_PAGE_SIZE)
 
     def _render_restart_notice(self):
         commands = self.host.renderer.begin_page("Forge-X update")

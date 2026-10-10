@@ -21,6 +21,7 @@ from feather.update_notification import (  # noqa: E402
 from ff5m_ui.print_state import PrintState  # noqa: E402
 from ff5m_ui.screen import ScreenDialog, ScreenPage  # noqa: E402
 from ui import FeatherRenderer  # noqa: E402
+from ui.font_metrics import get_font_metrics  # noqa: E402
 from tests.feather_render_test_helper import RenderCapture, RenderFrame  # noqa: E402
 
 
@@ -339,7 +340,9 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
 
     def test_print_start_closes_dialog_without_dismissing_update(self):
-        self.request_and_respond()
+        self.request_and_respond(changes=["Change %02d" % index for index in range(15)])
+        self.notification.handle_action("update.next")
+        self.assertEqual(self.notification.change_page, 1)
         self.assertTrue(self.notification.dialog_visible)
 
         self.host.print_active = True
@@ -357,9 +360,12 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
             PrintState.PRINTING, PrintState.IDLE, "standby")
         self.host._show_page(ScreenPage.IDLE_HOME)
         self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
+        self.assertEqual(self.notification.change_page, 0)
 
     def test_later_suppresses_only_the_displayed_offer(self):
-        self.request_and_respond()
+        self.request_and_respond(changes=["Change %02d" % index for index in range(15)])
+        self.notification.handle_action("update.next")
+        self.assertEqual(self.notification.change_page, 1)
         self.notification.handle_action("update.later")
 
         self.assertEqual(
@@ -508,32 +514,101 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertIn("update.next", self.host.renderer._buttons)
         self.notification.handle_action("update.next")
         self.assertEqual(self.notification.change_page, 1)
-        last_page = (len(self.notification.changes) - 1) // CHANGE_PAGE_SIZE
-        for _page in range(last_page - 1):
+        for _page in range(len(changes)):
+            previous = self.notification.change_page
             self.notification.handle_action("update.next")
+            if self.notification.change_page == previous:
+                break
+        else:
+            self.fail("Changelog pagination did not reach its end")
         drawing = "\n".join(self.host.draw_batches[-1])
 
         self.assertIn("MORE CHANGES NOT SHOWN", drawing)
         self.assertNotIn("Change 79", drawing)
 
-    def test_paged_update_uses_dialog_controls_without_covering_changes(self):
+    def test_update_page_aligns_pager_with_changelog_rows(self):
         self.request_and_respond(changes=[
-            "Change %02d" % index for index in range(12)])
+            "Change %02d" % index for index in range(15)])
         self.notification.handle_action("update.next")
 
         frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
-        self.assertLess(frame.text("FORGE-X 1.4.3 AVAILABLE").y,
-                        frame.text("CHANGES SINCE 1.4.2").y)
+        self.assertLess(frame.text("FORGE-X UPDATE: 1.4.3").y,
+                        frame.text(" - Change 07").y)
         current, total = frame.text("2"), frame.text("3")
         self.assertLess(current.y, total.y)
         self.assertTrue(any(
-            shape.kind == "fill" and shape.bounds.width == 22
-            and shape.bounds.height == 2
+            shape.kind == "fill" and shape.bounds.width > shape.bounds.height
             and current.y < shape.bounds.y < total.y
             for shape in frame.shapes))
-        self.assertEqual(frame.button("update.prev").bounds.width, 40)
-        self.assertEqual(frame.button("update.next").bounds.width, 40)
+        previous, following = frame.button("update.prev"), frame.button("update.next")
+        rows = [text for text in frame.texts if text.value.startswith(" - ")]
+        self.assertEqual(previous.bounds.y + previous.bounds.height // 2, rows[0].y)
+        self.assertEqual(following.bounds.y + following.bounds.height // 2, rows[-1].y)
+        for button in (previous, following):
+            self.assertGreaterEqual(button.bounds.width, 40)
+            self.assertGreaterEqual(button.bounds.height, 40)
+        self.assertGreater(current.y, previous.bounds.bottom)
+        self.assertLess(total.y, following.bounds.y)
         self.assertFalse(frame.has_text("2 / 3"))
+
+    def test_update_page_fits_version_and_seven_rows_with_balanced_button_gaps(self):
+        for version in ("1.4.3", "1.4.2-beta-4-5"):
+            with self.subTest(version=version):
+                self.host = Host()
+                self.notification = self.host.update_notification
+                with mock.patch.object(self.host.renderer, "dialog", wraps=self.host.renderer.dialog) as dialog:
+                    self.request_and_respond(version=version, changes=[
+                        "Change %02d" % index for index in range(8)])
+                dialog.assert_not_called()
+                frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+                title = frame.text("FORGE-X UPDATE: " + version.upper())
+                self.assertLessEqual(self.host.renderer.text_width(title.value, title.font), title.max_width)
+                self.assertEqual(sum(version.upper() in text.value for text in frame.texts), 1)
+                rows = [text for text in frame.texts if text.value.startswith(" - ")]
+                self.assertEqual(len(rows), 7)
+                self.assertFalse(any("CHANGES SINCE" in text.value for text in frame.texts))
+                for row in rows:
+                    self.assertGreater(row.y, title.y)
+                    height = get_font_metrics().metric(row.font).glyph_height
+                    self.assertLess(row.y + height / 2, frame.button("update.install").bounds.y)
+                button = frame.button("update.install").bounds
+                footer_y = next(shape.bounds.y for shape in frame.shapes
+                                if shape.kind == "fill" and shape.bounds.height == 1
+                                and shape.bounds.width > button.width and shape.bounds.y > button.bottom)
+                lower_gap = footer_y - button.bottom
+                upper_gap = button.y - rows[-1].y - get_font_metrics().metric(rows[-1].font).glyph_height / 2
+                self.assertGreater(lower_gap, 0)
+                self.assertAlmostEqual(upper_gap, 2 * lower_gap, delta=1)
+                self.notification.handle_action("update.next")
+                next_frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+                self.assertTrue(next_frame.has_text(" - Change 07"))
+                self.notification.handle_action("update.prev")
+                first_frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+                self.assertTrue(first_frame.has_text(" - Change 00"))
+
+    def test_update_page_disables_end_arrows_and_clamps_navigation(self):
+        self.request_and_respond(changes=["Change %02d" % index for index in range(8)])
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        self.assertNotIn("update.prev", frame.buttons)
+        self.assertIn("update.next", frame.buttons)
+        self.notification.handle_action("update.prev")
+        self.assertEqual(self.notification.change_page, 0)
+        self.notification.handle_action("update.next")
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        self.assertIn("update.prev", frame.buttons)
+        self.assertNotIn("update.next", frame.buttons)
+        self.notification.handle_action("update.next")
+        self.assertEqual(self.notification.change_page, 1)
+        self.notification.handle_action("update.prev")
+        self.assertEqual(self.notification.change_page, 0)
+
+    def test_wider_update_page_keeps_3mf_note_on_one_row(self):
+        subject = "Add support for plateIndex into 3MF handler"
+        self.request_and_respond(changes=[subject])
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        note = frame.text(" - " + subject)
+        self.assertLessEqual(self.host.renderer.text_width(note.value, note.font), note.max_width)
+        self.assertNotIn("update.next", frame.buttons)
 
     def test_short_changelog_has_no_scroll_controls(self):
         self.request_and_respond(changes=["One", "Two"])
@@ -542,7 +617,8 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
         self.assertNotIn("update.next", self.host.renderer._buttons)
 
     def test_long_release_notes_wrap_and_remain_readable_across_all_pages(self):
-        changes = ["CHANGE %02d: EXERCISE PAGINATED RELEASE NOTES" % index
+        changes = ["CHANGE %02d: EXERCISE PAGINATED RELEASE NOTES WITH LONG DESCRIPTIONS "
+                   "THAT CONTINUE ON THE NEXT ROW WITHOUT LOSING WORDS" % index
                    for index in range(7)]
         self.request_and_respond(changes=changes)
         visible = []
@@ -566,15 +642,21 @@ class ForgeXUpdateNotificationTest(unittest.TestCase):
             else:
                 recovered[-1] += " " + line.strip()
         self.assertEqual(recovered, changes)
+        self.assertGreater(previous, 0)
         self.notification.handle_action("update.prev")
         self.assertEqual(self.notification.change_page, previous - 1)
 
-    def test_missing_changelog_falls_back_to_available_version_message(self):
+    def test_missing_changelog_keeps_update_page_actions_available(self):
         self.request_and_respond(changes=[])
         drawing = "\n".join(self.host.draw_batches[-1])
 
         self.assertIn("CHANGELOG UNAVAILABLE", drawing)
         self.assertEqual(self.host.page, ScreenPage.UPDATE_NOTIFICATION)
+        frame = RenderFrame(self.host.draw_batches[-1], self.host.renderer)
+        self.assertIn("update.later", frame.buttons)
+        self.assertIn("update.install", frame.buttons)
+        self.assertNotIn("update.prev", frame.buttons)
+        self.assertNotIn("update.next", frame.buttons)
 
     def test_update_rechecks_idle_before_delegating_to_moonraker(self):
         self.request_and_respond()

@@ -1770,10 +1770,11 @@ class FeatherRenderer:
             commands += self.button("nav.back", 14, 7, 146, 46, "< BACK",
                                     font="JetBrainsMono Bold 8pt")
         title = str(title).upper()
+        title_width = 440 if back or show_header_action or self._busy_label is not None else 740
         commands += [
             self.text(400, 29, title, ThemeRole.HEADER_TEXT,
                       "JetBrainsMono 12pt",
-                      "center", "middle", max_width=440, truncate=True),
+                      "center", "middle", max_width=title_width, truncate=True),
             self.fill(18, HEADER_BOTTOM, 764, 1, ThemeRole.HEADER_BORDER),
             self.fill(18, FOOTER_Y - 2, 764, 1, ThemeColor.BORDER),
         ]
