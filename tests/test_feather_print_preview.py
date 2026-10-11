@@ -510,12 +510,12 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         self.assertFalse(preview["cancel"].is_set())
         self.assertEqual(len(controller.file_worker.submitted), 1)
         drawing = "\n".join(controller.batches[0])
-        for text in ("PAUSE", "FILAMENT", "Z ADJUST"):
+        for text in ("PAUSE", "MORE", "Z ADJUST"):
             self.assertIn(text, drawing)
         for text in ("PREVIEW", "missing.gcode", "ELAPSED", "CANCEL"):
             self.assertNotIn(text, drawing)
         actions = {region.action for region in controller.renderer.hitboxes}
-        self.assertTrue({"print.pause", "print.filament", "print.z", "print.cancel"} <= actions)
+        self.assertTrue({"print.pause", "print.more", "print.z", "print.cancel"} <= actions)
 
     def test_pending_button_refresh_and_queue_refusal_preserve_visible_input(self):
         controller = _controller("/data/missing.gcode")
@@ -534,7 +534,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
         controller._update_print_controls()
         drawing = "\n".join(controller.batches[0])
         self.assertIn("PAUSE", drawing)
-        for text in ("PREVIEW", "ELAPSED", "CANCEL", "FILAMENT", "Z ADJUST"):
+        for text in ("PREVIEW", "ELAPSED", "CANCEL", "MORE", "Z ADJUST"):
             self.assertNotIn(text, drawing)
         self.assertTrue(any(region.action == "print.pause" for region in controller.renderer.hitboxes))
 
@@ -562,7 +562,7 @@ class PrintPreviewLayoutTest(unittest.TestCase):
             "fill -p %d %d -s %d %d" % (
                 panel_x, panel_y, panel_width, panel_height), drawing)
         self.assertIn("-t \"PREVIEW\"", drawing)
-        for action in ("print.pause", "print.filament", "print.z",
+        for action in ("print.pause", "print.more", "print.z",
                        "print.cancel"):
             button = controller.renderer._buttons[action]
             self.assertGreaterEqual(

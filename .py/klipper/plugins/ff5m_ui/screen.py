@@ -47,6 +47,7 @@ class ScreenPage(Enum):
     COMPONENT_BENCHMARK = 41
     OPERATION_CANCEL = 42
     TIMELAPSE_WAIT = 43
+    EXCLUDE_MODEL = 46
 
 
 class ScreenDialog(Enum):
@@ -54,3 +55,4 @@ class ScreenDialog(Enum):
     MESSAGE = 3
     ERROR = 4
     TOUCH_UNAVAILABLE = 5
+    PRINT_MORE = 6

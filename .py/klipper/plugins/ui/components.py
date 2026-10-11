@@ -300,6 +300,39 @@ class Frame(Component):
         return None
 
 
+class Popup(Frame):
+    """Modal Frame around any child tree, with outside dismissal and shared chrome."""
+
+    property_schema = property_schema(
+        *copy.deepcopy(Frame.property_schema),
+        _property("action", Action, None, kind="semantic_action", group="Behavior",
+                  bindings=(), live=False),
+        _property("preserve_header_action", bool, True, kind="checkbox", group="Behavior"))
+
+    def __init__(self, child=None, action=None, border=ThemeColor.PRIMARY,
+                 background=ThemeColor.PANEL, line_width=2, preserve_header_action=True, key=None):
+        super().__init__(child, border, background, line_width, key)
+        self.action = action
+        self.preserve_header_action = preserve_header_action
+
+    def blocks_input(self, state):
+        return True
+
+    def interaction_signature(self, state):
+        return resolve(self.preserve_header_action, state)
+
+    def draw(self, renderer, state, bounds):
+        return renderer.popup(
+            resolve(self.action, state), *bounds,
+            border=resolve(self.border, state), background=resolve(self.background, state),
+            line_width=resolve(self.line_width, state),
+            preserve_header_action=resolve(self.preserve_header_action, state))
+
+    def interaction_commands(self, renderer, state, bounds):
+        from .renderer import SCREEN_WIDTH, SCREEN_HEIGHT
+        return renderer.action_hitbox(resolve(self.action, state), 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
+
+
 class Section(Component):
     covers_bounds = True
     property_schema = property_schema(
@@ -511,6 +544,7 @@ class Text(Component):
         _property(
             "truncate", bool, False, kind="checkbox", group="Text layout",
             storage="kwargs"),
+        _property("fit", bool, False, kind="checkbox", group="Text layout", storage="kwargs"),
     )
 
     def __init__(self, value="", color=ThemeColor.PRIMARY, font=None,
@@ -706,8 +740,14 @@ class Text(Component):
             kwargs.setdefault("max_width", max(1, bounds.width))
         font = (resolve(self.font, state) if self.font is not None
                 else "JetBrainsMono 8pt")
+        value = self._display_value(state, bounds, font)
+        if kwargs.pop("fit", False):
+            font = get_font_metrics().fitting_font(
+                value, font, min(bounds.width, kwargs.get("max_width") or bounds.width),
+                min(bounds.height, kwargs.get("max_height") or bounds.height),
+                wrap=bool(kwargs.get("wrap")))
         return renderer.text(
-            x, y, self._display_value(state, bounds, font), resolve(self.color, state),
+            x, y, value, resolve(self.color, state),
             font, horizontal, renderer_vertical, **kwargs)
 
 
@@ -1382,6 +1422,8 @@ _publish_property_source_positions(Fill, color=0)
 _publish_property_source_positions(Stroke, color=0, line_width=1)
 _publish_property_source_positions(Panel, border=0, background=1, line_width=2)
 _publish_property_source_positions(Frame, border=1, background=2, line_width=3)
+_publish_property_source_positions(Popup, action=1, border=2, background=3, line_width=4,
+                                   preserve_header_action=5)
 _publish_property_source_positions(Section, title=0, border=1)
 _publish_property_source_positions(Button, action=0, label=1, state=2)
 _publish_property_source_positions(
@@ -1422,6 +1464,8 @@ _publish_creation(Stroke, ("color", "line_width"))
 _publish_creation(Panel, ("border", "background", "line_width"))
 _publish_creation(Frame, ("border", "background", "line_width"),
                   category="Layout", kind="single_child", children=True)
+_publish_creation(Popup, ("border", "background", "line_width", "preserve_header_action"),
+                  (_action_creation(),), category="Layout", kind="single_child", children=True)
 _publish_creation(Section, ("title", "border"))
 _publish_creation(Button, (
     "label", "subtitle", "font", "state", "accent", "button_layout"),
@@ -1431,7 +1475,7 @@ _publish_creation(ToggleSwitch, ("active", "enabled"), (_action_creation(),))
 _publish_creation(Hitbox, ("continuous",), (_action_creation(),))
 _publish_creation(Text, (
     "value", "font", "color", "horizontal", "vertical", "max_width",
-    "max_height", "wrap", "truncate"))
+    "max_height", "wrap", "truncate", "fit"))
 _publish_creation(Metric, ("label", "value", "unit"))
 _publish_creation(NumericKeypad, (
     "title", "value", "subtitle", "mode", "minimum", "maximum",

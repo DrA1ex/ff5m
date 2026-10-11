@@ -1418,6 +1418,31 @@ class FeatherRenderer:
         return self._arrow_button_commands(
             self._wire_action(action), x, y, width, height, direction, state)
 
+    def _begin_dialog(self, bounds, modal):
+        self._dialog_bounds = bounds if modal else self._dialog_bounds + bounds
+        if not modal:
+            return []
+        self._reset_interactions()
+        return [self.clear_hitboxes("base"), self.clear_hitboxes("overlay"), self._wake_hitbox()]
+
+    def popup(self, dismiss, x, y, width, height, *, border=ThemeColor.PRIMARY,
+              background=ThemeColor.PANEL, line_width=2, preserve_header_action=True):
+        """Prepare one modal panel; its component root supplies arbitrary content."""
+        if not self._prepare_surface():
+            return []
+        commands = self._begin_dialog(((x, y, width, height),), True)
+        commands.append(self.action_hitbox(dismiss, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
+        commands += self.panel(x, y, width, height, border, background, line_width)
+        if preserve_header_action and self._header_action is not None:
+            commands += self._header_action_commands()
+            action = self._header_action[0]
+            wire = action_wire_id(action) if isinstance(action, Action) else str(action)
+            for region in self.hitboxes:
+                if region.action == wire:
+                    commands.append(self.overlay_hitbox(wire, region.x, region.y, region.width, region.height))
+                    break
+        return commands
+
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
                height=220, tone="warning", modal=True,
                preserve_header_action=True, page=0, page_actions=None,
@@ -1482,18 +1507,17 @@ class FeatherRenderer:
                                DIALOG_TITLE_FONT).glyph_height // 2),)
         if page_count > 1 and (page_actions is None or len(page_actions) != 2):
             raise ValueError("Overflowing dialog requires previous and next actions")
-        bounds = ((x, y, width, height),)
-        self._dialog_bounds = bounds if modal else self._dialog_bounds + bounds
-        commands = []
-        show_header_action = (
-            preserve_header_action and self._header_action is not None)
+        outer_x = max(0, x - 8)
+        outer_y = max(HEADER_BOTTOM + 1, y - 8)
+        outer_right = min(SCREEN_WIDTH, x + width + 8)
+        outer_bottom = min(CONTENT_BOTTOM, y + height + 8)
+        outer_bounds = (outer_x, outer_y, outer_right - outer_x,
+                        outer_bottom - outer_y)
+        commands = self._begin_dialog(((x, y, width, height),), modal)
+        show_header_action = (preserve_header_action and self._header_action is not None)
         if modal:
-            self._reset_interactions()
-            commands += [
-                self.clear_hitboxes("base"),
-                self.clear_hitboxes("overlay"),
-                self._wake_hitbox(),
-            ]
+            # Hide fragments of retained controls immediately beside the frame.
+            commands.append(self.fill(*outer_bounds, ThemeColor.BACKGROUND))
         commands += self.panel(
             x, y, width, height, border=border, background=ThemeColor.PANEL)
         for line, title_y in title_rows:

@@ -134,13 +134,15 @@ def _unavailable(reason="Source capture is unavailable"):
 
 
 def property_provenance(node, property_name, spec=None, value=None):
+    provider = _node_provider(node)
+    if provider is not None and getattr(node, "_source_return", None):
+        return provider.property_provenance(node, property_name, spec=spec, value=value)
     instance = getattr(node, "_component_template_instance", None)
     if instance and instance.get("root"):
         parameter = component_property_parameter(node, property_name)
         if parameter is None:
             return _unavailable("Property belongs to the component definition and is not an exposed parameter")
         return component_parameter_provenance(node, parameter.name, value)
-    provider = _node_provider(node)
     if provider is None:
         return _unavailable()
     return provider.property_provenance(

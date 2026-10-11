@@ -74,6 +74,9 @@ class PrintCancelPagesMixin:
                 "The active operation cannot be cancelled safely")
 
     def _handle_print_action(self, action):
+        if action == "print.more":
+            self._open_print_more()
+            return
         stats = self.print_stats.get_status(self.reactor.monotonic())["state"]
         phase = self._timelapse_phase()
         if action == "print.cancel":

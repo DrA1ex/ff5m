@@ -174,6 +174,28 @@ class FontMetrics:
     def text_width(self, value, font):
         return self.fonts[self.normalize_for_text(font, value)].text_advance(value)
 
+    def fitting_font(self, value, font, width, height, wrap=False):
+        """Shrink within the supported face sizes; retain the minimum when none fit."""
+        font = self.normalize_for_text(font, value)
+        requested = _FONT_NAME.match(font)
+        if requested is None:
+            return font
+        family, maximum = requested.group(1), int(requested.group(2))
+        candidates = []
+        for name in self.names:
+            match = _FONT_NAME.match(name)
+            if (match is not None and match.group(1) == family
+                    and int(match.group(2)) <= maximum and self.fonts[name].supports_text(value)):
+                candidates.append((int(match.group(2)), name))
+        candidates.sort(reverse=True)
+        chosen = font
+        for _size, chosen in candidates:
+            lines = self.wrap_text(value, chosen, width) if wrap else str(value).split("\n")
+            if (max((self.text_width(line, chosen) for line in lines), default=0) <= width
+                    and self.text_height(value, chosen, max_width=width, wrap=wrap) <= height):
+                break
+        return chosen
+
     def wrap_text(self, value, font, max_width):
         """Implement TextDrawer's whitespace and long-word rules (word-v1)."""
         text = str(value)

@@ -81,9 +81,10 @@ EXACT_ACTIONS = {
     ScreenPage.FILE_CONFIRM: (
         "nav.back", "file.start", "file.mesh.rebuild", "file.mesh.auto"),
     ScreenPage.PRINTING: ("nav.home", "print.pause", "print.filament",
-                    "print.cancel", "print.z"),
+                    "print.cancel", "print.z", "print.more"),
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
-                  "print.cancel", "print.z"),
+                  "print.cancel", "print.z", "print.more"),
+    ScreenPage.EXCLUDE_MODEL: ("exclude.back", "exclude.prev", "exclude.next", "exclude.request"),
     ScreenPage.TIMELAPSE_WAIT: (
         "print.cancel", "timelapse.wait.cancel_render"),
     ScreenPage.OPERATION_CANCEL: (
@@ -126,6 +127,9 @@ class DialogSpec(NamedTuple):
 
 RECOVERY_DIALOG_PRIORITY = 1
 DIALOGS = {
+    ScreenDialog.PRINT_MORE: DialogSpec(
+        "_render_print_more", ("more.close", "more.filament", "more.exclude"),
+        lambda content: (), 0, frozenset(), False, False),
     ScreenDialog.ACTION_PROMPT: DialogSpec(
         "_render_action_prompt", ("prompt.prev", "prompt.next", "coldpull.cancel"),
         lambda content: content["buttons"], 0, frozenset(), False, False),
@@ -1225,6 +1229,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._handle_operation_cancel_action(action)
             elif action.startswith("print."):
                 self._handle_print_action(action)
+            elif action.startswith("more."):
+                self._handle_more_action(action)
+            elif action.startswith("exclude."):
+                self._handle_exclude_action(action)
             elif action.startswith("heat."):
                 self._handle_heat_action(action)
             elif action.startswith("recovery."):
@@ -1275,6 +1283,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if action in EXACT_ACTIONS.get(page, ()):
             return True
         return ((page == ScreenPage.FILE_BROWSER and action.startswith("file.item"))
+                or (page == ScreenPage.EXCLUDE_MODEL and action.startswith("exclude.select."))
                 or (page == ScreenPage.WIFI_SCAN and action.startswith("net.item"))
                 or (page == ScreenPage.WIFI_PASSWORD and is_keyboard_action(action)))
 
@@ -1389,7 +1398,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             root.paint()
 
     def _paint_dialog(self, instance):
-        if not self.renderer.retaining_background:
+        if not self.renderer.retaining_background and instance.kind != ScreenDialog.PRINT_MORE:
             self.renderer.invalidate_footer()
             self.renderer.send((self.renderer.modal_scrim(),))
         instance.painter(instance)
@@ -1482,6 +1491,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._render_file_confirm()
         elif page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
             self._render_print_page()
+        elif page == ScreenPage.EXCLUDE_MODEL:
+            self._render_exclude_model()
         elif page == ScreenPage.TIMELAPSE_WAIT:
             self._render_timelapse_wait()
         elif page == ScreenPage.CONTROL_MOVE:
@@ -1506,6 +1517,9 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self.update_notification.render()
 
     def _go_back(self):
+        if self.page == ScreenPage.EXCLUDE_MODEL:
+            self._show_page(self.page_for_print_state())
+            return
         if self.page == ScreenPage.OPERATION_CANCEL:
             self._close_operation_cancel()
             return
@@ -2307,6 +2321,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self.renderer.loader(self.busy_message, self.busy_phase)
             elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                 self._update_print_progress(eventtime)
+            elif self.page == ScreenPage.EXCLUDE_MODEL:
+                self._render_screen()
             elif self.page == ScreenPage.IDLE_HOME:
                 self._update_dashboard(eventtime)
             elif self.page == ScreenPage.CONTROL_MOVE:
@@ -2484,6 +2500,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif new_state in (PrintState.PREPARING, PrintState.PRINTING):
             if (self.page not in (
                     ScreenPage.PRINTING, ScreenPage.TIMELAPSE_WAIT,
+                    ScreenPage.EXCLUDE_MODEL,
                     ScreenPage.LIVE_Z_OFFSET,
                     ScreenPage.OPERATION_CANCEL)
                     and not (self.page == ScreenPage.IDLE_HOME
@@ -2495,11 +2512,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     ScreenPage.FILAMENT_MATERIAL,
                     ScreenPage.FILAMENT_ACTION, ScreenPage.LIVE_Z_OFFSET,
                     ScreenPage.OPERATION_CANCEL,
-                    ScreenPage.TIMELAPSE_WAIT) and not (
+                    ScreenPage.TIMELAPSE_WAIT, ScreenPage.EXCLUDE_MODEL) and not (
                         self.page == ScreenPage.IDLE_HOME
                         and getattr(self, "home_during_print", False)):
                 self._show_page(ScreenPage.PAUSED)
         elif new_state == PrintState.IDLE:
+            if getattr(self, "page", None) == ScreenPage.EXCLUDE_MODEL:
+                self._show_page(ScreenPage.IDLE_HOME)
             self._filament_request_token = getattr(
                 self, "_filament_request_token", 0) + 1
             if old_state in (PrintState.PREPARING, PrintState.PRINTING,

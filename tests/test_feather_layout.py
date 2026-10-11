@@ -351,8 +351,8 @@ class PrintingLayoutTest(unittest.TestCase):
         buttons = page.rect(printing.PrintingRef.BUTTONS)
         controls = [
             page.rect(printing.PrintingRef.PAUSE),
-            page.rect(printing.PrintingRef.FILAMENT),
             page.rect(printing.PrintingRef.Z_ADJUST),
+            page.rect(printing.PrintingRef.MORE),
             page.rect(printing.PrintingRef.CANCEL),
         ]
 

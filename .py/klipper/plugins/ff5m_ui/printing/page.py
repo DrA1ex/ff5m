@@ -14,7 +14,7 @@ from ui.layout import FLEX, Column, Equal, Flex, Grid, Overlay, PageTree, Rect, 
 
 from ..keys import AppPage
 from ..styles import UI_STYLES, UiStyle
-from .actions import CANCEL, FILAMENT, HOME, PAUSE, RESUME, Z_ADJUST
+from .actions import CANCEL, HOME, MORE, PAUSE, RESUME, Z_ADJUST
 from .components import METRIC_PAIR
 from .state import PrintingState
 
@@ -42,7 +42,7 @@ class PrintingRef(Enum):
     PREVIEW_BOX = "printing.preview.box"
     BUTTONS = "printing.buttons"
     PAUSE = "printing.pause"
-    FILAMENT = "printing.filament"
+    MORE = "printing.more"
     Z_ADJUST = "printing.z_adjust"
     CANCEL = "printing.cancel"
 
@@ -200,10 +200,10 @@ def _buttons():
     return Grid(
         matrix=((
             pause,
-            Button(FILAMENT, "FILAMENT", state=derived(_enabled, ready))
-            .style(UiStyle.BUTTON_BOLD_8).ref(PrintingRef.FILAMENT),
             Button(Z_ADJUST, "Z ADJUST", state=derived(_enabled, bind(PrintingState.LIVE_Z_ALLOWED)))
             .style(UiStyle.BUTTON_BOLD_8).ref(PrintingRef.Z_ADJUST),
+            Button(MORE, "MORE", state=derived(_enabled, ready))
+            .style(UiStyle.BUTTON_BOLD_8).ref(PrintingRef.MORE),
             Button(CANCEL, "CANCEL", state="danger")
             .style(UiStyle.BUTTON_BOLD_8).ref(PrintingRef.CANCEL),
         ),),
@@ -218,7 +218,7 @@ def create_page(bounds=PAGE_BOUNDS):
             Button(HOME, "HOME").style(UiStyle.BUTTON_BOLD_8).ref(PrintingRef.HOME),
             Spacer(),
         ),),
-        columns=(146, FLEX), rows=Equal(1), gap=0,
+        columns=(146, FLEX), rows=Equal(1), gap=12,
     ).padding(left=14, top=6, right=14, bottom=2).height(56).ref(PrintingRef.HEADER)
 
     content = Column(

@@ -42,7 +42,7 @@ def _changed_refs(module, page, values):
         PrintingState.LAYER: (ref.LAYER,),
         PrintingState.HEIGHT: (ref.HEIGHT,),
         PrintingState.PAUSED: (ref.PAUSE,),
-        PrintingState.CONTROLS_READY: (ref.PAUSE, ref.FILAMENT),
+        PrintingState.CONTROLS_READY: (ref.PAUSE, ref.MORE),
         PrintingState.PENDING_ACTION: (ref.PAUSE,),
         PrintingState.LIVE_Z_ALLOWED: (ref.Z_ADJUST,),
         PrintingState.PREVIEW_STATUS: (ref.PREVIEW,),

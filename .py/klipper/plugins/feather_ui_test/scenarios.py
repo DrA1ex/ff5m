@@ -430,6 +430,11 @@ class ScenarioCatalog:
         self._add_tap(steps, "nav.back", ScreenPage.IDLE_HOME)
         self._add_render_capture(
             steps, "ui-print-preparing", self._render_preparing_print)
+        self._add_render_capture(steps, "ui-print-more-open", self._render_print_more_snapshot)
+        for kind in ("selected", "excluded", "small", "empty", "no-geometry", "paginated"):
+            self._add_render_capture(
+                steps, "ui-exclude-model-" + kind,
+                lambda value=kind: self._render_exclude_snapshot(value))
         self._add_operation_context_visuals(steps)
         for kind in ("normal", "pending", "not-cancelable"):
             self._add_render_capture(
@@ -1116,6 +1121,35 @@ class ScenarioCatalog:
                 "_operation_context_status": lambda eventtime=None: operation,
         }):
             self._show(ScreenPage.PRINTING)
+
+    def _render_print_more_snapshot(self):
+        operation = self._operation_context_snapshot({"path": ("print",)}, "PRINTING")
+        self._render_operation_print(operation, "printing", "PRINTING")
+        self.host._show_dialog(ScreenDialog.PRINT_MORE, content={})
+
+    def _render_exclude_snapshot(self, kind):
+        from .resources import load_exclude_models
+        fixture = load_exclude_models()
+        objects = fixture["objects"]
+        selected, page = "Gear_Cover", 0
+        if kind == "excluded":
+            selected = "Cable_Clip"
+        elif kind in ("small", "paginated"):
+            objects.append(fixture["tiny_object"])
+            if kind == "paginated":
+                selected, page = "Tiny_Pin", 1
+        elif kind == "empty":
+            objects, selected = [], None
+        elif kind == "no-geometry":
+            objects, selected = [{"name": "Unknown_Size", "center": [50, 60]}], None
+        elif kind != "selected":
+            raise ValueError("Unknown exclusion visual state: " + kind)
+        with _temporary_attributes(self.host, {
+                "_exclude_objects": lambda: (objects, set(fixture["excluded_objects"])),
+                "_exclude_bed": lambda: fixture["bed"],
+                "exclude_selected": {selected} if selected else set(), "exclude_list_page": page,
+        }):
+            self._show(ScreenPage.EXCLUDE_MODEL)
 
     @staticmethod
     def _operation_context_snapshot(specification, state):

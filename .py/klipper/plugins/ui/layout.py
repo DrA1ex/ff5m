@@ -1649,6 +1649,8 @@ class ComponentTemplate:
         if instance_source is not None:
             root._source = instance_source
         root._component_template_definition_root_source = definition_root_source
+        # A new instance is not the object returned while building its prototype.
+        root._source_return = None
         return root
 
 
@@ -1871,10 +1873,10 @@ _LIST_VIEW_CREATION = CreationContract(
             bindings=()),
         CreationFieldSpec(
             "direction", str, default="vertical",
-            validation=ValidationSpec(choices=("horizontal", "vertical")),
+            validation=ValidationSpec(choices=("horizontal", "vertical", "overlay")),
             editor=EditorSpec(
                 "select", label="Direction", group="Layout",
-                choices=("horizontal", "vertical")),
+                choices=("horizontal", "vertical", "overlay")),
             bindings=()),
         CreationFieldSpec(
             "gap", int, default=0,
@@ -1912,10 +1914,10 @@ class ListView(List):
                 name="template_key", runtime_name="template_key_binding")),
         PropertySpec(
             "direction", str, default="vertical",
-            validation=ValidationSpec(choices=("horizontal", "vertical")),
+            validation=ValidationSpec(choices=("horizontal", "vertical", "overlay")),
             editor=EditorSpec(
                 "select", label="Direction", group="Layout",
-                choices=("horizontal", "vertical")),
+                choices=("horizontal", "vertical", "overlay")),
             bindings=(), invalidation=Invalidation.STRUCTURE),
         PropertySpec(
             "gap", (int, type(None)), default=0, nullable=True,
@@ -1945,7 +1947,7 @@ class ListView(List):
             raise TypeError("ListView item_key must be a binding")
         if not isinstance(template_key, Binding):
             raise TypeError("ListView template_key must be a binding")
-        if direction not in ("horizontal", "vertical"):
+        if direction not in ("horizontal", "vertical", "overlay"):
             raise ValueError("Unknown ListView direction: %s" % direction)
         templates = tuple(templates or ())
         if not templates or not all(isinstance(value, Template)
@@ -2144,7 +2146,11 @@ class ListView(List):
         original = self.items
         self.items = rendered
         try:
-            List._arrange(self, bounds, result)
+            if self.direction == "overlay":
+                for child in rendered:
+                    child.arrange(bounds, result)
+            else:
+                List._arrange(self, bounds, result)
         finally:
             self.items = original
         if rendered is not self._template_samples:

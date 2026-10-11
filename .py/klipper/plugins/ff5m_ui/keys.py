@@ -12,6 +12,8 @@ class AppPage(PageKey):
     SCREEN_ROOT = "screen.root"
     HOME = "home.dashboard"
     PRINTING = "printing.active"
+    PRINT_MORE = "printing.more"
+    EXCLUDE_MODEL = "printing.exclude_model"
     HEAT = "heat.control"
     FILAMENT_MATERIAL = "filament.material"
     FILAMENT_ACTION = "filament.action"

@@ -2435,7 +2435,7 @@ class PrintWorkflowTest(unittest.TestCase):
 
                 controller._render_print_page()
 
-                for action in (primary, "print.filament", "print.z"):
+                for action in (primary, "print.more", "print.z"):
                     self.assertEqual(rendering.latest.has_action(action),
                                      controls_ready, action)
                 self.assertTrue(rendering.latest.has_action("print.cancel"))
@@ -2511,7 +2511,7 @@ class PrintWorkflowTest(unittest.TestCase):
         frame.status["is_paused"] = False
         controller._update_print_progress(controller.reactor.monotonic())
         self.assertEqual(rendering.latest.button("print.resume").state, "enabled")
-        self.assertTrue(rendering.latest.has_action("print.filament"))
+        self.assertTrue(rendering.latest.has_action("print.more"))
         self.assertTrue(rendering.latest.has_action("print.z"))
         commands = []
         def resume(command, message):

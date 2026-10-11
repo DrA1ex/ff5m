@@ -60,6 +60,7 @@ NONPHYSICAL_SUITES = frozenset(("UI", "COMPONENT", "RENDER"))
 EXTENDED_CONTEXT_SUITES = frozenset(("CONTEXT_PRINT", "CONTEXT_MATERIAL"))
 UI_FINGERPRINT_FILES = (
     "feather_screen.py",
+    "feather_ui_test/fixtures/exclude_models.json",
     "feather/calibration/extruder.py",
     "feather/calibration/z.py",
     "feather/control/joystick.py",
@@ -77,6 +78,7 @@ UI_FINGERPRINT_FILES = (
     "feather/screen/keyboard.py",
     "feather/screen/pagination.py",
     "feather/screen/pages/__init__.py",
+    "feather/screen/pages/exclude_objects.py",
     "feather/screen/pages/files.py",
     "feather/screen/pages/home.py",
     "feather/screen/pages/mod_editor.py",

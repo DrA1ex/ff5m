@@ -29,7 +29,7 @@ class DialogLayoutTests(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 renderer = FeatherRenderer()
                 frame = RenderFrame(render_case(renderer, case), renderer)
-                panel = next(shape.bounds for shape in frame.shapes if shape.kind == "fill")
+                panel = next(shape.bounds for shape in frame.shapes if shape.kind == "stroke")
                 choices = [button for action, button in frame.buttons.items()
                            if action.startswith("choice.")]
                 rows = {}
@@ -48,7 +48,7 @@ class DialogLayoutTests(unittest.TestCase):
                 self.assert_readable(renderer, frame)
 
     def assert_readable(self, renderer, frame):
-        panel = next(shape.bounds for shape in frame.shapes if shape.kind == "fill")
+        panel = next(shape.bounds for shape in frame.shapes if shape.kind == "stroke")
         self.assertGreaterEqual(panel.y, 74)
         self.assertLessEqual(panel.bottom, 422)
         for button in frame.buttons.values():
@@ -78,7 +78,7 @@ class DialogLayoutTests(unittest.TestCase):
         buttons = [frame.button(action) for action, _, _ in self.buttons()]
         self.assertGreater(len({button.bounds.y for button in buttons}), 1)
         self.assertTrue(all(button.font == DIALOG_BUTTON_FONT for button in buttons))
-        self.assertGreater(next(shape.bounds.height for shape in frame.shapes), 220)
+        self.assertGreater(next(shape.bounds.height for shape in frame.shapes if shape.kind == "stroke"), 220)
         self.assertNotIn("next", frame.buttons)
         self.assert_readable(renderer, frame)
 

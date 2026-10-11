@@ -206,6 +206,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                     Dialog.ERROR: {"message": "Configuration failed", "category": "error",
                                    "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},
+                    Dialog.PRINT_MORE: {},
                 }[dialog]
                 self.host._show_dialog(dialog, content=content)
                 self.begin("pid_bed")

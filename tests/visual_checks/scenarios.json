@@ -196,7 +196,9 @@
       "state": {
         "ui.pages.z_offset.summary.state.SummaryState.AVERAGE": -0.125,
         "ui.pages.z_offset.summary.state.SummaryState.LOAD_ZOFFSET": true,
-        "ui.pages.z_offset.summary.state.SummaryState.RESULTS": {"center": -0.125},
+        "ui.pages.z_offset.summary.state.SummaryState.RESULTS": {
+          "center": -0.125
+        },
         "ui.pages.z_offset.summary.state.SummaryState.SELECTED": "center"
       }
     },
@@ -206,6 +208,499 @@
       "page": "ui.pages.keys.AppPage.Z_OFFSET_SUMMARY",
       "state": {
         "ui.pages.z_offset.summary.state.SummaryState.DIALOG": "discard"
+      }
+    },
+    {
+      "id": "print-more-open",
+      "label": "Print More / reusable popup root",
+      "page": "ui.pages.keys.AppPage.PRINT_MORE",
+      "state": {}
+    },
+    {
+      "id": "exclude-model-selected",
+      "label": "Exclude Model / selected",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "SELECTED",
+            "marker": "2",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "EXCLUDED",
+            "marker": "3",
+            "selected": false,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "SELECTED",
+            "marker": "2",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "EXCLUDED",
+            "marker": "3",
+            "selected": false,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 3,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": false,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "1 / 1",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "danger",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "EXCLUDE SELECTED (1)"
+      }
+    },
+    {
+      "id": "exclude-model-excluded",
+      "label": "Exclude Model / excluded",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "TAP TO SELECT",
+            "marker": "2",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "SELECTED / EXCLUDED",
+            "marker": "3",
+            "selected": true,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "TAP TO SELECT",
+            "marker": "2",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "SELECTED / EXCLUDED",
+            "marker": "3",
+            "selected": true,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 3,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": false,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "1 / 1",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "ALREADY EXCLUDED"
+      }
+    },
+    {
+      "id": "exclude-model-small",
+      "label": "Exclude Model / small",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "SELECTED",
+            "marker": "2",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "EXCLUDED",
+            "marker": "3",
+            "selected": false,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          },
+          {
+            "name": "Tiny_Pin",
+            "kind": "object",
+            "label": "04  Tiny Pin",
+            "note": "TAP TO SELECT",
+            "marker": "4",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.9090909090909091,
+              0.1318181818181818,
+              0.049999999999999996,
+              0.049999999999999996
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "SELECTED",
+            "marker": "2",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "EXCLUDED",
+            "marker": "3",
+            "selected": false,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 4,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": false,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": true,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "1 / 2",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "enabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "danger",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "EXCLUDE SELECTED (1)"
+      }
+    },
+    {
+      "id": "exclude-model-empty",
+      "label": "Exclude Model / empty",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 0,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": true,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": true,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "1 / 1",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "EXCLUDE SELECTED"
+      }
+    },
+    {
+      "id": "exclude-model-no-geometry",
+      "label": "Exclude Model / no-geometry",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [
+          {
+            "name": "Unknown_Size",
+            "kind": "object",
+            "label": "01  Unknown Size",
+            "note": "TAP TO SELECT / NO GEOMETRY",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": null
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 1,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": false,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": true,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "1 / 1",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "EXCLUDE SELECTED"
+      }
+    },
+    {
+      "id": "exclude-model-paginated",
+      "label": "Exclude Model / paginated",
+      "page": "ui.pages.keys.AppPage.EXCLUDE_MODEL",
+      "state": {
+        "ui.pages.exclude_model.state.ExcludeState.OBJECTS": [
+          {
+            "name": "Bracket_Main",
+            "kind": "object",
+            "label": "01  Bracket Main",
+            "note": "TAP TO SELECT",
+            "marker": "1",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.11363636363636363,
+              0.5227272727272727,
+              0.2727272727272727,
+              0.3181818181818182
+            ]
+          },
+          {
+            "name": "Gear_Cover",
+            "kind": "object",
+            "label": "02  Gear Cover",
+            "note": "TAP TO SELECT",
+            "marker": "2",
+            "selected": false,
+            "excluded": false,
+            "rectangle": [
+              0.5227272727272727,
+              0.22727272727272727,
+              0.22727272727272727,
+              0.20454545454545453
+            ]
+          },
+          {
+            "name": "Cable_Clip",
+            "kind": "object",
+            "label": "03  Cable Clip",
+            "note": "EXCLUDED",
+            "marker": "3",
+            "selected": false,
+            "excluded": true,
+            "rectangle": [
+              0.6818181818181818,
+              0.7045454545454545,
+              0.18181818181818182,
+              0.11363636363636363
+            ]
+          },
+          {
+            "name": "Tiny_Pin",
+            "kind": "object",
+            "label": "04  Tiny Pin",
+            "note": "SELECTED",
+            "marker": "4",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.9090909090909091,
+              0.1318181818181818,
+              0.049999999999999996,
+              0.049999999999999996
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.ROWS": [
+          {
+            "name": "Tiny_Pin",
+            "kind": "object",
+            "label": "04  Tiny Pin",
+            "note": "SELECTED",
+            "marker": "4",
+            "selected": true,
+            "excluded": false,
+            "rectangle": [
+              0.9090909090909091,
+              0.1318181818181818,
+              0.049999999999999996,
+              0.049999999999999996
+            ]
+          }
+        ],
+        "ui.pages.exclude_model.state.ExcludeState.COUNT": 4,
+        "ui.pages.exclude_model.state.ExcludeState.EMPTY": false,
+        "ui.pages.exclude_model.state.ExcludeState.NO_GEOMETRY": false,
+        "ui.pages.exclude_model.state.ExcludeState.PAGINATED": true,
+        "ui.pages.exclude_model.state.ExcludeState.PAGE": "2 / 2",
+        "ui.pages.exclude_model.state.ExcludeState.PREVIOUS": "enabled",
+        "ui.pages.exclude_model.state.ExcludeState.NEXT": "disabled",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST": "danger",
+        "ui.pages.exclude_model.state.ExcludeState.REQUEST_LABEL": "EXCLUDE SELECTED (1)"
       }
     }
   ]

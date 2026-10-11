@@ -1,0 +1,115 @@
+{
+  "description": "Synthetic visual model: 220 x 220 mm bed; Bracket_Main bounds (25,35)-(85,105), Gear_Cover (115,125)-(165,170), Cable_Clip (150,40)-(190,65) already excluded. Optional Tiny_Pin is 11 x 11 mm, requiring a smaller map label. Supplied bounds only; no STL or toolpath is inferred.",
+  "bed": [
+    0,
+    0,
+    220,
+    220
+  ],
+  "objects": [
+    {
+      "name": "Bracket_Main",
+      "center": [
+        55,
+        70
+      ],
+      "polygon": [
+        [
+          25,
+          35
+        ],
+        [
+          85,
+          35
+        ],
+        [
+          85,
+          105
+        ],
+        [
+          25,
+          105
+        ]
+      ]
+    },
+    {
+      "name": "Gear_Cover",
+      "center": [
+        140,
+        147.5
+      ],
+      "polygon": [
+        [
+          115,
+          125
+        ],
+        [
+          165,
+          125
+        ],
+        [
+          165,
+          170
+        ],
+        [
+          115,
+          170
+        ]
+      ]
+    },
+    {
+      "name": "Cable_Clip",
+      "center": [
+        170,
+        52.5
+      ],
+      "polygon": [
+        [
+          150,
+          40
+        ],
+        [
+          190,
+          40
+        ],
+        [
+          190,
+          65
+        ],
+        [
+          150,
+          65
+        ]
+      ]
+    }
+  ],
+  "excluded_objects": [
+    "Cable_Clip"
+  ],
+  "current_object": "Bracket_Main",
+  "tiny_object": {
+    "name": "Tiny_Pin",
+    "center": [
+      205.5,
+      185.5
+    ],
+    "polygon": [
+      [
+        200,
+        180
+      ],
+      [
+        211,
+        180
+      ],
+      [
+        211,
+        191
+      ],
+      [
+        200,
+        191
+      ]
+    ]
+  }
+}

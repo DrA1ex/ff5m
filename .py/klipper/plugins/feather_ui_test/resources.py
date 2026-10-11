@@ -14,6 +14,12 @@ import re
 from feather.files import FileEntry
 
 
+def load_exclude_models():
+    """Load the synthetic model shared by native and Designer visual scenarios."""
+    with open(os.path.join(_FIXTURE_DIR, "exclude_models.json"), encoding="utf-8") as source:
+        return json.load(source)
+
+
 _MISSING = object()
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 # Shared with .root/timelapse_ffmpeg.sh: while this flag exists Moonraker's

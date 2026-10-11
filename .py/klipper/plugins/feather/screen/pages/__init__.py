@@ -8,6 +8,7 @@ from feather.network.pages import FeatherNetworkPagesMixin
 
 from .action_prompt import ActionPromptPagesMixin
 from .files import FILE_ROWS, FileBrowserPagesMixin
+from .exclude_objects import ExcludeObjectsPagesMixin
 from .home import HomePagesMixin
 from .mod_editor import ModEditorPagesMixin
 from .mod_settings import ModSettingsPagesMixin
@@ -21,6 +22,7 @@ class FeatherPagesMixin(
         HomePagesMixin,
         FileBrowserPagesMixin,
         PrintingPagesMixin,
+        ExcludeObjectsPagesMixin,
         PrintCancelPagesMixin,
         SettingsPagesMixin,
         ModSettingsPagesMixin,
