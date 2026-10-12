@@ -1620,6 +1620,25 @@ class RunnerContractTest(unittest.TestCase):
                 self.assertNotEqual(added, changed)
                 self.assertEqual(UI_TEST.UITestRun._ui_fingerprint(), changed)
 
+    def test_preview_metadata_changes_invalidate_both_ui_fingerprints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            plugins = root / ".py/klipper/plugins"
+            for package in HYBRID.UI_FINGERPRINT_PACKAGES:
+                (plugins / package).mkdir(parents=True)
+            reader = plugins / "feather/gcode_info.py"
+            reader.parent.mkdir()
+            with mock.patch.object(UI_TEST, "__file__", str(plugins / "feather_ui_test/runner.py")):
+                before = HYBRID.ui_fingerprint(root)
+                reader.write_text("metadata version A\n")
+                added = HYBRID.ui_fingerprint(root)
+                self.assertNotEqual(before, added)
+                self.assertEqual(UI_TEST.UITestRun._ui_fingerprint(), added)
+                reader.write_text("metadata version B\n")
+                changed = HYBRID.ui_fingerprint(root)
+                self.assertNotEqual(added, changed)
+                self.assertEqual(UI_TEST.UITestRun._ui_fingerprint(), changed)
+
     def test_ui_filament_back_preserves_target_before_leaving_materials(self):
         feature = UI_TEST.UITestRun(object())
         steps = feature.scenarios.build_steps("UI")

@@ -1401,6 +1401,23 @@ class FileWorkflowTest(unittest.TestCase):
         self.assertNotEqual(
             repeat_label, rendering.latest.button("file.start").label)
 
+    def test_file_confirmation_buttons_are_equal_and_labels_fit(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        controller.selected_file = FILES.FileEntry("part.gcode", "/data/part.gcode", size=1024)
+        rendering = RenderCapture(controller.renderer)
+        for repeat in (False, True):
+            with self.subTest(repeat=repeat):
+                controller.file_confirm_repeat = repeat
+                controller._render_file_confirm()
+                buttons = [rendering.latest.button(action) for action in ("file.preview", "file.start")]
+                for button in buttons:
+                    self.assertLessEqual(controller.renderer.text_width(button.label, button.font)
+                                         + 2 * controller.renderer.BUTTON_TEXT_PADDING, button.bounds.width)
+                self.assertEqual(buttons[0].bounds.width, buttons[1].bounds.width)
+                self.assertLess(buttons[0].bounds.right, buttons[1].bounds.x)
+                self.assertLessEqual(abs(buttons[0].bounds.x - (800 - buttons[1].bounds.right)), 1)
+
     def test_file_confirmation_reveals_auto_profile_only_after_mesh_rebuild(self):
         controller = base_controller()
         controller.page = FEATHER.ScreenPage.FILE_CONFIRM

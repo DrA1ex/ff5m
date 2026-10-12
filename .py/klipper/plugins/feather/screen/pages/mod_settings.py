@@ -6,7 +6,6 @@
 
 import logging
 
-from ui import ThemeColor
 from ui.lazy import LazyModule
 from ff5m_ui.screen import ScreenPage
 
@@ -14,16 +13,36 @@ from feather.screen.keyboard import TEXT_KEYBOARD, is_keyboard_action
 
 
 mod_ui = LazyModule("feather.settings.mod")
+parameter_ui = LazyModule("ff5m_ui.parameter_controls")
+preview_ui = LazyModule("ff5m_ui.model_preview.settings")
 
 
 class ModSettingsPagesMixin:
+    def _preview_parameter_context(self, page=None):
+        page = self.page if page is None else page
+        return (page == ScreenPage.PREVIEW_SETTINGS or
+                (page in (ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE)
+                 and getattr(self, "mod_return_page", None) == ScreenPage.PREVIEW_SETTINGS))
+
     def _mod_parameters(self):
+        if self._preview_parameter_context():
+            state = self.model_preview
+            if state is None:
+                raise RuntimeError("Model preview is no longer available")
+            keys = preview_ui.parameter_keys(self._setting("feather_preview_type", "LAYER_LINES"), state["mode"])
+            return [self.params.params_map[key] for key in keys]
         return mod_ui.visible_parameters(self.params)
+
+    def _mod_category_pages(self, parameters):
+        preview = self._preview_parameter_context()
+        return mod_ui.category_pages(self.params, parameters,
+                                     label="PRINT PREVIEW" if preview else None,
+                                     leading_height=mod_ui.ITEM_PITCH if preview else 0)
 
     def _render_mod_settings(self, anchor_key=None):
         self._require_idle()
         parameters = self._mod_parameters()
-        pages = mod_ui.category_pages(self.params, parameters)
+        pages = self._mod_category_pages(parameters)
         if anchor_key is None:
             anchor_key = getattr(self, "mod_restore_anchor_key", None)
         self.mod_restore_anchor_key = None
@@ -38,124 +57,15 @@ class ModSettingsPagesMixin:
             (index, param.key)
             for index, param in mod_ui.page_parameters(sections))
 
-        commands = self.renderer.begin_page("Mod settings", back=True)
-        y = mod_ui.LIST_TOP
-        for position, section in enumerate(sections):
-            pitch = mod_ui.band_pitch(position)
-            commands += self._mod_category_band(section, y, pitch)
-            y += pitch
-            for index, param in section.items:
-                commands += self._mod_parameter_row(param, index, y)
-                y += mod_ui.ITEM_PITCH
-        upcoming = mod_ui.next_category_hint(pages, self.mod_page)
-        if upcoming is not None:
-            commands += self._mod_next_category_card(upcoming, y)
-        commands += self._mod_scroll_rail(self.mod_page, len(pages))
+        preview = self._preview_parameter_context()
+        commands = self.renderer.begin_page("Preview settings" if preview else "Mod settings", back=True)
+        commands += parameter_ui.create_list_page(
+            self.params, sections, self.mod_page, len(pages),
+            mod_ui.next_category_hint(pages, self.mod_page, leading_height=mod_ui.ITEM_PITCH if preview else 0),
+            preview=preview,
+            leading_row=preview_ui.current_view_row(self.model_preview) if preview and self.mod_page == 0 else None,
+            measure_text=self.renderer.text_width).draw(self.renderer)
         self.renderer.send(commands)
-
-    def _mod_category_band(self, section, y, pitch):
-        """Draw the in-list heading that owns the parameter rows below it."""
-        label = section.label + (" (CONT.)" if section.continued else "")
-        counter = "%02d-%02d / %02d" % (
-            section.first, section.first + len(section.items) - 1,
-            section.total)
-        label_font, counter_font = "JetBrainsMono Bold 8pt", "JetBrainsMono 8pt"
-        # The band sits at the bottom of its slot, so the padding of a later
-        # band opens a gap above it and separates it from the rows before.
-        top = y + pitch - mod_ui.BAND_HEIGHT - mod_ui.BAND_GAP_BELOW
-        middle = top + mod_ui.BAND_HEIGHT // 2
-        right = mod_ui.LIST_X + mod_ui.LIST_WIDTH
-        label_x = mod_ui.LIST_X + 14
-        label_limit = (right - self.renderer.text_width(counter, counter_font)
-                       - 20 - label_x)
-        rule_x = label_x + min(
-            label_limit, self.renderer.text_width(label, label_font)) + 10
-        return [
-            self.renderer.fill(mod_ui.LIST_X, top, 4, mod_ui.BAND_HEIGHT,
-                               ThemeColor.PRIMARY),
-            self.renderer.text(label_x, middle, label, ThemeColor.PRIMARY,
-                               label_font, "left", "middle",
-                               max_width=label_limit, truncate=True),
-            self.renderer.fill(rule_x, middle,
-                               max(0, label_x + label_limit - rule_x), 1,
-                               ThemeColor.BORDER),
-            self.renderer.text(right, middle, counter, ThemeColor.DIM,
-                               counter_font, "right", "middle"),
-        ]
-
-    def _mod_parameter_row(self, param, index, y):
-        """Draw one parameter row together with its editing control."""
-        action = "mod.item.%d" % index
-        commands = [
-            self.renderer.fill(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
-                               mod_ui.ITEM_HEIGHT, ThemeColor.PANEL),
-            self.renderer.stroke(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
-                                 mod_ui.ITEM_HEIGHT, ThemeColor.BORDER, 1),
-            self.renderer.text(40, y + 14, str(param.label).upper(),
-                               ThemeColor.PRIMARY, "JetBrainsMono Bold 8pt",
-                               max_width=430, truncate=True),
-            self.renderer.text(40, y + 32, param.key, ThemeColor.DIM,
-                               "JetBrainsMono 8pt"),
-            self.renderer.text(40, y + 50, mod_ui.description(param),
-                               ThemeColor.TEXT, "JetBrainsMono 8pt",
-                               max_width=430, truncate=True),
-        ]
-        state = "disabled" if getattr(param, "readonly", False) else "enabled"
-        if mod_ui.parameter_kind(param) == "bool":
-            raw_value = self.params.variables.get(param.key, param.default)
-            commands += self.renderer.toggle(
-                action, 624, y + 13, 76, 38,
-                mod_ui.bool_display_active(param, raw_value),
-                enabled=state == "enabled")
-        else:
-            commands += self.renderer.button(
-                action, 520, y + 9, 180, 46,
-                mod_ui.display_value(self.params, param) + " >",
-                state=state, font="JetBrainsMono 8pt")
-        return commands
-
-    def _mod_next_category_card(self, label, y):
-        """Turn the space a postponed category left into the way to reach it.
-
-        The card wears the frame of an ordinary list block so it does not pull
-        attention away from the parameters, and carries the accent text of a
-        category heading to show that it leads to that category.
-        """
-        middle = y + mod_ui.ITEM_HEIGHT // 2
-        return [
-            self.renderer.fill(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
-                               mod_ui.ITEM_HEIGHT, ThemeColor.PANEL),
-            self.renderer.stroke(mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
-                                 mod_ui.ITEM_HEIGHT, ThemeColor.BORDER, 1),
-            self.renderer.text(
-                mod_ui.LIST_X + mod_ui.LIST_WIDTH // 2, middle,
-                "NEXT: %s >" % label, ThemeColor.TEXT,
-                "JetBrainsMono Bold 8pt", "center", "middle",
-                max_width=mod_ui.LIST_WIDTH - 40, truncate=True),
-            self.renderer.action_hitbox(
-                "mod.more", mod_ui.LIST_X, y, mod_ui.LIST_WIDTH,
-                mod_ui.ITEM_HEIGHT),
-        ]
-
-    def _mod_scroll_rail(self, page, page_count):
-        """Draw the page arrows and the position thumb beside the list."""
-        commands = self.renderer.arrow_button(
-            "mod.prev", 728, mod_ui.LIST_TOP, 52, 48, "up",
-            state="enabled" if page > 0 else "disabled")
-        commands += self.renderer.arrow_button(
-            "mod.next", 728, 388, 52, 48, "down",
-            state="enabled" if page + 1 < page_count else "disabled")
-        track_y, track_height = 134, 244
-        commands.append(self.renderer.stroke(749, track_y, 10, track_height,
-                                             ThemeColor.BORDER, 1))
-        thumb_height = max(18, track_height // page_count)
-        thumb_y = (track_y if page_count == 1 else
-                   track_y + (track_height - thumb_height) * page
-                   // (page_count - 1))
-        commands.append(self.renderer.fill(751, thumb_y + 2, 6,
-                                           max(4, thumb_height - 4),
-                                           ThemeColor.PRIMARY))
-        return commands
 
     def _open_mod_parameter(self, index, return_page=ScreenPage.MOD_SETTINGS):
         parameters = self._mod_parameters()
@@ -175,7 +85,7 @@ class ModSettingsPagesMixin:
         # Anchor on the first row of the current page.  Editing a parameter can
         # reveal or hide dependent rows, so the page number alone would not
         # bring the user back to the same place.
-        pages = mod_ui.category_pages(self.params, parameters)
+        pages = self._mod_category_pages(parameters)
         page = pages[max(0, min(getattr(self, "mod_page", 0), len(pages) - 1))]
         rows = mod_ui.page_parameters(page)
         self.mod_restore_anchor_key = rows[0][1].key if rows else None
@@ -262,6 +172,8 @@ class ModSettingsPagesMixin:
             self.mod_update_complete = None
             raise
         changed = previous_value != self.params.variables.get(param.key)
+        if changed and self._preview_parameter_context():
+            self._apply_model_preview_setting(param.key)
         if restart_effect is not None and changed:
             # set_value() only schedules its change hook. Draw and latch the
             # restart UI synchronously before the reactor can run that hook.
@@ -335,7 +247,7 @@ class ModSettingsPagesMixin:
             return
         if action.startswith("mod.item."):
             self._open_mod_parameter(
-                int(action.rsplit(".", 1)[1]), ScreenPage.MOD_SETTINGS)
+                int(action.rsplit(".", 1)[1]), self.page)
             return
         if action == "mod.cancel":
             self._restore_setting_preview()

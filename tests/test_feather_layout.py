@@ -1116,8 +1116,8 @@ class MovementLayoutTest(unittest.TestCase):
         z_panel = page.rect("z.panel")
         status_panel = page.rect("status.panel")
         xy_pad = page.rect("xy.pad")
-        z_hitbox = page.rect("z.hitbox")
-        z_track = page.rect("z.track")
+        z_hitbox = page.node("z.panel").touch_bounds(page.rect("z.panel"))
+        z_track = page.node("z.panel").track_bounds(page.rect("z.panel"))
 
         self.assertEqual((xy_panel.y, xy_panel.bottom),
                          (z_panel.y, z_panel.bottom))
@@ -1158,19 +1158,19 @@ class MovementLayoutTest(unittest.TestCase):
         values[move.MoveState.CURSOR] = None
         drawing = "\n".join(move.render_joystick(renderer, values))
         page = move.JOYSTICK_PAGE
-        track = page.rect("z.track")
-        scale = page.node("z.scale")
+        track = page.node("z.panel").track_bounds(page.rect("z.panel"))
+        scale = page.node("z.panel")
         positions = subdivision_positions(
-            track.y, track.height - 1, scale.depth)
+            track.y, track.height - 1, scale.scale_depth)
 
         for _index, y, level in positions:
             if level in (-1, 0):
-                width = scale.tick_widths[2]
+                width = 12
             elif level == 1:
-                width = scale.tick_widths[1]
+                width = 8
             else:
-                width = scale.tick_widths[0]
-            x = track.x - scale.tick_gap - width
+                width = 5
+            x = track.x - scale.scale_gap - width
             self.assertIn(
                 "-p %d %d -s %d 1" % (x, y, width), drawing)
 

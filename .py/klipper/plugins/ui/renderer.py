@@ -921,17 +921,18 @@ class FeatherRenderer:
         return commands
 
     def metric_row(self, x, y, width, label, value, unit="",
-                   label_color=ThemeColor.PRIMARY, value_color=ThemeColor.TEXT):
+                   label_color=ThemeColor.PRIMARY, value_color=ThemeColor.TEXT,
+                   label_font="JetBrainsMono 8pt", value_font="JetBrainsMono 8pt"):
         """Draw a compact label/value/unit row for status cards."""
         commands = [
-            self.text(x, y, label, label_color, "JetBrainsMono 8pt",
+            self.text(x, y, label, label_color, label_font,
                       "left", "middle"),
             self.text(x + width - (34 if unit else 0), y, value, value_color,
-                      "JetBrainsMono 8pt", "right", "middle"),
+                      value_font, "right", "middle"),
         ]
         if unit:
             commands.append(self.text(
-                x + width, y, unit, label_color, "JetBrainsMono 8pt",
+                x + width, y, unit, label_color, label_font,
                 "right", "middle"))
         return commands
 
@@ -992,24 +993,29 @@ class FeatherRenderer:
             ]
         return commands
 
-    def joystick_knob(self, x, y, axis="xy", size=25, color=ThemeColor.PRIMARY):
-        """Draw a centered square joystick knob without font alignment drift."""
+    def joystick_knob(self, x, y, axis="xy", size=25, color=ThemeColor.PRIMARY, *,
+                      glyph=None, background=ThemeColor.PANEL):
+        """Draw a centered knob with a glyph independent of its movement axis."""
+        if glyph is None:
+            glyph = "bars" if axis == "z" else "cross"
+        if glyph not in ("bars", "cross", "none"):
+            raise ValueError("Unknown knob glyph: %s" % glyph)
         size = max(9, int(size))
         if size % 2 == 0:
             size += 1
         left = int(x) - size // 2
         top = int(y) - size // 2
         commands = self.panel(
-            left, top, size, size, border=color, background=ThemeColor.PANEL,
+            left, top, size, size, border=color, background=background,
             line_width=2)
         center_x = int(x)
         center_y = int(y)
-        if axis == "z":
+        if glyph == "bars":
             commands += [
                 self.fill(center_x - 6, center_y - 3, 13, 1, color),
                 self.fill(center_x - 6, center_y + 3, 13, 1, color),
             ]
-        else:
+        elif glyph == "cross":
             commands += [
                 self.fill(center_x - 6, center_y, 13, 1, color),
                 self.fill(center_x, center_y - 6, 1, 13, color),

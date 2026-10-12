@@ -98,6 +98,31 @@
         "COLORFUL": "COLORFUL",
         "VANILLA": "VANILLA"
       }
+    },
+    "FeatherPreviewTypeEnum": {
+      "type": "str",
+      "values": {
+        "SOLID": "SOLID",
+        "STACKED": "STACKED",
+        "POINTS": "POINTS",
+        "MODEL_EDGES": "MODEL_EDGES",
+        "LAYER_LINES": "LAYER_LINES"
+      }
+    },
+    "FeatherPreviewGridEnum": {
+      "type": "int",
+      "values": {
+        "128": 128,
+        "192": 192,
+        "256": 256
+      }
+    },
+    "FeatherPreviewFitEnum": {
+      "type": "str",
+      "values": {
+        "TURN": "TURN",
+        "VIEW": "VIEW"
+      }
     }
   },
   "ui": {
@@ -188,9 +213,25 @@
         ]
       },
       {
+        "id": "print_preview",
+        "label": "PRINT PREVIEW",
+        "order": 5,
+        "parameters": [
+          "feather_preview_type",
+          "feather_preview_cache",
+          "feather_preview_grid",
+          "feather_preview_yaw",
+          "feather_preview_pitch",
+          "feather_preview_scale",
+          "feather_preview_fit",
+          "feather_preview_rotation_speed",
+          "feather_preview_fps"
+        ]
+      },
+      {
         "id": "experimental",
         "label": "EXPERIMENTAL",
-        "order": 5,
+        "order": 6,
         "parameters": [
           "klipper_rt",
           "zram_algo",
@@ -200,7 +241,7 @@
       {
         "id": "midi",
         "label": "MIDI",
-        "order": 6,
+        "order": 7,
         "parameters": [
           "midi_on",
           "midi_start",
@@ -210,7 +251,7 @@
       {
         "id": "other",
         "label": "OTHER",
-        "order": 7,
+        "order": 8,
         "fallback": true,
         "parameters": []
       }
@@ -965,6 +1006,139 @@
       "description": "Offer recovery after power loss.",
       "restart": "klipper",
       "order": 30000
+    },
+    {
+      "key": "feather_preview_stacked_density",
+      "type": "int",
+      "default": 100,
+      "minimum": 100,
+      "maximum": 200,
+      "label": "Layer density, percent",
+      "description": "More visible layers; 200 is twice 100.",
+      "order": 80009,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_points_density",
+      "type": "int",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 100,
+      "label": "Point density, percent",
+      "description": "Higher values show more points.",
+      "order": 80010,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_type",
+      "type": "FeatherPreviewTypeEnum",
+      "default": "LAYER_LINES",
+      "label": "Preview style",
+      "description": "Choose model style (experimental).",
+      "options": {
+        "SOLID": "Filled model surface",
+        "STACKED": "Selected layers spread through the model",
+        "POINTS": "Dots sampled from the print paths",
+        "MODEL_EDGES": "Outer edges of the model",
+        "LAYER_LINES": "Layer outlines on the model surface"
+      },
+      "order": 80000,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_grid",
+      "type": "FeatherPreviewGridEnum",
+      "default": "192",
+      "label": "Preview geometry detail",
+      "description": "More detail needs more work.",
+      "options": {
+        "128": "Less detail; lighter preparation",
+        "192": "Balanced detail and preparation",
+        "256": "More detail; heavier preparation"
+      },
+      "order": 80001,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_yaw",
+      "type": "float",
+      "default": 0,
+      "minimum": -180,
+      "maximum": 360,
+      "fraction_digits": 1,
+      "label": "Default rotation, degrees",
+      "description": "Turn left or right; 0 faces the front.",
+      "order": 80002,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_pitch",
+      "type": "float",
+      "default": 30,
+      "minimum": -90,
+      "maximum": 90,
+      "fraction_digits": 1,
+      "label": "Default tilt, degrees",
+      "description": "0 is level; 90 looks down from above.",
+      "order": 80003,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_scale",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0.25,
+      "maximum": 3.0,
+      "fraction_digits": 2,
+      "label": "Default zoom multiplier",
+      "description": "1 is auto-fit size; 2 zooms in twice.",
+      "order": 80008,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_fit",
+      "type": "FeatherPreviewFitEnum",
+      "default": "TURN",
+      "label": "Preview automatic framing",
+      "description": "How the base zoom adapts to rotation.",
+      "options": {
+        "TURN": "Stable size while turning left/right",
+        "VIEW": "Fit each angle; size changes as you turn"
+      },
+      "order": 80004,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_rotation_speed",
+      "type": "float",
+      "default": 24,
+      "minimum": 1,
+      "maximum": 90,
+      "fraction_digits": 1,
+      "label": "Auto-rotation, degrees/second",
+      "description": "Auto-turn speed in the preview lab.",
+      "order": 80005,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_fps",
+      "type": "int",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 60,
+      "label": "Preview frames per second",
+      "description": "FPS limit; higher uses more CPU.",
+      "order": 80006,
+      "hidden": true
+    },
+    {
+      "key": "feather_preview_cache",
+      "type": "bool",
+      "default": 1,
+      "label": "Model preview cache",
+      "description": "ON reuses; OFF rebuilds each frame.",
+      "order": 80007,
+      "hidden": true
     }
   ]
 }

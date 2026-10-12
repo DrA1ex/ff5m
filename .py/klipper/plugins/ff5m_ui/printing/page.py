@@ -233,11 +233,13 @@ def create_page(bounds=PAGE_BOUNDS):
         .padding(left=0, top=0, right=0, bottom=10) \
         .ref(PrintingRef.ROOT)
 
-    return PageTree(
+    page = PageTree(
         root, bounds, page_id=AppPage.PRINTING,
         styles=UI_STYLES,
         component_templates=(METRIC_PAIR,),
     )
+    page.title = "Printing"
+    return page
 
 
 PAGE = create_page()

@@ -11,8 +11,8 @@ from ui import ThemeColor, ThemeRole
 from ui.actions import Navigate
 from ui.bindings import bind, derived
 from ui.components import (
-    Button, CornerMarks, Crosshair, Dialog, DotGrid, Hitbox, JoystickKnob,
-    Metric, Panel, Section, Text, VerticalScale,
+    Button, CornerMarks, Crosshair, Dialog, DotGrid, Hitbox, Slider, SliderKnob,
+    Metric, Panel, Section, Text,
 )
 from ui.layout import (
     FLEX, Column, Equal, Grid, Overlay, PageTree as Page, Row, Spacer,
@@ -49,12 +49,6 @@ class JoystickRef(Enum):
     MOTORS = "motors"
     MODE = "mode"
     Z_PANEL = "z.panel"
-    Z_SECTION = "z.section"
-    Z_HITBOX = "z.hitbox"
-    Z_TRACK = "z.track"
-    Z_TRACK_PANEL = "z.track.panel"
-    Z_SCALE = "z.scale"
-    Z_KNOB = "z.knob"
     STATUS_PANEL = "status.panel"
     STATUS_SECTION = "status.section"
     STATUS_LAYOUT = "status.layout"
@@ -149,26 +143,16 @@ def _xy_pad():
         Text("+X").size(34, 24).margin(right=1)
         .align(horizontal="right", vertical="center")
         .ref(JoystickRef.XY_LABEL_X_PLUS),
-        JoystickKnob(
+        SliderKnob(
             "xy", position=bind(MoveState.CURSOR),
             active_action=JOYSTICK_XY,
             surface_ref=JoystickRef.XY_GRID,
+            glyph="cross", track="grid",
         ).ref(JoystickRef.XY_KNOB),
         Hitbox(JOYSTICK_XY, continuous=True)
         .ref(JoystickRef.XY_HITBOX),
         caution_overlay(),
     ).ref(JoystickRef.XY_PAD)
-
-
-def _z_track():
-    return Overlay(
-        Panel(border=ThemeColor.PRIMARY, line_width=1).ref(JoystickRef.Z_TRACK_PANEL),
-        VerticalScale(depth=3).ref(JoystickRef.Z_SCALE),
-        JoystickKnob(
-            "z", position=bind(MoveState.CURSOR),
-            active_action=JOYSTICK_Z, edge_padding=2,
-        ).ref(JoystickRef.Z_KNOB),
-    ).ref(JoystickRef.Z_TRACK)
 
 
 def _xy_panel():
@@ -189,17 +173,6 @@ def _xy_panel():
         Section("XY POSITION").ref(JoystickRef.XY_SECTION),
         xy_layout,
     ).ref(JoystickRef.XY_PANEL)
-
-
-def _z_panel():
-    return Overlay(
-        Section("Z AXIS").ref(JoystickRef.Z_SECTION),
-        Hitbox(JOYSTICK_Z, continuous=True)
-        .margin(left=8, top=32, right=8, bottom=3)
-        .ref(JoystickRef.Z_HITBOX),
-        _z_track().width(10).margin(top=39, right=27, bottom=10)
-        .align(horizontal="right"),
-    ).ref(JoystickRef.Z_PANEL)
 
 
 def _status_panel():
@@ -230,7 +203,17 @@ def _status_panel():
 
 def _content():
     return Grid(
-        matrix=((_xy_panel(), _z_panel(), _status_panel()),),
+        matrix=((
+            _xy_panel(),
+            Slider(
+                JOYSTICK_Z, "Z AXIS", "z", position=bind(MoveState.CURSOR),
+                edge_padding=2, glyph="bars", track="frame", scale=True, frame=True,
+                label_align="left", label_top=12, label_height=18, label_padding=18,
+                track_insets=(8, 39, 27, 10), track_size=10, track_align="end",
+                touch_insets=(8, 32, 8, 3),
+            ).ref(JoystickRef.Z_PANEL).repaint_boundary(),
+            _status_panel(),
+        ),),
         columns=(FLEX, 100, 200),
         rows=Equal(1), gap=(10, 0),
     ).ref(JoystickRef.ROOT)

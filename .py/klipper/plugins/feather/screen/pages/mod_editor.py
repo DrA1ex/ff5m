@@ -13,6 +13,7 @@ from feather.screen.pagination import Pagination
 
 
 mod_ui = LazyModule("feather.settings.mod")
+parameter_ui = LazyModule("ff5m_ui.parameter_controls")
 
 
 class ModEditorPagesMixin:
@@ -25,65 +26,11 @@ class ModEditorPagesMixin:
             self._render_theme_options(param)
             return
         commands = self.renderer.begin_page(str(param.label), back=True)
-        commands.append(self.renderer.text(
-            25, 76, mod_ui.description(param), ThemeColor.TEXT,
-            "JetBrainsMono 8pt", max_width=650, max_height=44, wrap=True,
-            truncate=True))
-        if mod_ui.restart_effect(param) is not None:
-            commands.append(self.renderer.text(
-                25, 108, "APPLYING THIS VALUE RESTARTS KLIPPER.", ThemeColor.WARNING,
-                "JetBrainsMono 8pt"))
-        options = self.parameter_options
-        if (param.key == "feather_theme"
-                and self.selected_parameter_option not in options):
-            self.selected_parameter_option = "DEFAULT"
-        entries = self.parameter_option_entries
         pagination = Pagination(
-            entries, getattr(self, "parameter_options_page_index", 0), 4)
+            self.parameter_option_entries, getattr(self, "parameter_options_page_index", 0), 4)
         self.parameter_options_page_index = pagination.page
-        start = pagination.start
-        for row, option in enumerate(pagination.visible):
-            index = start + row
-            selected = (option.enabled
-                        and option.value == self.selected_parameter_option)
-            detail = str(option.description or "").upper()
-            label = str(option.label).upper()
-            if detail:
-                label += " // " + detail
-            if selected:
-                label += "  [SELECTED]"
-            state = ("disabled" if not option.enabled else
-                     "selected" if selected else "enabled")
-            commands += self.renderer.button(
-                "mod.option.%d" % index, 25, 120 + row * 66, 750, 58,
-                label, state=state, font="JetBrainsMono 8pt")
-        if pagination.page_count > 1:
-            commands += self.renderer.button(
-                "mod.options.prev", 25, 390, 120, 47, "<",
-                state=("enabled" if pagination.has_previous
-                       else "disabled"),
-                font="JetBrainsMono Bold 8pt")
-            commands += self.renderer.button(
-                "mod.cancel", 155, 390, 220, 47, "CANCEL", state="danger",
-                font="JetBrainsMono Bold 8pt")
-            commands += self.renderer.button(
-                "mod.apply", 425, 390, 220, 47, "APPLY",
-                font="JetBrainsMono Bold 8pt")
-            commands += self.renderer.button(
-                "mod.options.next", 655, 390, 120, 47, ">",
-                state=("enabled" if pagination.has_next else "disabled"),
-                font="JetBrainsMono Bold 8pt")
-            commands.append(self.renderer.text(
-                750, 80, "%d/%d" % (
-                    pagination.page + 1, pagination.page_count),
-                ThemeColor.DIM, "JetBrainsMono 8pt", "right", "middle"))
-        else:
-            commands += self.renderer.button(
-                "mod.cancel", 25, 390, 360, 47, "CANCEL", state="danger",
-                font="JetBrainsMono Bold 8pt")
-            commands += self.renderer.button(
-                "mod.apply", 415, 390, 360, 47, "APPLY",
-                font="JetBrainsMono Bold 8pt")
+        commands += parameter_ui.create_options_page(
+            param, pagination, self.selected_parameter_option).draw(self.renderer)
         self.renderer.send(commands)
 
     def _render_theme_options(self, param):
@@ -221,20 +168,7 @@ class ModEditorPagesMixin:
         self.renderer.send(commands)
 
     def _render_mod_numeric_keys(self, param):
-        spec = mod_ui.numeric_input_spec(param)
-        actions = dict((digit, "mod.key.%s" % digit)
-                       for digit in "0123456789")
-        actions.update({
-            "backspace": "mod.backspace",
-            "confirm": "mod.save",
-        })
-        if spec.allows_decimal:
-            actions["decimal"] = "mod.dot"
-        if spec.allows_negative:
-            actions["sign"] = "mod.sign"
-        return self.renderer.numeric_keypad(
-            18, 65, 764, 370, param.key, self.mod_edit_value, actions,
-            subtitle=param.label, mode=spec, confirm_label="SAVE")
+        return parameter_ui.create_numeric_page(param, self.mod_edit_value).draw(self.renderer)
 
     def _render_mod_text_keys(self):
         commands = TEXT_KEYBOARD.render(

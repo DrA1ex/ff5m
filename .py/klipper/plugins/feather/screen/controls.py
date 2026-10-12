@@ -33,6 +33,7 @@ from feather.materials import render_material_selector
 
 
 home_ui = LazyModule("ff5m_ui.home.page")
+preview_actions = LazyModule("ff5m_ui.model_preview.actions")
 printing_ui = LazyModule("ff5m_ui.printing.runtime")
 z_offset_ui = LazyModule("ff5m_ui.z_offset.runtime")
 calibration_screws_ui = LazyModule("ff5m_ui.calibration_screws.runtime")
@@ -450,6 +451,9 @@ class FeatherControlsMixin:
             self.renderer.send(commands)
 
     def _semantic_ui_page(self):
+        if self.page in (ScreenPage.MODEL_PREVIEW, ScreenPage.PRINT_PREVIEW):
+            state = getattr(self, "model_preview", None)
+            return state["page_tree"] if state is not None else None
         if self.page == ScreenPage.IDLE_HOME:
             return home_ui.PAGE
         if self.page == ScreenPage.CONTROL_HEAT:
@@ -540,11 +544,17 @@ class FeatherControlsMixin:
         raise KeyError("Unsupported home route: %s" % route)
 
     def _dispatch_semantic_ui_action(self, action):
+        if (getattr(self, "page", None) in (ScreenPage.MODEL_PREVIEW, ScreenPage.PRINT_PREVIEW)
+                and isinstance(action, preview_actions.PreviewAction)):
+            self._handle_model_preview_action(action.wire_id)
+            return
         if isinstance(action, HomeNavigate):
             self._handle_home_navigation(action.route)
             return
         if isinstance(action, PrintingAction):
-            if action.route == PrintingRoute.HOME:
+            if action.route == PrintingRoute.PREVIEW:
+                self._open_print_model_preview()
+            elif action.route == PrintingRoute.HOME:
                 self.home_during_print = self.print_state in (
                     PrintState.PREPARING, PrintState.PRINTING,
                     PrintState.PAUSED)

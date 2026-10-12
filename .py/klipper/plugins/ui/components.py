@@ -15,7 +15,7 @@ from .font_metrics import get_font_metrics
 from .identity import serialize_key
 from .layout import (
     CreationContract, CreationIdentityContract, CreationSourceContract, Dirty,
-    Node, Rect, _SINGLE_CHILD_STRUCTURE, subdivision_positions,
+    Insets, Node, Rect, _command_list, _SINGLE_CHILD_STRUCTURE, subdivision_positions,
 )
 from .numeric_input import NumericInputSpec
 from .properties import (
@@ -756,10 +756,16 @@ class Metric(Component):
         _text("label", group="Content", live=True),
         _text("value", group="Content", live=True),
         _text("unit", group="Content", live=True),
-        _color(
-            "label_color", ThemeColor.PRIMARY, group="Appearance", storage="kwargs"),
-        _color(
-            "value_color", ThemeColor.TEXT, group="Appearance", storage="kwargs"))
+        _color("label_color", ThemeColor.PRIMARY, group="Appearance", storage="kwargs"),
+        _color("value_color", ThemeColor.TEXT, group="Appearance", storage="kwargs"),
+        _select("orientation", ("horizontal", "vertical"), "horizontal",
+                group="Layout", storage="kwargs", invalidation=Invalidation.LAYOUT),
+        _property("label_font", str, "JetBrainsMono 8pt", kind="font", group="Appearance",
+                  storage="kwargs", invalidation=Invalidation.LAYOUT),
+        _property("value_font", str, "JetBrainsMono 8pt", kind="font", group="Appearance",
+                  storage="kwargs", invalidation=Invalidation.LAYOUT),
+        _number("gap", 0, minimum=0, group="Layout", storage="kwargs",
+                invalidation=Invalidation.LAYOUT))
 
     def __init__(self, label, value, unit="", key=None, **kwargs):
         super().__init__(key=key)
@@ -767,15 +773,65 @@ class Metric(Component):
         self.value = value
         self.unit = unit
         self.kwargs = kwargs
+        self._measurement_state = None
+
+    def _content(self, state=None):
+        values = (self.label, self.value, self.unit,
+                  self.kwargs.get("orientation", "horizontal"),
+                  self.kwargs.get("label_font", "JetBrainsMono 8pt"),
+                  self.kwargs.get("value_font", "JetBrainsMono 8pt"),
+                  self.kwargs.get("gap", 0))
+        if state is not None:
+            values = tuple(resolve(value, state) for value in values)
+        label, value, unit, orientation, label_font, value_font, gap = values
+        label = str(label) if isinstance(label, (str, int, float)) else ""
+        value = str(value) if isinstance(value, (str, int, float)) else ""
+        unit = str(unit) if isinstance(unit, (str, int, float)) else ""
+        label_font = label_font if isinstance(label_font, str) else "JetBrainsMono 8pt"
+        value_font = value_font if isinstance(value_font, str) else "JetBrainsMono 8pt"
+        gap = gap if isinstance(gap, (int, float)) else 0
+        return label, value + (" " + unit if unit else ""), orientation, label_font, value_font, gap
+
+    def preferred_extent(self, direction, cross_extent=None):
+        label, value, orientation, label_font, value_font, gap = self._content(self._measurement_state)
+        if orientation != "vertical":
+            return None
+        metrics = get_font_metrics()
+        if direction == "horizontal":
+            return max(metrics.text_width(label, label_font), metrics.text_width(value, value_font)) + \
+                self.layout_options.padding.horizontal
+        if direction == "vertical":
+            return (metrics.metric(label_font).glyph_height + metrics.metric(value_font).glyph_height
+                    + gap + self.layout_options.padding.vertical)
+        return None
+
+    def update(self, state, initialize=False):
+        before = self._content(self._measurement_state)
+        self._measurement_state = state
+        super().update(state, initialize)
+        if before != self._content(state) and self._content(state)[2] == "vertical":
+            self.invalidate_layout()
 
     def draw(self, renderer, state, bounds):
-        kwargs = dict(
-            (name, resolve(value, state))
-            for name, value in self.kwargs.items())
-        return renderer.metric_row(
-            bounds.x, bounds.center_y, bounds.width,
-            resolve(self.label, state), resolve(self.value, state),
-            resolve(self.unit, state), **kwargs)
+        kwargs = dict((name, resolve(value, state)) for name, value in self.kwargs.items())
+        orientation = kwargs.pop("orientation", "horizontal")
+        label_font = kwargs.pop("label_font", "JetBrainsMono 8pt")
+        value_font = kwargs.pop("value_font", "JetBrainsMono 8pt")
+        gap = kwargs.pop("gap", 0)
+        if orientation == "horizontal":
+            return renderer.metric_row(
+                bounds.x, bounds.center_y, bounds.width,
+                resolve(self.label, state), resolve(self.value, state), resolve(self.unit, state),
+                label_font=label_font, value_font=value_font, **kwargs)
+        bounds = bounds.inset(self.layout_options.padding)
+        label, value, _orientation, _label_font, _value_font, _gap = self._content(state)
+        return [
+            renderer.text(bounds.x, bounds.y, label, kwargs.get("label_color", ThemeColor.PRIMARY),
+                          label_font, "left", "top", max_width=bounds.width, truncate=True),
+            renderer.text(bounds.x, bounds.y + get_font_metrics().metric(label_font).glyph_height + gap,
+                          value, kwargs.get("value_color", ThemeColor.TEXT),
+                          value_font, "left", "top", max_width=bounds.width, truncate=True),
+        ]
 
 
 class NumericKeypad(Component):
@@ -931,10 +987,23 @@ class Crosshair(Component):
         ]
 
 
-class JoystickKnob(Component):
+class SliderKnob(Component):
+    """Shared moving indicator for XY pads and horizontal/vertical sliders.
+
+    A point binding positions a joystick cursor; a scalar binding maps a
+    value range to one rail. Glyph and track restoration are independent of
+    movement direction. The dirty tree owns old-pixel restoration.
+    """
+
     restores_background = True
     property_schema = property_schema(
-        _select("axis", ("xy", "z"), "xy", group="Behavior"),
+        _select("axis", ("xy", "x", "z"), "xy", group="Behavior", bindings=()),
+        _number("value", None, integer=False, nullable=True, group="Value"),
+        _number("minimum", 0.0, integer=False, group="Value"),
+        _number("maximum", 1.0, integer=False, group="Value"),
+        _select("glyph", ("bars", "cross", "none"), "bars", group="Knob", bindings=()),
+        _select("track", ("auto", "grid", "frame", "line", "none"), "auto", group="Appearance", bindings=()),
+        _color("track_color", None, nullable=True, group="Appearance"),
         _number("size", 25, minimum=9, maximum=200, group="Knob"),
         _number(
             "edge_padding", 0, minimum=0, maximum=1000, group="Knob"),
@@ -943,21 +1012,22 @@ class JoystickKnob(Component):
         _color("color", group="Appearance"),
         _color("background", ThemeColor.PANEL, group="Appearance"))
 
-    """State-bound joystick indicator with local damage restoration.
-
-    The component owns the fast moving part of a joystick surface. A normal
-    page draw paints the centered knob. Later position binding changes are
-    handled through the page dirty tree: only the old knob rectangle is
-    restored and the new knob is painted. No controller-side draw commands or
-    parallel cursor bookkeeping are required.
-    """
-
     def __init__(self, axis="xy", position=None, active_action=None,
                  surface_ref=None, edge_padding=0, size=25, color=ThemeColor.PRIMARY,
-                 background=ThemeColor.PANEL, dirty_margin=2, key=None):
+                 background=ThemeColor.PANEL, dirty_margin=2, key=None, *,
+                 value=None, minimum=0.0, maximum=1.0, glyph="bars", track="auto", track_color=None):
         super().__init__(key=key)
-        if axis not in ("xy", "z"):
-            raise ValueError("Unknown joystick axis: %s" % axis)
+        if axis not in ("xy", "x", "z"):
+            raise ValueError("Unknown slider axis: %s" % axis)
+        if value is not None and (position is not None or active_action is not None):
+            raise ValueError("SliderKnob accepts either a value or a cursor position")
+        if value is not None and axis == "xy":
+            raise ValueError("SliderKnob scalar values require axis x or z")
+        if (isinstance(minimum, (int, float)) and isinstance(maximum, (int, float))
+                and maximum <= minimum):
+            raise ValueError("SliderKnob maximum must be greater than minimum")
+        if glyph not in ("bars", "cross", "none") or track not in ("auto", "grid", "frame", "line", "none"):
+            raise ValueError("Unknown slider glyph or track")
         self.axis = axis
         self.position = position
         self.active_action = active_action
@@ -967,6 +1037,8 @@ class JoystickKnob(Component):
         self.color = color
         self.background = background
         self.dirty_margin = dirty_margin
+        self.value, self.minimum, self.maximum = value, minimum, maximum
+        self.glyph, self.track, self.track_color = glyph, track, track_color
         self._drawn_geometry = None
 
     @staticmethod
@@ -986,7 +1058,9 @@ class JoystickKnob(Component):
 
     def state_signature(self, state):
         return (
-            self.axis,
+            self.axis, resolve(self.value, state),
+            resolve(self.minimum, state), resolve(self.maximum, state),
+            self.glyph, self.track, resolve(self.track_color, state),
             _frozen(self._position(state)),
             self.active_action,
             self.surface_ref,
@@ -1002,12 +1076,36 @@ class JoystickKnob(Component):
             return layout.rect(self.surface_ref)
         return bounds
 
+    def _scalar_centers(self, state, bounds, size=None):
+        size = self._normalized_size(resolve(self.size, state)) if size is None else size
+        edge = int(resolve(self.edge_padding, state))
+        origin, extent, center = ((bounds.x, bounds.width, bounds.center_x) if self.axis == "x"
+                                  else (bounds.y, bounds.height, bounds.center_y))
+        start, end = origin + size // 2 + edge, origin + extent - (size - size // 2) - edge
+        return (center, center, center) if start > end else (start, center, end)
+
     def _geometry(self, state, bounds, layout):
         size = self._normalized_size(resolve(self.size, state))
         dirty_margin = int(resolve(self.dirty_margin, state))
         position = self._position(state)
         x, y = bounds.center
-        if position is not None:
+        value = resolve(self.value, state)
+        if value is not None:
+            minimum, maximum = resolve(self.minimum, state), resolve(self.maximum, state)
+            if maximum <= minimum:
+                raise ValueError("SliderKnob maximum must be greater than minimum")
+            if self.axis == "xy":
+                raise ValueError("SliderKnob scalar values require axis x or z")
+            fraction = max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
+            start, center, end = self._scalar_centers(state, bounds, size)
+            fraction = fraction if self.axis == "x" else 1 - fraction
+            coordinate = round(start + (center - start) * fraction * 2 if fraction <= 0.5
+                               else center + (end - center) * (fraction * 2 - 1))
+            if self.axis == "x":
+                x = coordinate
+            else:
+                y = coordinate
+        elif position is not None:
             movement = self._movement_bounds(layout, bounds)
             half = size // 2 + dirty_margin
             if self.axis == "xy":
@@ -1016,20 +1114,26 @@ class JoystickKnob(Component):
                         min(movement.right - half, int(raw_x)))
                 y = max(movement.y + half,
                         min(movement.bottom - half, int(raw_y)))
+            elif self.axis == "x":
+                raw_x, _raw_y = position
+                edge = half + int(resolve(self.edge_padding, state))
+                x = max(bounds.x + edge, min(bounds.right - edge, int(raw_x)))
             else:
                 _raw_x, raw_y = position
                 edge = half + int(resolve(self.edge_padding, state))
                 x = bounds.center_x
                 y = max(bounds.y + edge,
                         min(bounds.bottom - edge, int(raw_y)))
-        return x, y, size, resolve(self.color, state), self.axis
+        return (x, y, size, resolve(self.color, state), self.axis, self.glyph,
+                resolve(self.background, state), self.track, resolve(self.track_color, state))
 
     def render(self, renderer, state, layout):
         bounds = layout.rect(self)
         geometry = self._geometry(state, bounds, layout)
         self._drawn_geometry = geometry
-        x, y, size, color, axis = geometry
-        return renderer.joystick_knob(x, y, axis, size, color)
+        x, y, size, color, axis, *_appearance = geometry
+        return renderer.joystick_knob(x, y, axis, size, color,
+                                      glyph=self.glyph, background=resolve(self.background, state))
 
     def render_dirty(self, renderer, state, layout):
         bounds = layout.rect(self)
@@ -1041,20 +1145,33 @@ class JoystickKnob(Component):
             return self.render(renderer, state, layout)
         commands = self._restore_previous(
             renderer, state, bounds, layout, previous)
-        x, y, size, color, axis = current
-        commands += renderer.joystick_knob(x, y, axis, size, color)
+        x, y, size, color, axis, *_appearance = current
+        commands += renderer.joystick_knob(x, y, axis, size, color,
+                                           glyph=self.glyph, background=resolve(self.background, state))
         self._drawn_geometry = current
         return commands
 
     def _restore_previous(self, renderer, state, bounds, layout, geometry):
-        x, y, size, _color, axis = geometry
+        x, y, size, _color, axis, *_appearance = geometry
         half = size // 2 + int(resolve(self.dirty_margin, state))
         patch = Rect(x - half, y - half, half * 2 + 1, half * 2 + 1)
+        if resolve(self.value, state) is not None:
+            # Scalar endpoints contain the knob itself; damage padding must
+            # not erase adjacent content beyond the rail's movement axis.
+            if axis == "x":
+                left, right = max(patch.x, bounds.x), min(patch.right, bounds.right)
+                patch = Rect(left, patch.y, max(0, right - left), patch.height)
+            else:
+                top, bottom = max(patch.y, bounds.y), min(patch.bottom, bounds.bottom)
+                patch = Rect(patch.x, top, patch.width, max(0, bottom - top))
         background = resolve(self.background, state)
-        color = resolve(self.color, state)
+        color = resolve(self.track_color, state) or resolve(self.color, state)
+        track = self.track
+        if track == "auto":
+            track = "grid" if axis == "xy" else "line" if axis == "x" else "frame"
         commands = [renderer.fill(
             patch.x, patch.y, patch.width, patch.height, background)]
-        if axis == "xy":
+        if track == "grid":
             grid = self._movement_bounds(layout, bounds)
             columns, rows, grid_color = 11, 7, ThemeColor.MUTED
             if self.surface_ref is not None:
@@ -1068,7 +1185,16 @@ class JoystickKnob(Component):
                     grid_color = resolve(surface.color, state)
             return commands + self._restore_xy(
                 renderer, grid, patch, color, columns, rows, grid_color)
-        return commands + self._restore_z(renderer, bounds, patch, color)
+        if track == "frame":
+            return commands + self._restore_z(renderer, bounds, patch, color)
+        if track == "line":
+            rail = (Rect(bounds.x, bounds.center_y - 1, bounds.width, 2) if axis == "x"
+                    else Rect(bounds.center_x - 1, bounds.y, 2, bounds.height))
+            left, top = max(rail.x, patch.x), max(rail.y, patch.y)
+            right, bottom = min(rail.right, patch.right), min(rail.bottom, patch.bottom)
+            if left < right and top < bottom:
+                commands.append(renderer.fill(left, top, right - left, bottom - top, color))
+        return commands
 
     @staticmethod
     def _restore_xy(renderer, grid, patch, color, columns, rows, grid_color):
@@ -1115,8 +1241,180 @@ class JoystickKnob(Component):
         return commands
 
 
+# Older source uses the same implementation and produces no extra palette entry.
+JoystickKnob = SliderKnob
+
+
+class Slider(SliderKnob):
+    """Complete labelled rail with optional scale and its own pointer surface."""
+
+    covers_bounds = True
+    property_schema = property_schema(
+        *(copy.deepcopy(spec) for spec in SliderKnob.property_schema
+          if spec.name not in ("axis", "track", "color", "background", "track_color")),
+        _color("color", ThemeColor.PRIMARY, group="Appearance", styleable=True),
+        _color("background", ThemeColor.PANEL, group="Appearance", styleable=True),
+        _color("track_color", None, nullable=True, group="Appearance", styleable=True),
+        _select("axis", ("x", "z"), "z", group="Behavior", bindings=()),
+        _select("track", ("line", "frame"), "line", group="Appearance", bindings=()),
+        _property("action", Action, None, kind="semantic_action", group="Behavior", bindings=(), live=False),
+        _text("label", group="Label"),
+        _property("label_font", str, "JetBrainsMono 8pt", kind="font", group="Label", styleable=True),
+        _color("label_color", ThemeColor.PRIMARY, group="Label", styleable=True),
+        _select("label_align", ("left", "center", "right"), "center", group="Label", bindings=()),
+        _number("label_top", 2, minimum=0, group="Label"),
+        _number("label_height", 20, minimum=1, group="Label"),
+        _number("label_padding", 6, minimum=0, group="Label"),
+        _property("position", (tuple, list), None, nullable=True, kind="point", group="Value"),
+        _property("scale", bool, False, kind="checkbox", group="Scale"),
+        _number("scale_depth", 3, minimum=0, maximum=8, group="Scale"),
+        _number("scale_gap", 20, minimum=0, group="Scale"),
+        _color("scale_color", ThemeColor.DIM, group="Scale", styleable=True),
+        _property("frame", bool, False, kind="checkbox", group="Appearance"),
+        _color("frame_color", ThemeColor.BORDER, group="Appearance", styleable=True),
+        _property("track_insets", (tuple, list), None, nullable=True, kind="insets", group="Geometry",
+                  bindings=(), invalidation=Invalidation.LAYOUT, wire_codec="insets",
+                  vector_labels=("Left", "Top", "Right", "Bottom"), item_minimum=0, item_maximum=2000),
+        _number("track_size", None, minimum=1, nullable=True, group="Geometry", bindings=()),
+        _select("track_align", ("start", "center", "end"), "center", group="Geometry", bindings=()),
+        _property("touch_insets", (tuple, list), (0, 0, 0, 0), kind="insets", group="Geometry",
+                  bindings=(), invalidation=Invalidation.LAYOUT, wire_codec="insets",
+                  vector_labels=("Left", "Top", "Right", "Bottom"), item_minimum=0, item_maximum=2000))
+
+    def __init__(self, action, label="", axis="z", *, value=None, minimum=0.0, maximum=1.0,
+                 position=None, size=25, edge_padding=0, dirty_margin=2, glyph="bars", track="line",
+                 color=ThemeColor.PRIMARY, background=ThemeColor.PANEL, track_color=None,
+                 label_font="JetBrainsMono 8pt", label_color=ThemeColor.PRIMARY, label_align="center",
+                 label_top=2, label_height=20, label_padding=6, scale=False, scale_depth=3,
+                 scale_gap=20, scale_color=ThemeColor.DIM, frame=False, frame_color=ThemeColor.BORDER,
+                 track_insets=None, track_size=None, track_align="center", touch_insets=(0, 0, 0, 0), key=None):
+        if axis not in ("x", "z"):
+            raise ValueError("Slider requires axis x or z")
+        if track not in ("line", "frame"):
+            raise ValueError("Slider requires track line or frame")
+        super().__init__(axis, position=position, active_action=action if position is not None else None,
+                         value=value, minimum=minimum, maximum=maximum, size=size, edge_padding=edge_padding,
+                         dirty_margin=dirty_margin, glyph=glyph, track=track, color=color,
+                         background=background, track_color=track_color, key=key)
+        self.action, self.label = action, label
+        self.label_font, self.label_color, self.label_align = label_font, label_color, label_align
+        self.label_top, self.label_height, self.label_padding = label_top, label_height, label_padding
+        self.scale, self.scale_depth, self.scale_gap, self.scale_color = scale, scale_depth, scale_gap, scale_color
+        self.frame, self.frame_color = frame, frame_color
+        self.track_insets, self.track_size, self.track_align = track_insets, track_size, track_align
+        self.touch_insets = tuple(touch_insets)
+        self._drawn_surface = None
+
+    def content_bounds(self, bounds):
+        return bounds.inset(self.layout_options.padding)
+
+    def track_bounds(self, bounds):
+        """Canonical arranged rail used by painting and pointer normalization."""
+        bounds = self.content_bounds(bounds)
+        insets = self.track_insets
+        if insets is None:
+            insets = (18, 20, 18, 6) if self.axis == "x" else (8, 34, 8, 14)
+        area = bounds.inset(Insets(*insets))
+        if self.track_size is None:
+            return area
+        extent = area.height if self.axis == "x" else area.width
+        size = min(extent, int(self.track_size))
+        offset = (0 if self.track_align == "start" else
+                  extent - size if self.track_align == "end" else (extent - size) // 2)
+        return (Rect(area.x, area.y + offset, area.width, size) if self.axis == "x" else
+                Rect(area.x + offset, area.y, size, area.height))
+
+    def value_at(self, x, y, bounds, state=None):
+        """Map a pointer to the same bounded value range used by the knob."""
+        track = self.track_bounds(bounds)
+        start, center, end = self._scalar_centers(state, track)
+        coordinate = x if self.axis == "x" else y
+        if start == end:
+            fraction = 0.5
+        elif coordinate <= center:
+            fraction = max(0.0, (coordinate - start) / max(1, center - start)) / 2
+        else:
+            fraction = 0.5 + min(1.0, (coordinate - center) / max(1, end - center)) / 2
+        if self.axis == "z":
+            fraction = 1 - fraction
+        minimum, maximum = resolve(self.minimum, state), resolve(self.maximum, state)
+        if maximum <= minimum:
+            raise ValueError("Slider maximum must be greater than minimum")
+        return minimum + fraction * (maximum - minimum)
+
+    def touch_bounds(self, bounds):
+        return self.content_bounds(bounds).inset(Insets(*self.touch_insets))
+
+    def _surface_signature(self, state):
+        padding = self.layout_options.padding
+        return (tuple(_signature_value(getattr(self, spec.name), state)
+                      for spec in self.property_schema if spec.name not in ("position", "value")),
+                (padding.left, padding.top, padding.right, padding.bottom))
+
+    def state_signature(self, state):
+        return super().state_signature(state), self._surface_signature(state)
+
+    def _geometry(self, state, bounds, layout):
+        self.active_action = self.action if self.position is not None else None
+        return super()._geometry(state, self.track_bounds(bounds), layout)
+
+    def _scale_commands(self, renderer, state, bounds, clip=None):
+        if not resolve(self.scale, state):
+            return []
+        scale = VerticalScale(tick_gap=self.scale_gap, depth=self.scale_depth,
+                              tick_color=self.scale_color, center_color=self.color, axis=self.axis)
+        return scale.draw(renderer, state, self.track_bounds(bounds), clip=clip)
+
+    def _restore_previous(self, renderer, state, bounds, layout, geometry):
+        commands = super()._restore_previous(renderer, state, self.track_bounds(bounds), layout, geometry)
+        x, y, size, *_appearance = geometry
+        half = size // 2 + int(resolve(self.dirty_margin, state))
+        patch = Rect(x - half, y - half, 2 * half + 1, 2 * half + 1)
+        return commands + self._scale_commands(renderer, state, bounds, patch)
+
+    def interaction_commands(self, renderer, state, bounds):
+        return renderer.action_hitbox(self.action, *self.touch_bounds(bounds), continuous=True)
+
+    def render(self, renderer, state, layout):
+        bounds = layout.rect(self)
+        color = resolve(self.track_color, state) or resolve(self.color, state)
+        background = resolve(self.background, state)
+        commands = (renderer.panel(*bounds, border=resolve(self.frame_color, state), background=background, line_width=1)
+                    if resolve(self.frame, state) else [renderer.fill(*bounds, background)])
+        label = resolve(self.label, state)
+        if label:
+            content = self.content_bounds(bounds)
+            padding = int(resolve(self.label_padding, state))
+            x = (content.x + padding if self.label_align == "left" else
+                 content.right - padding if self.label_align == "right" else content.center_x)
+            y = content.y + int(resolve(self.label_top, state)) + int(resolve(self.label_height, state)) // 2
+            available = content.width - padding * (2 if self.label_align == "center" else 1)
+            commands.append(renderer.text(x, y,
+                                          label, resolve(self.label_color, state), resolve(self.label_font, state),
+                                          self.label_align, "middle", max_width=max(1, available),
+                                          truncate=True))
+        track = self.track_bounds(bounds)
+        if self.track == "frame":
+            commands += renderer.panel(*track, border=color, background=background, line_width=1)
+        else:
+            rail = (Rect(track.x, track.center_y - 1, track.width, 2) if self.axis == "x" else
+                    Rect(track.center_x - 1, track.y, 2, track.height))
+            commands.append(renderer.fill(*rail, color))
+        commands += self._scale_commands(renderer, state, bounds)
+        commands += super().render(renderer, state, layout)
+        commands += _command_list(self.interaction_commands(renderer, state, bounds))
+        self._drawn_surface = self._surface_signature(state), bounds
+        return commands
+
+    def render_dirty(self, renderer, state, layout):
+        if self._drawn_surface != (self._surface_signature(state), layout.rect(self)):
+            return self.render(renderer, state, layout)
+        return super().render_dirty(renderer, state, layout)
+
+
 class VerticalScale(Component):
     property_schema = property_schema(
+        _select("axis", ("x", "z"), "z", group="Scale", bindings=()),
         _number("tick_gap", 20, minimum=0, maximum=1000, group="Scale"),
         _number("depth", 3, minimum=0, maximum=8, group="Scale"),
         _number(
@@ -1137,8 +1435,9 @@ class VerticalScale(Component):
     """Binary-subdivision ticks derived from the arranged track bounds."""
 
     def __init__(self, tick_gap=20, tick_widths=(5, 8, 12), depth=3,
-                 tick_color=ThemeColor.DIM, center_color=ThemeColor.PRIMARY, key=None):
+                 tick_color=ThemeColor.DIM, center_color=ThemeColor.PRIMARY, key=None, *, axis="z"):
         super().__init__(key=key)
+        self.axis = axis
         self.tick_gap = tick_gap
         self.tick_widths = tuple(tick_widths)
         self.depth = depth
@@ -1147,11 +1446,13 @@ class VerticalScale(Component):
         if len(self.tick_widths) != 3:
             raise ValueError("VerticalScale requires three tick widths")
 
-    def draw(self, renderer, state, bounds):
+    def draw(self, renderer, state, bounds, clip=None):
         tick_gap = int(resolve(self.tick_gap, state))
         depth = int(resolve(self.depth, state))
-        tick_right = bounds.x - tick_gap - 1
-        positions = subdivision_positions(bounds.y, bounds.height - 1, depth)
+        horizontal = self.axis == "x"
+        tick_right = (bounds.y if horizontal else bounds.x) - tick_gap - 1
+        positions = subdivision_positions(bounds.x if horizontal else bounds.y,
+                                          (bounds.width if horizontal else bounds.height) - 1, depth)
         divisions = 1 << depth
         commands = []
         for index, y, level in positions:
@@ -1161,8 +1462,15 @@ class VerticalScale(Component):
                 width = self.tick_widths[1]
             else:
                 width = self.tick_widths[0]
+            tick = Rect(y, tick_right - width + 1, 1, width) if horizontal else Rect(tick_right - width + 1, y, width, 1)
+            if clip is not None:
+                left, top = max(tick.x, clip.x), max(tick.y, clip.y)
+                right, bottom = min(tick.right, clip.right), min(tick.bottom, clip.bottom)
+                if left >= right or top >= bottom:
+                    continue
+                tick = Rect(left, top, right - left, bottom - top)
             commands.append(renderer.fill(
-                tick_right - width + 1, y, width, 1,
+                *tick,
                 resolve(self.center_color, state)
                 if index == divisions // 2
                 else resolve(self.tick_color, state)))
@@ -1443,7 +1751,7 @@ _publish_property_source_positions(DotGrid, columns=0, rows=1, color=2)
 _publish_property_source_positions(CornerMarks, length=0, color=1)
 _publish_property_source_positions(Crosshair, color=0)
 _publish_property_source_positions(
-    JoystickKnob, axis=0, edge_padding=4, size=5, color=6,
+    SliderKnob, axis=0, edge_padding=4, size=5, color=6,
     background=7, dirty_margin=8)
 _publish_property_source_positions(
     VerticalScale, tick_gap=0, tick_width_small=1, tick_width_medium=1,
@@ -1476,7 +1784,8 @@ _publish_creation(Hitbox, ("continuous",), (_action_creation(),))
 _publish_creation(Text, (
     "value", "font", "color", "horizontal", "vertical", "max_width",
     "max_height", "wrap", "truncate", "fit"))
-_publish_creation(Metric, ("label", "value", "unit"))
+_publish_creation(Metric, ("label", "value", "unit", "orientation", "label_font",
+                           "value_font", "gap", "label_color", "value_color"))
 _publish_creation(NumericKeypad, (
     "title", "value", "subtitle", "mode", "minimum", "maximum",
     "max_length", "fraction_digits", "confirm_label", "border",
@@ -1493,8 +1802,15 @@ _publish_creation(NumericKeypad, (
 _publish_creation(DotGrid, ("columns", "rows", "color"))
 _publish_creation(CornerMarks, ("length", "color"))
 _publish_creation(Crosshair, ("color",))
-_publish_creation(JoystickKnob, ("axis", "size", "color", "background"))
-_publish_creation(VerticalScale, ("tick_gap", "depth", "tick_color", "center_color"))
+_publish_creation(SliderKnob, ("axis", "value", "minimum", "maximum", "glyph", "track",
+                               "track_color", "edge_padding", "size", "color", "background", "dirty_margin"))
+_publish_creation(VerticalScale, ("axis", "tick_gap", "depth", "tick_color", "center_color"))
 _publish_creation(ScrollIndicator, (
     "position", "count", "minimum_thumb", "line_width", "track_color",
     "thumb_color"))
+
+for _slider_spec in Slider.property_schema:
+    _slider_spec.source.position = None
+_publish_property_source_positions(Slider, action=0, label=1, axis=2)
+_publish_creation(Slider, tuple(spec.name for spec in Slider.property_schema if spec.name != "action"),
+                  (_action_creation(),))

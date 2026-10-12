@@ -55,6 +55,7 @@ class ScreenReceiptRoutingTest(unittest.TestCase):
         screen.event_partial = ""
         notifications = []
         screen.feature_manager = SimpleNamespace(
+            peek=lambda name: None,
             notify=lambda *args: notifications.append(args))
 
         with mock.patch(

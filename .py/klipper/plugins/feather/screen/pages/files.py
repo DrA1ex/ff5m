@@ -10,6 +10,7 @@ import time
 import threading
 
 from ui import ThemeColor, ThemeRole
+from ui.layout_helpers import centered_button_row
 from ff5m_ui.screen import ScreenPage
 
 from feather.files import FileEntry, FileTaskSuperseded, scan_gcode_files
@@ -216,8 +217,11 @@ class FileBrowserPagesMixin:
             self.file_entries, self.file_page, self._file_page_size())
         self.file_page = pagination.page
         usb_page = self.file_source == "usb"
-        title = "USB files" if usb_page else "Print files"
+        title = ("Preview files" if getattr(self, "model_preview_file_select", False)
+                 else "USB files" if usb_page else "Print files")
         commands = self.renderer.begin_page(title, back=True)
+        commands.append(self.renderer.action_hitbox(
+            "file.model_preview.tap", 170, 7, 370, 46))
         commands += self._file_view_commands()
         rows = pagination.visible
         if self.file_view == "tiles":
@@ -512,6 +516,8 @@ class FileBrowserPagesMixin:
             self._render_file_confirm()
         elif action == "file.start":
             self._start_selected_file()
+        elif action == "file.preview":
+            self._open_selected_model_preview()
         elif action.startswith("file.item"):
             index = int(action[len("file.item"):])
             pagination = Pagination(
@@ -527,6 +533,9 @@ class FileBrowserPagesMixin:
                 self._cancel_file_preview()
                 self._expire_file_entries_if_stale("usb")
                 self._render_file_browser()
+                return
+            if getattr(self, "model_preview_file_select", False):
+                self._open_model_preview(entry)
                 return
             self.selected_file = entry
             self.file_confirm_return_page = ScreenPage.FILE_BROWSER
@@ -584,9 +593,15 @@ class FileBrowserPagesMixin:
             commands += self._file_confirm_option(
                 "file.mesh.auto", 238, "SAVE MESH FOR FUTURE PRINTS",
                 "YOU'LL BE ASKED AFTER PRINT", auto_mesh)
-        commands += self.renderer.button("file.start", 220, 316, 360, 96,
-                                         "PRINT AGAIN" if repeat else "START PRINT",
-                                         font="Roboto Bold 16pt")
+        labels = ("PREVIEW", "PRINT AGAIN" if repeat else "START PRINT")
+        font = self.renderer.normalize_font("Roboto Bold 16pt")
+        button_width = max(self.renderer.text_width(label, font) for label in labels) + 2 * self.renderer.BUTTON_TEXT_PADDING
+        bounds = centered_button_row(
+            labels, 0, 316, 800, measure_text=self.renderer.text_width,
+            font=font, height=96, padding=self.renderer.BUTTON_TEXT_PADDING,
+            minimum=button_width, maximum=760, gap=18, margin=24)
+        for action, label, box in zip(("file.preview", "file.start"), labels, bounds):
+            commands += self.renderer.button(action, *box, label, font=font)
         self.renderer.send(commands)
 
     def _file_confirm_option(self, action, y, label, subtitle, active):

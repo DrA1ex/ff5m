@@ -28,6 +28,9 @@ FRAMEWORK_CAPABILITIES = (
     "grid-cell-source",
     "modal-popup",
     "fitted-text",
+    "slider-knob",
+    "labelled-slider",
+    "stacked-metrics",
 )
 
 
@@ -115,7 +118,7 @@ _EXPORT_GROUPS = (
     )),
     ("components", (
         "ArrowButton", "Button", "ButtonStyle", "CornerMarks", "Crosshair", "Dialog",
-        "DotGrid", "Fill", "Frame", "Hitbox", "JoystickKnob", "Metric", "Panel", "Popup",
+        "DotGrid", "Fill", "Frame", "Hitbox", "JoystickKnob", "Slider", "SliderKnob", "Metric", "Panel", "Popup",
         "NumericKeypad", "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge",
         "VerticalScale",
     )),
@@ -185,6 +188,6 @@ __all__ = (
     "Spacer", "Span", "StateCase", "StructureContract", "StructureSourceContract", "Tree", "When", "WrapPanel", "split",
     "subdivision_positions", "ArrowButton", "Button",
     "ButtonStyle", "CornerMarks", "Crosshair", "Dialog", "DotGrid",
-    "Fill", "Frame", "Hitbox", "JoystickKnob", "Metric", "NumericKeypad", "Panel", "Popup",
+    "Fill", "Frame", "Hitbox", "JoystickKnob", "Slider", "SliderKnob", "Metric", "NumericKeypad", "Panel", "Popup",
     "ScrollIndicator", "Section", "Stroke", "Text", "ToggleSwitch", "VerticalGauge", "VerticalScale",
 )

@@ -107,7 +107,7 @@ def _category_runs(manager, parameters):
     return runs
 
 
-def category_pages(manager, parameters):
+def category_pages(manager, parameters, label=None, leading_height=0):
     """Split the parameter list into pages of category sections.
 
     A band is placed only when at least one of its rows fits below it, so a
@@ -117,8 +117,9 @@ def category_pages(manager, parameters):
     """
     capacity = LIST_BOTTOM - LIST_TOP
     pages = [[]]
-    used = 0
-    for label, entries in _category_runs(manager, parameters):
+    used = leading_height
+    runs = [(label, list(enumerate(parameters)))] if label is not None else _category_runs(manager, parameters)
+    for label, entries in runs:
         shown = 0
         while shown < len(entries):
             pitch = band_pitch(len(pages[-1]))
@@ -141,7 +142,7 @@ def page_height(sections):
                for position, section in enumerate(sections))
 
 
-def next_category_hint(pages, page):
+def next_category_hint(pages, page, leading_height=0):
     """Return the category the next page opens with, when there is room to say.
 
     A postponed category leaves a hole at least as tall as a row, so the page
@@ -149,7 +150,8 @@ def next_category_hint(pages, page):
     """
     if page + 1 >= len(pages):
         return None
-    if LIST_BOTTOM - LIST_TOP - page_height(pages[page]) < ITEM_PITCH:
+    used = page_height(pages[page]) + (leading_height if page == 0 else 0)
+    if LIST_BOTTOM - LIST_TOP - used < ITEM_PITCH:
         return None
     return pages[page + 1][0].label
 

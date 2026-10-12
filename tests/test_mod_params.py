@@ -54,6 +54,50 @@ class ModParameterTest(unittest.TestCase):
         self.manager._reload()
         self.assertEqual(self.manager.variables["midi_start"], text)
 
+    def test_related_values_commit_once_and_notify_after_the_whole_snapshot(self):
+        values = {"feather_preview_yaw": -45, "feather_preview_pitch": 20, "feather_preview_scale": 1.5}
+        with mock.patch.object(self.manager, "_save_all", wraps=self.manager._save_all) as save:
+            result = self.manager.set_values(values)
+        save.assert_called_once()
+        self.assertEqual(result, values)
+        snapshots = []
+        with mock.patch.object(self.manager, "_notify_committed_change",
+                               side_effect=lambda param: snapshots.append(dict(self.manager.variables))):
+            for call in self.manager.reactor.register_callback.call_args_list:
+                call.args[0](0)
+        self.assertEqual(len(snapshots), 3)
+        self.assertTrue(all(all(snapshot[key] == value for key, value in values.items()) for snapshot in snapshots))
+        self.manager._reload()
+        self.assertTrue(all(self.manager.variables[key] == value for key, value in values.items()))
+
+    def test_invalid_batch_and_storage_failure_preserve_every_value_and_hook(self):
+        self.manager.set_value("feather_preview_yaw", 10)
+        before, stored = dict(self.manager.variables), self.path.read_bytes()
+        self.manager.reactor.reset_mock()
+        with self.assertRaises(ValueError):
+            self.manager.set_values({"feather_preview_yaw": 20, "feather_preview_pitch": 100})
+        self.assertEqual(self.manager.variables, before)
+        self.assertEqual(self.path.read_bytes(), stored)
+        with mock.patch.object(self.manager, "_save_all", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.manager.set_values({"feather_preview_yaw": 20, "feather_preview_pitch": 25})
+        self.assertEqual(self.manager.variables, before)
+        self.assertEqual(self.path.read_bytes(), stored)
+        self.manager.reactor.register_callback.assert_not_called()
+
+    def test_density_ranges_and_defaults_are_style_specific(self):
+        self.assertEqual(self.manager.variables["feather_preview_stacked_density"], 100)
+        self.assertEqual(self.manager.variables["feather_preview_points_density"], 30)
+        for key, accepted, rejected in (
+                ("feather_preview_stacked_density", (100, 150, 200), (99, 201)),
+                ("feather_preview_points_density", (5, 30, 100), (4, 101))):
+            for value in accepted:
+                self.manager.set_value(key, value)
+                self.assertEqual(self.manager.variables[key], value)
+            for value in rejected:
+                with self.assertRaises(ValueError):
+                    self.manager.set_value(key, value)
+
     def test_status_bar_modes_default_to_metrics_and_round_trip_through_storage(self):
         self.assertEqual(self.manager.variables['feather_status_bar'], 'METRICS')
         param = self.manager.params_map['feather_status_bar']
@@ -190,6 +234,31 @@ class ModParameterTest(unittest.TestCase):
             self.manager.set_value("z_offset", value)
             self.manager._reload()
             self.assertEqual(self.manager.variables["z_offset"], value)
+
+    def test_preview_scale_round_trips_and_rejects_invalid_sizes_without_changing_storage(self):
+        for value in (0.25, 1.75, 3.0):
+            self.manager.set_value("feather_preview_scale", value)
+            self.manager._reload()
+            self.assertEqual(self.manager.variables["feather_preview_scale"], value)
+        before = self.path.read_bytes()
+        for value in (0, 0.24, 3.01, "nan", "inf", "broken"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.manager.set_value("feather_preview_scale", value)
+            self.assertEqual(self.path.read_bytes(), before)
+            self.assertEqual(self.manager.variables["feather_preview_scale"], 3.0)
+
+    def test_preview_camera_accepts_signed_positions_and_wraps_legacy_turns(self):
+        from feather.model_preview import model_settings
+        for yaw, pitch, expected_yaw in ((-180, -90, -180), (0, 30, 0), (180, 90, 180), (270, 0, -90)):
+            self.manager.set_value("feather_preview_yaw", yaw)
+            self.manager.set_value("feather_preview_pitch", pitch)
+            self.manager._reload()
+            settings = model_settings(lambda key, default: self.manager.variables.get(key, default))
+            self.assertEqual(settings[2:4], (expected_yaw, pitch))
+        for key, value in (("feather_preview_yaw", -181), ("feather_preview_pitch", -91),
+                           ("feather_preview_pitch", 91)):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                self.manager.set_value(key, value)
 
     def test_all_declared_defaults_pass_validation(self):
         for param in self.manager.params:

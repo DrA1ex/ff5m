@@ -17,6 +17,7 @@ class PrintingRoute(Enum):
     FILAMENT = "print.filament"
     Z_ADJUST = "print.z"
     CANCEL = "print.cancel"
+    PREVIEW = "print.preview"
     MORE = "print.more"
     MORE_CLOSE = "more.close"
     MORE_FILAMENT = "more.filament"
@@ -52,11 +53,12 @@ RESUME = PrintingAction(PrintingRoute.RESUME)
 FILAMENT = PrintingAction(PrintingRoute.FILAMENT)
 Z_ADJUST = PrintingAction(PrintingRoute.Z_ADJUST)
 CANCEL = PrintingAction(PrintingRoute.CANCEL)
+PREVIEW = PrintingAction(PrintingRoute.PREVIEW)
 MORE = PrintingAction(PrintingRoute.MORE)
 
 
 __all__ = (
-    "CANCEL", "FILAMENT", "HOME", "MORE", "PAUSE", "RESUME", "Z_ADJUST",
+    "CANCEL", "FILAMENT", "HOME", "MORE", "PAUSE", "PREVIEW", "RESUME", "Z_ADJUST",
     "PrintingAction", "PrintingRoute",
 )
 

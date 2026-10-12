@@ -41,6 +41,7 @@ from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.status_bar import PrinterRenderer as FeatherRenderer, footer_values
 from feather.cpu_usage import CpuUsageSampler
+from feather.screen.model_preview import ModelPreviewEntryMixin
 from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
 from feather.files import (
         DEFAULT_HISTORY_PATH, FileWorker, PrintHistory,
@@ -49,7 +50,7 @@ from feather.previews import (
         DEFAULT_PREVIEW_CACHE_KB, MIN_PREVIEW_CACHE_KB, PreviewCache)
 from feather.screen.controls import (
         FeatherControlsMixin,
-        joystick_ui, joystick_motion,
+        joystick_ui, joystick_motion, preview_actions,
         JOYSTICK_XY_CENTER, JOYSTICK_XY_RADIUS,
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS)
 from feather.materials import load_material_catalog
@@ -75,13 +76,15 @@ EXACT_ACTIONS = {
         "home.last_job", "nav.filament", "nav.move"),
     ScreenPage.MAIN_MENU: ("nav.back", "nav.files", "nav.control", "nav.filament",
                      "nav.network", "menu.component_benchmark.tap"),
+    ScreenPage.MODEL_PREVIEW: ("nav.back",),
+    ScreenPage.PRINT_PREVIEW: ("nav.back",),
     ScreenPage.CONTROL_HOME: ("nav.back", "nav.move", "nav.heat", "nav.calibration",
                         "nav.settings"),
     ScreenPage.FILE_BROWSER: (
         "nav.back", "file.prev", "file.next", "file.refresh",
-        "file.view.list", "file.view.tiles"),
+        "file.view.list", "file.view.tiles", "file.model_preview.tap"),
     ScreenPage.FILE_CONFIRM: (
-        "nav.back", "file.start", "file.mesh.rebuild", "file.mesh.auto"),
+        "nav.back", "file.start", "file.preview", "file.mesh.rebuild", "file.mesh.auto"),
     ScreenPage.PRINTING: ("nav.home", "print.pause", "print.filament",
                     "print.cancel", "print.z", "print.more"),
     ScreenPage.PAUSED: ("nav.home", "print.resume", "print.filament",
@@ -172,6 +175,8 @@ def _feature_module(name):
 
 
 FEATURE_SPECS = (
+    FeatureSpec("model_preview", "feather.screen.pages.model_preview",
+                "ModelPreviewFeature"),
     FeatureSpec("ui_test", _feature_module("ui_test"),
                 "UITestFeature"),
     FeatureSpec("filament", _feature_module("filament"),
@@ -193,7 +198,8 @@ FEATURE_SPECS = (
                     ScreenPage.EXTRUDER_CALIBRATION,)),
     FeatureSpec("settings", _feature_module("settings"),
                 "SettingsFeature", (
-        ScreenPage.SETTINGS, ScreenPage.MOD_SETTINGS, ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE)),
+        ScreenPage.SETTINGS, ScreenPage.MOD_SETTINGS, ScreenPage.PREVIEW_SETTINGS,
+        ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE)),
     FeatureSpec("benchmark", _feature_module("benchmark"),
                 "BenchmarkFeature", (
                     ScreenPage.RENDER_BENCHMARK,
@@ -201,7 +207,7 @@ FEATURE_SPECS = (
 )
 
 
-class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
+class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMixin):
     def __init__(self, config):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
@@ -393,6 +399,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         # Intentionally undocumented.  The implementation remains a cold
         # lazy feature until ACTION=RUN is explicitly requested on a printer.
         self.gcode.register_command("_FEATHER_UI_TEST", self.cmd_FEATHER_UI_TEST)
+        self.gcode.register_command("_FEATHER_PREVIEW_LAB", self.cmd_FEATHER_PREVIEW_LAB)
         # Start only once the reactor can accept callbacks posted by worker.
         self.reactor.register_callback(self._deferred_start_pre_ready_ui)
 
@@ -708,6 +715,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.file_scan_loading = False
         self._cancel_file_preview()
         self._cancel_gcode_preview()
+        self._close_model_preview()
         file_worker = getattr(self, "file_worker", None)
         self.cpu_usage = None
         self.system_stats = None
@@ -821,9 +829,10 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if len(self.event_partial) > MAX_TOUCH_EVENT:
             logging.warning("[feather_screen] oversized partial touch event discarded")
             self.event_partial = ""
-        for line in lines:
+        for line in self._coalesce_model_preview_moves(lines):
             receipt = parse_render_receipt(line)
             if receipt is not None:
+                self._model_preview_render_receipt(receipt)
                 self._notify_features(
                     "on_render_receipt", receipt, eventtime)
             elif line.startswith("render "):
@@ -928,6 +937,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         action = decode(raw_action)
         semantic_action = (
             None if action is None else self._resolve_semantic_ui_action(action))
+        if (self.page in (ScreenPage.MODEL_PREVIEW, ScreenPage.PRINT_PREVIEW)
+                and isinstance(semantic_action, preview_actions.PreviewAction)):
+            if phase == "begin" and self._wake_if_dimmed():
+                self.joystick_suppressed = raw_action
+                return
+            self._handle_model_preview_touch(action, phase, x, y, now)
+            return
         joystick_axis = None
         if isinstance(semantic_action, Command):
             if semantic_action.key == move_ui.MoveCommand.JOYSTICK_XY:
@@ -1184,6 +1200,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._show_page(ScreenPage.MAIN_MENU)
             elif action == "menu.component_benchmark.tap":
                 self._handle_component_benchmark_tap()
+            elif action == "file.model_preview.tap":
+                self._handle_model_preview_tap()
             elif action == "nav.files":
                 self.file_page = 0
                 self.file_source = "internal"
@@ -1443,6 +1461,17 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                      or getattr(self, "joystick_action", None) is not None)):
             self._stop_joystick()
         old_page = self.page
+        # Opening another preview retires its old session before publishing the
+        # replacement. Navigation closes the session only when leaving preview.
+        if (getattr(self, "model_preview", None) is not None
+                and page not in (ScreenPage.MODEL_PREVIEW, ScreenPage.PRINT_PREVIEW)):
+            settings = manager.peek("settings") if manager is not None else None
+            if settings is None or not settings.retains_model_preview(page):
+                self._close_model_preview()
+        if page not in (ScreenPage.FILE_BROWSER, ScreenPage.MODEL_PREVIEW):
+            self.model_preview_file_select = False
+        if old_page == ScreenPage.FILE_BROWSER and page != old_page:
+            self._model_preview_taps = 0
         if (old_page in (ScreenPage.PRINTING, ScreenPage.PAUSED)
                 and page not in (ScreenPage.PRINTING, ScreenPage.PAUSED)):
             stop_preview_loader = getattr(
@@ -1494,6 +1523,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self._render_control_home()
         elif page == ScreenPage.FILE_BROWSER:
             self._render_file_browser()
+        elif page in (ScreenPage.MODEL_PREVIEW, ScreenPage.PRINT_PREVIEW):
+            self._render_model_preview()
         elif page == ScreenPage.FILE_CONFIRM:
             self._render_file_confirm()
         elif page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
@@ -1526,6 +1557,14 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
     def _go_back(self):
         if self.page == ScreenPage.EXCLUDE_MODEL:
             self._show_page(self.page_for_print_state())
+            return
+        if self.page == ScreenPage.PRINT_PREVIEW:
+            state = getattr(self, "model_preview", None)
+            self._show_page(ScreenPage.FILE_CONFIRM if state and state["mode"] == "file"
+                            else self.page_for_print_state())
+            return
+        if self.page == ScreenPage.MODEL_PREVIEW:
+            self._open_model_preview_browser()
             return
         if self.page == ScreenPage.OPERATION_CANCEL:
             self._close_operation_cancel()
@@ -2328,6 +2367,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self.renderer.loader(self.busy_message, self.busy_phase)
             elif self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
                 self._update_print_progress(eventtime)
+            elif self.page == ScreenPage.PRINT_PREVIEW:
+                self._update_print_model_preview(eventtime)
             elif self.page == ScreenPage.EXCLUDE_MODEL:
                 self._render_screen()
             elif self.page == ScreenPage.IDLE_HOME:
@@ -2465,7 +2506,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             self.selected_file = None
             self.file_confirm_rebuild_mesh = False
             self.file_confirm_auto_mesh = False
-            if self.page == ScreenPage.FILE_CONFIRM:
+            if (self.page == ScreenPage.FILE_CONFIRM or
+                    (self.page == ScreenPage.PRINT_PREVIEW and self.model_preview["mode"] == "file")):
                 self._show_message("USB drive removed", ScreenPage.FILE_BROWSER)
                 return
         if self.page == ScreenPage.FILE_BROWSER:
@@ -2529,6 +2571,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         elif new_state in (PrintState.PREPARING, PrintState.PRINTING):
             if (self.page not in (
                     ScreenPage.PRINTING, ScreenPage.TIMELAPSE_WAIT,
+                    ScreenPage.PRINT_PREVIEW,
                     ScreenPage.EXCLUDE_MODEL,
                     ScreenPage.LIVE_Z_OFFSET,
                     ScreenPage.OPERATION_CANCEL)
@@ -2541,12 +2584,13 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                     ScreenPage.FILAMENT_MATERIAL,
                     ScreenPage.FILAMENT_ACTION, ScreenPage.LIVE_Z_OFFSET,
                     ScreenPage.OPERATION_CANCEL,
-                    ScreenPage.TIMELAPSE_WAIT, ScreenPage.EXCLUDE_MODEL) and not (
+                    ScreenPage.TIMELAPSE_WAIT, ScreenPage.PRINT_PREVIEW,
+                    ScreenPage.EXCLUDE_MODEL) and not (
                         self.page == ScreenPage.IDLE_HOME
                         and getattr(self, "home_during_print", False)):
                 self._show_page(ScreenPage.PAUSED)
         elif new_state == PrintState.IDLE:
-            if getattr(self, "page", None) == ScreenPage.EXCLUDE_MODEL:
+            if getattr(self, "page", None) in (ScreenPage.PRINT_PREVIEW, ScreenPage.EXCLUDE_MODEL):
                 self._show_page(ScreenPage.IDLE_HOME)
             self._filament_request_token = getattr(
                 self, "_filament_request_token", 0) + 1

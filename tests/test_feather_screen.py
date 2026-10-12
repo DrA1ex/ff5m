@@ -2976,7 +2976,7 @@ class RendererStateTest(unittest.TestCase):
         snapshot = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
         page = MOVE_LAYOUT.JOYSTICK_PAGE
         xy_pad = page.rect("xy.pad")
-        z_hitbox = page.rect("z.hitbox")
+        z_hitbox = page.node("z.panel").touch_bounds(page.rect("z.panel"))
 
         for raw_x, raw_y in ((-100, -100), (900, 900)):
             MOVE_LAYOUT.render_joystick(
@@ -3253,7 +3253,7 @@ class RendererStateTest(unittest.TestCase):
             1.0, position=(1.0, 2.0, 4.8), force=True)
 
         drawing = "\n".join(batches[-1])
-        knob_size = MOVE_LAYOUT.JOYSTICK_PAGE.node("z.knob").size
+        knob_size = MOVE_LAYOUT.JOYSTICK_PAGE.node("z.panel").size
         knob_left = FEATHER.JOYSTICK_Z_CENTER[0] - knob_size // 2
         knob_top = 150 - knob_size // 2
         self.assertIn(

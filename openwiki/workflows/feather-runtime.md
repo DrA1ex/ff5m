@@ -470,6 +470,61 @@ skipped. If the schema or bundled files cannot be read, the in-code
 `FALLBACK_THEME` is resolved with conservative role defaults so Feather can
 still render a usable interface.
 
+## Interactive preview settings
+
+The file Preview header offers Settings immediately to the left of Print.
+Settings navigates to `ScreenPage.PREVIEW_SETTINGS`, owned by the lazy settings
+feature. It uses the same list, enum editor, numeric editor, paging and commit
+flow as Mod Settings. `ff5m_ui/parameter_controls.py` declares their common
+rows, category bands, paging controls, choices and NumericKeypad through the
+component model. `ff5m_ui/model_preview/settings.py` supplies only the relevant
+parameter keys for the selected style. Both UI modules load on demand.
+The settings feature owns the temporary editor text and selection;
+`mod_params` remains the sole owner of persisted values.
+
+The existing `feather_preview_*` parameters remain compatible with stored
+configuration and SET_MOD, but are hidden from the general mod settings list.
+Common camera, cache, resolution and frame-limit values are shared between
+styles. Solid chooses its own geometry resolution, so its list omits that
+control. Auto-turn speed is relevant only to the preview lab.
+
+Stacked exposes `feather_preview_stacked_density`; Points exposes
+`feather_preview_points_density`. Stacked accepts 100–200 percent, defaulting
+to 100, and requests approximately 24 layers at 100 percent or 48 at 200.
+This doubles the previous density scale. Layers are evenly distributed
+through the available layer count, with the first and last retained. Points
+accepts 5–100 percent, defaulting to 30, and
+uses a sampling gap equal to the model's largest extent divided by the density
+percentage, both along paths and between selected physical layers. Uniformly
+scaling the model therefore preserves approximate sample density. Available
+physical layers, the compact layer table and the existing primitive budget
+bound the result.
+
+The first settings page includes a Default View row with the current yaw,
+tilt and scale. Use Current saves all three through `mod_params.set_values`
+in one persisted snapshot, rounded to each parameter's editing precision.
+The live camera stays in place; subsequent previews and Reset use the saved
+view. Validation or persistence failure preserves all three previous defaults.
+
+Saving first validates and persists through `mod_params.set_value`, then
+updates the open preview. Style, resolution, density and cache changes retire
+the old process through the normal session lifecycle; stale worker completions
+cannot publish into the replacement. Cancelling a numeric editor discards its
+draft, and a persistence failure leaves the previous preview settings intact.
+While its settings or value editor is open, the preview retains its file,
+camera and session without painting over that screen. Back returns to the
+existing preview and resumes its frame and monitor timers. Leaving this flow
+retires the preview session; leaving the settings feature also invalidates
+pending editor completion callbacks so they cannot reopen an obsolete screen.
+
+The native adapter accepts an optional density percentage after the viewport
+arguments. Calls without it preserve legacy sampling and revision-2 caches.
+Density requests use revision-4 caches, which include density in their checked
+envelope and size the compact layer table from that policy. Revision-3 caches
+remain readable, but current density requests rebuild them for the new sampling
+policy. The Python cache identity also includes density and sampling revision.
+Frame transport and per-frame camera controls are unchanged.
+
 ## Component boundaries
 
 | Component | Owns | Does not own |

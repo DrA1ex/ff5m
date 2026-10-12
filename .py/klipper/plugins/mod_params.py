@@ -420,50 +420,53 @@ class ModParamManagement:
         values cannot break quoting or turn into additional G-code commands.
         Change hooks retain the same reactor scheduling as SET_MOD.
         """
-        if key not in self.params_map:
-            raise ValueError('Unknown parameter: "%s"' % key)
+        return self.set_values({key: value}, force=force)[key]
 
-        param = self.params_map[key]
-        if param.readonly and not force:
-            raise ValueError('Updating readonly parameter "%s" is forbidden.' % key)
+    def set_values(self, values: Dict[str, Any], force: bool = False):
+        """Validate related settings before committing one complete snapshot."""
+        loaded = {}
+        for key, value in values.items():
+            if key not in self.params_map:
+                raise ValueError('Unknown parameter: "%s"' % key)
+            param = self.params_map[key]
+            if param.readonly and not force:
+                raise ValueError('Updating readonly parameter "%s" is forbidden.' % key)
+            try:
+                loaded[key] = str(value) if param.type == str else self._load_param(param, str(value))
+            except Exception:
+                raise ValueError('Failed to update parameter "%s"' % key)
 
-        try:
-            if param.type == str:
-                new_value = str(value)
-            else:
-                new_value = self._load_param(param, str(value))
-        except Exception:
-            raise ValueError('Failed to update parameter "%s"' % key)
-
-        self._store_value(param, new_value)
+        self._store_values(loaded)
 
         lock = getattr(self, "_variables_lock", None)
         with lock:
-            return self._transform(param, self.variables[key])
+            return {key: self._transform(self.params_map[key], self.variables[key]) for key in loaded}
 
     def _store_value(self, param: Parameter, new_value: Any):
-        """Atomically update one value and persist the complete snapshot."""
+        return self._store_values({param.key: new_value})
+
+    def _store_values(self, values):
+        """Atomically persist changes, rolling back every affected value on failure."""
         lock = getattr(self, "_variables_lock", None)
         if lock is None:
             lock = self._variables_lock = threading.RLock()
 
-        changed = False
         with lock:
-            previous_value = self.variables[param.key]
-            if new_value != previous_value:
-                self.variables[param.key] = new_value
+            changed = {key: value for key, value in values.items() if self.variables[key] != value}
+            if changed:
+                previous = {key: self.variables[key] for key in changed}
+                self.variables.update(changed)
                 try:
                     self._save_all()
                 except Exception:
-                    self.variables[param.key] = previous_value
+                    self.variables.update(previous)
                     raise
-                changed = True
 
-        if changed:
+        for key in changed:
             self.reactor.register_callback(
-                lambda _, p=param: self._notify_committed_change(p))
+                lambda _, p=self.params_map[key]: self._notify_committed_change(p))
 
-        return changed
+        return bool(changed)
 
     def _format_label(self, param: Parameter, value: Any):
         if param.options:

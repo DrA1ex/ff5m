@@ -117,6 +117,25 @@ class LazyImportContractTest(unittest.TestCase):
         subprocess.run([sys.executable, "-c", source], check=True,
                        env=environment)
 
+    def test_preview_settings_load_only_when_the_settings_button_opens(self):
+        self.run_clean("""
+import sys
+from tests.test_feather_preview_settings import PreviewSettingsTest
+fixture = PreviewSettingsTest()
+fixture.setUp()
+try:
+    cold = ('ff5m_ui.parameter_controls', 'ff5m_ui.model_preview.settings')
+    assert not [name for name in cold if name in sys.modules]
+    assert fixture.controller.feature_manager.peek('settings') is None
+    fixture.open_settings()
+    assert all(name in sys.modules for name in cold)
+    assert fixture.controller.feature_manager.peek('settings') is not None
+    fixture.tap('nav.back')
+    assert fixture.controller._current_dialog() is None
+finally:
+    fixture.doCleanups()
+""")
+
     def test_screen_import_keeps_product_features_cold(self):
         self.run_clean("""
 import sys
@@ -129,6 +148,11 @@ blocked = (
     'feather.features.benchmark', 'ff5m_ui.benchmark',
     'feather.calibration.z', 'feather.calibration.extruder',
     'feather.settings.mod',
+    'feather.model_preview', 'feather.gcode_info',
+    'feather.screen.pages.model_preview', 'ff5m_ui.model_preview.actions',
+    'ff5m_ui.model_preview.common', 'ff5m_ui.model_preview.page',
+    'ff5m_ui.model_preview.print_page',
+    'ff5m_ui.model_preview.settings', 'ff5m_ui.parameter_controls',
 )
 assert not [name for name in blocked if name in sys.modules]
 assert 'ff5m_ui.z_offset.constants' in sys.modules
@@ -235,6 +259,10 @@ blocked = (
     'feather.features.benchmark', 'ff5m_ui.benchmark',
     'feather.calibration.z', 'feather.calibration.extruder',
     'feather.settings.mod',
+    'feather.model_preview', 'feather.gcode_info',
+    'feather.screen.pages.model_preview', 'ff5m_ui.model_preview.actions',
+    'ff5m_ui.model_preview.common', 'ff5m_ui.model_preview.page',
+    'ff5m_ui.model_preview.print_page',
 )
 assert not [name for name in blocked if name in sys.modules]
 assert 'ff5m_ui.z_offset.constants' in sys.modules
@@ -247,6 +275,173 @@ assert not [name for name in sys.modules
 assert 'ff5m_ui.heat.page' not in sys.modules
 assert not [name for name in sys.modules
             if name.startswith('ff5m_ui.benchmark')]
+""")
+
+    def test_model_preview_first_open_loads_only_the_requested_layout(self):
+        for mode in ("lab", "file", "print"):
+            with self.subTest(mode=mode):
+                self.run_clean("""
+import sys
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from tests.test_feather_print_model_preview import FileController
+from feather.files import FileEntry
+from ff5m_ui.screen import ScreenPage
+
+controller = FileController()
+controller._close_model_preview()
+controller._model_preview_render_receipt(SimpleNamespace(token='ordinary-page'))
+blocked = ('feather.model_preview', 'feather.gcode_info',
+           'ff5m_ui.model_preview.common', 'ff5m_ui.model_preview.page',
+           'ff5m_ui.model_preview.print_page')
+assert not [name for name in blocked if name in sys.modules]
+
+with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / 'part.gcode'
+    path.write_text(chr(10).join((';TIME:3600', ';LAYER_COUNT:10', 'G1 X20', '')))
+    controller.selected_file = FileEntry(path.name, str(path))
+    mode = %r
+    if mode == 'lab':
+        controller._open_model_preview(controller.selected_file)
+    elif mode == 'file':
+        controller._open_selected_model_preview()
+    else:
+        controller._open_print_model_preview()
+    assert 'feather.model_preview' in sys.modules
+    assert 'ff5m_ui.model_preview.common' in sys.modules
+    wanted = 'page' if mode == 'lab' else 'print_page'
+    other = 'print_page' if mode == 'lab' else 'page'
+    assert 'ff5m_ui.model_preview.' + wanted in sys.modules
+    assert 'ff5m_ui.model_preview.' + other not in sys.modules
+    assert 'ff5m_ui.model_preview.settings' not in sys.modules
+    assert 'ff5m_ui.parameter_controls' not in sys.modules
+    assert ('feather.gcode_info' in sys.modules) == (mode == 'file')
+    state = controller.model_preview
+    assert state['session'] is None
+    assert state['render_timer'] is not None
+    controller._show_page(ScreenPage.PRINTING)
+    assert state['cancel'].is_set()
+    assert 'ff5m_ui.model_preview.' + other not in sys.modules
+    if mode == 'lab':
+        controller._open_print_model_preview()
+    else:
+        controller._open_model_preview(controller.selected_file)
+    assert 'ff5m_ui.model_preview.' + other in sys.modules
+    controller._close_model_preview()
+""" % mode)
+
+    def test_screen_preview_entry_keeps_runtime_cold_until_open_and_owns_one_session(self):
+        for mode in ("lab", "file", "print"):
+            with self.subTest(mode=mode):
+                self.run_clean("""
+import sys
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from tests.test_feather_workflows import base_controller
+from tests.test_feather_print_preview import DeferredPreviewWorker, PreviewReactor
+from feather.features.manager import LazyFeatureManager
+from feather.files import FileEntry
+from ff5m_ui.screen import ScreenPage
+from ui import FeatherRenderer
+import feather_screen
+
+class Reactor(PreviewReactor):
+    def update_timer(self, timer, when):
+        pass
+    def unregister_timer(self, timer):
+        pass
+
+mode = %r
+controller = base_controller('printing' if mode == 'print' else 'idle')
+controller.feature_manager = LazyFeatureManager(controller, feather_screen.FEATURE_SPECS)
+controller.reactor = Reactor()
+controller.renderer = FeatherRenderer()
+controller.file_worker = DeferredPreviewWorker()
+controller._require_idle = lambda: None
+controller._setting = lambda key, default=None: default
+controller._render_screen = lambda feature=None: controller._render_model_preview()
+controller.virtual_sdcard.get_status = lambda now: {'progress': 0.25}
+controller.toolhead = SimpleNamespace(get_status=lambda now: {'position': (0, 0, 2, 0)})
+controller._close_model_preview()
+controller._model_preview_render_receipt(SimpleNamespace(token='ordinary-page'))
+assert list(controller._coalesce_model_preview_moves(['ordinary-event'])) == ['ordinary-event']
+assert controller.model_preview is None
+assert 'feather.screen.pages.model_preview' not in sys.modules
+assert 'ff5m_ui.model_preview.actions' not in sys.modules
+
+if mode == 'lab':
+    for _ in range(4):
+        controller._handle_model_preview_tap()
+    assert 'feather.screen.pages.model_preview' not in sys.modules
+    controller._handle_model_preview_tap()
+    assert controller.model_preview_file_select
+    assert controller.file_source == 'internal'
+    assert controller.feature_manager.peek('model_preview') is not None
+    assert controller.model_preview is None
+    assert 'feather.model_preview' not in sys.modules
+    assert 'ff5m_ui.model_preview.page' not in sys.modules
+
+with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / 'part.gcode'
+    path.write_text(';TIME:60\\nG1 X20\\n')
+    controller.selected_file = FileEntry(path.name, str(path))
+    controller.virtual_sdcard.file_path = lambda: str(path)
+    if mode == 'lab':
+        controller._open_model_preview(controller.selected_file)
+    elif mode == 'file':
+        controller._open_selected_model_preview()
+    else:
+        controller._open_print_model_preview()
+    feature = controller.feature_manager.peek('model_preview')
+    state = controller.model_preview
+    assert state is feature.model_preview
+    assert state['mode'] == mode
+    assert state['session'] is None
+    assert 'feather.screen.pages.model_preview' in sys.modules
+    assert 'ff5m_ui.model_preview.actions' in sys.modules
+    other = 'print_page' if mode == 'lab' else 'page'
+    assert 'ff5m_ui.model_preview.' + other not in sys.modules
+    controller._show_page(ScreenPage.PRINTING)
+    assert state['cancel'].is_set()
+    assert controller.model_preview is None
+    assert controller.feature_manager.peek('model_preview') is feature
+""" % mode)
+
+    def test_preview_layout_import_failure_can_be_retried_without_starting_work(self):
+        self.run_clean("""
+import importlib
+import sys
+from unittest import mock
+from tests.test_feather_print_model_preview import FileController
+
+controller = FileController()
+original_import = importlib.import_module
+failed = False
+
+def import_module(name, package=None):
+    global failed
+    if name == 'ff5m_ui.model_preview.print_page' and not failed:
+        failed = True
+        raise ImportError('preview layout unavailable')
+    return original_import(name, package)
+
+with mock.patch('ui.lazy.importlib.import_module', side_effect=import_module):
+    try:
+        controller._open_print_model_preview()
+    except ImportError as error:
+        assert str(error) == 'preview layout unavailable'
+    else:
+        raise AssertionError('import failure was hidden')
+    assert controller.model_preview is None
+    assert controller.file_worker.submitted == []
+    assert 'ff5m_ui.model_preview.print_page' not in sys.modules
+    controller._open_print_model_preview()
+    assert controller.model_preview['mode'] == 'print'
+    assert 'ff5m_ui.model_preview.print_page' in sys.modules
+    assert 'ff5m_ui.model_preview.page' not in sys.modules
+    controller._close_model_preview()
 """)
 
     def test_features_load_sequentially_and_are_singletons(self):
