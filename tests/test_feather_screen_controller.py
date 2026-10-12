@@ -698,6 +698,8 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_z_offset_summary_registers_all_positions(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.reactor = Reactor()
+        controller.toolhead = StatusObject({"homed_axes": "xyz"})
         controller.renderer = FEATHER.FeatherRenderer()
         RenderCapture(controller.renderer)
         controller.z_calibration = ZCalibrationSession()

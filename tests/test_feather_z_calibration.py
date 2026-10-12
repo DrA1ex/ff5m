@@ -6,8 +6,13 @@
 
 import importlib.util
 import pathlib
+import shlex
 import sys
 import unittest
+from types import SimpleNamespace
+
+from tests.test_bed_mesh_validation import Command, Coord, GCodeMove
+from tests.gcode_macro_harness import load_macro, render_macro
 
 
 MODULE_PATH = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
@@ -17,6 +22,151 @@ SPEC = importlib.util.spec_from_file_location(
     "feather_z_calibration_test", MODULE_PATH)
 ZCAL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ZCAL)
+
+
+class PaperMotionHarness(ZCAL.FeatherZCalibrationMixin):
+    """Execute calibration commands through the shipped Klipper G-code state."""
+    def __init__(self):
+        self.z_calibration = ZCAL.ZCalibrationSession()
+        self.z_calibration.begin(0.0, None, "", -0.25, False)
+        self.z_calibration.choose_zone("center")
+        self.z_calibration.set_trigger(-0.5)
+        self.position = [10.0, 20.0, 0.0, 3.0]
+        self.moves = []
+        self.fail_move = False
+        self.move = GCodeMove.GCodeMove.__new__(GCodeMove.GCodeMove)
+        self.move.Coord = Coord
+        self.move.absolute_coord = self.move.absolute_extrude = False
+        self.move.base_position = [0.0] * 4
+        self.move.homing_position = [0.0] * 4
+        self.move.last_position = list(self.position)
+        self.move.speed = 25.0
+        self.move.speed_factor = 1.0 / 60.0
+        self.move.extrude_factor = 1.0
+        self.move.saved_states = {}
+        self.move.move_with_transform = self._move
+        self.reactor = SimpleNamespace(monotonic=lambda: 0.0)
+        self.probe = SimpleNamespace(
+            get_status=lambda eventtime: {"last_z_result": -0.625})
+
+    def _move(self, position, speed):
+        if self.fail_move:
+            raise RuntimeError("Move out of range")
+        self.position[:] = position
+        self.moves.append((list(position), speed))
+
+    def _run_script(self, script, show_notice=True):
+        for line in script.splitlines():
+            name, *arguments = shlex.split(line)
+            if name == "PROBE":
+                self.position[2] = -0.625
+                self.move.last_position[:] = self.position
+                continue
+            params = dict(word.split("=", 1) for word in arguments
+                          if "=" in word)
+            if name == "MOVE_SAFE":
+                path = pathlib.Path(__file__).parents[1] / "macros" / "base.cfg"
+                rendered = render_macro(path, name, params=params, printer={
+                    "gcode_macro MOVE_SAFE": load_macro(path, name).variables,
+                    "toolhead": {"axis_maximum": {"z": 230.0}},
+                })
+                self._run_script("\n".join(rendered.commands))
+                continue
+            if name == "G1":
+                params = dict((word[0], word[1:]) for word in arguments)
+            try:
+                getattr(self.move, "cmd_" + name)(Command(params))
+            except Exception:
+                # Klipper resets its command position after a rejected move.
+                self.move.last_position[:] = self.position
+                raise
+
+    def _run_blocking_gcode(self, script, message):
+        self._run_script(script)
+
+    def _render_z_paper(self):
+        pass
+
+    def _check_z_pressure(self, eventtime):
+        return False
+
+
+class ZCalibrationMotionTest(unittest.TestCase):
+    def setUp(self):
+        self.harness = PaperMotionHarness()
+
+    def assert_motion_matches_session(self, expected):
+        harness = self.harness
+        self.assertAlmostEqual(harness.position[2], expected)
+        self.assertAlmostEqual(harness.z_calibration.paper_contact_z, expected)
+        self.assertEqual(harness.position[:2], [10.0, 20.0])
+        self.assertEqual(harness.position[3], 3.0)
+        self.assertFalse(harness.move.absolute_coord)
+        self.assertFalse(harness.move.absolute_extrude)
+        self.assertEqual(harness.move.speed, 25.0)
+
+    def test_closer_crosses_zero_and_farther_moves_immediately(self):
+        self.harness._move_z_paper(-0.01)
+        self.assert_motion_matches_session(-0.01)
+        self.harness._move_z_paper(-0.01)
+        self.assert_motion_matches_session(-0.02)
+        self.harness._move_z_paper(0.01)
+        self.assert_motion_matches_session(-0.01)
+        self.assertEqual(len(self.harness.moves), 3)
+        self.assertAlmostEqual(self.harness.moves[0][1], 5.0)
+
+    def test_reset_moves_to_negative_position_for_zero_candidate(self):
+        self.harness._reset_z_paper()
+        self.assert_motion_matches_session(-0.25)
+        self.assertAlmostEqual(self.harness.z_calibration.candidate, 0.0)
+
+    def test_absolute_mode_is_preserved_after_adjustment(self):
+        self.harness.move.absolute_coord = True
+        self.harness._move_z_paper(-0.01)
+        self.assertAlmostEqual(self.harness.position[2], -0.01)
+        self.assertTrue(self.harness.move.absolute_coord)
+        self.assertEqual(self.harness.move.speed, 25.0)
+
+    def test_probe_retracts_half_mm_while_target_is_negative(self):
+        self.harness._probe_z_zone()
+        self.assert_motion_matches_session(-0.125)
+        self.assertAlmostEqual(self.harness.z_calibration.local_z, 0.5)
+        self.assertFalse(self.harness.z_calibration.probing)
+
+    def test_manual_start_preserves_gcode_state(self):
+        self.harness._move_z_manual_start()
+        self.assert_motion_matches_session(5.0)
+        self.assertEqual(self.harness.z_calibration.start_mode, "manual")
+
+    def test_failed_probe_retract_or_manual_start_does_not_publish_a_reference(self):
+        for action in (self.harness._probe_z_zone,
+                       self.harness._move_z_manual_start):
+            with self.subTest(action=action):
+                session = self.harness.z_calibration
+                session.choose_zone("center")
+                self.harness.fail_move = True
+                with self.assertRaisesRegex(RuntimeError, "Move out of range"):
+                    action()
+                self.assertFalse(session.ready_for_paper_test)
+                self.assertFalse(session.probing)
+                self.assertFalse(session.moving_to_start)
+                self.assertFalse(self.harness.move.absolute_coord)
+                self.assertEqual(self.harness.move.speed, 25.0)
+
+    def test_rejected_adjustment_and_reset_restore_session_and_gcode_state(self):
+        for action in (lambda: self.harness._move_z_paper(-0.01),
+                       self.harness._reset_z_paper):
+            with self.subTest(action=action):
+                self.harness.fail_move = True
+                old_local = self.harness.z_calibration.local_z
+                with self.assertRaisesRegex(RuntimeError, "Move out of range"):
+                    action()
+                self.assertEqual(self.harness.z_calibration.local_z, old_local)
+                self.assert_motion_matches_session(0.0)
+                self.harness.fail_move = False
+                self.harness._move_z_paper(0.01)
+                self.assert_motion_matches_session(0.01)
+                self.harness._move_z_paper(-0.01)
 
 
 class ZCalibrationStateTest(unittest.TestCase):

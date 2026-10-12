@@ -333,7 +333,7 @@ class Button(Component):
             group="Typography", catalog="fonts",
             styleable=True, inheritable=True, invalidation=Invalidation.LAYOUT),
         _select(
-            "state", ("enabled", "disabled", "selected", "warning",
+            "state", ("enabled", "primary", "disabled", "selected", "warning",
                       "danger", "busy"), "enabled", group="Behavior"),
         _color(
             "accent", None, group="Appearance", storage="kwargs",

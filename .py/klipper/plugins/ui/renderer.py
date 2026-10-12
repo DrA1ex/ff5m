@@ -93,6 +93,8 @@ class FeatherRenderer:
     """Translate small UI primitives into typer display-list commands."""
 
     BUTTON_COLORS = {
+        "primary": (ThemeRole.ACCENT_BACKGROUND, ThemeRole.ACCENT_BORDER,
+                    ThemeRole.ACCENT_TEXT),
         "enabled": (ThemeRole.BUTTON_BACKGROUND, ThemeRole.BUTTON_BORDER,
                     ThemeRole.BUTTON_TEXT),
         "disabled": (ThemeRole.BUTTON_BACKGROUND, ThemeColor.MUTED,

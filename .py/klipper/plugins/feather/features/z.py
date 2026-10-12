@@ -1,4 +1,8 @@
 ## Z-offset, Safe Z, paper-test, and Live Z feature for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from ff5m_ui.screen import ScreenPage
 from feather.features.manager import FeatureHostProxy
@@ -104,41 +108,44 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
         return True
 
     def safety_armed_reasons(self, page, eventtime):
-        if page not in (ScreenPage.Z_OFFSET_PAPER_BRIEFING, ScreenPage.Z_OFFSET_PAPER,
-                        ScreenPage.SAFE_Z_BRIEFING, ScreenPage.SAFE_Z_CALIBRATION,
-                        ScreenPage.LIVE_Z_OFFSET):
-            return ()
-        return ("z-controls",) if self._homed_motion_available(
-            eventtime) else ()
+        return ("z-controls",) if page in PAGES else ()
 
     def back(self, page):
+        if page not in PAGES:
+            return False
+        if page == ScreenPage.LIVE_Z_OFFSET:
+            self.live_z_dialog = None
+            self._show_page(self.page_for_print_state())
+            return True
+
         session = self.z_calibration
-        if page in (ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_SUMMARY):
+        summary_pages = (ScreenPage.CALIBRATION_Z, ScreenPage.Z_OFFSET_SUMMARY)
+        homed, _position = self._z_offset_head_state()
+        if page in summary_pages:
             if session.results:
                 session.dialog = "discard"
                 self._render_z_summary()
-            elif page == ScreenPage.Z_OFFSET_SUMMARY and session.active:
-                self._begin_safe_z_calibration(preserve_result=True)
             else:
                 self._cancel_z_calibration()
-        elif page == ScreenPage.SAFE_Z_BRIEFING:
+            return True
+
+        if not homed and not session.results:
             self._cancel_z_calibration()
-        elif page == ScreenPage.SAFE_Z_CALIBRATION:
+            return True
+
+        session.dialog = None
+        if homed and page in (ScreenPage.SAFE_Z_CALIBRATION, ScreenPage.Z_OFFSET_PAPER):
+            height = (self._safe_z_preparation_height()
+                      if page == ScreenPage.SAFE_Z_CALIBRATION else self._safe_z())
             self._run_blocking_gcode(
-                "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" %
-                self._safe_z_preparation_height(), "LIFTING Z...")
+                "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" % height, "LIFTING Z...")
+
+        if session.results or page in (ScreenPage.Z_OFFSET_PAPER_BRIEFING, ScreenPage.Z_OFFSET_PAPER):
+            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+        elif page == ScreenPage.SAFE_Z_CALIBRATION:
             self._show_page(ScreenPage.SAFE_Z_BRIEFING)
-        elif page == ScreenPage.Z_OFFSET_PAPER_BRIEFING:
-            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
-        elif page == ScreenPage.Z_OFFSET_PAPER:
-            session.dialog = None
-            self._run_blocking_gcode(self._safe_z_move_command(), "LIFTING Z...")
-            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
-        elif page == ScreenPage.LIVE_Z_OFFSET:
-            self.live_z_dialog = None
-            self._show_page(self.page_for_print_state())
         else:
-            return False
+            self._cancel_z_calibration()
         return True
 
     def update(self, eventtime):

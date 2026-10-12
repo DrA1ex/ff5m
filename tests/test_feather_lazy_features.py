@@ -597,7 +597,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller._show_page(FEATHER.ScreenPage.FILAMENT_ACTION)
         self.assertEqual(controller.page, FEATHER.ScreenPage.FILAMENT_ACTION)
 
-    def test_z_motion_pages_arm_abort_only_after_homing(self):
+    def test_z_pages_always_arm_abort(self):
         controller = self.controller()
         status = {"homed_axes": ""}
         controller.toolhead = type("Toolhead", (), {
@@ -605,6 +605,8 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         })()
         feature = controller.feature_manager.get("z")
         pages = (
+            FEATHER.ScreenPage.CALIBRATION_Z,
+            FEATHER.ScreenPage.Z_OFFSET_SUMMARY,
             FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
             FEATHER.ScreenPage.Z_OFFSET_PAPER,
             FEATHER.ScreenPage.SAFE_Z_BRIEFING,
@@ -613,7 +615,8 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         )
 
         for page in pages:
-            self.assertEqual(feature.safety_armed_reasons(page, 1.0), ())
+            self.assertEqual(
+                feature.safety_armed_reasons(page, 1.0), ("z-controls",))
 
         status["homed_axes"] = "z"
         for page in pages:

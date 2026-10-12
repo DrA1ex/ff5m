@@ -275,9 +275,11 @@ class FeatherZCalibrationMixin:
 
     def _z_summary_ui_state(self):
         session = self.z_calibration
+        homed, _position = self._z_offset_head_state()
         return {
             z_offset_ui.SummaryState.ZONE_LABELS: self._z_zone_labels(),
             z_offset_ui.SummaryState.RESULTS: dict(session.results),
+            z_offset_ui.SummaryState.CAN_MEASURE: homed,
             z_offset_ui.SummaryState.SPREAD: float(session.spread),
             z_offset_ui.SummaryState.POSITIONAL_WARNING: float(
                 POSITIONAL_WARNING),
@@ -506,6 +508,9 @@ class FeatherZCalibrationMixin:
 
     def _choose_z_zone(self, key):
         self._require_idle()
+        homed, _position = self._z_offset_head_state()
+        if not homed:
+            raise RuntimeError("Homing lost. Restart Z-offset calibration.")
         self.z_calibration.choose_zone(key)
         self._show_page(ScreenPage.Z_OFFSET_PAPER_BRIEFING)
 
@@ -582,6 +587,22 @@ class FeatherZCalibrationMixin:
         self._move_z_offset_head(point[2], point[3])
         self._show_page(ScreenPage.Z_OFFSET_PAPER)
 
+    def _run_z_paper_move(self, target, message=None):
+        # Paper calibration must cross Z=0; MOVE_SAFE clamps it silently.
+        state_name = "_feather_z_paper"
+        self._run_script(
+            "SAVE_GCODE_STATE NAME=%s" % state_name, show_notice=False)
+        command = "G90\nG1 Z%.6f F300" % target
+        try:
+            if message is None:
+                self._run_script(command, show_notice=False)
+            else:
+                self._run_blocking_gcode(command, message)
+        finally:
+            self._run_script(
+                "RESTORE_GCODE_STATE NAME=%s MOVE=0" % state_name,
+                show_notice=False)
+
     def _probe_z_zone(self):
         session = self.z_calibration
         if session.probing:
@@ -593,9 +614,7 @@ class FeatherZCalibrationMixin:
             self._run_blocking_gcode("PROBE SAMPLES=2", "PROBING...")
             status = self.probe.get_status(self.reactor.monotonic())
             trigger = float(status["last_z_result"])
-            self._run_script(
-                "MOVE_SAFE Z=%.6f ABSOLUTE=1 F=300" % (trigger + 0.5),
-                show_notice=False)
+            self._run_z_paper_move(trigger + 0.5)
             session.set_trigger(trigger, 0.5)
         finally:
             session.probing = False
@@ -610,8 +629,8 @@ class FeatherZCalibrationMixin:
         self._render_z_paper()
         try:
             height = self._safe_z() / 2.0
-            self._run_blocking_gcode(
-                "MOVE_SAFE Z=%.6f ABSOLUTE=1 F=300" % height,
+            self._run_z_paper_move(
+                height,
                 "MOVING TO %.3f MM..." % height)
             session.set_manual_start(height)
         finally:
@@ -622,9 +641,7 @@ class FeatherZCalibrationMixin:
         session = self.z_calibration
         target = session.adjust(delta)
         try:
-            self._run_script(
-                "MOVE_SAFE Z=%.6f ABSOLUTE=1 F=300" % target,
-                show_notice=False)
+            self._run_z_paper_move(target)
         except Exception:
             session.adjust(-delta)
             raise
@@ -635,9 +652,7 @@ class FeatherZCalibrationMixin:
         old_local = session.local_z
         target = session.reset()
         try:
-            self._run_script(
-                "MOVE_SAFE Z=%.6f ABSOLUTE=1 F=300" % target,
-                show_notice=False)
+            self._run_z_paper_move(target)
         except Exception:
             session.local_z = old_local
             raise

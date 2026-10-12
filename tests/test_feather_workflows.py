@@ -4324,7 +4324,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertFalse(controller.z_calibration.safe_z_ready)
         self.assertEqual(controller.gcode.commands, [])
 
-    def test_zone_selection_back_returns_to_saved_safe_z_without_repreparing(self):
+    def test_empty_zone_selection_back_returns_to_calibration_menu_without_repreparing(self):
         controller = base_controller()
         controller.page = FEATHER.ScreenPage.Z_OFFSET_SUMMARY
         controller.z_calibration = ZCalibrationSession()
@@ -4346,22 +4346,12 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         feature.back(FEATHER.ScreenPage.Z_OFFSET_SUMMARY)
 
-        self.assertEqual(moves, [(
-            "_HOME_IF_NEEDED\nMOVE_SAFE Z=12 ABSOLUTE=1 F=600\n"
-            "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
-            "LOAD_CELL_TARE\nMOVE_SAFE Z=6.000000 ABSOLUTE=1 F=300",
-            "POSITIONING HEAD...")])
-        self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_CALIBRATION])
-        self.assertTrue(controller.z_calibration.safe_z_ready)
-
-        feature._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
-        feature._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
-
-        self.assertEqual(controller.gcode.commands[-2:], [
-            "MOVE_SAFE Z=7.000000 ABSOLUTE=1 F=300",
-            "SET_MOD PARAM=safe_z VALUE=7.000",
-        ])
-        self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_SUMMARY)
+        self.assertEqual(moves, [])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_HOME])
+        self.assertFalse(controller.z_calibration.active)
+        self.assertEqual(controller.gcode.commands, [
+            "MOVE_SAFE Z=6 ABSOLUTE=1 F=600",
+            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.000000 MOVE=0"])
         self.assertEqual(callbacks, [])
 
     def test_filament_page_cannot_replace_cancel_confirmation(self):
@@ -4374,6 +4364,239 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertFalse(opened)
         self.assertEqual(pages, [])
+
+    def test_z_calibration_back_after_homing_timeout_does_not_move_or_home(self):
+        pages = (
+            FEATHER.ScreenPage.Z_OFFSET_PAPER,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+            FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+            FEATHER.ScreenPage.SAFE_Z_BRIEFING,
+            FEATHER.ScreenPage.Z_OFFSET_SUMMARY,
+            FEATHER.ScreenPage.CALIBRATION_Z,
+        )
+        for page in pages:
+            with self.subTest(page=page):
+                controller = base_controller()
+                controller.toolhead.status["homed_axes"] = ""
+                controller._run_blocking_gcode = mock.Mock(
+                    side_effect=RuntimeError("Must home axis first"))
+                shown = []
+                controller._show_page = shown.append
+                feature = ZCalibrationFeature(controller)
+                feature.z_calibration.begin(0.2, None, "", -0.25, False)
+
+                self.assertTrue(feature.back(page))
+
+                self.assertEqual(shown, [FEATHER.ScreenPage.CALIBRATION_HOME])
+                controller._run_blocking_gcode.assert_not_called()
+                self.assertEqual(controller.gcode.commands, [
+                    "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+                self.assertFalse(feature.z_calibration.active)
+
+    def test_homing_timeout_keeps_measurements_for_saving_before_exit(self):
+        pages = (
+            FEATHER.ScreenPage.Z_OFFSET_PAPER,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+            FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+            FEATHER.ScreenPage.SAFE_Z_BRIEFING,
+        )
+        for page in pages:
+            for save in (False, True):
+                with self.subTest(page=page, save=save):
+                    controller = base_controller()
+                    controller.toolhead.status["homed_axes"] = "xy"
+                    controller._run_blocking_gcode = mock.Mock(
+                        side_effect=RuntimeError("Must home axis first"))
+                    shown = []
+                    controller._show_page = shown.append
+                    feature = ZCalibrationFeature(controller)
+                    session = feature.z_calibration
+                    session.begin(0.2, None, "", -0.25, True)
+                    session.choose_zone("center")
+                    session.set_trigger(-0.5)
+                    session.adjust(-0.01)
+                    session.accept()
+                    session.dialog = "pressure"
+
+                    self.assertTrue(feature.back(page))
+
+                    self.assertEqual(shown, [FEATHER.ScreenPage.Z_OFFSET_SUMMARY])
+                    self.assertEqual(session.results, {"center": 0.24})
+                    self.assertIsNone(session.dialog)
+                    self.assertTrue(session.active)
+                    self.assertEqual(controller.gcode.commands, [])
+
+                    if save:
+                        feature._handle_z_offset_command(Z_OFFSET_UI.SAVE)
+                        self.assertEqual(controller.gcode.commands, [
+                            "TURN_OFF_HEATERS",
+                            "_SET_GCODE_OFFSET Z=+0.240000 MOVE=0\n"
+                            "SET_MOD PARAM=z_offset VALUE=0.240\n"
+                            "SET_MOD PARAM=load_zoffset VALUE=1"])
+                    else:
+                        self.assertTrue(feature.back(FEATHER.ScreenPage.Z_OFFSET_SUMMARY))
+                        self.assertEqual(session.dialog, "discard")
+                        self.assertEqual(controller.gcode.commands, [])
+                        feature._handle_z_offset_command(Z_OFFSET_UI.DISCARD_CONFIRM)
+                        self.assertEqual(controller.gcode.commands, [
+                            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+                    self.assertEqual(shown[-1], FEATHER.ScreenPage.CALIBRATION_HOME)
+                    self.assertFalse(session.active)
+                    controller._run_blocking_gcode.assert_not_called()
+
+    def test_back_with_measurements_returns_to_results_while_homed(self):
+        for page in (FEATHER.ScreenPage.Z_OFFSET_PAPER,
+                     FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+                     FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+                     FEATHER.ScreenPage.SAFE_Z_BRIEFING):
+            with self.subTest(page=page):
+                controller = base_controller()
+                controller._run_blocking_gcode = mock.Mock()
+                shown = []
+                controller._show_page = shown.append
+                feature = ZCalibrationFeature(controller)
+                session = feature.z_calibration
+                session.begin(0.2, None, "", -0.25, False)
+                session.choose_zone("center")
+                session.set_trigger(-0.5)
+                session.accept()
+
+                self.assertTrue(feature.back(page))
+
+                self.assertEqual(shown, [FEATHER.ScreenPage.Z_OFFSET_SUMMARY])
+                self.assertEqual(session.results, {"center": 0.25})
+                self.assertTrue(session.active)
+                self.assertEqual(controller.gcode.commands, [])
+
+    def test_result_exit_dialog_can_save_discard_or_stay_with_or_without_homing(self):
+        from ui.actions import SetValue
+        for homed in ("xyz", "xy"):
+            for choice in ("SAVE", "DISCARD", "STAY"):
+                with self.subTest(homed=homed, choice=choice):
+                    controller = base_controller()
+                    controller.toolhead.status["homed_axes"] = homed
+                    controller.page = FEATHER.ScreenPage.Z_OFFSET_SUMMARY
+                    controller.renderer = FEATHER.FeatherRenderer()
+                    capture = RenderCapture(controller.renderer)
+                    shown = []
+                    controller._show_page = shown.append
+                    feature = ZCalibrationFeature(controller)
+                    session = feature.z_calibration
+                    session.begin(0.2, None, "", -0.25, True)
+                    session.choose_zone("center")
+                    session.set_trigger(-0.5)
+                    session.accept()
+
+                    self.assertTrue(feature.back(controller.page))
+
+                    self.assertTrue(session.active)
+                    self.assertEqual(shown, [])
+                    self.assertEqual(controller.gcode.commands, [])
+                    buttons = {button.label: button for button in capture.latest.buttons.values()}
+                    self.assertEqual(set(buttons), {"SAVE", "DISCARD", "STAY"})
+                    self.assertEqual(buttons["SAVE"].state, "primary")
+                    self.assertEqual(buttons["DISCARD"].state, "danger")
+                    self.assertEqual(buttons["STAY"].state, "enabled")
+                    for action in Z_OFFSET_UI.ZONE_ACTIONS.values():
+                        self.assertNotIn(action.wire_id, capture.latest.buttons)
+                    action = {"SAVE": Z_OFFSET_UI.SAVE,
+                              "DISCARD": Z_OFFSET_UI.DISCARD_CONFIRM,
+                              "STAY": SetValue(Z_OFFSET_UI.SummaryState.DIALOG, None)}[choice]
+                    feature.handle_semantic_action(controller.page, action)
+
+                    if choice == "STAY":
+                        self.assertTrue(session.active)
+                        self.assertIsNone(session.dialog)
+                        self.assertEqual(session.results, {"center": 0.25})
+                        self.assertEqual(shown, [])
+                        self.assertEqual(controller.gcode.commands, [])
+                    else:
+                        self.assertFalse(session.active)
+                        self.assertEqual(shown, [FEATHER.ScreenPage.CALIBRATION_HOME])
+                        commands = "\n".join(controller.gcode.commands)
+                        self.assertNotIn("_HOME_IF_NEEDED", commands)
+                        self.assertEqual("SET_MOD PARAM=z_offset VALUE=0.250" in commands,
+                                         choice == "SAVE")
+
+    def test_summary_after_homing_timeout_allows_saving_but_no_more_measurements(self):
+        controller = base_controller()
+        controller.toolhead.status["homed_axes"] = ""
+        controller.page = FEATHER.ScreenPage.Z_OFFSET_SUMMARY
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        feature = ZCalibrationFeature(controller)
+        session = feature.z_calibration
+        session.begin(0.2, None, "", -0.25, True)
+        session.choose_zone("center")
+        session.set_trigger(-0.5)
+        session.accept()
+
+        feature.render(controller.page)
+
+        for action in Z_OFFSET_UI.ZONE_ACTIONS.values():
+            self.assertFalse(capture.latest.has_action(action.wire_id))
+        self.assertTrue(capture.latest.has_action(Z_OFFSET_UI.SAVE.wire_id))
+        self.assertTrue(capture.latest.has_action(Z_OFFSET_UI.SELECTION_NEXT.wire_id))
+        for action in Z_OFFSET_UI.ZONE_ACTIONS.values():
+            with self.assertRaisesRegex(RuntimeError, "Restart Z-offset calibration"):
+                feature._handle_z_offset_command(action)
+        self.assertEqual(session.results, {"center": 0.25})
+        self.assertEqual(controller.gcode.commands, [])
+
+    def test_z_calibration_abort_is_rendered_even_without_homing_or_heating(self):
+        controller = base_controller()
+        controller.toolhead.status["homed_axes"] = ""
+        controller.feature_manager = FEATHER.LazyFeatureManager(
+            controller, FEATHER.FEATURE_SPECS)
+        feature = controller.feature_manager.get("z")
+        feature.z_calibration.begin(0.2, None, "", -0.25, False)
+        feature.z_calibration.choose_zone("center")
+        controller.gcode_move = StatusObject({"homing_origin": (0.0, 0.0, 0.0)})
+        controller.z_adjust_warning_threshold = 0.3
+        controller._update_z_weight_gauge = lambda eventtime: None
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        pages = (
+            FEATHER.ScreenPage.CALIBRATION_Z,
+            FEATHER.ScreenPage.Z_OFFSET_SUMMARY,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
+            FEATHER.ScreenPage.Z_OFFSET_PAPER,
+            FEATHER.ScreenPage.SAFE_Z_BRIEFING,
+            FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+            FEATHER.ScreenPage.LIVE_Z_OFFSET,
+        )
+        for homed in ("", "xyz"):
+            controller.toolhead.status["homed_axes"] = homed
+            for page in pages:
+                with self.subTest(page=page, homed=homed):
+                    controller.page = page
+                    controller._apply_safety_visibility(page)
+                    feature.render(page)
+                    self.assertTrue(capture.latest.has_action("global.abort"))
+        controller._handle_touch_action("global.abort")
+        self.assertEqual(controller.gcode.commands, ["M112"])
+
+    def test_z_calibration_back_still_lifts_when_homed(self):
+        cases = (
+            (FEATHER.ScreenPage.Z_OFFSET_PAPER,
+             FEATHER.ScreenPage.Z_OFFSET_SUMMARY, 10),
+            (FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
+             FEATHER.ScreenPage.SAFE_Z_BRIEFING, 20),
+        )
+        for page, destination, height in cases:
+            with self.subTest(page=page):
+                controller = base_controller()
+                controller._run_blocking_gcode = mock.Mock()
+                pages = []
+                controller._show_page = pages.append
+                feature = ZCalibrationFeature(controller)
+                feature.z_calibration.begin(0.2, None, "", -0.25, False)
+
+                self.assertTrue(feature.back(page))
+
+                controller._run_blocking_gcode.assert_called_once_with(
+                    "MOVE_SAFE Z=%d ABSOLUTE=1 F=600" % height, "LIFTING Z...")
+                self.assertEqual(pages, [destination])
 
     def test_material_selection_heats_and_opens_action_page(self):
         controller = base_controller("paused")
@@ -4485,8 +4708,10 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._handle_z_offset_command(Z_OFFSET_UI.CLOSER)
 
-        self.assertEqual(controller.gcode.commands,
-                         ["MOVE_SAFE Z=-0.010000 ABSOLUTE=1 F=300"])
+        self.assertEqual(controller.gcode.commands, [
+            "SAVE_GCODE_STATE NAME=_feather_z_paper",
+            "G90\nG1 Z-0.010000 F300",
+            "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
         self.assertAlmostEqual(controller.z_calibration.local_z, 0.49)
         self.assertEqual(blocking, [])
 
@@ -4501,8 +4726,10 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._handle_z_offset_command(Z_OFFSET_UI.FARTHER)
 
-        self.assertEqual(controller.gcode.commands,
-                         ["MOVE_SAFE Z=0.050000 ABSOLUTE=1 F=300"])
+        self.assertEqual(controller.gcode.commands, [
+            "SAVE_GCODE_STATE NAME=_feather_z_paper",
+            "G90\nG1 Z0.050000 F300",
+            "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
 
     def test_live_z_adjust_uses_original_macro_without_saving(self):
         controller = base_controller("printing")
@@ -4655,7 +4882,9 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_z_offset_command(Z_OFFSET_UI.RESET)
 
         self.assertEqual(controller.gcode.commands, [
-            "MOVE_SAFE Z=-0.250000 ABSOLUTE=1 F=300"])
+            "SAVE_GCODE_STATE NAME=_feather_z_paper",
+            "G90\nG1 Z-0.250000 F300",
+            "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
         self.assertEqual(controller.z_calibration.candidate, 0.0)
         self.assertEqual(rendered, [True])
 
@@ -4676,7 +4905,9 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual([command for command, _message in probing],
                          ["PROBE SAMPLES=2"])
         self.assertEqual(controller.gcode.commands, [
-            "MOVE_SAFE Z=-0.125000 ABSOLUTE=1 F=300"])
+            "SAVE_GCODE_STATE NAME=_feather_z_paper",
+            "G90\nG1 Z-0.125000 F300",
+            "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
         self.assertAlmostEqual(controller.z_calibration.trigger_z, -0.625)
         self.assertAlmostEqual(controller.z_calibration.local_z, 0.5)
         self.assertAlmostEqual(controller.z_calibration.candidate, 0.25)
@@ -4694,7 +4925,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
 
         self.assertEqual(moves, [(
-            "MOVE_SAFE Z=5.000000 ABSOLUTE=1 F=300",
+            "G90\nG1 Z5.000000 F300",
             "MOVING TO 5.000 MM...")])
         self.assertEqual(controller.z_calibration.start_mode, "manual")
         self.assertTrue(controller.z_calibration.ready_for_paper_test)
@@ -4716,7 +4947,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
 
         self.assertEqual(moves, [(
-            "MOVE_SAFE Z=3.750000 ABSOLUTE=1 F=300",
+            "G90\nG1 Z3.750000 F300",
             "MOVING TO 3.750 MM...")])
 
     def test_paper_step_uses_no_loader_or_busy_notice(self):
@@ -4736,7 +4967,9 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertEqual(notices, [])
         self.assertEqual(controller.gcode.commands, [
-            "MOVE_SAFE Z=-0.005000 ABSOLUTE=1 F=300"])
+            "SAVE_GCODE_STATE NAME=_feather_z_paper",
+            "G90\nG1 Z-0.005000 F300",
+            "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
 
     def test_screw_output_is_collected_only_during_workflow(self):
         controller = base_controller()

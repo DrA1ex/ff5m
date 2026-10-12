@@ -62,11 +62,15 @@ def _zone_caption(labels, results, key):
     return "%s  %+.3f" % (labels[key], results[key])
 
 
-def _zone_state(results, key):
+def _zone_state(results, key, can_measure):
+    if not can_measure:
+        return "disabled"
     return "selected" if key in results else "enabled"
 
 
-def _status(spread, positional_warning, results):
+def _status(spread, positional_warning, results, can_measure):
+    if not can_measure:
+        return "HOMING LOST - SAVE RESULTS OR RETURN TO CALIBRATION MENU"
     if spread > positional_warning:
         return "ZONES DIFFER BY %.3f MM - CHECK THE BED AND PROBE" % spread
     count = len(results)
@@ -99,8 +103,9 @@ def _zone_button(key):
             _zone_caption(labels, results, zone),
             bind(SummaryState.ZONE_LABELS), bind(SummaryState.RESULTS)),
         state=derived(
-            lambda results, zone=key: _zone_state(results, zone),
-            bind(SummaryState.RESULTS)),
+            lambda results, can_measure, zone=key:
+            _zone_state(results, zone, can_measure),
+            bind(SummaryState.RESULTS), bind(SummaryState.CAN_MEASURE)),
     ).style(UiStyle.BUTTON).ref(_ZONE_REFS[key])
 
 
@@ -122,7 +127,8 @@ def _content():
             _status,
             bind(SummaryState.SPREAD),
             bind(SummaryState.POSITIONAL_WARNING),
-            bind(SummaryState.RESULTS)),
+            bind(SummaryState.RESULTS),
+            bind(SummaryState.CAN_MEASURE)),
         color=derived(
             _status_color,
             bind(SummaryState.SPREAD),
@@ -178,14 +184,15 @@ def _content():
         derived(lambda dialog: dialog == "discard",
                 bind(SummaryState.DIALOG)),
         Dialog(
-            "DISCARD Z CALIBRATION?",
+            "EXIT Z CALIBRATION?",
             (
-                "ALL MEASURED ZONE RESULTS WILL BE LOST.",
-                "THE ORIGINAL BED MESH AND Z OFFSET WILL BE RESTORED.",
+                "SAVE THE SELECTED Z OFFSET BEFORE LEAVING?",
+                "DISCARD WILL DELETE ALL UNSAVED MEASUREMENTS.",
             ),
             (
-                (SetValue(SummaryState.DIALOG, None), "KEEP", "enabled"),
+                (SAVE, "SAVE", "primary"),
                 (DISCARD_CONFIRM, "DISCARD", "danger"),
+                (SetValue(SummaryState.DIALOG, None), "STAY", "enabled"),
             ),
             tone="danger", modal=True,
         ).size(630, 275).margin(top=49)
