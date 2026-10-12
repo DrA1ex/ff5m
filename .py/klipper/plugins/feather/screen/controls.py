@@ -1099,7 +1099,10 @@ class FeatherControlsMixin:
                       if self.heating_materials else "n/a"))
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
-            self._show_page(ScreenPage.CALIBRATION_CONFIRM)
+            if self.calibration_kind == "z":
+                self._start_z_calibration()
+            else:
+                self._show_page(ScreenPage.CALIBRATION_CONFIRM)
         elif action == "cal.extruder":
             self._start_extruder_calibration()
         elif action == "cal.axes":
@@ -1128,7 +1131,7 @@ class FeatherControlsMixin:
                 raise RuntimeError(
                     "Select WITHOUT CLEANING when no materials are enabled")
             if self.calibration_kind == "z":
-                self._start_z_calibration()
+                self._start_z_calibration_preparation()
             else:
                 self._start_calibration(repeat_probe=False)
         elif action == "cal.cancel":
@@ -1344,8 +1347,8 @@ class FeatherControlsMixin:
             text = ("Select a material to clean the nozzle before probing, "
                     "or choose WITHOUT CLEANING.")
         elif kind == "z":
-            text = ("Select a material to clean the nozzle first, "
-                    "or choose WITHOUT CLEANING.")
+            text = ("Safe Z is set. Select a material for nozzle cleaning, "
+                    "or choose WITHOUT CLEANING, then start the Z-offset paper test.")
         elif kind == "pid_bed":
             text = ("Select the bed target temperature used for PID tuning. "
                     "The printer will home before heating.")
@@ -1386,11 +1389,13 @@ class FeatherControlsMixin:
             if (getattr(self, "calibration_clean_nozzle", True)
                     and materials):
                 mode_hint = (
-                    "CLEAN NOZZLE FOR %s, THEN HOME AND TARE" %
+                    ("CLEAN FOR %s, THEN TARE FOR THE PAPER TEST" if kind == "z"
+                     else "CLEAN NOZZLE FOR %s, THEN HOME AND TARE") %
                     self.calibration_material)
             else:
                 mode_hint = (
-                    "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
+                    "HOME IF NEEDED, COOLDOWN AND TARE FOR THE PAPER TEST" if kind == "z"
+                    else "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
             commands.append(self.renderer.text(
                 400, 290, mode_hint,
                 ThemeColor.DIM, "JetBrainsMono 8pt", "center"))

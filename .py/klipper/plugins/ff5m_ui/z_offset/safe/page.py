@@ -63,7 +63,7 @@ def _content():
 
     return Column(
         Text(
-            "PROBE TOUCHES THE CLEAN BED AT THE CENTER. THE STARTING SAFE Z IS THE TRIGGER HEIGHT + 5 MM.",
+            "PROBE THE BED CENTER. SAFE Z STARTS AT THE TRIGGER HEIGHT + 5 MM. SAVE TO CHOOSE NOZZLE CLEANING NEXT.",
             wrap=True, auto_height=True,
         ).style(UiStyle.TEXT).ref(SafeRef.HELP),
         Spacer().grow(12),

@@ -545,7 +545,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
             controller, FEATHER.FEATURE_SPECS)
         return controller
 
-    def test_calibration_confirm_loads_z_only_when_starting(self):
+    def test_z_entry_loads_safe_z_before_the_cleaning_confirmation(self):
         controller = self.controller()
         manager = controller.feature_manager
 
@@ -555,20 +555,30 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         self.assertIsNone(manager.peek("z"))
         self.assertNotIn("calibration_kind", controller.__dict__)
 
-        controller._dispatch_action("cal.z")
-        self.assertEqual(controller.page, FEATHER.ScreenPage.CALIBRATION_CONFIRM)
-        self.assertEqual(common.calibration_kind, "z")
-        self.assertIsNone(manager.peek("z"))
-
         from feather.features import z as feather_feature_z
         started = []
+        def start(feature):
+            started.append(feature)
+            feature._show_page(FEATHER.ScreenPage.SAFE_Z_BRIEFING)
         with mock.patch.object(
                 feather_feature_z.ZCalibrationFeature,
-                "start_calibration", lambda feature: started.append(feature)):
+                "start_calibration", start):
+            controller._dispatch_action("cal.z")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.SAFE_Z_BRIEFING)
+        self.assertEqual(common.calibration_kind, "z")
+        self.assertEqual(started, [manager.peek("z")])
+
+        from ff5m_ui.z_offset.actions import SAFE_SKIP
+        manager.get("z")._handle_z_offset_command(SAFE_SKIP)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CALIBRATION_CONFIRM)
+        preparing = []
+        with mock.patch.object(
+                feather_feature_z.ZCalibrationFeature,
+                "start_preparation", lambda feature: preparing.append(feature)):
             controller.last_action_time = -1.0
             controller._dispatch_action("cal.confirm")
 
-        self.assertEqual(started, [manager.peek("z")])
+        self.assertEqual(preparing, [manager.peek("z")])
         self.assertIs(manager.get("z"), manager.peek("z"))
 
     def test_filament_pages_load_their_declarations_only_when_opened(self):

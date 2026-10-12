@@ -1,4 +1,8 @@
 ## Declarative Safe Z briefing page for Feather.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
 
 from enum import Enum
 
@@ -28,16 +32,16 @@ class SafeBriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "SAFE Z IS THE HEIGHT THE TOOLHEAD LIFTS TO BEFORE PARKING OR MOVING IN X/Y.",
+            "CHECK SAFE Z BEFORE NOZZLE CLEANING AND X/Y MOVES.",
             wrap=True, auto_height=True).style(UiStyle.PRIMARY),
         Text(
-            "CALIBRATE IT IF THE BED HAS BEEN RAISED, OR IF A LONGER NOZZLE IS INSTALLED.",
+            "CALIBRATE AFTER CHANGING THE BED OR NOZZLE. REMOVE PLASTIC FROM THE NOZZLE TIP BEFORE PROBING.",
             wrap=True, auto_height=True).style(UiStyle.TEXT),
         Text(
             "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF CLEARANCE.",
             wrap=True, auto_height=True).style(UiStyle.TEXT),
         Text(
-            "SKIP THIS ONLY IF SAFE Z HAS ALREADY BEEN CHECKED FOR THE CURRENT BED AND NOZZLE.",
+            "SKIP ONLY IF SAFE Z IS VERIFIED. NEXT, CHOOSE NOZZLE CLEANING AND MATERIAL.",
             wrap=True, auto_height=True).style(UiStyle.TEXT),
         gap=20,
     ).height("content").ref(SafeBriefingRef.TEXT)

@@ -758,7 +758,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._render_safe_z_briefing()
         briefing = "\n".join(batches[-1])
         self.assertIn("CURRENT: 8.000 MM", briefing)
-        self.assertIn("START HEIGHT: 16.000 MM", briefing)
+        self.assertIn("START HEIGHT: 20.000 MM", briefing)
         self.assertIn("z.safe.skip", briefing)
         self.assertIn("z.safe.calibrate", briefing)
 

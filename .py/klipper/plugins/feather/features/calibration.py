@@ -93,6 +93,9 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
     def _start_z_calibration(self):
         self.feature_manager.get("z").start_calibration()
 
+    def _start_z_calibration_preparation(self):
+        self.feature_manager.get("z").start_preparation()
+
     def _start_extruder_calibration(self):
         self.feature_manager.get("extruder").start_calibration()
 
@@ -102,7 +105,10 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         elif page == ScreenPage.CALIBRATION_GUIDE:
             self._show_page(ScreenPage.CALIBRATION_HOME)
         elif page == ScreenPage.CALIBRATION_CONFIRM:
-            self._show_page(ScreenPage.CALIBRATION_HOME)
+            if self.calibration_kind == "z":
+                self.feature_manager.get("z").cancel_calibration()
+            else:
+                self._show_page(ScreenPage.CALIBRATION_HOME)
         else:
             return False
         return True
@@ -190,6 +196,8 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         return False
 
     def safety_armed_reasons(self, page, eventtime):
+        if page == ScreenPage.CALIBRATION_CONFIRM and self.calibration_kind == "z":
+            return ("z-controls",)
         return (("calibration-controls",)
                 if page == ScreenPage.CALIBRATION_PROGRESS else ())
 

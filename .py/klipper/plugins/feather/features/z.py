@@ -58,6 +58,12 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
     def start_calibration(self):
         self._start_z_calibration()
 
+    def start_preparation(self):
+        self._start_z_calibration_preparation()
+
+    def cancel_calibration(self):
+        self._cancel_z_calibration()
+
     def open_live_z(self):
         if not self._live_z_adjust_allowed(self.reactor.monotonic()):
             raise RuntimeError("Z adjust is not available yet")

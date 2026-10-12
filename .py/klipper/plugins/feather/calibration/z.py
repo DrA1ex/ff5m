@@ -263,7 +263,7 @@ class FeatherZCalibrationMixin:
         return self._setting("safe_z", 10.0)
 
     def _safe_z_preparation_height(self):
-        return self._safe_z() * 2.0
+        return max(20.0, self._safe_z() * 2.0)
 
     def _safe_z_move_command(self, speed=600):
         return "MOVE_SAFE Z=%g ABSOLUTE=1 F=%d" % (
@@ -537,10 +537,7 @@ class FeatherZCalibrationMixin:
         self._show_page(ScreenPage.SAFE_Z_CALIBRATION)
 
     def _continue_after_safe_z(self):
-        if self.z_calibration.prepared:
-            self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
-            return
-        self._start_z_calibration_preparation()
+        self._show_page(ScreenPage.CALIBRATION_CONFIRM)
 
     def _skip_safe_z_calibration(self):
         self._continue_after_safe_z()

@@ -1526,12 +1526,12 @@ class ScenarioCatalog:
 
     def _steps_z(self, steps):
         self._add_call(steps, "z-open", self._open_calibration_home)
-        self._add_tap(steps, "cal.z", ScreenPage.CALIBRATION_CONFIRM)
+        self._add_tap(steps, "cal.z", ScreenPage.SAFE_Z_BRIEFING)
+        self._add_capture(steps, "z-safe-briefing")
+        self._add_semantic_tap(steps, z_actions.SAFE_SKIP, ScreenPage.CALIBRATION_CONFIRM)
         self._add_tap(steps, "cal.clean.skip", ScreenPage.CALIBRATION_CONFIRM)
         self._add_capture(steps, "z-confirm")
-        self._add_tap(steps, "cal.confirm", ScreenPage.SAFE_Z_BRIEFING)
-        self._add_capture(steps, "z-safe-briefing")
-        self._add_semantic_tap(steps, z_actions.SAFE_SKIP)
+        self._add_tap(steps, "cal.confirm", ScreenPage.CALIBRATION_PROGRESS)
         self._add_wait(steps, "z-preparation", self._z_summary_ready,
                        1200.0, 1.0)
         self._add_capture(steps, "z-summary-empty")

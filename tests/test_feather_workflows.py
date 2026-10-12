@@ -4227,6 +4227,27 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertEqual(feature._selected_target, 250.0)
         self.assertTrue(feature._cooling_fan_active)
 
+    def test_safe_z_start_height_is_doubled_with_a_twenty_mm_floor(self):
+        for safe_z, expected_height in ((5.0, 20.0), (10.0, 20.0), (15.0, 30.0)):
+            with self.subTest(safe_z=safe_z):
+                controller = base_controller()
+                controller.z_calibration = ZCalibrationSession()
+                controller.z_calibration.begin(
+                    0.0, None, "", -0.25, False, safe_z=safe_z)
+                controller._run_blocking_gcode = mock.Mock()
+                controller._show_page = mock.Mock()
+
+                controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_CALIBRATE)
+
+                controller._run_blocking_gcode.assert_called_once_with(
+                    "_HOME_IF_NEEDED\n"
+                    "MOVE_SAFE Z=%g ABSOLUTE=1 F=600\n"
+                    "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
+                    "LOAD_CELL_TARE" % expected_height,
+                    "POSITIONING HEAD...")
+                self.assertEqual(controller.z_calibration.safe_z, safe_z)
+                self.assertEqual(controller.gcode.commands, [])
+
     def test_safe_z_stage_positions_probes_adjusts_saves_then_continues(self):
         controller = base_controller()
         controller.params = type("Params", (), {
@@ -4249,7 +4270,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertEqual(moves, [
             ("_HOME_IF_NEEDED\n"
-             "MOVE_SAFE Z=16 ABSOLUTE=1 F=600\n"
+             "MOVE_SAFE Z=20 ABSOLUTE=1 F=600\n"
              "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
              "LOAD_CELL_TARE",
              "POSITIONING HEAD..."),
@@ -4270,9 +4291,23 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         ])
         self.assertAlmostEqual(controller.z_calibration.safe_z, 4.6)
         self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_CALIBRATION,
-                                 FEATHER.ScreenPage.CALIBRATION_PROGRESS])
-        self.assertEqual(callbacks,
-                         [controller._run_z_calibration_preparation])
+                                 FEATHER.ScreenPage.CALIBRATION_CONFIRM])
+        self.assertEqual(callbacks, [])
+
+        controller.calibration_kind = "z"
+        controller.calibration_clean_nozzle = True
+        controller.calibration_material = controller.heating_materials[0]
+        controller._limited_preheat = lambda material: (220.0, 60.0)
+        controller._handle_calibration_action("cal.confirm")
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0](0.0)
+        self.assertEqual(pages[-2:], [FEATHER.ScreenPage.CALIBRATION_PROGRESS,
+                                      FEATHER.ScreenPage.Z_OFFSET_SUMMARY])
+        preparation = controller.gcode.commands[-1]
+        self.assertIn("CLEAR_NOZZLE EXTRUDER_TEMP=220 BED_TEMP=60", preparation)
+        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", preparation)
+        self.assertLess(controller.gcode.commands.index("SET_MOD PARAM=safe_z VALUE=4.600"),
+                        len(controller.gcode.commands) - 1)
 
     def test_safe_z_stage_can_be_skipped_without_changing_setting(self):
         controller = base_controller()
@@ -4288,9 +4323,8 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertEqual(controller.z_calibration.safe_z, 9.0)
         self.assertEqual(controller.gcode.commands, [])
-        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
-        self.assertEqual(callbacks,
-                         [controller._run_z_calibration_preparation])
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_CONFIRM])
+        self.assertEqual(callbacks, [])
 
     def test_safe_z_adjustment_rolls_back_failed_move(self):
         controller = base_controller()
@@ -4308,6 +4342,21 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "move failed"):
             controller._adjust_safe_z(-1)
         self.assertEqual(controller.z_calibration.safe_z_candidate, 6)
+
+    def test_failed_safe_z_save_does_not_advance_to_cleaning(self):
+        controller = base_controller()
+        controller.z_calibration = ZCalibrationSession()
+        controller.z_calibration.begin(0.2, None, "", -0.25, False)
+        controller.z_calibration.set_safe_z_trigger(-0.4)
+        shown = []
+        controller._show_page = shown.append
+        controller._run_script = mock.Mock(side_effect=RuntimeError("Safe Z could not be saved"))
+
+        with self.assertRaisesRegex(RuntimeError, "Safe Z could not be saved"):
+            controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_SAVE)
+
+        self.assertEqual(shown, [])
+        self.assertTrue(controller.z_calibration.active)
 
     def test_safe_z_probe_failure_resets_busy_state_without_a_followup_move(self):
         controller = base_controller()
@@ -4800,7 +4849,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "SET_MOD PARAM=load_zoffset VALUE=1"])
         self.assertIsNone(controller.live_z_dialog)
 
-    def test_z_offset_entry_opens_preparation_without_moving_or_live_change(self):
+    def test_z_offset_entry_opens_safe_z_before_the_cleaning_choice(self):
         controller = base_controller()
         controller.z_calibration = ZCalibrationSession()
         controller.toolhead = StatusObject({
@@ -4808,13 +4857,79 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         pages = []
         controller._show_page = pages.append
         controller._current_material = lambda: "ABS-PC"
+        controller.gcode_move = StatusObject({"homing_origin": (0.0, 0.0, 0.2)})
+        controller.probe = type("Probe", (), {"z_offset": -0.25})()
 
         controller._handle_calibration_action("cal.z")
 
-        self.assertEqual(controller.gcode.commands, [])
+        self.assertEqual(controller.gcode.commands, [
+            "_CANCEL_DELAYED_COMMANDS", "SET_SKEW CLEAR=1",
+            "_SET_GCODE_OFFSET Z=0 MOVE=0", "BED_MESH_CLEAR"])
         self.assertEqual(controller.calibration_material, "ABS-PC")
-        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_CONFIRM])
-        self.assertFalse(controller.z_calibration.active)
+        self.assertEqual(pages, [FEATHER.ScreenPage.SAFE_Z_BRIEFING])
+        self.assertTrue(controller.z_calibration.active)
+        self.assertEqual(controller.z_calibration.original_runtime_offset, 0.2)
+
+    def test_safe_z_skip_then_cleaning_confirm_preserves_the_original_session(self):
+        controller = base_controller()
+        controller.feature_manager = FEATHER.LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
+        controller.gcode_move = StatusObject({"homing_origin": (0.0, 0.0, 0.2)})
+        controller.probe = type("Probe", (), {"z_offset": -0.25})()
+        shown = []
+        callbacks = []
+        controller._show_page = shown.append
+        controller.reactor.register_callback = callbacks.append
+        calibration = controller.feature_manager.get("calibration")
+
+        calibration.handle_action(FEATHER.ScreenPage.CALIBRATION_HOME, "cal.z")
+        feature = controller.feature_manager.get("z")
+        session = feature.z_calibration
+        controller.gcode_move.status["homing_origin"] = (0.0, 0.0, 0.0)
+        feature._handle_z_offset_command(Z_OFFSET_UI.SAFE_SKIP)
+        self.assertEqual(shown, [FEATHER.ScreenPage.SAFE_Z_BRIEFING,
+                                FEATHER.ScreenPage.CALIBRATION_CONFIRM])
+        self.assertEqual(callbacks, [])
+        calibration.calibration_clean_nozzle = False
+        calibration.handle_action(FEATHER.ScreenPage.CALIBRATION_CONFIRM, "cal.confirm")
+
+        self.assertEqual(shown[-1], FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        self.assertEqual(len(callbacks), 1)
+        self.assertIs(feature.z_calibration, session)
+        self.assertEqual(session.original_runtime_offset, 0.2)
+        self.assertEqual(controller.gcode.commands.count("BED_MESH_CLEAR"), 1)
+
+    def test_back_from_z_cleaning_choice_closes_the_active_session(self):
+        controller = base_controller()
+        controller.feature_manager = FEATHER.LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
+        controller.toolhead.status["homed_axes"] = ""
+        shown = []
+        controller._show_page = shown.append
+        calibration = controller.feature_manager.get("calibration")
+        calibration.calibration_kind = "z"
+        feature = controller.feature_manager.get("z")
+        feature.z_calibration.begin(0.2, None, "", -0.25, False)
+
+        self.assertTrue(calibration.back(FEATHER.ScreenPage.CALIBRATION_CONFIRM))
+
+        self.assertFalse(feature.z_calibration.active)
+        self.assertEqual(shown, [FEATHER.ScreenPage.CALIBRATION_HOME])
+        self.assertEqual(controller.gcode.commands, [
+            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+
+    def test_z_cleaning_choice_keeps_abort_visible_without_homing(self):
+        controller = base_controller()
+        controller.feature_manager = FEATHER.LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
+        controller.toolhead.status["homed_axes"] = ""
+        controller.page = FEATHER.ScreenPage.CALIBRATION_CONFIRM
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        calibration = controller.feature_manager.get("calibration")
+        calibration.calibration_kind = "z"
+
+        controller._apply_safety_visibility(controller.page)
+        calibration.render(controller.page)
+
+        self.assertTrue(capture.latest.has_action("global.abort"))
 
     def test_z_offset_bed_point_uses_configured_safe_z_before_xy_move(self):
         controller = base_controller()
