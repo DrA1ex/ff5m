@@ -21,6 +21,7 @@ SCHEMA_VERSION = 1
 CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
 UI_FINGERPRINT_FILES = (
     "feather_screen.py",
+    "object_exclusion.py",
     "feather_ui_test/fixtures/exclude_models.json",
     "feather/calibration/extruder.py",
     "feather/calibration/z.py",

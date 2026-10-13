@@ -254,6 +254,38 @@ class GCodeStateParserTest(unittest.TestCase):
                 RESURRECTION.RecoveryParseError, "Invalid ACCEL"):
             self.parse("SET_VELOCITY_LIMIT ACCEL=fast\n")
 
+    def test_object_definitions_and_current_object_are_reduced_up_to_checkpoint(self):
+        first = ('EXCLUDE_OBJECT_DEFINE NAME="Крышка левая" CENTER=1,2 POLYGON=[[0,0],[2,0],[2,3]]\n'
+                 'EXCLUDE_OBJECT_START NAME="Крышка левая"\nG1 X1 E1 F900\n')
+        state = self.parse(first + 'EXCLUDE_OBJECT_END NAME="Крышка левая"\n', len(first.encode()))
+        self.assertEqual(state.current_object, 'КРЫШКА ЛЕВАЯ')
+        self.assertEqual(state.objects['КРЫШКА ЛЕВАЯ']['center'], [1, 2])
+        self.assertEqual(state.objects['КРЫШКА ЛЕВАЯ']['polygon'], [[0, 0], [2, 0], [2, 3]])
+        state = self.parse(first + 'EXCLUDE_OBJECT_END\nEXCLUDE_OBJECT_START NAME=PART_B\n')
+        self.assertEqual(state.current_object, 'PART_B')
+        self.assertIn('PART_B', state.objects)
+        state = self.parse(first + 'EXCLUDE_OBJECT_DEFINE RESET=1\n')
+        self.assertEqual(state.objects, {})
+        self.assertIsNone(state.current_object)
+
+    def test_object_identifiers_are_parsed_with_klipper_quoting_and_invalid_geometry_is_rejected(self):
+        state = self.parse("EXCLUDE_OBJECT_START NAME='PART RESET=1'\n")
+        self.assertEqual(state.current_object, 'PART RESET=1')
+        for line in ('EXCLUDE_OBJECT_DEFINE NAME="unterminated\n',
+                     'EXCLUDE_OBJECT_DEFINE NAME=PART CENTER=nan,0\n',
+                     'EXCLUDE_OBJECT_DEFINE NAME=PART POLYGON=[[0,0],[1,"bad"]]\n'):
+            with self.subTest(line=line), self.assertRaises(RESURRECTION.RecoveryParseError):
+                self.parse(line)
+
+    def test_object_markers_survive_chunk_boundaries_line_numbers_and_comments(self):
+        data = ('n10 exclude_object_define name="Крышка левая" center=1,2*42 ; geometry\n'
+                'n20 exclude_object_start name="Крышка левая"*42\n'
+                'G1 X1 E1 F900\n')
+        with mock.patch.object(STATE, 'PARSE_CHUNK_SIZE', 17):
+            state = self.parse(data)
+        self.assertEqual(state.current_object, 'КРЫШКА ЛЕВАЯ')
+        self.assertEqual(state.objects['КРЫШКА ЛЕВАЯ']['center'], [1, 2])
+
     def test_pre_cancelled_parse_stops_without_reading_state(self):
         data = b"M106 S64\n"
         with tempfile.NamedTemporaryFile() as stream:
@@ -339,6 +371,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             resurrector = RESURRECTION.Resurrector.__new__(
                 RESURRECTION.Resurrector)
             resurrector.file_path = checkpoint_path
+            resurrector.printer = SimpleNamespace(lookup_object=lambda name, default=None: default)
             resurrector.virtual_sdcard = type("SD", (), {
                 "get_status": lambda self, eventtime: {
                     "file_path": gcode_path,
@@ -410,6 +443,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
                              file_size=gcode_path.stat().st_size)
                 recovery = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
                 recovery.file_path = str(pathlib.Path(directory) / 'resurrection.json')
+                recovery.printer = SimpleNamespace(lookup_object=lambda name, default=None: default)
                 recovery.virtual_sdcard = VirtualSDRecorder()
                 recovery.virtual_sdcard.sdcard_dirname = directory
                 recovery.virtual_sdcard.get_status = lambda eventtime: stats
@@ -495,6 +529,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             resurrector._resume_pending = False
             resurrector.dump_time = 3.
             resurrector.file_path = checkpoint_path
+            resurrector.printer = SimpleNamespace(lookup_object=lambda name, default=None: default)
             resurrector.reactor = CooperativeReactor()
             resurrector.print_stats = type("Stats", (), {
                 "get_status": lambda self, eventtime: print_stats_status,
@@ -590,6 +625,7 @@ class ResurrectorLifecycleTest(unittest.TestCase):
             "variables": {"print_started": True},
         })()
         resurrector._dump = mock.Mock()
+        resurrector._checkpoint_cache = None
 
         resurrector._dump_timer_handler(100.)
 

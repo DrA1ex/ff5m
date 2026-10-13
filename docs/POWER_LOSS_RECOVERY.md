@@ -97,7 +97,8 @@ The periodic checkpoint contains the information needed to identify the print an
 - hotend target temperature;
 - bed target temperature;
 - active bed-mesh profile;
-- current Z offset.
+- current Z offset;
+- excluded model names, when any models have been excluded.
 
 The checkpoint itself is written through a temporary file, flushed with `fsync()`, and atomically replaced. This avoids treating a partially written JSON file as a valid checkpoint after a power interruption.
 
@@ -151,7 +152,15 @@ When `RESURRECT` is accepted, Forge-X performs the recovery in a controlled orde
 9. Restore the saved Z offset.
 10. Restore skew and move the toolhead back to the saved machine position.
 11. Restore extrusion mode/position, feed rate, speed factors, motion limits, Pressure Advance, firmware retraction, fans, and print metadata.
-12. Resume virtual-SD printing from the saved file position.
+12. Restore the model list, the current model marker, and saved model exclusions.
+13. Resume virtual-SD printing from the saved file position.
+
+Models excluded in the saved checkpoint remain excluded after recovery, including
+models excluded during a previously recovered print. Exclusions use the same
+checkpoint interval as the rest of the print state. While paused, changes to the
+excluded-model list are saved without overwriting the position saved before parking.
+Older checkpoints remain usable; if they do not contain model exclusions, recovery
+has no saved exclusions to apply.
 
 Heating the **bed before the nozzle** is intentional. After an outage, the bed has had time to cool and the model may have lost some adhesion. Restoring the bed first gives the part the best chance to stabilize before the nozzle becomes hot and the printer returns to the model. It also reduces the time a fully heated nozzle spends near a cold or poorly adhered part.
 

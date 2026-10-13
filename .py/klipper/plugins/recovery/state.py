@@ -4,7 +4,9 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import math, os, re, time
+import json, math, os, re, shlex, time
+
+from ..object_exclusion import exclude_command, object_name_parameter
 
 
 PARSE_CHUNK_SIZE = 16 * 1024
@@ -49,6 +51,22 @@ class RecoveryGCodeState:
         self.fans = {}
         self.progress = {}
         self.print_stats = {}
+        self.objects = {}
+        self.current_object = None
+
+    def exclusion_commands(self, excluded):
+        commands = []
+        for name, definition in self.objects.items():
+            params = [object_name_parameter(name)]
+            if "center" in definition:
+                params.append("CENTER=" + ",".join(_format_number(value) for value in definition["center"]))
+            if "polygon" in definition:
+                params.append("POLYGON=" + json.dumps(definition["polygon"], separators=(",", ":"), allow_nan=False))
+            commands.append("EXCLUDE_OBJECT_DEFINE " + " ".join(params))
+        commands.extend(exclude_command(name) for name in excluded)
+        if self.current_object is not None:
+            commands.append("EXCLUDE_OBJECT_START " + object_name_parameter(self.current_object))
+        return commands
 
     def skew_commands(self):
         commands = []
@@ -147,6 +165,7 @@ class GCodeStateReducer:
         "SET_VELOCITY_LIMIT", "SET_PRESSURE_ADVANCE",
         "SET_SKEW", "SKEW_PROFILE", "SET_RETRACTION",
         "SET_PRINT_STATS_INFO",
+        "EXCLUDE_OBJECT_DEFINE", "EXCLUDE_OBJECT_START", "EXCLUDE_OBJECT_END",
     }
     MODE_CHANGES = {
         "G90": ("absolute_coordinates", True),
@@ -186,7 +205,7 @@ class GCodeStateReducer:
         rb"G10|G11|M106|M107|M204|M220|M221|M73|"
         rb"SET_VELOCITY_LIMIT|SET_PRESSURE_ADVANCE|"
         rb"SET_SKEW|SKEW_PROFILE|SET_RETRACTION|"
-        rb"SET_PRINT_STATS_INFO"
+        rb"SET_PRINT_STATS_INFO|EXCLUDE_OBJECT_DEFINE|EXCLUDE_OBJECT_START|EXCLUDE_OBJECT_END"
         rb")\b[^\r\n]*")
     FEEDRATE = re.compile(
         rb"(?im)^[ \t]*G[01]\b[^\r\n;]*?[ \t]F("
@@ -355,8 +374,15 @@ class GCodeStateReducer:
     def _parse_long_params(self, text, command):
         if isinstance(text, bytes):
             text = text.decode("utf-8", errors="replace")
+        try:
+            if command.startswith("EXCLUDE_OBJECT_"):
+                tokens = shlex.split(re.split(r"[#*]", text, maxsplit=1)[0])
+            else:
+                tokens = text.split()
+        except ValueError:
+            raise RecoveryParseError("Invalid parameters for %s" % command)
         params = {}
-        for token in text.split():
+        for token in tokens:
             if "=" not in token:
                 raise RecoveryParseError(
                     "Invalid parameters for %s: %s" % (command, text))
@@ -411,6 +437,43 @@ class GCodeStateReducer:
 
     def _apply(self, command, params):
         state = self.state
+        if command == "EXCLUDE_OBJECT_END":
+            state.current_object = None
+            return
+        if command == "EXCLUDE_OBJECT_DEFINE" and params.get("RESET"):
+            state.objects.clear()
+            state.current_object = None
+            return
+        if command in {"EXCLUDE_OBJECT_DEFINE", "EXCLUDE_OBJECT_START"}:
+            name = params.get("NAME", "").upper()
+            if not name and command == "EXCLUDE_OBJECT_DEFINE":
+                return
+            try:
+                object_name_parameter(name)
+            except RuntimeError as error:
+                raise RecoveryParseError(str(error))
+            if command == "EXCLUDE_OBJECT_START":
+                state.objects.setdefault(name, {"name": name})
+                state.current_object = name
+            else:
+                definition = {"name": name}
+                for field in ("CENTER", "POLYGON"):
+                    if field not in params:
+                        continue
+                    try:
+                        text = "[" + params[field] + "]" if field == "CENTER" else params[field]
+                        value = json.loads(text)
+                        points = [value] if field == "CENTER" else value
+                        if (not isinstance(points, list)
+                                or any(not isinstance(point, list) or len(point) != 2
+                                       or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in point)
+                                       for point in points)):
+                            raise ValueError
+                    except (ValueError, TypeError, OverflowError):
+                        raise RecoveryParseError("Invalid %s for %s" % (field, command))
+                    definition[field.lower()] = value
+                state.objects[name] = definition
+            return
         if command in {"G0", "G1"}:
             feedrate = self._float(params, "F", command, above=0.)
             if feedrate is not None:

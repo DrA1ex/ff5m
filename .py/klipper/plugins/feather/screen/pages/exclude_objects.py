@@ -5,19 +5,12 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import math
-import shlex
 
 from ff5m_ui.screen import ScreenDialog, ScreenPage
+from object_exclusion import exclude_command
 
 
 OBJECT_ROWS = 3
-
-
-def exclude_command(name):
-    # Klipper strips these delimiters before shlex handles quoted parameters.
-    if any(character in "#*;" or ord(character) < 32 or ord(character) == 127 for character in name):
-        raise RuntimeError("This object name contains characters unsupported by Klipper")
-    return "EXCLUDE_OBJECT NAME=" + shlex.quote(name)
 
 
 def polygon_bounds(value):

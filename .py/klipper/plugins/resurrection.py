@@ -7,6 +7,7 @@
 import enum, json, logging, math, os, queue, threading
 
 from .recovery import state as _state
+from .object_exclusion import object_name_parameter
 
 GCodeStateParser = _state.GCodeStateParser
 GCodeStateReducer = _state.GCodeStateReducer
@@ -90,7 +91,7 @@ class Resurrector:
             return result
         try:
             if not self._checkpoint_cache_loaded:
-                with open(self.file_path, "r") as stream:
+                with open(self.file_path, "r", encoding="utf-8") as stream:
                     self._checkpoint_cache = json.load(stream)
                 self._checkpoint_cache_loaded = True
             saved = self._checkpoint_cache
@@ -170,6 +171,8 @@ class Resurrector:
         logging.info("[resurrection] Shutdown...")
         if self.state == ResurrectorState.PRINTING:
             self._dump(self.reactor.monotonic())
+        elif self.state == ResurrectorState.PAUSED:
+            self._refresh_paused_exclusions(self.reactor.monotonic())
 
         self._disconnect()
 
@@ -220,6 +223,8 @@ class Resurrector:
                 self._change_state(ResurrectorState.IDLE)
                 self._clear(eventtime)
 
+        if self.state == ResurrectorState.PAUSED:
+            self._refresh_paused_exclusions(eventtime)
         return eventtime + self.dump_time
 
     def _change_state(self, new_state):
@@ -319,27 +324,48 @@ class Resurrector:
                 "bed_temp": bed_temp,
                 "mesh": mesh,
             }
-            temporary_path = self.file_path + ".tmp"
-            try:
-                with open(temporary_path, "w") as stream:
-                    json.dump(checkpoint, stream)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary_path, self.file_path)
-                self._checkpoint_cache = checkpoint
-                self._checkpoint_cache_loaded = True
-            except (IOError, OSError) as e:
-                logging.error(f"[resurrection] Failed to save resurrection file: {e}")
-                try:
-                    if os.path.isfile(temporary_path):
-                        os.remove(temporary_path)
-                except OSError:
-                    logging.exception(
-                        "[resurrection] Failed to remove temporary checkpoint")
-                return
+            excluded = self._excluded_objects(eventtime)
+            if excluded:
+                checkpoint["excluded_objects"] = excluded
+            self._write_checkpoint(checkpoint)
         else:
             logging.info("[resurrection] Failed to save resurrection file. G-Code file is invalid")
             self._change_state(ResurrectorState.ERROR)
+
+    def _excluded_objects(self, eventtime):
+        source = self.printer.lookup_object("exclude_object", None)
+        return sorted(set(source.get_status(eventtime)["excluded_objects"])) if source is not None else []
+
+    def _refresh_paused_exclusions(self, eventtime):
+        saved = self._checkpoint_cache
+        if saved is None or self.virtual_sdcard.get_status(eventtime)["file_path"] != saved["file_path"]:
+            return
+        excluded = self._excluded_objects(eventtime)
+        if excluded == saved.get("excluded_objects", []):
+            return
+        checkpoint = dict(saved)
+        checkpoint.pop("excluded_objects", None)
+        if excluded:
+            checkpoint["excluded_objects"] = excluded
+        self._write_checkpoint(checkpoint)
+
+    def _write_checkpoint(self, checkpoint):
+        temporary_path = self.file_path + ".tmp"
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as stream:
+                json.dump(checkpoint, stream, separators=(",", ":"))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, self.file_path)
+            self._checkpoint_cache = checkpoint
+            self._checkpoint_cache_loaded = True
+        except (IOError, OSError) as e:
+            logging.error(f"[resurrection] Failed to save resurrection file: {e}")
+            try:
+                if os.path.isfile(temporary_path):
+                    os.remove(temporary_path)
+            except OSError:
+                logging.exception("[resurrection] Failed to remove temporary checkpoint")
 
     def _clear(self, eventtime):
         if os.path.isfile(self.file_path):
@@ -358,7 +384,7 @@ class Resurrector:
             return None
 
         try:
-            with open(self.file_path, "r") as stream:
+            with open(self.file_path, "r", encoding="utf-8") as stream:
                 state = json.load(stream)
         except (ValueError, IOError, OSError) as e:
             gcmd.respond_raw(
@@ -373,6 +399,16 @@ class Resurrector:
             if key not in state:
                 gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
                 return None
+
+        excluded = state.get("excluded_objects", [])
+        try:
+            if not isinstance(excluded, list):
+                raise RuntimeError("Expected a list of object names")
+            for name in excluded:
+                object_name_parameter(name)
+        except RuntimeError as error:
+            gcmd.respond_raw("!! Failed to resurrect. Invalid excluded objects: %s" % error)
+            return None
 
         gcode_file = state["file_path"]
         if not isinstance(gcode_file, str) or not os.path.isfile(gcode_file):
@@ -498,10 +534,10 @@ class Resurrector:
                     "[resurrection] Failed to reset virtual SD after recovery")
         if self.state != ResurrectorState.DESTROYED:
             try:
-                self.gcode.run_script_from_command(
-                    "_CONTEXT_RESET\n"
-                    "TURN_OFF_HEATERS\n"
-                    "M106 P1 S0")
+                cleanup = ["_CONTEXT_RESET", "TURN_OFF_HEATERS", "M106 P1 S0"]
+                if file_loaded and self.printer.lookup_object("exclude_object", None) is not None:
+                    cleanup.append("EXCLUDE_OBJECT_DEFINE RESET=1")
+                self.gcode.run_script_from_command("\n".join(cleanup))
             except Exception:
                 logging.exception(
                     "[resurrection] Failed to apply recovery cleanup")
@@ -559,6 +595,12 @@ class Resurrector:
             if self.state == ResurrectorState.DESTROYED:
                 return
 
+            excluded = state.get("excluded_objects", [])
+            exclusion = self.printer.lookup_object("exclude_object", None)
+            if excluded and exclusion is None:
+                raise RecoveryParseError("Object exclusion is unavailable")
+            object_commands = parsed_state.exclusion_commands(excluded) if exclusion is not None else []
+
             self.virtual_sdcard.load_file(gcmd, state["_relative_path"])
             # load_file resets the previous virtual-SD job. Claim the newly
             # loaded job only after that reset has completed successfully.
@@ -613,6 +655,7 @@ class Resurrector:
                 firmware_retraction.is_retracted = parsed_state.retracted
 
             final_commands = parsed_state.final_commands()
+            final_commands.extend(object_commands)
             final_commands.extend([
                 "_CONTEXT_END",
                 "SET_GCODE_VARIABLE MACRO=_START_PRINT "
@@ -623,6 +666,14 @@ class Resurrector:
                 "_CONTEXT_STATE NAME=PRINTING",
             ])
             self.gcode.run_script_from_command("\n".join(final_commands))
+
+            if excluded:
+                if exclusion.next_transform is None:
+                    raise RecoveryParseError("Object exclusion transform could not be restored")
+                # Klipper normally primes a new exclusion transform with five
+                # extrusion moves. Recovery has already restored the E state;
+                # those moves must not print a currently excluded object.
+                exclusion.initial_extrusion_moves = 0
 
             self.virtual_sdcard.do_resume()
             self._change_state(ResurrectorState.PRINTING)

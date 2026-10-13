@@ -93,7 +93,7 @@ Dedicated operator guidance, limitations, UPS advice, and the controlled-pause w
 SET_MOD PARAM=power_loss_recovery VALUE=1
 ```
 
-While an eligible print is running, it periodically saves the G-code path/position, machine position, temperature targets, mesh, and Z offset; `dump_time` in a user `[resurrection]` section controls the interval (default 3 seconds). On startup, a valid saved state makes a recovery prompt available in Fluidd/Mainsail and Guppy, and the extension exposes:
+While an eligible print is running, it periodically saves the G-code path/position, machine position, temperature targets, mesh, Z offset, and object exclusions; `dump_time` in a user `[resurrection]` section controls the interval (default 3 seconds). On startup, a valid saved state makes a recovery prompt available in Fluidd/Mainsail and Guppy, and the extension exposes:
 
 ```gcode
 RESURRECT
@@ -108,6 +108,63 @@ Pause-safe checkpoints do not require a patched `virtual_sdcard`. The shared
 successful `RESUME_BASE`. A third-party macro set should preserve that ordering.
 Both calls are guarded by the `resurrection.supports_pause_markers` status field,
 so the same macros remain compatible when the extension is absent or older.
+
+### Object-exclusion checkpoint contract and RFC gate
+
+**Problem and desired behavior:** virtual-SD loading resets `exclude_object`, so
+power-loss recovery previously forgot exclusions made through any client. Save
+those identifiers and apply them before virtual-SD resume, including exclusions
+made after an earlier recovery and a checkpoint inside an excluded object.
+
+**Ownership and state:** Klipper owns live exclusion state. Resurrection observes
+`excluded_objects` when writing a checkpoint and stores a sorted, deduplicated
+list of canonical names. Names are stable identifiers; list indexes and hashes
+cannot replace them. Empty lists are omitted. The G-code reducer reconstructs
+object definitions, optional center/polygon data, and the active START/END marker
+from the original file up to the checkpoint, so none of that geometry is duplicated
+in the checkpoint. The existing checkpoint cache contains only the last successfully
+written snapshot. Paused updates replace only the exclusion field and never the
+pre-park position; an unchanged list causes no write.
+
+**Compatibility:** `excluded_objects` is optional and defaults to no exclusions.
+Existing required fields keep their meaning, and unknown fields remain accepted.
+No schema version or migration is needed. Older readers ignore the additional
+field; they can resume but do not gain exclusion recovery. Compact ASCII JSON
+retains older readers' locale compatibility while preserving Unicode identifiers.
+Checkpoint publication still uses one temporary file, fsync, and atomic replacement.
+
+**Failure and recovery:** invalid exclusion lists or command-breaking names stop
+checkpoint loading. Required exclusion support is checked before loading the job
+or preparing the printer. Restoration uses the same name quoting as Feather and
+the normal EXCLUDE_OBJECT protocol. A command or transform failure prevents resume
+and uses the existing rollback, leaving the checkpoint available. Already restored
+definitions, exclusions, and their transform are reset during rollback and again
+by the next file load before a retry.
+
+One necessary Klipper integration exception is setting `initial_extrusion_moves`
+to zero after installing the exclusion transform. Upstream primes a new transform
+with five extrusion moves; recovery has already restored modal E/flow state and
+must immediately skip a currently excluded object. The transform must be installed
+successfully before this adjustment. No transform offsets or private coordinate
+buffers are serialized, and no preparation move runs through the restored exclusion
+transform.
+
+**Tests:** unittest covers compact identifier snapshots, atomic-write failure,
+missing/empty and unknown fields, Unicode/quoting, object marker parsing across
+chunks, pause-safe updates, repeated recovery, exclusions before resume, initial
+skipped movements, absent plugin, and command failure rollback. Local supplemental
+checks exercise the pre-change checkpoint reader and the actual local Klipper
+ExcludeObject movement transform. Neither check contacts a printer.
+
+**Non-goals:** physical printer access, deployment, recovering exclusions that were
+never captured by an old checkpoint, immediate per-click durability beyond the
+existing checkpoint interval, and exact reconstruction of every motion queued
+before an abrupt outage. RFC review keeps one owner for live state, one checkpoint
+publication path, the existing reducer and rollback, and no new recovery framework.
+
+```sh
+.venv/bin/python -m unittest tests.test_resurrection tests.test_resurrection_exclusions tests.test_feather_exclude_objects
+```
 
 The [`sdcard_cancel` plugin](../../.py/klipper/plugins/sdcard_cancel.py) exposes
 `SDCARD_CANCEL_FILE` for a file held by the timelapse start wait. Klipper's
