@@ -547,6 +547,8 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
 
     def test_z_entry_loads_safe_z_before_the_cleaning_confirmation(self):
         controller = self.controller()
+        controller.extruder = types.SimpleNamespace(heater=types.SimpleNamespace(max_temp=300))
+        controller.heater_bed = types.SimpleNamespace(max_temp=130)
         manager = controller.feature_manager
 
         controller._show_page(FEATHER.ScreenPage.CALIBRATION_HOME)

@@ -10,7 +10,7 @@ import shlex
 import unittest
 
 from tests.gcode_macro_harness import (
-    MacroActionError, execute_macro_chain, load_macro, render_macro)
+    MacroActionError, MacroExecution, execute_macro_chain, load_macro, render_macro)
 
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -665,6 +665,7 @@ class WorkflowMacroTest(unittest.TestCase):
         printer = {
             "mod_params": {"variables": {
                 "clear_cooldown_temp": 150,
+                "safe_z": 12.5,
             }},
             "configfile": {"settings": {"screws_tilt_adjust": {
                 "screw1": [-91.5, 93.5],
@@ -685,7 +686,7 @@ class WorkflowMacroTest(unittest.TestCase):
             clean.commands)
         self.assertNotIn("M104 S150", clean.commands)
         assert_order(self, cooldown.commands, (
-            "M104 S150", "_HOME_IF_NEEDED",
+            "M104 S150", "_HOME_IF_NEEDED", "MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600", "M400",
             "_CONTEXT_STATE NAME=HEATING",
             "_WAIT_TEMPERATURE CMD=M104 VALUE=150 BELOW=2 ABOVE=3",
             "_CONTEXT_STATE NAME=PROBING",
@@ -693,6 +694,26 @@ class WorkflowMacroTest(unittest.TestCase):
         assert_order(self, probe.commands, (
             "LOAD_CELL_TARE", "SCREWS_TILT_CALCULATE",
             "G0 X-91.5 Y93.5 F30000.0", "M400"))
+
+    def test_screw_preparation_failure_stops_before_temperature_wait(self):
+        for failing_command in ("_HOME_IF_NEEDED", "MOVE_SAFE", "M400"):
+            with self.subTest(failing_command=failing_command):
+                def terminal(command):
+                    if command.split()[0] == failing_command:
+                        raise RuntimeError("Preparation failed")
+
+                execution = MacroExecution(
+                    ((BASE, "BED_LEVEL_SCREWS_TUNE", "gcode_macro"),),
+                    {"mod_params": {"variables": {
+                        "clear_cooldown_temp": 150, "safe_z": 12.5}}}, terminal)
+
+                with self.assertRaisesRegex(RuntimeError, "Preparation failed"):
+                    execution.run("BED_LEVEL_SCREWS_TUNE CLEAN=0")
+
+                self.assertIn("M104 S150", execution.commands)
+                self.assertFalse(any(command.split()[0] in (
+                    "_WAIT_TEMPERATURE", "_BED_LEVEL_SCREWS_PROBE")
+                    for command in execution.commands))
 
     def test_workflow_macros_publish_their_owned_contexts(self):
         cases = (

@@ -1079,9 +1079,11 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        RenderCapture(controller.renderer)
+        capture = RenderCapture(controller.renderer)
         controller.calibration_kind = "screws"
         controller.calibration_material = "PETG"
+        controller.params = SimpleNamespace(variables={"clear_cooldown_temp": 135})
+        controller._limited_preheat = lambda material: (245, 75)
 
         controller.calibration_clean_nozzle = True
         controller._render_calibration_confirm()
@@ -1092,15 +1094,20 @@ class ControllerSafetyTest(unittest.TestCase):
             controller.renderer._buttons["cal.clean.skip"][5], "enabled")
         self.assertIn("cal.material.ABS-PC", controller.renderer._buttons)
         self.assertIn("cal.confirm", controller.renderer._buttons)
+        self.assertTrue(capture.latest.has_text("CLEANING FOR PETG (245 C / 75 C)"))
 
         controller.calibration_clean_nozzle = False
         controller._render_calibration_confirm()
+        self.assertTrue(capture.latest.has_text("SKIP CLEANING, HEAT UP TO 135 C"))
         self.assertEqual(
             controller.renderer._buttons["cal.clean.skip"][5], "selected")
         self.assertTrue(all(
             spec[5] != "selected"
             for action, spec in controller.renderer._buttons.items()
             if action.startswith("cal.material.")))
+        controller.params.variables["clear_cooldown_temp"] = 165
+        controller._render_calibration_confirm()
+        self.assertTrue(capture.latest.has_text("SKIP CLEANING, HEAT UP TO 165 C"))
 
     def test_mesh_cleaning_uses_complete_shared_material_selector(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -1120,6 +1127,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
     def test_empty_heating_disables_mesh_but_preserves_no_clean_screws(self):
         controller = ScenarioController.__new__(ScenarioController)
+        controller.params = SimpleNamespace(variables={"clear_cooldown_temp": 135})
         controller.heating_materials = ()
         controller.heating_profiles = {}
         controller.renderer = FEATHER.FeatherRenderer()
@@ -1293,7 +1301,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.calibration_material = "ABS-PC"
         controller._limited_preheat = lambda material: (270, 105)
         controller.params = type("Params", (), {
-            "variables": {"clear_cooldown_temp": 120}})()
+            "variables": {"clear_cooldown_temp": 120, "safe_z": 12.5}})()
 
         controller.calibration_clean_nozzle = True
         clean = controller._z_preparation_command()
@@ -1302,7 +1310,7 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("_CONTEXT_BEGIN TYPE=z_offset", clean)
         self.assertIn("_CONTEXT_STATE NAME=TARING", clean)
         self.assertIn("_CONTEXT_END", clean)
-        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", clean)
+        self.assertIn("MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600", clean)
         self.assertIn("LOAD_CELL_TARE", clean)
 
         controller.calibration_clean_nozzle = False
@@ -1316,8 +1324,16 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertNotIn("\nG28\n", no_clean)
         self.assertNotIn("M140", no_clean)
         self.assertNotIn("CLEAR_NOZZLE", no_clean)
-        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", no_clean)
+        self.assertIn("MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600", no_clean)
         self.assertIn("LOAD_CELL_TARE", no_clean)
+        commands = no_clean.splitlines()
+        ordered = (
+            "M104 S120", "_HOME_IF_NEEDED", "MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600", "M400",
+            "_WAIT_TEMPERATURE CMD=M104 VALUE=120 BELOW=2 ABOVE=3",
+            "LOAD_CELL_TARE",
+        )
+        positions = [commands.index(command) for command in ordered]
+        self.assertEqual(positions, sorted(positions))
 
     def test_z_progress_stages_match_cleaning_choice(self):
         controller = ScenarioController.__new__(ScenarioController)

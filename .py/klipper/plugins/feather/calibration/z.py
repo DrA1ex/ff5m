@@ -442,7 +442,7 @@ class FeatherZCalibrationMixin:
         self.reactor.register_callback(self._run_z_calibration_preparation)
 
     def _z_preparation_command(self):
-        preparation_z = self._safe_z_preparation_height()
+        safe_z_move = self._safe_z_move_command()
         if self.calibration_clean_nozzle:
             nozzle, bed = self._limited_preheat(self.calibration_material)
             return "\n".join((
@@ -450,20 +450,21 @@ class FeatherZCalibrationMixin:
                 "CLEAR_NOZZLE EXTRUDER_TEMP=%.0f BED_TEMP=%.0f" %
                 (nozzle, bed),
                 '_CONTEXT_STATE NAME=TARING',
-                "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" % preparation_z,
+                safe_z_move,
                 "LOAD_CELL_TARE",
                 '_CONTEXT_END',
             ))
-        cooldown = float(self._setting("clear_cooldown_temp", 120))
+        cooldown = self.params.variables["clear_cooldown_temp"]
         return "\n".join((
             '_CONTEXT_BEGIN TYPE=z_offset',
             "M104 S%.0f" % cooldown,
             '_HOME_IF_NEEDED',
+            safe_z_move,
+            "M400",
             '_CONTEXT_STATE NAME=HEATING',
             "_WAIT_TEMPERATURE CMD=M104 VALUE=%.0f BELOW=2 ABOVE=3" %
             cooldown,
             '_CONTEXT_STATE NAME=TARING',
-            "MOVE_SAFE Z=%g ABSOLUTE=1 F=600" % preparation_z,
             "LOAD_CELL_TARE",
             '_CONTEXT_END',
         ))

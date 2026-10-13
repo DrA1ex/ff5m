@@ -1388,13 +1388,14 @@ class FeatherControlsMixin:
                     self, "calibration_clean_nozzle", True) else "selected"))
             if (getattr(self, "calibration_clean_nozzle", True)
                     and materials):
+                nozzle, bed = self._limited_preheat(self.calibration_material)
                 mode_hint = (
-                    "CLEAN NOZZLE FOR %s, THEN HOME AND TARE" %
-                    self.calibration_material)
+                    "CLEANING FOR %s (%.0f C / %.0f C)" %
+                    (self.calibration_material, nozzle, bed))
             else:
                 mode_hint = (
-                    "WITHOUT CLEANING: COOL DOWN, HOME AND TARE. CHECK THE NOZZLE TIP FIRST" if kind == "z"
-                    else "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
+                    "SKIP CLEANING, HEAT UP TO %.0f C" %
+                    self.params.variables["clear_cooldown_temp"])
             commands.append(self.renderer.text(
                 400, 290, mode_hint,
                 ThemeColor.DIM, "JetBrainsMono 8pt", "center"))

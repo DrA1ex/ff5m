@@ -4301,7 +4301,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
                                       FEATHER.ScreenPage.Z_OFFSET_SUMMARY])
         preparation = controller.gcode.commands[-1]
         self.assertIn("CLEAR_NOZZLE EXTRUDER_TEMP=220 BED_TEMP=60", preparation)
-        self.assertIn("MOVE_SAFE Z=20 ABSOLUTE=1 F=600", preparation)
+        self.assertIn("MOVE_SAFE Z=4.6 ABSOLUTE=1 F=600", preparation)
         self.assertLess(controller.gcode.commands.index("SET_MOD PARAM=safe_z VALUE=4.600"),
                         len(controller.gcode.commands) - 1)
 
@@ -4925,9 +4925,12 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         calibration.calibration_kind = "z"
 
         controller._apply_safety_visibility(controller.page)
+        calibration._limited_preheat = lambda material: (245, 75)
         calibration.render(controller.page)
 
         self.assertTrue(capture.latest.has_action("global.abort"))
+        self.assertTrue(capture.latest.has_text(
+            "CLEANING FOR %s (245 C / 75 C)" % calibration.calibration_material))
 
     def _blocking_move_controller(self, run_script):
         controller = base_controller()
