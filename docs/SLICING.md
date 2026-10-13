@@ -167,6 +167,9 @@ One of the main reasons for print failures on the AD5M printer is corrupted G-co
 
 ### Enabling MD5 Checksum Validation
 
+> [!NOTE]
+> Starting with Forge-X **1.4.2**, the separate MD5 check is unnecessary when using **3MF** files from OrcaSlicer: OrcaSlicer includes an MD5 checksum in the package by default. You can leave `check_md5` disabled and skip the post-processing script below. Enabling the option adds an extra check before printing, but corruption mainly occurs during file transfer, rather than when printing an already uploaded file again.
+
 To use MD5 checksum validation, you need to add an MD5 checksum to your G-code file. This can be done by adding a post-processing script in your slicer.
 
 #### Downloading the Script
