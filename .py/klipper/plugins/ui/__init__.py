@@ -1,8 +1,12 @@
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
 ## Public Feather UI package.
 
-__version__ = "2.6.0"
+__version__ = "2.10.0"
 FRAMEWORK_API_VERSION = 2
-REFLECTION_SCHEMA_VERSION = "2.3.0"
+REFLECTION_SCHEMA_VERSION = "2.4.0"
 FRAMEWORK_CAPABILITIES = (
     "typed-identities",
     "stable-key-namespaces",
@@ -12,6 +16,7 @@ FRAMEWORK_CAPABILITIES = (
     "on-demand-source-provenance",
     "binding-source-authoring",
     "source-edit-contracts",
+    "call-site-overrides",
     "structural-editing",
     "package-relative-themes",
     "typed-theme-tokens",

@@ -1,3 +1,7 @@
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
 """Typed, Designer-neutral component and layout property contracts (v2)."""
 
 from enum import Enum
@@ -127,12 +131,13 @@ class SourceSpec:
 
     __slots__ = (
         "name", "position", "index", "storage", "runtime_name", "runtime_index",
-        "policy", "reason",
+        "policy", "reason", "override_method",
     )
 
     def __init__(self, name=None, position=None, index=None, storage="attribute",
                  runtime_name=None, runtime_index=None,
-                 policy=RewritePolicy.LITERAL_OR_BINDING, reason=None):
+                 policy=RewritePolicy.LITERAL_OR_BINDING, reason=None,
+                 override_method="props"):
         self.name = None if name is None else str(name)
         self.position = None if position is None else int(position)
         self.index = None if index is None else int(index)
@@ -142,6 +147,7 @@ class SourceSpec:
                               else int(runtime_index))
         self.policy = RewritePolicy(policy)
         self.reason = None if reason is None else str(reason)
+        self.override_method = None if override_method is None else str(override_method)
 
     def as_dict(self, property_name=None):
         return {
@@ -154,6 +160,7 @@ class SourceSpec:
             "policy": self.policy.value,
             "rewrite": self.policy != RewritePolicy.LOCKED,
             "reason": self.reason,
+            "override_method": self.override_method,
         }
 
 

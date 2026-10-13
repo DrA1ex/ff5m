@@ -299,8 +299,6 @@ class FeatherZCalibrationMixin:
     def _safe_z_briefing_ui_state(self):
         return {
             z_offset_ui.SafeBriefingState.CURRENT: self._safe_z(),
-            z_offset_ui.SafeBriefingState.START:
-                self._safe_z_preparation_height(),
         }
 
     def _render_safe_z_briefing(self):
@@ -332,7 +330,7 @@ class FeatherZCalibrationMixin:
     def _render_z_paper_briefing(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
         commands = self.renderer.begin_page(
-            "Paper test briefing", back=True)
+            "Paper test", back=True)
         commands += z_offset_ui.render_paper_briefing(
             self.renderer, {
                 z_offset_ui.PaperBriefingState.ZONE_LABEL: str(point[1]),
@@ -391,10 +389,6 @@ class FeatherZCalibrationMixin:
             self._safe_z_move_command(),
             "MOVE_SAFE X=%.1f Y=%.1f ABSOLUTE=1 F=6000" % (x, y),
         ])
-
-    def _move_z_offset_head(self, x, y):
-        self._run_blocking_gcode(
-            self._z_offset_move_commands(x, y), "POSITIONING HEAD...")
 
     def _capture_z_mesh(self):
         mesh = getattr(self, "bed_mesh", None)
@@ -510,7 +504,7 @@ class FeatherZCalibrationMixin:
         self._require_idle()
         homed, _position = self._z_offset_head_state()
         if not homed:
-            raise RuntimeError("Homing lost. Restart Z-offset calibration.")
+            raise RuntimeError("Motors turned off and homing was lost. Start Z offset calibration again.")
         self.z_calibration.choose_zone(key)
         self._show_page(ScreenPage.Z_OFFSET_PAPER_BRIEFING)
 
@@ -532,9 +526,11 @@ class FeatherZCalibrationMixin:
             commands.append(
                 "MOVE_SAFE Z=%.6f ABSOLUTE=1 F=300" %
                 session.safe_z_candidate)
+        # LOAD_CELL_TARE keeps the head still for a few seconds after the
+        # move, so the loader names both steps.
         self._run_blocking_gcode(
-            "\n".join(commands), "POSITIONING HEAD...")
-        self._show_page(ScreenPage.SAFE_Z_CALIBRATION)
+            "\n".join(commands), "POSITIONING HEAD AND TARING...",
+            next_page=ScreenPage.SAFE_Z_CALIBRATION)
 
     def _continue_after_safe_z(self):
         self._show_page(ScreenPage.CALIBRATION_CONFIRM)
@@ -581,8 +577,9 @@ class FeatherZCalibrationMixin:
 
     def _enter_z_zone(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
-        self._move_z_offset_head(point[2], point[3])
-        self._show_page(ScreenPage.Z_OFFSET_PAPER)
+        self._run_blocking_gcode(
+            self._z_offset_move_commands(point[2], point[3]),
+            "POSITIONING HEAD...", next_page=ScreenPage.Z_OFFSET_PAPER)
 
     def _run_z_paper_move(self, target, message=None):
         # Paper calibration must cross Z=0; MOVE_SAFE clamps it silently.
@@ -658,8 +655,8 @@ class FeatherZCalibrationMixin:
     def _accept_z_zone(self):
         result = self.z_calibration.accept()
         self._run_blocking_gcode(
-            self._safe_z_move_command(), "LIFTING Z...")
-        self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
+            self._safe_z_move_command(), "LIFTING Z...",
+            next_page=ScreenPage.Z_OFFSET_SUMMARY)
         self._toast("Zone accepted %+.3f mm" % result)
 
     def _finish_z_calibration(self, saved_offset):

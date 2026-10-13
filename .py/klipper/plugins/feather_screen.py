@@ -1981,11 +1981,19 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         """Filter page subscriptions; the screen root owns output visibility."""
         return self.page in pages
 
-    def _run_blocking_gcode(self, command, message):
+    def _run_blocking_gcode(self, command, message, next_page=None):
+        """Run a command behind the loader.
+
+        A caller that navigates afterwards passes ``next_page``: it replaces
+        the redraw of the current page, so the loader is followed by one
+        repaint instead of two. A failed command always restores the page.
+        """
         # Unit tests and early startup may not have a live renderer yet.
         renderer = getattr(self, "renderer", None)
         if renderer is None or not hasattr(self, "busy_message"):
             self._run_script(command)
+            if next_page is not None:
+                self._show_page(next_page)
             return
         page = self.page
         safety_lease = self._ensure_safety_registry().activity(
@@ -1994,17 +2002,22 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.busy_phase = 0
         logging.info("[feather_screen] operation start label=%s page=%s",
                      message, page.name)
+        completed = False
         try:
             self._apply_safety_visibility()
             self._render_screen()
             self._run_script(command)
+            completed = True
         finally:
             self.busy_message = None
             safety_lease.release()
             logging.info("[feather_screen] operation finish label=%s page=%s",
                          message, self.page.name)
-            if self.page == page and self.print_state != PrintState.DESTROYED:
-                self._show_page(page)
+            if self.print_state != PrintState.DESTROYED:
+                if completed and next_page is not None:
+                    self._show_page(next_page)
+                elif self.page == page:
+                    self._show_page(page)
 
     def _hide_toast(self, redraw=True):
         active = bool(self.toast_until or self.toast_message)

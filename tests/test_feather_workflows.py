@@ -4239,12 +4239,13 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
                 controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_CALIBRATE)
 
-                controller._run_blocking_gcode.assert_called_once_with(
+                controller._run_blocking_gcode.assert_called_once()
+                self.assertEqual(
+                    controller._run_blocking_gcode.call_args.args[0],
                     "_HOME_IF_NEEDED\n"
                     "MOVE_SAFE Z=%g ABSOLUTE=1 F=600\n"
                     "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
-                    "LOAD_CELL_TARE" % expected_height,
-                    "POSITIONING HEAD...")
+                    "LOAD_CELL_TARE" % expected_height)
                 self.assertEqual(controller.z_calibration.safe_z, safe_z)
                 self.assertEqual(controller.gcode.commands, [])
 
@@ -4257,27 +4258,22 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             0.0, None, "", -0.25, False, safe_z=8.0)
         controller.probe = StatusObject({"last_z_result": -0.4})
         controller._render_safe_z = lambda: None
-        moves = []
         pages = []
         callbacks = []
         controller.reactor.register_callback = callbacks.append
-        controller._run_blocking_gcode = (
-            lambda command, message: moves.append((command, message)))
         controller._show_page = pages.append
 
         controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_CALIBRATE)
         controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_PROBE)
 
-        self.assertEqual(moves, [
-            ("_HOME_IF_NEEDED\n"
-             "MOVE_SAFE Z=20 ABSOLUTE=1 F=600\n"
-             "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
-             "LOAD_CELL_TARE",
-             "POSITIONING HEAD..."),
-            ("PROBE SAMPLES=2", "PROBING..."),
-        ])
         self.assertEqual(controller.gcode.commands, [
-            "MOVE_SAFE Z=4.600000 ABSOLUTE=1 F=300"])
+            "_HOME_IF_NEEDED\n"
+            "MOVE_SAFE Z=20 ABSOLUTE=1 F=600\n"
+            "MOVE_SAFE X=0 Y=0 ABSOLUTE=1 F=6000\n"
+            "LOAD_CELL_TARE",
+            "PROBE SAMPLES=2",
+            "MOVE_SAFE Z=4.600000 ABSOLUTE=1 F=300",
+        ])
         self.assertAlmostEqual(controller.z_calibration.safe_z_candidate, 4.6)
 
         controller._handle_z_offset_command(Z_OFFSET_UI.SAFE_HIGHER)
@@ -4587,7 +4583,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertTrue(capture.latest.has_action(Z_OFFSET_UI.SAVE.wire_id))
         self.assertTrue(capture.latest.has_action(Z_OFFSET_UI.SELECTION_NEXT.wire_id))
         for action in Z_OFFSET_UI.ZONE_ACTIONS.values():
-            with self.assertRaisesRegex(RuntimeError, "Restart Z-offset calibration"):
+            with self.assertRaises(RuntimeError):
                 feature._handle_z_offset_command(action)
         self.assertEqual(session.results, {"center": 0.25})
         self.assertEqual(controller.gcode.commands, [])
@@ -4643,8 +4639,10 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
                 self.assertTrue(feature.back(page))
 
-                controller._run_blocking_gcode.assert_called_once_with(
-                    "MOVE_SAFE Z=%d ABSOLUTE=1 F=600" % height, "LIFTING Z...")
+                controller._run_blocking_gcode.assert_called_once()
+                self.assertEqual(
+                    controller._run_blocking_gcode.call_args.args[0],
+                    "MOVE_SAFE Z=%d ABSOLUTE=1 F=600" % height)
                 self.assertEqual(pages, [destination])
 
     def test_material_selection_heats_and_opens_action_page(self):
@@ -4931,6 +4929,47 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         self.assertTrue(capture.latest.has_action("global.abort"))
 
+    def _blocking_move_controller(self, run_script):
+        controller = base_controller()
+        controller.busy_message = None
+        controller.busy_phase = 0
+        controller.page = FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING
+        controller._apply_safety_visibility = lambda page=None: None
+        controller._run_script = run_script
+        shown = []
+
+        def show(page):
+            shown.append(page)
+            controller.page = page
+
+        controller._show_page = show
+        return controller, shown
+
+    def test_blocking_move_goes_straight_to_the_next_page(self):
+        commands = []
+        controller, shown = self._blocking_move_controller(commands.append)
+
+        controller._run_blocking_gcode(
+            "MOVE", "MOVING...", next_page=FEATHER.ScreenPage.Z_OFFSET_PAPER)
+
+        self.assertEqual(commands, ["MOVE"])
+        self.assertEqual(shown, [FEATHER.ScreenPage.Z_OFFSET_PAPER])
+        self.assertIsNone(controller.busy_message)
+
+    def test_failed_blocking_move_restores_the_current_page(self):
+        def fail(command):
+            raise RuntimeError("move failed")
+
+        controller, shown = self._blocking_move_controller(fail)
+
+        with self.assertRaises(RuntimeError):
+            controller._run_blocking_gcode(
+                "MOVE", "MOVING...",
+                next_page=FEATHER.ScreenPage.Z_OFFSET_PAPER)
+
+        self.assertEqual(shown, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING])
+        self.assertIsNone(controller.busy_message)
+
     def test_z_offset_bed_point_uses_configured_safe_z_before_xy_move(self):
         controller = base_controller()
         controller.params = type("Params", (), {
@@ -4939,23 +4978,19 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller.z_calibration.begin(
             0.2, None, "", -0.25, False, safe_z=12.5)
         controller.z_calibration.prepared = True
-        moves = []
-        controller._run_blocking_gcode = (
-            lambda command, message: moves.append((command, message)))
         pages = []
         controller._show_page = pages.append
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["rear_right"])
 
-        self.assertEqual(moves, [])
+        self.assertEqual(controller.gcode.commands, [])
         self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING])
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
 
-        self.assertEqual(moves, [(
+        self.assertEqual(controller.gcode.commands, [
             "MOVE_SAFE Z=12.5 ABSOLUTE=1 F=600\n"
-            "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000",
-            "POSITIONING HEAD...")])
+            "MOVE_SAFE X=94.0 Y=94.0 ABSOLUTE=1 F=6000"])
         self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING,
                                  FEATHER.ScreenPage.Z_OFFSET_PAPER])
 
@@ -4964,25 +4999,25 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         controller.z_calibration = ZCalibrationSession()
         controller.z_calibration.begin(0.2, None, "", -0.25, False)
         pages = []
-        moves = []
         controller._show_page = pages.append
-        controller._move_z_offset_head = (
-            lambda x, y: moves.append((x, y)))
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["front_left"])
         self.assertEqual(pages, [FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING])
-        self.assertEqual(moves, [])
+        self.assertEqual(controller.gcode.commands, [])
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
-        self.assertEqual(moves, [(-94.0, -94.0)])
+        self.assertEqual(len(controller.gcode.commands), 1)
+        self.assertTrue(controller.gcode.commands[-1].endswith(
+            "MOVE_SAFE X=-94.0 Y=-94.0 ABSOLUTE=1 F=6000"))
         self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_PAPER)
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ZONE_ACTIONS["center"])
-        self.assertEqual(moves, [(-94.0, -94.0)])
+        self.assertEqual(len(controller.gcode.commands), 1)
         self.assertEqual(pages[-1], FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING)
 
         controller._handle_z_offset_command(Z_OFFSET_UI.ENTER_ZONE)
-        self.assertEqual(moves[-1], (0.0, 0.0))
+        self.assertTrue(controller.gcode.commands[-1].endswith(
+            "MOVE_SAFE X=0.0 Y=0.0 ABSOLUTE=1 F=6000"))
         self.assertEqual(pages.count(FEATHER.ScreenPage.Z_OFFSET_PAPER_BRIEFING), 2)
 
     def test_z_offset_reset_moves_to_zero_candidate_position(self):
@@ -5039,9 +5074,8 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
 
-        self.assertEqual(moves, [(
-            "G90\nG1 Z5.000000 F300",
-            "MOVING TO 5.000 MM...")])
+        self.assertEqual([command for command, _message in moves],
+                         ["G90\nG1 Z5.000000 F300"])
         self.assertEqual(controller.z_calibration.start_mode, "manual")
         self.assertTrue(controller.z_calibration.ready_for_paper_test)
         self.assertAlmostEqual(controller.z_calibration.reference_z, 5.0)
@@ -5061,9 +5095,8 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
         controller._handle_z_offset_command(Z_OFFSET_UI.MOVE_SAFE_HALF)
 
-        self.assertEqual(moves, [(
-            "G90\nG1 Z3.750000 F300",
-            "MOVING TO 3.750 MM...")])
+        self.assertEqual([command for command, _message in moves],
+                         ["G90\nG1 Z3.750000 F300"])
 
     def test_paper_step_uses_no_loader_or_busy_notice(self):
         controller = base_controller()

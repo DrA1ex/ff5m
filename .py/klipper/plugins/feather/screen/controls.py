@@ -1347,8 +1347,8 @@ class FeatherControlsMixin:
             text = ("Select a material to clean the nozzle before probing, "
                     "or choose WITHOUT CLEANING.")
         elif kind == "z":
-            text = ("Safe Z is set. Select a material for nozzle cleaning, "
-                    "or choose WITHOUT CLEANING, then start the Z-offset paper test.")
+            text = ("Safe Z is set. Select a material to clean the nozzle first, "
+                    "or choose WITHOUT CLEANING. The paper test starts after preparation.")
         elif kind == "pid_bed":
             text = ("Select the bed target temperature used for PID tuning. "
                     "The printer will home before heating.")
@@ -1389,12 +1389,11 @@ class FeatherControlsMixin:
             if (getattr(self, "calibration_clean_nozzle", True)
                     and materials):
                 mode_hint = (
-                    ("CLEAN FOR %s, THEN TARE FOR THE PAPER TEST" if kind == "z"
-                     else "CLEAN NOZZLE FOR %s, THEN HOME AND TARE") %
+                    "CLEAN NOZZLE FOR %s, THEN HOME AND TARE" %
                     self.calibration_material)
             else:
                 mode_hint = (
-                    "HOME IF NEEDED, COOLDOWN AND TARE FOR THE PAPER TEST" if kind == "z"
+                    "WITHOUT CLEANING: COOL DOWN, HOME AND TARE. CHECK THE NOZZLE TIP FIRST" if kind == "z"
                     else "WITHOUT CLEANING: USE COOLDOWN TEMPERATURE, THEN HOME AND TARE")
             commands.append(self.renderer.text(
                 400, 290, mode_hint,

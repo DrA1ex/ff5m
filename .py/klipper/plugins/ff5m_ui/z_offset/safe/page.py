@@ -63,14 +63,14 @@ def _content():
 
     return Column(
         Text(
-            "PROBE THE BED CENTER. SAFE Z STARTS AT THE TRIGGER HEIGHT + 5 MM. SAVE TO CHOOSE NOZZLE CLEANING NEXT.",
+            "TAP PROBE. THE NOZZLE TOUCHES THE BED CENTER AND SAFE Z IS SET 5 MM ABOVE THAT POINT. ADJUST IT IF NEEDED, THEN SAVE.",
             wrap=True, auto_height=True,
         ).style(UiStyle.TEXT).ref(SafeRef.HELP),
         Spacer().grow(12),
         cards,
         Spacer().grow(14),
         Button(
-            SAFE_PROBE, "PROBE BED CENTER",
+            SAFE_PROBE, "PROBE",
             state=derived(
                 lambda busy: "busy" if busy else "danger",
                 bind(SafeState.PROBING)),
@@ -84,9 +84,9 @@ def _content():
             columns=Equal(2), rows=Equal(1), gap=(20, 0),
         ).height(64).ref(SafeRef.ADJUST),
         Spacer().grow(14),
-        Button(SAFE_SAVE, "SAVE SAFE Z AND CONTINUE", state=ready)
+        Button(SAFE_SAVE, "SAVE AND CONTINUE", state=ready)
         .style(UiStyle.BUTTON_BOLD_12).height(68).ref(SafeRef.SAVE),
-    ).padding(left=24, top=14, right=24, bottom=20).ref(SafeRef.ROOT)
+    ).padding(left=20, top=10, right=20, bottom=10).ref(SafeRef.ROOT)
 
 
 PAGE = Page(

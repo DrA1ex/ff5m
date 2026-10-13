@@ -55,7 +55,6 @@ class PaperRef(Enum):
     FINISH = "paper.finish"
     RESET = "paper.reset"
     ACCEPT = "paper.accept"
-    GAUGE_LAYOUT = "paper.gauge.layout"
     GAUGE = "paper.gauge"
     PRESSURE = "paper.pressure"
     PRESSURE_DIALOG = "paper.pressure.dialog"
@@ -71,7 +70,7 @@ def _cards():
             VALUE_CARD(
                 instance_key=PaperRef.REFERENCE,
                 label=derived(
-                    lambda manual: "REFERENCE Z" if manual else "TRIGGER Z",
+                    lambda manual: "START Z" if manual else "TRIGGER Z",
                     bind(PaperState.MANUAL)),
                 value=derived(lambda value: "%s MM" % value, bind(PaperState.REFERENCE)),
                 card_ref=PaperRef.REFERENCE, panel_ref=PaperRef.REFERENCE_PANEL,
@@ -90,7 +89,7 @@ def _cards():
                 label_ref=PaperRef.CANDIDATE_LABEL, value_ref=PaperRef.CANDIDATE_VALUE),
         ),),
         columns=Equal(3), rows=Equal(1), gap=(15, 0),
-    ).padding(right=10).ref(PaperRef.CARDS)
+    ).ref(PaperRef.CARDS)
 
 
 def _probe_state(probing, moving):
@@ -139,7 +138,7 @@ def _steps():
             ).style(UiStyle.BUTTON).ref(_step_ref(step))
             for step in PAPER_STEPS),),
         columns=Equal(len(PAPER_STEPS)), rows=Equal(1), gap=(8, 0),
-    ).padding(right=8).ref(PaperRef.STEPS)
+    ).ref(PaperRef.STEPS)
 
 
 def _ready_state(ready):
@@ -171,7 +170,7 @@ def _finish():
     adjust_state = derived(_ready_state, bind(PaperState.READY))
     return Grid(
         matrix=((
-            Button(RESET, "RESET TO 0.000", state=adjust_state).style(UiStyle.BUTTON).ref(PaperRef.RESET),
+            Button(RESET, "BACK TO START", state=adjust_state).style(UiStyle.BUTTON).ref(PaperRef.RESET),
             Button(ACCEPT, "ACCEPT ZONE", state=adjust_state, font="JetBrainsMono Bold 10pt").ref(PaperRef.ACCEPT),
         ),),
         columns=(205, FLEX), rows=Equal(1), gap=(20, 0),
@@ -189,25 +188,24 @@ def _content():
         _adjust().height(66),
         Spacer().grow(14).ref(PaperRef.SPACER_4),
         _finish().height(48),
-    ).padding(top=14, bottom=14).ref(PaperRef.CONTROLS)
-    gauge = Grid(
-        matrix=((None,), (VerticalGauge(
-            bind(PaperState.GAUGE), danger_above=Z_WEIGHT_DANGER,
-        ).ref(PaperRef.GAUGE).repaint_boundary(),), (None,)),
-        columns=Equal(1), rows=(16, FLEX, 12),
-    ).ref(PaperRef.GAUGE_LAYOUT)
+    ).ref(PaperRef.CONTROLS)
+    gauge = VerticalGauge(
+        bind(PaperState.GAUGE), danger_above=Z_WEIGHT_DANGER,
+    ).ref(PaperRef.GAUGE).repaint_boundary()
+    # Top and bottom padding belong to the page, so the cards and the gauge
+    # start and end on the same lines.
     layout = Grid(
         matrix=((controls, gauge),),
         columns=(FLEX, 70), rows=Equal(1), gap=(20, 0),
-    ).padding(left=20, right=20).ref(PaperRef.LAYOUT)
+    ).padding(left=20, top=10, right=20, bottom=10).ref(PaperRef.LAYOUT)
     pressure = When(
         derived(lambda dialog: dialog == "pressure", bind(PaperState.DIALOG)),
         Dialog(
-            "HIGH BED PRESSURE",
+            "TOO MUCH PRESSURE",
             derived(
                 lambda weight: (
-                    "CURRENT LOAD: %.0F G" % weight,
-                    "MOVE THE NOZZLE FARTHER AWAY AND CHECK THE PAPER.",
+                    "BED LOAD: %.0F G" % weight,
+                    "THE NOZZLE IS PRESSING ON THE BED. MOVE IT FARTHER AWAY.",
                 ),
                 bind(PaperState.DIALOG_WEIGHT)),
             ((SetValue(PaperState.DIALOG, None), "OK", "danger"),),

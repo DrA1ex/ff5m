@@ -368,20 +368,22 @@ class LayoutModifierSpec:
 class LayoutSourceContract:
     """Framework-owned grammar for fluent layout source editing."""
 
-    __slots__ = ("strategy", "modifiers")
+    __slots__ = ("strategy", "modifiers", "call_site_overrides")
 
-    def __init__(self, strategy, modifiers=()):
+    def __init__(self, strategy, modifiers=(), call_site_overrides=False):
         self.strategy = str(strategy)
         self.modifiers = tuple(modifiers)
         if not all(isinstance(value, LayoutModifierSpec)
                    for value in self.modifiers):
             raise TypeError(
                 "LayoutSourceContract modifiers must be LayoutModifierSpec values")
+        self.call_site_overrides = bool(call_site_overrides)
 
     def as_dict(self):
         return {
             "strategy": self.strategy,
             "modifiers": [value.as_dict() for value in self.modifiers],
+            "call_site_overrides": self.call_site_overrides,
         }
 
 
@@ -404,7 +406,7 @@ _FLUENT_LAYOUT_SOURCE = LayoutSourceContract(
             "offset", (("offset", (0, 1)),), argument_codec="spread_field"),
         LayoutModifierSpec(
             "allow_overflow", (("allow_overflow", (0,)),)),
-    ))
+    ), call_site_overrides=True)
 
 
 class LayoutOptions:
@@ -1024,6 +1026,30 @@ class Node(metaclass=_NodeMeta):
         _capture_modifier(self, "style", (("style", 0),))
         self._style_id = style_id
         self.invalidate_layout()
+        return self
+
+    def props(self, **properties):
+        """Override public properties through their typed framework contracts."""
+        specs = {spec.name: spec for spec in self.property_schema}
+        values = {}
+        for name, value in properties.items():
+            spec = specs.get(name)
+            if spec is None or not spec.rewrite or spec.source.override_method != "props":
+                raise ValueError("Property %s has no props() override contract" % name)
+            if isinstance(value, Binding):
+                if not spec.bindings:
+                    raise ValueError("%s does not accept bindings" % name)
+            elif not isinstance(value, ParamRef):
+                value = spec.validate(value)
+            values[name] = value
+
+        _capture_modifier(self, "props", tuple((name, name) for name in values))
+        for name, value in values.items():
+            specs[name].set_on(self, value)
+        self._explicit_properties.update(values)
+        if values:
+            self.invalidate_actions()
+            self.invalidate_layout()
         return self
 
     # Shared layout modifiers. They deliberately mutate the declaration node

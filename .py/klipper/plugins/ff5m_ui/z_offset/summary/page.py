@@ -70,13 +70,13 @@ def _zone_state(results, key, can_measure):
 
 def _status(spread, positional_warning, results, can_measure):
     if not can_measure:
-        return "HOMING LOST - SAVE RESULTS OR RETURN TO CALIBRATION MENU"
+        return "MOTORS OFF, HOMING LOST - SAVE THE RESULT OR EXIT"
     if spread > positional_warning:
-        return "ZONES DIFFER BY %.3f MM - CHECK THE BED AND PROBE" % spread
+        return "ZONES DIFFER BY %.3f MM - CHECK BED LEVELING" % spread
     count = len(results)
     if count:
-        return "%d ZONE%s MEASURED" % (count, "" if count == 1 else "S")
-    return "SELECT A POSITION TO START THE PAPER TEST"
+        return "%d ZONE%s MEASURED - PICK A VALUE AND SAVE" % (count, "" if count == 1 else "S")
+    return "TAP A ZONE TO START THE PAPER TEST"
 
 
 def _status_color(spread, positional_warning):
@@ -88,7 +88,7 @@ def _selection_label(selected, average, labels, results):
         return "USE AVERAGE  %+.3f" % average
     if selected in labels and selected in results:
         return "USE %s  %+.3f" % (labels[selected], results[selected])
-    return "NO RESULT SELECTED"
+    return "NOTHING MEASURED YET"
 
 
 def _selection_state(results):
@@ -164,7 +164,7 @@ def _content():
     ).padding(left=65, right=65).ref(SummaryRef.CHOICES)
     save = Grid(
         matrix=((
-            Button(SAVE, "SAVE SELECTED Z OFFSET", state=selection_state)
+            Button(SAVE, "SAVE Z OFFSET", state=selection_state)
             .style(UiStyle.BUTTON_BOLD_12).ref(SummaryRef.SAVE),
         ),),
         columns=Equal(1), rows=Equal(1),
@@ -186,8 +186,8 @@ def _content():
         Dialog(
             "EXIT Z CALIBRATION?",
             (
-                "SAVE THE SELECTED Z OFFSET BEFORE LEAVING?",
-                "DISCARD WILL DELETE ALL UNSAVED MEASUREMENTS.",
+                "SAVE THE Z OFFSET BEFORE LEAVING?",
+                "IF YOU DISCARD, ALL MEASUREMENTS ARE LOST.",
             ),
             (
                 (SAVE, "SAVE", "primary"),

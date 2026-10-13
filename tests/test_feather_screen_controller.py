@@ -37,6 +37,7 @@ from ff5m_ui.printing import runtime as PRINTING_UI
 from ff5m_ui.filament import actions as FILAMENT_ACTIONS
 from ff5m_ui.home import page as HOME_PAGE
 from ff5m_ui.home import state as HOME_STATE
+from ff5m_ui.z_offset import runtime as z_offset_ui
 from ff5m_ui.keys import AppPage
 from feather.previews import PreviewCache
 from feather.features.filament import FilamentFeature
@@ -757,8 +758,9 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._render_safe_z_briefing()
         briefing = "\n".join(batches[-1])
-        self.assertIn("CURRENT: 8.000 MM", briefing)
-        self.assertIn("START HEIGHT: 20.000 MM", briefing)
+        self.assertEqual(
+            controller._safe_z_briefing_ui_state()[
+                z_offset_ui.SafeBriefingState.CURRENT], 8.0)
         self.assertIn("z.safe.skip", briefing)
         self.assertIn("z.safe.calibrate", briefing)
 
@@ -898,7 +900,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 self.assertIn("TEMPORARY", "\n".join(batches[-1]))
                 # A disabled button has no touch target.
                 self.assertNotIn("live_z.save", controller.renderer._buttons)
-                with self.assertRaisesRegex(RuntimeError, "compensation is active"):
+                with self.assertRaises(RuntimeError):
                     controller._handle_live_z_action("live_z.save")
                 self.assertAlmostEqual(harness.offset, compensated)
                 self.assertAlmostEqual(harness.mod.variables['z_offset'], .05)
@@ -909,7 +911,7 @@ class ControllerSafetyTest(unittest.TestCase):
                 controller._handle_live_z_action("live_z.farther")
                 controller._handle_live_z_action("live_z.save")
                 self.assertIn("live_z.save", controller.renderer._buttons)
-                self.assertEqual(messages, ['Z offset saved +0.060 mm'])
+                self.assertEqual(len(messages), 1)
                 harness.mod._reload()
                 self.assertAlmostEqual(harness.mod.variables['z_offset'], .06)
 

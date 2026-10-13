@@ -32,25 +32,19 @@ class SafeBriefingRef(Enum):
 def _content():
     text = Column(
         Text(
-            "CHECK SAFE Z BEFORE NOZZLE CLEANING AND X/Y MOVES.",
+            "SAFE Z IS THE HEIGHT AT WHICH THE HEAD CAN MOVE OVER THE BED WITHOUT TOUCHING IT.",
             wrap=True, auto_height=True).style(UiStyle.PRIMARY),
         Text(
-            "CALIBRATE AFTER CHANGING THE BED OR NOZZLE. REMOVE PLASTIC FROM THE NOZZLE TIP BEFORE PROBING.",
+            "CALIBRATE IT AFTER CHANGING THE BUILD PLATE OR THE NOZZLE.\nREMOVE ANY PLASTIC FROM THE NOZZLE TIP FIRST.",
             wrap=True, auto_height=True).style(UiStyle.TEXT),
         Text(
-            "FEATHER PROBES THE CENTER OF THE BED AND ADDS 5 MM OF CLEARANCE.",
-            wrap=True, auto_height=True).style(UiStyle.TEXT),
-        Text(
-            "SKIP ONLY IF SAFE Z IS VERIFIED. NEXT, CHOOSE NOZZLE CLEANING AND MATERIAL.",
+            "IF NOTHING HAS CHANGED SINCE THE LAST CALIBRATION, TAP SKIP.",
             wrap=True, auto_height=True).style(UiStyle.TEXT),
         gap=20,
     ).height("content").ref(SafeBriefingRef.TEXT)
     current = Text(
-        derived(lambda current, start:
-                "CURRENT: %.3f MM   START HEIGHT: %.3f MM" %
-                (current, start),
-                bind(SafeBriefingState.CURRENT),
-                bind(SafeBriefingState.START)),
+        derived(lambda current: "SAVED SAFE Z: %.1f MM" % current,
+                bind(SafeBriefingState.CURRENT)),
         color=ThemeColor.SECONDARY, font="JetBrainsMono Bold 10pt",
     ).height(28).align(horizontal="center").ref(SafeBriefingRef.CURRENT)
     actions = Grid(
