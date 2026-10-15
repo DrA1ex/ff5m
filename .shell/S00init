@@ -49,6 +49,30 @@ handle_boot_options() {
     return 0
 }
 
+migrate_stock_config() {
+    local binaries=(/opt/PROGRAM/software/*/firmwareExe)
+    if (( ${#binaries[@]} != 1 )) || [[ ! -f ${binaries[0]} ]]; then
+        echo "@@ Cannot find a unique stock firmwareExe; migration skipped."
+        return 0
+    fi
+
+    local binary=${binaries[0]}
+    local version=${binary%/firmwareExe}
+    local installed_version=""
+    [[ -r /root/version ]] && IFS= read -r installed_version < /root/version || true
+
+    if [[ ${version##*/} == "$installed_version" ]] &&
+        grep -Fq -- '# Forge-X stock config padding BEGIN' /opt/config/printer.base.cfg &&
+        grep -Fq -- '# Forge-X stock config padding END' /opt/config/printer.base.cfg; then
+        return 0
+    fi
+
+    echo "// Migrate stock firmware configuration..."
+    if ! /usr/bin/python3 "$PY"/stock_firmware_config.py --binary "$binary"; then
+        echo "@@ Stock firmware configuration migration failed."
+    fi
+}
+
 initialize() {
     echo "// Initialization started"
     
@@ -142,6 +166,8 @@ initialize() {
 
     echo "// Restore config..."
     fix_config
+
+    migrate_stock_config
 
     echo "// Apply database migrations..."
     
