@@ -185,6 +185,84 @@ class StatusBarTest(unittest.TestCase):
                 self.assertIn('FREE --MB', self.values(memory=memory)[0])
         self.assertIn('CPU --%', self.values(cpu=None)[0])
 
+    def test_cpu_digit_changes_center_metrics_in_remaining_space_without_padding(self):
+        renderer = PrinterRenderer()
+        capture = RenderCapture(renderer)
+        outer_positions = None
+        for cpu in (None, 0, 9, 10, 99, 100):
+            with self.subTest(cpu=cpu):
+                renderer.footer(*self.values(cpu=cpu))
+                texts = capture.latest.texts
+                cpu_text = next(text for text in texts if text.value.startswith('CPU '))
+                self.assertEqual(cpu_text.value, 'CPU %s%%' % ('--' if cpu is None else cpu))
+                bed = capture.latest.text('B 120/120C')
+                free = capture.latest.text('FREE 128MB')
+                network = capture.latest.text('255.255.255.255')
+                status = capture.latest.text('CANCELLED')
+                expected_center = (bed.x + renderer.text_width(bed.value, bed.font) + network.x) / 2
+                self.assertAlmostEqual((cpu_text.x + free.x + renderer.text_width(free.value, free.font)) / 2,
+                                       expected_center, delta=0.5)
+                current = [text.x for text in (texts[0], bed, network, status)]
+                if outer_positions is None:
+                    outer_positions = current
+                self.assertEqual(current, outer_positions)
+
+    def test_metrics_groups_anchor_left_center_and_right_without_padding_memory(self):
+        renderer = PrinterRenderer()
+        capture = RenderCapture(renderer)
+        outer_positions = None
+        for memory in (0, 9, 20, 128):
+            with self.subTest(memory=memory):
+                renderer.footer(*self.values(cpu=9, memory=memory * 1024, network='192.168.2.124'))
+                frame = capture.latest
+                nozzle = frame.text('N 300/300C')
+                bed = frame.text('B 120/120C')
+                cpu = next(text for text in frame.texts if text.value.startswith('CPU '))
+                free = frame.text('FREE %dMB' % memory)
+                network = frame.text('192.168.2.124')
+                status = frame.text('CANCELLED')
+                self.assertEqual(nozzle.x, 20)
+                expected_center = (bed.x + renderer.text_width(bed.value, bed.font) + network.x) / 2
+                self.assertAlmostEqual((cpu.x + free.x + renderer.text_width(free.value, free.font)) / 2,
+                                       expected_center, delta=0.5)
+                self.assertEqual(status.x + renderer.text_width(status.value, status.font), 780)
+                current = [text.x for text in (nozzle, bed, network, status)]
+                if outer_positions is None:
+                    outer_positions = current
+                self.assertEqual(current, outer_positions)
+
+    def test_center_column_adapts_to_temperature_network_and_state_widths(self):
+        renderer = PrinterRenderer()
+        capture = RenderCapture(renderer)
+        for temperature, network, status in ((0, 'OFFLINE', 'idle'),
+                                             (100, '192.168.2.124', 'printing'),
+                                             (300, '255.255.255.255', 'cancelled')):
+            with self.subTest(temperature=temperature, network=network, status=status):
+                values = footer_values(dict(temperature=temperature, target=300),
+                                       dict(temperature=20, target=0), 9, 20 * 1024, network, status)
+                renderer.footer(*values)
+                frame = capture.latest
+                bed = frame.text('B 20/0C')
+                cpu = frame.text('CPU 9%')
+                free = frame.text('FREE 20MB')
+                address = frame.text(network)
+                expected_center = (bed.x + renderer.text_width(bed.value, bed.font) + address.x) / 2
+                self.assertAlmostEqual((cpu.x + free.x + renderer.text_width(free.value, free.font)) / 2,
+                                       expected_center, delta=0.5)
+
+    def test_long_ip_and_state_leave_a_visible_gap_beside_metrics(self):
+        renderer = PrinterRenderer()
+        capture = RenderCapture(renderer)
+        renderer.footer(*self.values())
+        frame = capture.latest
+        bed = frame.text('B 120/120C')
+        cpu = frame.text('CPU 100%')
+        free = frame.text('FREE 128MB')
+        network = frame.text('255.255.255.255')
+        gap = renderer.text_width('·', free.font)
+        self.assertGreaterEqual(cpu.x - bed.x - renderer.text_width(bed.value, bed.font), gap)
+        self.assertGreaterEqual(network.x - free.x - renderer.text_width(free.value, free.font), gap)
+
     def test_all_colored_fields_are_one_cached_footer_batch(self):
         renderer = PrinterRenderer()
         capture = RenderCapture(renderer)
@@ -195,8 +273,8 @@ class StatusBarTest(unittest.TestCase):
         self.assertEqual((batch.kind, batch.key), ('state', 'footer'))
         self.assertEqual(len(renderer._encode_frames(batch.commands)), 1)
         self.assertEqual([text.value for text in capture.latest.texts], [
-            'N 300/300C', '·', 'B 120/120C', '·', 'CPU 100%', '·',
-            'FREE 128MB', '·', '255.255.255.255', '·', 'CANCELLED'])
+            'N 300/300C', '·', 'B 120/120C', 'CPU 100%', '·',
+            'FREE 128MB', '255.255.255.255', '·', 'CANCELLED'])
         renderer.footer(*self.values(cpu=99))
         self.assertEqual(len(capture.submitted), 2)
         self.assertTrue(capture.latest.has_text('CPU 99%'))
@@ -210,7 +288,7 @@ class StatusBarTest(unittest.TestCase):
                 renderer.invalidate_footer()
                 renderer.footer(*self.values())
                 texts = capture.latest.texts
-                self.assertEqual(len(texts), 11)
+                self.assertEqual(len(texts), 9)
                 previous_right = 19
                 for text in texts:
                     self.assertGreaterEqual(text.x, previous_right)
@@ -221,8 +299,8 @@ class StatusBarTest(unittest.TestCase):
                 commands = [shlex.split(command) for command in capture.batches[-1]
                             if command.startswith('--batch text ')]
                 expected = []
-                for color in colors:
-                    if expected:
+                for index, color in enumerate(colors):
+                    if index % 2:
                         expected.append(renderer.color(ThemeColor.DIM))
                     expected.append(renderer.color(color))
                 self.assertEqual([tokens[tokens.index('-c') + 1] for tokens in commands], expected)

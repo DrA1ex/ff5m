@@ -6,11 +6,13 @@
 import math
 
 from ui import FeatherRenderer, ThemeColor, ThemeRole
+from ui.lazy import LazyModule
 from ui.renderer import FOOTER_HEIGHT, FOOTER_Y, FRAME_WIDTH, FRAME_X, SCREEN_HEIGHT, SCREEN_WIDTH
 
 
 SEPARATOR = " · "
 FONT = "JetBrainsMono 8pt"
+layout = LazyModule("ui.layout")
 
 
 def footer_values(extruder, bed, cpu_percent, memory_kib, network, status, style="METRICS"):
@@ -52,12 +54,16 @@ class PrinterRenderer(FeatherRenderer):
             colors = (ThemeColor.SECONDARY, ThemeColor.WARNING, ThemeColor.TEXT, ThemeColor.PRIMARY)
         widths = [self.text_width(value, FONT) for value in fields]
         dot_width = self.text_width("·", FONT)
-        available_gap = SCREEN_WIDTH - 40 - sum(widths)
-        if len(fields) == 4:
-            # Retain the original left/right groups, with full labels.
-            gaps = (3 * dot_width, available_gap - 6 * dot_width, 3 * dot_width)
-        else:
-            gaps = (available_gap / 5,) * 5
+        # Compact pairs leave room for a fill-sized center column between the
+        # content-sized temperatures and network/state columns.
+        pair_gap = dot_width if len(fields) == 6 else 3 * dot_width
+        pair_widths = [sum(widths[index:index + 2]) + pair_gap
+                       for index in range(0, len(fields), 2)]
+        columns = layout.split(layout.Rect(20, FOOTER_Y, SCREEN_WIDTH - 40, FOOTER_HEIGHT),
+                               "horizontal", (pair_widths[0], layout.FLEX, pair_widths[-1]), gap=dot_width)
+        starts = [columns[0].x, columns[-1].x]
+        if len(fields) == 6:
+            starts.insert(1, columns[1].x + (columns[1].width - pair_widths[1]) / 2)
         commands = [
             self.fill(0, FOOTER_Y - 2, SCREEN_WIDTH,
                       SCREEN_HEIGHT - FOOTER_Y + 2, ThemeColor.BACKGROUND),
@@ -65,13 +71,13 @@ class PrinterRenderer(FeatherRenderer):
             self.stroke(FRAME_X, FOOTER_Y - 2, FRAME_WIDTH,
                         SCREEN_HEIGHT - FOOTER_Y - 2, ThemeColor.BORDER, 1),
         ]
-        x = 20.0
-        for index, (value, color, width) in enumerate(zip(fields, colors, widths)):
-            commands.append(self.text(round(x), FOOTER_Y + 16, value, color, FONT))
-            if index < len(gaps):
-                gap = gaps[index]
-                if len(fields) != 4 or index != 1:
-                    commands.append(self.text(round(x + width + (gap - dot_width) / 2),
-                                              FOOTER_Y + 16, "·", ThemeColor.DIM, FONT))
-                x += width + gap
+        for index, x in zip(range(0, len(fields), 2), starts):
+            x = round(x)
+            commands += [
+                self.text(x, FOOTER_Y + 16, fields[index], colors[index], FONT),
+                self.text(round(x + widths[index] + (pair_gap - dot_width) / 2),
+                          FOOTER_Y + 16, "·", ThemeColor.DIM, FONT),
+                self.text(round(x + widths[index] + pair_gap), FOOTER_Y + 16,
+                          fields[index + 1], colors[index + 1], FONT),
+            ]
         return commands
