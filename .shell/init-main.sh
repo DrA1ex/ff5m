@@ -44,6 +44,30 @@ cleanup_failed_init() {
     rm -f "$SPLASH_CONTROL_FIFO" "$FORGE_X_SCREEN_BUSY_F" "$SCREEN_FOLLOW_UP_LOG"
 }
 
+migrate_stock_config() {
+    local binaries=(/opt/PROGRAM/software/*/firmwareExe)
+    if (( ${#binaries[@]} != 1 )) || [[ ! -f ${binaries[0]} ]]; then
+        echo "@@ Cannot find a unique stock firmwareExe; migration skipped."
+        return 0
+    fi
+
+    local binary=${binaries[0]}
+    local version=${binary%/firmwareExe}
+    local installed_version=""
+    [[ -r /root/version ]] && IFS= read -r installed_version < /root/version || true
+
+    if [[ ${version##*/} == "$installed_version" ]] &&
+        grep -Fq -- '# Forge-X stock config padding BEGIN' /opt/config/printer.base.cfg &&
+        grep -Fq -- '# Forge-X stock config padding END' /opt/config/printer.base.cfg; then
+        return 0
+    fi
+
+    echo "// Migrate stock firmware configuration..."
+    if ! /usr/bin/python3 "$PY"/stock_firmware_config.py --binary "$binary"; then
+        echo "@@ Stock firmware configuration migration failed."
+    fi
+}
+
 initialize() {
     local special_boot_status
 
@@ -154,6 +178,11 @@ initialize() {
 
     echo "// Restore config..."
     fix_config
+
+    # Stock config migration is optional; never abort initialization under set -e.
+    if ! migrate_stock_config; then
+        echo "@@ Stock firmware migration checks failed; continuing initialization."
+    fi
 
     echo "// Apply database migrations..."
     
