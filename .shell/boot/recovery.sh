@@ -338,6 +338,35 @@ run_recovery_lifecycle() {
 
     "$SCRIPTS/screen.sh" splash_stop >/dev/null 2>&1 || true
 
+    # Consume the one-shot flash request before any firmware hand-off, so a
+    # reset or interruption never silently replays an installation.
+    local request=/opt/config/mod/BOOT_FLASH_IMAGE
+    local image_name
+    if [ -e "$request" ] || [ -L "$request" ]; then
+        image_name=$(cat "$request" 2>/dev/null) || image_name=""
+        rm -f "$request"
+        sync
+        case "$image_name" in
+            "$FIRMWARE_MACHINE"-*.tgz|"$FIRMWARE_MACHINE"-*.tar.xz)
+                image=/data/forge-x-recovery/$image_name
+                if valid_firmware_path "$image"; then
+                    echo "// Starting requested firmware installation: $image_name"
+                    stop_recovery_ssh
+                    cleanup_recovery_runtime
+                    trap - EXIT
+                    clear_recovery_screen || true
+                    sync
+                    run_firmware_installer "$image"
+                    return $?
+                fi
+                RECOVERY_NOTICE="Requested firmware image is missing or unsafe: $image_name"
+            ;;
+            *)
+                RECOVERY_NOTICE="Invalid firmware request. Returning to Recovery."
+            ;;
+        esac
+    fi
+
     while true; do
         echo "// Starting recovery UI."
         run_recovery_ui

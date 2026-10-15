@@ -8,13 +8,15 @@
 
 
 import glob
-import json
 import os
 import re
 import shutil
 import sys
 import tarfile
-import urllib.request
+
+from firmware_download import (
+    RESERVE_BYTES, archive_names, download, emit, emit_progress, request_json,
+)
 
 API_URL = os.environ.get(
     "FORGE_X_FIRMWARE_API_URL",
@@ -30,17 +32,6 @@ REQUIRED_FILES = {
     "xz/buildroot.tar.xz",
     "xz/entware.tar.xz",
 }
-RESERVE_BYTES = 16 * 1024 * 1024
-
-
-def emit(line):
-    print(line, flush=True)
-
-
-def emit_progress(percent, message):
-    emit("@@PROGRESS|{}|{}".format(percent, message))
-
-
 def prompt_ready(version, filename):
     emit("// action:prompt_end")
     emit("// action:prompt_begin Firmware update ready")
@@ -59,18 +50,6 @@ def prompt_failed(message):
     emit("// action:prompt_show")
 
 
-def request_json(url):
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "Forge-X-firmware-updater",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
-
-
 def select_asset(release):
     assets = [
         asset for asset in release.get("assets", [])
@@ -83,46 +62,12 @@ def select_asset(release):
     return assets[0]
 
 
-def download(url, destination, expected_size):
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Forge-X-firmware-updater"},
-    )
-    downloaded = 0
-    progress_step = 5
-    next_progress = progress_step
-
-    with urllib.request.urlopen(request, timeout=60) as response, open(destination, "wb") as output:
-        while True:
-            chunk = response.read(256 * 1024)
-            if not chunk:
-                break
-            output.write(chunk)
-            downloaded += len(chunk)
-
-            percent = min(100, downloaded * 100 // expected_size)
-            if percent >= next_progress:
-                emit_progress(percent, "Downloading {:.1f}/{:.1f} MiB".format(
-                    downloaded / 1048576.0,
-                    expected_size / 1048576.0,
-                ))
-                next_progress += progress_step
-
-    if downloaded != expected_size:
-        raise RuntimeError(
-            "Downloaded firmware size is incorrect: {} of {} bytes.".format(
-                downloaded, expected_size
-            )
-        )
-
-
 def verify_posix_tar(path):
     # Release files intentionally use a .tgz name but contain an uncompressed
     # POSIX tar archive. Use r: so tarfile does not attempt gzip detection.
     try:
-        with tarfile.open(path, mode="r:") as archive:
-            names = {name.lstrip("./") for name in archive.getnames()}
-    except tarfile.TarError as error:
+        names = archive_names(path, mode="r:")
+    except (OSError, tarfile.TarError) as error:
         raise RuntimeError(
             "Downloaded file is not a valid POSIX tar firmware archive."
         ) from error

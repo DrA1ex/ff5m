@@ -27,6 +27,15 @@ import time
 import urllib.parse
 
 
+# Recovery also runs under the minimal stock Python interpreter. Keep the
+# shared catalog pure-Python and locate it beside this script for direct
+# execution and importlib-based tools.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+from firmware_catalog import (DOWNLOAD_DIR, FORGEX_API, asset_sha256,
+                              forgex_asset, model_name)
+
 TYPER = "/opt/config/mod/.bin/exec/typer"
 CURL = os.environ.get("RECOVERY_CURL", "")
 CURL_CACERT = os.environ.get("RECOVERY_CACERT", "")
@@ -35,14 +44,12 @@ SHA256SUM = "/usr/bin/sha256sum"
 DRAW_PIPE = "/tmp/forge-x-recovery-draw"
 EVENT_PIPE = "/tmp/forge-x-recovery-events"
 TOUCH_DEVICE = "/dev/input/guppy"
-DOWNLOAD_DIR = "/data/forge-x-recovery"
 VERIFICATION_LOG = "/data/logFiles/verification.log"
 ZBACKUP = "/opt/config/mod/.shell/commands/zbackup.sh"
 FSCK = "/sbin/fsck"
 RECOVERY_HTTP_PORT = 80
 CLEANUP_LIMIT = 40
-GITHUB_RELEASES_API = (
-    "https://api.github.com/repos/DrA1ex/ff5m/releases?per_page=100")
+GITHUB_RELEASES_API = FORGEX_API + "?per_page=100"
 USER_AGENT = "Forge-X-early-recovery"
 RESERVE_BYTES = 16 * 1024 * 1024
 MAX_FRAME_BYTES = 3584
@@ -94,9 +101,6 @@ UI_PAGER_STEP = UI_PAGER_BUTTON_WIDTH + UI_PAGER_GAP
 VERIFICATION_PROGRESS = re.compile(
     r"^// Processed (\d+) / (\d+); errors: (\d+)\.$")
 
-FORGE_X_ASSET = re.compile(
-    r"^Adventurer5M(?:Pro)?-ForgeX-[A-Za-z0-9._-]+\.(?:tgz|tar\.xz)$")
-
 GITHUB_RELEASE_ASSET_URL = re.compile(
     r"^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^/]+)$")
 
@@ -147,19 +151,6 @@ CLEANUP_DELETE_PROTECTED = ("/opt", "/root", "/data", "/data/.mod/.forge-x")
 def quote(value):
     value = str(value).replace("\r", " ").replace("\n", " ")
     return '"{}"'.format(value.replace("\\", "\\\\").replace('"', '\\"'))
-
-
-def model_name(machine, generic_name):
-    if machine == "Adventurer5MPro":
-        if generic_name.startswith("Adventurer5MPro-"):
-            return generic_name
-        if generic_name.startswith("Adventurer5M-"):
-            return "Adventurer5MPro-" + generic_name[len("Adventurer5M-"):]
-
-    if machine == "Adventurer5M" and generic_name.startswith("Adventurer5MPro-"):
-        return "Adventurer5M-" + generic_name[len("Adventurer5MPro-"):]
-
-    return generic_name
 
 
 def static_catalog(machine, entries):
@@ -241,41 +232,20 @@ def explained_curl_error(line):
     return line
 
 
-def asset_sha256(asset):
-    # GitHub publishes release asset integrity as "sha256:<hex>"; assets
-    # uploaded before that feature have no digest and skip the check.
-    digest = str(asset.get("digest") or "")
-    if digest.startswith("sha256:"):
-        return digest[len("sha256:"):].lower()
-    return None
-
-
 def forge_x_catalog(machine, releases):
     result = []
     seen = set()
     for release in releases:
-        if release.get("draft"):
+        selected = forgex_asset(release, machine, allow_xz=True)
+        if selected is None:
             continue
 
-        tag = str(release.get("tag_name") or "untagged")
-        candidates = [
-            asset for asset in release.get("assets", [])
-            if FORGE_X_ASSET.fullmatch(str(asset.get("name") or ""))
-        ]
-        if not candidates:
-            continue
-
-        exact_prefix = machine + "-"
-        asset = next(
-            (candidate for candidate in candidates
-             if candidate["name"].startswith(exact_prefix)),
-            candidates[0],
-        )
-        destination_name = model_name(machine, asset["name"])
+        asset, destination_name = selected
         if destination_name in seen:
             continue
 
         seen.add(destination_name)
+        tag = str(release["tag_name"])
         result.append({
             "version": tag + (" beta" if release.get("prerelease") else ""),
             "name": destination_name,

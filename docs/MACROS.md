@@ -1,9 +1,9 @@
 # 3D Printer Macros Documentation
 
 > [!NOTE]
-> This reference was generated with the help of an AI model. The macro definitions in `macros/base.cfg`, `macros/headless.cfg`, and `config/stock.cfg` are the authoritative source, so check them if a description and the actual behavior differ.
+> This reference was generated with the help of an AI model. The macro definitions in `macros/base.cfg`, `macros/firmware.cfg`, `macros/headless.cfg`, and `config/stock.cfg` are the authoritative source, so check them if a description and the actual behavior differ.
 
-This document provides a concise overview of the G-code macros defined in `macros/` (`base.cfg`, `headless.cfg`, `client.cfg`, `timelapse.cfg`), `config/` (`stock.cfg`, `material.cfg`, `feather.cfg`), and `KAMP/` for the Flashforge Adventurer 5M / 5M Pro running the Klipper-based Forge-X firmware mod. They cover bed leveling, filament management, system control, user-interface interactions, and stock screen integration. Each macro is described with its parameters and default values where applicable.
+This document provides a concise overview of the G-code macros defined in `macros/` (`base.cfg`, `firmware.cfg`, `headless.cfg`, `client.cfg`, `timelapse.cfg`), `config/` (`stock.cfg`, `material.cfg`, `feather.cfg`), and `KAMP/` for the Flashforge Adventurer 5M / 5M Pro running the Klipper-based Forge-X firmware mod. They cover bed leveling, filament management, system control, user-interface interactions, and stock screen integration. Each macro is described with its parameters and default values where applicable.
 
 ## Operation Contexts
 
@@ -361,6 +361,18 @@ validation, and persistent override examples.
   - **Parameters**:
     - `MODEL` (`5M` or `PRO`, optional): Printer model. Without it, a dialog asks for the model.
   - **Defaults**: Requires exactly one USB drive with one FAT32 partition; run `PREPARE_USB` first if needed. Progress is shown in a dialog.
+
+- **ENTER_RECOVERY**
+  - **Description**: Reboots into the normal Forge-X Recovery menu without flashing an image. Unavailable while printing.
+  - **Parameters**: None.
+
+- **FLASH_FIRMWARE**
+  - **Description**: Opens a firmware chooser when called without parameters. Choose STOCK, FORGEX or RECOVERY, select a version from the current GitHub catalogs (paginated when needed), then confirm. The model is detected automatically. The image is downloaded, verified and installed through a one-shot Recovery request after reboot. Unavailable while printing.
+  - **Parameters** (optional for direct use):
+    - `TYPE`: `STOCK`, `FORGEX`, or `RECOVERY`.
+    - `VERSION`: stock firmware version (for example `3.1.3`), Forge-X release tag (for example `1.4.2-beta-4` or `latest`), or `dry`/`full` for recovery images.
+  - **Examples**: `FLASH_FIRMWARE` (interactive), `FLASH_FIRMWARE TYPE=STOCK VERSION=3.1.3` (confirmation dialog).
+  - **Notes**: Only images published in the Forge-X GitHub releases are listed and downloaded. Missing versions and invalid downloads never trigger a reboot. Downloaded files remain in `/data/forge-x-recovery`. Recovery requests are one-shot. Hardware validation is required before relying on this for production flashing.
 
 ### Stock Screen Integration
 
