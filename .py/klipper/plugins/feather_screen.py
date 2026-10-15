@@ -31,7 +31,7 @@ if not sys.path or sys.path[0] != _PLUGIN_ROOT:
 from timelapse_state import TimelapsePhase
 
 from ui import (
-    Command, DismissToast, FeatherRenderer, ThemeColor,
+    Command, DismissToast, ThemeColor,
     normalize_theme_name, parse_render_receipt,
 )
 from ff5m_ui.screen import ScreenDialog, ScreenPage
@@ -39,6 +39,8 @@ from ff5m_ui.keys import AppPage
 from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.print_state import PrintState
+from ff5m_ui.status_bar import PrinterRenderer as FeatherRenderer, footer_values
+from feather.cpu_usage import CpuUsageSampler
 from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
 from feather.files import (
         DEFAULT_HISTORY_PATH, FileWorker, PrintHistory,
@@ -381,6 +383,7 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
             "operation_context:end", self._handle_operation_end)
         self.printer.register_event_handler(
             "mod_params:changed", self.update_notification.on_mod_params_changed)
+        self.printer.register_event_handler("mod_params:changed", self._refresh_status_bar)
         self.gcode.register_command(
             "FEATHER_ABORT", self.cmd_FEATHER_ABORT,
             desc=self.cmd_FEATHER_ABORT_help)
@@ -567,6 +570,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self.file_view = self._configured_file_view()
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
+        self.system_stats = self.printer.lookup_object("system_stats", None)
+        self.cpu_usage = CpuUsageSampler(self.file_worker, sample_clock=self.reactor.monotonic)
         catalog = load_material_catalog(
             self.printer, self.extruder, self.heater_bed)
         self.heating_materials = catalog.heating_materials
@@ -704,6 +709,8 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         self._cancel_file_preview()
         self._cancel_gcode_preview()
         file_worker = getattr(self, "file_worker", None)
+        self.cpu_usage = None
+        self.system_stats = None
         if file_worker is not None:
             file_worker.stop()
             self.file_worker = None
@@ -2338,19 +2345,35 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
                 self._open_filament(True)
             self._filament_present = present
 
-        extruder = self.extruder.get_status(eventtime)
-        bed = self.heater_bed.get_status(eventtime)
-        network = self.network_status.get("ip") or "Offline"
-        temperatures = "NOZZLE %.0f/%.0fC | BED %.0f/%.0fC" % (
-            extruder["temperature"], extruder["target"],
-            bed["temperature"], bed["target"])
-        status = "%s | %s" % (network, state.upper())
-        self.renderer.footer(temperatures, status, paint=self._current_dialog() is None)
+        self._refresh_status_bar(eventtime, state=state)
         if self.toast_until and eventtime >= self.toast_until:
             self._hide_toast()
         return eventtime + REFRESH_TIME
 
-    def _reconcile_print_state(self, eventtime, stats=None):
+    def _refresh_status_bar(self, eventtime=None, *, state=None, style=None):
+        if self.print_state in (PrintState.INACTIVE, PrintState.DESTROYED):
+            return
+        if eventtime is None:
+            eventtime = self.reactor.monotonic()
+        if state is None:
+            state, _phase = self._observed_print_state(eventtime)
+        if style is None:
+            manager = getattr(self, "feature_manager", None)
+            settings = manager.peek("settings") if manager is not None else None
+            style = ((settings.status_bar_preview if settings is not None else None)
+                     or self._setting("feather_status_bar", "METRICS"))
+        extruder = self.extruder.get_status(eventtime)
+        bed = self.heater_bed.get_status(eventtime)
+        network = self.network_status.get("ip") or "Offline"
+        sampler = getattr(self, "cpu_usage", None)
+        cpu = sampler.get_percent(eventtime) if sampler is not None else None
+        system_stats = getattr(self, "system_stats", None)
+        memory = (system_stats.get_status(eventtime).get("memavail")
+                  if system_stats is not None else None)
+        self.renderer.footer(*footer_values(extruder, bed, cpu, memory, network, state, style),
+                             paint=self._current_dialog() is None)
+
+    def _observed_print_state(self, eventtime, stats=None):
         if stats is None:
             stats = self.print_stats.get_status(eventtime)
         phase = (self._timelapse_phase() if stats["state"] in ("printing", "paused")
@@ -2359,6 +2382,12 @@ class FeatherScreen(FeatherPagesMixin, FeatherControlsMixin):
         if state == "standby" and self.virtual_sdcard.is_active():
             # do_resume queues work before work_handler calls note_start().
             state = "printing"
+        return state, phase
+
+    def _reconcile_print_state(self, eventtime, stats=None):
+        if stats is None:
+            stats = self.print_stats.get_status(eventtime)
+        state, phase = self._observed_print_state(eventtime, stats)
         if state == "printing":
             new_state = (PrintState.PREPARING
                          if (stats["print_duration"] == 0

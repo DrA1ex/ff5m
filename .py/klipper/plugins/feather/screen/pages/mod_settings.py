@@ -338,7 +338,7 @@ class ModSettingsPagesMixin:
                 int(action.rsplit(".", 1)[1]), ScreenPage.MOD_SETTINGS)
             return
         if action == "mod.cancel":
-            self._restore_theme_preview()
+            self._restore_setting_preview()
             self.mod_parameter = None
             self._show_page(getattr(
                 self, "mod_return_page", ScreenPage.MOD_SETTINGS))
@@ -359,6 +359,8 @@ class ModSettingsPagesMixin:
                 self.renderer.set_theme(option.value)
             self.selected_parameter_option = option.value
             self._render_parameter_options()
+            if param.key == "feather_status_bar":
+                self._refresh_status_bar(style=option.value)
             return
         if action == "mod.options.prev":
             self.parameter_options_page_index = max(
@@ -414,9 +416,11 @@ class ModSettingsPagesMixin:
                 max_length=mod_ui.MAX_VALUE_LENGTH)
         self._render_mod_value()
 
-    def _restore_theme_preview(self):
+    def _restore_setting_preview(self):
         param = getattr(self, "mod_parameter", None)
         original = getattr(self, "mod_theme_original", None)
         if param is not None and param.key == "feather_theme" and original:
             self.renderer.set_theme(original)
+        if param is not None and param.key == "feather_status_bar":
+            self._refresh_status_bar(style=self._setting("feather_status_bar", "METRICS"))
         self.mod_theme_original = None

@@ -90,6 +90,14 @@
         "TIME": "TIME",
         "PERCENT": "PERCENT"
       }
+    },
+    "FeatherStatusBarEnum": {
+      "type": "str",
+      "values": {
+        "METRICS": "METRICS",
+        "COLORFUL": "COLORFUL",
+        "VANILLA": "VANILLA"
+      }
     }
   },
   "ui": {
@@ -155,6 +163,7 @@
           "auto_reboot",
           "power_loss_recovery",
           "feather_theme",
+          "feather_status_bar",
           "backlight",
           "display_eco",
           "backlight_eco",
@@ -531,6 +540,19 @@
       "default": "DEFAULT",
       "label": "Feather color theme",
       "description": "Choose the Feather color palette.",
+      "order": 49999
+    },
+    {
+      "key": "feather_status_bar",
+      "type": "FeatherStatusBarEnum",
+      "default": "METRICS",
+      "label": "Feather status bar",
+      "description": "Choose the bottom status bar layout.",
+      "options": {
+        "METRICS": "Compact temperatures, CPU and available RAM",
+        "COLORFUL": "Full temperature labels with theme colors",
+        "VANILLA": "Original single-color status bar"
+      },
       "order": 49999
     },
     {

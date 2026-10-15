@@ -130,12 +130,20 @@ class SettingsFeature(
         elif page == ScreenPage.MOD_SETTINGS:
             self._show_page(ScreenPage.SETTINGS)
         elif page in (ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE):
-            self._restore_theme_preview()
+            self._restore_setting_preview()
             self.mod_parameter = None
             self._show_page(self.mod_return_page)
         else:
             return False
         return True
+
+    @property
+    def status_bar_preview(self):
+        param = self.mod_parameter
+        if (self.page == ScreenPage.PARAMETER_OPTIONS and param is not None
+                and param.key == "feather_status_bar"):
+            return self.selected_parameter_option
+        return None
 
     @property
     def input_blocked(self):
@@ -151,8 +159,10 @@ class SettingsFeature(
 
     def deactivate(self):
         self._reset_benchmark_taps()
-        self._restore_theme_preview()
+        self._restore_setting_preview()
         self.mod_update_pending = False
         self.mod_update_modal_visible = False
         self.mod_update_complete = None
         self.mod_update_token += 1
+        self.mod_parameter = None
+        self.mod_return_page = ScreenPage.MOD_SETTINGS

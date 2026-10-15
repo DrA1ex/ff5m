@@ -2206,6 +2206,95 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller.renderer.theme_name, "DEFAULT")
         self.assertEqual(controller.params.updated, [])
 
+    def _status_bar_picker(self):
+        styles = enum.Enum('Styles', {name: name for name in ('METRICS', 'COLORFUL', 'VANILLA')})
+        param = mod_param('feather_status_bar', styles, 'METRICS', 'Feather status bar')
+        feature = mod_controller([param], {'feather_status_bar': 'METRICS'})
+        host = feature._host
+        host.feature_manager = SimpleNamespace(peek=lambda name: feature if name == 'settings' else None)
+        host.extruder = StatusObject(dict(temperature=42, target=0))
+        host.heater_bed = StatusObject(dict(temperature=30, target=0))
+        host.network_status = dict(ip='192.168.2.124')
+        capture = RenderCapture(host.renderer)
+        host.draw_batches = capture.batches
+        host._refresh_status_bar()
+        feature._handle_mod_action('mod.item.0')
+        return feature, capture
+
+    def test_status_bar_selection_previews_immediately_and_survives_status_refresh(self):
+        feature, capture = self._status_bar_picker()
+        self.assertEqual(feature.parameter_options, ('METRICS', 'COLORFUL', 'VANILLA'))
+        feature._handle_mod_action('mod.option.1')
+        self.assertTrue(capture.latest.has_text('NOZZLE 42/0C'))
+        self.assertFalse(capture.latest.has_text('CPU --%'))
+        self.assertEqual(feature.params.updated, [])
+        self.assertEqual(feature.params.variables['feather_status_bar'], 'METRICS')
+        feature._host.extruder.status['temperature'] = 43
+        feature._host._refresh_status_bar()
+        self.assertTrue(capture.latest.has_text('NOZZLE 43/0C'))
+        self.assertFalse(capture.latest.has_text('CPU --%'))
+        feature._handle_mod_action('mod.option.2')
+        self.assertTrue(capture.latest.has_text('NOZZLE 43/0C | BED 30/0C'))
+
+    def test_status_bar_preview_cancel_back_and_deactivation_restore_saved_mode(self):
+        for action in ('cancel', 'back', 'deactivate'):
+            with self.subTest(action=action):
+                feature, capture = self._status_bar_picker()
+                feature._handle_mod_action('mod.option.1')
+                before = len(capture.frames)
+                if action == 'cancel':
+                    feature._handle_mod_action('mod.cancel')
+                elif action == 'back':
+                    feature.back(FEATHER.ScreenPage.PARAMETER_OPTIONS)
+                else:
+                    feature.deactivate()
+                self.assertTrue(any(frame.has_text('CPU --%') for frame in capture.frames[before:]))
+                self.assertIsNone(feature.status_bar_preview)
+                self.assertEqual(feature.params.updated, [])
+
+    def test_status_bar_preview_save_persists_selection_and_failed_save_remains_cancelable(self):
+        feature, capture = self._status_bar_picker()
+        feature._handle_mod_action('mod.option.1')
+        feature._handle_mod_action('mod.apply')
+        self.assertEqual(feature.params.updated, [('feather_status_bar', 'COLORFUL')])
+        self.assertIsNone(feature.status_bar_preview)
+        feature._host.extruder.status['temperature'] = 43
+        feature._host._refresh_status_bar()
+        self.assertTrue(capture.latest.has_text('NOZZLE 43/0C'))
+
+        feature, capture = self._status_bar_picker()
+        feature._handle_mod_action('mod.option.1')
+        with mock.patch.object(feature.params, 'set_value', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                feature._handle_mod_action('mod.apply')
+        self.assertEqual(feature.params.variables['feather_status_bar'], 'METRICS')
+        before = len(capture.frames)
+        feature._handle_mod_action('mod.cancel')
+        self.assertTrue(any(frame.has_text('CPU --%') for frame in capture.frames[before:]))
+
+    def test_status_bar_preview_survives_external_change_and_cancel_uses_latest_saved_mode(self):
+        feature, capture = self._status_bar_picker()
+        feature._handle_mod_action('mod.option.1')
+        feature.params.variables['feather_status_bar'] = 'VANILLA'
+        feature._host._refresh_status_bar()
+        feature._host.extruder.status['temperature'] = 43
+        feature._host._refresh_status_bar()
+        self.assertTrue(capture.latest.has_text('NOZZLE 43/0C'))
+        before = len(capture.frames)
+        feature._handle_mod_action('mod.cancel')
+        self.assertTrue(any(frame.has_text('NOZZLE 43/0C | BED 30/0C')
+                            for frame in capture.frames[before:]))
+
+    def test_status_bar_preview_deactivation_does_not_read_a_stopped_printer(self):
+        feature, capture = self._status_bar_picker()
+        feature._handle_mod_action('mod.option.1')
+        feature._host.print_state = FEATHER.PrintState.DESTROYED
+        feature._host.print_stats.get_status = mock.Mock(side_effect=AssertionError('Stopped printer read'))
+        before = len(capture.frames)
+        feature.deactivate()
+        self.assertEqual(len(capture.frames), before)
+        self.assertIsNone(feature.mod_parameter)
+
     def test_toggle_thumb_is_centered_and_animates_between_halves(self):
         renderer = FEATHER.FeatherRenderer()
         callbacks = []
@@ -2826,6 +2915,34 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.reactor.run_until(1.0)
 
         controller._update_print_progress.assert_not_called()
+
+    def test_status_tick_reads_cached_resources_and_publishes_one_footer_batch(self):
+        controller = self._recovered_print_update_controller()
+        controller.print_state = FEATHER.PrintState.PRINTING
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        worker = SimpleNamespace(add_service=lambda service: True)
+        reader = mock.Mock(side_effect=((100, 50), (200, 75)))
+        controller.cpu_usage = FEATHER.CpuUsageSampler(worker, reader)
+        controller.cpu_usage.poll(0.0)
+        controller.cpu_usage.poll(1.0)
+        controller.system_stats = StatusObject({"memavail": 1536})
+
+        with mock.patch("builtins.open", side_effect=AssertionError("Reactor performed file I/O")):
+            controller._update_cycle(1.0)
+            controller._update_cycle(1.1)
+            self.assertEqual(len(capture.submitted), 1)
+            self.assertTrue(capture.latest.has_text("CPU 75%"))
+            self.assertTrue(capture.latest.has_text("FREE 1MB"))
+            self.assertTrue(capture.latest.has_text("PRINTING"))
+            controller.system_stats.status["memavail"] = 1638
+            controller._update_cycle(2.0)
+            self.assertTrue(capture.latest.has_text("FREE 2MB"))
+            controller._update_cycle(4.1)
+            self.assertTrue(capture.latest.has_text("CPU --%"))
+        self.assertEqual(reader.call_count, 2)
+        self.assertTrue(all((batch.kind, batch.key) == ("state", "footer")
+                            for batch in capture.submitted))
 
     def test_first_observed_pause_starts_clean_progress(self):
         for restored, expected_start in (

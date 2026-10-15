@@ -464,7 +464,8 @@ class ScreenCompositionWorkflowTest(unittest.TestCase):
         self.assertEqual(set(controller.renderer._buttons), {"message.ok"})
         controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
         self.assertTrue(rendering.latest.has_text("LATEST"))
-        self.assertTrue(rendering.latest.has_text("NOZZLE 42/0C | BED 30/0C"))
+        self.assertTrue(rendering.latest.has_text("N 42/0C"))
+        self.assertTrue(rendering.latest.has_text("B 30/0C"))
 
     def test_same_page_layout_refresh_is_deferred_but_page_transition_paints(self):
         controller, _ = ActionPromptProtocolTest.controller_with_navigation()

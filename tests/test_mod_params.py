@@ -54,6 +54,54 @@ class ModParameterTest(unittest.TestCase):
         self.manager._reload()
         self.assertEqual(self.manager.variables["midi_start"], text)
 
+    def test_status_bar_modes_default_to_metrics_and_round_trip_through_storage(self):
+        self.assertEqual(self.manager.variables['feather_status_bar'], 'METRICS')
+        param = self.manager.params_map['feather_status_bar']
+        self.assertEqual([option.name for option in param.type], ['METRICS', 'COLORFUL', 'VANILLA'])
+        for style in ('COLORFUL', 'VANILLA', 'METRICS'):
+            self.manager.set_value('feather_status_bar', style)
+            self.manager._reload()
+            self.assertEqual(self.manager.variables['feather_status_bar'], style)
+        with self.assertRaises(ValueError):
+            self.manager.set_value('feather_status_bar', 'UNKNOWN')
+        self.assertEqual(self.manager.variables['feather_status_bar'], 'METRICS')
+
+    def test_committed_status_bar_event_repaints_without_waiting_for_a_status_tick(self):
+        from tests.test_feather_screen import FEATHER, DeferredReactor, StatusObject
+        from tests.feather_render_test_helper import RenderCapture
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.print_state = FEATHER.PrintState.IDLE
+        controller.params = self.manager
+        controller.renderer = FEATHER.FeatherRenderer()
+        capture = RenderCapture(controller.renderer)
+        controller.reactor = self.manager.reactor = DeferredReactor()
+        controller.extruder = StatusObject(dict(temperature=42, target=0))
+        controller.heater_bed = StatusObject(dict(temperature=30, target=0))
+        controller.print_stats = StatusObject(dict(state='cancelled'))
+        controller.virtual_sdcard = SimpleNamespace(is_active=lambda: False)
+        controller.network_status = dict(ip='192.168.2.124')
+        controller._update_cycle = mock.Mock(side_effect=AssertionError('Unexpected full status tick'))
+        events = []
+
+        def send_event(name):
+            events.append(name)
+            controller._refresh_status_bar()
+
+        self.manager.printer.send_event = send_event
+        self.manager.changes_gcode_present = False
+        controller._refresh_status_bar()
+        self.assertTrue(capture.latest.has_text('CPU --%'))
+        self.manager.set_value('feather_status_bar', 'COLORFUL')
+        self.assertTrue(capture.latest.has_text('CPU --%'))
+        controller.reactor.run_until(controller.reactor.now)
+        self.assertEqual(events, ['mod_params:changed'])
+        self.assertTrue(capture.latest.has_text('NOZZLE 42/0C'))
+        self.assertFalse(capture.latest.has_text('CPU --%'))
+        before = len(capture.frames)
+        controller.print_state = FEATHER.PrintState.INACTIVE
+        controller._refresh_status_bar()
+        self.assertEqual(len(capture.frames), before)
+
     def test_structural_ini_errors_preserve_the_previous_snapshot(self):
         previous = dict(self.manager.variables)
         self.path.write_text("[Variables\nz_offset = 0\n", encoding="utf-8")
