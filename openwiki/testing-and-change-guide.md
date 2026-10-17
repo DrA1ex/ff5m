@@ -1,5 +1,24 @@
 # Testing and change guide
 
+## Repository security scanning
+
+This fork uses GitHub CodeQL **default setup**, configured in the repository's
+Security settings. Keep that service enabled and review its selected languages
+there; the working configuration scans Python, JavaScript/TypeScript, and
+GitHub Actions. The checked-in `codeql.yml` is a legacy advanced-setup template
+whose workflow is disabled. Do not enable a competing advanced workflow while
+default setup owns the analysis.
+
+The separate Salesforce-oriented CodeScan workflow was removed: it required an
+unconfigured external account/project and its bundled Java 11 runtime could not
+load the service's Java 17 classes. Updating system Java alone would not fix the
+missing account setup. CodeQL does not need `CODESCAN_*` credentials.
+
+After a scanning change, verify that CodeQL analyzes the actual new commit and
+that the host tests still pass. A completed analysis is not a clean security
+report: review the reported findings separately. Historical failed CodeScan runs
+remain in Actions history; removing the obsolete workflow does not rewrite them.
+
 ## Validation posture
 
 The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
