@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 from __future__ import annotations
+import asyncio
 import logging
 
 # Annotation imports
@@ -21,10 +22,15 @@ if TYPE_CHECKING:
     from .klippy_apis import KlippyAPI
 
 class JobState:
+    SUBSCRIPTION_RETRY_DELAY = 1.0
+    MAX_SUBSCRIPTION_ATTEMPTS = 3
+
     def __init__(self, config: ConfigHelper) -> None:
         self.server = config.get_server()
         self.last_print_stats: Dict[str, Any] = {}
         self.last_event: JobEvent = JobEvent.STANDBY
+        self._subscription_generation = 0
+        self._subscribe_retry_handle: Optional[asyncio.TimerHandle] = None
         self.server.register_event_handler(
             "server:klippy_started", self._handle_started
         )
@@ -33,6 +39,7 @@ class JobState:
         )
 
     def _handle_disconnect(self):
+        self._reset_subscription()
         state = self.last_print_stats.get("state", "")
         if state in ("printing", "paused"):
             # set error state
@@ -40,18 +47,49 @@ class JobState:
             self.last_event = JobEvent.ERROR
 
     async def _handle_started(self, state: KlippyState) -> None:
+        self._reset_subscription()
         if state != KlippyState.READY:
             return
+        await self._subscribe_print_stats(self._subscription_generation, 1)
+
+    def _reset_subscription(self) -> None:
+        self._subscription_generation += 1
+        if self._subscribe_retry_handle is not None:
+            self._subscribe_retry_handle.cancel()
+            self._subscribe_retry_handle = None
+
+    async def _subscribe_print_stats(self, generation: int, attempt: int) -> None:
+        if generation != self._subscription_generation:
+            return
+        self._subscribe_retry_handle = None
         kapis: KlippyAPI = self.server.lookup_component('klippy_apis')
         sub: Dict[str, Optional[List[str]]] = {"print_stats": None}
         try:
             result = await kapis.subscribe_objects(sub, self._status_update)
         except self.server.error:
-            logging.info("Error subscribing to print_stats")
+            if generation != self._subscription_generation:
+                return
+            logging.info("Error subscribing to print_stats (attempt %d/%d)",
+                         attempt, self.MAX_SUBSCRIPTION_ATTEMPTS)
+            if attempt < self.MAX_SUBSCRIPTION_ATTEMPTS:
+                self._subscribe_retry_handle = (
+                    self.server.get_event_loop().delay_callback(
+                        self.SUBSCRIPTION_RETRY_DELAY,
+                        self._subscribe_print_stats, generation, attempt + 1))
+            else:
+                logging.warning(
+                    "Unable to subscribe to print_stats; job completion events "
+                    "are unavailable until Klipper reconnects")
+            return
+        # Ignore a response belonging to a disconnected or replaced session.
+        if generation != self._subscription_generation:
+            return
         self.last_print_stats = result.get("print_stats", {})
         if "state" in self.last_print_stats:
-            state = self.last_print_stats["state"]
-            logging.info(f"Job state initialized: {state}")
+            logging.info("Job state initialized: %s", self.last_print_stats["state"])
+
+    async def close(self) -> None:
+        self._reset_subscription()
 
     async def _status_update(self, data: Dict[str, Any], _: float) -> None:
         if 'print_stats' not in data:

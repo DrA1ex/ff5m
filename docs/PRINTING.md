@@ -19,6 +19,49 @@ For the required slicer start/end G-code and upload configuration, see [Slicing]
 - Enable MD5 validation in the slicer if you use the Forge-X G-code integrity check.
 - Verify the first layer with a small test before starting a long print.
 
+## Job queue (Fluidd / Mainsail)
+
+The Moonraker job queue stores pending G-code filenames. A completed print or
+homed axes do **not** by themselves start the next queued job or prove that the
+build plate is clear.
+
+With the shipped defaults, `automatic_transition` and `load_on_startup` are both
+`False`. Use the queue manually on an AD5M:
+
+1. Add the next file to the queue.
+2. Wait for the current print to finish, remove it, and prepare the build plate.
+3. Press **Start** in the **Job Queue** panel, not the active print's **Resume**
+   button. The next queued file loads only when Klipper reports no active or
+   paused print.
+4. Repeat the bed check and queue Start for each subsequent job.
+
+**Pause Queue** prevents pending jobs from loading; it does not pause a print
+already submitted to Klipper. A loading error leaves the file in the queue and
+pauses it, so fix the reported error before pressing queue Start to retry.
+Reordering the queue is broadcast to connected clients.
+
+If automatic transitions were explicitly enabled in a `[job_queue]` section of
+`user.moonraker.conf`, an armed queue can advance on a print-completion event.
+Queue Start during an active print arms that mode; Pause Queue disarms it. Adding
+jobs during a print can also arm it unless the queue was explicitly paused.
+`load_on_startup: True` separately allows pending jobs to load when Klipper becomes
+ready, even if the queue was previously paused, without running transition G-code.
+
+> [!WARNING]
+> Leave both options disabled for ordinary AD5M printing. Automatic transitions
+> are intended for a verified automatic bed-clearing workflow, not an occupied
+> build plate. Homing and `END_PRINT` are not bed-clearing safeguards. These queue
+> fixes do not enable automatic printing or install a bed-clearing routine.
+
+The queue is held in Moonraker memory and is lost when **Moonraker itself**
+restarts. A Klipper-only restart is different. Queue persistence is not provided
+by these fixes.
+
+If queue Start does not load a file, check the queue state, the current print's
+state, and the Moonraker log. Job-state subscription errors are retried up to
+three times, one second apart; exhausted retries are logged and require a
+Klipper reconnect before completion tracking is retried.
+
 ## Calibration
 
 Use the Stock screen's supported workflow, Feather's **Control → Calibration** pages, or the Forge-X macros exposed in Fluidd/Mainsail:

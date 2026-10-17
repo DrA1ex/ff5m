@@ -122,11 +122,11 @@ class JobQueue:
             kapis: KlippyAPI = self.server.lookup_component('klippy_apis')
             uid, job = list(self.queued_jobs.items())[0]
             filename = str(job)
-            can_print = await self._check_can_print()
-            if not can_print or self.queue_state != "loading":
-                self._set_queue_state("paused")
-                return
             try:
+                can_print = await self._check_can_print()
+                if not can_print or self.queue_state != "loading":
+                    self._set_queue_state("paused")
+                    return
                 if self.job_transition_gcode and need_transition:
                     await kapis.run_gcode(self.job_transition_gcode)
                     # Check to see if the queue was paused while running
@@ -139,7 +139,10 @@ class JobQueue:
                 await kapis.start_print(
                     filename, wait_klippy_started=True, user=job.user
                 )
-            except self.server.error:
+            except asyncio.CancelledError:
+                self._set_queue_state("paused")
+                raise
+            except Exception:
                 logging.exception(f"Error Loading print: {filename}")
                 self._set_queue_state("paused")
             else:
@@ -213,13 +216,20 @@ class JobQueue:
             self._send_queue_event(action="jobs_removed")
 
     async def pause_queue(self) -> None:
+        # Signal in-flight operations before waiting for their lock.
+        self.pause_requested = True
         self._set_queue_state("paused")
+        self._cancel_pending_job()
+        # Reassert Pause after any operation already holding the lock finishes.
+        async with self.lock:
+            self.pause_requested = True
+            self._set_queue_state("paused")
+            self._cancel_pending_job()
+
+    def _cancel_pending_job(self) -> None:
         if self.pop_queue_handle is not None:
             self.pop_queue_handle.cancel()
             self.pop_queue_handle = None
-        # Acquire the lock to wait for any pending operations to complete
-        async with self.lock:
-            self.pause_requested = True
 
     async def start_queue(self) -> None:
         async with self.lock:
@@ -227,14 +237,20 @@ class JobQueue:
             if self.queue_state in ("ready", "paused"):
                 if not self.queued_jobs:
                     self._set_queue_state("paused")
-                elif await self._check_can_print():
-                    self._set_queue_state("loading")
-                    event_loop = self.server.get_event_loop()
-                    self.pop_queue_handle = event_loop.delay_callback(
-                        0.01, self._pop_job, False
-                    )
                 else:
-                    self._set_queue_state("ready" if self.automatic else "paused")
+                    can_print = await self._check_can_print()
+                    # Pause may have been requested while querying Klipper.
+                    if self.pause_requested:
+                        return
+                    if can_print:
+                        self._set_queue_state("loading")
+                        event_loop = self.server.get_event_loop()
+                        self.pop_queue_handle = event_loop.delay_callback(
+                            0.01, self._pop_job, False
+                        )
+                    else:
+                        self._set_queue_state(
+                            "ready" if self.automatic else "paused")
 
     def _job_map_to_list(self) -> List[Dict[str, Any]]:
         cur_time = time.time()
@@ -323,6 +339,7 @@ class JobQueue:
             new_queue = {job_id: job}
             new_queue.update(self.queued_jobs)
             self.queued_jobs = new_queue
+            self._send_queue_event(action="jobs_updated")
         return {
             'queued_jobs': self._job_map_to_list(),
             'queue_state': self.queue_state
