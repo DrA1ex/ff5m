@@ -2,6 +2,11 @@
 
 To use the mod, you need to replace your slicer's default start and end G-code with the following configurations. These snippets are for _OrcaSlicer_. If you use a different slicer, adjust the placeholders accordingly.
 
+The repository also includes corrected
+[Orca-Flashforge AD5M profile sources](../slicer_profiles/Orca-Flashforge/README.md)
+with these lifecycle commands, KAMP object labels, regular-AD5M hardware
+capabilities, and firmware-owned generic pressure advance already set.
+
 ### For Stock Screen
 
 Start Gcode
@@ -37,9 +42,11 @@ END_PRINT
 > `X100 Y100` to a machine move near `X210 Y210`, which Klipper rejects as out
 > of range. Files sliced with the old profile must be re-sliced after both
 > settings are corrected; editing the profile does not change G-code files
-> that were already generated. Forge-X 1.4.2 blocks `G92` commands that reset
-> X, Y, or Z so a bad file stops before the shifted move; normal extruder-only
-> resets such as `G92 E0` remain supported.
+> that were already generated. Forge-X blocks a bare `G92` and the legacy
+> centered-bed origin reset `G92 X0 Y0` (with or without `Z0`) so a bad file
+> stops before the shifted move. Extruder resets such as `G92 E0`, individual
+> axis resets, and deliberate nonzero coordinate changes still pass through to
+> Klipper.
 
 ### Configuring Moonraker / Klipper connection
 

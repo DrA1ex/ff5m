@@ -565,18 +565,27 @@ class WorkflowMacroTest(unittest.TestCase):
                     'RESPOND PREFIX="info" MSG="All axes already parked."',
                     result.commands)
 
-    def test_g92_allows_extruder_reset_but_rejects_xyz_rebasing(self):
-        extruder = render_macro(
-            BASE, "G92",
-            printer={"virtual_sdcard": {"is_active": False}},
-            params={"E": 0}, rawparams="E0")
-        self.assertEqual(extruder.commands, ("G92.1 E0",))
-
-        unsafe_cases = (
+    def test_g92_allows_legitimate_resets_but_rejects_legacy_xy_origin(self):
+        allowed_cases = (
+            ({"E": 0}, "E0"),
             ({"X": 0}, "X0"),
             ({"Y": 0}, "Y0"),
             ({"Z": 0}, "Z0"),
+            ({"X": 10, "Y": 20, "Z": 30}, "X10 Y20 Z30"),
+        )
+        for params, rawparams in allowed_cases:
+            with self.subTest(rawparams=rawparams):
+                rendered = render_macro(
+                    BASE, "G92",
+                    printer={"virtual_sdcard": {"is_active": False}},
+                    params=params, rawparams=rawparams)
+                self.assertEqual(
+                    rendered.commands, ("G92.1 %s" % rawparams,))
+
+        unsafe_cases = (
+            ({"X": 0, "Y": 0}, "X0 Y0"),
             ({"X": 0, "Y": 0, "Z": 0}, "X0 Y0 Z0"),
+            ({"X": "0.0", "Y": "-0"}, "X0.0 Y-0"),
             ({}, ""),
         )
         for params, rawparams in unsafe_cases:
@@ -595,18 +604,18 @@ class WorkflowMacroTest(unittest.TestCase):
             rawparams="X0 Y0 Z0")
 
         self.assertEqual(result.commands, (
-            '_ABORT_UNSAFE_G92 MSG="Unsafe G92 XYZ origin reset blocked. '
-            'Forge-X uses centered X/Y coordinates; remove G92 X/Y/Z and '
-            're-slice the file."',
+            '_ABORT_UNSAFE_G92 MSG="Unsafe G92 centered-bed origin reset '
+            'blocked. Remove bare G92 or G92 X0 Y0 [Z0], correct the slicer '
+            'bed coordinates, and re-slice the file."',
         ))
 
         abort = render_macro(
             BASE, "_ABORT_UNSAFE_G92",
-            params={"MSG": "Unsafe G92 XYZ origin reset blocked."})
+            params={"MSG": "Unsafe G92 centered-bed origin reset blocked."})
         self.assertEqual(abort.commands, (
             "_STOP",
             "CANCEL_PRINT_BASE",
-            'RESPOND PREFIX="!!" MSG="Unsafe G92 XYZ origin reset blocked."',
+            'RESPOND PREFIX="!!" MSG="Unsafe G92 centered-bed origin reset blocked."',
             "_RAISE_ERROR",
         ))
 
