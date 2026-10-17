@@ -18,7 +18,7 @@ import math
 from copy import deepcopy
 from inotify_simple import INotify
 from inotify_simple import flags as iFlags
-from ...utils import source_info
+from ...utils import ServerError, source_info
 from ...utils import json_wrapper as jsonw
 from ...common import RequestType, TransportType
 from . import gcode_3mf
@@ -1003,6 +1003,8 @@ class FileManager:
                     upload_info['tmp_file_path'], dest_path)
                 finfo = self.get_path_info(upload_info['dest_path'],
                                            upload_info['root'])
+        except ServerError:
+            raise
         except Exception:
             logging.exception("Upload Write Error")
             raise self.server.error("Unable to save file", 500)
