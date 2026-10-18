@@ -58,6 +58,18 @@ def _set_layout_value(node, name, value):
         setattr(options, name, value)
 
 
+def _copy_rule_value(value):
+    # Rule values are portable data: copy their mutable containers so a later
+    # in-place edit is observed as a change. Other values are compared as-is.
+    if type(value) is dict:
+        return dict((key, _copy_rule_value(item)) for key, item in value.items())
+    if type(value) is list:
+        return [_copy_rule_value(item) for item in value]
+    if type(value) is tuple:
+        return tuple(_copy_rule_value(item) for item in value)
+    return value
+
+
 class Style:
     """One typed style declaration with optional single inheritance."""
 
@@ -141,6 +153,16 @@ class StyleSheet:
 
         for style in self.styles:
             visit(style)
+
+    def rules_snapshot(self):
+        """Copy the mutable rule state that one style pass consumes."""
+        return tuple((style, style.target, style.based_on, _copy_rule_value(style.properties))
+                     for style in self.styles)
+
+    def rules_match(self, snapshot):
+        """Re-observe the live rules against a snapshot, including in-place value edits."""
+        return snapshot == tuple((style, style.target, style.based_on, style.properties)
+                                 for style in self.styles)
 
     def get(self, style_id):
         key = _style_id(style_id)

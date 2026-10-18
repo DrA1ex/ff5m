@@ -2856,8 +2856,9 @@ class DeclarativePage(Tree):
             content.update(self.state, initialize=True)
         _validate_component_template_definitions(
             content, self.component_templates)
+        self._styled_with = None
         if self.styles is not None:
-            self.styles.apply(content)
+            self._apply_styles(content)
         super().__init__(content, bounds)
         self._declared_actions = tuple(actions or ())
         self.actions = {}
@@ -2908,7 +2909,7 @@ class DeclarativePage(Tree):
             return
         self.root.update(self.state, initialize=True)
         if self.styles is not None:
-            self.styles.apply(self.root)
+            self._apply_styles(self.root)
         self.layout = LayoutResult()
         self.root.arrange(self.bounds, self.layout)
         self.root.clear_dirty()
@@ -2942,7 +2943,7 @@ class DeclarativePage(Tree):
         else:
             self.root.update(self.state, initialize=not reuse_layout)
         if self.styles is not None and not (reuse_cached and reuse_styles):
-            self.styles.apply(self.root)
+            self._apply_styles(self.root)
         return self._render_full(
             renderer,
             arrange=not reuse_layout or self.root._dirty >= Dirty.LAYOUT,
@@ -2983,9 +2984,28 @@ class DeclarativePage(Tree):
         if self._layout_metrics_key != get_font_metrics().cache_key:
             self.root.invalidate_layout()
         self.root.update(self.state)
-        if self.styles is not None:
-            self.styles.apply(self.root)
+        if self.styles is not None and not self._styles_current():
+            self._apply_styles(self.root)
         return self._render_updates(renderer)
+
+    def _apply_styles(self, root):
+        """Run the complete style pass and remember the rules it applied."""
+        self.styles.apply(root)
+        self._styled_with = (self.styles, self.styles.rules_snapshot())
+
+    def _styles_current(self):
+        """Return whether an update can keep the previous style pass.
+
+        A pass depends on the rules and on the tree's structure, style ids and
+        explicit values. Framework modifiers and structural changes invalidate
+        layout, so an update that only repaints bound values cannot change the
+        result. Rules are mutable data and are re-observed against the snapshot
+        of the last successful pass. Writes that bypass framework invalidation
+        take effect at the next layout invalidation, rule change or draw().
+        """
+        applied = self._styled_with
+        return (applied is not None and self.root._dirty < Dirty.LAYOUT
+                and applied[0] is self.styles and self.styles.rules_match(applied[1]))
 
     def update_refs(self, renderer, state, refs):
         """Update known state-bound nodes without traversing unrelated content.
