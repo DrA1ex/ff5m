@@ -174,7 +174,7 @@
       },
       {
         "id": "behavior_ui",
-        "label": "PRINT & INTERFACE",
+        "label": "PRINT BEHAVIOR",
         "order": 3,
         "parameters": [
           "disable_priming",
@@ -186,14 +186,7 @@
           "park_dz",
           "stop_motor",
           "auto_reboot",
-          "power_loss_recovery",
-          "feather_theme",
-          "feather_status_bar",
-          "backlight",
-          "display_eco",
-          "backlight_eco",
-          "sound",
-          "close_dialogs"
+          "power_loss_recovery"
         ]
       },
       {
@@ -201,6 +194,13 @@
         "label": "USABILITY",
         "order": 4,
         "parameters": [
+          "sound",
+          "backlight",
+          "display_eco",
+          "backlight_eco",
+          "feather_theme",
+          "feather_status_bar",
+          "close_dialogs",
           "feather_preview_back_to_files"
         ]
       },
@@ -265,6 +265,54 @@
       }
     ],
     "strict_visibility_dependencies": [
+      {
+        "parameter": "close_dialogs",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "STOCK"
+      },
+      {
+        "parameter": "disable_screen_led",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "STOCK"
+      },
+      {
+        "parameter": "block_cloud",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "STOCK"
+      },
+      {
+        "parameter": "feather_theme",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "FEATHER"
+      },
+      {
+        "parameter": "feather_status_bar",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "FEATHER"
+      },
+      {
+        "parameter": "feather_preview_back_to_files",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": "FEATHER"
+      },
+      {
+        "parameter": "backlight",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": ["FEATHER", "GUPPY", "HEADLESS"]
+      },
+      {
+        "parameter": "display_eco",
+        "depends_on": "display",
+        "operator": "equals",
+        "value": ["FEATHER", "GUPPY", "HEADLESS"]
+      },
       {
         "parameter": "timelapse",
         "depends_on": "camera",

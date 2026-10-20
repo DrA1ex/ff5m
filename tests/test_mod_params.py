@@ -6,6 +6,7 @@
 
 import configparser
 import importlib.util
+import json
 import pathlib
 import tempfile
 import threading
@@ -329,6 +330,97 @@ class ModParameterTest(unittest.TestCase):
             self.assertEqual(self.path.read_bytes(), before)
             self.assertEqual(list(self.path.parent.iterdir()), [self.path])
         self.manager.reactor.register_callback.assert_not_called()
+
+
+class ParameterVisibilityTest(unittest.TestCase):
+    def setUp(self):
+        from tests.test_feather_screen import MOD_UI
+
+        self.visible_parameters = MOD_UI.visible_parameters
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = pathlib.Path(directory.name) / "declaration.json"
+        declaration = {
+            "enums": {"Mode": {"type": "int", "values": {"FIRST": 7, "SECOND": 19, "THIRD": 42}}},
+            "parameters": [
+                {"key": "mode", "type": "Mode", "default": "FIRST", "label": "Mode"},
+                {"key": "enabled", "type": "bool", "default": 1, "label": "Enabled"},
+                {"key": "detail", "type": "int", "default": 9, "label": "Detail"},
+                {"key": "other", "type": "bool", "default": 0, "label": "Other"},
+                {"key": "alternative", "type": "str", "default": "saved", "label": "Alternative"},
+                {"key": "explicit", "type": "bool", "default": 1, "label": "Explicit",
+                 "ui": {"visible_if": {"parameter": "mode", "operator": "equals", "value": "SECOND"}}},
+                {"key": "hidden", "type": "bool", "default": 1, "label": "Hidden", "hidden": True},
+            ],
+            "ui": {"strict_visibility_dependencies": [
+                {"parameter": "enabled", "depends_on": "mode", "operator": "equals",
+                 "value": ["FIRST", "SECOND"]},
+                {"parameter": "detail", "depends_on": "enabled", "operator": "equals", "value": True},
+                {"parameter": "alternative", "depends_on": ["enabled", "other"],
+                 "operator": "equals", "value": True},
+            ]},
+        }
+        path.write_text(json.dumps(declaration), encoding="utf-8")
+        self.manager = MOD_PARAMS.ModParamManagement.__new__(MOD_PARAMS.ModParamManagement)
+        self.manager.declaration = str(path)
+        self.manager._load_declaration()
+        self.params = self.manager.params_map
+        self.manager.variables = {param.key: self.manager._load_param(param, None)
+                                  for param in self.manager.params}
+
+    def test_enum_conditions_use_member_names_and_accept_alternative_values(self):
+        for mode in self.params["mode"].type:
+            with self.subTest(mode=mode):
+                self.manager.variables["mode"] = mode.value
+                visible = self.visible_parameters(self.manager)
+                self.assertEqual(self.params["enabled"] in visible, mode.name in ("FIRST", "SECOND"))
+                self.assertEqual(self.params["explicit"] in visible, mode.name == "SECOND")
+        self.manager.variables["mode"] = -1
+        self.assertNotIn(self.params["enabled"], self.visible_parameters(self.manager))
+        self.assertNotIn(self.params["explicit"], self.visible_parameters(self.manager))
+
+    def test_hidden_parent_hides_descendants_even_when_its_saved_value_matches(self):
+        for mode in self.params["mode"].type:
+            for enabled in (False, True):
+                with self.subTest(mode=mode, enabled=enabled):
+                    self.manager.variables.update(mode=mode.value, enabled=enabled)
+                    visible = self.visible_parameters(self.manager)
+                    self.assertEqual(self.params["detail"] in visible,
+                                     enabled and mode.name in ("FIRST", "SECOND"))
+                    self.assertNotIn(self.params["hidden"], visible)
+                    self.assertIn(self.params["other"], visible)
+
+    def test_any_matching_visible_parent_can_reveal_a_dependent(self):
+        for mode in self.params["mode"].type:
+            for enabled in (False, True):
+                for other in (False, True):
+                    with self.subTest(mode=mode, enabled=enabled, other=other):
+                        self.manager.variables.update(mode=mode.value, enabled=enabled, other=other)
+                        self.assertEqual(self.params["alternative"] in self.visible_parameters(self.manager),
+                                         other or (enabled and mode.name in ("FIRST", "SECOND")))
+
+    def test_settings_pages_refresh_visibility_without_changing_values(self):
+        from tests.test_feather_screen import mod_controller
+
+        feature = mod_controller(self.manager.params, self.manager.variables)
+        for mode in self.params["mode"].type:
+            with self.subTest(mode=mode):
+                feature.params.variables["mode"] = mode.value
+                before = dict(feature.params.variables)
+                feature.mod_page = 0
+                feature._render_mod_settings()
+                offered = set(feature.mod_action_keys.values())
+                while True:
+                    page = feature.mod_page
+                    feature._handle_mod_action("mod.next")
+                    if feature.mod_page == page:
+                        break
+                    offered.update(feature.mod_action_keys.values())
+                self.assertEqual(self.params["detail"].key in offered, mode.name in ("FIRST", "SECOND"))
+                self.assertEqual(self.params["explicit"].key in offered, mode.name == "SECOND")
+                self.assertNotIn(self.params["hidden"].key, offered)
+                self.assertIn(self.params["other"].key, offered)
+                self.assertEqual(feature.params.variables, before)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@
 
 import configparser
 import importlib.util
+import itertools
 import enum
 import json
 import pathlib
@@ -580,7 +581,10 @@ class FeatherUtilitiesTest(unittest.TestCase):
         })
         drawn = {}
         all_visible = {}
-        for mode, action in (("LAYER", "CANCEL"), ("TIME", "RECALIBRATE"), ("PERCENT", "Z_OFFSET")):
+        for display, (mode, action) in itertools.product(
+                manager.params_map["display"].type,
+                (("LAYER", "CANCEL"), ("TIME", "RECALIBRATE"), ("PERCENT", "Z_OFFSET"))):
+            variables["display"] = display.value
             variables["timelapse_mode"] = mode
             variables["bed_mesh_validation_action"] = manager.params_map["bed_mesh_validation_action"].type[action].value
             feature = mod_controller(manager.params, variables)
