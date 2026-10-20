@@ -197,9 +197,17 @@
         ]
       },
       {
+        "id": "usability",
+        "label": "USABILITY",
+        "order": 4,
+        "parameters": [
+          "feather_preview_back_to_files"
+        ]
+      },
+      {
         "id": "system_services",
         "label": "SYSTEM SERVICES",
-        "order": 4,
+        "order": 5,
         "parameters": [
           "use_swap",
           "check_md5",
@@ -215,7 +223,7 @@
       {
         "id": "print_preview",
         "label": "PRINT PREVIEW",
-        "order": 5,
+        "order": 6,
         "parameters": [
           "feather_preview_type",
           "feather_preview_cache",
@@ -231,7 +239,7 @@
       {
         "id": "experimental",
         "label": "EXPERIMENTAL",
-        "order": 6,
+        "order": 7,
         "parameters": [
           "klipper_rt",
           "zram_algo",
@@ -241,7 +249,7 @@
       {
         "id": "midi",
         "label": "MIDI",
-        "order": 7,
+        "order": 8,
         "parameters": [
           "midi_on",
           "midi_start",
@@ -251,7 +259,7 @@
       {
         "id": "other",
         "label": "OTHER",
-        "order": 8,
+        "order": 9,
         "fallback": true,
         "parameters": []
       }
@@ -595,6 +603,14 @@
         "VANILLA": "Original single-color status bar"
       },
       "order": 49999
+    },
+    {
+      "key": "feather_preview_back_to_files",
+      "type": "bool",
+      "default": 1,
+      "label": "Preview back to files",
+      "description": "Skip print confirmation when going back.",
+      "order": 50000
     },
     {
       "key": "backlight",

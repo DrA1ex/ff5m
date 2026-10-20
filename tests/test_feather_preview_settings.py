@@ -287,12 +287,15 @@ class PreviewSettingsTest(unittest.TestCase):
 
     def test_hidden_preview_parameters_remain_hidden_from_general_mod_settings(self):
         feature = self.open_settings()
-        self.assertTrue(any(param.key.startswith("feather_preview_") for param in feature._mod_parameters()))
-        self.assertFalse(any(param.key.startswith("feather_preview_") for param in visible_parameters(self.manager)))
+        preview_keys = {param.key for param in feature._mod_parameters()}
+        general_keys = {param.key for param in visible_parameters(self.manager)}
+        self.assertTrue(preview_keys)
+        self.assertTrue(preview_keys.isdisjoint(general_keys))
+        self.assertIn("feather_preview_back_to_files", general_keys)
         self.tap("nav.back")
         self.controller._show_page(ScreenPage.MOD_SETTINGS)
         self.assertIsNone(self.controller.model_preview)
-        self.assertFalse(any(param.key.startswith("feather_preview_") for param in feature._mod_parameters()))
+        self.assertTrue(preview_keys.isdisjoint(param.key for param in feature._mod_parameters()))
 
     def test_current_view_button_saves_the_live_camera_as_defaults(self):
         self.state["yaw"], self.state["pitch"], self.state["scale"] = -83.27, -44.678, 1.45

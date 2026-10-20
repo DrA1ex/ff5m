@@ -1560,8 +1560,11 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             return
         if self.page == ScreenPage.PRINT_PREVIEW:
             state = getattr(self, "model_preview", None)
-            self._show_page(ScreenPage.FILE_CONFIRM if state and state["mode"] == "file"
-                            else self.page_for_print_state())
+            if state and state["mode"] == "file":
+                self._show_page(ScreenPage.FILE_BROWSER if self._setting("feather_preview_back_to_files", True)
+                                else ScreenPage.FILE_CONFIRM)
+            else:
+                self._show_page(self.page_for_print_state())
             return
         if self.page == ScreenPage.MODEL_PREVIEW:
             self._open_model_preview_browser()

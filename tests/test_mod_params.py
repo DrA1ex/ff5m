@@ -54,6 +54,13 @@ class ModParameterTest(unittest.TestCase):
         self.manager._reload()
         self.assertEqual(self.manager.variables["midi_start"], text)
 
+    def test_preview_back_to_files_defaults_on_and_round_trips_through_storage(self):
+        self.assertTrue(self.manager.variables["feather_preview_back_to_files"])
+        for enabled in (False, True):
+            self.manager.set_value("feather_preview_back_to_files", int(enabled))
+            self.manager._reload()
+            self.assertIs(self.manager.variables["feather_preview_back_to_files"], enabled)
+
     def test_related_values_commit_once_and_notify_after_the_whole_snapshot(self):
         values = {"feather_preview_yaw": -45, "feather_preview_pitch": 20, "feather_preview_scale": 1.5}
         with mock.patch.object(self.manager, "_save_all", wraps=self.manager._save_all) as save:

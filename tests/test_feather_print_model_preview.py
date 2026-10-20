@@ -217,6 +217,18 @@ class PrintModelPreviewTest(unittest.TestCase):
         self.assertFalse(self.controller.renderer.capture.latest.has_action("print.preview"))
         self.assertTrue(self.controller.renderer.capture.latest.has_action("print.more"))
 
+    def test_current_print_preview_back_ignores_file_navigation_preference(self):
+        self.controller._setting = FEATHER.FeatherScreen._setting.__get__(self.controller)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                self.controller.params.variables = {"feather_preview_back_to_files": enabled}
+                self.controller._open_print_model_preview()
+                state = self.controller.model_preview
+                self.controller._go_back()
+                self.assertEqual(self.controller.page, ScreenPage.PRINTING)
+                self.assertIsNone(self.controller.model_preview)
+                self.assertTrue(state["cancel"].is_set())
+
     def test_current_file_preview_remains_available_without_idle_or_motion_commands(self):
         self.controller._go_back()
         self.controller._require_idle = mock.Mock(side_effect=RuntimeError("not idle"))
@@ -723,6 +735,8 @@ class SelectedFileModelPreviewTest(unittest.TestCase):
         self.path.write_text(";TIME:3600\n;LAYER_COUNT:10\n;model_size = 20,20,2\n"
                              ";filament used [g] = 3.5\n;filament_type = PLA\nG1 X20\n")
         self.controller = LazyFileController()
+        self.controller.params.variables = {}
+        self.controller._setting = FEATHER.FeatherScreen._setting.__get__(self.controller)
         self.controller.print_state = PrintState.IDLE
         self.controller.virtual_sdcard.sdcard_dirname = folder.name
         self.entry = FileEntry(self.path.name, str(self.path), size=self.path.stat().st_size)
@@ -883,7 +897,26 @@ class SelectedFileModelPreviewTest(unittest.TestCase):
         self.assertEqual(state["printed"], Session.layers)
         self.controller._run_script.assert_not_called()
 
-    def test_back_keeps_file_and_mesh_options_and_ignores_late_metadata(self):
+    def test_back_returns_to_same_browser_and_ignores_late_metadata(self):
+        for configured in (None, True):
+            with self.subTest(configured=configured):
+                if configured is not None:
+                    self.controller.params.variables["feather_preview_back_to_files"] = configured
+                self.controller.file_source = "usb"
+                self.controller.file_page = 2
+                state = self.open()
+                self.controller._go_back()
+                self.assertEqual(self.controller.page, ScreenPage.FILE_BROWSER)
+                self.assertEqual(self.controller.file_source, "usb")
+                self.assertEqual(self.controller.file_page, 2)
+                self.assertIsNone(self.controller.model_preview)
+                self.assertTrue(state["cancel"].is_set())
+                batches = len(self.controller.renderer.capture.batches)
+                self.controller.file_worker.finish(len(self.controller.file_worker.submitted) - 1)
+                self.assertEqual(len(self.controller.renderer.capture.batches), batches)
+
+    def test_disabled_back_to_files_keeps_file_and_mesh_options_and_ignores_late_metadata(self):
+        self.controller.params.variables["feather_preview_back_to_files"] = False
         state = self.open()
         self.controller._go_back()
         self.assertEqual(self.controller.page, ScreenPage.FILE_CONFIRM)
@@ -979,7 +1012,7 @@ class SelectedFileModelPreviewTest(unittest.TestCase):
         self.controller._run_script.assert_not_called()
         self.assertEqual(self.controller.page, ScreenPage.PRINT_PREVIEW)
         self.controller._go_back()
-        self.assertEqual(self.controller.page, ScreenPage.FILE_CONFIRM)
+        self.assertEqual(self.controller.page, ScreenPage.FILE_BROWSER)
 
     def test_unknown_file_details_use_physical_layer_count_after_render(self):
         self.path.write_text("G1 X20\n")
