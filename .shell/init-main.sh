@@ -338,35 +338,89 @@ init_buildroot() {
     sync
 }
 
+extract_move_section() {
+    local section="$1" source="$2"
+    awk -v target="$section" '
+        {
+            line = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line ~ /^\[[^]]+\]$/) selected = (line == target)
+            else if (selected && line ~ /^[[:alnum:]_]+[[:space:]]*[:=][[:space:]]*.+$/) print line
+        }
+    ' "$source"
+}
+
+prepare_init_move() {
+    local actual="$1" data="$2" missing section values
+
+    # The usual path reads each rules/config file once and creates no files.
+    if ! missing=$(awk '
+        FILENAME == ARGV[1] {
+            section = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", section)
+            if (section ~ /^\[[^]]+\]$/) present[section] = 1
+            next
+        }
+        {
+            section = $0
+            sub(/#.*/, "", section)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", section)
+            if (section == "") next
+            if (section !~ /^\[[[:alnum:]_]+([[:space:]]+[[:alnum:]_]+)?\]$/) {
+                print "@@ Invalid init.move.cfg section: " section > "/dev/stderr"
+                next
+            }
+            if (!(section in present)) print section
+        }
+    ' /opt/config/printer.cfg /opt/config/mod/.cfg/init.move.cfg); then
+        echo "@@ Cannot inspect config sections for migration; continuing initialization."
+        return 1
+    fi
+    [ -n "$missing" ] || return 1
+
+    : > "$actual"
+    : > "$data"
+    while IFS= read -r section; do
+        values=$(extract_move_section "$section" /opt/config/printer.base.cfg) || values=""
+        if [ -z "$values" ]; then
+            values=$(extract_move_section "$section" /opt/config/mod/.cfg/data.init.move.cfg) || values=""
+        fi
+        if [ -z "$values" ]; then
+            echo "@@ No migration source for $section; skipping it."
+            continue
+        fi
+
+        printf '%s\n' "$section" >> "$actual"
+        printf '%s\n%s\n' "$section" "$values" >> "$data"
+    done <<< "$missing"
+
+    [ -s "$actual" ]
+}
+
 fix_config() {
-    TMP_CFG_PATH=/tmp/printer.tmp.cfg
+    local actual_move_cfg=/tmp/init.move.actual.cfg
+    local move_data_cfg=/tmp/init.move.data.cfg
+    local move_ready=0
     BATCH_FILE=/tmp/cfg_backup_batch.json
 
-    # 1. Create dump with parameters from printer.base.cfg
-    # Use defaults when the source config has no matching parameters.
-    if chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
-            --mode backup \
-            --config /opt/config/printer.base.cfg \
-            --data $TMP_CFG_PATH \
-            --params /opt/config/mod/.cfg/init.move.cfg; then
-        # TODO: Merge with defaults?
-        DATA_MOVE_CFG=$TMP_CFG_PATH
-    else
-        DATA_MOVE_CFG=/opt/config/mod/.cfg/data.init.move.cfg
+    if prepare_init_move "$actual_move_cfg" "$move_data_cfg"; then
+        move_ready=1
     fi
 
     # Create the batch file
     echo "[" > $BATCH_FILE
 
-    # 2. Move params from printer.base.cfg to printer.cfg
-    echo "
+    # 2. Move missing sections from printer.base.cfg or defaults to printer.cfg
+    if [ "$move_ready" -eq 1 ]; then
+        echo "
     {
         \"mode\": \"restore\",
         \"config\": \"/opt/config/printer.cfg\",
-        \"data\": \"$DATA_MOVE_CFG\",
-        \"params\": \"/opt/config/mod/.cfg/init.move.cfg\",
+        \"data\": \"$move_data_cfg\",
+        \"params\": \"$actual_move_cfg\",
         \"avoid_writes\": true
     }," >> $BATCH_FILE
+    fi
 
     # 3. Initialize display configuration
     local screen
@@ -482,7 +536,7 @@ fix_config() {
     sync
 
     # Clean up the temporary files
-    rm -f $BATCH_FILE $TMP_CFG_PATH
+    rm -f "$BATCH_FILE" "$actual_move_cfg" "$move_data_cfg"
 
     # Restore optional legacy backup without blocking initialization.
     if [ -f /opt/config/printer.base.cfg.bak ]; then

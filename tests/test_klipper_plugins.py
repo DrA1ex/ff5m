@@ -378,7 +378,7 @@ class OverlayTests(unittest.TestCase):
             script.chmod(0o755)
         self.env.update(SCRIPTS=str(scripts), CMDS=str(scripts / "commands"))
         source = (ROOT / ".shell/init-main.sh").read_text()
-        function = source[source.index("fix_config() {"):source.index("rotate_logs() {")]
+        function = source[source.index("extract_move_section() {"):source.index("rotate_logs() {")]
         function = function.replace("/tmp/", str(self.runtime) + "/")
         function = function.replace("/opt/config/mod_data", str(self.data)).replace("/opt/config", str(config_root))
         # Keep the existing GNU sed batch finalizer portable on host macOS.
