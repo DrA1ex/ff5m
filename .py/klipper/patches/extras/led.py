@@ -3,7 +3,7 @@
 # Changes:
 # - Added invert parameter
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Copyright (C) 2019-2022  Kevin O'Connor <kevin@koconnor.net>
 #
@@ -216,7 +216,9 @@ class PrinterPWMLED:
         self.led_helper = pled.setup_helper(config, self.update_leds, 1)
         self.prev_color = color = self.led_helper.get_status()['color_data'][0]
         for idx, mcu_pin in self.pins:
-            mcu_pin.setup_start_value(color[idx], 0.)
+            start_value = 1. - color[idx] if self.invert else color[idx]
+            shutdown_value = 1. if self.invert else 0.
+            mcu_pin.setup_start_value(start_value, shutdown_value)
     def update_leds(self, led_state, print_time):
         if print_time is None:
             eventtime = self.printer.get_reactor().monotonic()
