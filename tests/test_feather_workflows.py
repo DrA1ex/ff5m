@@ -1990,8 +1990,8 @@ class UsbStorageMonitorTest(unittest.TestCase):
     def _event(action="add", subsystem="block", usb=True):
         path = ("/devices/platform/usb1/1-1/block/sda"
                 if usb else "/devices/platform/mmc/block/mmcblk0")
-        return ("ACTION=%s\0SUBSYSTEM=%s\0DEVPATH=%s\0DEVNAME=sda\0"
-                % (action, subsystem, path)).encode("ascii")
+        return ("%s@%s\0ACTION=%s\0SUBSYSTEM=%s\0DEVPATH=%s\0DEVNAME=sda\0"
+                % (action, path, action, subsystem, path)).encode("ascii")
 
     def _monitor(self, processes, mounted):
         calls = []
@@ -2072,9 +2072,13 @@ class UsbStorageMonitorTest(unittest.TestCase):
         self._tick(monitor, 1.0)
         self.assertEqual(len(calls), 1)
 
+        display = "/devices/platform/soc@3000000/5000000.disp"
         events.messages.extend([
             self._event("change", usb=False),
             self._event("add", subsystem="net"),
+            # Sent by the display driver on every vsync while Typer runs.
+            ("change@%s\0ACTION=change\0DEVPATH=%s\0SUBSYSTEM=platform\0"
+             "VSYNC0=197946048884381\0" % (display, display)).encode("ascii"),
         ])
         monitor._worker.poll(2.0)
         self._tick(monitor, 3.0)

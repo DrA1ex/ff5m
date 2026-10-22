@@ -454,6 +454,10 @@ class UsbStorageMonitor:
 
     @staticmethod
     def _is_usb_block_event(message):
+        # A kernel uevent starts with "ACTION@DEVPATH". Checking it first
+        # skips the field parse for the display's vsync event on every frame.
+        if b"/usb" not in message.partition(b"\0")[0]:
+            return False
         fields = {}
         for field in message.split(b"\0"):
             key, separator, value = field.partition(b"=")
