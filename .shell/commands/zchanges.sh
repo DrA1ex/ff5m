@@ -71,7 +71,11 @@ case "$key" in
     ;;
 
     timelapse)
-        chroot "$MOD" /opt/config/mod/.root/S65moonraker restart
+        DISABLE_MOONRAKER=$("$CFG_SCRIPT" "$VAR_PATH" --get "disable_moonraker" "0")
+
+        if [ "$DISABLE_MOONRAKER" != "1" ]; then
+            chroot "$MOD" /opt/config/mod/.root/S65moonraker restart
+        fi
     ;;
     
     user_plugins_override_patches)
