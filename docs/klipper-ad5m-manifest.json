@@ -43,7 +43,7 @@
     },
     "klippy/extras/led.py": {
       "ff5m": ".py/klipper/patches/extras/led.py",
-      "sha256": "8b41182ee471b099086512c793d44dc98342f28b032af31707884055da8937a0"
+      "sha256": "1c999bd67a909d4276b31410d3de9916aed6e22115bed792faaee33c525863e2"
     },
     "klippy/extras/probe.py": {
       "ff5m": ".py/klipper/patches/extras/probe.py",

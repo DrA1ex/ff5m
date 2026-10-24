@@ -74,7 +74,7 @@ case "$key" in
         DISABLE_MOONRAKER=$("$CFG_SCRIPT" "$VAR_PATH" --get "disable_moonraker" "0")
 
         if [ "$DISABLE_MOONRAKER" != "1" ]; then
-            chroot "$MOD" /opt/config/mod/.root/S65moonraker restart
+            chroot "$MOD" /opt/config/mod/.root/S65moonraker try-restart
         fi
     ;;
     

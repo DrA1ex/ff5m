@@ -2,6 +2,9 @@
 #
 # Start moonraker
 #
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+#
 
 PYTHON=/root/moonraker-env/bin/python3
 MOONRAKER=/root/moonraker-env/moonraker/moonraker.py
@@ -76,8 +79,15 @@ case "$1" in
     restart|reload)
         restart
     ;;
+    try-restart)
+        if [ -f "$PID_FILE" ] && start-stop-daemon -K -t -q -p "$PID_FILE"; then
+            restart
+        else
+            echo "Moonraker is not running; skipping restart."
+        fi
+    ;;
     *)
-        echo "Usage: $0 {start|stop|restart}"
+        echo "Usage: $0 {start|stop|restart|try-restart}"
         exit 1
 esac
 

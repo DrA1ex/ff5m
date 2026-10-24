@@ -657,7 +657,7 @@
       "type": "bool",
       "default": 1,
       "label": "Preview back to files",
-      "description": "Skip print confirmation when going back.",
+      "description": "Back from preview opens file browser.",
       "order": 50000
     },
     {
@@ -1059,7 +1059,8 @@
       "type": "bool",
       "default": 0,
       "label": "Disable Moonraker",
-      "description": "Disable the Moonraker API service.",
+      "description": "Printer restart required.",
+      "warning": "Restart the printer to apply this change.",
       "order": 30000
     },
     {

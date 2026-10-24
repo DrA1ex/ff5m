@@ -237,6 +237,18 @@ class ModParameterTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.set_value("timelapse_every_percent", 100)
 
+    def test_moonraker_selection_warns_to_restart_in_both_directions(self):
+        messages = []
+        self.manager.gcode.respond_raw = messages.append
+        for value in ("1", "0"):
+            messages.clear()
+            command = SimpleNamespace(get=lambda key, default=None: {
+                "PARAM": "disable_moonraker", "VALUE": value
+            }.get(key, default), error=RuntimeError, respond_raw=messages.append)
+            self.manager.cmd_SET_MOD(command)
+            self.assertIn("Restart the printer to apply this change.", messages)
+            self.assertEqual(self.manager.variables["disable_moonraker"], value == "1")
+
     def test_offsets_outside_two_mm_remain_supported(self):
         for value in (-5.0, 5.0):
             self.manager.set_value("z_offset", value)
