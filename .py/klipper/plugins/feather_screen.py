@@ -2190,7 +2190,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                 reason = content["message"].splitlines()[0].strip()
                 weight = re.fullmatch(
                     r"Shutdown due to sensor value exceeding the limit "
-                    r"\(weightValue: (-?\d+(?:\.\d+)?) g\)", reason)
+                    r"\(weightValue: (-?\d+(?:\.\d+)?)(?: g)?\)", reason)
                 if weight is not None:
                     title = "BED PRESSURE LIMIT"
                     dialog_width = 700

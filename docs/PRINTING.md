@@ -323,13 +323,13 @@ These are described in [Configuration](CONFIGURATION.md).
 
 ## Fixing Communication Timeout (E0011) / Move Queue Overflow (E0017) Error
 
-The Stock Klipper build uses communication and move-queue values that can trigger E0011 or E0017 under some workloads. Enable the Forge-X patch with:
+The Stock Klipper build uses communication and move-queue values that can trigger E0011 or E0017 under some workloads. Forge-X timing adjustments are enabled by default (`tune_klipper=1`). Updates preserve saved settings; if you previously disabled this option, re-enable it with:
 
 ```gcode
 SET_MOD PARAM=tune_klipper VALUE=1
 ```
 
-Changing this parameter restarts the relevant printer services. Recreate the bed mesh and verify Z offset if other motion/config tuning was enabled at the same time.
+Changing this parameter restarts Klipper. To use the stock FlashForge TRSYNC and lookahead timings, set it to `0`; see [Configuration](CONFIGURATION.md#key-parameters). Recreate the bed mesh and verify Z offset if other motion/config tuning was enabled at the same time.
 
 ## Reducing Resource Usage
 
@@ -376,7 +376,7 @@ Test the complete start, finish, cancel, and failure paths before relying on thi
 
 Use these settings for timing/MCU errors, not merely because memory usage is high:
 
-- `tune_klipper` adjusts the Stock communication timeout and move-queue behavior for E0011/E0017:
+- `tune_klipper` adjusts the Stock communication timeout and move-queue behavior for E0011/E0017 and is on by default. If it was previously disabled:
 
   ```gcode
   SET_MOD PARAM=tune_klipper VALUE=1

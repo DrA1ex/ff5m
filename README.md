@@ -47,7 +47,6 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 **Recommended**
 
-- `SET_MOD PARAM=tune_klipper VALUE=1`: [Klipper tuning](/docs/CONFIGURATION.md#configuration-macros) to avoid typical MCU errors.
 - `SET_MOD PARAM=tune_config VALUE=1`: [config tuning](/docs/CONFIGURATION.md#configuration-macros) for a better first layer (⚠️ recalibrate afterward).
 
 **Optional**

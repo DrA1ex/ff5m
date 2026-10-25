@@ -3,7 +3,7 @@
 # Copyright (C) 2020  Dmitry Butyugin <dmbutyugin@google.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import collections, importlib, logging, math, multiprocessing, traceback
+import collections, importlib, logging, math, traceback
 shaper_defs = importlib.import_module('.shaper_defs', 'extras')
 
 MIN_FREQ = 5.
@@ -72,7 +72,10 @@ class ShaperCalibrate:
     def background_process_exec(self, method, args):
         if self.printer is None:
             return method(*args)
-        import queuelogger
+        # Avoid loading multiprocessing before calibration. ARMv7/Python 3.7
+        # import-only tests measured ~706 KiB extra PSS (10-run mean);
+        # actual Klippy savings depend on other imports, and are not additive.
+        import multiprocessing, queuelogger
         parent_conn, child_conn = multiprocessing.Pipe()
         def wrapper():
             queuelogger.clear_bg_logging()

@@ -30,9 +30,9 @@ class TemperatureSensorShutdownTest(unittest.TestCase):
 
         sensor.printer.invoke_shutdown.assert_called_once_with(
             "Shutdown due to sensor value exceeding the limit "
-            "(weightValue: 1284.75 g)")
+            "(weightValue: 1284.75)")
 
-    def test_other_sensor_keeps_generic_shutdown_reason(self):
+    def test_other_sensor_records_its_name_and_value(self):
         sensor = SENSOR.PrinterSensorGeneric.__new__(
             SENSOR.PrinterSensorGeneric)
         sensor.name = "other"
@@ -42,7 +42,7 @@ class TemperatureSensorShutdownTest(unittest.TestCase):
         sensor._handle_exceed(250.0)
 
         sensor.printer.invoke_shutdown.assert_called_once_with(
-            "Shutdown due to sensor value exceeding the limit")
+            "Shutdown due to sensor value exceeding the limit (other: 250.00)")
 
 
 if __name__ == "__main__":

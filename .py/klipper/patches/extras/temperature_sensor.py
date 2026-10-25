@@ -70,10 +70,9 @@ class PrinterSensorGeneric:
         template = self._template(temp)
         # Run M112 immediately if present
         if self.m112_r.search(template):
-            reason = "Shutdown due to sensor value exceeding the limit"
-            if self.name == "weightValue":
-                reason += " (weightValue: %.2f g)" % temp
-            self.printer.invoke_shutdown(reason)
+            self.printer.invoke_shutdown(
+                "Shutdown due to sensor value exceeding the limit (%s: %.2f)"
+                % (self.name, temp))
             return
 
         now = self.reactor.monotonic()

@@ -530,7 +530,7 @@
     {
       "key": "tune_klipper",
       "type": "bool",
-      "default": 0,
+      "default": 1,
       "label": "Tune klipper parameters",
       "description": "Apply Forge-X Klipper tuning.",
       "restart": "printer",

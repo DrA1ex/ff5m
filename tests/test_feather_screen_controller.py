@@ -3650,7 +3650,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.params = type("Params", (), {
             "variables": {"weight_check_max": 1200}})()
 
-        controller._show_error('Shutdown due to sensor value exceeding the limit (weightValue: 1284.75 g)\nPrinter is shutdown', 'shutdown', 'firmware_restart')
+        controller._show_error('Shutdown due to sensor value exceeding the limit (weightValue: 1284.75)\nPrinter is shutdown', 'shutdown', 'firmware_restart')
 
         drawing = "\n".join(batches[-1])
         rendered = " ".join(re.findall(r'-t "([^"]+)"', drawing))

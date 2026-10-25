@@ -192,8 +192,6 @@ while read -r file; do
         fi
 
         if [ "$DEST_FILE" = "./mod/.bin/exec/netd" ]; then
-            # Replacing the inode is safe while the old daemon is executing;
-            # truncating the running image in place fails with ETXTBSY.
             for candidate in $(pidof netd 2>/dev/null); do
                 current_exe=$(readlink "/proc/$candidate/exe" 2>/dev/null)
                 if [ "$current_exe" = "$EXPECTED_NETD" ]; then
@@ -201,13 +199,20 @@ while read -r file; do
                     break
                 fi
             done
+        fi
+
+        if [ "$DEST_FILE" = "./mod/.bin/exec/netd" ] || [[ "$DEST_FILE" = *.so ]]; then
+            # Keep executing binaries and mapped libraries on their old inode
+            # until restart. Copying in place can corrupt a live shared library.
             STAGED_FILE="${DEST_FILE}.sync.$$"
             rm -f "$STAGED_FILE"
             cp -p "$SRC_FILE" "$STAGED_FILE" \
                 && mv -f "$STAGED_FILE" "$DEST_FILE"
             copy_result=$?
             rm -f "$STAGED_FILE"
-            NETD_CHANGED=1
+            if [ "$DEST_FILE" = "./mod/.bin/exec/netd" ]; then
+                NETD_CHANGED=1
+            fi
         else
             cp "$SRC_FILE" "$DEST_FILE"
             copy_result=$?

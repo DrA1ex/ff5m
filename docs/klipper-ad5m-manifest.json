@@ -3,10 +3,10 @@
   "binaries": {
     "klippy/chelper/c_helper.so": {
       "ff5m": ".py/klipper/patches/chelper/c_helper.so",
-      "sha256": "1f80f81bee9e9a75669842ff3d42e4b41432c22095e2d35783277f057fb0b5e4"
+      "sha256": "476b43ce5eeb766c418528d4cc7e2c5141269c8a435124df9fa11852feb405c3"
     }
   },
-  "commit": "78602795d93c23822f4f530fa8d0a7c3d183c6e9",
+  "commit": "6ea380d0e082a7ad6cae1bb97c0a5b540d340e2f",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -16,6 +16,10 @@
     "klippy/configfile.py": {
       "ff5m": ".py/klipper/patches/configfile.py",
       "sha256": "274d98b6e75054b83171243165d724c2787bcb690de4a64abd76e9046d0d7508"
+    },
+    "klippy/extras/adxl345.py": {
+      "ff5m": ".py/klipper/patches/extras/adxl345.py",
+      "sha256": "dbcfae1f9b679a41d499016ace4c7b9af3d002471ddb10922bcd770f9c32e2f2"
     },
     "klippy/extras/buttons.py": {
       "ff5m": ".py/klipper/patches/extras/buttons.py",
@@ -59,7 +63,7 @@
     },
     "klippy/extras/shaper_calibrate.py": {
       "ff5m": ".py/klipper/patches/extras/shaper_calibrate.py",
-      "sha256": "ee146d663a6d24111591ea499020d698e8b8fd040a9a7e6baa4f39f6008c0cac"
+      "sha256": "a2da64fe8a3cdebec785fddf9b65d58cdbcc6251c3816f5514ed78f212667bb9"
     },
     "klippy/extras/statistics.py": {
       "ff5m": ".py/klipper/patches/extras/statistics.py",
@@ -67,7 +71,7 @@
     },
     "klippy/extras/temperature_sensor.py": {
       "ff5m": ".py/klipper/patches/extras/temperature_sensor.py",
-      "sha256": "a12f6add9b38488d88a186c4849067cb3978203c3558773793bf0ec16ddf4c2e"
+      "sha256": "e55e4557518b6207a81ee4186e3f71d49043289f65292ffff9f6c0c8c896fa37"
     },
     "klippy/extras/tmc.py": {
       "ff5m": ".py/klipper/patches/extras/tmc.py",
@@ -92,6 +96,10 @@
     "klippy/reactor.py": {
       "ff5m": ".py/klipper/patches/reactor.py",
       "sha256": "9481fbecebe520c8367d792e523cc3f4ddd773801054f235329f725885c48780"
+    },
+    "klippy/serialhdl.py": {
+      "ff5m": ".py/klipper/patches/serialhdl.py",
+      "sha256": "27adbff9f9d1f98bcb1bce2135abe11b6e5c72accd5c08920ee99bfa9abaabd8"
     },
     "klippy/toolhead.py": {
       "ff5m": ".py/klipper/patches/toolhead.py",

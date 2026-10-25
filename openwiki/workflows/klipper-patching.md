@@ -1,7 +1,5 @@
 # Built-in Klipper patching
 
-# Built-in Klipper patching
-
 Forge-X **keeps the printer’s stock host Klipper** at `/opt/klipper/klippy`; it does not build or install a complete upstream Klipper tree. Instead, each normal mod initialization overlays a small, version-sensitive set of replacement modules, compiled host helpers, and extra plugins onto that stock tree. This is the project’s mechanism for carrying printer-specific fixes while retaining the native MCU firmware and making uninstall reversible.
 
 > **Hardware-risk boundary:** a patch can apply mechanically yet be incorrect for a supported stock firmware layout or unsafe in a motion/calibration workflow. Do not edit deployed `/opt/klipper` files as a durable fix; update the overlay and validate on the relevant printer/firmware combination.
@@ -60,14 +58,125 @@ The replacement files carry short `Changes:` headers where applicable. Examples 
 - [`patches/extras/gcode_shell_command.py`](../../.py/klipper/patches/extras/gcode_shell_command.py) adds Forge-X background/exclusive execution parameters.
 - [`patches/extras/temperature_sensor.py`](../../.py/klipper/patches/extras/temperature_sensor.py) adds a G-code action for out-of-range sensor values.
 - [`patches/extras/shaper_calibrate.py`](../../.py/klipper/patches/extras/shaper_calibrate.py) drains a ready child-process result before waiting for the child to exit. Recent history documents why: a result larger than the OS pipe buffer could otherwise block `SHAPER_CALIBRATE` indefinitely.
-- [`patches/extras/probe.py`](../../.py/klipper/patches/extras/probe.py) closes locally owned multi-probe lifecycles in `finally`, including probe, tolerance, and retract failures. The matching change and behavioral tests are in [klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m), commit `13603008cd6401395aa45b8a02a14b0e0888c937`, following [PR #93](https://github.com/DrA1ex/ff5m/pull/93).
-- `patches/kinematics/extruder.py`, `patches/chelper/__init__.py`, and `patches/chelper/c_helper.so` are one matched adaptive pressure advance host backport. The native helper is soft-float ARM EABI and depends only on the stock `libc.so.6`; it is not MCU firmware and does not use Forge-X's `libstdc++` runtime bundle.
+- [`patches/extras/probe.py`](../../.py/klipper/patches/extras/probe.py) closes locally owned multi-probe lifecycles in `finally`, including probe, tolerance, and retract failures. The matching published source is in [klipper-ad5m commit `c0b26da`](https://github.com/DrA1ex/klipper-ad5m/commit/c0b26daa5a54de73fe70619e1e6294149ce2b4c4), following [PR #93](https://github.com/DrA1ex/ff5m/pull/93); the behavioral tests remain in Forge-X.
+- `patches/kinematics/extruder.py`, `patches/chelper/__init__.py`, and `patches/chelper/c_helper.so` retain the matched adaptive pressure advance host API. The helper also carries the serial-queue timing backport. It is soft-float ARM EABI and depends only on the stock `libc.so.6`; it is not MCU firmware and does not use Forge-X's `libstdc++` runtime bundle.
 
 Keep an explanation close to the changed behavior in the file or commit. The wiki should not become a speculative inventory of every line-level divergence from stock Klipper.
 
+## Patch provenance and verification
+
+[`docs/klipper-ad5m-manifest.json`](../../docs/klipper-ad5m-manifest.json) pins
+the replacement sources to `6ea380d0e082a7ad6cae1bb97c0a5b540d340e2f` in
+[DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m). All 25 shipped
+Python replacements match that snapshot byte for byte. The manifest also
+records the SHA-256 of the rebuilt `c_helper.so`; the fork stores its C sources,
+not the prebuilt binary.
+
+The three UART changes after the previous snapshot `dfd1945` are:
+
+- [`4944975`](https://github.com/DrA1ex/klipper-ad5m/commit/494497507f639b29aadcc7234ad9c38d568ea284):
+  `serialhdl.py` falls back to the connection's configured baud rate when
+  the MCU identify dictionary omits `SERIAL_BAUD`. This gives serialqueue
+  the wire frequency needed to account for transmission time.
+- [`4375de3`](https://github.com/DrA1ex/klipper-ad5m/commit/4375de3a2530aa5a49eb15f7ddda95528e9dbf9c):
+  UART sessions fall back to a 192-byte `RECEIVE_WINDOW` when the dictionary
+  omits it. The commit records disassembly of `serial_rx_byte()` in stock
+  `Mainboard-20230831.bin` and `Eboard-20231012.hex`: both accept buffer indices
+  through `0xbf`, with buffers at `0x200001b0` and `0x20000140`, respectively.
+  The host can therefore use its existing byte-based receive-window limit
+  alongside `MAX_PENDING_BLOCKS`, without changing MCU firmware. This evidence
+  applies to those stock images; recheck the buffer before reusing the fallback
+  with different MCU firmware.
+- [`ce2ec15`](https://github.com/DrA1ex/klipper-ad5m/commit/ce2ec150b510ec4119c09e3d7fc5b1f059d8c386):
+  upstream [`2e5802370c1a`](https://github.com/Klipper3d/klipper/commit/2e5802370c1a)
+  reduces `MIN_REQTIME_DELTA` from 250 ms to 100 ms in `serialqueue.c`. The
+  shorter early-send horizon avoids flushing many small UART blocks while
+  the MCU move queue is saturated. This change requires the rebuilt helper;
+  installing only `serialhdl.py` does not apply it.
+
+Firmware-provided baud rates and receive windows take precedence. The
+fallbacks apply only to sessions marked as UART (`serial_fd_type == b'u'`),
+and each fallback is logged. CAN frequency selection remains unchanged.
+These changes are unconditional host fixes, independent of `tune_klipper`.
+
+The snapshot is on `opt/lazy-multiprocessing-imports`, two commits after
+`main` at `4375de3`. Both are shipped:
+
+- [`219e99c`](https://github.com/DrA1ex/klipper-ad5m/commit/219e99c435d80e1fe0733349fc350d944ef49f3a)
+  moves the `adxl345.py` multiprocessing import into accelerometer CSV export.
+- [`6ea380d`](https://github.com/DrA1ex/klipper-ad5m/commit/6ea380d0e082a7ad6cae1bb97c0a5b540d340e2f)
+  moves the `shaper_calibrate.py` import into background calculation, after
+  the direct-call path for offline tools.
+
+The fork measured about 706 KiB additional PSS for importing multiprocessing
+alone on ARMv7/Python 3.7 (ten-run mean). This is import overhead, not a measured
+whole-Klippy saving; the two changes are not additive. An operation that needs
+the module still loads it, and it remains loaded afterward. Process creation,
+calculation results, errors, and CSV formatting are unchanged.
+`tests/test_klipper_lazy_multiprocessing.py` checks clean-interpreter imports,
+offline calls, CSV export, and a real forked calculation with a result larger
+than the pipe buffer and a child error.
+
+The host patch inventory was compared against the fork's stock commit across
+`main` and the deferred-import branch. The startup GC and immutable-config
+changes from `experimental-gc` are already included through `1c21f43`; its
+older tree must not replace the newer host fixes. `garbage_collection.py` is
+shipped separately as a plugin. The MCU sources on `mcu-v0.11` are a separate
+firmware development branch, not a host overlay update.
+
+Adaptive Pressure Advance is already published in
+[`4f41d5d`](https://github.com/DrA1ex/klipper-ad5m/commit/4f41d5df9c9fc6b4105b61633224d8f4dae95ff3),
+the backport of upstream `c84d78f3f169bc5163d11b74837f9880b0b7dba4`.
+It includes `kinematics/extruder.py`, the CFFI declarations in
+`chelper/__init__.py`, and the time-indexed PA history in `kin_extruder.c`.
+The Forge-X Private build inputs under `src/klipper_c_helper/source/klippy/`
+match the corresponding fork files, including the serial-queue update. Build
+with `src/klipper_c_helper/build.sh`, run `src/klipper_c_helper/test.sh`, and
+copy only `exec/klipper/c_helper.so` into `.py/klipper/patches/chelper/`.
+The build checks ARM EABI5 soft-float, the sole `libc.so.6` dependency, and
+stock-compatible GLIBC symbol versions. Keep the PA Python modules and helper
+API together when updating either backport.
+
+The helper is tracked at `.py/klipper/patches/chelper/c_helper.so` in the
+Forge-X repository. `sync.sh` includes it in both full and lightweight archives:
+`--skip-heavy` excludes `.bin`, not `.py/klipper/patches`. `sync_remote.sh`
+replaces `.so` files using a neighboring temporary file and atomic rename,
+preserving the inode mapped by the running process until it exits. Copy or
+rename failure keeps the old helper and removes the partial temporary file.
+The overlay then preserves the stock helper as `.bak` and links
+`/opt/klipper/klippy/chelper/c_helper.so` to the deployed patch.
+
+Use the `klipper` sync profile when deploying a changed helper: it reloads the
+overlay and hard-restarts Klippy. The CFFI library is cached in the process,
+so an in-process `RESTART` alone does not load a new helper. Other profiles
+still transfer the file, but their restart policy may leave the old library
+active until a full process restart. `tests/test_klipper_sync.py` checks archive
+inclusion, profile flags, loaded-inode preservation, idempotence, and failed
+copy/rename recovery without connecting to a printer.
+
+Verify the shipped inventory and hashes offline, then compare Python sources
+against the manifest's exact published commit:
+
+```shell
+.venv/bin/python tests/verify_klipper_fork.py
+.venv/bin/python tests/verify_klipper_fork.py --fork https://github.com/DrA1ex/klipper-ad5m
+```
+
+The fork check must report no source mismatches. It does not compare the
+binary with the fork, which does not contain it; verify its build inputs and
+ABI separately. After updating sources and rebuilding the helper, regenerate
+the inventory with `tests/verify_klipper_fork.py --update --commit <full-sha>`.
+This records hashes; it does not establish correspondence to the fork by itself.
+
+`tests/test_serialhdl_patch.py` exercises session negotiation with missing and
+explicit MCU constants, CAN compatibility, and identify-timeout cleanup.
+The native pressure-advance history test protects values on already-queued
+moves. Hardware validation of UART timing and receive-window behavior remains
+a separate step requiring an idle printer and explicit operator authorization.
+
 ## Runtime-selected tuning
 
-`mod_params.json` declares `tune_klipper` as a boolean defaulting to off and migrates the older `fix_e0017` setting to it. The shared setting selects:
+`mod_params.json` declares `tune_klipper` as a boolean defaulting to on and migrates the older `fix_e0017` setting to it. Initialization fills missing settings from the schema; updates preserve an existing saved value, including `0`. The shared setting selects:
 
 | Module | Default when disabled | Enabled value | Intended symptom |
 |---|---:|---:|---|

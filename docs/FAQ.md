@@ -315,7 +315,7 @@ If you see the error on an older Forge-X version, update first. The stock firmwa
 **What to check:**
 - **Hardware**: Reattach the wiring, especially for the toolhead. Verify that the driver fan works by removing the printer’s back plate.
 - **Memory usage**: Run the `MEM` macro after boot and while reproducing the problem. Aim for usage below 75–80%.
-- **`tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md) optimizes Klipper's internal configuration for E0011 and E0017 and can lower the error rate.
+- **`tune_klipper`**: This [mod parameter](/docs/CONFIGURATION.md#key-parameters) adjusts Klipper timing for E0011 and E0017 and is on by default. Updates preserve an existing saved value; check it if you previously disabled the option.
 - **Resource usage**: Disable features like `weight_check`, `filament_switch_sensor`, or camera streaming. Switch to the Feather screen or Headless mode (Feather typically needs around a tenth of the memory of the Stock screen).
 - **Isolate the print**: Only if the error persists, try a simpler infill or print a single object to see whether a particular file causes it.
 

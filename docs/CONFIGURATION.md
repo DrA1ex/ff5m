@@ -33,7 +33,13 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`block_cloud`**: Blocks the stock FlashForge cloud / telemetry endpoints (Flash Studio / MQTT, VoxelShare, stock OTA, NetEase IM) if set to `1`. Default `0` (off) — leave disabled if you use FlashForge cloud, video streaming or model sharing. Blocking is done at name-resolution level (`/etc/hosts`) only. Full air-gap additionally requires router-level blocking of AlibabaCloud OSS upload URLs.
 
-- **`tune_klipper`**: Enables a fix for Communication Timeout (E0011) / Move Queue Overflow (E0017) errors if set to `1`.
+- **`tune_klipper`**: Enables Forge-X timing adjustments for Communication Timeout (E0011) / Move Queue Overflow (E0017). Default `1` (on); an existing saved value is preserved on update. To use the stock FlashForge AD5M TRSYNC timeout and lookahead flush time, run:
+
+  ```gcode
+  SET_MOD PARAM=tune_klipper VALUE=0
+  ```
+
+  Restore Forge-X timing with `SET_MOD PARAM=tune_klipper VALUE=1`. Changing this setting restarts Klipper. Other Forge-X fixes remain active; this does not restore the complete stock Klipper behavior. See [Klipper fixes](KLIPPER.md#all-changes) for the timing values.
 
 - **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
 
