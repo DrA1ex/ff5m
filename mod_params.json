@@ -375,6 +375,7 @@
       "type": "bool",
       "default": 0,
       "label": "Disable Moonraker",
+      "warning": "Restart the printer to apply this change.",
       "order": 30000
     },
     {

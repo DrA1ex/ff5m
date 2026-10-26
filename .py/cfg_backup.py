@@ -1,10 +1,11 @@
 ## Configuration management, backup and restore
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import argparse
+import io
 import json
 import os.path
 import re
@@ -19,7 +20,6 @@ from typing import Optional, Dict, Self, Iterable, Tuple, Set, Callable, Any
 MAX_BLANK_LINES = 2
 PARAM_WILDCARD = "*"
 
-AVOID_WRITES = False
 DRY_RUN = False
 VERBOSE = False
 
@@ -310,8 +310,10 @@ class ParametersToken(Enum):
     COMMENT = 7
 
 
-def iterate_cmd_config_tokens(file_path, *, callback):
-    with open(file_path, "r") as in_file:
+def iterate_cmd_config_tokens(file_path, *, callback, params_string=None):
+    source = (open(file_path, "r") if params_string is None
+              else io.StringIO(params_string))
+    with source as in_file:
         for line in in_file:
             s_line = line.strip()
 
@@ -339,7 +341,7 @@ def iterate_cmd_config_tokens(file_path, *, callback):
 ## Parameters configuration loading
 ##########################################################################
 
-def parse_cmd_configuration(file_path) -> Configuration:
+def parse_cmd_configuration(file_path=None, *, params_string=None) -> Configuration:
     builder = ConfigurationBuilder()
 
     def _callback(token, **kwargs):
@@ -356,8 +358,12 @@ def parse_cmd_configuration(file_path) -> Configuration:
         elif token == ParametersToken.INCLUDE_REMOVE:
             builder.include(kwargs["path"], Action.REMOVE)
 
-    print(f"Loading parameters from \"{file_path}\"...")
-    iterate_cmd_config_tokens(file_path, callback=_callback)
+    if params_string is None:
+        print(f"Loading parameters from \"{file_path}\"...")
+    else:
+        print("Loading inline parameters...")
+    iterate_cmd_config_tokens(file_path, callback=_callback,
+                              params_string=params_string)
 
     new_config = builder.build()
 
@@ -388,7 +394,7 @@ def parse_cmd_configuration(file_path) -> Configuration:
 def backup(file_path: str, dst_path: str, cfg: Configuration, dry=False):
     print(f"Parsing config \"{file_path}\"...")
 
-    tmp_path = dst_path + ".tmp"
+    tmp_path = f"{dst_path}.tmp.{os.getpid()}"
     with (open(tmp_path, "w") as out_f):
         empty = True
         section_key = None
@@ -505,7 +511,7 @@ def load_backup(file_path: str, cfg: Configuration) -> SavedData:
         elif token == CfgToken.PARAMETER and section_name and cfg.is_saving(section_name, param_name=kwargs["key"]):
             section[kwargs["key"]] = kwargs["value"]
             if VERBOSE: print(f"  - Load Parameter {kwargs['key']}")
-        elif token in {CfgToken.BREAK or CfgToken.SECTION}:
+        elif token in {CfgToken.BREAK, CfgToken.SECTION}:
             section = None
             section_name = None
 
@@ -520,7 +526,7 @@ def load_backup(file_path: str, cfg: Configuration) -> SavedData:
 def restore(file_path: str, saved_data: SavedData, cfg: Configuration, dry=False):
     print(f"Restoring config \"{file_path}\"...\n")
 
-    tmp_path = file_path + ".tmp"
+    tmp_path = f"{file_path}.tmp.{os.getpid()}"
     state = RestoreState(
         cfg=cfg,
         data=deepcopy(saved_data),
@@ -699,6 +705,7 @@ def restore(file_path: str, saved_data: SavedData, cfg: Configuration, dry=False
         iterate_printer_config_tokens(file_path, callback=_parse_config)
 
     if not state.is_changed:
+        os.remove(tmp_path)
         print("Config doesn't contains changed properties!")
         return
 
@@ -836,6 +843,8 @@ class ProcessingParams:
     params_path: str
     mode: str
     no_data: bool
+    avoid_writes: bool
+    params_string: Optional[str] = None
 
 
 def load_params_from_args(values):
@@ -845,16 +854,20 @@ def load_params_from_args(values):
         params_path=values.params,
         mode=values.mode,
         no_data=values.no_data,
+        avoid_writes=values.avoid_writes,
+        params_string=values.params_string,
     )
 
 
-def load_params_from_dict(values):
+def load_params_from_dict(values, avoid_writes=False):
     return ProcessingParams(
         config_path=values["config"],
         mode=values["mode"],
         data_path=values.get("data", None),
         params_path=values.get("params", None),
         no_data=values.get("no_data", False),
+        avoid_writes=values.get("avoid_writes", False) or avoid_writes,
+        params_string=values.get("params_string", None),
     )
 
 
@@ -879,11 +892,15 @@ def process(p: ProcessingParams):
     if not os.path.isfile(p.config_path):
         raise Exception(f"Config file doesn't exists: {p.config_path!r}")
 
+    if p.params_path and p.params_string is not None:
+        raise Exception("Specify either parameters file or inline parameters")
+
     if p.params_path and not os.path.isfile(p.params_path):
         raise Exception(f"Parameters file doesn't exists: {p.params_path!r}")
 
-    if p.params_path:
-        cfg = parse_cmd_configuration(p.params_path)
+    if p.params_path or p.params_string is not None:
+        cfg = parse_cmd_configuration(p.params_path,
+                                      params_string=p.params_string)
         print()
     else:
         cfg = DEFAULT_PARAMETERS
@@ -902,7 +919,7 @@ def process(p: ProcessingParams):
         else:
             backup_data = dict()
 
-        if not AVOID_WRITES or has_changes(p.config_path, backup_data, cfg, logging=_no_logging):
+        if not p.avoid_writes or has_changes(p.config_path, backup_data, cfg, logging=_no_logging):
             restore(p.config_path, backup_data, cfg, DRY_RUN)
         else:
             print("Config doesn't contains changed properties!")
@@ -929,8 +946,11 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--data", type=str,
                         help="Path to saved printer values",
                         default="/opt/config/printer.base.cfg.bak")
-    parser.add_argument("-p", "--params", type=str,
-                        help="Path to backup parameters configuration file", )
+    params_group = parser.add_mutually_exclusive_group()
+    params_group.add_argument("-p", "--params", type=str,
+                              help="Path to backup parameters configuration file")
+    params_group.add_argument("--params-string", type=str,
+                              help="Backup parameters rules as inline text")
     parser.add_argument("-m", "--mode", type=str,
                         choices=["backup", "restore", "verify"],
                         help="Mode: (backup, restore, verify)")
@@ -967,14 +987,13 @@ if __name__ == "__main__":
             exit(4)
 
         try:
-            processing_params = [load_params_from_dict(entry) for entry in batch_data]
+            processing_params = [load_params_from_dict(entry, args.avoid_writes) for entry in batch_data]
         except Exception as e:
             print("Unable to parse batch file:", repr(e), file=sys.stderr)
             exit(5)
     else:
         processing_params = [load_params_from_args(args)]
 
-    AVOID_WRITES = args.avoid_writes
     DRY_RUN = args.dry
     VERBOSE = args.verbose
 
