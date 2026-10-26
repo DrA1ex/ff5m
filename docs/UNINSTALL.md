@@ -28,7 +28,6 @@ Insert USB drive and reboot the printer. The mod will uninstall itself during bo
 
 ## Flashing Factory Firmware  
 If you encounter uninstallation issues or firmware not working correctly after removing the mod, you **can** try to restore it by flashing the factory firmware.  
-It's **recommended** to flash the uninstall image first, to ensure there are no mod files left on the printer.
 
 1. Download the Factory Image:   
    Make sure to select the correct version for your printer (Pro or Non-Pro) based on your specific model. You can access the factory firmware here:  
