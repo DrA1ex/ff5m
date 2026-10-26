@@ -1,6 +1,6 @@
 
 name: Forge-X Bug Report
-description: Report a bug or unexpected behavior in Forge-X
+description: Report a bug in Forge-X
 title: "[Bug]: "
 labels: ["bug"]
 assignees:
@@ -10,26 +10,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        ## Report a Bug
-
-        Thanks for helping improve Forge-X!
-
-        GitHub Issues are intended for bugs in Forge-X itself.
-        Please provide enough information to help us understand
-        the problem. Bugs that occur intermittently are welcome,
-        even if they are difficult to reproduce reliably.
-
-        **Not sure if the problem is caused by Forge-X?**
-        If you need help diagnosing an issue, have a question,
-        or would like to discuss unexpected behavior first,
-        please use:
-
-        - [GitHub Discussions — Q&A](https://github.com/DrA1ex/ff5m/discussions/categories/q-a)
-        - [Telegram Community](https://t.me/+ihE2Ry8kBNkwYzhi)
-        - [Discord Community](https://discord.gg/K7MH4hAfeX)
-
-        Please also check for [existing issues](https://github.com/DrA1ex/ff5m/issues)
-        before submitting a new report.
+        Report suspected Forge-X bugs here, including intermittent issues.
+        For questions or uncertain problems, use [GitHub Discussions — Q&A](https://github.com/DrA1ex/ff5m/discussions/categories/q-a).
+        Please check [existing issues](https://github.com/DrA1ex/ff5m/issues) first.
 
   - type: dropdown
     id: printer_model
@@ -42,103 +25,56 @@ body:
       required: true
 
   - type: input
-    id: versions
+    id: mod_version
     attributes:
-      label: Software Versions
-      description: Forge-X and stock firmware versions, if known.
-      placeholder: "e.g., Forge-X 1.4.2, firmware 3.1.5"
-    validations:
-      required: false
+      label: Forge-X Version
+      placeholder: "e.g., 1.4.2"
 
-  - type: textarea
-    id: description
+  - type: input
+    id: firmware_version
     attributes:
-      label: What happened?
-      description: Describe the problem and what you expected to happen.
-      placeholder: |
-        What went wrong? Were there any error messages?
-        What should have happened instead?
-    validations:
-      required: true
+      label: Firmware Version
+      placeholder: "e.g., 3.1.5"
 
-  - type: textarea
-    id: steps
+  - type: dropdown
+    id: screen_type
     attributes:
-      label: Steps to Reproduce
-      description: How can we reproduce the problem? Leave blank if unknown.
-      placeholder: |
-        1. Open...
-        2. Select...
-        3. The problem occurs...
-    validations:
-      required: false
-
-  - type: markdown
-    attributes:
-      value: |
-        ### Testing Without Forge-X (Recommended)
-
-        If the problem might also occur with stock firmware,
-        run `SKIP_MOD` from the Fluidd console to reboot
-        without Forge-X services, then try to reproduce it.
-
-        - **Problem persists:** It may be related to stock firmware,
-          hardware, or printer configuration rather than Forge-X.
-        - **Problem disappears:** Forge-X may be involved,
-          but additional testing can help confirm this.
-
-        For intermittent problems, a single successful test
-        is not enough to draw a reliable conclusion.
-
-        This test is not necessary for Forge-X-specific features
-        or when the printer cannot boot normally.
+      label: Screen Type
+      options:
+        - Stock screen
+        - Feather
+        - Guppy
+        - Headless
 
   - type: dropdown
     id: skip_mod
     attributes:
-      label: SKIP_MOD Test Result
+      label: SKIP_MOD Test
+      description: If possible, test without Forge-X using SKIP_MOD in Fluidd. Intermittent issues may require repeated testing.
       options:
         - Not tested
-        - Problem also occurs without Forge-X
-        - Problem does not occur without Forge-X
+        - Problem persists without Forge-X
+        - Problem disappears without Forge-X
         - Not applicable / Unable to test
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: What happened? Include reproduction steps, error messages, or expected behavior if known.
+      placeholder: "Describe the problem..."
     validations:
-      required: false
+      required: true
 
   - type: markdown
     attributes:
       value: |
-        ### Debug Logs (Recommended)
-
-        **Logs are extremely helpful** for investigating bugs,
-        especially crashes and intermittent problems.
-
-        - **Web UI accessible:** Run `TAR_DEBUG` in the Fluidd
-          console and attach the generated archive.
-        - **Web UI unavailable:** You can collect `debug.tar`
-          using the appropriate debug image:
-          - [Adventurer 5M](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-debug.tgz)
-          - [Adventurer 5M Pro](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-debug.tgz)
-
-        For installation or uninstallation problems, please
-        attach the logs from your USB drive if available.
-
-        **You can still submit a report if you cannot collect logs.**
+        **Debug logs:** Run `TAR_DEBUG` in Fluidd, or collect `debug.tar` using a debug image:
+        [5M](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-debug.tgz) · [5M Pro](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-debug.tgz).
 
   - type: textarea
-    id: logs
+    id: attachments
     attributes:
-      label: Logs and Attachments
-      description: Attach debug archives, installation logs, screenshots, or other relevant files.
-      placeholder: "Drag and drop files here, or paste relevant error messages."
-    validations:
-      required: false
-
-  - type: textarea
-    id: additional_info
-    attributes:
-      label: Additional Information
-      description: Anything else that might help investigate the issue.
-      placeholder: "e.g., Screen type, other mods, recent updates, SKIP_MOD test details..."
-    validations:
-      required: false
+      label: Logs & Attachments
+      description: Attach debug archives, installation logs, screenshots, or other useful information if available.
+      placeholder: "Drag and drop files here..."
