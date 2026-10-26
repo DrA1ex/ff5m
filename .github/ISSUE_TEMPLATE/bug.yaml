@@ -1,6 +1,7 @@
-name: Forge-X Issue
-description: Report a reproducible bug in Forge-X
-title: "[Issue]: "
+
+name: Forge-X Bug Report
+description: Report a bug or unexpected behavior in Forge-X
+title: "[Bug]: "
 labels: ["bug"]
 assignees:
   - DrA1ex
@@ -9,211 +10,135 @@ body:
   - type: markdown
     attributes:
       value: |
-        ## Before Opening a GitHub Issue
+        ## Report a Bug
 
-        > [!IMPORTANT]
-        > GitHub Issues are **only for reproducible bugs in Forge-X itself**.
-        >
-        > This is **not** general printer support, a hardware issue tracker, or a place for questions.
+        Thanks for helping improve Forge-X!
 
-        If you need help, have a question, or are not sure whether the problem is actually caused by Forge-X, please ask first:
+        GitHub Issues are intended for bugs in Forge-X itself.
+        Please provide enough information to help us understand
+        the problem. Bugs that occur intermittently are welcome,
+        even if they are difficult to reproduce reliably.
+
+        **Not sure if the problem is caused by Forge-X?**
+        If you need help diagnosing an issue, have a question,
+        or would like to discuss unexpected behavior first,
+        please use:
+
         - [GitHub Discussions — Q&A](https://github.com/DrA1ex/ff5m/discussions/categories/q-a)
-        - [Telegram Forge-X Community](https://t.me/+ihE2Ry8kBNkwYzhi) — Forge-X help and troubleshooting
-        - [Discord FlashForge Community](https://discord.gg/K7MH4hAfeX) — general printer help, or Forums → mods-and-projects → Forge-X for Forge-X-specific help
-        
-        ### Verify the problem without Forge-X
-        
-        If the problem can also exist in stock firmware, run `SKIP_MOD` from the Fluidd console and test it again.
-        `SKIP_MOD` reboots the printer with Forge-X startup skipped, allowing you to test the same printer without Forge-X services running.
-        
-        **For intermittent problems, one successful test in stock mode is not enough.**
-        Use the printer in stock mode long enough to be reasonably confident that the problem is gone, repeat the conditions that normally trigger it, or re-enable Forge-X and verify that the problem returns.
-        
-        - If the problem **still occurs after `SKIP_MOD`**, it is **almost certainly not a Forge-X runtime bug**. It is much more likely to be related to the printer itself, hardware, stock firmware, calibration, or saved printer configuration. **Do not open an issue unless you have specific evidence that Forge-X is still involved.**
-        - If the problem **does not occur after `SKIP_MOD`**, do not assume Forge-X is responsible after a single test. Confirm the result as described above before reporting it.
-        - If the problem concerns functionality that only exists in Forge-X, such as a Forge-X-specific UI or feature, the `SKIP_MOD` test may be **not applicable**.
-        
-        <details>
-        <summary><b>Common problems that are often not Forge-X bugs</b></summary>
-        
-        Problems such as these are frequently caused by calibration, mechanics, sensors, hardware, or other printer-side issues:
-        
-        - Incorrect or changing Z-offset / first layer height
-        - Unexpected bed mesh changes or inconsistent probing results
-        - Print quality, extrusion, or motion problems
-        - Mechanical noises or problems with fans, servos, sensors, heaters, motors, or other printer hardware
-        
-        If the same problem remains after `SKIP_MOD`, treat it as a printer-side problem first unless you have clear evidence that Forge-X is responsible.
-        
-        </details>
-        
-        Please review the documentation and existing issues before submitting a report.    
-        
-        Support requests, hardware problems, incomplete reports, and reports that do not identify a Forge-X bug may be **closed without further investigation**. Repeated misuse of the issue tracker may result in being blocked.    
+        - [Telegram Community](https://t.me/+ihE2Ry8kBNkwYzhi)
+        - [Discord Community](https://discord.gg/K7MH4hAfeX)
 
-  - type: checkboxes
-    id: checklist
-    attributes:
-      label: Checklist
-      description: Confirm you’ve completed these steps before submitting.
-      options:
-        - label: I am reporting a reproducible Forge-X bug, not asking for general printer or hardware support.
-          required: true
-
-        - label: I have tried rebooting the printer, and the problem persists.
-          required: true
-
-        - label: I have completed the `SKIP_MOD` verification below when applicable. For an intermittent problem, I did not rely on a single successful stock-mode test.
-          required: true
-
-        - label: I have checked [GitHub Discussions](https://github.com/DrA1ex/ff5m/discussions) and haven't found a similar problem or an existing answer.
-          required: true
-
-        - label: I have searched for [similar issues](https://github.com/DrA1ex/ff5m/issues?q=is%3Aissue) but haven't found any matching reports.
-          required: true
+        Please also check for [existing issues](https://github.com/DrA1ex/ff5m/issues)
+        before submitting a new report.
 
   - type: dropdown
     id: printer_model
     attributes:
       label: Printer Model
-      description: Select your printer model.
       options:
         - Adventurer 5M
         - Adventurer 5M Pro
-      default: 0
     validations:
       required: true
 
   - type: input
-    id: firmware_version
+    id: versions
     attributes:
-      label: Firmware Version
-      description: Enter the firmware version of your printer (e.g., 3.1.5).
-      placeholder: "e.g., 3.1.5"
+      label: Software Versions
+      description: Forge-X and stock firmware versions, if known.
+      placeholder: "e.g., Forge-X 1.4.2, firmware 3.1.5"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen.
+      placeholder: |
+        What went wrong? Were there any error messages?
+        What should have happened instead?
     validations:
       required: true
 
-  - type: input
-    id: mod_version
+  - type: textarea
+    id: steps
     attributes:
-      label: Mod Version
-      description: Enter the version of the mod you are using (e.g., 1.3.3).
-      placeholder: "e.g., 1.3.3"
+      label: Steps to Reproduce
+      description: How can we reproduce the problem? Leave blank if unknown.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. The problem occurs...
     validations:
-      required: true
-
-  - type: checkboxes
-    id: other_mods
-    attributes:
-      label: Other Mods Installed
-      description: Check any other mods you have installed on your printer previously.
-      options:
-        - label: I have installed Klipper Mod earlier.
-          required: false
-
-        - label: I have installed ZMod earlier.
-          required: false
-
-        - label: I have installed Forge-X earlier.
-          required: false
-
-  - type: dropdown
-    id: screen_type
-    attributes:
-      label: Screen Type
-      description: Select the screen configuration you are using when the issue occurs.
-      options:
-        - Stock screen
-        - Feather screen
-        - Guppy screen
-        - Headless
-    validations:
-      required: true
+      required: false
 
   - type: markdown
     attributes:
       value: |
-        ### `SKIP_MOD` Verification    
-        
-        If the problem can be tested in stock firmware, run `SKIP_MOD` and try to reproduce it before opening the issue.
-        
-        For intermittent problems, test stock mode for a meaningful period or enough repetitions to compare behavior. Ideally, also return to Forge-X and confirm that the problem returns.
-        **If the same problem still occurs after `SKIP_MOD`, it is almost certainly not a Forge-X runtime bug.**
+        ### Testing Without Forge-X (Recommended)
+
+        If the problem might also occur with stock firmware,
+        run `SKIP_MOD` from the Fluidd console to reboot
+        without Forge-X services, then try to reproduce it.
+
+        - **Problem persists:** It may be related to stock firmware,
+          hardware, or printer configuration rather than Forge-X.
+        - **Problem disappears:** Forge-X may be involved,
+          but additional testing can help confirm this.
+
+        For intermittent problems, a single successful test
+        is not enough to draw a reliable conclusion.
+
+        This test is not necessary for Forge-X-specific features
+        or when the printer cannot boot normally.
 
   - type: dropdown
-    id: skip_mod_test
+    id: skip_mod
     attributes:
       label: SKIP_MOD Test Result
-      description: Select the result that best describes your verification.
       options:
-        - Tested — the problem still occurs after SKIP_MOD
-        - Tested — the problem does not occur after SKIP_MOD, and I tested stock mode long enough to account for intermittent behavior
-        - Tested — the problem does not occur after SKIP_MOD and returns after re-enabling Forge-X
-        - Not applicable — the problem is specific to Forge-X functionality that does not exist in stock firmware
-        - Unable to test — the problem prevents me from running SKIP_MOD or booting stock firmware
+        - Not tested
+        - Problem also occurs without Forge-X
+        - Problem does not occur without Forge-X
+        - Not applicable / Unable to test
     validations:
-      required: true
-
-  - type: textarea
-    id: skip_mod_details
-    attributes:
-      label: SKIP_MOD Test Details
-      description: Briefly describe how you tested without Forge-X and what happened. For intermittent problems, include how long or how many times you tested. If the test was not applicable or could not be performed, explain why.
-      placeholder: "e.g., Ran SKIP_MOD and completed 5 prints over two days without the issue. Re-enabled Forge-X and the issue returned on the next two prints."
-    validations:
-      required: true
-
-  - type: textarea
-    id: what_did_you_do
-    attributes:
-      label: What did you do?
-      description: Describe the steps you took that led to the issue.
-      placeholder: "e.g., I installed the mod on my Adventurer 5M Pro following the instructions in the README."
-    validations:
-      required: true
-
-  - type: textarea
-    id: what_didnt_work
-    attributes:
-      label: What didn't work?
-      description: Explain what went wrong, including error messages or unexpected behavior.
-      placeholder: "e.g., The printer crashed after starting a print job, showing 'Error E0011' on the screen and 'Timer too close' in Fluidd."
-    validations:
-      required: true
+      required: false
 
   - type: markdown
     attributes:
       value: |
-        ---
-        - **If you can access Web UI:** Run `TAR_DEBUG` on your printer and upload the generated archive file below.
-        - **If you cannot access Web UI:** Flash the appropriate debug image for your printer, then upload the `debug.tar` archive:
-          - Adventurer 5M: [Adventurer5M-debug.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-debug.tgz)
-          - Adventurer 5M Pro: [Adventurer5MPro-debug.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-debug.tgz)
+        ### Debug Logs (Recommended)
+
+        **Logs are extremely helpful** for investigating bugs,
+        especially crashes and intermittent problems.
+
+        - **Web UI accessible:** Run `TAR_DEBUG` in the Fluidd
+          console and attach the generated archive.
+        - **Web UI unavailable:** You can collect `debug.tar`
+          using the appropriate debug image:
+          - [Adventurer 5M](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-debug.tgz)
+          - [Adventurer 5M Pro](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-debug.tgz)
+
+        For installation or uninstallation problems, please
+        attach the logs from your USB drive if available.
+
+        **You can still submit a report if you cannot collect logs.**
 
   - type: textarea
-    id: debug_instructions
+    id: logs
     attributes:
-      label: Debugging Information
-      description: Follow the instructions above and upload the required files.
-      placeholder: "e.g., Drag and drop the debug.tar file here."
+      label: Logs and Attachments
+      description: Attach debug archives, installation logs, screenshots, or other relevant files.
+      placeholder: "Drag and drop files here, or paste relevant error messages."
     validations:
-      required: true
-
-  - type: textarea
-    id: installation_logs
-    attributes:
-      label: Installation/Uninstallation Logs (if applicable)
-      description: If your issue is related to installation or uninstallation, upload the installation log (from USB) or other logs left after flashing the mod.
-      placeholder: "e.g., Drag and drop the log file here."
+      required: false
 
   - type: textarea
     id: additional_info
     attributes:
       label: Additional Information
-      description: Provide any extra details that might be relevant to the issue.
-      placeholder: "e.g., The printer worked fine with mod version 1.2.1 but started crashing after upgrading to 1.2.2."
-
-  - type: markdown
-    attributes:
-      value: |
-        Thank you for providing detailed information! This will help to resolve your issue more quickly.
+      description: Anything else that might help investigate the issue.
+      placeholder: "e.g., Screen type, other mods, recent updates, SKIP_MOD test details..."
+    validations:
+      required: false
