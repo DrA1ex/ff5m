@@ -100,7 +100,7 @@ apply_display_mode() {
 
 case "$1" in
     stock)
-        display_stock
+        display_stock || exit $?
         sync
         
         if [ "$2" != "--skip-reboot" ]; then

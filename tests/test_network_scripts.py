@@ -53,6 +53,30 @@ def patched_ethernet_helper(directory, sys_class_net, interfaces):
 
 
 class NetworkScriptsTest(unittest.TestCase):
+    def test_failed_stock_restore_propagates_status_without_sync_or_reboot(self):
+        for arguments in (("stock",), ("stock", "--skip-reboot")):
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                events = pathlib.Path(directory) / "events"
+                script = pathlib.Path(directory) / "zdisplay.sh"
+                script.write_text(DISPLAY.read_text().replace(
+                    "/tmp/printer", str(pathlib.Path(directory) / "printer")))
+                env = dict(os.environ, TEST_DISPLAY_EVENTS=str(events), MOD="/unused", PY="/unused")
+                result = run([
+                    "bash", "-c", '''
+source() { :; }
+chroot() { echo restore >> "$TEST_DISPLAY_EVENTS"; return 7; }
+sync() { echo sync >> "$TEST_DISPLAY_EVENTS"; }
+reboot() { echo reboot >> "$TEST_DISPLAY_EVENTS"; }
+sleep() { :; }
+export -f source chroot sync reboot sleep
+exec bash "$@"
+''', "display-harness", str(script), *arguments,
+                ], env=env)
+
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(events.read_text().splitlines(), ["restore"])
+                self.assertNotIn("will be rebooted", result.stdout)
+
     def test_common_script_preserves_the_shell_command_builtin(self):
         with tempfile.TemporaryDirectory() as directory:
             netd = pathlib.Path(directory) / "netd"

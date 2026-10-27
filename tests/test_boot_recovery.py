@@ -14,6 +14,7 @@ import pathlib
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -65,6 +66,72 @@ class FakeTyperSession:
 
     def next_tap(self):
         return self.taps.pop(0)
+
+
+# A stand-in for Typer's batch protocol: it commits on "--batch flush", answers
+# the flush receipt on the event pipe and rejects a frame holding "--batch reject"
+# as Typer rejects an invalid command. "--batch tap X" queues a tap that is
+# written in the same event write as the receipt; "--batch hang" sends none.
+FAKE_TYPER = """\
+import os, sys
+arguments = sys.argv[1:]
+events = os.open(arguments[arguments.index("--event-pipe") + 1], os.O_WRONLY)
+os.write(events, b"touch-device connected\\n")
+frame = []
+with open(arguments[arguments.index("--pipe") + 1]) as draw:
+    for line in draw:
+        line = line.strip()
+        if not line.startswith("--batch flush"):
+            frame.append(line)
+            continue
+        taps = [item.split()[2] for item in frame if item.startswith("--batch tap ")]
+        output = "".join("tap {}\\n".format(tap) for tap in taps)
+        if "--batch hang" not in frame:
+            status = "failed" if "--batch reject" in frame else "ok"
+            output += "render {} {} 10 10 5\\n".format(line.split()[-1], status)
+        os.write(events, output.encode())
+        frame = []
+"""
+
+
+class TyperSessionTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = pathlib.Path(temp.name)
+        typer = root / "typer"
+        typer.write_text("#!{}\n{}".format(sys.executable, FAKE_TYPER))
+        typer.chmod(0o755)
+        self.session = RECOVERY.TyperSession(
+            binary=str(typer), draw_pipe=str(root / "draw"),
+            event_pipe=str(root / "events"), touch_device="/dev/null")
+        self.session.start()
+        self.addCleanup(self.session.close)
+
+    def test_confirmed_frame_returns_after_typer_commits_it(self):
+        self.session.send(["--batch fill -p 0 0 -s 10 10 -c 000000"])
+        self.session.send(["--batch fill -p 0 0 -s 10 10 -c ffffff"])
+        self.assertIsNone(self.session.next_tap(timeout=0))
+
+    def test_rejected_frame_is_a_display_failure(self):
+        with self.assertRaisesRegex(RuntimeError, "rejected a frame"):
+            self.session.send(["--batch fill -p 0 0 -s 10 10 -c 000000", "--batch reject"])
+
+    def test_unconfirmed_frame_is_a_display_failure(self):
+        with mock.patch.object(RECOVERY, "RENDER_RECEIPT_TIMEOUT", 0.3):
+            with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+                self.session.send(["--batch hang"])
+
+    def test_taps_read_with_the_receipt_are_delivered_in_order(self):
+        self.session.send(["--batch tap 1:first", "--batch tap 1:second"])
+        self.assertEqual(self.session.next_tap(timeout=0), "1:first")
+        self.assertEqual(self.session.next_tap(timeout=0), "1:second")
+        self.assertIsNone(self.session.next_tap(timeout=0))
+
+    def test_frame_split_across_transport_chunks_is_confirmed_once(self):
+        label = "x" * 1000
+        self.session.send(['--batch text -p 0 0 -t "{}"'.format(label)] * 8 + ["--batch tap 1:done"])
+        self.assertEqual(self.session.next_tap(timeout=0), "1:done")
 
 
 class BootRecoveryTest(unittest.TestCase):
@@ -623,6 +690,10 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertIn("CHECKED: 17 / 50   ERRORS: 1", stats)
         self.assertIn("-c ff6b6b", stats)
         self.assertIn("-c ff6b6b", failure)
+
+    def test_wrapped_text_without_bounds_is_rejected_before_drawing(self):
+        with self.assertRaises(ValueError):
+            RECOVERY.RecoveryView.text(400, 200, "Unbounded paragraph", wrap=True, max_width=700)
 
     def test_pages_without_status_give_long_titles_the_full_header_width(self):
         session = FakeTyperSession()
@@ -1343,6 +1414,44 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertIn(str(active), result.stdout)
         self.assertNotIn(str(backup) + " missing", result.stdout)
 
+    def test_recovery_mounts_and_releases_debugfs_only_when_it_owns_it(self):
+        for name, preexisting in (("new", False), ("existing", True)):
+            with self.subTest(name=name):
+                run_root = self.root / ("debugfs-" + name)
+                run_root.mkdir()
+                command = r'''
+source "$1"
+trap - EXIT HUP INT TERM
+RECOVERY_ACTION="$2/action"
+LIFECYCLE="$2/lifecycle"
+DEBUGFS_EXISTING="$3"
+mount() {
+    if [ "$#" -eq 0 ]; then
+        [ "$DEBUGFS_EXISTING" = 1 ] && echo 'none on /sys/kernel/debug type debugfs (rw)'
+        return 0
+    fi
+    printf 'mount:%s\n' "$*" >> "$LIFECYCLE"
+}
+umount() { printf 'umount:%s\n' "$*" >> "$LIFECYCLE"; }
+mount_recovery_debugfs
+cleanup_recovery_runtime
+'''
+                result = subprocess.run(
+                    ["bash", "-c", command, "debugfs-harness",
+                     str(self.boot_scripts["recovery.sh"]), str(run_root),
+                     "1" if preexisting else "0"],
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    check=False)
+                lifecycle = run_root / "lifecycle"
+                events = lifecycle.read_text(encoding="utf-8") if lifecycle.exists() else ""
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                if preexisting:
+                    self.assertEqual(events, "")
+                else:
+                    self.assertEqual(events, "mount:-t debugfs none /sys/kernel/debug\n"
+                                             "umount:/sys/kernel/debug\n")
+
     def test_recovery_mounts_and_releases_devpts_only_when_needed(self):
         cases = (
             ("new", False, False),
@@ -1554,9 +1663,10 @@ MOD_DATA="$6/data"
 SCRIPTS="$7"
 TEST_ACTION="$8"
 mount_data_partition() { :; }
-find_stock_python() { printf '%s\n' "$MOD/bin/python3"; }
+RECOVERY_PYTHON="$MOD/bin/python3"
 load_stock_printer_identity() { :; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -1619,11 +1729,12 @@ RECOVERY_ACTION="$2/action"
 SCRIPTS="$2/scripts"
 FIRMWARE_MACHINE=Adventurer5M
 mount_data_partition() { :; }
-find_stock_python() { echo /bin/true; }
+RECOVERY_PYTHON=/bin/true
 find_vendor_curl() { return 1; }
 find_vendor_cacert() { return 1; }
 load_stock_printer_identity() { :; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -1677,11 +1788,12 @@ FIRMWARE_MACHINE=Adventurer5M
 TEST_RECOVERY_CLEANED="$2/cleaned"
 TEST_UNINSTALL_MARKER="$2/uninstalled"
 export TEST_RECOVERY_CLEANED TEST_UNINSTALL_MARKER
-find_stock_python() { echo /bin/true; }
+RECOVERY_PYTHON=/bin/true
 find_vendor_curl() { return 1; }
 find_vendor_cacert() { return 1; }
 load_stock_printer_identity() { :; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -1726,11 +1838,12 @@ trap - EXIT HUP INT TERM
 RUN_ROOT="$2"
 RECOVERY_ACTION="$2/action"
 FIRMWARE_MACHINE=Adventurer5M
-find_stock_python() { echo /bin/true; }
+RECOVERY_PYTHON=/bin/true
 find_vendor_curl() { return 1; }
 find_vendor_cacert() { return 1; }
 load_stock_printer_identity() { :; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -1789,11 +1902,12 @@ RECOVERY_RESET_CONFIG="$2/reset.sh"
 FIRMWARE_MACHINE=Adventurer5MPro
 TEST_RESET_MODEL="$2/reset-model"
 export TEST_RESET_MODEL
-find_stock_python() { echo /bin/true; }
+RECOVERY_PYTHON=/bin/true
 find_vendor_curl() { return 1; }
 find_vendor_cacert() { return 1; }
 load_stock_printer_identity() { :; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -1868,6 +1982,43 @@ run_recovery_ui
             arguments[0:2], ["-u", "/opt/config/mod/.py/recovery.py"])
         self.assertEqual(arguments[2:4], ["--machine", "Adventurer5M"])
         self.assertEqual(arguments[4:6], ["--action-file", str(action)])
+
+    def test_missing_recovery_python_reports_launch_failure_without_fallback(self):
+        command = '''
+source "$1"
+trap - EXIT HUP INT TERM
+RECOVERY_PYTHON="$2/missing-python"
+RECOVERY_ACTION="$2/action"
+FIRMWARE_MACHINE=Adventurer5M
+run_recovery_ui
+'''
+        result = subprocess.run(
+            ["bash", "-c", command, "missing-python-harness",
+             str(self.boot_scripts["recovery.sh"]), str(self.root)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+        self.assertEqual(result.returncode, 127, result.stdout)
+
+    def test_certificate_bundle_is_found_without_importing_python_packages(self):
+        script = self.root / "recovery-cacert.sh"
+        script.write_text(self.boot_scripts["recovery.sh"].read_text().replace(
+            "/opt/Python-", str(self.root / "opt" / "Python-")))
+        harness = ['bash', '-c', 'source "$1"; trap - EXIT HUP INT TERM; '
+                   'RECOVERY_PYTHON=/bin/false; find_vendor_cacert',
+                   "certificate-harness", str(script)]
+
+        missing = subprocess.run(harness, text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+
+        certificate = (self.root / "opt" / "Python-3.7.2" / "lib" / "python3.7" / "site-packages"
+                       / "pip" / "_vendor" / "certifi" / "cacert.pem")
+        certificate.parent.mkdir(parents=True)
+        certificate.write_text("fixture certificate bundle")
+        found = subprocess.run(harness, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(found.returncode, 0, found.stdout)
+        self.assertEqual(found.stdout.strip(), str(certificate))
 
     def test_recovery_firmware_handoff_routes_progress_to_screen_logger(self):
         run_root = self.root / "firmware-screen-logger"
@@ -2493,7 +2644,7 @@ commit_boot_guard
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertIn("incomplete mode", result.stdout)
 
-    def _run_hard_stock_preparation(self, restore_status, hangs=False):
+    def _run_hard_stock_preparation(self, restore_status, hangs=False, real_display=False):
         run_root = self.root / ("hard-stock-{}-{}".format(
             restore_status, "hang" if hangs else "done"))
         run_root.mkdir()
@@ -2511,6 +2662,7 @@ commit_boot_guard
         common = run_root / "common.sh"
         common.write_text(
             "MOD={mod}\n"
+            "PY=/unused\n"
             "CMDS={commands}\n"
             "NOT_FIRST_LAUNCH_F={root}/not-first\n"
             "mount_data_partition() {{ echo mount-data >> {calls}; }}\n"
@@ -2575,6 +2727,17 @@ commit_boot_guard
                 encoding="utf-8")
             command.chmod(0o755)
 
+        if real_display:
+            zdisplay.write_text((ROOT / ".shell/commands/zdisplay.sh").read_text().replace(
+                "/opt/config/mod/.shell/common.sh", str(common)), encoding="utf-8")
+            chroot = fake_bin / "chroot"
+            chroot.write_text(
+                '#!/bin/sh\n'
+                'echo restore >> "$STOCK_TEST_CALLS"\n'
+                'touch "$STOCK_TEST_READY"\n'
+                'exit "$STOCK_TEST_STATUS"\n', encoding="utf-8")
+            chroot.chmod(0o755)
+
         for path in self.boot_paths.values():
             path.unlink(missing_ok=True)
         self.boot_paths["SKIP_MOD_HARD_F"].touch()
@@ -2620,6 +2783,45 @@ commit_boot_guard
                       skip_log.read_text(encoding="utf-8"))
         self.assertTrue(self.boot_paths["SKIP_MOD_HARD_F"].exists())
         self.assertFalse(self.boot_paths["SKIP_MOD_SOFT_F"].exists())
+
+    def test_actual_display_restore_failure_is_not_reported_as_stock_ready(self):
+        result, calls, skip_log, _restore_pid = self._run_hard_stock_preparation(7, real_display=True)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        log = skip_log.read_text(encoding="utf-8")
+        self.assertIn("restore\n", calls.read_text(encoding="utf-8"))
+        self.assertIn("Stock screen setup failed", log)
+        self.assertNotIn("Stock display configuration is ready", log)
+        self.assertTrue(self.boot_paths["SKIP_MOD_HARD_F"].exists())
+
+    def test_killed_special_boot_handler_aborts_before_normal_initialization(self):
+        scripts = self.root / "interrupted-handoff"
+        scripts.mkdir()
+        screen = scripts / "screen.sh"
+        screen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        screen.chmod(0o755)
+        special = scripts / "special.sh"
+        special.write_text("#!/bin/sh\nexit 137\n", encoding="utf-8")
+        special.chmod(0o755)
+        init_main = self._patched_script(INIT_MAIN, "interrupted-init-main.sh", {
+            DEPLOYED_BOOT_MODE_SH: str(self.boot_mode_sh),
+            "/opt/config/mod/.shell/common.sh": "/dev/null",
+            "/opt/config/mod/.shell/klipper_overlay.sh": "/dev/null",
+        })
+        result = subprocess.run([
+            "bash", "-c", '''
+source "$1"
+SCRIPTS="$2"
+SPECIAL_BOOT_SCRIPT="$2/special.sh"
+VERSION_PATCH_F="$2/version-patch"
+mount_data_partition() { touch "$SCRIPTS/normal-mount-reached"; }
+initialize
+''', "interrupted-handoff", str(init_main), str(scripts),
+        ], capture_output=True, text=True, check=False)
+
+        self.assertEqual(result.returncode, 137, result.stdout + result.stderr)
+        self.assertNotIn("Mounting partition", result.stdout)
+        self.assertFalse((scripts / "normal-mount-reached").exists())
 
     def test_timed_out_hard_stock_restore_is_stopped_and_boot_continues(self):
         result, calls, skip_log, restore_pid = \

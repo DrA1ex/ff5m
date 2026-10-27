@@ -5,19 +5,13 @@
 
 ## Automatic fallback to stock firmware
 
-If Forge-X fails to start, you usually don't need special tools:
-
-- If normal startup is interrupted or does not finish, the next boot skips Forge-X and starts the stock firmware once.
-- If a Recovery session is interrupted, the next boot also starts the stock firmware instead of re-entering Recovery.
-- After an update, the new startup code must finish successfully once before it replaces the previous boot code. A broken update falls back to stock instead of failing on every boot.
+If Forge-X fails to start, restart the printer. It will normally start the stock firmware so you can recover or remove Forge-X.
 
 To fix or remove the mod, open the [Recovery menu](#forge-x-recovery-menu) by rebooting during the `REBOOT THE PRINTER NOW TO ENTER RECOVERY!` message (see [Dual Boot](DUAL_BOOT.md)). UART, U-Boot, and FEL (below) are needed only when this does not work.
 
-Technical details and tests: [Stock firmware integration and lifecycle safety](DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
-
 ## Forge-X Recovery Menu
 
-Early Forge-X Recovery groups the available operations by purpose:
+Use the touchscreen to choose what you need:
 
 ```text
 FORGE-X RECOVERY
@@ -37,30 +31,48 @@ Before reset, Recovery warns that the current settings will be replaced and offe
 
 Generated diagnostics and settings backups can be downloaded from the address shown on screen. Connect the printer to Ethernet or Wi-Fi first. Leaving the sharing screen or choosing `STOP SHARING` stops the download service.
 
-`NETWORK / SSH` refreshes its displayed state whenever the screen is entered; there is no separate refresh action. Firmware flashing keeps the existing two-stage confirmation flow.
+Use `BOOT OPTIONS` to start Forge-X or the stock firmware, `FIRMWARE / RESTORE` to reinstall firmware, and `NETWORK / SSH` to set up a network connection or remote access.
 
 `FIRMWARE / RESTORE → STOCK FIRMWARE` lists the stock firmware versions for your printer model, newest first; factory images are marked `Factory`. A factory image also flashes the MCUs and resets the printer configuration. The list is read from the [Stock](https://github.com/DrA1ex/ff5m/releases/tag/Stock) and [factory](https://github.com/DrA1ex/ff5m/releases/tag/factory) releases, so it needs a network connection.
 
+### CPU and eMMC tuning
+
+This optional menu changes processor (CPU) and internal storage (eMMC) speed. You can leave the default settings if you are unsure.
+
+1. Open **SYSTEM / DIAGNOSTICS → HARDWARE TUNING**.
+2. Choose a CPU or eMMC setting, then press **APPLY & REBOOT**. The printer restarts into Recovery.
+3. Run the suggested test. Testing is optional but recommended; it cannot guarantee stability during every print.
+4. Choose **ACCEPT PROFILE** to keep the setting, or **DISCARD PROFILE** to return to the last confirmed settings. If a test fails or cannot confirm stability, discard the change.
+5. Choose **BOOT FORGE-X** when finished.
+
+Until you accept or discard a trial, every restart returns to Recovery, and firmware, boot and reset actions stay locked. A firmware installation requested during a trial waits: install it later from **FIRMWARE / RESTORE → DOWNLOADED IMAGES**.
+
+**BACK TO MENU** returns to Recovery without restarting. If the observed settings differ, the screen shows saved and observed values; use a reboot button only when you want to restart.
+
+If the printer freezes, turn it off and on, then follow the on-screen instructions.
+
+To return CPU and eMMC to factory settings, choose **RESTORE STOCK**. Do this before changing firmware: reinstalling firmware or removing Forge-X does not reset these settings.
+
 ## Recovery Using Flashing Image
 
-If you are still able to flash firmware using USB, you can try running a system file integrity check.  
-This process verifies all system files and restores them if they are corrupted.
+If you are still able to flash firmware using USB, you can try running a system file integrity check. This process verifies all system files and restores them if they are corrupted.
 
-There are two versions of these images:  
-- **Dry Run:** This is the same as the full image but does not restore anything. It only prints information about corrupted files. Additionally, you can read the log created on the USB after uninstalling.  
+There are two versions of these images:
+
+- **Dry Run:** This is the same as the full image but does not restore anything. It only prints information about corrupted files. Additionally, you can read the log created on the USB after uninstalling.
 - **Full Recovery:** This contains a full system data backup and restores corrupted files from it.
 
-Before you start, flash the debug image to collect all diagnostics needed for potential future recovery.   
-Choose based on your model:
+Before you start, flash the debug image to collect all diagnostics needed for potential future recovery. Choose based on your model:
+
 - Adventurer 5M: [Adventurer5M-debug.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-debug.tgz)
 - Adventurer 5M **Pro**: [Adventurer5MPro-debug.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-debug.tgz)
 
 Recovery images:
+
 - Dry Run: [Adventurer5M-3.x.x-2.2.3-recovery-dry](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz)
 - Full Recovery: [Adventurer5M-3.x.x-2.2.3-recovery-full.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.x.x-2.2.3-recovery-full.tgz)
 
-If recovery doesn't work, try flashing the [Uninstall image](/docs/UNINSTALL.md#using-uninstall-image), and then the [Factory image](/docs/UNINSTALL.md#flashing-factory-firmware).  
-In most cases, this should restore your printer's functionality.
+If recovery doesn't work, try flashing the [Uninstall image](/docs/UNINSTALL.md#using-uninstall-image), and then the [Factory image](/docs/UNINSTALL.md#flashing-factory-firmware). In most cases, this should restore your printer's functionality.
 
 
 ## Recovery using UART
@@ -71,8 +83,8 @@ If you’ve modified internal system files and something went wrong—your print
 
 To understand the problem, you’ll need a **UART-USB** adapter that supports **3.3V** logic levels. Using a 5V adapter can **damage** the motherboard, so be careful. Alternatively, you can use an ESP8266/ESP32 (do not use an Arduino, as it operates at 5V and could **permanently damage the CPU**). Flash the ESP with the MultiSerial example from the Arduino IDE `(Examples -> Communications -> MultiSerial)`, but change the `Serial` and `Serial1` Baud to `115200`.
 
-Next, connect the UART adapter to the motherboard near the processor (next to USB0).   
-Connect the wires as follows:
+Next, connect the UART adapter to the motherboard near the processor (next to USB0). Connect the wires as follows:
+
 - **RX** on the adapter to **TX** on the motherboard.
 - **TX** on the adapter to **RX** on the motherboard.
 - **GND** to **GND**.
@@ -84,15 +96,14 @@ Connect the wires as follows:
 </p>
 
 
-Connect the adapter to your PC and open a terminal program (e.g., PuTTY, Arduino IDE, or PlatformIO). 
+Connect the adapter to your PC and open a terminal program (e.g., PuTTY, Arduino IDE, or PlatformIO).
 
 On macOS or Linux you can use `screen`:
 ```bash
 screen /dev/<device> 115200
 ```
 
-Power on the printer and observe the logs. 
-These logs will help you determine how far the boot process goes. If the Linux kernel loads, the situation isn’t too bad, and you might be able to fix it without advanced procedures.
+Power on the printer and observe the logs. These logs will help you determine how far the boot process goes. If the Linux kernel loads, the situation isn’t too bad, and you might be able to fix it without advanced procedures.
 
 <p align="center">
 <img width="400" alt="image" src="https://github.com/user-attachments/assets/1e8ee6ff-836a-439d-a45a-613291416d3e" />
@@ -135,10 +146,9 @@ fsck -y /dev/mmcblk0p7
 mount /dev/mmcblk0p7 /data
 ```
 
-6. Now, fix whatever changes caused the issue.  
+6. Now, fix whatever changes caused the issue.
 
-Note that the system isn’t fully booted, so some features may not work.  
-Search online for solutions or ask for help in the Support Telegram Group.
+Note that the system isn’t fully booted, so some features may not work. Search online for solutions or ask for help in the Support Telegram Group.
 
 (Optional) **Check the Filesystem**
 
@@ -200,7 +210,7 @@ sync
 reboot -f
 ```
 
-The system should now boot normally. You can leave the UART connected if needed. If SSH isn’t working, you can log in via UART using the credentials root/root.   
+The system should now boot normally. You can leave the UART connected if needed. If SSH isn’t working, you can log in via UART using the credentials root/root.
 
 If this method doesn’t work, the printer may still be recoverable. If the system partially boots, you might be able to recover files via UART.
 
@@ -212,20 +222,20 @@ You can download the necessary files and access the guide from this link: [Firmw
 
 #### Steps to Restore Firmware
 
-1. Prepare for Recovery:   
-   - You’ll need to solder USB0. This is relatively simple, even for beginners (you would need JST PH2.0 5pin).   
-   - You don’t need to solder a button to a resistor. Instead, interrupt the boot process via UART (press Enter when prompted) to enter U-Boot.   
+1. Prepare for Recovery:
+   - You’ll need to solder USB0. This is relatively simple, even for beginners (you would need JST PH2.0 5pin).
+   - You don’t need to solder a button to a resistor. Instead, interrupt the boot process via UART (press Enter when prompted) to enter U-Boot.
    - Use the firmware dump and tools provided here: [link](https://disk.yandex.ru/d/oie2Chx1rexkgw).
 
-2. Enter FEL Mode:   
+2. Enter FEL Mode:
    - Interrupt the boot process via UART (press Enter when prompted) to enter U-Boot
-   - From U-Boot, run the following command to enter FEL mode:   
+   - From U-Boot, run the following command to enter FEL mode:
    ```
    efex
    ```
 
 3. Follow the Guide
-   - Carefully follow the instructions in the linked guide to complete the recovery process.  
+   - Carefully follow the instructions in the linked guide to complete the recovery process.
 
 4. Flash the dump:
    ```

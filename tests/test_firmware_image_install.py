@@ -236,6 +236,15 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
         self.assertFalse(list(self.staging.glob(".forge-x-install-*")))
         self.assertTrue((self.runner_staging / "runner.sh").exists())
 
+    def test_installation_runs_without_tuning_components(self):
+        image = self._archive("Adventurer5M-test.tgz", [
+            ("flashforge_init.sh", '#!/bin/sh\necho launched > "$RESULT_PATH"\n', 0o755),
+        ])
+        result = self._run(image)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self._wait_for(self.result.exists, "firmware entrypoint did not run")
+        self.assertEqual(self.result.read_text(), "launched\n")
+
     def test_accepted_image_stops_supplied_stock_parent(self):
         image = self._archive("Adventurer5M-test.tgz", [
             ("forge-x-init.sh",

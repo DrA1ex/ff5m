@@ -345,6 +345,13 @@ class FirmwareShellTest(unittest.TestCase):
         self.assertTrue(self.flag.exists())
         self.assertIn("rebooted", succeeded.stdout)
 
+    def test_firmware_request_does_not_depend_on_tuning(self):
+        result = self.run_flash("success")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.request.read_text(), self.name + "\n")
+        self.assertTrue(self.flag.exists())
+        self.assertIn("rebooted", result.stdout)
+
     def test_unpersisted_request_arms_nothing_and_does_not_reboot(self):
         self.write_command("sync", '#!/bin/bash\nexit 1\n')
 
@@ -385,11 +392,12 @@ trap - EXIT HUP INT TERM
 RECOVERY_ACTION="$2/action"
 RUN_ROOT="$2"
 FIRMWARE_MACHINE=Adventurer5M
-find_stock_python() { %s; }
+RECOVERY_PYTHON=/bin/true
 find_vendor_curl() { return 1; }
 find_vendor_cacert() { return 1; }
-load_stock_printer_identity() { :; }
+load_stock_printer_identity() { %s; }
 mount_recovery_devpts() { :; }
+mount_recovery_debugfs() { :; }
 mount_recovery_chroot() { :; }
 start_recovery_touch() { :; }
 start_recovery_netd() { :; }
@@ -405,7 +413,7 @@ clear_recovery_screen() { echo clear >> "$RUN_ROOT/lifecycle"; }
 sync() { :; }
 run_firmware_installer() { echo "$1" > "$RUN_ROOT/installed"; }
 run_recovery_lifecycle
-""" % ("return 1" if fail_early else "echo /bin/true")
+""" % ("return 1" if fail_early else ":")
         return subprocess.run(
             ["bash", "-c", command, "recovery-request-test",
              str(self.script), str(self.root)],

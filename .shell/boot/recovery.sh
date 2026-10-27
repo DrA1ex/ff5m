@@ -16,7 +16,7 @@ RECOVERY_LOG=/data/logFiles/recovery.log
 RECOVERY_INSTALL_IMAGE=/opt/config/mod/.shell/boot/install-image.sh
 RECOVERY_UNINSTALL=/opt/config/mod/.shell/uninstall.sh
 RECOVERY_RESET_CONFIG=/opt/config/mod/.shell/commands/zreset_config.sh
-RECOVERY_PYTHON=""
+RECOVERY_PYTHON=/usr/bin/python3
 RECOVERY_CURL=""
 RECOVERY_CACERT=""
 RECOVERY_CHROOT_MOUNTS=()
@@ -25,8 +25,14 @@ RECOVERY_NTP_STARTED=0
 RECOVERY_TSLIB_STARTED=0
 RECOVERY_TSLIB_PARENT_MOUNTED=0
 RECOVERY_DEVPTS_MOUNTED=0
+RECOVERY_DEBUGFS_MOUNTED=0
 RECOVERY_SSH_ACTIVE=0
 RECOVERY_NOTICE=""
+# Set after the first UI run: a pending trial opens tuning only on entry, not
+# when the UI restarts inside this Recovery (for example after START SSH).
+RECOVERY_UI_RESTARTED=0
+# profilectl's candidate record: an unresolved CPU/eMMC trial.
+RECOVERY_TUNING_TRIAL=/data/.forge-x-overclocking/profile/candidate
 
 prepare_recovery_log() {
     mkdir -p "${RECOVERY_LOG%/*}" || return 1
@@ -72,6 +78,15 @@ mount_recovery_devpts() {
     mkdir -p /dev/pts || return 1
     mount -t devpts devpts /dev/pts || return 1
     RECOVERY_DEVPTS_MOUNTED=1
+}
+
+mount_recovery_debugfs() {
+    # Hardware tuning reads the active eMMC clock from debugfs. Recovery runs
+    # before boot.sh, which mounts it for normal boot.
+    mount | grep -q ' on /sys/kernel/debug ' && return 0
+
+    mount -t debugfs none /sys/kernel/debug || return 1
+    RECOVERY_DEBUGFS_MOUNTED=1
 }
 
 stop_recovery_netd() {
@@ -141,6 +156,11 @@ cleanup_recovery_runtime() {
             && [ "$RECOVERY_SSH_ACTIVE" -eq 0 ]; then
         umount /dev/pts >/dev/null 2>&1 || true
         RECOVERY_DEVPTS_MOUNTED=0
+    fi
+
+    if [ "$RECOVERY_DEBUGFS_MOUNTED" -eq 1 ]; then
+        umount /sys/kernel/debug >/dev/null 2>&1 || true
+        RECOVERY_DEBUGFS_MOUNTED=0
     fi
 }
 trap cleanup_recovery_runtime EXIT
@@ -225,22 +245,6 @@ valid_firmware_path() {
     esac
 }
 
-find_stock_python() {
-    local candidate name selected=""
-
-    for candidate in /opt/Python-*/bin/python3.*; do
-        [ -x "$candidate" ] || continue
-        name=${candidate##*/}
-        case "$name" in python3.*[!0-9]*) continue ;; esac
-
-        [ -z "$selected" ] || return 1
-        selected=$candidate
-    done
-
-    [ -n "$selected" ] || return 1
-    printf '%s\n' "$selected"
-}
-
 find_vendor_curl() {
     local candidate selected=""
 
@@ -255,23 +259,24 @@ find_vendor_curl() {
 }
 
 find_vendor_cacert() {
-    local candidate python_root selected=""
+    local candidate
 
-    python_root=${RECOVERY_PYTHON%/bin/*}
-    for candidate in "$python_root"/lib/python*/site-packages/pip/_vendor/certifi/cacert.pem; do
+    # The stock Python installation's pip ships the CA bundle the vendor curl
+    # needs. Read it as a file: importing pip from /usr/bin/python3 fails on
+    # the printer.
+    for candidate in /opt/Python-*/lib/python3*/site-packages/pip/_vendor/certifi/cacert.pem; do
         [ -r "$candidate" ] || continue
-        [ -z "$selected" ] || return 1
-        selected=$candidate
+        printf '%s\n' "$candidate"
+        return 0
     done
-
-    [ -n "$selected" ] || return 1
-    printf '%s\n' "$selected"
+    return 1
 }
 
 run_recovery_ui() {
     rm -f "$RECOVERY_ACTION"
 
     RECOVERY_SSH_ACTIVE="$RECOVERY_SSH_ACTIVE" \
+        RECOVERY_UI_RESTARTED="$RECOVERY_UI_RESTARTED" \
         RECOVERY_NOTICE="$RECOVERY_NOTICE" \
         RECOVERY_CURL="$RECOVERY_CURL" \
         RECOVERY_CACERT="$RECOVERY_CACERT" \
@@ -327,10 +332,6 @@ run_recovery_lifecycle() {
         sync
     fi
 
-    RECOVERY_PYTHON=$(find_stock_python) || {
-        echo "@@ Unable to select exactly one stock Python runtime."
-        return 1
-    }
     RECOVERY_CURL=$(find_vendor_curl) || RECOVERY_CURL=""
     RECOVERY_CACERT=$(find_vendor_cacert) || RECOVERY_CACERT=""
     echo "// Stock Python: $RECOVERY_PYTHON"
@@ -350,6 +351,8 @@ run_recovery_lifecycle() {
         echo "@@ Unable to prepare recovery devpts."
         return 1
     }
+    mount_recovery_debugfs \
+        || echo "?? Recovery debugfs is unavailable; the active eMMC clock cannot be read."
     mount_recovery_chroot || {
         echo "@@ Unable to mount the recovery chroot."
         return 1
@@ -362,6 +365,13 @@ run_recovery_lifecycle() {
     start_recovery_clock || echo "?? Recovery time synchronization is unavailable."
 
     "$SCRIPTS/screen.sh" splash_stop >/dev/null 2>&1 || true
+
+    if [ "$request_present" -eq 1 ] && [ -e "$RECOVERY_TUNING_TRIAL" ]; then
+        # An unresolved hardware trial comes first. The request stays consumed;
+        # the verified image remains available for a manual installation.
+        RECOVERY_NOTICE="Firmware installation was postponed: accept or discard the hardware trial first. The downloaded image remains in FIRMWARE / RESTORE > DOWNLOADED IMAGES."
+        request_present=0
+    fi
 
     if [ "$request_present" -eq 1 ]; then
         case "$image_name" in
@@ -387,8 +397,11 @@ run_recovery_lifecycle() {
         echo "// Starting recovery UI."
         run_recovery_ui
         status=$?
+        RECOVERY_UI_RESTARTED=1
         if [ "$status" -ne 0 ]; then
             echo "@@ Recovery UI exited with status $status."
+            # A failing Recovery never requests its own next entry.
+            rm -f "$BOOT_SKIP_F"
             return "$status"
         fi
 
@@ -415,6 +428,16 @@ run_recovery_lifecycle() {
                 if ! start_recovery_ssh; then
                     RECOVERY_NOTICE="Unable to start recovery SSH."
                 fi
+            ;;
+
+            recovery-reboot)
+                # The UI requested the next Recovery entry for a pending trial.
+                cleanup_recovery_runtime
+                trap - EXIT
+
+                sync
+                reboot -f
+                return 1
             ;;
 
             reboot)

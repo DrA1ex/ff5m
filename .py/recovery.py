@@ -8,6 +8,7 @@
 
 import argparse
 import base64
+import collections
 import heapq
 import http.server
 import json
@@ -24,6 +25,7 @@ import sys
 import tarfile
 import threading
 import time
+import traceback
 import urllib.parse
 
 
@@ -49,6 +51,8 @@ EVENT_PIPE = "/tmp/forge-x-recovery-events"
 TOUCH_DEVICE = "/dev/input/guppy"
 VERIFICATION_LOG = "/data/logFiles/verification.log"
 ZBACKUP = "/opt/config/mod/.shell/commands/zbackup.sh"
+BOOT_FLAGS = "/opt/config/mod"
+TRIAL_CANDIDATE = "/data/.forge-x-overclocking/profile/candidate"
 FSCK = "/sbin/fsck"
 RECOVERY_HTTP_PORT = 80
 CLEANUP_LIMIT = 40
@@ -56,6 +60,7 @@ GITHUB_RELEASES_API = FORGEX_API + "?per_page=100"
 USER_AGENT = "Forge-X-early-recovery"
 RESERVE_BYTES = 16 * 1024 * 1024
 MAX_FRAME_BYTES = 3584
+RENDER_RECEIPT_TIMEOUT = 5.0
 VERIFICATION_RENDER_INTERVAL = 1.0
 
 UI_WIDTH = 800
@@ -73,12 +78,18 @@ UI_BUTTON_DANGER_BACKGROUND = "2b1014"
 UI_BUTTON_LONG_BACKGROUND = "2b2410"
 UI_BUTTON_PRESSED_BACKGROUND = "243b46"
 UI_HIGHLIGHT = "b47aff"
+UI_SUCCESS = "6dd9ab"
+UI_RULE = "20404a"
 UI_FONT_TITLE = "JetBrainsMono 16pt"
 UI_FONT_TITLE_BOLD = "JetBrainsMono Bold 16pt"
 UI_FONT_TITLE_SMALL = "JetBrainsMono Bold 12pt"
 UI_FONT_BODY = "JetBrainsMono 12pt"
+UI_FONT_MEDIUM = "JetBrainsMono 10pt"
 UI_FONT_SMALL = "JetBrainsMono 8pt"
 UI_FONT_BUTTON = "JetBrainsMono Bold 8pt"
+# JetBrainsMono is monospaced: (glyph advance, line advance) of each size.
+UI_FONT_METRICS = {UI_FONT_SMALL: (11, 24), UI_FONT_MEDIUM: (14, 31),
+                   UI_FONT_TITLE_SMALL: (16, 36), UI_FONT_TITLE_BOLD: (22, 49)}
 
 # Shared screen content geometry. Interactive screen content uses one common
 # horizontal inset so navigation does not shift between menu/list depths.
@@ -818,6 +829,9 @@ class TyperSession:
         self.draw_fd = None
         self.event_fd = None
         self.partial = ""
+        self.frames = 0
+        # Taps read while waiting for a render receipt, in arrival order.
+        self.taps = collections.deque()
 
     def start(self):
         for path in (self.draw_pipe, self.event_pipe):
@@ -835,7 +849,7 @@ class TyperSession:
             "--touch-device", self.touch_device,
             "--event-pipe", self.event_pipe,
             "batch", "--pipe", self.draw_pipe,
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        ], stdout=subprocess.DEVNULL)
         self.draw_fd = os.open(self.draw_pipe, os.O_RDWR | os.O_NONBLOCK)
 
         deadline = time.monotonic() + 5.0
@@ -880,7 +894,10 @@ class TyperSession:
         if self.process is None or self.process.poll() is not None:
             raise RuntimeError("Recovery display stopped.")
 
-        suffix_size = len("--batch flush\n--end\n".encode("utf-8"))
+        self.frames += 1
+        receipt = "recovery-{}".format(self.frames)
+        flush = "--batch flush --receipt " + receipt
+        suffix_size = len((flush + "\n--end\n").encode("utf-8"))
         chunks = []
         current = []
         current_size = suffix_size
@@ -903,7 +920,7 @@ class TyperSession:
         for index, chunk in enumerate(chunks):
             suffix = ["--end", ""]
             if index == len(chunks) - 1:
-                suffix = ["--batch flush", "--end", ""]
+                suffix = [flush, "--end", ""]
 
             payload = "\n".join(chunk + suffix).encode("utf-8")
             view = memoryview(payload)
@@ -915,14 +932,54 @@ class TyperSession:
 
                 view = view[written:]
 
-    def next_tap(self):
+        self._wait_receipt(receipt)
+
+    def _wait_receipt(self, receipt):
+        # Typer publishes a frame atomically: one rejected command discards
+        # the whole frame and its buttons, leaving the previous screen while
+        # Recovery waits for taps it can no longer receive. A failed or
+        # missing receipt is therefore a display failure; Typer's stderr in
+        # the Recovery log names the rejected command.
+        deadline = time.monotonic() + RENDER_RECEIPT_TIMEOUT
         while True:
             if self.process.poll() is not None:
                 raise RuntimeError("Recovery display stopped.")
 
-            for line in self._read_lines(0.5):
-                if line.startswith("tap "):
-                    return line[4:].strip()
+            status = self._read_events(max(0, min(0.5, deadline - time.monotonic())), receipt)
+            if status == "ok":
+                return
+
+            if status is not None:
+                raise RuntimeError("Recovery display rejected a frame; see the Typer error in the Recovery log.")
+
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Recovery display did not confirm a frame within {:g} s.".format(
+                    RENDER_RECEIPT_TIMEOUT))
+
+    def next_tap(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if self.taps:
+                return self.taps.popleft()
+
+            if self.process.poll() is not None:
+                raise RuntimeError("Recovery display stopped.")
+
+            wait = 0.5 if deadline is None else max(0, min(0.5, deadline - time.monotonic()))
+            self._read_events(wait)
+            if not self.taps and deadline is not None and time.monotonic() >= deadline:
+                return None
+
+    def _read_events(self, timeout, receipt=None):
+        """Queue every tap read; return the status of the receipt, if it arrived."""
+        status = None
+        for line in self._read_lines(timeout):
+            fields = line.split()
+            if fields[0] == "tap" and len(fields) > 1:
+                self.taps.append(line[4:].strip())
+            elif receipt is not None and len(fields) > 2 and fields[:2] == ["render", receipt]:
+                status = fields[2]
+        return status
 
     def _read_lines(self, timeout):
         ready, _, _ = select.select([self.event_fd], [], [], timeout)
@@ -941,6 +998,13 @@ class TyperSession:
 
 
 class RecoveryView:
+    # The tuning pages cannot import this script, which runs as __main__;
+    # they take the shared palette and fonts from the view.
+    ACCENT, MUTED, TEXT, DANGER = UI_ACCENT, UI_MUTED, UI_TEXT, UI_DANGER
+    WARNING, SUCCESS = UI_LONG, UI_SUCCESS
+    FONT_LABEL, FONT_MEDIUM = UI_FONT_SMALL, UI_FONT_MEDIUM
+    FONT_VALUE, FONT_HEADLINE = UI_FONT_TITLE_SMALL, UI_FONT_TITLE_BOLD
+
     def __init__(self, session=None):
         self.session = session or TyperSession()
         self.generation = 0
@@ -988,6 +1052,13 @@ class RecoveryView:
     def text(x, y, value, color=UI_TEXT, font=UI_FONT_BODY,
              h_align="center", v_align="middle", max_width=None,
              max_height=None, wrap=False, truncate=True):
+        # Typer rejects the whole command when --wrap or --truncate lacks its
+        # bounds, so the label silently disappears. Truncation fits max_width;
+        # without one there is nothing to fit. Wrapping without bounds is a
+        # caller error.
+        if wrap and (max_width is None or max_height is None):
+            raise ValueError("Wrapped text needs max_width and max_height: " + value)
+
         command = [
             "--batch text",
             "-p {} {}".format(x, y),
@@ -1002,7 +1073,7 @@ class RecoveryView:
             command.append("--max-height {}".format(max_height))
         if wrap:
             command.append("--wrap")
-        if truncate:
+        if truncate and max_width is not None:
             command.append("--truncate")
         command.append("-t {}".format(quote(value)))
         return " ".join(command)
@@ -1048,9 +1119,16 @@ class RecoveryView:
             action, *spec, interactive=False, pressed=pressed)])
         return True
 
-    def wait_action(self):
+    def wait_action(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
-            wire_action = self.session.next_tap()
+            if deadline is None:
+                wire_action = self.session.next_tap()
+            else:
+                remaining = max(0, deadline - time.monotonic())
+                wire_action = self.session.next_tap(timeout=remaining)
+                if wire_action is None:
+                    return None
             prefix, separator, action = wire_action.partition(":")
             if separator and prefix == str(self.generation):
                 if self.button_feedback(action, True):
@@ -1077,30 +1155,57 @@ class RecoveryView:
                 action, x, y, width, height, label, danger, long))
         return commands
 
-    def dialog(self, title, detail, actions):
+    def dialog(self, title, detail, actions, headline=None,
+               headline_color=UI_TEXT, headline_font=UI_FONT_TITLE_SMALL):
+        """With a headline, the question or outcome is one large line and
+        detail is its smaller, muted explanation; the pair is centered above
+        the buttons."""
         commands = self.begin_page(title)
-        commands.append(self.text(
-            400, 185, detail, max_width=700, max_height=190,
-            wrap=True))
+        if headline is None:
+            commands.append(self.text(
+                400, 185, detail, max_width=700, max_height=190,
+                wrap=True))
+        else:
+            commands += self.headline_block(
+                headline, detail, headline_color, headline_font)
         commands.extend(self.action_row(actions))
         self.send(commands)
         return self.wait_action()
 
-    def confirm(self, title, detail, confirm_label):
+    def headline_block(self, headline, detail, color, font):
+        headline_lines = min(3, self.wrapped_lines(headline, 700, font))
+        detail_lines = min(5, self.wrapped_lines(detail, 700, UI_FONT_MEDIUM)) if detail else 0
+        height = headline_lines * self.line_height(font)
+        if detail:
+            height += 18 + detail_lines * self.line_height(UI_FONT_MEDIUM)
+        # Centered between the header (64) and the action row (360).
+        top = 64 + (296 - height) // 2
+        commands = [self.text(
+            400, top, headline, color=color, font=font, v_align="top",
+            max_width=700, max_height=headline_lines * self.line_height(font),
+            wrap=True)]
+        if detail:
+            commands.append(self.text(
+                400, top + headline_lines * self.line_height(font) + 18, detail,
+                color=UI_MUTED, font=UI_FONT_MEDIUM, v_align="top", max_width=700,
+                max_height=detail_lines * self.line_height(UI_FONT_MEDIUM), wrap=True))
+        return commands
+
+    def confirm(self, title, detail, confirm_label, headline=None, **headline_style):
         action = self.dialog(title, detail, (
             ("confirm.cancel", "CANCEL"),
             ("confirm.accept", confirm_label, True),
-        ))
+        ), headline, **headline_style)
         return action == "confirm.accept"
 
-    def message(self, title, detail, extra=None):
+    def message(self, title, detail, extra=None, headline=None, **headline_style):
         actions = [("message.back", "BACK")]
         if extra is not None:
             action, label = extra[0], extra[1]
             danger = bool(extra[2]) if len(extra) > 2 else False
             long = bool(extra[3]) if len(extra) > 3 else False
             actions.append((action, label, danger, long))
-        return self.dialog(title, detail, actions)
+        return self.dialog(title, detail, actions, headline, **headline_style)
 
     def menu(self, title, items, subtitle="", subtitle_detail=""):
         commands = self.begin_page(title, subtitle, subtitle_detail)
@@ -1130,17 +1235,52 @@ class RecoveryView:
         commands.append(self.text(
             400, 205, detail, max_width=700, max_height=130, wrap=True))
         if percent is not None:
-            percent = max(0, min(100, int(percent)))
-            commands += [
-                "--batch stroke -p 100 315 -s 600 38 -c {} -lw 2 -sd inner"
-                .format(UI_ACCENT),
-                "--batch fill -p 108 323 -s {} 22 -c {}".format(
-                    percent * 584 // 100, UI_HIGHLIGHT),
-                self.text(400, 380, "{}%".format(percent),
-                          color=UI_ACCENT, truncate=False),
-            ]
+            commands += self.progress_bar(percent, 315)
+            commands.append(self.text(
+                400, 380, "{}%".format(max(0, min(100, int(percent)))),
+                color=UI_ACCENT, truncate=False))
 
         self.send(commands)
+
+    @staticmethod
+    def progress_bar(percent, y):
+        percent = max(0, min(100, int(percent)))
+        return [
+            "--batch stroke -p 100 {} -s 600 38 -c {} -lw 2 -sd inner"
+            .format(y, UI_ACCENT),
+            "--batch fill -p 108 {} -s {} 22 -c {}".format(
+                y + 8, percent * 584 // 100, UI_HIGHLIGHT),
+        ]
+
+    @staticmethod
+    def wrapped_lines(text, width, font):
+        """The number of lines Typer's word wrap needs for text."""
+        columns = max(1, width // UI_FONT_METRICS[font][0])
+        lines, used = 1, 0
+        for word in text.split():
+            if used and used + 1 + len(word) <= columns:
+                used += 1 + len(word)
+                continue
+            if used:
+                lines += 1
+            # A word longer than a line is broken across lines.
+            used = len(word)
+            while used > columns:
+                lines, used = lines + 1, used - columns
+        return lines
+
+    @staticmethod
+    def text_width(text, font):
+        return len(text) * UI_FONT_METRICS[font][0]
+
+    @staticmethod
+    def line_height(font):
+        return UI_FONT_METRICS[font][1]
+
+    @staticmethod
+    def rule(y):
+        return "--batch fill -p {} {} -s {} 1 -c {}".format(
+            UI_CONTENT_X, y, UI_CONTENT_WIDTH, UI_RULE)
 
     def verification_progress(self, messages, checked, total, failures):
         commands = self.begin_page("CHECKING SYSTEM FILES")
@@ -1253,6 +1393,36 @@ class RecoveryView:
                     continue
 
 
+def trial_pending():
+    # profilectl's candidate record is the only unresolved tuning decision.
+    # Checking it needs no tuning imports, so ordinary Recovery never loads them.
+    return os.path.lexists(TRIAL_CANDIDATE)
+
+
+def request_next_recovery(enabled):
+    """Make a reset or reboot enter Recovery again, or stop doing so."""
+    skip = os.path.join(BOOT_FLAGS, "BOOT_FLAG_SKIP")
+    if enabled:
+        # Publish the next request durably before clearing this entry's
+        # interrupted-Recovery protection, which would otherwise start stock.
+        open(skip, "a").close()
+        sync_directory(BOOT_FLAGS)
+        for name in ("BOOT_FLAG_RECOVERY_FAILURE", "BOOT_FLAG_FAILURE"):
+            if os.path.lexists(os.path.join(BOOT_FLAGS, name)):
+                os.unlink(os.path.join(BOOT_FLAGS, name))
+    elif os.path.lexists(skip):
+        os.unlink(skip)
+    sync_directory(BOOT_FLAGS)
+
+
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 class RecoveryUI:
     def __init__(self, machine, action_file, session=None):
         self.machine = machine
@@ -1260,7 +1430,9 @@ class RecoveryUI:
         self.view = RecoveryView(session)
         self.file_server = RecoveryFileServer()
         self.ssh_active = os.environ.get("RECOVERY_SSH_ACTIVE") == "1"
+        self.restarted = os.environ.get("RECOVERY_UI_RESTARTED") == "1"
         self.notice = os.environ.get("RECOVERY_NOTICE", "").strip()
+        self.tuning_failed = False
 
     def close(self):
         self.file_server.stop()
@@ -1274,8 +1446,23 @@ class RecoveryUI:
             os.fsync(output.fileno())
         os.replace(temporary, self.action_file)
 
+    def trial_blocks_exit(self):
+        # Broken tuning must not trap the printer in Recovery.
+        return trial_pending() and not self.tuning_failed
+
+    def reboot(self):
+        """Reboot; while a trial is unresolved the printer comes back to Recovery."""
+        if self.trial_blocks_exit():
+            request_next_recovery(True)
+            self.write_action("recovery-reboot")
+        else:
+            self.write_action("reboot")
+
     def run(self):
         self.view.start()
+        # The trial was already offered on entry; a restart keeps the gates below.
+        if trial_pending() and not self.restarted and self.hardware_tuning():
+            return
         self.render_main()
 
         if self.notice:
@@ -1284,12 +1471,20 @@ class RecoveryUI:
 
         while True:
             action = self.view.wait_action()
+            if action in ("main.boot", "main.firmware", "main.backup") and self.trial_blocks_exit():
+                self.view.message("HARDWARE TRIAL PENDING", "Accept or discard the trial in Hardware Tuning "
+                                  "before other Recovery actions.")
+                if self.hardware_tuning():
+                    return
+                self.render_main()
+                continue
             if action == "main.boot":
                 if self.boot_options_menu():
                     return
 
             elif action == "main.system":
-                self.system_diagnostics_menu()
+                if self.system_diagnostics_menu():
+                    return
 
             elif action == "main.firmware":
                 self.firmware_menu()
@@ -1303,7 +1498,7 @@ class RecoveryUI:
             elif action == "main.reboot":
                 if self.view.confirm(
                         "REBOOT PRINTER", "No firmware will be written.", "REBOOT"):
-                    self.write_action("reboot")
+                    self.reboot()
                     return
 
             self.render_main()
@@ -1357,7 +1552,8 @@ class RecoveryUI:
             action = self.view.menu("SYSTEM / DIAGNOSTICS", (
                 ("system.verify", "CHECK SYSTEM FILES", False, True),
                 ("system.storage", "STORAGE"),
-                ("system.diagnostics", "CREATE DIAGNOSTICS", False, True),
+                ("system.diagnostics", "CREATE DIAGNOSTICS"),
+                ("system.tuning", "HARDWARE TUNING", False, True),
                 ("system.back", "BACK"),
             ))
             if action == "system.back":
@@ -1368,6 +1564,23 @@ class RecoveryUI:
                 self.storage_menu()
             elif action == "system.diagnostics":
                 self.create_diagnostics()
+            elif action == "system.tuning":
+                if self.hardware_tuning():
+                    return True
+
+    def hardware_tuning(self):
+        self.view.progress("HARDWARE TUNING", "Checking hardware and saved settings. Please wait...")
+        try:
+            from overclocking_ui import TuningUI
+            return TuningUI(self.view, self.reboot,
+                            lambda: request_next_recovery(trial_pending())).run()
+        except Exception as error:
+            traceback.print_exc()
+            self.tuning_failed = True
+            request_next_recovery(False)
+            self.view.message("HARDWARE TUNING UNAVAILABLE", str(error) +
+                              " Ordinary Recovery actions remain available.")
+            return False
 
     def storage_menu(self):
         while True:

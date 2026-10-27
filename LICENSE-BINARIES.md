@@ -10,11 +10,16 @@ The native programs that Forge-X ships in [`.bin/exec/`](.bin/exec/), built from
 
 - `boot_mcu`
 - `demo`
+- `fgx-fdt`
+- `fgx-lock`
+- `fgx-stress`
 - `logged`
 - `netd`
 - `netd-cli`
 - `splash`
 - `typer`
+
+and the accompanying profile control tool in `.bin/tools/overclocking/bin/t113-profilectl`.
 
 These are called the **Components**. Everything else in this repository is **not** covered by this license, see [Other files](#other-files).
 

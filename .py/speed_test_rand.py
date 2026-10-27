@@ -1,6 +1,6 @@
 ## Speed testing with variable block size
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
@@ -162,89 +162,95 @@ def test_disk_speed(file_path, block_size=16 * 1024, num_operations=None):
     print(f"Random read speed: {read_speed:.2f} MB/s\n")
 
 
-base_path = "/data"
-if len(sys.argv) >= 2:
-    base_path = sys.argv[1]
+def main():
+    target_size = TARGET_FILE_SIZE
+    base_path = "/data"
+    if len(sys.argv) >= 2:
+        base_path = sys.argv[1]
 
-if len(sys.argv) >= 3:
-    TARGET_FILE_SIZE = int(sys.argv[2]) * 1024 * 1024
+    if len(sys.argv) >= 3:
+        target_size = int(sys.argv[2]) * 1024 * 1024
 
-if not os.path.exists(base_path):
-    sys.stderr.write(f"Path \"{base_path}\" doesn't exists!\n")
-    exit(1)
+    if not os.path.exists(base_path):
+        sys.stderr.write(f"Path \"{base_path}\" doesn't exists!\n")
+        exit(1)
 
-path_stats = os.statvfs(base_path)
-path_free_space = path_stats.f_frsize * path_stats.f_bavail
-if path_free_space <= TARGET_FILE_SIZE:
-    sys.stderr.write(
-        f"Path \"{base_path}\" should have at least {TARGET_FILE_SIZE / 1024 / 1024}MB"
-        f"but got {path_free_space / 1024 / 1024}MB!\n")
-    exit(2)
+    path_stats = os.statvfs(base_path)
+    path_free_space = path_stats.f_frsize * path_stats.f_bavail
+    if path_free_space <= target_size:
+        sys.stderr.write(
+            f"Path \"{base_path}\" should have at least {target_size / 1024 / 1024}MB"
+            f"but got {path_free_space / 1024 / 1024}MB!\n")
+        exit(2)
 
-print("Speed test started. Please be patient!\n")
+    print("Speed test started. Please be patient!\n")
 
-file_path = os.path.join(base_path, f"speed_test.{random.randint(int(1e6), int(1e7 - 1))}")
-print(f"Using temporary test file \"{file_path}\" of size {TARGET_FILE_SIZE / 1024 / 1024}MB\n")
+    file_path = os.path.join(base_path, f"speed_test.{random.randint(int(1e6), int(1e7 - 1))}")
+    print(f"Using temporary test file \"{file_path}\" of size {target_size / 1024 / 1024}MB\n")
 
-try:
-    block_count = TARGET_FILE_SIZE // DEFAULT_FILE_BLOCK_SIZE
-    bytes_written = 0
+    try:
+        block_count = target_size // DEFAULT_FILE_BLOCK_SIZE
+        bytes_written = 0
 
-    # Prepare data outside the timed section. Reusing a random 1 MiB payload is
-    # fine for an eMMC/filesystem throughput test and avoids mixing RNG cost
-    # with I/O without incorrectly subtracting overlapping writeback time.
-    data = generate_random_data(DEFAULT_FILE_BLOCK_SIZE)
+        # Prepare data outside the timed section. Reusing a random 1 MiB payload is
+        # fine for an eMMC/filesystem throughput test and avoids mixing RNG cost
+        # with I/O without incorrectly subtracting overlapping writeback time.
+        data = generate_random_data(DEFAULT_FILE_BLOCK_SIZE)
 
-    create_start_time = time.perf_counter()
-    with open(file_path, 'wb') as f:
-        for i in range(block_count):
-            bytes_written += f.write(data)
-            print_progress_bar("Generating test file", i + 1, block_count)
+        create_start_time = time.perf_counter()
+        with open(file_path, 'wb') as f:
+            for i in range(block_count):
+                bytes_written += f.write(data)
+                print_progress_bar("Generating test file", i + 1, block_count)
 
-        f.flush()
-        os.fsync(f.fileno())
+            f.flush()
+            os.fsync(f.fileno())
 
-    create_end_time = time.perf_counter()
-    create_duration = create_end_time - create_start_time
+        create_end_time = time.perf_counter()
+        create_duration = create_end_time - create_start_time
 
-    if not NO_PROGRESS:
-        sys.stdout.write("\033[1K\r")
-    sys.stdout.write(
-        f"Sequential write speed: "
-        f"{(bytes_written / 1024 / 1024 / create_duration):0.2f}MB/S\n\n"
-    )
+        if not NO_PROGRESS:
+            sys.stdout.write("\033[1K\r")
+        sys.stdout.write(
+            f"Sequential write speed: "
+            f"{(bytes_written / 1024 / 1024 / create_duration):0.2f}MB/S\n\n"
+        )
 
-    # Do not let the sequential read consume pages cached by file creation.
-    drop_caches(file_path)
+        # Do not let the sequential read consume pages cached by file creation.
+        drop_caches(file_path)
 
-    bytes_read = 0
-    read_start_time = time.perf_counter()
-    with open(file_path, 'rb') as f:
-        if hasattr(os, 'posix_fadvise') and hasattr(os, 'POSIX_FADV_SEQUENTIAL'):
-            os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_SEQUENTIAL)
+        bytes_read = 0
+        read_start_time = time.perf_counter()
+        with open(file_path, 'rb') as f:
+            if hasattr(os, 'posix_fadvise') and hasattr(os, 'POSIX_FADV_SEQUENTIAL'):
+                os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_SEQUENTIAL)
 
-        for i in range(block_count):
-            data = f.read(DEFAULT_FILE_BLOCK_SIZE)
-            bytes_read += len(data)
-            print_progress_bar("Reading test file", i + 1, block_count)
-    read_end_time = time.perf_counter()
+            for i in range(block_count):
+                data = f.read(DEFAULT_FILE_BLOCK_SIZE)
+                bytes_read += len(data)
+                print_progress_bar("Reading test file", i + 1, block_count)
+        read_end_time = time.perf_counter()
 
-    if not NO_PROGRESS:
-        sys.stdout.write("\033[1K\r")
-    sys.stdout.write(
-        f"Sequential read speed: "
-        f"{(bytes_read / 1024 / 1024 / (read_end_time - read_start_time)):0.2f}MB/S\n\n"
-    )
+        if not NO_PROGRESS:
+            sys.stdout.write("\033[1K\r")
+        sys.stdout.write(
+            f"Sequential read speed: "
+            f"{(bytes_read / 1024 / 1024 / (read_end_time - read_start_time)):0.2f}MB/S\n\n"
+        )
 
-    test_disk_speed(file_path, block_size=1 * 1024, num_operations=4000)
-    test_disk_speed(file_path, block_size=4 * 1024, num_operations=4000)
-    test_disk_speed(file_path, block_size=16 * 1024, num_operations=2000)
-    test_disk_speed(file_path, block_size=32 * 1024, num_operations=1000)
-    test_disk_speed(file_path, block_size=1024 * 1024, num_operations=50)
+        test_disk_speed(file_path, block_size=1 * 1024, num_operations=4000)
+        test_disk_speed(file_path, block_size=4 * 1024, num_operations=4000)
+        test_disk_speed(file_path, block_size=16 * 1024, num_operations=2000)
+        test_disk_speed(file_path, block_size=32 * 1024, num_operations=1000)
+        test_disk_speed(file_path, block_size=1024 * 1024, num_operations=50)
 
-    print("\n Done!")
-except KeyboardInterrupt:
-    print("\nAborted!")
-finally:
-    if os.path.exists(file_path):
-        os.remove(file_path)
+        print("\n Done!")
+    except KeyboardInterrupt:
+        print("\nAborted!")
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+
+if __name__ == "__main__":
+    main()

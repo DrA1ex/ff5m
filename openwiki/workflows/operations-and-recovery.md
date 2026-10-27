@@ -114,10 +114,14 @@ mounting the already-installed Buildroot chroot, binding `/data`, `/opt/config`,
 starting `netd`, and reversing only resources it started. It consumes every UI
 action itself, including the `Stock + SSH` and `Stock Only` markers. `S00init`
 sees only whether the wrapper returned; on failure it applies `SKIP_MOD_HARD`,
-while `Stock + SSH` remains an explicit user choice. The wrapper discovers
-exactly one stock `/opt/Python-*/bin/python3.*` runtime and starts the UI outside the chroot;
+while `Stock + SSH` remains an explicit user choice. The wrapper runs the stock `/usr/bin/python3` directly outside the chroot, without
+searching for interpreters or selecting an alternative;
 the chroot remains limited to its installed tslib service. The UI owns one Typer
-FIFO/touch session. It can select `Stock + SSH` or `Stock Only`, use
+FIFO/touch session. Every frame ends with a render receipt that the UI waits for:
+Typer publishes a frame atomically, so one rejected command would otherwise leave
+the previous screen without working buttons while Recovery waits for a tap. A
+failed or missing receipt is a display failure handled like a stopped display;
+Typer's stderr in `/data/logFiles/recovery.log` names the rejected command. It can select `Stock + SSH` or `Stock Only`, use
 Ethernet or an already-saved Wi-Fi profile, start the stock-side Dropbear
 service and remain before normal printer services, run the canonical checksum
 command, or request a firmware hand-off. The wrapper mounts `/dev/pts` before

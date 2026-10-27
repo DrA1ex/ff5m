@@ -1,0 +1,1350 @@
+#!/bin/sh
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# All rights reserved. See the LICENSE file.
+#
+# t113-profilectl — runtime DTB generation, independent axes and crash-safe promotion.
+set -u
+set -f
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}; export PATH
+
+VERSION=0.6.0-recovery
+VALIDATOR_VERSION=5
+STOCK_SHA=27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21
+STOCK_BOOTCMD='run setargs_mmc boot_dsp0 boot_uImage'
+MANAGED_BOOTCMD='run setargs_mmc boot_dsp0 fgx_boot_current'
+ONESHOT_BOOTCMD='run fgx_boot_restore fgx_boot_save setargs_mmc boot_dsp0 fgx_boot_test'
+TRANSITION_BOOTCMD='run setargs_mmc boot_dsp0 fgx_boot_test'
+SLOT_A=FORGE_X_A.DTB
+SLOT_B=FORGE_X_B.DTB
+SLOT_TMP=FORGE_X_TMP.DTB
+SLOT_STOCK=FORGE_X_STOCK.DTB
+STOCK_TRANSITION_BOOTCMD='run setargs_mmc boot_dsp0 fgx_boot_stock'
+
+# Canonical protected-helper environment is human-readable bundle data.
+# It is parsed as data and must never be sourced as shell code.
+STOCK_ENV_PROFILE=ad5m-stock-v1
+
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || exit 1
+BUNDLE_DIR=${T113_BUNDLE_DIR:-$(dirname "$SELF_DIR")}
+MANIFEST=${T113_MANIFEST:-$BUNDLE_DIR/manifest-v2.json}
+SCHEMA=${T113_SCHEMA:-$BUNDLE_DIR/schema/manifest-v2.schema.json}
+BUNDLE_SUMS=${T113_BUNDLE_SUMS:-$BUNDLE_DIR/SHA256SUMS}
+STOCK_DTB=${T113_STOCK_DTB:-$BUNDLE_DIR/profiles/source/sunxi-stock.dtb}
+STOCK_ENV_FILE=${T113_STOCK_ENV_FILE:-$BUNDLE_DIR/profiles/source/stock-uboot.env}
+FGX_FDT=${T113_FGX_FDT:-$BUNDLE_DIR/../../exec/fgx-fdt}
+FGX_LOCK=${T113_FGX_LOCK:-$BUNDLE_DIR/../../exec/fgx-lock}
+STATE_DIR=${T113_STATE_DIR:-/data/.t113-profilectl}
+ORIGINAL_DIR=$STATE_DIR/original
+CURRENT_FILE=$STATE_DIR/current
+CANDIDATE_FILE=$STATE_DIR/candidate
+BOOT_DIR=${T113_BOOT_DIR:-/boot-resource}
+BOOT_DIR_CONFIGURED=$BOOT_DIR
+FW_CONFIG=${T113_FW_CONFIG:-/opt/uboot/fw_env.config}
+DEV_BOOT=${T113_DEV_BOOT:-/dev/mmcblk0p1}
+DEV_ENV=${T113_DEV_ENV:-/dev/mmcblk0p2}
+DEV_ENV_REDUND=${T113_DEV_ENV_REDUND:-/dev/mmcblk0p3}
+IOS_FILE=${T113_IOS_FILE:-/sys/kernel/debug/mmc0/ios}
+CID_FILE=${T113_CID_FILE:-/sys/bus/mmc/devices/mmc0:0001/cid}
+BOOT_ID_FILE=${T113_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+DMESG_FILE=${T113_DMESG_FILE:-}
+DMESG_CMD=${T113_DMESG_CMD:-dmesg}
+CPU_CUR_FILE=${T113_CPU_CUR_FILE:-/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq}
+CPU_MAX_FILE=${T113_CPU_MAX_FILE:-/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq}
+CPU_AVAIL_FILE=${T113_CPU_AVAIL_FILE:-/sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies}
+CPU_DRIVER_FILE=${T113_CPU_DRIVER_FILE:-/sys/devices/system/cpu/cpufreq/policy0/scaling_driver}
+CPU_TEMP_FILE=${T113_CPU_TEMP_FILE:-/sys/class/thermal/thermal_zone0/temp}
+CLK_SUMMARY_FILE=${T113_CLK_SUMMARY_FILE:-/sys/kernel/debug/clk/clk_summary}
+MODEL_FILE=${T113_MODEL_FILE:-/proc/device-tree/model}
+COMPAT_FILE=${T113_COMPAT_FILE:-/proc/device-tree/compatible}
+DT_ROOT=${T113_DT_ROOT:-/proc/device-tree}
+TMP_ROOT=${TMPDIR:-/tmp}
+LOCK_DIR=${T113_LOCK_DIR:-$TMP_ROOT/.t113-profilectl.lock}
+CACHE_DIR=${T113_CACHE_DIR:-$TMP_ROOT/.t113-profilectl}
+CACHE_FILE=$CACHE_DIR/validation-ok
+TEST_MODE=${T113_TEST_MODE:-0}
+MOUNTS_FILE=${T113_MOUNTS_FILE:-/proc/mounts}
+MOUNT_CMD=${T113_MOUNT_CMD:-mount}
+UMOUNT_CMD=${T113_UMOUNT_CMD:-umount}
+TEST_BOOT_MOUNT_STATE=${T113_TEST_BOOT_MOUNT_STATE:-rw}
+
+APPLY=0
+DRY_RUN=0
+DANGER_ASSUME_STOCK=0
+DANGER_UNTESTED_EMMC=0
+DANGER_CLEANUP_UNKNOWN=0
+LOCK_HELD=0
+TMP_DIR=
+BOOT_MOUNT_OWNED=0
+BOOT_MOUNT_MODE=
+ENV_READY=0
+ENV_DATA=
+
+say(){ printf '%s\n' "$*"; }
+warn(){ printf 'WARNING: %s\n' "$*" >&2; }
+die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+have(){ command -v "$1" >/dev/null 2>&1; }
+progress(){ [ "${T113_PROGRESS:-0}" != 1 ] || printf 'FGX_PROGRESS:%s\n' "$*" >&2; }
+durable_sync(){ [ "$TEST_MODE" = 1 ] && [ "${T113_TEST_SKIP_SYNC:-0}" = 1 ] && return 0; progress 'Flushing storage (sync)'; sync; }
+fault(){ [ "${T113_FAIL_POINT:-}" != "$1" ] || die "injected fault after $1"; }
+
+cleanup_exit(){
+    if [ "$BOOT_MOUNT_OWNED" = 1 ] && [ "$TEST_MODE" != 1 ]; then
+        progress 'Finishing temporary boot filesystem access'
+        [ "$BOOT_MOUNT_MODE" != rw ] || durable_sync >/dev/null 2>&1 || true
+        progress 'Unmounting temporary boot filesystem'
+        "$UMOUNT_CMD" "$BOOT_DIR" >/dev/null 2>&1 || warn "unable to unmount temporary boot FAT at $BOOT_DIR"
+        BOOT_MOUNT_OWNED=0
+    fi
+    if [ "$LOCK_HELD" = 1 ]; then
+        rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+        exec 9>&-
+    fi
+    [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR" 2>/dev/null || true
+}
+trap cleanup_exit 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 131' 3
+trap 'exit 143' 15
+
+usage(){ cat <<'USAGE'
+Usage: t113-profilectl [--apply|--dry-run] [--danger-*] COMMAND [ARGS]
+
+Read-only:
+  list cpu
+  list emmc
+  status
+  snapshot
+  doctor
+  detect
+  validate-bundle
+
+Mutating:
+  --apply backup
+  --apply test cpu stock|1.1|1.15|1.2|1.25|1.3|1.35|1.4
+  --apply test emmc stock|25|50|100|150
+  --apply verify
+  --apply enable
+  --apply cancel
+  --apply cleanup
+  --apply rollback
+  --apply diagnostics
+  --apply migrate-state LEGACY_DIRECTORY
+
+Danger flags (each bypasses only its named check):
+  --danger-assume-stock-axes
+  --danger-allow-untested-emmc
+  --danger-cleanup-unknown
+USAGE
+}
+
+sha256_file(){ if have sha256sum; then sha256sum "$1" | awk '{print $1}'; elif have shasum; then shasum -a 256 "$1" | awk '{print $1}'; else die 'sha256sum or shasum is required'; fi; }
+sha256_stream(){ if have sha256sum; then sha256sum | awk '{print $1}'; else shasum -a 256 | awk '{print $1}'; fi; }
+file_size(){ wc -c <"$1" | tr -d ' '; }
+boot_id(){ [ -r "$BOOT_ID_FILE" ] && tr -d '\n ' <"$BOOT_ID_FILE" || printf unknown; }
+meta_get(){ file=$1; key=$2; [ -r "$file" ] || return 1; sed -n "s/^${key}=//p" "$file" | head -n 1; }
+
+read_environment(){
+    progress 'Reading U-Boot environment (fw_printenv)'
+    ENV_DATA=$(fw_printenv -c "$FW_CONFIG" 2>/dev/null) || die 'cannot read U-Boot environment'
+    ENV_READY=1
+}
+ensure_environment(){ [ "$ENV_READY" = 1 ] || read_environment; }
+get_env(){
+    ensure_environment
+    GE_NAME=$1
+    while IFS= read -r GE_LINE; do
+      case "$GE_LINE" in "$GE_NAME="*) printf '%s\n' "${GE_LINE#*=}"; return 0;; esac
+    done <<EOF_ENV
+$ENV_DATA
+EOF_ENV
+    return 1
+}
+env_exists(){ get_env "$1" >/dev/null; }
+set_env(){
+    SE_NAME=$1; SE_VALUE=$2
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN set env $SE_NAME=$SE_VALUE"; return 0; fi
+    if env_exists "$SE_NAME" && [ "$(get_env "$SE_NAME")" = "$SE_VALUE" ]; then return 0; fi
+    progress "Writing U-Boot entry: $SE_NAME (fw_setenv)"
+    fw_setenv -c "$FW_CONFIG" "$SE_NAME" "$SE_VALUE" || die "failed to set $SE_NAME"
+    read_environment
+    SE_GOT=$(get_env "$SE_NAME" || true); [ "$SE_GOT" = "$SE_VALUE" ] || die "$SE_NAME readback mismatch"
+    fault "env:$SE_NAME"
+}
+del_env(){
+    DE_NAME=$1
+    if [ "$DRY_RUN" = 1 ]; then env_exists "$DE_NAME" && say "DRY-RUN delete env $DE_NAME"; return 0; fi
+    env_exists "$DE_NAME" || return 0
+    progress "Removing U-Boot entry: $DE_NAME (fw_setenv)"
+    fw_setenv -c "$FW_CONFIG" "$DE_NAME" || die "failed to delete $DE_NAME"
+    read_environment
+    env_exists "$DE_NAME" && die "$DE_NAME still exists after delete"
+    fault "del-env:$DE_NAME"
+}
+
+ensure_tmp(){ [ -n "$TMP_DIR" ] && return; TMP_DIR=$(mktemp -d "$TMP_ROOT/t113-profilectl.XXXXXX" 2>/dev/null) || die 'cannot create temporary directory'; chmod 700 "$TMP_DIR" 2>/dev/null || true; }
+
+decode_mount_field(){ printf '%s\n' "$1" | sed 's/\\040/ /g; s/\\011/	/g; s/\\134/\\/g'; }
+mount_record_for_dev(){ [ -r "$MOUNTS_FILE" ] || return 1; awk -v dev="$DEV_BOOT" '$1 == dev { print $2 "|" $3 "|" $4 }' "$MOUNTS_FILE"; }
+parse_boot_mount_record(){
+    EBA_RAW_MP=${1%%|*}; EBA_REST=${1#*|}; EBA_TYPE=${EBA_REST%%|*}; EBA_OPTS=${EBA_REST#*|}
+    EBA_MP=$(decode_mount_field "$EBA_RAW_MP")
+}
+# The msdos driver stores 8.3 names only: FORGE_X_A.DTB and FORGE_X_B.DTB both become FORGE_X_.DTB, which
+# Linux still finds by the long name while U-Boot does not. The stock kernel's default vfat iocharset "CP936"
+# names no NLS table, so an untyped busybox mount fails vfat and silently falls back to msdos.
+require_vfat_boot_mount(){
+    [ "$EBA_TYPE" = vfat ] || die "boot FAT $DEV_BOOT is mounted as $EBA_TYPE at $1; vfat is required for long boot file names"
+}
+mount_source_for_path(){ [ -r "$MOUNTS_FILE" ] || return 1; awk -v mp="$1" '$2 == mp { print $1 "|" $4 }' "$MOUNTS_FILE"; }
+mount_opts_has(){ opts=$1; wanted=$2; oldifs=$IFS; IFS=,; set -- $opts; IFS=$oldifs; for o do [ "$o" = "$wanted" ] && return 0; done; return 1; }
+ensure_boot_access(){
+    EBA_MODE=$1
+    case "$EBA_MODE" in ro|rw) ;; *) die "internal invalid boot access mode: $EBA_MODE";; esac
+    if [ "$TEST_MODE" = 1 ]; then
+        [ -d "$BOOT_DIR" ] || die "test boot directory is missing: $BOOT_DIR"
+        case "$TEST_BOOT_MOUNT_STATE" in
+          rw) return 0;;
+          ro) [ "$EBA_MODE" = ro ] && return 0; die "boot FAT is mounted read-only in test fixture";;
+          wrong) die "boot path is not mounted from DEV_BOOT in test fixture";;
+          unmounted) BOOT_MOUNT_OWNED=1; [ "$BOOT_MOUNT_MODE" = rw ] || BOOT_MOUNT_MODE=$EBA_MODE; return 0;;
+          *) die "invalid T113_TEST_BOOT_MOUNT_STATE=$TEST_BOOT_MOUNT_STATE";;
+        esac
+    fi
+    [ -r "$MOUNTS_FILE" ] || die "cannot inspect mount table: $MOUNTS_FILE"
+    EBA_RECORDS=$(mount_record_for_dev || true)
+    EBA_COUNT=$(printf '%s\n' "$EBA_RECORDS" | sed '/^$/d' | wc -l | tr -d ' ')
+    [ "$EBA_COUNT" -le 1 ] || die "$DEV_BOOT is mounted at multiple locations; refusing ambiguous boot FAT access"
+    if [ "$EBA_COUNT" = 1 ]; then
+        parse_boot_mount_record "$EBA_RECORDS"
+        [ -n "$EBA_MP" ] || die "cannot determine mountpoint for $DEV_BOOT"
+        BOOT_DIR=$EBA_MP
+        require_vfat_boot_mount "$BOOT_DIR"
+        if [ "$EBA_MODE" = rw ] && ! mount_opts_has "$EBA_OPTS" rw; then die "boot FAT $DEV_BOOT is mounted read-only at $BOOT_DIR; refusing mutation"; fi
+        [ "$BOOT_MOUNT_MODE" = rw ] || BOOT_MOUNT_MODE=$EBA_MODE
+        return 0
+    fi
+    EBA_OTHER=$(mount_source_for_path "$BOOT_DIR_CONFIGURED" || true)
+    [ -z "$EBA_OTHER" ] || die "configured boot path $BOOT_DIR_CONFIGURED is already mounted from ${EBA_OTHER%%|*}, not $DEV_BOOT"
+    have "$MOUNT_CMD" && have "$UMOUNT_CMD" || die 'mount/umount are required when boot FAT is not already mounted'
+    mkdir -p "$BOOT_DIR_CONFIGURED" || die "cannot create boot mountpoint $BOOT_DIR_CONFIGURED"
+    # cp936 is the stock default spelled as the kernel's NLS table names it; like U-Boot, lookups stay case-insensitive.
+    if [ "$EBA_MODE" = rw ]; then EBA_MOUNT_OPTS=rw,iocharset=cp936; else EBA_MOUNT_OPTS=ro,iocharset=cp936; fi
+    "$MOUNT_CMD" -t vfat -o "$EBA_MOUNT_OPTS" "$DEV_BOOT" "$BOOT_DIR_CONFIGURED" || die "cannot temporarily mount $DEV_BOOT at $BOOT_DIR_CONFIGURED ($EBA_MOUNT_OPTS)"
+    BOOT_MOUNT_OWNED=1; BOOT_MOUNT_MODE=$EBA_MODE; BOOT_DIR=$BOOT_DIR_CONFIGURED
+    EBA_RECORDS=$(mount_record_for_dev || true)
+    EBA_COUNT=$(printf '%s\n' "$EBA_RECORDS" | sed '/^$/d' | wc -l | tr -d ' ')
+    [ "$EBA_COUNT" = 1 ] || die "temporary mount of $DEV_BOOT could not be verified"
+    parse_boot_mount_record "$EBA_RECORDS"
+    [ "$EBA_MP" = "$BOOT_DIR_CONFIGURED" ] || die "temporary boot mount resolved to unexpected path $EBA_MP"
+    require_vfat_boot_mount "$EBA_MP"
+    if [ "$EBA_MODE" = rw ]; then mount_opts_has "$EBA_OPTS" rw || die 'temporary boot mount is not read-write'; fi
+}
+ensure_boot_mutation_access(){ if [ "$DRY_RUN" = 1 ]; then ensure_boot_access ro; else ensure_boot_access rw; fi; }
+acquire_lock(){
+    [ "$DRY_RUN" = 1 ] && return 0
+    [ "$LOCK_HELD" = 1 ] && return 0
+    [ -x "$FGX_LOCK" ] || die 'fgx-lock helper is missing; rebuild the complete bundle'
+    mkdir -p "$LOCK_DIR" || die 'cannot create mutation lock directory'
+    # Never unlink the owner file: all contenders must lock the same inode.
+    exec 9>>"$LOCK_DIR/owner" || die 'cannot open mutation lock'
+    "$FGX_LOCK"
+    lock_result=$?
+    case "$lock_result" in
+      0) ;;
+      1) die 'another mutation is active';;
+      *) die 'cannot acquire kernel mutation lock';;
+    esac
+    # Respect a live owner from the previous PID-directory locking protocol.
+    pid=''; [ ! -r "$LOCK_DIR/pid" ] || pid=$(tr -d '\n ' <"$LOCK_DIR/pid" || true)
+    case "$pid" in
+      ''|*[!0-9]*) ;;
+      *) if kill -0 "$pid" 2>/dev/null; then die "another mutation is active (pid $pid)"; fi;;
+    esac
+    LOCK_HELD=1
+    printf '%s\n' "$$" >"$LOCK_DIR/pid" || die 'cannot write mutation lock PID'
+}
+cleanup_reserved_temps(){
+    if [ -d "$STATE_DIR" ]; then
+      find "$STATE_DIR" -maxdepth 1 -type f \
+        \( -name '.current.tmp.*' -o -name '.candidate.tmp.*' -o -name '.dtb-build.tmp.*' \) \
+        -exec rm -f {} \; 2>/dev/null || die 'cannot remove stale reserved metadata/DTB temp files'
+    fi
+    if [ -d "$BOOT_DIR" ]; then
+      rm -f "$BOOT_DIR/$SLOT_TMP" 2>/dev/null || true
+      find "$BOOT_DIR" -maxdepth 1 -type f \( -name '.sunxi.dtb.tmp.*' -o -name '.FORGE_X_STOCK.tmp.*' \) -exec rm -f {} \; 2>/dev/null || die 'cannot remove stale reserved stock-DTB temp file'
+    fi
+}
+need_mutation(){
+    [ "$DRY_RUN" = 1 ] && { ensure_boot_access ro; return 0; }
+    [ "$APPLY" = 1 ] || die 'write command requires --apply (or use --dry-run)'
+    if [ "$TEST_MODE" = 1 ]; then
+        [ -f "$DEV_BOOT" ] && [ -f "$DEV_ENV" ] && [ -f "$DEV_ENV_REDUND" ] || die 'test mode requires regular-file fake devices'
+        [ "$STATE_DIR" != /data/.t113-profilectl ] && [ "$BOOT_DIR_CONFIGURED" != /boot-resource ] || die 'test mode refuses production paths'
+    else
+        [ "$(id -u 2>/dev/null)" = 0 ] || die 'write command must run as root'
+    fi
+    have fw_setenv || die 'fw_setenv was not found'
+    mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
+    acquire_lock
+    # This snapshot belongs only to this locked command. Every write reloads it
+    # from flash before readback; a later command always starts with a fresh read.
+    read_environment
+    ensure_boot_access rw
+    cleanup_reserved_temps
+}
+
+write_meta_atomic(){
+    dest=$1; shift
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN publish metadata ${dest##*/}"; return 0; fi
+    mkdir -p "$STATE_DIR" || die 'cannot create state root'
+    case "$dest" in "$STATE_DIR"/*) ;; *) die 'metadata destination is outside persistent state filesystem';; esac
+    base=${dest##*/}; tmp=$STATE_DIR/.${base}.tmp.$$
+    umask 077
+    : >"$tmp" || die "cannot create $tmp"
+    fault "meta:${base}:temp"
+    for kv do printf '%s\n' "$kv" >>"$tmp" || die "cannot write $tmp"; done
+    durable_sync
+    fault "meta:${base}:pre-rename"
+    mv "$tmp" "$dest" || die "cannot publish $dest"
+    durable_sync
+    fault "meta:${base}:published"
+}
+
+record_lines(){ kind=$1; grep '"kind"[ ]*:[ ]*"'"$kind"'"' "$MANIFEST"; }
+family_known_for_cid(){ cid=$1; record_lines hardware_family | while IFS= read -r l; do fam=$(printf '%s\n' "$l" | sed -n 's/.*"family_id"[ ]*:[ ]*"\([^"]*\)".*/\1/p'); cids=$(printf '%s\n' "$l" | sed -n 's/.*"cids"[ ]*:[ ]*"\([^"]*\)".*/\1/p'); oldifs=$IFS; IFS=,; set -- $cids; IFS=$oldifs; for c do [ "$c" = "$cid" ] && { printf '%s\n' "$fam"; exit 0; }; done; done; }
+
+runtime_ios(){
+    [ -r "$IOS_FILE" ] || return 1
+    IOS_CLOCK=$(sed -n 's/^clock:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*Hz.*/\1/p' "$IOS_FILE" | head -n1)
+    IOS_TIMING=$(sed -n 's/^timing spec:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$IOS_FILE" | head -n1)
+    IOS_VOLTAGE=$(sed -n 's/^signal voltage:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$IOS_FILE" | head -n1)
+    [ -n "$IOS_CLOCK" ] && [ -n "$IOS_TIMING" ] && [ -n "$IOS_VOLTAGE" ]
+}
+# Only a managed CPU profile switches vdd-cpu to sunxi-pwm-regulator, so cpufreq
+# exists only then. Stock CPU runs at U-Boot's PLL rate, observed in clk_summary.
+runtime_cpu_hz(){
+    if [ -r "$CPU_CUR_FILE" ]; then k=$(tr -d '\n ' <"$CPU_CUR_FILE"); case "$k" in ''|*[!0-9]*) return 1;; esac; printf '%s\n' $((k * 1000)); return; fi
+    [ -r "$CLK_SUMMARY_FILE" ] || return 1
+    rate=$(awk '$1 == "cpux" { print $5; exit }' "$CLK_SUMMARY_FILE"); case "$rate" in ''|*[!0-9]*) return 1;; esac; printf '%s\n' "$rate"
+}
+runtime_cpu_limit_hz(){ [ -r "$CPU_MAX_FILE" ] || return 1; rcl=$(tr -d '\n ' <"$CPU_MAX_FILE"); case "$rcl" in ''|*[!0-9]*) return 1;; esac; printf '%s\n' $((rcl * 1000)); }
+loaded_property(){ [ -r "$DT_ROOT/forge-x,$1" ] || return 1; tr -d '\000' <"$DT_ROOT/forge-x,$1"; }
+loaded_cpu_matches(){
+    [ "$(loaded_property source-sha256 || true)" = "$STOCK_SHA" ] &&
+    [ "$(loaded_property cpu-profile || true)" = "$1" ]
+}
+runtime_family_evidence(){
+    runtime_ios || { printf unknown; return; }
+    if [ "$IOS_TIMING" = 9 ] && [ "$IOS_VOLTAGE" = 1 ]; then printf hs2001v8
+    elif { [ "$IOS_TIMING" = 0 ] || [ "$IOS_TIMING" = 1 ]; } && [ "$IOS_VOLTAGE" = 0 ]; then printf legacy3v3
+    else printf unknown; fi
+}
+detect_hardware(){
+    CID=unknown; [ -r "$CID_FILE" ] && CID=$(tr -d '\n ' <"$CID_FILE")
+    KNOWN_FAMILY=''; [ "$CID" = unknown ] || KNOWN_FAMILY=$(family_known_for_cid "$CID" | head -n1)
+    EVIDENCE_FAMILY=$(runtime_family_evidence)
+    if [ -n "$KNOWN_FAMILY" ]; then
+        DETECT_FAMILY=$KNOWN_FAMILY; HARDWARE_STATUS=known
+        if [ "$EVIDENCE_FAMILY" != unknown ] && [ "$EVIDENCE_FAMILY" != "$KNOWN_FAMILY" ]; then DETECT_CONFLICT=1; else DETECT_CONFLICT=0; fi
+    else
+        DETECT_FAMILY=$EVIDENCE_FAMILY; HARDWARE_STATUS=untested; DETECT_CONFLICT=0
+    fi
+}
+
+normalize_cpu(){
+    case "$1" in
+      stock) CPU_PROFILE=stock; CPU_HZ=1008000000;;
+      1.1|1.10|1104) CPU_PROFILE=1104; CPU_HZ=1104000000;;
+      1.15|1152) CPU_PROFILE=1152; CPU_HZ=1152000000;;
+      1.2|1.20|1200) CPU_PROFILE=1200; CPU_HZ=1200000000;;
+      1.25|1248) CPU_PROFILE=1248; CPU_HZ=1248000000;;
+      1.3|1.30|1296) CPU_PROFILE=1296; CPU_HZ=1296000000;;
+      1.35|1344) CPU_PROFILE=1344; CPU_HZ=1344000000;;
+      1.4|1.40|1392) CPU_PROFILE=1392; CPU_HZ=1392000000;;
+      *) return 1;;
+    esac
+}
+cpu_profile_from_hz(){ case "$1" in 1008000000) printf stock;; 1104000000) printf 1104;; 1152000000) printf 1152;; 1200000000) printf 1200;; 1248000000) printf 1248;; 1296000000) printf 1296;; 1344000000) printf 1344;; 1392000000) printf 1392;; *) return 1;; esac; }
+normalize_emmc(){ case "$1" in stock) EMMC_MHZ=25;; 25|50|100|150) EMMC_MHZ=$1;; *) return 1;; esac; }
+family_allows_emmc(){ case "$1:$2" in legacy3v3:25|legacy3v3:50|hs2001v8:25|hs2001v8:50|hs2001v8:100|hs2001v8:150) return 0;; *) return 1;; esac; }
+
+managed_vars(){
+    for MV_NAME in fgx_boot_current fgx_boot_test fgx_boot_restore fgx_boot_save fgx_boot_stock fgx_candidate_axis fgx_candidate_value; do env_exists "$MV_NAME" && printf '%s\n' "$MV_NAME"; done | sort -u
+}
+env_dump(){ ensure_environment; printf '%s\n' "$ENV_DATA"; }
+boot_graph_vars(){
+    env_dump | awk '
+      function addq(n){ if (n ~ /^[A-Za-z_][A-Za-z0-9_]*$/ && !queued[n]) { q[++qt]=n; queued[n]=1 } }
+      function refs(val,    x,n,a,i,j,t){ x=val; gsub(/[;|&()]/," ",x); n=split(x,a,/[	 ]+/); for(i=1;i<=n;i++) if(a[i]=="run") for(j=i+1;j<=n;j++){ t=a[j]; if(t !~ /^[A-Za-z_][A-Za-z0-9_]*$/) break; addq(t) } }
+      { p=index($0,"="); if(!p) next; n=substr($0,1,p-1); v[n]=substr($0,p+1) }
+      END { addq("bootcmd"); while(qh<qt){ n=q[++qh]; if(seen[n]++) continue; if(n in v){ print n; refs(v[n]) } else { print "!MISSING:" n } } }
+    '
+}
+boot_like_graph_vars(){
+    env_dump | awk '
+      function addq(n){ if (n ~ /^[A-Za-z_][A-Za-z0-9_]*$/ && !queued[n]) { q[++qt]=n; queued[n]=1 } }
+      function refs(val,    x,n,a,i,j,t){ x=val; gsub(/[;|&()]/," ",x); n=split(x,a,/[	 ]+/); for(i=1;i<=n;i++) if(a[i]=="run") for(j=i+1;j<=n;j++){ t=a[j]; if(t !~ /^[A-Za-z_][A-Za-z0-9_]*$/) break; addq(t) } }
+      { p=index($0,"="); if(!p) next; n=substr($0,1,p-1); v[n]=substr($0,p+1); if(v[n] ~ /(^|[; 	])(run|fatload|ext4load|bootm|bootz|booti|source|fdt|mw\.l|setexpr)([; 	]|$)/ || v[n] ~ /setenv[ 	]+bootcmd/) addq(n) }
+      END { while(qh<qt){ n=q[++qh]; if(seen[n]++) continue; if(n in v){ print n; refs(v[n]) } } }
+    '
+}
+boot_graph_missing(){ boot_graph_vars | sed -n 's/^!MISSING://p'; }
+boot_chain_file_refs(){
+    BCF_NAMES=$( { boot_graph_vars; boot_like_graph_vars; } | sed '/^!/d' | sort -u | tr '\n' ' ')
+    [ -n "$BCF_NAMES" ] || return 0
+    env_dump | awk -v wanted="$BCF_NAMES" '
+      BEGIN { n=split(wanted,a," "); for(i=1;i<=n;i++) if(a[i]!="") keep[a[i]]=1 }
+      function emit_loader(val,    x,n,t,i,cmd,j,f){ x=val; gsub(/;/," ; ",x); n=split(x,t,/[	 ]+/); for(i=1;i<=n;i++){ cmd=t[i]; if(cmd=="fatload" || cmd=="ext4load"){ if(i+4<=n){ f=t[i+4]; gsub(/^"|"$/,"",f); print f } } else if(cmd=="load" && i+1<=n && t[i+1]=="mmc"){ if(i+4<=n){ f=t[i+4]; gsub(/^"|"$/,"",f); print f } } } }
+      { p=index($0,"="); if(!p) next; name=substr($0,1,p-1); if(keep[name]) emit_loader(substr($0,p+1)) }
+    ' | sort -u
+}
+unsafe_boot_file_refs(){ boot_chain_file_refs | while IFS= read -r f; do case "$f" in ''|.|..|*/*|*'..'*) printf '%s\n' "$f";; *[!A-Za-z0-9._-]*) printf '%s\n' "$f";; esac; done | sort -u; }
+stock_env_value(){
+    SEV_NAME=$1
+    [ -r "$STOCK_ENV_FILE" ] || return 1
+    awk -v key="$SEV_NAME" '
+      BEGIN { count=0 }
+      index($0,key "=")==1 { count++; if(count==1) print substr($0,length(key)+2) }
+      END { if(count!=1) exit 1 }
+    ' "$STOCK_ENV_FILE"
+}
+stock_env_file_valid(){
+    [ -r "$STOCK_ENV_FILE" ] || return 1
+    awk '
+      BEGIN { seen_setargs=seen_dsp=seen_uimage=0; bad=0 }
+      /^[^=]+=/ {
+        p=index($0,"="); k=substr($0,1,p-1); v=substr($0,p+1)
+        if(v=="") bad=1
+        if(k=="setargs_mmc") seen_setargs++
+        else if(k=="boot_dsp0") seen_dsp++
+        else if(k=="boot_uImage") seen_uimage++
+        else bad=1
+        next
+      }
+      { bad=1 }
+      END { exit !(bad==0 && seen_setargs==1 && seen_dsp==1 && seen_uimage==1) }
+    ' "$STOCK_ENV_FILE"
+}
+stock_env_matches(){
+    SEM_NAME=$1
+    SEM_EXPECTED=$(stock_env_value "$SEM_NAME") || return 1
+    SEM_ACTUAL=$(get_env "$SEM_NAME" || true)
+    [ "$SEM_ACTUAL" = "$SEM_EXPECTED" ]
+}
+stock_helpers_valid(){
+    stock_env_file_valid || return 1
+    stock_env_matches setargs_mmc && stock_env_matches boot_dsp0 && stock_env_matches boot_uImage
+}
+show_stock_helper_mismatches(){
+    for SHD_NAME in setargs_mmc boot_dsp0 boot_uImage; do
+      SHD_EXPECTED=$(stock_env_value "$SHD_NAME" 2>/dev/null || true)
+      SHD_ACTUAL=$(get_env "$SHD_NAME" || true)
+      [ -n "$SHD_EXPECTED" ] && [ "$SHD_ACTUAL" = "$SHD_EXPECTED" ] && continue
+      say "Stock U-Boot helper mismatch: $SHD_NAME"
+      say ''
+      say 'Expected:'
+      if [ -n "$SHD_EXPECTED" ]; then say "  $SHD_EXPECTED"; else say '  <missing/invalid canonical value>'; fi
+      say ''
+      say 'Actual:'
+      if env_exists "$SHD_NAME"; then say "  $SHD_ACTUAL"; else say '  <missing>'; fi
+      say ''
+    done
+}
+require_stock_helpers(){
+    stock_helpers_valid && return 0
+    show_stock_helper_mismatches >&2
+    die 'protected stock U-Boot helpers are modified or canonical stock-uboot.env is invalid; manual recovery is required'
+}
+die_inconsistent(){
+    DI_MESSAGE=$1
+    stock_helpers_valid || show_stock_helper_mismatches >&2
+    die "$DI_MESSAGE"
+}
+stock_environment_profile(){
+    stock_helpers_valid || { STOCK_ENV_MATCH=unknown; return 1; }
+    STOCK_ENV_MATCH=$STOCK_ENV_PROFILE
+    return 0
+}
+unknown_boot_vars(){
+    { boot_graph_vars; boot_like_graph_vars; } | sed '/^bootcmd$/d; /^!MISSING:/d' | while IFS= read -r UBV_NAME; do
+        case "$UBV_NAME" in setargs_mmc|boot_dsp0|boot_uImage|fgx_boot_current|fgx_boot_test|fgx_boot_restore|fgx_boot_save|fgx_boot_stock|fgx_candidate_axis|fgx_candidate_value) continue;; esac
+        printf '%s\n' "$UBV_NAME"
+    done
+    env_dump | while IFS='=' read -r UBV_NAME UBV_VALUE; do case "$UBV_NAME" in fgx_*) case "$UBV_NAME" in fgx_boot_current|fgx_boot_test|fgx_boot_restore|fgx_boot_save|fgx_boot_stock|fgx_candidate_axis|fgx_candidate_value) ;; *) printf '%s\n' "$UBV_NAME";; esac;; esac; done
+}
+unknown_boot_files(){
+    ensure_boot_access ro
+    { boot_chain_file_refs; find "$BOOT_DIR" -maxdepth 1 -type f \( -name '*.dtb' -o -name '*.DTB' \) -print 2>/dev/null | while IFS= read -r path; do printf '%s\n' "${path##*/}"; done; } | sort -u | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in uImage|sunxi.dtb|FORGE_X_A.DTB|FORGE_X_B.DTB|FORGE_X_TMP.DTB|FORGE_X_STOCK.DTB) continue;; esac
+      case "$f" in *[!A-Za-z0-9._-]*|.|..) continue;; esac
+      [ -f "$BOOT_DIR/$f" ] && printf '%s\n' "$f"
+    done | sort -u
+}
+stock_dtb_hash(){ ensure_boot_access ro; [ -r "$BOOT_DIR/sunxi.dtb" ] || { printf missing; return; }; sha256_file "$BOOT_DIR/sunxi.dtb"; }
+current_slot_count(){ ensure_boot_access ro; n=0; [ -f "$BOOT_DIR/$SLOT_A" ] && n=$((n+1)); [ -f "$BOOT_DIR/$SLOT_B" ] && n=$((n+1)); printf '%s\n' "$n"; }
+
+valid_hash(){ case "$1" in [0-9a-f][0-9a-f][0-9a-f]*) [ "${#1}" = 64 ] 2>/dev/null || return 1;; *) return 1;; esac; printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
+valid_cpu_metadata(){ prof=$1; hz=$2; case "$prof:$hz" in stock:1008000000|1104:1104000000|1152:1152000000|1200:1200000000|1248:1248000000|1296:1296000000|1344:1344000000|1392:1392000000) return 0;; *) return 1;; esac; }
+valid_family_emmc_metadata(){ family_allows_emmc "$1" "$2"; }
+valid_fallback_bootcmd(){ case "$1" in "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD") return 0;; *) return 1;; esac; }
+current_metadata_valid(){
+    [ -r "$CURRENT_FILE" ] || return 1
+    [ "$(meta_get "$CURRENT_FILE" format || true)" = 2 ] && [ "$(meta_get "$CURRENT_FILE" phase || true)" = current ] || return 1
+    CMV_SLOT=$(meta_get "$CURRENT_FILE" slot || true); case "$CMV_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
+    CMV_CPU=$(meta_get "$CURRENT_FILE" cpu_profile || true); CMV_HZ=$(meta_get "$CURRENT_FILE" cpu_hz || true); valid_cpu_metadata "$CMV_CPU" "$CMV_HZ" || return 1
+    CMV_FAM=$(meta_get "$CURRENT_FILE" family || true); CMV_EMMC=$(meta_get "$CURRENT_FILE" emmc_mhz || true); valid_family_emmc_metadata "$CMV_FAM" "$CMV_EMMC" || return 1
+    CMV_HASH=$(meta_get "$CURRENT_FILE" dtb_sha256 || true); valid_hash "$CMV_HASH" || return 1
+    CMV_UNTESTED=$(meta_get "$CURRENT_FILE" untested_emmc_override || printf 0); case "$CMV_UNTESTED" in 0|1) ;; *) return 1;; esac
+}
+candidate_metadata_valid(){
+    [ -r "$CANDIDATE_FILE" ] || return 1
+    [ "$(meta_get "$CANDIDATE_FILE" format || true)" = 2 ] || return 1
+    CM_PHASE=$(meta_get "$CANDIDATE_FILE" phase || true); case "$CM_PHASE" in armed|passed|committing) ;; *) return 1;; esac
+    CM_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true); case "$CM_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
+    CM_CPU=$(meta_get "$CANDIDATE_FILE" cpu_profile || true); CM_HZ=$(meta_get "$CANDIDATE_FILE" cpu_hz || true); valid_cpu_metadata "$CM_CPU" "$CM_HZ" || return 1
+    CM_FAM=$(meta_get "$CANDIDATE_FILE" family || true); CM_EMMC=$(meta_get "$CANDIDATE_FILE" emmc_mhz || true); valid_family_emmc_metadata "$CM_FAM" "$CM_EMMC" || return 1
+    CM_HASH=$(meta_get "$CANDIDATE_FILE" dtb_sha256 || true); valid_hash "$CM_HASH" || return 1
+    CM_AXIS=$(meta_get "$CANDIDATE_FILE" axis || true); CM_VALUE=$(meta_get "$CANDIDATE_FILE" value || true)
+    case "$CM_AXIS" in cpu) normalize_cpu "$CM_VALUE" >/dev/null 2>&1 || return 1; [ "$CPU_PROFILE" = "$CM_CPU" ] || return 1;; emmc) normalize_emmc "$CM_VALUE" >/dev/null 2>&1 || return 1; [ "$EMMC_MHZ" = "$CM_EMMC" ] || return 1;; *) return 1;; esac
+    CM_FALLBACK=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true); valid_fallback_bootcmd "$CM_FALLBACK" || return 1
+    CM_UNTESTED=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0); case "$CM_UNTESTED" in 0|1) ;; *) return 1;; esac
+    [ -n "$(meta_get "$CANDIDATE_FILE" armed_boot_id || true)" ] || return 1
+}
+stock_transition_valid(){
+    ensure_boot_access ro
+    [ -r "$BOOT_DIR/$SLOT_STOCK" ] && [ "$(sha256_file "$BOOT_DIR/$SLOT_STOCK")" = "$STOCK_SHA" ] || return 1
+    boot_script_matches "$SLOT_STOCK" "$(get_env fgx_boot_stock || true)" || return 1
+    stock_helpers_valid
+}
+
+current_valid(){
+    ensure_boot_access ro
+    current_metadata_valid || return 1
+    CV_SLOT=$(meta_get "$CURRENT_FILE" slot || true); CV_HASH=$(meta_get "$CURRENT_FILE" dtb_sha256 || true)
+    CV_CPU=$(meta_get "$CURRENT_FILE" cpu_profile || true); CV_EMMC=$(meta_get "$CURRENT_FILE" emmc_mhz || true); CV_FAMILY=$(meta_get "$CURRENT_FILE" family || true)
+    case "$CV_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
+    [ -r "$BOOT_DIR/$CV_SLOT" ] || return 1
+    [ "$(sha256_file "$BOOT_DIR/$CV_SLOT")" = "$CV_HASH" ] || return 1
+    [ -x "$FGX_FDT" ] || return 1
+    "$FGX_FDT" verify --file "$BOOT_DIR/$CV_SLOT" --cpu "$CV_CPU" --emmc "$CV_EMMC" --family "$CV_FAMILY" >/dev/null 2>&1 || return 1
+    CV_HELPER=$(get_env fgx_boot_current || true); boot_script_matches "$CV_SLOT" "$CV_HELPER" || return 1
+}
+candidate_artifact_valid(){
+    ensure_boot_access ro
+    candidate_metadata_valid || return 1
+    CAV_PHASE=$(meta_get "$CANDIDATE_FILE" phase || true)
+    CAV_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true); CAV_HASH=$(meta_get "$CANDIDATE_FILE" dtb_sha256 || true)
+    CAV_CPU=$(meta_get "$CANDIDATE_FILE" cpu_profile || true); CAV_EMMC=$(meta_get "$CANDIDATE_FILE" emmc_mhz || true); CAV_FAMILY=$(meta_get "$CANDIDATE_FILE" family || true)
+    case "$CAV_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
+    [ -r "$BOOT_DIR/$CAV_SLOT" ] || return 1
+    [ "$(sha256_file "$BOOT_DIR/$CAV_SLOT")" = "$CAV_HASH" ] || return 1
+    [ -x "$FGX_FDT" ] || return 1
+    "$FGX_FDT" verify --file "$BOOT_DIR/$CAV_SLOT" --cpu "$CAV_CPU" --emmc "$CAV_EMMC" --family "$CAV_FAMILY" >/dev/null 2>&1
+}
+candidate_helpers_valid(){
+    candidate_artifact_valid || return 1
+    CHV_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true); CHV_FALLBACK=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true)
+    CHV_AXIS=$(meta_get "$CANDIDATE_FILE" axis || true); CHV_VALUE=$(meta_get "$CANDIDATE_FILE" value || true)
+    boot_script_matches "$CHV_SLOT" "$(get_env fgx_boot_test || true)" || return 1
+    [ "$(get_env fgx_boot_restore || true)" = "setenv bootcmd $CHV_FALLBACK" ] || return 1
+    [ "$(get_env fgx_boot_save || true)" = saveenv ] || return 1
+    [ "$(get_env fgx_candidate_axis || true)" = "$CHV_AXIS" ] || return 1
+    [ "$(get_env fgx_candidate_value || true)" = "$CHV_VALUE" ] || return 1
+}
+candidate_functionally_committed(){
+    [ -r "$CANDIDATE_FILE" ] || return 1
+    CFC_BOOTCMD=$(get_env bootcmd || true)
+    [ "$CFC_BOOTCMD" = "$TRANSITION_BOOTCMD" ] && return 0
+    [ "$CFC_BOOTCMD" = "$MANAGED_BOOTCMD" ] || return 1
+    CFC_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true)
+    case "$CFC_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
+    CFC_HELPER=$(get_env fgx_boot_current || true)
+    boot_script_matches "$CFC_SLOT" "$CFC_HELPER"
+}
+classify_boot_state(){
+    progress 'Inspecting boot configuration'
+    ensure_environment
+    ensure_boot_access ro
+    BOOTCMD=$(get_env bootcmd || true)
+    STOCK_HASH=$(stock_dtb_hash)
+    UVARS=$(unknown_boot_vars | sort -u)
+    UFILES=$(unknown_boot_files)
+    UMISSING=$(boot_graph_missing)
+    UUNSAFE=$(unsafe_boot_file_refs)
+    MCOUNT=$(current_slot_count)
+    BOOT_STATE=inconsistent
+    CLEANUP_REQUIRED=yes
+    CLEANUP_DANGER_REQUIRED=no
+    MANUAL_RECOVERY_REQUIRED=yes
+    CBS_PHASE=''; [ -r "$CANDIDATE_FILE" ] && CBS_PHASE=$(meta_get "$CANDIDATE_FILE" phase || true)
+    STOCK_HELPERS_OK=0; stock_helpers_valid && STOCK_HELPERS_OK=1
+
+    # A stock restore transition is known only when the protected vendor helper
+    # triplet still matches a canonical manifest profile exactly.
+    if [ "$BOOTCMD" = "$STOCK_TRANSITION_BOOTCMD" ] && [ "$STOCK_HELPERS_OK" = 1 ] && stock_transition_valid; then
+      BOOT_STATE=stock-restore-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
+    fi
+
+    # Missing run dependencies, unsafe file references, corrupt metadata, or a
+    # modified protected stock helper are structural inconsistencies.  Do not
+    # offer destructive automatic cleanup for them.
+    [ -z "$UMISSING" ] && [ -z "$UUNSAFE" ] || return
+    [ "$STOCK_HELPERS_OK" = 1 ] || return
+    if [ -r "$CURRENT_FILE" ]; then current_metadata_valid || return; fi
+    if [ -r "$CANDIDATE_FILE" ]; then candidate_metadata_valid || return; fi
+
+    # If a candidate falls back to managed state, that managed recovery path
+    # must itself still be valid before the transaction can be called known.
+    if [ -r "$CANDIDATE_FILE" ] && [ "$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true)" = "$MANAGED_BOOTCMD" ] && [ "$BOOTCMD" != "$TRANSITION_BOOTCMD" ]; then
+      current_valid || return
+    fi
+
+    # Unknown/custom boot objects appearing during a Forge-X transaction are
+    # not a known transaction state. They can be removed only with the danger
+    # cleanup path, after the stock helper profile has already been proven.
+    if [ -r "$CANDIDATE_FILE" ] && { [ -n "$UVARS" ] || [ -n "$UFILES" ]; }; then
+      BOOT_STATE=unknown/custom; CLEANUP_REQUIRED=yes; CLEANUP_DANGER_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
+    fi
+
+    if [ -r "$CANDIDATE_FILE" ]; then
+      candidate_artifact_valid || return
+      case "$CBS_PHASE:$BOOTCMD" in
+        armed:"$ONESHOT_BOOTCMD"|armed:"$STOCK_BOOTCMD"|armed:"$MANAGED_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=candidate-armed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
+        passed:"$STOCK_BOOTCMD"|passed:"$MANAGED_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=candidate-passed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
+        committing:"$STOCK_BOOTCMD"|committing:"$ONESHOT_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=promotion-not-committed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
+        committing:"$TRANSITION_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return;;
+        committing:"$MANAGED_BOOTCMD")
+          if candidate_functionally_committed; then BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no
+          elif current_valid && candidate_helpers_valid; then BOOT_STATE=promotion-not-committed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no
+          else return
+          fi
+          return;;
+      esac
+      if candidate_functionally_committed; then BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return; fi
+      return
+    fi
+
+    # Exact stock active path. Unknown disconnected boot remnants are reported
+    # separately instead of turning a successful rollback into a failure.
+    if [ "$BOOTCMD" = "$STOCK_BOOTCMD" ] && [ "$STOCK_HASH" = "$STOCK_SHA" ]; then
+      if [ -n "$UVARS" ] || [ -n "$UFILES" ]; then
+        BOOT_STATE=stock-active-with-unknown-remnants; CLEANUP_REQUIRED=yes; CLEANUP_DANGER_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
+      fi
+      if [ -z "$(managed_vars)" ] && [ "$MCOUNT" = 0 ] && [ ! -f "$BOOT_DIR/$SLOT_STOCK" ] && [ ! -r "$CURRENT_FILE" ]; then
+        BOOT_STATE=clean-stock; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no
+      else
+        BOOT_STATE=known-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no
+      fi
+      return
+    fi
+
+    # Managed state is considered clean only if the complete protected vendor
+    # recovery helper profile remains canonical, including boot_uImage.
+    if [ "$BOOTCMD" = "$MANAGED_BOOTCMD" ]; then
+      current_valid || return
+      if [ -n "$UVARS" ] || [ -n "$UFILES" ]; then
+        BOOT_STATE=unknown/custom; CLEANUP_REQUIRED=yes; CLEANUP_DANGER_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
+      fi
+      if [ "$MCOUNT" -gt 1 ] || [ -n "$(managed_vars | grep -v '^fgx_boot_current$' || true)" ] || [ -f "$BOOT_DIR/$SLOT_STOCK" ]; then
+        BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no
+      else
+        BOOT_STATE=clean-managed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no
+      fi
+      return
+    fi
+
+    # A custom but structurally traversable chain with canonical protected
+    # roots can be normalized by the explicit danger cleanup operation.
+    BOOT_STATE=unknown/custom
+    CLEANUP_REQUIRED=yes
+    CLEANUP_DANGER_REQUIRED=yes
+    MANUAL_RECOVERY_REQUIRED=no
+}
+
+
+# The AD5M U-Boot has no hush parser: if/&& are unknown commands and every ';' command runs even after a
+# failure. Clearing both image headers first makes bootm reject a failed load instead of booting stale DRAM.
+boot_script(){
+    printf '%s\n' "mw.l 0x43000000 0 0x10;mw.l 0x44864e70 0 0x10;part list mmc 0;fatload mmc 0:1 0x43000000 uImage;fatload mmc 0:1 0x44864e70 $1;bootm 0x43000000 - 0x44864e70;reset"
+}
+boot_script_matches(){
+    [ "$2" = "$(boot_script "$1")" ] && return 0
+    # Recognize existing installations for recovery; never publish these forms. The if-form never booted.
+    [ "$2" = "part list mmc 0;fatload mmc 0:1 0x43000000 uImage;fatload mmc 0:1 0x44864e70 $1;bootm 0x43000000 - 0x44864e70" ] && return 0
+    [ "$2" = "if part list mmc 0 && fatload mmc 0:1 0x43000000 uImage && fatload mmc 0:1 0x44864e70 $1; then bootm 0x43000000 - 0x44864e70; fi; reset" ]
+}
+
+bundle_key(){
+    { sha256_file "$BUNDLE_DIR/bin/t113-profilectl"; sha256_file "$FGX_FDT"; sha256_file "$FGX_LOCK"; sha256_file "$MANIFEST"; sha256_file "$SCHEMA"; sha256_file "$STOCK_DTB"; sha256_file "$STOCK_ENV_FILE"; sha256_file "$BUNDLE_SUMS"; } | sha256_stream
+}
+cache_valid(){
+    [ -r "$CACHE_FILE" ] || return 1
+    [ "$(meta_get "$CACHE_FILE" boot_id || true)" = "$(boot_id)" ] || return 1
+    [ "$(meta_get "$CACHE_FILE" bundle_key || true)" = "$(bundle_key)" ] || return 1
+    [ "$(meta_get "$CACHE_FILE" validator_version || true)" = "$VALIDATOR_VERSION" ] || return 1
+    [ "$(meta_get "$CACHE_FILE" result || true)" = ok ]
+}
+write_cache(){
+    mkdir -p "$CACHE_DIR" || return 1; tmp=$CACHE_DIR/.validation-ok.tmp.$$
+    { printf 'boot_id=%s\n' "$(boot_id)"; printf 'bundle_key=%s\n' "$(bundle_key)"; printf 'validator_version=%s\n' "$VALIDATOR_VERSION"; printf 'result=ok\n'; } >"$tmp" || return 1
+    mv "$tmp" "$CACHE_FILE" || return 1
+}
+verify_sums(){
+    [ -r "$BUNDLE_SUMS" ] || die 'SHA256SUMS missing'
+    (cd "$BUNDLE_DIR" && while read -r sum path; do [ -n "$sum" ] || continue; [ -f "$path" ] || { echo "missing $path" >&2; exit 1; }; got=$(sha256_file "$path"); [ "$got" = "$sum" ] || { echo "checksum mismatch: $path" >&2; exit 1; }; done <"$BUNDLE_SUMS") || die 'bundle checksum mismatch'
+}
+validate_manifest_constraints(){
+    [ -r "$MANIFEST" ] && [ -r "$SCHEMA" ] && [ -r "$STOCK_ENV_FILE" ] || return 1
+    VMS_JSON=$(tr -d '[:space:]' <"$MANIFEST") || return 1
+    for VMS_NEEDLE in \
+      '"format":2' '"name":"t113-profilectl"' '"generator_version":"1.0.1"' '"validator_version":5' \
+      '"file":"profiles/source/sunxi-stock.dtb"' '"sha256":"27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21"' \
+      '"fdt_version":17' '"size":55093' '"uimage_address":"0x43000000"' '"dtb_address":"0x44864e70"' '"minimum_padding":32768' \
+      '"slots":["FORGE_X_A.DTB","FORGE_X_B.DTB"]' '"stock_environment"' '"id":"ad5m-stock-v1"' '"file":"profiles/source/stock-uboot.env"' \
+      '"exact_hz":1104000000' '"exact_hz":1152000000' '"exact_hz":1200000000' '"exact_hz":1248000000' '"exact_hz":1296000000' '"exact_hz":1344000000' '"exact_hz":1392000000' \
+      '"passive_mc":70000' '"hysteresis_mc":2000' '"critical_mc":90000' '"cooling_floor_hz":1008000000' '"managed_opp_microvolt":950000' \
+      '"family_id":"hs2001v8"' '"frequencies_mhz":"25,50,100,150"' '"family_id":"legacy3v3"' '"frequencies_mhz":"25,50"'; do
+        case "$VMS_JSON" in *"$VMS_NEEDLE"*) ;; *) return 1;; esac
+    done
+    grep -F '"stock_bootcmd":"run setargs_mmc boot_dsp0 boot_uImage"' "$MANIFEST" >/dev/null 2>&1 || return 1
+    VMS_SCHEMA=$(tr -d '[:space:]' <"$SCHEMA") || return 1
+    case "$VMS_SCHEMA" in *'"format":{"const":2}'*'"additionalProperties":false'*) ;; *) return 1;; esac
+    stock_env_file_valid || return 1
+    VMS_UIMAGE=$(stock_env_value boot_uImage) || return 1
+    case "$VMS_UIMAGE" in *sunxi.dtb*) ;; *) return 1;; esac
+    case "$VMS_UIMAGE" in *'bootm 0x43000000 - 0x44864e70') ;; *) return 1;; esac
+    return 0
+}
+full_validate_bundle(){
+    progress 'Validating bundled hardware profiles'
+    ensure_tmp
+    [ -r "$MANIFEST" ] && [ -r "$SCHEMA" ] && [ -x "$FGX_FDT" ] && [ -x "$FGX_LOCK" ] && [ -r "$STOCK_DTB" ] && [ -r "$STOCK_ENV_FILE" ] || die 'bundle critical files are missing'
+    verify_sums
+    validate_manifest_constraints || die 'manifest-v2 constrained runtime validation failed'
+    [ "$(sha256_file "$STOCK_DTB")" = "$STOCK_SHA" ] || die 'canonical stock DTB hash mismatch'
+    VMS_SELFTEST=$("$FGX_FDT" --self-test 2>/dev/null || true); [ "$VMS_SELFTEST" = 'fgx-fdt 1.0.1 self-test PASS' ] || die 'fgx-fdt self-test/version mismatch'
+    combos=0
+    for cpu in stock 1104 1152 1200 1248 1296 1344 1392; do
+      progress "Checking generated CPU profile: $cpu (fgx-fdt)"
+      for fam in legacy3v3 hs2001v8; do
+        if [ "$fam" = legacy3v3 ]; then freqs='25 50'; else freqs='25 50 100 150'; fi
+        for emmc in $freqs; do
+          out=$TMP_DIR/v-$cpu-$fam-$emmc.dtb
+          "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --output "$out" >/dev/null || die "DTB build validation failed: $cpu/$fam/$emmc"
+          "$FGX_FDT" verify --file "$out" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die "DTB semantic validation failed: $cpu/$fam/$emmc"
+          combos=$((combos+1))
+        done
+      done
+    done
+    [ "$combos" = 48 ] || die "internal validation matrix count is $combos, expected 48"
+    write_cache || die 'cannot write validation cache'
+    say 'Bundle validation: PASS (48 transient generated combinations)'
+}
+ensure_bundle_valid_cached(){ [ "$TEST_MODE" = 1 ] && [ "${T113_TEST_ASSUME_BUNDLE_VALID:-0}" = 1 ] && return 0; cache_valid && return 0; full_validate_bundle >/dev/null; }
+
+original_verify(){
+    [ -d "$ORIGINAL_DIR" ] || return 1; [ -r "$ORIGINAL_DIR/SHA256SUMS" ] || return 1
+    (cd "$ORIGINAL_DIR" && while read -r sum path; do [ -f "$path" ] || exit 1; [ "$(sha256_file "$path")" = "$sum" ] || exit 1; done <SHA256SUMS)
+}
+cleanup_stale_original_tmp(){
+    [ -d "$STATE_DIR" ] || return 0
+    find "$STATE_DIR" -maxdepth 1 -type d -name '.original.tmp.*' -exec rm -rf {} \; 2>/dev/null || die 'cannot remove stale reserved original temp directory'
+}
+create_original(){
+    progress 'Verifying original backup checksums'
+    if [ -e "$ORIGINAL_DIR" ]; then original_verify || die 'immutable original exists but is invalid'; return 0; fi
+    [ "$DRY_RUN" = 1 ] && { say 'DRY-RUN create immutable original backup'; return 0; }
+    cleanup_stale_original_tmp
+    tmp=$STATE_DIR/.original.tmp.$$
+    mkdir -p "$tmp/files" || die 'cannot create original temp'
+    ensure_boot_access rw
+    durable_sync
+    progress 'Backing up boot partition (dd)'
+    dd if="$DEV_BOOT" of="$tmp/p1.img" bs=1M 2>"$TMP_ROOT/t113-profilectl-dd-p1.$$.log" || die 'cannot backup p1'
+    progress 'Backing up primary U-Boot partition (dd)'
+    dd if="$DEV_ENV" of="$tmp/p2.img" bs=1M 2>"$TMP_ROOT/t113-profilectl-dd-p2.$$.log" || die 'cannot backup p2'
+    progress 'Backing up redundant U-Boot partition (dd)'
+    dd if="$DEV_ENV_REDUND" of="$tmp/p3.img" bs=1M 2>"$TMP_ROOT/t113-profilectl-dd-p3.$$.log" || die 'cannot backup p3'
+    env_dump >"$tmp/environment.txt" || die 'cannot dump U-Boot environment'
+    progress 'Copying original boot files'
+    if [ -d "$BOOT_DIR" ]; then find "$BOOT_DIR" -maxdepth 1 -type f -exec cp -p {} "$tmp/files/" \; || die 'cannot backup boot files'; fi
+    { printf 'format=2\n'; printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf unknown)"; printf 'bootcmd=%s\n' "$(get_env bootcmd || true)"; printf 'stock_template_sha256=%s\n' "$STOCK_SHA"; } >"$tmp/meta" || die 'cannot write original meta'
+    progress 'Checksumming original backup'
+    (cd "$tmp" && find . -type f ! -name SHA256SUMS -print | sed 's#^./##' | sort | while IFS= read -r f; do printf '%s  %s\n' "$(sha256_file "$f")" "$f"; done >SHA256SUMS) || die 'cannot checksum original'
+    durable_sync; fault original:pre-publish
+    mv "$tmp" "$ORIGINAL_DIR" || die 'cannot publish immutable original'
+    durable_sync; fault original:published
+    original_verify || die 'published original verification failed'
+}
+
+copy_stock_dtb_safe(){
+    ensure_boot_mutation_access
+    [ "$(sha256_file "$STOCK_DTB")" = "$STOCK_SHA" ] || die 'canonical stock DTB invalid'
+    if [ "$DRY_RUN" = 1 ]; then say 'DRY-RUN restore canonical sunxi.dtb'; return; fi
+    tmp=$BOOT_DIR/.sunxi.dtb.tmp.$$
+    cp "$STOCK_DTB" "$tmp" || die 'cannot stage stock sunxi.dtb'
+    [ "$(sha256_file "$tmp")" = "$STOCK_SHA" ] || die 'staged stock DTB hash mismatch'
+    durable_sync; mv "$tmp" "$BOOT_DIR/sunxi.dtb" || die 'cannot publish stock sunxi.dtb'; durable_sync
+    [ "$(sha256_file "$BOOT_DIR/sunxi.dtb")" = "$STOCK_SHA" ] || die 'stock sunxi.dtb readback mismatch'
+}
+
+candidate_build_publish(){
+    ensure_boot_mutation_access
+    cpu=$1; emmc=$2; fam=$3; slot=$4
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN generate canonical candidate cpu=$cpu emmc=$emmc family=$fam -> $slot"; CAND_HASH=dry-run; return; fi
+    build=$STATE_DIR/.dtb-build.tmp.$$
+    rm -f "$build" "$BOOT_DIR/$SLOT_TMP"
+    "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --output "$build" || die 'candidate DTB generation failed'
+    "$FGX_FDT" verify --file "$build" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate semantic verify failed'
+    hash=$(sha256_file "$build")
+    cp "$build" "$BOOT_DIR/$SLOT_TMP" || die 'cannot copy candidate to FAT temp'
+    [ "$(sha256_file "$BOOT_DIR/$SLOT_TMP")" = "$hash" ] || die 'FAT temp hash mismatch'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$SLOT_TMP" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'FAT temp semantic verify failed'
+    durable_sync; fault candidate:fat-temp
+    mv "$BOOT_DIR/$SLOT_TMP" "$BOOT_DIR/$slot" || die 'cannot publish candidate slot'
+    durable_sync; fault candidate:slot-published
+    [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'candidate final slot hash mismatch'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate final semantic verify failed'
+    rm -f "$build"; CAND_HASH=$hash
+}
+
+choose_candidate_slot(){ if [ -r "$CURRENT_FILE" ] && [ "$(meta_get "$CURRENT_FILE" slot || true)" = "$SLOT_A" ]; then CAND_SLOT=$SLOT_B; else CAND_SLOT=$SLOT_A; fi; }
+current_axes(){
+    if [ -r "$CURRENT_FILE" ]; then
+      [ "$DANGER_ASSUME_STOCK" = 0 ] || die '--danger-assume-stock-axes is not applicable when managed current metadata defines both axes'
+      EFFECTIVE_CPU=$(meta_get "$CURRENT_FILE" cpu_profile); EFFECTIVE_CPU_HZ=$(meta_get "$CURRENT_FILE" cpu_hz); EFFECTIVE_EMMC=$(meta_get "$CURRENT_FILE" emmc_mhz); EFFECTIVE_FAMILY=$(meta_get "$CURRENT_FILE" family); return 0
+    fi
+    classify_boot_state
+    [ "$BOOT_STATE" = clean-stock ] || die "cannot determine initial axes from boot state: $BOOT_STATE"
+    cpu=$(runtime_cpu_limit_hz 2>/dev/null || runtime_cpu_hz 2>/dev/null || true); runtime_ios >/dev/null 2>&1 || true
+    if [ -n "$cpu" ] && [ "${IOS_CLOCK:-}" = 25000000 ]; then
+      [ "$DANGER_ASSUME_STOCK" = 0 ] || die '--danger-assume-stock-axes is not applicable because runtime axes were confirmed'
+      prof=$(cpu_profile_from_hz "$cpu" 2>/dev/null || true)
+      [ -n "$prof" ] || die "unsupported runtime CPU clock: $cpu"
+      EFFECTIVE_CPU=$prof; EFFECTIVE_CPU_HZ=$cpu; EFFECTIVE_EMMC=25; EFFECTIVE_FAMILY=$DETECT_FAMILY; return 0
+    fi
+    [ "$DANGER_ASSUME_STOCK" = 1 ] || die 'runtime axes cannot be confirmed; --danger-assume-stock-axes is required only for a verified clean-stock boot path'
+    warn 'DANGER: assuming stock axes CPU=1008 MHz and eMMC=25 MHz because runtime values could not be confirmed.'
+    EFFECTIVE_CPU=stock; EFFECTIVE_CPU_HZ=1008000000; EFFECTIVE_EMMC=25; EFFECTIVE_FAMILY=$DETECT_FAMILY
+}
+
+prepare_hardware_for_mutation(){
+    detect_hardware
+    [ "$DETECT_CONFLICT" = 0 ] || die "CID family $KNOWN_FAMILY conflicts with runtime evidence $EVIDENCE_FAMILY"
+    [ "$DETECT_FAMILY" != unknown ] || die 'eMMC family cannot be determined unambiguously'
+    if [ "$HARDWARE_STATUS" = untested ]; then
+      [ "$DANGER_UNTESTED_EMMC" = 1 ] || { warn 'This eMMC chip has not been tested with Forge-X profiles.'; warn "Detected runtime family: $DETECT_FAMILY"; warn 'Please report the chip in Forge-X Discord, Telegram, or GitHub Discussions so it can be added to the tested hardware table.'; die 'mutation blocked; use --danger-allow-untested-emmc only if you accept this hardware risk'; }
+      warn "DANGER: allowing untested eMMC CID $CID as detected family $DETECT_FAMILY"
+      UNTESTED_OVERRIDE=1
+    else
+      [ "$DANGER_UNTESTED_EMMC" = 0 ] || die '--danger-allow-untested-emmc is not applicable to known hardware'
+      UNTESTED_OVERRIDE=0
+    fi
+}
+
+ensure_normal_mutation_state(){
+    classify_boot_state
+    case "$BOOT_STATE" in clean-stock|clean-managed) ;;
+      promotion-cleanup-required|known-cleanup-required|stock-restore-cleanup-required) die 'cleanup is required before starting another profile mutation';;
+      candidate-armed|candidate-passed|promotion-not-committed) die 'a candidate transaction is already active; verify/enable/cancel it before starting another test';;
+      unknown/custom|stock-active-with-unknown-remnants) die 'unknown/custom boot state; run cleanup first with --danger-cleanup-unknown after reviewing the exact plan';;
+      inconsistent) die_inconsistent 'boot state is inconsistent; manual recovery is required before profile mutations';;
+      *) die "unsupported boot state: $BOOT_STATE";;
+    esac
+}
+
+arm_test(){
+    TEST_AXIS=$1; TEST_VALUE=$2
+    ensure_bundle_valid_cached
+    need_mutation
+    prepare_hardware_for_mutation
+    ensure_normal_mutation_state
+    current_axes
+    case "$TEST_AXIS" in
+      cpu) normalize_cpu "$TEST_VALUE" || die "invalid CPU profile: $TEST_VALUE"; NEW_CPU=$CPU_PROFILE; NEW_CPU_HZ=$CPU_HZ; NEW_EMMC=$EFFECTIVE_EMMC;;
+      emmc) normalize_emmc "$TEST_VALUE" || die "invalid eMMC frequency: $TEST_VALUE"; NEW_CPU=$EFFECTIVE_CPU; NEW_CPU_HZ=$EFFECTIVE_CPU_HZ; NEW_EMMC=$EMMC_MHZ;;
+      *) die 'test axis must be cpu or emmc';;
+    esac
+    family_allows_emmc "$DETECT_FAMILY" "$NEW_EMMC" || die "$NEW_EMMC MHz is incompatible with $DETECT_FAMILY"
+    [ "$NEW_CPU" != stock ] || NEW_CPU_HZ=1008000000
+    if [ "$NEW_CPU" = 1392 ]; then warn '1392 MHz is experimental and was unstable on at least one tested CPU sample.'; fi
+    create_original
+    choose_candidate_slot
+    candidate_build_publish "$NEW_CPU" "$NEW_EMMC" "$DETECT_FAMILY" "$CAND_SLOT"
+    cscript=$(boot_script "$CAND_SLOT")
+    if [ -r "$CURRENT_FILE" ]; then FALLBACK=$MANAGED_BOOTCMD; else FALLBACK=$STOCK_BOOTCMD; fi
+    set_env fgx_boot_test "$cscript"
+    set_env fgx_boot_restore "setenv bootcmd $FALLBACK"
+    set_env fgx_boot_save 'saveenv'
+    set_env fgx_candidate_axis "$TEST_AXIS"
+    set_env fgx_candidate_value "$TEST_VALUE"
+    write_meta_atomic "$CANDIDATE_FILE" \
+      'format=2' 'phase=armed' "axis=$TEST_AXIS" "value=$TEST_VALUE" "cpu_profile=$NEW_CPU" "cpu_hz=$NEW_CPU_HZ" "emmc_mhz=$NEW_EMMC" "family=$DETECT_FAMILY" "slot=$CAND_SLOT" "dtb_sha256=$CAND_HASH" "armed_boot_id=$(boot_id)" "fallback_bootcmd=$FALLBACK" "untested_emmc_override=$UNTESTED_OVERRIDE"
+    set_env bootcmd "$ONESHOT_BOOTCMD"
+    say "Candidate armed: CPU=$NEW_CPU eMMC=$NEW_EMMC MHz family=$DETECT_FAMILY slot=$CAND_SLOT"
+    say 'Reboot manually, then run: t113-profilectl --apply verify'
+}
+
+fatal_dmesg(){
+    ensure_tmp
+    if [ -n "$DMESG_FILE" ]; then
+        [ -f "$DMESG_FILE" ] && [ -r "$DMESG_FILE" ] || return 1
+        cp "$DMESG_FILE" "$TMP_DIR/dmesg" || return 1
+    else
+        "$DMESG_CMD" >"$TMP_DIR/dmesg" 2>/dev/null || return 1
+    fi
+    grep -Eai 'kernel panic|BUG:|Oops:|mmc[^:]*:.*(timeout|error|CRC|I/O error)|EXT4-fs error|Buffer I/O error' "$TMP_DIR/dmesg" >"$TMP_DIR/kernel-errors"
+    journal_result=$?
+    case "$journal_result" in
+      0) head -n 20 "$TMP_DIR/kernel-errors";;
+      1) return 0;;
+      *) return 1;;
+    esac
+}
+verify_cpu_runtime(){
+    prof=$1; hz=$2
+    if [ "$prof" = stock ]; then got=$(runtime_cpu_limit_hz 2>/dev/null || runtime_cpu_hz 2>/dev/null || true); [ "$got" = 1008000000 ] || die "runtime stock CPU clock mismatch: got ${got:-unknown}, expected 1008000000"; return; fi
+    [ -r "$CPU_MAX_FILE" ] && [ -r "$CPU_AVAIL_FILE" ] && [ -r "$CPU_DRIVER_FILE" ] || die 'managed CPU cpufreq policy is incomplete'
+    maxk=$(tr -d '\n ' <"$CPU_MAX_FILE"); [ "$maxk" = $((hz/1000)) ] || die "CPU policy maximum mismatch: got $maxk kHz expected $((hz/1000))"
+    grep -qw "$((hz/1000))" "$CPU_AVAIL_FILE" || die 'target frequency is absent from scaling_available_frequencies'
+    drv=$(tr -d '\n ' <"$CPU_DRIVER_FILE"); [ -n "$drv" ] || die 'cpufreq scaling driver is empty'
+    # Loaded provenance plus policy confirms application even while DVFS is idle.
+    # Frequency attainment under load remains a separate optional stress check.
+    loaded_cpu_matches "$prof" && return 0
+    got=$(runtime_cpu_hz 2>/dev/null || true)
+    if [ "$got" != "$hz" ]; then
+      temp=''; [ -r "$CPU_TEMP_FILE" ] && temp=$(tr -d '\n ' <"$CPU_TEMP_FILE" || true)
+      case "$temp" in ''|*[!0-9]*) ;; *) if [ "$temp" -ge 70000 ]; then say "INCONCLUSIVE: CPU is thermally throttled (${temp} mC); cool the device and repeat verify."; exit 2; fi;; esac
+      die "runtime CPU clock mismatch: got ${got:-unknown}, expected $hz"
+    fi
+}
+verify_emmc_runtime(){
+    fam=$1; mhz=$2; runtime_ios || die 'cannot read MMC ios'
+    [ "$IOS_CLOCK" = $((mhz*1000000)) ] || die "runtime eMMC clock mismatch: got $IOS_CLOCK expected $((mhz*1000000))"
+    case "$fam:$mhz" in
+      hs2001v8:*) [ "$IOS_TIMING" = 9 ] && [ "$IOS_VOLTAGE" = 1 ] || die "HS200 runtime mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)";;
+      legacy3v3:25) [ "$IOS_TIMING" = 0 ] && [ "$IOS_VOLTAGE" = 0 ] || die "legacy 25 MHz mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)";;
+      legacy3v3:50) [ "$IOS_TIMING" = 1 ] && [ "$IOS_VOLTAGE" = 0 ] || die "legacy HS52 mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)";;
+      *) die 'invalid candidate family/frequency metadata';;
+    esac
+}
+verify_cmd(){
+    need_mutation
+    [ -r "$CANDIDATE_FILE" ] || die 'no candidate metadata'
+    phase=$(meta_get "$CANDIDATE_FILE" phase || true); [ "$phase" = armed ] || die "candidate phase is $phase, expected armed"
+    oldid=$(meta_get "$CANDIDATE_FILE" armed_boot_id); newid=$(boot_id); [ "$oldid" != "$newid" ] || die 'boot ID did not change; candidate has not been reboot-tested'
+    fallback=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd); bc=$(get_env bootcmd || true); [ "$bc" = "$fallback" ] || die "one-shot fallback was not restored before verify (bootcmd=$bc)"
+    cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); hz=$(meta_get "$CANDIDATE_FILE" cpu_hz); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family); slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256)
+    [ -r "$BOOT_DIR/$slot" ] || die 'candidate slot missing after reboot'
+    [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'candidate DTB hash differs after reboot'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate DTB semantic verification failed after boot'
+    if [ -e "$DT_ROOT/forge-x,cpu-profile" ]; then
+      loaded_cpu_matches "$cpu" &&
+        [ "$(loaded_property emmc-mhz || true)" = "$emmc" ] &&
+        [ "$(loaded_property emmc-family || true)" = "$fam" ] || die 'booted DTB does not match the candidate'
+    fi
+    detect_hardware; [ "$EVIDENCE_FAMILY" = "$fam" ] || die "runtime hardware family mismatch: got $EVIDENCE_FAMILY expected $fam"
+    verify_cpu_runtime "$cpu" "$hz"
+    verify_emmc_runtime "$fam" "$emmc"
+    ensure_tmp
+    fatal=$(fatal_dmesg) || die 'cannot read kernel journal; candidate remains unverified'
+    [ -z "$fatal" ] || { printf '%s\n' "$fatal" >&2; die 'new fatal kernel/MMC errors found'; }
+    write_meta_atomic "$CANDIDATE_FILE" \
+      'format=2' 'phase=passed' "axis=$(meta_get "$CANDIDATE_FILE" axis)" "value=$(meta_get "$CANDIDATE_FILE" value)" "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "slot=$slot" "dtb_sha256=$hash" "armed_boot_id=$oldid" "verified_boot_id=$newid" "fallback_bootcmd=$fallback" "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
+    say 'Candidate verification: PASS'
+}
+
+candidate_to_current(){
+    cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); hz=$(meta_get "$CANDIDATE_FILE" cpu_hz); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family); slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256); untested=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)
+    write_meta_atomic "$CURRENT_FILE" 'format=2' 'phase=current' "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "slot=$slot" "dtb_sha256=$hash" "untested_emmc_override=$untested"
+}
+normalize_promotion(){
+    [ -r "$CANDIDATE_FILE" ] || return 1
+    slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256); cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family)
+    [ -r "$BOOT_DIR/$slot" ] && [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'committed candidate slot is missing or corrupt'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'committed candidate DTB semantic verify failed'
+    cscript=$(boot_script "$slot")
+    candidate_to_current
+    fault enable:after-current
+    set_env fgx_boot_current "$cscript"
+    fault enable:after-current-helper
+    set_env bootcmd "$MANAGED_BOOTCMD"
+    fault enable:after-final-bootcmd
+    del_env fgx_boot_test; del_env fgx_boot_restore; del_env fgx_boot_save; del_env fgx_candidate_axis; del_env fgx_candidate_value
+    fault enable:after-helper-cleanup
+    if [ "$DRY_RUN" = 0 ]; then rm -f "$CANDIDATE_FILE"; durable_sync; fi
+    fault enable:after-candidate-cleanup
+    old=$SLOT_A; [ "$slot" = "$SLOT_A" ] && old=$SLOT_B
+    if [ "$DRY_RUN" = 1 ]; then [ -e "$BOOT_DIR/$old" ] && say "DRY-RUN remove old slot $old"; else rm -f "$BOOT_DIR/$old" "$BOOT_DIR/$SLOT_TMP"; durable_sync; fi
+    fault enable:after-old-slot-cleanup
+    say "Current profile enabled: CPU=$(meta_get "$CURRENT_FILE" cpu_profile) eMMC=$(meta_get "$CURRENT_FILE" emmc_mhz) MHz"
+}
+enable_cmd(){
+    need_mutation
+    [ -r "$CANDIDATE_FILE" ] || die 'no candidate to enable'
+    phase=$(meta_get "$CANDIDATE_FILE" phase || true)
+    bc=$(get_env bootcmd || true)
+    if [ "$phase" = passed ]; then
+      candidate_helpers_valid || die 'candidate helpers or artifact are invalid; refusing permanent commit'
+      # Publish committing before the first functional commit.
+      write_meta_atomic "$CANDIDATE_FILE" \
+        'format=2' 'phase=committing' "axis=$(meta_get "$CANDIDATE_FILE" axis)" "value=$(meta_get "$CANDIDATE_FILE" value)" "cpu_profile=$(meta_get "$CANDIDATE_FILE" cpu_profile)" "cpu_hz=$(meta_get "$CANDIDATE_FILE" cpu_hz)" "emmc_mhz=$(meta_get "$CANDIDATE_FILE" emmc_mhz)" "family=$(meta_get "$CANDIDATE_FILE" family)" "slot=$(meta_get "$CANDIDATE_FILE" slot)" "dtb_sha256=$(meta_get "$CANDIDATE_FILE" dtb_sha256)" "armed_boot_id=$(meta_get "$CANDIDATE_FILE" armed_boot_id)" "verified_boot_id=$(meta_get "$CANDIDATE_FILE" verified_boot_id)" "fallback_bootcmd=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd)" "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
+      fault enable:phase-committing
+      set_env fgx_boot_test "$(boot_script "$(meta_get "$CANDIDATE_FILE" slot)")"
+      set_env bootcmd "$TRANSITION_BOOTCMD"
+      fault enable:functional-commit
+    elif [ "$phase" = committing ]; then
+      if ! candidate_functionally_committed; then
+        candidate_helpers_valid || die 'candidate helpers or artifact are invalid; refusing permanent commit'
+        set_env fgx_boot_test "$(boot_script "$(meta_get "$CANDIDATE_FILE" slot)")"
+        set_env bootcmd "$TRANSITION_BOOTCMD"
+        fault enable:functional-commit
+      fi
+    else die "candidate must be verified before enable (phase=$phase)"; fi
+    normalize_promotion
+}
+
+cancel_cmd(){
+    need_mutation
+    [ -r "$CANDIDATE_FILE" ] || { say 'No candidate to cancel.'; return; }
+    candidate_metadata_valid || die 'candidate metadata is invalid; refusing destructive cancel (use cleanup/recovery diagnostics)'
+    classify_boot_state
+    case "$BOOT_STATE" in candidate-armed|candidate-passed|promotion-not-committed) ;; promotion-cleanup-required) die 'candidate promotion is already committed; run cleanup, not cancel';; *) die "candidate state is $BOOT_STATE; refusing destructive cancel";; esac
+    candidate_helpers_valid || die 'candidate helpers/artifact are invalid; refusing destructive cancel'
+    fallback=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true); valid_fallback_bootcmd "$fallback" || die 'invalid candidate fallback bootcmd'
+    set_env bootcmd "$fallback"
+    slot=$(meta_get "$CANDIDATE_FILE" slot || true); case "$slot" in "$SLOT_A"|"$SLOT_B") ;; *) die 'invalid candidate slot';; esac
+    del_env fgx_boot_test; del_env fgx_boot_restore; del_env fgx_boot_save; del_env fgx_candidate_axis; del_env fgx_candidate_value
+    if [ "$DRY_RUN" = 0 ]; then rm -f "$CANDIDATE_FILE" "$BOOT_DIR/$slot" "$BOOT_DIR/$SLOT_TMP"; durable_sync; fi
+    say 'Candidate cancelled; previous current/stock remains active.'
+}
+
+known_cleanup(){
+    if [ "$BOOT_STATE" = stock-restore-cleanup-required ]; then
+      finish_stock_transition
+      for n in fgx_boot_test fgx_boot_restore fgx_boot_save fgx_candidate_axis fgx_candidate_value; do del_env "$n"; done
+      [ "$DRY_RUN" = 1 ] || { rm -f "$BOOT_DIR/$SLOT_A" "$BOOT_DIR/$SLOT_B" "$BOOT_DIR/$SLOT_TMP"; durable_sync; }
+      say 'Interrupted stock restore normalized to exact stock boot path.'; return
+    fi
+    if [ "$BOOT_STATE" = promotion-cleanup-required ]; then
+      if [ -r "$CANDIDATE_FILE" ]; then normalize_promotion; return; fi
+      # Candidate metadata already removed: keep valid current, remove stale second slot/helpers.
+      current_valid || die 'cleanup-required state has no valid current'
+      slot=$(meta_get "$CURRENT_FILE" slot); other=$SLOT_A; [ "$slot" = "$SLOT_A" ] && other=$SLOT_B
+      set_env bootcmd "$MANAGED_BOOTCMD"
+      for n in fgx_boot_test fgx_boot_restore fgx_boot_save fgx_candidate_axis fgx_candidate_value; do del_env "$n"; done
+      [ "$DRY_RUN" = 1 ] || { rm -f "$BOOT_DIR/$other" "$BOOT_DIR/$SLOT_TMP"; durable_sync; }
+      say 'Interrupted promotion cleanup completed.'; return
+    fi
+    case "$BOOT_STATE" in
+      known-cleanup-required) for n in $(managed_vars); do del_env "$n"; done; [ "$DRY_RUN" = 1 ] || { rm -f "$BOOT_DIR/$SLOT_A" "$BOOT_DIR/$SLOT_B" "$BOOT_DIR/$SLOT_TMP" "$BOOT_DIR/$SLOT_STOCK" "$CANDIDATE_FILE"; durable_sync; }; say 'Known Forge-X crash remnants cleaned; stock path remains active.';;
+      clean-stock) for n in fgx_boot_test fgx_boot_restore fgx_boot_save fgx_boot_stock fgx_candidate_axis fgx_candidate_value; do del_env "$n"; done; [ "$DRY_RUN" = 1 ] || rm -f "$BOOT_DIR/$SLOT_TMP" "$BOOT_DIR/$SLOT_STOCK"; say 'Known Forge-X temporary remnants cleaned.';;
+      clean-managed) slot=$(meta_get "$CURRENT_FILE" slot); other=$SLOT_A; [ "$slot" = "$SLOT_A" ] && other=$SLOT_B; for n in fgx_boot_test fgx_boot_restore fgx_boot_save fgx_candidate_axis fgx_candidate_value; do del_env "$n"; done; [ "$DRY_RUN" = 1 ] || { rm -f "$BOOT_DIR/$other" "$BOOT_DIR/$SLOT_TMP"; durable_sync; }; say 'Managed state is clean.';;
+      candidate-armed|candidate-passed|promotion-not-committed) die 'an uncommitted candidate exists; use verify/enable/cancel rather than cleanup';;
+      *) return 1;;
+    esac
+}
+
+stage_stock_transition(){
+    ensure_boot_mutation_access
+    require_stock_helpers
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN stage $SLOT_STOCK and switch bootcmd to $STOCK_TRANSITION_BOOTCMD"; return 0; fi
+    stmp=$BOOT_DIR/.FORGE_X_STOCK.tmp.$$
+    cp "$STOCK_DTB" "$stmp" || die 'cannot stage transitional stock DTB'
+    [ "$(sha256_file "$stmp")" = "$STOCK_SHA" ] || die 'transitional stock DTB hash mismatch'
+    durable_sync; mv "$stmp" "$BOOT_DIR/$SLOT_STOCK" || die 'cannot publish transitional stock DTB'; durable_sync
+    [ "$(sha256_file "$BOOT_DIR/$SLOT_STOCK")" = "$STOCK_SHA" ] || die 'transitional stock DTB readback mismatch'
+    set_env fgx_boot_stock "$(boot_script "$SLOT_STOCK")"
+    set_env bootcmd "$STOCK_TRANSITION_BOOTCMD"
+    stock_transition_valid || die 'transitional stock boot path verification failed'
+    fault stock-restore:transition-active
+}
+finish_stock_transition(){
+    ensure_boot_mutation_access
+    stock_transition_valid || die 'transitional stock boot path is invalid; refusing stock restore continuation'
+    [ "$(stock_dtb_hash)" = "$STOCK_SHA" ] || copy_stock_dtb_safe
+    fault stock-restore:stock-dtb-published
+    require_stock_helpers
+    set_env bootcmd "$STOCK_BOOTCMD"
+    [ "$(get_env bootcmd || true)" = "$STOCK_BOOTCMD" ] && [ "$(stock_dtb_hash)" = "$STOCK_SHA" ] || die 'exact stock boot path readback failed'
+    require_stock_helpers
+    fault stock-restore:exact-stock-active
+    del_env fgx_boot_stock
+    if [ "$DRY_RUN" = 0 ]; then rm -f "$BOOT_DIR/$SLOT_STOCK"; durable_sync; fi
+}
+prepare_exact_stock_path(){
+    ensure_boot_mutation_access
+    if [ "$(stock_dtb_hash)" != "$STOCK_SHA" ]; then stage_stock_transition; finish_stock_transition
+    else
+      require_stock_helpers
+      set_env bootcmd "$STOCK_BOOTCMD"
+      [ "$(get_env bootcmd || true)" = "$STOCK_BOOTCMD" ] || die 'stock bootcmd readback failed'
+    fi
+}
+
+remove_stock_transition_remnants(){
+    del_env fgx_boot_stock
+    if [ "$DRY_RUN" = 1 ]; then [ -f "$BOOT_DIR/$SLOT_STOCK" ] && say "DRY-RUN remove $SLOT_STOCK"; else rm -f "$BOOT_DIR/$SLOT_STOCK"; durable_sync; fi
+}
+
+print_unknown_cleanup_plan(){
+    say "Current bootcmd: $BOOTCMD"
+    if [ "$STOCK_HASH" = "$STOCK_SHA" ]; then say 'Will restore stock sunxi.dtb: no'; else say 'Will restore stock sunxi.dtb: yes'; fi
+    say 'Will set bootcmd to:'; say "  $STOCK_BOOTCMD"
+    [ "$STOCK_HASH" = "$STOCK_SHA" ] || say "Will use crash-safe transitional path: $STOCK_TRANSITION_BOOTCMD"
+    say 'Will remove U-Boot variables:'
+    { managed_vars; printf '%s\n' "$UVARS"; } | sed '/^$/d' | sort -u | sed 's/^/  /'
+    say 'Will remove boot files:'
+    { [ -f "$BOOT_DIR/$SLOT_A" ] && echo "$SLOT_A"; [ -f "$BOOT_DIR/$SLOT_B" ] && echo "$SLOT_B"; [ -f "$BOOT_DIR/$SLOT_TMP" ] && echo "$SLOT_TMP"; printf '%s\n' "$UFILES"; } | sed '/^$/d' | sort -u | sed 's/^/  /'
+}
+danger_cleanup_unknown(){
+    [ "$DANGER_CLEANUP_UNKNOWN" = 1 ] || die 'unknown/custom boot objects will not be removed without --danger-cleanup-unknown'
+    case "$BOOT_STATE" in unknown/custom|stock-active-with-unknown-remnants) ;; inconsistent) die_inconsistent 'boot state is inconsistent; manual recovery is required before destructive cleanup';; *) die "dangerous cleanup requires unknown/custom remnants, got $BOOT_STATE";; esac
+    DC_UNSAFE=$UUNSAFE; [ -z "$DC_UNSAFE" ] || { warn 'Custom boot chain references non-root/unsafe boot file paths:'; printf '%s\n' "$DC_UNSAFE" >&2; die 'refusing automatic cleanup of unsafe boot file paths'; }
+    DC_VARS=$( { managed_vars; printf '%s\n' "$UVARS"; } | sed '/^$/d' | sort -u)
+    DC_FILES=$( { [ -f "$BOOT_DIR/$SLOT_A" ] && echo "$SLOT_A"; [ -f "$BOOT_DIR/$SLOT_B" ] && echo "$SLOT_B"; [ -f "$BOOT_DIR/$SLOT_TMP" ] && echo "$SLOT_TMP"; printf '%s\n' "$UFILES"; } | sed '/^$/d' | sort -u)
+    print_unknown_cleanup_plan
+    create_original
+    prepare_exact_stock_path
+    remove_stock_transition_remnants
+    fault stock-restore:before-custom-delete
+    for n in $DC_VARS; do case "$n" in setargs_mmc|boot_dsp0|boot_uImage|bootcmd|fgx_boot_stock) continue;; esac; del_env "$n"; done
+    if [ "$DRY_RUN" = 0 ]; then
+      printf '%s\n' "$DC_FILES" | while IFS= read -r DCF_FILE; do [ -n "$DCF_FILE" ] && case "$DCF_FILE" in "$SLOT_A"|"$SLOT_B"|"$SLOT_TMP"|[A-Za-z0-9._-]*) rm -f "$BOOT_DIR/$DCF_FILE";; *) die "unsafe cleanup filename: $DCF_FILE";; esac; done
+      rm -f "$CURRENT_FILE" "$CANDIDATE_FILE"; durable_sync
+    fi
+    classify_boot_state
+    [ "$DRY_RUN" = 1 ] || [ "$BOOT_STATE" = clean-stock ] || die "post-cleanup state is $BOOT_STATE, expected clean-stock"
+    say 'Dangerous custom boot cleanup completed; exact stock boot path is active.'
+}
+cleanup_cmd(){
+    need_mutation
+    classify_boot_state
+    # Cleanup helpers consume this locked classification until the first write.
+    case "$BOOT_STATE" in
+      inconsistent) die_inconsistent 'boot state is inconsistent; manual recovery is required before destructive cleanup';;
+      unknown/custom|stock-active-with-unknown-remnants)
+        [ "$DANGER_CLEANUP_UNKNOWN" = 1 ] || die 'unknown/custom boot objects require --danger-cleanup-unknown after reviewing the exact cleanup plan'
+        ;;
+      *)
+        [ "$DANGER_CLEANUP_UNKNOWN" = 0 ] || die '--danger-cleanup-unknown is not applicable: no unknown/custom boot state is active'
+        ;;
+    esac
+    if known_cleanup; then return; fi
+    danger_cleanup_unknown
+}
+
+
+rollback_cmd(){
+    need_mutation
+    original_verify || die 'verified immutable original is required for rollback'
+    [ "$(sha256_file "$STOCK_DTB")" = "$STOCK_SHA" ] || die 'canonical stock DTB invalid'
+    # Rollback may only activate the vendor stock chain when the complete
+    # protected helper triplet matches one canonical manifest profile.
+    require_stock_helpers
+    classify_boot_state
+    [ "$BOOT_STATE" != inconsistent ] || die_inconsistent 'boot state is inconsistent; manual recovery is required before rollback'
+    RB_UNKNOWN_VARS=$(unknown_boot_vars | sort -u); RB_UNKNOWN_FILES=$(unknown_boot_files)
+    RB_UNSAFE=$(unsafe_boot_file_refs); [ -z "$RB_UNSAFE" ] || die 'rollback found unsafe/non-root custom boot file references; manual recovery is required'
+    RB_HAD_UNKNOWN=0; { [ -n "$RB_UNKNOWN_VARS" ] || [ -n "$RB_UNKNOWN_FILES" ]; } && RB_HAD_UNKNOWN=1
+    if [ "$DANGER_CLEANUP_UNKNOWN" = 1 ] && [ "$STOCK_HASH" = "$STOCK_SHA" ] && [ "$RB_HAD_UNKNOWN" = 0 ]; then
+      die '--danger-cleanup-unknown is not applicable: rollback found no unknown/custom boot objects'
+    fi
+    if [ "$DANGER_CLEANUP_UNKNOWN" = 0 ]; then
+      if [ -n "$RB_UNKNOWN_VARS" ]; then warn 'Rollback will leave these unknown/custom U-Boot variables untouched:'; printf '%s\n' "$RB_UNKNOWN_VARS" | sed 's/^/  /' >&2; fi
+      if [ -n "$RB_UNKNOWN_FILES" ]; then warn 'Rollback will leave these unknown/custom boot files untouched:'; printf '%s\n' "$RB_UNKNOWN_FILES" | sed 's/^/  /' >&2; fi
+    fi
+    if [ "$STOCK_HASH" != "$STOCK_SHA" ]; then [ "$DANGER_CLEANUP_UNKNOWN" = 1 ] || die 'sunxi.dtb is custom/unknown; rollback requires --danger-cleanup-unknown to replace it'; fi
+    prepare_exact_stock_path
+    remove_stock_transition_remnants
+    for n in $(managed_vars); do del_env "$n"; done
+    if [ "$DANGER_CLEANUP_UNKNOWN" = 1 ]; then for n in $RB_UNKNOWN_VARS; do case "$n" in setargs_mmc|boot_dsp0|boot_uImage|bootcmd) continue;; esac; del_env "$n"; done; fi
+    if [ "$DRY_RUN" = 0 ]; then
+      rm -f "$BOOT_DIR/$SLOT_A" "$BOOT_DIR/$SLOT_B" "$BOOT_DIR/$SLOT_TMP" "$BOOT_DIR/$SLOT_STOCK" "$CURRENT_FILE" "$CANDIDATE_FILE"
+      if [ "$DANGER_CLEANUP_UNKNOWN" = 1 ]; then printf '%s\n' "$RB_UNKNOWN_FILES" | while IFS= read -r RBF_FILE; do [ -n "$RBF_FILE" ] && case "$RBF_FILE" in [A-Za-z0-9._-]*) rm -f "$BOOT_DIR/$RBF_FILE";; *) die "unsafe rollback filename: $RBF_FILE";; esac; done; fi
+      durable_sync
+    fi
+    classify_boot_state
+    if [ "$DANGER_CLEANUP_UNKNOWN" = 1 ] || [ "$RB_HAD_UNKNOWN" = 0 ]; then
+      [ "$BOOT_STATE" = clean-stock ] || die "rollback ended in $BOOT_STATE instead of clean-stock"
+      say "Rollback complete: bootcmd=$STOCK_BOOTCMD"
+    else
+      [ "$BOOT_STATE" = stock-active-with-unknown-remnants ] || die "rollback ended in $BOOT_STATE; expected stock-active-with-unknown-remnants"
+      say "Rollback complete: bootcmd=$STOCK_BOOTCMD"
+      warn 'Exact stock boot path is active, but unknown/custom boot remnants were intentionally left untouched.'
+      warn 'Run status/doctor, then use --danger-cleanup-unknown cleanup only after reviewing those remnants.'
+    fi
+}
+
+
+migrate_state_cmd(){
+    legacy=$1
+    [ "$APPLY" = 1 ] || [ "$DRY_RUN" = 1 ] || die 'migration requires --apply (or use --dry-run)'
+    case "$legacy:$STATE_DIR" in /*:/*) ;; *) die 'migration requires absolute state paths';; esac
+    [ "$legacy" != "$STATE_DIR" ] || die 'legacy and destination state are the same'
+    case "$STATE_DIR/" in "$legacy/"*) die 'destination is inside legacy state';; esac
+    case "$legacy/" in "$STATE_DIR/"*) die 'legacy state is inside destination';; esac
+    if [ "$TEST_MODE" != 1 ]; then [ "$(id -u)" = 0 ] || die 'write command must run as root'; fi
+    [ ! -L "$legacy" ] && [ ! -L "$STATE_DIR" ] || die 'state migration refuses symlinks'
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN migrate $legacy -> $STATE_DIR"; return; fi
+    acquire_lock
+    [ -e "$legacy" ] || { say 'No legacy profile state to migrate.'; return; }
+    [ -d "$legacy" ] || die 'legacy state is not a directory'
+    [ ! -e "$STATE_DIR" ] || die 'both legacy and destination profile state exist; refusing to merge'
+    parent=${STATE_DIR%/*}
+    mkdir -p "$parent" || die 'cannot create destination parent'
+    # mv must be a same-filesystem rename, not a recursive copy with partial state.
+    legacy_device=$(df -P "$legacy" | awk 'NR == 2 { print $1 }')
+    parent_device=$(df -P "$parent" | awk 'NR == 2 { print $1 }')
+    [ -n "$legacy_device" ] && [ "$legacy_device" = "$parent_device" ] || die 'state migration requires the same filesystem'
+    durable_sync
+    fault migration:before-rename
+    mv "$legacy" "$STATE_DIR" || die 'cannot rename legacy profile state'
+    durable_sync
+    fault migration:after-rename
+    say 'Profile state migrated; original backup preserved.'
+}
+
+# Stable data protocol for Recovery. Only validated metadata fields are exposed;
+# no caller needs to parse human diagnostics or edit the private state files.
+snapshot_value(){
+    sv_key=$1; sv_value=$2
+    case "$sv_value" in *[!A-Za-z0-9._:/,-]*) sv_value=unknown;; esac
+    printf '%s=%s\n' "$sv_key" "$sv_value"
+}
+snapshot_profile(){
+    sp_prefix=$1; sp_file=$2
+    if [ ! -e "$sp_file" ]; then snapshot_value "${sp_prefix}_present" no; return; fi
+    snapshot_value "${sp_prefix}_present" yes
+    case "$sp_prefix" in current) current_metadata_valid;; candidate) candidate_metadata_valid;; esac
+    if [ "$?" != 0 ]; then snapshot_value "${sp_prefix}_valid" no; return; fi
+    snapshot_value "${sp_prefix}_valid" yes
+    for sp_key in phase cpu_profile cpu_hz emmc_mhz family dtb_sha256; do
+      if [ "$sp_key" = cpu_hz ] && [ "$(meta_get "$sp_file" cpu_profile)" = stock ]; then
+        snapshot_value "${sp_prefix}_cpu_hz" 1008000000; continue
+      fi
+      snapshot_value "${sp_prefix}_$sp_key" "$(meta_get "$sp_file" "$sp_key" || true)"
+    done
+    if [ "$sp_prefix" = candidate ]; then
+      for sp_key in axis armed_boot_id verified_boot_id; do
+        snapshot_value "candidate_$sp_key" "$(meta_get "$sp_file" "$sp_key" || true)"
+      done
+    fi
+}
+snapshot_cmd(){
+    classify_boot_state
+    detect_hardware
+    snapshot_value format 1
+    snapshot_value boot_state "$BOOT_STATE"
+    snapshot_value stock_dtb_sha256 "$STOCK_HASH"
+    snapshot_value hardware "$HARDWARE_STATUS"
+    snapshot_value family "$DETECT_FAMILY"
+    snapshot_value hardware_conflict "$DETECT_CONFLICT"
+    snapshot_value cleanup_required "$CLEANUP_REQUIRED"
+    snapshot_value manual_recovery_required "$MANUAL_RECOVERY_REQUIRED"
+    snapshot_value stock_helpers_valid "$STOCK_HELPERS_OK"
+    snapshot_value unknown_boot_variables "$(printf '%s\n' "$UVARS" | awk 'NF {printf "%s%s", sep, $0; sep=","}')"
+    snapshot_value unknown_boot_files "$(printf '%s\n' "$UFILES" | awk 'NF {printf "%s%s", sep, $0; sep=","}')"
+    snapshot_value missing_boot_dependencies "$(printf '%s\n' "$UMISSING" | awk 'NF {printf "%s%s", sep, $0; sep=","}')"
+    snapshot_value unsafe_boot_paths "$(printf '%s\n' "$UUNSAFE" | awk 'NF {printf "%s%s", sep, $0; sep=","}')"
+    snapshot_value boot_id "$(boot_id)"
+    case "$BOOTCMD" in
+      "$ONESHOT_BOOTCMD") snapshot_value pending_boot candidate;;
+      "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD") snapshot_value pending_boot confirmed;;
+      *) snapshot_value pending_boot other;;
+    esac
+    snapshot_value runtime_cpu_hz "$(runtime_cpu_hz 2>/dev/null || printf unknown)"
+    snapshot_value runtime_cpu_limit_hz "$(runtime_cpu_limit_hz 2>/dev/null || printf unknown)"
+    runtime_ios >/dev/null 2>&1 || true
+    snapshot_value runtime_emmc_hz "${IOS_CLOCK:-unknown}"
+    snapshot_value runtime_timing "${IOS_TIMING:-unknown}"
+    snapshot_value runtime_voltage "${IOS_VOLTAGE:-unknown}"
+    for ls_key in cpu-profile emmc-mhz emmc-family source-sha256; do
+      ls_name=$(printf '%s' "$ls_key" | tr '-' '_')
+      snapshot_value "loaded_$ls_name" "$(loaded_property "$ls_key" 2>/dev/null || printf unknown)"
+    done
+    snapshot_profile current "$CURRENT_FILE"
+    snapshot_profile candidate "$CANDIDATE_FILE"
+    if current_metadata_valid; then
+      for cf_key in cpu_profile cpu_hz emmc_mhz family; do
+        if [ "$cf_key" = cpu_hz ] && [ "$(meta_get "$CURRENT_FILE" cpu_profile)" = stock ]; then
+          snapshot_value confirmed_cpu_hz 1008000000; continue
+        fi
+        snapshot_value "confirmed_$cf_key" "$(meta_get "$CURRENT_FILE" "$cf_key")"
+      done
+    elif [ ! -e "$CURRENT_FILE" ] && [ "$STOCK_HASH" = "$STOCK_SHA" ]; then
+      snapshot_value confirmed_cpu_profile stock
+      snapshot_value confirmed_cpu_hz 1008000000
+      snapshot_value confirmed_emmc_mhz 25
+      snapshot_value confirmed_family "$DETECT_FAMILY"
+    fi
+}
+
+list_cmd(){ case "$1" in cpu) cat <<EOF2
+  1.1 -> 1104 MHz
+  1.15 -> 1152 MHz
+  1.2 -> 1200 MHz
+  1.25 -> 1248 MHz
+  1.3 -> 1296 MHz
+  1.35 -> 1344 MHz
+  1.4 -> 1392 MHz
+EOF2
+;; emmc) detect_hardware; case "$DETECT_FAMILY" in legacy3v3) printf '  25 MHz\n  50 MHz\n';; hs2001v8) printf '  25 MHz\n  50 MHz\n  100 MHz\n  150 MHz\n';; *) die 'cannot determine eMMC family';; esac;; *) die 'list requires cpu or emmc';; esac; }
+cpu_display(){ case "$1" in stock) printf 'stock (1008 MHz)';; 1104) printf '1.1 (1104 MHz)';; 1152) printf '1.15 (1152 MHz)';; 1200) printf '1.2 (1200 MHz)';; 1248) printf '1.25 (1248 MHz)';; 1296) printf '1.3 (1296 MHz)';; 1344) printf '1.35 (1344 MHz)';; 1392) printf '1.4 (1392 MHz)';; *) printf '%s' "$1";; esac; }
+detect_cmd(){ detect_hardware; cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "family=$DETECT_FAMILY"; say "hardware=$HARDWARE_STATUS"; say "cid=$CID"; say "runtime_evidence=$EVIDENCE_FAMILY"; say "cpu_hz=$cpu"; say "emmc_hz=${IOS_CLOCK:-unknown}"; say "timing_spec=${IOS_TIMING:-unknown}"; say "signal_voltage=${IOS_VOLTAGE:-unknown}"; }
+status_cmd(){ classify_boot_state; detect_hardware; say "boot state: $BOOT_STATE"; if stock_helpers_valid; then say 'stock helpers: canonical'; else say 'stock helpers: modified'; fi; say "hardware: $HARDWARE_STATUS"; if [ -r "$CURRENT_FILE" ]; then sp=$(meta_get "$CURRENT_FILE" cpu_profile); say "CPU: $(cpu_display "$sp")"; say "eMMC: $(meta_get "$CURRENT_FILE" emmc_mhz) MHz"; say "current slot: $(meta_get "$CURRENT_FILE" slot)"; else cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "CPU: $cpu Hz"; say "eMMC: ${IOS_CLOCK:-unknown} Hz"; say 'current slot: none'; fi; if [ -r "$CANDIDATE_FILE" ]; then say "candidate: $(meta_get "$CANDIDATE_FILE" phase) $(meta_get "$CANDIDATE_FILE" axis)=$(meta_get "$CANDIDATE_FILE" value)"; else say 'candidate: none'; fi; say "cleanup required: $CLEANUP_REQUIRED"; say "cleanup danger required: $CLEANUP_DANGER_REQUIRED"; say "manual recovery required: $MANUAL_RECOVERY_REQUIRED"; }
+doctor_cmd(){ status_cmd; say "cid=${CID:-unknown}"; say "detected_family=${DETECT_FAMILY:-unknown}"; say "runtime_family_evidence=${EVIDENCE_FAMILY:-unknown}"; if stock_environment_profile; then say "stock_environment_profile=$STOCK_ENV_MATCH"; else say "stock_environment_profile=unknown"; show_stock_helper_mismatches; fi; say "bootcmd=$(get_env bootcmd || true)"; say 'fgx variables:'; managed_vars | while IFS= read -r dv; do say "  $dv=$(get_env "$dv" || true)"; done; say 'unknown/custom boot variables:'; unknown_boot_vars | sed 's/^/  /'; say 'boot DTB files:'; find "$BOOT_DIR" -maxdepth 1 -type f \( -name '*.dtb' -o -name '*.DTB' \) -print 2>/dev/null | while IFS= read -r path; do printf '  %s\n' "${path##*/}"; done | sort; say "stock_sunxi_sha256=$(stock_dtb_hash)"; say "boot_id=$(boot_id)"; say "validation_cache=$(cache_valid && printf valid || printf invalid)"; runtime_ios >/dev/null 2>&1 || true; say "mmc_clock=${IOS_CLOCK:-unknown}"; say "mmc_timing=${IOS_TIMING:-unknown}"; say "mmc_voltage=${IOS_VOLTAGE:-unknown}"; [ -r "$CPU_CUR_FILE" ] && say "cpu_cur_khz=$(tr -d '\n ' <"$CPU_CUR_FILE")"; [ -r "$CPU_MAX_FILE" ] && say "cpu_max_khz=$(tr -d '\n ' <"$CPU_MAX_FILE")"; [ -r "$CPU_AVAIL_FILE" ] && say "cpu_available_khz=$(tr '\n' ' ' <"$CPU_AVAIL_FILE")"; [ -r "$CPU_DRIVER_FILE" ] && say "cpu_driver=$(tr -d '\n ' <"$CPU_DRIVER_FILE")"; [ -r "$CPU_TEMP_FILE" ] && say "cpu_temp_mc=$(tr -d '\n ' <"$CPU_TEMP_FILE")"; [ -r "$CURRENT_FILE" ] && { say 'current metadata:'; sed 's/^/  /' "$CURRENT_FILE"; }; [ -r "$CANDIDATE_FILE" ] && { say 'candidate metadata:'; sed 's/^/  /' "$CANDIDATE_FILE"; }; return 0; }
+diagnostics_cmd(){ need_mutation; if [ "$DRY_RUN" = 1 ]; then say 'DRY-RUN write diagnostics report'; return; fi; mkdir -p "$STATE_DIR/diagnostics" || die 'cannot create diagnostics dir'; outp=$STATE_DIR/diagnostics/doctor-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt; doctor_cmd >"$outp" || die 'doctor failed'; chmod 600 "$outp" 2>/dev/null || true; say "Diagnostics written: $outp"; }
+backup_cmd(){ ensure_bundle_valid_cached; need_mutation; create_original; say 'Immutable original backup: valid'; }
+
+validate_danger_scope(){
+    cmd=$1
+    if [ "$DANGER_ASSUME_STOCK" = 1 ] && [ "$cmd" != test ]; then die '--danger-assume-stock-axes is not applicable to this operation'; fi
+    if [ "$DANGER_UNTESTED_EMMC" = 1 ] && [ "$cmd" != test ]; then die '--danger-allow-untested-emmc is not applicable to this operation'; fi
+    if [ "$DANGER_CLEANUP_UNKNOWN" = 1 ]; then case "$cmd" in cleanup|rollback) ;; *) die '--danger-cleanup-unknown is not applicable to this operation';; esac; fi
+}
+
+# Parse global flags wherever they appear before COMMAND.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1; shift;;
+    --dry-run) DRY_RUN=1; shift;;
+    --danger-assume-stock-axes) DANGER_ASSUME_STOCK=1; shift;;
+    --danger-allow-untested-emmc) DANGER_UNTESTED_EMMC=1; shift;;
+    --danger-cleanup-unknown) DANGER_CLEANUP_UNKNOWN=1; shift;;
+    --help|-h) usage; exit 0;;
+    --version) say "$VERSION"; exit 0;;
+    --force|--override|--assume) die "generic override flag is forbidden; use the specific --danger-* flag";;
+    --*) die "unknown option: $1";;
+    *) break;;
+  esac
+done
+[ "$APPLY" = 0 ] || [ "$DRY_RUN" = 0 ] || die '--apply and --dry-run are mutually exclusive'
+[ "$#" -gt 0 ] || { usage; exit 2; }
+cmd=$1; shift
+validate_danger_scope "$cmd"
+
+have awk && have sed && have grep && have wc && have find && have sort && have sync || die 'required base utilities are missing'
+have fw_printenv || { case "$cmd" in validate-bundle|list|migrate-state) ;; *) die 'fw_printenv was not found';; esac; }
+
+case "$cmd" in
+  list) [ "$#" = 1 ] || die 'list requires one axis'; list_cmd "$1";;
+  detect) [ "$#" = 0 ] || die 'detect takes no arguments'; detect_cmd;;
+  status) [ "$#" = 0 ] || die 'status takes no arguments'; status_cmd;;
+  snapshot) [ "$#" = 0 ] || die 'snapshot takes no arguments'; snapshot_cmd;;
+  migrate-state) [ "$#" = 1 ] || die 'migrate-state requires LEGACY_DIRECTORY'; migrate_state_cmd "$1";;
+  doctor) [ "$#" = 0 ] || die 'doctor takes no arguments'; doctor_cmd;;
+  validate-bundle) [ "$#" = 0 ] || die 'validate-bundle takes no arguments'; full_validate_bundle;;
+  backup) [ "$#" = 0 ] || die 'backup takes no arguments'; backup_cmd;;
+  test) [ "$#" = 2 ] || die 'test requires AXIS VALUE'; arm_test "$1" "$2";;
+  verify) [ "$#" = 0 ] || die 'verify takes no arguments'; verify_cmd;;
+  enable) [ "$#" = 0 ] || die 'enable takes no arguments'; enable_cmd;;
+  cancel) [ "$#" = 0 ] || die 'cancel takes no arguments'; cancel_cmd;;
+  cleanup) [ "$#" = 0 ] || die 'cleanup takes no arguments'; cleanup_cmd;;
+  rollback) [ "$#" = 0 ] || die 'rollback takes no arguments'; rollback_cmd;;
+  diagnostics) [ "$#" = 0 ] || die 'diagnostics takes no arguments'; diagnostics_cmd;;
+  *) die "unknown command: $cmd";;
+esac

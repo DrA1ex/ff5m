@@ -1,0 +1,518 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge-x.invalid/schema/t113-profilectl-manifest-v2.schema.json",
+  "title": "Forge-X T113 profilectl manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "name",
+    "generator_version",
+    "validator_version",
+    "canonical_stock",
+    "boot",
+    "stock_environment",
+    "cpu",
+    "thermal",
+    "voltage",
+    "hardware"
+  ],
+  "properties": {
+    "format": {
+      "const": 2
+    },
+    "name": {
+      "const": "t113-profilectl"
+    },
+    "generator_version": {
+      "const": "1.0.1"
+    },
+    "validator_version": {
+      "const": 5
+    },
+    "canonical_stock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "sha256",
+        "fdt_version",
+        "size"
+      ],
+      "properties": {
+        "file": {
+          "const": "profiles/source/sunxi-stock.dtb"
+        },
+        "sha256": {
+          "const": "27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21"
+        },
+        "fdt_version": {
+          "const": 17
+        },
+        "size": {
+          "const": 55093
+        }
+      }
+    },
+    "boot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uimage_address",
+        "dtb_address",
+        "minimum_padding",
+        "stock_bootcmd",
+        "slots"
+      ],
+      "properties": {
+        "uimage_address": {
+          "const": "0x43000000"
+        },
+        "dtb_address": {
+          "const": "0x44864e70"
+        },
+        "minimum_padding": {
+          "const": 32768
+        },
+        "stock_bootcmd": {
+          "const": "run setargs_mmc boot_dsp0 boot_uImage"
+        },
+        "slots": {
+          "const": [
+            "FORGE_X_A.DTB",
+            "FORGE_X_B.DTB"
+          ]
+        }
+      }
+    },
+    "cpu": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/cpu1104"
+        },
+        {
+          "$ref": "#/$defs/cpu1152"
+        },
+        {
+          "$ref": "#/$defs/cpu1200"
+        },
+        {
+          "$ref": "#/$defs/cpu1248"
+        },
+        {
+          "$ref": "#/$defs/cpu1296"
+        },
+        {
+          "$ref": "#/$defs/cpu1344"
+        },
+        {
+          "$ref": "#/$defs/cpu1392"
+        }
+      ],
+      "items": false
+    },
+    "thermal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passive_mc",
+        "hysteresis_mc",
+        "critical_mc",
+        "cooling_floor_hz",
+        "sensor_path",
+        "sensor_index"
+      ],
+      "properties": {
+        "passive_mc": {
+          "const": 70000
+        },
+        "hysteresis_mc": {
+          "const": 2000
+        },
+        "critical_mc": {
+          "const": 90000
+        },
+        "cooling_floor_hz": {
+          "const": 1008000000
+        },
+        "sensor_path": {
+          "const": "/soc@3000000/ths@02009400"
+        },
+        "sensor_index": {
+          "const": 0
+        }
+      }
+    },
+    "voltage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "managed_opp_microvolt"
+      ],
+      "properties": {
+        "managed_opp_microvolt": {
+          "const": 950000
+        }
+      }
+    },
+    "hardware": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/hs200"
+        },
+        {
+          "$ref": "#/$defs/legacy"
+        }
+      ],
+      "items": false
+    },
+    "stock_environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "file"
+      ],
+      "properties": {
+        "id": {
+          "const": "ad5m-stock-v1"
+        },
+        "file": {
+          "const": "profiles/source/stock-uboot.env"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cpuBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "alias",
+        "accepted_aliases",
+        "exact_mhz",
+        "exact_hz"
+      ],
+      "properties": {
+        "kind": {
+          "const": "cpu_axis"
+        },
+        "alias": {
+          "type": "string"
+        },
+        "accepted_aliases": {
+          "type": "string"
+        },
+        "exact_mhz": {
+          "type": "integer"
+        },
+        "exact_hz": {
+          "type": "integer"
+        },
+        "warning": {
+          "type": "string"
+        }
+      }
+    },
+    "cpu1104": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.1"
+            },
+            "accepted_aliases": {
+              "const": "1.10,1104"
+            },
+            "exact_mhz": {
+              "const": 1104
+            },
+            "exact_hz": {
+              "const": 1104000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1152": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.15"
+            },
+            "accepted_aliases": {
+              "const": "1152"
+            },
+            "exact_mhz": {
+              "const": 1152
+            },
+            "exact_hz": {
+              "const": 1152000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1200": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.2"
+            },
+            "accepted_aliases": {
+              "const": "1.20,1200"
+            },
+            "exact_mhz": {
+              "const": 1200
+            },
+            "exact_hz": {
+              "const": 1200000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1248": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.25"
+            },
+            "accepted_aliases": {
+              "const": "1248"
+            },
+            "exact_mhz": {
+              "const": 1248
+            },
+            "exact_hz": {
+              "const": 1248000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1296": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.3"
+            },
+            "accepted_aliases": {
+              "const": "1.30,1296"
+            },
+            "exact_mhz": {
+              "const": 1296
+            },
+            "exact_hz": {
+              "const": 1296000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1344": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.35"
+            },
+            "accepted_aliases": {
+              "const": "1344"
+            },
+            "exact_mhz": {
+              "const": 1344
+            },
+            "exact_hz": {
+              "const": 1344000000
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz"
+          ]
+        }
+      ]
+    },
+    "cpu1392": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cpuBase"
+        },
+        {
+          "properties": {
+            "alias": {
+              "const": "1.4"
+            },
+            "accepted_aliases": {
+              "const": "1.40,1392"
+            },
+            "exact_mhz": {
+              "const": 1392
+            },
+            "exact_hz": {
+              "const": 1392000000
+            },
+            "warning": {
+              "const": "experimental-known-unstable-on-one-sample"
+            }
+          },
+          "required": [
+            "alias",
+            "accepted_aliases",
+            "exact_mhz",
+            "exact_hz",
+            "warning"
+          ]
+        }
+      ]
+    },
+    "hardwareBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "family_id",
+        "cids",
+        "frequencies_mhz",
+        "runtime"
+      ],
+      "properties": {
+        "kind": {
+          "const": "hardware_family"
+        },
+        "family_id": {
+          "type": "string"
+        },
+        "cids": {
+          "type": "string"
+        },
+        "frequencies_mhz": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        }
+      }
+    },
+    "hs200": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/hardwareBase"
+        },
+        {
+          "properties": {
+            "family_id": {
+              "const": "hs2001v8"
+            },
+            "cids": {
+              "const": "15010048533230304700000000000002,d6010335384133393811732c45913b01"
+            },
+            "frequencies_mhz": {
+              "const": "25,50,100,150"
+            },
+            "runtime": {
+              "const": "HS200,1.8V"
+            }
+          },
+          "required": [
+            "family_id",
+            "cids",
+            "frequencies_mhz",
+            "runtime"
+          ]
+        }
+      ]
+    },
+    "legacy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/hardwareBase"
+        },
+        {
+          "properties": {
+            "family_id": {
+              "const": "legacy3v3"
+            },
+            "cids": {
+              "const": "1501004d345846495500000000000001"
+            },
+            "frequencies_mhz": {
+              "const": "25,50"
+            },
+            "runtime": {
+              "const": "legacy-or-HS52,3.3V"
+            }
+          },
+          "required": [
+            "family_id",
+            "cids",
+            "frequencies_mhz",
+            "runtime"
+          ]
+        }
+      ]
+    }
+  }
+}
