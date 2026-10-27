@@ -2416,6 +2416,112 @@ start_normal_boot
         self.assertFalse((run_root / "boot-skip").exists())
         self.assertTrue((run_root / "boot-failure").exists())
 
+    def _pending_mcu_harness(self, name, mcu_confirms=True, flags=(),
+                             flagged_versions=("2.2.3",)):
+        run_root = self.root / name
+        control = run_root / "control"
+        for age, version in enumerate(("2.2.1", "2.2.3")):
+            package = control / version
+            package.mkdir(parents=True)
+            run_sh = package / "run.sh"
+            body = 'pwd > "{}/mcu-cwd"\n'.format(run_root)
+            if mcu_confirms:
+                body += "rm -f Update\n"
+            run_sh.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            run_sh.chmod(0o755)
+            if version in flagged_versions:
+                (package / "Update").touch()
+            stamp = time.time() - 100 + age * 10
+            os.utime(package, (stamp, stamp))
+        for flag in flags:
+            (run_root / flag).touch()
+
+        init_main = run_root / "init-main"
+        init_main.write_text(
+            "#!/bin/sh\ntouch {0}/init-called {0}/init-finished\n".format(run_root),
+            encoding="utf-8")
+        init_main.chmod(0o755)
+        recovery = run_root / "recovery"
+        recovery.write_text(
+            "#!/bin/sh\ntouch {}/recovery-called\n".format(run_root), encoding="utf-8")
+        recovery.chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", "-c", r'''
+source "$1"
+INIT_FLAG="$2/init-finished"
+BOOT_SKIP_F="$2/boot-skip"
+BOOT_RECOVERY_FAILURE_F="$2/recovery-failure"
+BOOT_FAILURE_F="$2/boot-failure"
+SKIP_MOD_F="$2/skip-legacy"
+SKIP_MOD_SOFT_F="$2/skip-soft"
+SKIP_MOD_HARD_F="$2/skip-hard"
+INIT_MAIN_SCRIPT="$3"
+RECOVERY_SCRIPT="$4"
+STOCK_CONTROL_DIR="$2/control"
+SKIP_IMAGE="$2/skip.img.xz"
+BOOT_IMAGE="$2/boot.img"
+FRAMEBUFFER="$2/framebuffer"
+sync() { :; }
+sleep() { :; }
+xzcat() { :; }
+cat() { :; }
+commit_boot_guard() { :; }
+RUN_ROOT="$2"
+reboot() { command touch "$RUN_ROOT/rebooted"; }
+start_normal_boot
+''', "pending-mcu-harness", str(self.s00_init), str(run_root),
+             str(init_main), str(recovery)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+        return result, run_root
+
+    def test_pending_mcu_update_restarts_before_boot_flags_change(self):
+        result, run_root = self._pending_mcu_harness("mcu-confirmed")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            (run_root / "mcu-cwd").read_text(encoding="utf-8").strip(),
+            str(run_root / "control" / "2.2.3"))
+        self.assertFalse((run_root / "control" / "2.2.3" / "Update").exists())
+        self.assertTrue((run_root / "rebooted").exists())
+        self.assertFalse((run_root / "init-called").exists())
+        for flag in ("boot-skip", "boot-failure", "skip-hard"):
+            self.assertFalse((run_root / flag).exists(), flag)
+
+    def test_unconfirmed_mcu_update_continues_the_normal_boot(self):
+        result, run_root = self._pending_mcu_harness(
+            "mcu-unconfirmed", mcu_confirms=False)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((run_root / "mcu-cwd").exists())
+        self.assertTrue((run_root / "control" / "2.2.3" / "Update").exists())
+        self.assertFalse((run_root / "rebooted").exists())
+        self.assertTrue((run_root / "init-called").exists())
+        self.assertTrue((run_root / "init-finished").exists())
+
+    def test_recovery_and_stock_modes_precede_the_mcu_update(self):
+        for flag, called in (("boot-skip", "recovery-called"),
+                             ("skip-soft", None)):
+            with self.subTest(flag=flag):
+                result, run_root = self._pending_mcu_harness(
+                    "mcu-after-" + flag, flags=(flag,))
+
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertFalse((run_root / "mcu-cwd").exists())
+                self.assertTrue((run_root / "control" / "2.2.3" / "Update").exists())
+                self.assertFalse((run_root / "init-called").exists())
+                if called:
+                    self.assertTrue((run_root / called).exists())
+
+    def test_only_the_newest_control_package_is_updated(self):
+        result, run_root = self._pending_mcu_harness(
+            "mcu-older-flag", flagged_versions=("2.2.1",))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((run_root / "mcu-cwd").exists())
+        self.assertTrue((run_root / "init-called").exists())
+
     def test_noop_normal_initializer_cannot_publish_ready(self):
         result, run_root = self._normal_start_harness(0, publish_ready=False)
 

@@ -80,10 +80,27 @@ when its layout is confirmed (`check_stock_layout` in the runner): `end.img`,
 `/opt/PROGRAM`, keeps the control `run.sh` call commented out and ends with the
 `end.img` screen and `play`. Stock leaves that MCU update to the next boot, where
 `auto_run.sh` runs `/opt/PROGRAM/control/<version>/run.sh` while its `Update`
-flag exists. Both stock MCU tools reset their chip through GPIO, so on this path
-the runner holds back the completion screen and sound, runs that step after a
-successful installer, then shows them. An unconfirmed MCU update keeps the flag,
-and stock startup retries it.
+flag exists. On this path the runner holds back the completion screen and
+sound, runs that step after a successful installer, then shows them. An
+unconfirmed MCU update keeps the flag for the next boot.
+
+The stock tools remove `Update` only after flashing. `NationsCommand` resets the
+mainboard into its ROM bootloader through GPIO 205/206. `IAPCommand` does not
+reset the eboard: its vendor bootloader waits for an update only after a
+power-on. A Klipper `reset` restarts the eboard straight into its application,
+and a GPIO 34 pulse (the unused `stm32Reboot` in `IAPCommand`) does not reset it
+on an AD5M; both were checked on hardware. After a warm restart the eboard step
+therefore fails, the tool reports "Can not connect to board", and the flag
+stays.
+
+Forge-X display modes stop `rcS` in `S99root` before `/opt/auto_run.sh` starts,
+so the boot guard takes over that step: after recovery and stock-mode
+selection, and before the skip window arms any boot flag, `S00init` runs the
+newest control package's `run.sh` while its `Update` flag exists and reboots
+when the flag is gone. Stock modes leave the step to `auto_run.sh`. Unlike
+stock, an unconfirmed update continues the boot instead of rebooting, because a
+warm restart cannot reach the eboard bootloader; the next power-on completes
+it.
 
 This path intentionally depends on kernel block metadata rather than partition-table parsing. Changes must retain coverage for multiple and logical partitions, digit-suffixed block names, whole-disk filesystems, existing read-only mounts, FAT/ext filesystems, firmware images, and normal boot flags. Unsupported filesystems are skipped so root/eMMC flag checks and the remaining recovery path still run.
 

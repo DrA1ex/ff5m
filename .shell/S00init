@@ -27,6 +27,7 @@ SKIP_IMAGE=/opt/config/mod/skip.img.xz
 BOOT_IMAGE=/root/boot.img
 FRAMEBUFFER=/dev/fb0
 INIT_MAIN_SPECIAL_BOOT=10
+STOCK_CONTROL_DIR=/opt/PROGRAM/control
 
 publish_hard_skip() {
     local reason="$1"
@@ -110,6 +111,32 @@ handle_boot_options() {
     return 1
 }
 
+# Stock auto_run.sh flashes the MCUs while the newest control package keeps its
+# Update flag, then reboots. Forge-X boot modes stop rcS before auto_run.sh
+# runs, so the guard performs the same step; stock modes leave it to
+# auto_run.sh. The stock tools remove the flag after flashing. It remains when
+# the eboard is outside its bootloader, which only a power-on provides, so an
+# unconfirmed update continues this boot instead of rebooting into it again.
+update_pending_mcu() {
+    local version
+
+    version=$(ls -1t "$STOCK_CONTROL_DIR" 2>/dev/null | head -n 1)
+    [ -n "$version" ] && [ -f "$STOCK_CONTROL_DIR/$version/Update" ] || return 1
+
+    echo "Updating MCU firmware from control $version."
+    (cd "$STOCK_CONTROL_DIR/$version" && ./run.sh)
+    sync
+
+    if [ -f "$STOCK_CONTROL_DIR/$version/Update" ]; then
+        echo "MCU firmware update was not confirmed."
+        echo "It is retried on the next boot."
+        return 1
+    fi
+
+    echo "MCU firmware updated. Restarting."
+    reboot -f
+}
+
 commit_boot_guard() {
     local candidate="${INSTALLED_GUARD%/*}/.S00init.$$"
 
@@ -162,6 +189,11 @@ start_normal_boot() {
     if [ -f "$INIT_FLAG" ]; then
         echo "Forge-X is already initialized."
         return 1
+    fi
+
+    # Before any boot flag changes, so its restart leaves the next boot as is.
+    if update_pending_mcu; then
+        return 0
     fi
 
     rm -f "$BOOT_REASON_F"

@@ -86,9 +86,11 @@ check_stock_layout() {
     fi
 }
 
-# Both stock MCU tools reset their chip through GPIO, so the MCU update stock
-# leaves to the next boot runs here, and the completion screen and sound wait
-# until it has finished.
+# The MCU update stock leaves to the next boot runs here, and the completion
+# screen and sound wait until it has finished. The mainboard tool resets its
+# chip through GPIO; the eboard tool needs the eboard bootloader, which only a
+# power-on provides, so after a warm restart the flag remains and the boot
+# guard (S00init) or stock auto_run.sh retries it on the next boot.
 defer_stock_completion() {
     local name
 
@@ -106,8 +108,7 @@ update_stock_mcu() {
     runner_lifecycle INFO "Updating MCU firmware from control $version."
     (cd "$STOCK_CONTROL_DIR/$version" && ./run.sh)
     if [ -f "$STOCK_CONTROL_DIR/$version/Update" ]; then
-        # Stock auto_run.sh retries while the update flag remains.
-        runner_lifecycle ERROR "MCU update flag remains; stock startup retries it."
+        runner_lifecycle ERROR "MCU update flag remains; the next boot retries it."
         echo "@@ MCU firmware update was not confirmed; it is retried on the next boot."
     else
         runner_lifecycle INFO "MCU firmware updated."
