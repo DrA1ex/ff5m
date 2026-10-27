@@ -192,13 +192,14 @@ contains an active mount, and confirms with an irreversible-action warning.
 The scan roots, search-excluded subtrees, and delete-protected paths are the
 `CLEANUP_*` policy lists in [`recovery.py`](../../.py/recovery.py); adjust
 those lists rather than the scanning code.
-The fixed factory and file-recovery catalogs carry only release URLs and
-never frozen checksums: factory images have per-model assets, file-recovery
-images share one asset across models, and integrity values always come from
-the live API. Forge-X release discovery uses the GitHub releases API rather
-than `releases/latest`, so stable and prerelease assets remain selectable.
-Factory and file-recovery entries remain a small explicit catalog matching
-the documented images.
+Stock and factory images are not listed in code: `archive_catalog` in
+[`firmware_catalog.py`](../../.py/firmware_catalog.py) scans the `Stock` and
+`factory` releases for `<model>-<version>[-Factory].tgz` assets, so publishing
+an asset there is enough. Size and SHA-256 come from the same API response.
+The two file-recovery images remain a fixed catalog of release 1.2.0 assets
+shared by both models. Forge-X release discovery uses the GitHub releases API
+rather than `releases/latest`, so stable and prerelease assets remain
+selectable. `zflash.py` and Recovery use the same catalog functions.
 
 The UI never executes a firmware entrypoint. After two explicit confirmations
 it writes a validated

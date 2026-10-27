@@ -351,16 +351,12 @@ class BootRecoveryTest(unittest.TestCase):
         self.assertEqual(catalog[0]["sha256"], "ab" * 32)
         self.assertIsNone(catalog[1]["sha256"])
 
-    def test_static_pro_catalog_uses_pro_factory_but_shared_recovery_url(self):
-        factory = RECOVERY.static_catalog(
-            "Adventurer5MPro", RECOVERY.FACTORY_IMAGES)[0]
+    def test_pro_recovery_image_keeps_the_shared_url_and_a_model_name(self):
         recovery = RECOVERY.static_catalog(
             "Adventurer5MPro", RECOVERY.RECOVERY_IMAGES)[0]
 
-        self.assertIn("Adventurer5MPro-2.7.8", factory["url"])
         self.assertIn("Adventurer5M-3.x.x", recovery["url"])
         self.assertTrue(recovery["name"].startswith("Adventurer5MPro-"))
-        self.assertNotIn("shared", recovery)
         self.assertNotIn("sha256", recovery)
 
     def test_release_catalog_request_uses_vendor_curl_and_ca_bundle(self):
@@ -1108,6 +1104,29 @@ class BootRecoveryTest(unittest.TestCase):
             "--id 2:downloaded.clear" in command
             and '"CLEAR DOWNLOADS"' in command
             for command in downloaded))
+
+    def test_stock_firmware_lists_stock_and_factory_images_by_version(self):
+        releases = {
+            RECOVERY.FORGEX_API + "/tags/Stock": {"assets": [
+                {"name": "Adventurer5M-3.1.5.tgz", "size": 1},
+                {"name": "Adventurer5M-3.2.7.tgz", "size": 1},
+                {"name": "Adventurer5M-5.1.9.tgz", "size": 1},
+                {"name": "Adventurer5MPro-5.1.9.tgz", "size": 1}]},
+            RECOVERY.FORGEX_API + "/tags/factory": {"assets": [
+                {"name": "Adventurer5M-3.2.7-Factory.tgz", "size": 1}]},
+        }
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), mock.Mock())
+        ui.view.menu = mock.Mock(side_effect=["firmware.stock", "firmware.back"])
+        ui.view.choose = mock.Mock(return_value=None)
+
+        with mock.patch.object(RECOVERY, "request_json", side_effect=releases.__getitem__):
+            ui.firmware_menu()
+
+        title, entries, label = ui.view.choose.call_args.args
+        self.assertEqual(title, "STOCK FIRMWARE")
+        self.assertEqual([label(entry) for entry in entries],
+                         ["5.1.9", "3.2.7", "3.2.7 Factory", "3.1.5"])
 
     def test_bulk_cleanup_requires_confirmation_and_deletes_regular_files(self):
         download_dir = self.root / "downloads"

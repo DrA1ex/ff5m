@@ -90,23 +90,12 @@ mkdir -p "$CHROOT_BIND" || fail "Unable to prepare the chroot USB mount."
 mount --bind "$USB_STORAGE_MOUNT_POINT" "$CHROOT_BIND" \
     || fail "Unable to expose the USB drive inside the Forge-X chroot."
 
-update_download_prompt() {
-    local percent=$1 message=$2
-    local filled=$((percent / 5)) bar empty
-    printf -v bar '%*s' "$filled" ''; bar=${bar// /#}
-    printf -v empty '%*s' "$((20 - filled))" ''; empty=${empty// /-}
-    echo "// action:prompt_begin Downloading firmware"
-    echo "// action:prompt_text $message"
-    echo "// action:prompt_text [$bar$empty] $percent%"
-    echo "// action:prompt_show"
-}
-
 chroot "$MOD" /bin/python3 -u "$PY/zupdate.py" "$MODEL" "$CHROOT_PATH" 2>&1 |
 while IFS= read -r line; do
     case "$line" in
         '@@PROGRESS|'*)
             data=${line#@@PROGRESS|}; percent=${data%%|*}; message=${data#*|}
-            update_download_prompt "$percent" "$message"
+            firmware_download_prompt "$percent" "$message"
             echo "// $message ($percent%)"
             ;;
         *) echo "$line" ;;

@@ -59,7 +59,8 @@ stop_firmware_parent() {
     killall -9 ffstartup-arm >/dev/null 2>&1 || true
     pidof ffstartup-arm >/dev/null 2>&1 && return 1
 
-    echo "// Stopping stock firmware (PID $parent_pid)..."
+    # The parent is the printer's boot sequence for USB and Recovery installs.
+    echo "// Stopping the printer startup sequence (PID $parent_pid)..."
     if ! kill -9 "$parent_pid" 2>/dev/null; then
         kill -0 "$parent_pid" 2>/dev/null || {
             FIRMWARE_PARENT_STOPPED=1

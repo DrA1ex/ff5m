@@ -27,6 +27,18 @@ import time
 import urllib.parse
 
 
+# Recovery also runs under the minimal stock Python interpreter. Keep the
+# shared catalog pure-Python and locate it beside this script for direct
+# execution and importlib-based tools.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+from firmware_catalog import (DOWNLOAD_DIR, FORGEX_API,
+                              FULL_RECOVERY_IMAGE, RECOVERY_IMAGES,
+                              archive_api, archive_catalog,
+                              forgex_catalog, published_metadata,
+                              release_asset_location, static_catalog)
+
 TYPER = "/opt/config/mod/.bin/exec/typer"
 CURL = os.environ.get("RECOVERY_CURL", "")
 CURL_CACERT = os.environ.get("RECOVERY_CACERT", "")
@@ -35,14 +47,12 @@ SHA256SUM = "/usr/bin/sha256sum"
 DRAW_PIPE = "/tmp/forge-x-recovery-draw"
 EVENT_PIPE = "/tmp/forge-x-recovery-events"
 TOUCH_DEVICE = "/dev/input/guppy"
-DOWNLOAD_DIR = "/data/forge-x-recovery"
 VERIFICATION_LOG = "/data/logFiles/verification.log"
 ZBACKUP = "/opt/config/mod/.shell/commands/zbackup.sh"
 FSCK = "/sbin/fsck"
 RECOVERY_HTTP_PORT = 80
 CLEANUP_LIMIT = 40
-GITHUB_RELEASES_API = (
-    "https://api.github.com/repos/DrA1ex/ff5m/releases?per_page=100")
+GITHUB_RELEASES_API = FORGEX_API + "?per_page=100"
 USER_AGENT = "Forge-X-early-recovery"
 RESERVE_BYTES = 16 * 1024 * 1024
 MAX_FRAME_BYTES = 3584
@@ -94,46 +104,6 @@ UI_PAGER_STEP = UI_PAGER_BUTTON_WIDTH + UI_PAGER_GAP
 VERIFICATION_PROGRESS = re.compile(
     r"^// Processed (\d+) / (\d+); errors: (\d+)\.$")
 
-FORGE_X_ASSET = re.compile(
-    r"^Adventurer5M(?:Pro)?-ForgeX-[A-Za-z0-9._-]+\.(?:tgz|tar\.xz)$")
-
-GITHUB_RELEASE_ASSET_URL = re.compile(
-    r"^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^/]+)$")
-
-
-FACTORY_IMAGES = (
-    {
-        "version": "2.7.8 Factory",
-        "name": "Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz",
-        "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
-               "Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz",
-    },
-    {
-        "version": "3.1.3 Factory",
-        "name": "Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz",
-        "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
-               "Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz",
-    },
-)
-
-RECOVERY_DRY_IMAGE = {
-    "version": "Recovery dry run",
-    "name": "Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz",
-    "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
-           "Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz",
-    "shared": True,
-}
-
-FULL_RECOVERY_IMAGE = {
-    "version": "Full file recovery",
-    "name": "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
-    "url": "https://github.com/DrA1ex/ff5m/releases/download/1.2.0/"
-           "Adventurer5M-3.x.x-2.2.3-recovery-full.tgz",
-    "shared": True,
-}
-
-RECOVERY_IMAGES = (RECOVERY_DRY_IMAGE, FULL_RECOVERY_IMAGE)
-
 # Cleanup browser policy. These lists are the only place to adjust where the
 # recovery cleanup feature may scan and what it must never touch.
 CLEANUP_SCAN_ROOTS = ("/data", "/opt/config")
@@ -147,35 +117,6 @@ CLEANUP_DELETE_PROTECTED = ("/opt", "/root", "/data", "/data/.mod/.forge-x")
 def quote(value):
     value = str(value).replace("\r", " ").replace("\n", " ")
     return '"{}"'.format(value.replace("\\", "\\\\").replace('"', '\\"'))
-
-
-def model_name(machine, generic_name):
-    if machine == "Adventurer5MPro":
-        if generic_name.startswith("Adventurer5MPro-"):
-            return generic_name
-        if generic_name.startswith("Adventurer5M-"):
-            return "Adventurer5MPro-" + generic_name[len("Adventurer5M-"):]
-
-    if machine == "Adventurer5M" and generic_name.startswith("Adventurer5MPro-"):
-        return "Adventurer5M-" + generic_name[len("Adventurer5MPro-"):]
-
-    return generic_name
-
-
-def static_catalog(machine, entries):
-    result = []
-    for source in entries:
-        entry = dict(source)
-        source_name = entry["name"]
-        destination_name = model_name(machine, source_name)
-        if machine == "Adventurer5MPro" and not entry.get("shared"):
-            entry["url"] = entry["url"].replace(source_name, destination_name)
-
-        entry.pop("shared", None)
-        entry["name"] = destination_name
-        result.append(entry)
-
-    return result
 
 
 def request_json(url):
@@ -241,50 +182,8 @@ def explained_curl_error(line):
     return line
 
 
-def asset_sha256(asset):
-    # GitHub publishes release asset integrity as "sha256:<hex>"; assets
-    # uploaded before that feature have no digest and skip the check.
-    digest = str(asset.get("digest") or "")
-    if digest.startswith("sha256:"):
-        return digest[len("sha256:"):].lower()
-    return None
-
-
 def forge_x_catalog(machine, releases):
-    result = []
-    seen = set()
-    for release in releases:
-        if release.get("draft"):
-            continue
-
-        tag = str(release.get("tag_name") or "untagged")
-        candidates = [
-            asset for asset in release.get("assets", [])
-            if FORGE_X_ASSET.fullmatch(str(asset.get("name") or ""))
-        ]
-        if not candidates:
-            continue
-
-        exact_prefix = machine + "-"
-        asset = next(
-            (candidate for candidate in candidates
-             if candidate["name"].startswith(exact_prefix)),
-            candidates[0],
-        )
-        destination_name = model_name(machine, asset["name"])
-        if destination_name in seen:
-            continue
-
-        seen.add(destination_name)
-        result.append({
-            "version": tag + (" beta" if release.get("prerelease") else ""),
-            "name": destination_name,
-            "url": asset.get("browser_download_url"),
-            "size": int(asset.get("size") or 0),
-            "sha256": asset_sha256(asset),
-        })
-
-    return result
+    return forgex_catalog(machine, releases, allow_xz=True)
 
 
 def release_asset_metadata(url):
@@ -292,29 +191,16 @@ def release_asset_metadata(url):
     # each release asset's current size and SHA-256 digest. Deliberately
     # best-effort — every failure means "no published checksum", never a
     # blocked cache check or download.
-    match = GITHUB_RELEASE_ASSET_URL.match(str(url or ""))
-    if not match:
+    location = release_asset_location(url)
+    if not location:
         return None
 
-    owner, repository, tag, name = match.groups()
     try:
-        release = request_json(
-            "https://api.github.com/repos/{}/{}/releases/tags/{}"
-            .format(owner, repository, urllib.parse.quote(tag)))
+        release = request_json(location[0])
     except (RuntimeError, OSError, subprocess.SubprocessError):
         return None
 
-    if not isinstance(release, dict):
-        return None
-
-    for asset in release.get("assets") or []:
-        if str(asset.get("name") or "") == name:
-            return {
-                "size": int(asset.get("size") or 0),
-                "sha256": asset_sha256(asset),
-            }
-
-    return None
+    return published_metadata(release, location[1])
 
 
 def attach_published_checksums(entry):
@@ -1609,7 +1495,7 @@ class RecoveryUI:
         while True:
             action = self.view.menu("FIRMWARE / RESTORE", (
                 ("firmware.forgex", "FORGE-X RELEASES"),
-                ("firmware.factory", "FACTORY IMAGES"),
+                ("firmware.stock", "STOCK FIRMWARE"),
                 ("firmware.recovery", "RECOVERY IMAGES"),
                 ("firmware.downloaded", "DOWNLOADED IMAGES"),
                 ("firmware.back", "BACK"),
@@ -1619,28 +1505,30 @@ class RecoveryUI:
                 return
 
             if action == "firmware.forgex":
-                self.choose_forgex_release()
-            elif action == "firmware.factory":
-                self.choose_static_image(FACTORY_IMAGES, "Factory images")
+                self.choose_release_image("FORGE-X RELEASES", lambda: forge_x_catalog(
+                    self.machine, request_json(GITHUB_RELEASES_API)))
+            elif action == "firmware.stock":
+                # One version list; Factory images are labelled as such.
+                self.choose_release_image("STOCK FIRMWARE", lambda: archive_catalog(
+                    self.machine, request_json(archive_api("STOCK")),
+                    request_json(archive_api("FACTORY"))))
             elif action == "firmware.recovery":
                 self.choose_static_image(RECOVERY_IMAGES, "Recovery images")
             elif action == "firmware.downloaded":
                 self.downloaded_images_menu()
 
-    def choose_forgex_release(self):
-        self.view.progress("FORGE-X RELEASES", "Loading GitHub releases...")
+    def choose_release_image(self, title, load):
+        self.view.progress(title, "Loading GitHub releases...")
         try:
-            releases = request_json(GITHUB_RELEASES_API)
-            entries = forge_x_catalog(self.machine, releases)
+            entries = load()
             if not entries:
-                raise RuntimeError("No compatible Forge-X release images were found.")
+                raise RuntimeError("No compatible images were found for this printer.")
         except Exception as error:
             self.view.message("RELEASE LIST FAILED", str(error))
             return
 
         entry = self.view.choose(
-            "FORGE-X RELEASES", entries, lambda item: item["version"],
-            items_long=True)
+            title, entries, lambda item: item["version"], items_long=True)
         if entry is not None:
             self.download_and_offer(entry)
 

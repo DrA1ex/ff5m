@@ -30,7 +30,7 @@ The menu offers:
 
 - **Stock + SSH** — starts stock firmware without Forge-X services while preserving SSH access.
 - **Stock Only** — starts stock firmware without any Forge-X services, including recovery SSH.
-- **Firmware Images** — downloads Forge-X releases, factory images, or
+- **Firmware Images** — downloads Forge-X releases, stock and factory firmware, or
   file-recovery images into `/data/forge-x-recovery`. Downloaded images can be
   flashed after two confirmations. Use **Clear All Downloads** in this menu to
   remove every downloaded file. To remove only one file, delete it from

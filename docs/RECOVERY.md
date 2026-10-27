@@ -39,6 +39,8 @@ Generated diagnostics and settings backups can be downloaded from the address sh
 
 `NETWORK / SSH` refreshes its displayed state whenever the screen is entered; there is no separate refresh action. Firmware flashing keeps the existing two-stage confirmation flow.
 
+`FIRMWARE / RESTORE → STOCK FIRMWARE` lists the stock firmware versions for your printer model, newest first; factory images are marked `Factory`. A factory image also flashes the MCUs and resets the printer configuration. The list is read from the [Stock](https://github.com/DrA1ex/ff5m/releases/tag/Stock) and [factory](https://github.com/DrA1ex/ff5m/releases/tag/factory) releases, so it needs a network connection.
+
 ## Recovery Using Flashing Image
 
 If you are still able to flash firmware using USB, you can try running a system file integrity check.  

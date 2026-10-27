@@ -30,22 +30,10 @@ Insert USB drive and reboot the printer. The mod will uninstall itself during bo
 If you encounter uninstallation issues or firmware not working correctly after removing the mod, you **can** try to restore it by flashing the factory firmware.  
 
 1. Download the Factory Image:   
-   Make sure to select the correct version for your printer (Pro or Non-Pro) based on your specific model. You can access the factory firmware here:  
-   - **2.7.8 Factory images**
-     - Non-Pro: [Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-2.7.8-2.2.3-20241213-Factory.tgz)
-     - Pro: [Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-2.7.8-2.2.3-20241213-Factory.tgz)   
-   - **3.1.3 Factory images**
-     - Non-Pro: [Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.1.3-2.2.3-20250107-Factory.tgz)   
-     - Pro: [Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5MPro-3.1.3-2.2.3-20250107-Factory.tgz)
+   Open the [factory firmware release](https://github.com/DrA1ex/ff5m/releases/tag/factory) and download the file for your model: `Adventurer5M-<version>-Factory.tgz` for the 5M or `Adventurer5MPro-<version>-Factory.tgz` for the 5M Pro. Regular (non-factory) images are in the [stock firmware release](https://github.com/DrA1ex/ff5m/releases/tag/Stock).
 > [!NOTE]
-> The official 3.1.5 firmware available on the Flashforge website does not include printer config files. To install 3.1.5 while restoring those files it's necessary to first flash the above 3.1.3 firmware and then flash the 3.1.5 firmware.
-2. (Optional) Before flashing, check the integrity of the firmware file using the MD5 checksum:  
-   - **Version 2.7.8**:  
-     - Non-Pro: `608cb3830e69d1ff946bf699d69c491f`  
-     - Pro: `5470a03d8dd7d5bc15140b0922b6e4fe`  
-   - **Version 3.1.3**:  
-     - Non-Pro: `bda2f882433d57ef0a0c9808b96aaf00`  
-     - Pro: `ae83c3b5fcb9181aec8fc9e5e821d5f4`  
+> The official 3.1.5 firmware available on the Flashforge website does not include printer config files. To install 3.1.5 while restoring those files it's necessary to first flash a factory image and then flash the 3.1.5 firmware.
+2. (Optional) Before flashing, compare the file's SHA-256 checksum with the one GitHub shows next to it in the release.
 3. Copy it to a USB drive.  
 4. Insert the USB drive **before powering up** the printer.  
 5. Wait **until** the firmware is installed. Don't reboot the printer **until the installation process is finished**.  

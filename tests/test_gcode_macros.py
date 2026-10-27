@@ -15,6 +15,7 @@ from tests.gcode_macro_harness import (
 
 ROOT = pathlib.Path(__file__).parents[1]
 BASE = ROOT / "macros" / "base.cfg"
+FIRMWARE = ROOT / "macros" / "firmware.cfg"
 HEADLESS = ROOT / "macros" / "headless.cfg"
 CLIENT = ROOT / "macros" / "client.cfg"
 STOCK = ROOT / "config" / "stock.cfg"
@@ -1577,10 +1578,10 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
     def test_usb_prepare_blocks_printing_and_preserves_confirmed_identity(self):
         idle = render_macro(
-            BASE, "PREPARE_USB",
+            FIRMWARE, "PREPARE_USB",
             printer={"idle_timeout": {"state": "Ready"}})
         confirm = render_macro(
-            BASE, "_PREPARE_USB_CONFIRM",
+            FIRMWARE, "_PREPARE_USB_CONFIRM",
             params={"FORMAT": "fat32", "DEVICE": "sda", "ID": 42})
 
         self.assertEqual(
@@ -1592,7 +1593,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
         with self.assertRaisesRegex(
                 MacroActionError, "unavailable while printing"):
             render_macro(
-                BASE, "PREPARE_USB",
+                FIRMWARE, "PREPARE_USB",
                 printer={"idle_timeout": {"state": "Printing"}})
 
 

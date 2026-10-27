@@ -65,6 +65,17 @@ logged() {
     "$BINS/logged" "${SCREEN_THEME_ARGS[@]}" "$@"
 }
 
+firmware_download_prompt() {
+    local percent=$1 message=$2
+    local filled=$((percent / 5)) bar empty
+    printf -v bar '%*s' "$filled" ''; bar=${bar// /#}
+    printf -v empty '%*s' "$((20 - filled))" ''; empty=${empty// /-}
+    echo "// action:prompt_begin Downloading firmware"
+    echo "// action:prompt_text $message"
+    echo "// action:prompt_text [$bar$empty] $percent%"
+    echo "// action:prompt_show"
+}
+
 # One-shot shell screen rendering can run while another process (notably logged)
 # is mapped to a specific framebuffer page. Keep Typer double-buffered to avoid
 # visible intermediate drawing, but publish by copying to the currently visible
