@@ -739,6 +739,41 @@ class BootRecoveryTest(unittest.TestCase):
         ui.view.progress.assert_any_call(
             "DOWNLOADING IMAGE", "Connecting to the download server...")
 
+    def test_full_image_checks_are_shown_as_a_stage_after_the_download(self):
+        payload = firmware_archive_bytes()
+        curl, cacert, source = self._fake_curl(payload)
+        ui = RECOVERY.RecoveryUI(
+            "Adventurer5M", str(self.root / "action"), session=mock.Mock())
+        ui.view.progress = mock.Mock()
+        shown = {}
+        archive_check = RECOVERY.validate_archive
+
+        def checksum(_path):
+            shown["checksum"] = ui.view.progress.call_args.args
+            return hashlib.sha256(payload).hexdigest()
+
+        def validate(path):
+            shown["archive"] = ui.view.progress.call_args.args
+            archive_check(path)
+
+        entry = {
+            "name": "Adventurer5M-test.tgz",
+            "url": "https://example.test/image",
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        with mock.patch.object(RECOVERY, "DOWNLOAD_DIR", str(self.root / "downloads")), \
+                mock.patch.object(RECOVERY, "CURL", str(curl)), \
+                mock.patch.object(RECOVERY, "CURL_CACERT", str(cacert)), \
+                mock.patch.object(RECOVERY, "file_sha256", side_effect=checksum), \
+                mock.patch.object(RECOVERY, "validate_archive", side_effect=validate), \
+                mock.patch.dict(os.environ, {"CURL_TEST_SOURCE": str(source)}):
+            ui.download(entry)
+
+        self.assertEqual(shown["checksum"][0], "VERIFYING IMAGE")
+        self.assertIn("SHA-256", shown["checksum"][1])
+        self.assertEqual(shown["archive"][0], "VERIFYING IMAGE")
+
     def test_download_failure_stops_the_writer_before_removing_partial_file(self):
         download_dir = self.root / "downloads"
         ui = RECOVERY.RecoveryUI(

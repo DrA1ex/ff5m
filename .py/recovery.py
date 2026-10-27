@@ -1708,9 +1708,17 @@ class RecoveryUI:
                     "Downloaded size is incorrect: {} of {} bytes."
                     .format(downloaded, expected_size))
 
-            if expected_sha256 and file_sha256(partial) != expected_sha256.lower():
-                raise RuntimeError(
-                    "Downloaded image SHA-256 does not match the published value.")
+            # Both checks read the whole image and take a while on the printer.
+            # Show them as their own stage: the last download frame may still
+            # show a few percent short of complete.
+            if expected_sha256:
+                self.view.progress(
+                    "VERIFYING IMAGE",
+                    "Downloaded {:.1f} MiB. Checking SHA-256 checksum..."
+                    .format(downloaded / 1048576.0))
+                if file_sha256(partial) != expected_sha256.lower():
+                    raise RuntimeError(
+                        "Downloaded image SHA-256 does not match the published value.")
 
             self.view.progress("VERIFYING IMAGE", "Checking firmware archive...")
             validate_archive(partial)

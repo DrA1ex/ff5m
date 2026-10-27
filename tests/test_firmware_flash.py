@@ -165,6 +165,34 @@ class FirmwareDownloadTest(unittest.TestCase):
 
         self.assertEqual(self.destination.read_bytes(), self.payload)
 
+    def test_full_image_checks_are_reported_before_they_run(self):
+        progress = mock.Mock()
+        checks = []
+
+        def write_image(_url, path, _size, _digest):
+            pathlib.Path(path).write_bytes(self.payload)
+
+        def checksum(path):
+            checks.append(("checksum", progress.call_args.args))
+            return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+        def archive(_path):
+            checks.append(("archive", progress.call_args.args))
+
+        with mock.patch.object(zflash, "download", side_effect=write_image), \
+                mock.patch.object(zflash, "emit_progress", progress), \
+                mock.patch.object(zflash, "sha256", side_effect=checksum), \
+                mock.patch.object(zflash, "verify_archive", side_effect=archive):
+            self.prepare()
+            self.prepare()
+
+        # A fresh download, then the cached image: each check follows a
+        # completed (100%) step that names it instead of a download frame.
+        self.assertEqual([kind for kind, _args in checks], ["archive", "checksum", "archive"])
+        for _kind, (percent, message) in checks:
+            self.assertEqual(percent, 100)
+            self.assertIn("Checking", message)
+
     def test_failed_download_removes_part_and_does_not_publish_image(self):
         def truncated(_url, path, _size, _digest):
             pathlib.Path(path).write_bytes(self.payload[:10])

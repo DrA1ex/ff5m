@@ -138,6 +138,9 @@ def prepare_download(kind, version, machine):
     if os.path.islink(destination) or os.path.islink(partial):
         raise RuntimeError("Firmware destination is an unsafe symbolic link.")
 
+    if os.path.exists(destination):
+        # The checksum and archive checks read the whole image.
+        emit_progress(100, "Checking saved image {}".format(name))
     if verify_file(destination, size, digest):
         emit("// Using verified cached image: " + name)
     else:
@@ -153,7 +156,7 @@ def prepare_download(kind, version, machine):
         try:
             emit_progress(0, "Downloading {}".format(name))
             download(url, partial, size, digest)
-            emit("// Checking firmware archive...")
+            emit_progress(100, "Checking firmware archive...")
             verify_archive(partial)
             os.replace(partial, destination)
             os.sync()
