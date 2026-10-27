@@ -236,6 +236,117 @@ printf '%s|%s|%s\\n' "$1" "$2" "$PWD" > "$RESULT_PATH"
         self.assertFalse(list(self.staging.glob(".forge-x-install-*")))
         self.assertTrue((self.runner_staging / "runner.sh").exists())
 
+    def test_stock_script_finds_its_package_after_changing_directory(self):
+        # Stock flashforge_init.sh takes WORK_DIR from $0, then cds into
+        # /opt/PROGRAM for each sub-package before reading the next one.
+        image = self._archive("Adventurer5M-test.tgz", [
+            ("flashforge_init.sh", """#!/bin/sh
+WORK_DIR=`dirname $0`
+cd /
+cat $WORK_DIR/payload > "$RESULT_PATH"
+""", 0o755),
+            ("payload", "finished\n", 0o644),
+        ])
+
+        result = self._run(image)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self._wait_for(self.result.exists, "firmware entrypoint did not run")
+        self.assertEqual(self.result.read_text(encoding="utf-8"), "finished\n")
+
+    # The steps by which the runner recognises a stock installer. The fixture
+    # never calls them: its own steps below use test paths.
+    STOCK_STEPS = """
+stock_steps()
+{
+	RUN_DIR="/opt/PROGRAM"
+			#	${RUN_DIR}/control/${control_version}/run.sh
+	update_control
+	cat $WORK_DIR/end.img > /dev/fb0
+	$WORK_DIR/play
+}
+"""
+
+    def _stock_package(self, installer_status=0, mcu_confirms=True, stock_steps=True):
+        """A stock-shaped package whose steps append to RESULT_PATH."""
+        self.framebuffer = self.root / "fb0"
+        control = self.root / "control" / "2.2.3"
+        control.mkdir(parents=True)
+        (control / "Update").touch()
+        (control / "run.sh").write_text(
+            '#!/bin/sh\necho mcu >> "$RESULT_PATH"\n'
+            + ('rm -f Update\n' if mcu_confirms else ''), encoding="utf-8")
+        (control / "run.sh").chmod(0o755)
+        self.environment.update({
+            "FORGE_X_FIRMWARE_FRAMEBUFFER": str(self.framebuffer),
+            "FORGE_X_STOCK_CONTROL_DIR": str(control.parent),
+        })
+        return self._archive("Adventurer5M-test.tgz", [
+            ("flashforge_init.sh", """#!/bin/sh
+WORK_DIR=`dirname $0`
+%s
+echo system >> "$RESULT_PATH"
+cat $WORK_DIR/end.img > "$FORGE_X_FIRMWARE_FRAMEBUFFER" 2>/dev/null
+$WORK_DIR/play 2>/dev/null
+exit %d
+""" % (self.STOCK_STEPS if stock_steps else "", installer_status), 0o755),
+            ("control-2.2.3.tar.xz", "", 0o644),
+            ("end.img", "completed\n", 0o644),
+            ("play", '#!/bin/sh\necho sound >> "$RESULT_PATH"\n', 0o755),
+        ])
+
+    def _wait_for_steps(self, count):
+        self._wait_for(
+            lambda: self.result.exists()
+            and len(self.result.read_text(encoding="utf-8").split()) >= count,
+            "stock installation steps did not finish")
+        return self.result.read_text(encoding="utf-8").split()
+
+    def test_stock_mcu_update_runs_before_the_completion_screen(self):
+        result = self._run(self._stock_package())
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._wait_for_steps(3), ["system", "mcu", "sound"])
+        self.assertEqual(self.framebuffer.read_text(encoding="utf-8"), "completed\n")
+        self.assertFalse((self.root / "control" / "2.2.3" / "Update").exists())
+        self.assertIn("confirmed FlashForge stock multi-stage layout",
+                      self.launch_log.read_text(encoding="utf-8"))
+
+    def test_unconfirmed_layout_runs_its_installer_unchanged(self):
+        result = self._run(self._stock_package(stock_steps=False))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._wait_for_steps(2), ["system", "sound"])
+        self._wait_for(lambda: "Installer completed" in
+                       self.launch_log.read_text(encoding="utf-8"),
+                       "installer did not complete")
+        log = self.launch_log.read_text(encoding="utf-8")
+        self.assertIn("installer script (installer step not found", log)
+        self.assertEqual(self.framebuffer.read_text(encoding="utf-8"), "completed\n")
+        self.assertEqual(self.result.read_text(encoding="utf-8").split(), ["system", "sound"])
+        self.assertTrue((self.root / "control" / "2.2.3" / "Update").exists())
+
+    def test_unconfirmed_stock_mcu_update_is_left_for_stock_startup(self):
+        result = self._run(self._stock_package(mcu_confirms=False))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._wait_for_steps(3), ["system", "mcu", "sound"])
+        self._wait_for(lambda: "MCU update flag remains" in
+                       self.launch_log.read_text(encoding="utf-8"),
+                       "unconfirmed MCU update was not recorded")
+        self.assertTrue((self.root / "control" / "2.2.3" / "Update").exists())
+
+    def test_failed_stock_installer_skips_mcu_update_and_completion(self):
+        result = self._run(self._stock_package(installer_status=1))
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self._wait_for(lambda: "Installer exited with status 1" in
+                       self.launch_log.read_text(encoding="utf-8"),
+                       "installer failure was not recorded")
+        self.assertEqual(self.result.read_text(encoding="utf-8").split(), ["system"])
+        # The stock script's own redirect may create it, but stays empty.
+        self.assertEqual(self.framebuffer.read_text(encoding="utf-8"), "")
+
     def test_installation_runs_without_tuning_components(self):
         image = self._archive("Adventurer5M-test.tgz", [
             ("flashforge_init.sh", '#!/bin/sh\necho launched > "$RESULT_PATH"\n', 0o755),

@@ -68,6 +68,23 @@ does not trigger another screen. Only an early loader, crash, or
 unexpected-status failure receives the runner's emergency screen. Legacy shell
 entrypoints retain their synchronous delayed fallback.
 
+The runner starts every entrypoint by its absolute path, as stock `auto_run.sh`
+does: stock `flashforge_init.sh` takes its package directory from `dirname $0`
+after it changes into `/opt/PROGRAM`, so a `./` start skips most packages and
+leaves the "Upgrading" screen.
+
+Beyond that, a package takes one of two logged paths. An ordinary installer
+script runs unchanged. The FlashForge stock multi-stage installer is used only
+when its layout is confirmed (`check_stock_layout` in the runner): `end.img`,
+`play` and a `control-*.tar.xz` package, and a `flashforge_init.sh` that updates
+`/opt/PROGRAM`, keeps the control `run.sh` call commented out and ends with the
+`end.img` screen and `play`. Stock leaves that MCU update to the next boot, where
+`auto_run.sh` runs `/opt/PROGRAM/control/<version>/run.sh` while its `Update`
+flag exists. Both stock MCU tools reset their chip through GPIO, so on this path
+the runner holds back the completion screen and sound, runs that step after a
+successful installer, then shows them. An unconfirmed MCU update keeps the flag,
+and stock startup retries it.
+
 This path intentionally depends on kernel block metadata rather than partition-table parsing. Changes must retain coverage for multiple and logical partitions, digit-suffixed block names, whole-disk filesystems, existing read-only mounts, FAT/ext filesystems, firmware images, and normal boot flags. Unsupported filesystems are skipped so root/eMMC flag checks and the remaining recovery path still run.
 
 ### Operational caveat: release channels

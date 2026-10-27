@@ -33,7 +33,7 @@ Generated diagnostics and settings backups can be downloaded from the address sh
 
 Use `BOOT OPTIONS` to start Forge-X or the stock firmware, `FIRMWARE / RESTORE` to reinstall firmware, and `NETWORK / SSH` to set up a network connection or remote access.
 
-`FIRMWARE / RESTORE → STOCK FIRMWARE` lists the stock firmware versions for your printer model, newest first; factory images are marked `Factory`. A factory image also flashes the MCUs and resets the printer configuration. The list is read from the [Stock](https://github.com/DrA1ex/ff5m/releases/tag/Stock) and [factory](https://github.com/DrA1ex/ff5m/releases/tag/factory) releases, so it needs a network connection.
+`FIRMWARE / RESTORE → STOCK FIRMWARE` lists the stock firmware versions for your printer model, newest first; factory images are marked `Factory`. Installing a stock image also updates the MCU firmware in the same run; keep the printer powered until the screen shows "Upgrade completed". A factory image also resets the printer configuration. The list is read from the [Stock](https://github.com/DrA1ex/ff5m/releases/tag/Stock) and [factory](https://github.com/DrA1ex/ff5m/releases/tag/factory) releases, so it needs a network connection.
 
 ### CPU and eMMC tuning
 

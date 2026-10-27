@@ -9,6 +9,8 @@
 FIRMWARE_RUNTIME_RELEASE_TIMEOUT_SECONDS=30
 FIRMWARE_BINARY_STARTUP_GRACE_SECONDS=10
 FIRMWARE_CONSOLE=${FORGE_X_FIRMWARE_CONSOLE:-/dev/console}
+FIRMWARE_FRAMEBUFFER=${FORGE_X_FIRMWARE_FRAMEBUFFER:-/dev/fb0}
+STOCK_CONTROL_DIR=${FORGE_X_STOCK_CONTROL_DIR:-/opt/PROGRAM/control}
 FORGE_X_RUNTIME_PATHS='/data/\.mod|/opt/config/mod|/root/printer_data'
 
 # fd 3 remains the small persistent lifecycle log inherited from install-image.
@@ -40,6 +42,87 @@ firmware_message() {
 
     echo "// $title"
     [ -z "$detail" ] || echo "// $detail"
+}
+
+# A package is handled as the FlashForge stock multi-stage installer only when
+# its layout is confirmed: flashforge_init.sh updates the /opt/PROGRAM packages,
+# leaves the control (MCU) step to stock auto_run.sh on the next boot, and ends
+# with the end.img screen and play. Any other package is an ordinary installer
+# script and runs unchanged. Prints why a package is not the stock layout.
+check_stock_layout() {
+    local name step
+    local -a steps=(
+        'RUN_DIR="/opt/PROGRAM"'
+        'update_control'
+        '#[[:space:]]*\$\{RUN_DIR\}/control/\$\{control_version\}/run\.sh'
+        'cat \$WORK_DIR/end\.img > /dev/fb0'
+        '\$WORK_DIR/play'
+    )
+
+    [ "$FIRMWARE_ENTRYPOINT_NAME" = "flashforge_init.sh" ] || {
+        echo "entrypoint is $FIRMWARE_ENTRYPOINT_NAME"
+        return 1
+    }
+    for name in end.img play; do
+        [ -f "$name" ] && [ ! -L "$name" ] || {
+            echo "$name is missing"
+            return 1
+        }
+    done
+    ls control-*.tar.xz >/dev/null 2>&1 || {
+        echo "no control package"
+        return 1
+    }
+    for step in "${steps[@]}"; do
+        grep -Eq "^[[:space:]]*${step}[[:space:]]*\$" "$FIRMWARE_ENTRYPOINT" || {
+            echo "installer step not found: $step"
+            return 1
+        }
+    done
+    # An installer that flashes the MCUs itself must not get a second run.
+    if grep -Eq '^[[:space:]]*[^#[:space:]][^#]*control/[^#]*run\.sh' "$FIRMWARE_ENTRYPOINT"; then
+        echo "installer runs the control step itself"
+        return 1
+    fi
+}
+
+# Both stock MCU tools reset their chip through GPIO, so the MCU update stock
+# leaves to the next boot runs here, and the completion screen and sound wait
+# until it has finished.
+defer_stock_completion() {
+    local name
+
+    for name in end.img play; do
+        [ -f "$name" ] && mv -f "$name" "$name.deferred"
+    done
+}
+
+update_stock_mcu() {
+    local version
+
+    version=$(ls -1t "$STOCK_CONTROL_DIR" 2>/dev/null | head -n 1)
+    [ -n "$version" ] && [ -f "$STOCK_CONTROL_DIR/$version/Update" ] || return 0
+
+    runner_lifecycle INFO "Updating MCU firmware from control $version."
+    (cd "$STOCK_CONTROL_DIR/$version" && ./run.sh)
+    if [ -f "$STOCK_CONTROL_DIR/$version/Update" ]; then
+        # Stock auto_run.sh retries while the update flag remains.
+        runner_lifecycle ERROR "MCU update flag remains; stock startup retries it."
+        echo "@@ MCU firmware update was not confirmed; it is retried on the next boot."
+    else
+        runner_lifecycle INFO "MCU firmware updated."
+    fi
+}
+
+show_stock_completion() {
+    local name
+
+    for name in end.img play; do
+        [ -f "$name.deferred" ] && mv -f "$name.deferred" "$name"
+    done
+    [ -f end.img ] && cat end.img > "$FIRMWARE_FRAMEBUFFER"
+    [ -f play ] && ./play
+    return 0
 }
 
 mod_path_references() {
@@ -82,8 +165,11 @@ FIRMWARE_PRODUCT_ID=$5
 FIRMWARE_ERROR_DELAY_SECONDS=$6
 FIRMWARE_RUNNER_DIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 
-[ -n "$FIRMWARE_PACKAGE_DIR" ] && [ "$FIRMWARE_PACKAGE_DIR" != "/" ] \
-    && [ -d "$FIRMWARE_PACKAGE_DIR" ] || exit 2
+case "$FIRMWARE_PACKAGE_DIR" in
+    /?*) ;;
+    *) exit 2 ;;
+esac
+[ -d "$FIRMWARE_PACKAGE_DIR" ] || exit 2
 case "$FIRMWARE_ENTRYPOINT_KIND:$FIRMWARE_ENTRYPOINT_NAME" in
     binary:forge-x-init|shell:forge-x-init.sh|shell:flashforge_init.sh) ;;
     *) exit 2 ;;
@@ -112,6 +198,10 @@ fi
 
 rm -f /tmp/logged_message_queue
 export FORGE_X_FIRMWARE_DIR="$FIRMWARE_PACKAGE_DIR"
+# Stock flashforge_init.sh finds its package through `dirname $0` after it
+# changes directory, so the entrypoint is started by its absolute path, as
+# stock auto_run.sh does.
+FIRMWARE_ENTRYPOINT="$FIRMWARE_PACKAGE_DIR/$FIRMWARE_ENTRYPOINT_NAME"
 cd "$FIRMWARE_PACKAGE_DIR" || exit 1
 runner_lifecycle INFO "Previous Forge-X runtime released; starting installer."
 
@@ -119,7 +209,7 @@ if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
     # The outer nohup already made SIGHUP ignored. Keep that disposition
     # explicit while avoiding a second nohup that could redirect /dev/console.
     trap '' HUP
-    "./$FIRMWARE_ENTRYPOINT_NAME" \
+    "$FIRMWARE_ENTRYPOINT" \
         "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID" </dev/null 3>&- &
     installer_pid=$!
     if [ -z "$installer_pid" ]; then
@@ -180,10 +270,27 @@ if [ "$FIRMWARE_ENTRYPOINT_KIND" = "binary" ]; then
     exit 0
 fi
 
+stock_package=0
+if layout_reason=$(check_stock_layout); then
+    stock_package=1
+    runner_lifecycle INFO \
+        "Package: confirmed FlashForge stock multi-stage layout; MCU update follows the system update."
+    defer_stock_completion
+else
+    runner_lifecycle INFO \
+        "Package: installer script ($layout_reason); running it unchanged."
+fi
+
 firmware_message "Starting firmware installer" "Launching the selected image."
-/bin/bash "./$FIRMWARE_ENTRYPOINT_NAME" \
+/bin/bash "$FIRMWARE_ENTRYPOINT" \
     "$FIRMWARE_MACHINE" "$FIRMWARE_PRODUCT_ID" 3>&-
 status=$?
+
+if [ "$status" -eq 0 ] && [ "$stock_package" -eq 1 ]; then
+    update_stock_mcu
+    sync
+    show_stock_completion
+fi
 
 if [ "$status" -ne 0 ]; then
     runner_lifecycle ERROR "Installer exited with status $status."
