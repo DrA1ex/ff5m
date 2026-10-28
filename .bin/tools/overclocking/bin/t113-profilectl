@@ -147,7 +147,7 @@ meta_get(){ file=$1; key=$2; [ -r "$file" ] || return 1; sed -n "s/^${key}=//p" 
 
 read_environment(){
     progress 'Reading U-Boot environment (fw_printenv)'
-    ENV_DATA=$(fw_printenv -c "$FW_CONFIG" 2>/dev/null) || die 'cannot read U-Boot environment'
+    ENV_DATA=$(fw_printenv -c "$FW_CONFIG") || die 'cannot read U-Boot environment'
     ENV_READY=1
 }
 ensure_environment(){ [ "$ENV_READY" = 1 ] || read_environment; }
