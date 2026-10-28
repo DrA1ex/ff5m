@@ -41,7 +41,9 @@ class RecoveryTrialGateTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.candidate = self.root / "candidate"
-        for name, value in (("BOOT_FLAGS", str(self.root)), ("TRIAL_CANDIDATE", str(self.candidate))):
+        for name, value in (("BOOT_FLAGS", str(self.root)),
+                            ("TRIAL_CANDIDATE", str(self.candidate)),
+                            ("FW_ENV_CONFIG", str(self.root / "uboot" / "fw_env.config"))):
             patcher = mock.patch.object(recovery, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -122,10 +124,50 @@ class RecoveryTrialGateTest(unittest.TestCase):
         self.assertFalse((self.root / "BOOT_FLAG_SKIP").exists())
         self.assertEqual(self.action(), "reboot")
 
+    def test_tuning_prepares_missing_uboot_directory_and_config(self):
+        config = self.root / "uboot" / "fw_env.config"
+        with mock.patch.object(recovery, "FW_ENV_CONFIG", str(config)):
+            self.ui([]).hardware_tuning()
+        self.assertEqual(config.read_text(), recovery.FW_ENV_CONTENT)
+        self.tuning.assert_called_once()
+
+    def test_tuning_does_not_overwrite_existing_config(self):
+        config = self.root / "uboot" / "fw_env.config"
+        config.parent.mkdir()
+        config.write_text("custom config\n")
+        with mock.patch.object(recovery, "FW_ENV_CONFIG", str(config)):
+            self.ui([]).hardware_tuning()
+        self.assertEqual(config.read_text(), "custom config\n")
+
+    def test_tuning_rejects_nonregular_config(self):
+        config = self.root / "uboot" / "fw_env.config"
+        config.mkdir(parents=True)
+        with mock.patch.object(recovery, "FW_ENV_CONFIG", str(config)):
+            self.ui(["message.back"]).hardware_tuning()
+        self.tuning.assert_not_called()
+        self.assertTrue(config.is_dir())
+
+    def test_prepare_fw_env_config_returns_without_recreating_existing_file(self):
+        config = self.root / "uboot" / "fw_env.config"
+        config.parent.mkdir()
+        config.write_text("custom config\n")
+        with mock.patch.object(recovery.os, "makedirs",
+                               side_effect=AssertionError("unexpected mkdir")):
+            recovery.prepare_fw_env_config()
+        self.assertEqual(config.read_text(), "custom config\n")
+
+    def test_tuning_config_error_is_handled(self):
+        parent = self.root / "uboot"
+        parent.write_text("not a directory")
+        with mock.patch.object(recovery, "FW_ENV_CONFIG", str(parent / "fw_env.config")):
+            self.ui(["message.back"]).hardware_tuning()
+        self.tuning.assert_not_called()
+
     def test_ordinary_recovery_does_not_load_tuning(self):
         del sys.modules["overclocking_ui"]
         self.ui(["main.reboot", "confirm.accept"]).run()
         self.assertNotIn("overclocking_ui", sys.modules)
+        self.assertFalse((self.root / "uboot").exists())
         self.assertEqual(self.action(), "reboot")
 
 

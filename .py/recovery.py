@@ -53,6 +53,8 @@ VERIFICATION_LOG = "/data/logFiles/verification.log"
 ZBACKUP = "/opt/config/mod/.shell/commands/zbackup.sh"
 BOOT_FLAGS = "/opt/config/mod"
 TRIAL_CANDIDATE = "/data/.forge-x-overclocking/profile/candidate"
+FW_ENV_CONFIG = "/opt/uboot/fw_env.config"
+FW_ENV_CONTENT = "/dev/mmcblk0p2 0x0000 0x20000\n/dev/mmcblk0p3 0x0000 0x20000\n"
 FSCK = "/sbin/fsck"
 RECOVERY_HTTP_PORT = 80
 CLEANUP_LIMIT = 40
@@ -1393,6 +1395,19 @@ class RecoveryView:
                     continue
 
 
+
+def prepare_fw_env_config():
+    if os.path.isfile(FW_ENV_CONFIG):
+        return
+    if os.path.lexists(FW_ENV_CONFIG):
+        raise RuntimeError("U-Boot environment config is not a regular file.")
+
+    os.makedirs(os.path.dirname(FW_ENV_CONFIG), exist_ok=True)
+    with open(FW_ENV_CONFIG, "w", encoding="ascii") as config:
+        config.write(FW_ENV_CONTENT)
+    print("Created U-Boot environment config: " + FW_ENV_CONFIG, flush=True)
+
+
 def trial_pending():
     # profilectl's candidate record is the only unresolved tuning decision.
     # Checking it needs no tuning imports, so ordinary Recovery never loads them.
@@ -1571,6 +1586,7 @@ class RecoveryUI:
     def hardware_tuning(self):
         self.view.progress("HARDWARE TUNING", "Checking hardware and saved settings. Please wait...")
         try:
+            prepare_fw_env_config()
             from overclocking_ui import TuningUI
             return TuningUI(self.view, self.reboot,
                             lambda: request_next_recovery(trial_pending())).run()
