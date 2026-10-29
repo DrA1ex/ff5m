@@ -150,7 +150,7 @@ In practice:
 
 **Reference**
 
-- [F.A.Q.](/docs/FAQ.md) · [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md) · [Customizing and extending Forge-X](/docs/EXTENDING.md)
+- [F.A.Q.](/docs/FAQ.md) · [Klipper fixes and AD5M-specific hardening](/docs/KLIPPER.md) · [Customizing and extending Forge-X](/docs/EXTENDING.md) · [Optional Phobos updates](/docs/PHOBOS.md)
 
 **For contributors**
 
