@@ -1,0 +1,33 @@
+/* Fluidd's native .fluidd-theme/custom.css extension point. */
+.theme--dark.v-app-bar.v-toolbar { background-color: #050c0f !important; border-bottom: 1px solid #295c66; }
+.theme--dark .toolbar-logo {
+    width: 140px;
+    flex: 0 0 140px;
+    background: #050c0f url('__FORGE_X_LOGO__') center / 116px 32px no-repeat !important;
+    border-right: 1px solid #295c66;
+}
+.theme--dark .toolbar-logo .logo-wrapper { visibility: hidden; }
+.theme--dark .printer-title { font-family: Roboto, sans-serif; font-size: 18px; font-weight: 400; }
+.theme--dark .v-card__title,
+.theme--dark .v-card .v-toolbar__title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #35d9e6;
+}
+.theme--dark .v-card__title { border-bottom: 1px solid #295c66; }
+.theme--dark.v-navigation-drawer .v-list-item__title { font-family: 'JetBrains Mono', monospace; }
+.theme--dark .v-navigation-drawer__border { background-color: #295c66; }
+.theme--dark .v-btn.v-btn--rounded:not(.v-btn--round) { border-radius: 2px; }
+.theme--dark .echarts { color: #91a6ae; }
+.theme--dark.v-toolbar:not(.v-app-bar) {
+    background-color: #050c0f !important;
+    border-bottom: 1px solid #295c66;
+}
+.theme--dark .v-main { background-color: #030607; }
+.theme--dark.v-navigation-drawer--mini-variant .v-list-item {
+    margin: 5px 3px;
+    padding: 0 8px;
+}
