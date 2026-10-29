@@ -137,4 +137,4 @@ body { background: var(--feather-background); }
 .theme--dark .v-tab--active { color: var(--feather-primary) !important; }
 /* SVG chart labels remain legible without changing plotted-series colors. */
 .theme--dark .temperature-panel svg text,
-.theme--dark .temperature-chart svg text { fill: #91a6ae !important; }
+.theme--dark .temperature-chart svg text { fill: #91a6ae !important; fill-opacity: 1 !important; opacity: 1 !important; }
