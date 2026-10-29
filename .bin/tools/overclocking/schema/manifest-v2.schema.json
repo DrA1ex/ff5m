@@ -28,7 +28,7 @@
       "const": "1.0.1"
     },
     "validator_version": {
-      "const": 5
+      "const": 6
     },
     "canonical_stock": {
       "type": "object",
@@ -434,7 +434,7 @@
       "required": [
         "kind",
         "family_id",
-        "cids",
+        "models",
         "frequencies_mhz",
         "runtime"
       ],
@@ -445,8 +445,10 @@
         "family_id": {
           "type": "string"
         },
-        "cids": {
-          "type": "string"
+        "models": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}:[0-9a-f]{4}:[0-9a-f]{12}:[0-9a-f]{2}(,[0-9a-f]{2}:[0-9a-f]{4}:[0-9a-f]{12}:[0-9a-f]{2})*$",
+          "description": "Supported MMC v2+ model/revision identities: MID:OEM:PNM-hex:PRV. Exact field values, no specimen serial/date/CRC and no wildcard revisions. Support is not individual frequency certification; explicit trial and verification remain mandatory."
         },
         "frequencies_mhz": {
           "type": "string"
@@ -466,8 +468,8 @@
             "family_id": {
               "const": "hs2001v8"
             },
-            "cids": {
-              "const": "15010048533230304700000000000002,d6010335384133393811732c45913b01"
+            "models": {
+              "const": "15:0100:485332303047:00,d6:0103:353841333938:11"
             },
             "frequencies_mhz": {
               "const": "25,50,100,150"
@@ -478,7 +480,7 @@
           },
           "required": [
             "family_id",
-            "cids",
+            "models",
             "frequencies_mhz",
             "runtime"
           ]
@@ -495,8 +497,8 @@
             "family_id": {
               "const": "legacy3v3"
             },
-            "cids": {
-              "const": "1501004d345846495500000000000001"
+            "models": {
+              "const": "15:0100:4d3458464955:00"
             },
             "frequencies_mhz": {
               "const": "25,50"
@@ -507,7 +509,7 @@
           },
           "required": [
             "family_id",
-            "cids",
+            "models",
             "frequencies_mhz",
             "runtime"
           ]

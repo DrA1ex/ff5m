@@ -9,7 +9,7 @@ umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}; export PATH
 
 VERSION=0.6.0-recovery
-VALIDATOR_VERSION=5
+VALIDATOR_VERSION=6
 STOCK_SHA=27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21
 STOCK_BOOTCMD='run setargs_mmc boot_dsp0 boot_uImage'
 MANAGED_BOOTCMD='run setargs_mmc boot_dsp0 fgx_boot_current'
@@ -313,7 +313,28 @@ write_meta_atomic(){
 }
 
 record_lines(){ kind=$1; grep '"kind"[ ]*:[ ]*"'"$kind"'"' "$MANIFEST"; }
-family_known_for_cid(){ cid=$1; record_lines hardware_family | while IFS= read -r l; do fam=$(printf '%s\n' "$l" | sed -n 's/.*"family_id"[ ]*:[ ]*"\([^"]*\)".*/\1/p'); cids=$(printf '%s\n' "$l" | sed -n 's/.*"cids"[ ]*:[ ]*"\([^"]*\)".*/\1/p'); oldifs=$IFS; IFS=,; set -- $cids; IFS=$oldifs; for c do [ "$c" = "$cid" ] && { printf '%s\n' "$fam"; exit 0; }; done; done; }
+# Linux MMC v2+ CID: MID [127:120], OEM [119:104], six-byte PNM [103:56],
+# PRV [55:48]. sysfs emits four big-endian words as 32 hex digits. PSN, MDT
+# and CRC/end bits are specimen data, never model identity. See mmc_decode_cid.
+cid_model_identity(){
+    printf '%s\n' "$1" | awk '
+      { value=tolower($0); sub(/^[ \t]+/, "", value); sub(/[ \t]+$/, "", value) }
+      NR != 1 || length(value) != 32 || value ~ /[^0-9a-f]/ { bad=1 }
+      END { if(bad || NR != 1) exit 1
+        printf "%s:%s:%s:%s\n", substr(value,1,2), substr(value,3,4), substr(value,7,12), substr(value,19,2)
+      }'
+}
+family_known_for_model(){
+    # Require one match, including within the same family. Ambiguous data must
+    # not select whichever entry happens to come first in the manifest.
+    record_lines hardware_family | awk -v wanted="$1" '
+      { line=$0; family=line; sub(/.*"family_id"[ ]*:[ ]*"/, "", family); sub(/".*/, "", family)
+        models=line; if(models !~ /"models"[ ]*:/) next
+        sub(/.*"models"[ ]*:[ ]*"/, "", models); sub(/".*/, "", models)
+        n=split(models,entries,","); for(i=1;i<=n;i++) if(entries[i]==wanted){ found++; result=family }
+      }
+      END { if(found==1) print result; else if(found>1) print "ambiguous" }'
+}
 
 runtime_ios(){
     [ -r "$IOS_FILE" ] || return 1
@@ -342,15 +363,27 @@ runtime_family_evidence(){
     else printf unknown; fi
 }
 detect_hardware(){
-    CID=unknown; [ -r "$CID_FILE" ] && CID=$(tr -d '\n ' <"$CID_FILE")
-    KNOWN_FAMILY=''; [ "$CID" = unknown ] || KNOWN_FAMILY=$(family_known_for_cid "$CID" | head -n1)
-    EVIDENCE_FAMILY=$(runtime_family_evidence)
-    if [ -n "$KNOWN_FAMILY" ]; then
-        DETECT_FAMILY=$KNOWN_FAMILY; HARDWARE_STATUS=known
-        if [ "$EVIDENCE_FAMILY" != unknown ] && [ "$EVIDENCE_FAMILY" != "$KNOWN_FAMILY" ]; then DETECT_CONFLICT=1; else DETECT_CONFLICT=0; fi
-    else
-        DETECT_FAMILY=$EVIDENCE_FAMILY; HARDWARE_STATUS=untested; DETECT_CONFLICT=0
+    CID=unknown; CID_IDENTITY=unknown; CID_STATUS=unavailable
+    if [ -f "$CID_FILE" ] && [ -r "$CID_FILE" ]; then
+      CID=$(cat "$CID_FILE") || CID=unknown
+      if CID_IDENTITY=$(cid_model_identity "$CID"); then
+        CID_STATUS=valid
+        CID=$(printf '%s' "$CID" | tr 'A-F' 'a-f' | tr -d ' \t\r\n')
+      else CID_STATUS=invalid; CID_IDENTITY=unknown; CID=unknown
+      fi
     fi
+    KNOWN_FAMILY=''; [ "$CID_STATUS" != valid ] || KNOWN_FAMILY=$(family_known_for_model "$CID_IDENTITY")
+    EVIDENCE_FAMILY=$(runtime_family_evidence)
+    DETECT_CONFLICT=0; HARDWARE_STATUS=untested; MODEL_STATUS=unsupported
+    DETECT_FAMILY=$EVIDENCE_FAMILY
+    case "$KNOWN_FAMILY" in
+      ambiguous) DETECT_FAMILY=unknown; DETECT_CONFLICT=1; MODEL_STATUS=ambiguous;;
+      ?*)
+        DETECT_FAMILY=$KNOWN_FAMILY; MODEL_STATUS=supported-model-revision
+        if [ "$EVIDENCE_FAMILY" = "$KNOWN_FAMILY" ]; then HARDWARE_STATUS=known
+        elif [ "$EVIDENCE_FAMILY" != unknown ]; then DETECT_CONFLICT=1
+        fi;;
+    esac
 }
 
 normalize_cpu(){
@@ -700,7 +733,7 @@ validate_manifest_constraints(){
     [ -r "$MANIFEST" ] && [ -r "$SCHEMA" ] && [ -r "$STOCK_ENV_FILE" ] || return 1
     VMS_JSON=$(tr -d '[:space:]' <"$MANIFEST") || return 1
     for VMS_NEEDLE in \
-      '"format":2' '"name":"t113-profilectl"' '"generator_version":"1.0.1"' '"validator_version":5' \
+      '"format":2' '"name":"t113-profilectl"' '"generator_version":"1.0.1"' '"validator_version":6' \
       '"file":"profiles/source/sunxi-stock.dtb"' '"sha256":"27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21"' \
       '"fdt_version":17' '"size":55093' '"uimage_address":"0x43000000"' '"dtb_address":"0x44864e70"' '"minimum_padding":32768' \
       '"slots":["FORGE_X_A.DTB","FORGE_X_B.DTB"]' '"stock_environment"' '"id":"ad5m-stock-v1"' '"file":"profiles/source/stock-uboot.env"' \
@@ -712,6 +745,16 @@ validate_manifest_constraints(){
     grep -F '"stock_bootcmd":"run setargs_mmc boot_dsp0 boot_uImage"' "$MANIFEST" >/dev/null 2>&1 || return 1
     VMS_SCHEMA=$(tr -d '[:space:]' <"$SCHEMA") || return 1
     case "$VMS_SCHEMA" in *'"format":{"const":2}'*'"additionalProperties":false'*) ;; *) return 1;; esac
+    record_lines hardware_family | awk '
+      { if($0 !~ /"models"[ ]*:/) { bad=1; next }
+        models=$0; sub(/.*"models"[ ]*:[ ]*"/, "", models); sub(/".*/, "", models)
+        n=split(models,entries,","); for(i=1;i<=n;i++) {
+          count=split(entries[i],f,":")
+          if(count!=4 || length(f[1])!=2 || length(f[2])!=4 || length(f[3])!=12 || length(f[4])!=2 ||
+             entries[i] ~ /[^0-9a-f:]/ || seen[entries[i]]++) bad=1
+        }
+      }
+      END { exit bad }' || return 1
     stock_env_file_valid || return 1
     VMS_UIMAGE=$(stock_env_value boot_uImage) || return 1
     case "$VMS_UIMAGE" in *sunxi.dtb*) ;; *) return 1;; esac
@@ -1243,6 +1286,14 @@ snapshot_cmd(){
     snapshot_value hardware "$HARDWARE_STATUS"
     snapshot_value family "$DETECT_FAMILY"
     snapshot_value hardware_conflict "$DETECT_CONFLICT"
+    snapshot_value cid_status "$CID_STATUS"
+    snapshot_value model_identity "$CID_IDENTITY"
+    snapshot_value model_support "$MODEL_STATUS"
+    snapshot_value matched_family "${KNOWN_FAMILY:-none}"
+    snapshot_value runtime_family_evidence "$EVIDENCE_FAMILY"
+    snapshot_value cleanup_danger_required "$CLEANUP_DANGER_REQUIRED"
+    snapshot_value boot_graph_variables "$(boot_graph_vars | sed '/^!/d' | sort -u | tr '\n' ',' | sed 's/,$//')"
+    snapshot_value boot_file_references "$(boot_chain_file_refs | tr '\n' ',' | sed 's/,$//')"
     snapshot_value cleanup_required "$CLEANUP_REQUIRED"
     snapshot_value manual_recovery_required "$MANUAL_RECOVERY_REQUIRED"
     snapshot_value stock_helpers_valid "$STOCK_HELPERS_OK"
@@ -1294,7 +1345,7 @@ list_cmd(){ case "$1" in cpu) cat <<EOF2
 EOF2
 ;; emmc) detect_hardware; case "$DETECT_FAMILY" in legacy3v3) printf '  25 MHz\n  50 MHz\n';; hs2001v8) printf '  25 MHz\n  50 MHz\n  100 MHz\n  150 MHz\n';; *) die 'cannot determine eMMC family';; esac;; *) die 'list requires cpu or emmc';; esac; }
 cpu_display(){ case "$1" in stock) printf 'stock (1008 MHz)';; 1104) printf '1.1 (1104 MHz)';; 1152) printf '1.15 (1152 MHz)';; 1200) printf '1.2 (1200 MHz)';; 1248) printf '1.25 (1248 MHz)';; 1296) printf '1.3 (1296 MHz)';; 1344) printf '1.35 (1344 MHz)';; 1392) printf '1.4 (1392 MHz)';; *) printf '%s' "$1";; esac; }
-detect_cmd(){ detect_hardware; cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "family=$DETECT_FAMILY"; say "hardware=$HARDWARE_STATUS"; say "cid=$CID"; say "runtime_evidence=$EVIDENCE_FAMILY"; say "cpu_hz=$cpu"; say "emmc_hz=${IOS_CLOCK:-unknown}"; say "timing_spec=${IOS_TIMING:-unknown}"; say "signal_voltage=${IOS_VOLTAGE:-unknown}"; }
+detect_cmd(){ detect_hardware; cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "family=$DETECT_FAMILY"; say "hardware=$HARDWARE_STATUS"; say "hardware_conflict=$DETECT_CONFLICT"; say "cid=$CID"; say "runtime_evidence=$EVIDENCE_FAMILY"; say "cpu_hz=$cpu"; say "emmc_hz=${IOS_CLOCK:-unknown}"; say "timing_spec=${IOS_TIMING:-unknown}"; say "signal_voltage=${IOS_VOLTAGE:-unknown}"; }
 status_cmd(){ classify_boot_state; detect_hardware; say "boot state: $BOOT_STATE"; if stock_helpers_valid; then say 'stock helpers: canonical'; else say 'stock helpers: modified'; fi; say "hardware: $HARDWARE_STATUS"; if [ -r "$CURRENT_FILE" ]; then sp=$(meta_get "$CURRENT_FILE" cpu_profile); say "CPU: $(cpu_display "$sp")"; say "eMMC: $(meta_get "$CURRENT_FILE" emmc_mhz) MHz"; say "current slot: $(meta_get "$CURRENT_FILE" slot)"; else cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "CPU: $cpu Hz"; say "eMMC: ${IOS_CLOCK:-unknown} Hz"; say 'current slot: none'; fi; if [ -r "$CANDIDATE_FILE" ]; then say "candidate: $(meta_get "$CANDIDATE_FILE" phase) $(meta_get "$CANDIDATE_FILE" axis)=$(meta_get "$CANDIDATE_FILE" value)"; else say 'candidate: none'; fi; say "cleanup required: $CLEANUP_REQUIRED"; say "cleanup danger required: $CLEANUP_DANGER_REQUIRED"; say "manual recovery required: $MANUAL_RECOVERY_REQUIRED"; }
 doctor_cmd(){ status_cmd; say "cid=${CID:-unknown}"; say "detected_family=${DETECT_FAMILY:-unknown}"; say "runtime_family_evidence=${EVIDENCE_FAMILY:-unknown}"; if stock_environment_profile; then say "stock_environment_profile=$STOCK_ENV_MATCH"; else say "stock_environment_profile=unknown"; show_stock_helper_mismatches; fi; say "bootcmd=$(get_env bootcmd || true)"; say 'fgx variables:'; managed_vars | while IFS= read -r dv; do say "  $dv=$(get_env "$dv" || true)"; done; say 'unknown/custom boot variables:'; unknown_boot_vars | sed 's/^/  /'; say 'boot DTB files:'; find "$BOOT_DIR" -maxdepth 1 -type f \( -name '*.dtb' -o -name '*.DTB' \) -print 2>/dev/null | while IFS= read -r path; do printf '  %s\n' "${path##*/}"; done | sort; say "stock_sunxi_sha256=$(stock_dtb_hash)"; say "boot_id=$(boot_id)"; say "validation_cache=$(cache_valid && printf valid || printf invalid)"; runtime_ios >/dev/null 2>&1 || true; say "mmc_clock=${IOS_CLOCK:-unknown}"; say "mmc_timing=${IOS_TIMING:-unknown}"; say "mmc_voltage=${IOS_VOLTAGE:-unknown}"; [ -r "$CPU_CUR_FILE" ] && say "cpu_cur_khz=$(tr -d '\n ' <"$CPU_CUR_FILE")"; [ -r "$CPU_MAX_FILE" ] && say "cpu_max_khz=$(tr -d '\n ' <"$CPU_MAX_FILE")"; [ -r "$CPU_AVAIL_FILE" ] && say "cpu_available_khz=$(tr '\n' ' ' <"$CPU_AVAIL_FILE")"; [ -r "$CPU_DRIVER_FILE" ] && say "cpu_driver=$(tr -d '\n ' <"$CPU_DRIVER_FILE")"; [ -r "$CPU_TEMP_FILE" ] && say "cpu_temp_mc=$(tr -d '\n ' <"$CPU_TEMP_FILE")"; [ -r "$CURRENT_FILE" ] && { say 'current metadata:'; sed 's/^/  /' "$CURRENT_FILE"; }; [ -r "$CANDIDATE_FILE" ] && { say 'candidate metadata:'; sed 's/^/  /' "$CANDIDATE_FILE"; }; return 0; }
 diagnostics_cmd(){ need_mutation; if [ "$DRY_RUN" = 1 ]; then say 'DRY-RUN write diagnostics report'; return; fi; mkdir -p "$STATE_DIR/diagnostics" || die 'cannot create diagnostics dir'; outp=$STATE_DIR/diagnostics/doctor-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt; doctor_cmd >"$outp" || die 'doctor failed'; chmod 600 "$outp" 2>/dev/null || true; say "Diagnostics written: $outp"; }

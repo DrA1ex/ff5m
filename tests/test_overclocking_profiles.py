@@ -4,7 +4,10 @@ Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 This file may be distributed under the terms of the GNU GPLv3 license.
 """
 
+import contextlib
 import importlib.util
+import io
+import json
 import pathlib
 import subprocess
 import sys
@@ -236,6 +239,137 @@ class OverclockingProfilesTest(unittest.TestCase):
                 self.tool.run('snapshot', timeout=0.1)
         self.assertIsNotNone(children[0].returncode)
         self.assertTrue(children[0].stdout.closed)
+
+    def records(self, output):
+        return [json.loads(line.split("Tuning diagnostic: ", 1)[1]) for line in output.splitlines()
+                if line.startswith("Tuning diagnostic: ")]
+
+    def test_repeated_entry_logs_each_observation_without_stdout_or_private_fields(self):
+        protocol = "".join(key + "=" + value + "\n" for key, value in self.report.items())
+        self.command_script("import sys\nif 'snapshot' in sys.argv:\n    print(" + repr(protocol) +
+                            ", end='')\nelse:\n    print('No legacy profile state to migrate.')\n")
+        log, console = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(log), contextlib.redirect_stdout(console):
+            for _ in range(2):
+                self.assertEqual(self.tool.prepare(), self.report)
+        self.assertEqual(console.getvalue(), '')
+        observations = [item for item in self.records(log.getvalue()) if item['event'] == 'snapshot']
+        self.assertEqual(len(observations), 2)
+        self.assertLess(len(log.getvalue()), 16000)
+
+    def test_invalid_snapshot_logs_protocol_failure_without_dumping_input(self):
+        self.command_script("print('private-fixture-value without a protocol separator')\n")
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            with self.assertRaises(PROFILES.ProfileError):
+                self.tool.snapshot()
+        self.assertEqual(self.records(log.getvalue())[-1]['event'], 'snapshot-invalid')
+        self.assertNotIn('private-fixture-value', log.getvalue())
+
+    def test_successful_snapshot_records_allowlisted_state_and_restore_verdict(self):
+        report = dict(self.report, hardware="untested", boot_state="inconsistent",
+                      manual_recovery_required="yes", stock_helpers_valid="0",
+                      model_identity="d6:0103:353841333938:11",
+                      runtime_timing="9", runtime_voltage="1", serial="private-fixture-id",
+                      bootcmd="arbitrary_private_boot_value", stock_dtb_sha256="b" * 64)
+        protocol = "".join(key + "=" + value + "\n" for key, value in report.items())
+        self.command_script("print(" + repr(protocol) + ", end='')\n")
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            self.assertEqual(self.tool.snapshot(), report)
+        command, observed = self.records(log.getvalue())
+        self.assertEqual(command['exit_code'], 0)
+        self.assertEqual(command['failure'], 'none')
+        self.assertEqual(command['stdout'], '')
+        self.assertEqual(observed['model_identity'], report['model_identity'])
+        self.assertEqual(observed['product_name'], '58A398')
+        self.assertEqual(observed['runtime_timing'], '9')
+        self.assertEqual(observed['stock_dtb_matches'], False)
+        self.assertEqual(observed['restore_stock_available'], False)
+        self.assertNotIn('private-fixture-id', log.getvalue())
+        self.assertNotIn('arbitrary_private_boot_value', log.getvalue())
+        self.assertNotIn('serial', observed)
+
+    def test_successful_utility_stdout_and_warnings_are_attributed_and_redacted(self):
+        self.command_script("import sys\nprint('Candidate verification: PASS')\n"
+                            "print('WARNING: fw_printenv: fixture warning', file=sys.stderr)\n"
+                            "print('cid=d60103353841333938118ae86aa09a81 serial=fixture-private-id "
+                            "ethaddr=02:00:00:00:00:01', file=sys.stderr)\n")
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            result = self.tool.run('detect')
+        self.assertIn('PASS', result)
+        record, = self.records(log.getvalue())
+        self.assertEqual(record['command'], 't113-profilectl detect')
+        self.assertIn('Candidate verification: PASS', record['stdout'])
+        self.assertIn('fw_printenv: fixture warning', record['stderr'])
+        self.assertNotIn('d60103353841333938118ae86aa09a81', log.getvalue())
+        self.assertNotIn('fixture-private-id', log.getvalue())
+        self.assertNotIn('02:00:00:00:00:01', log.getvalue())
+
+    def test_output_is_bounded_but_failure_tail_and_exit_code_survive(self):
+        self.command_script("import sys\nprint('x' * 20000)\n"
+                            "print('y' * 20000 + ' fw_printenv: fixture failure', file=sys.stderr)\n"
+                            "sys.exit(7)\n")
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            with self.assertRaisesRegex(PROFILES.ProfileError, 'fixture failure') as failed:
+                self.tool.run('verify')
+        self.assertEqual(failed.exception.returncode, 7)
+        record, = self.records(log.getvalue())
+        self.assertEqual(record['failure'], 'exit')
+        self.assertEqual(record['exit_code'], 7)
+        self.assertIn('fixture failure', record['stderr'])
+        self.assertLess(len(log.getvalue()), 9000)
+        self.assertIn('<truncated>', log.getvalue())
+
+    def test_timeout_keeps_partial_diagnostic_and_reaps_child(self):
+        self.command_script("")
+        pathlib.Path(self.tool.executable).write_text(
+            "#!/bin/sh\nprintf 'fw_printenv: still waiting\\n' >&2\nsleep 60\n")
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            with self.assertRaisesRegex(PROFILES.ProfileError, 'still waiting'):
+                self.tool.run('snapshot', timeout=1)
+        record, = self.records(log.getvalue())
+        self.assertEqual(record['failure'], 'timeout')
+        self.assertEqual(record['exit_code'], -9)
+        self.assertIn('fw_printenv: still waiting', record['stderr'])
+
+    def test_launch_error_is_distinguished_from_utility_failure(self):
+        self.tool.executable = '/nonexistent-fixture-directory/profilectl'
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            with self.assertRaises(PROFILES.ProfileError):
+                self.tool.run('snapshot')
+        record, = self.records(log.getvalue())
+        self.assertEqual(record['failure'], 'launch')
+        self.assertIsNone(record['exit_code'])
+
+    def test_raw_boot_helper_values_and_bootcmd_are_omitted(self):
+        value = ('Current bootcmd: echo fixture-arbitrary-value\n'
+                 'Stock U-Boot helper mismatch: boot_uImage\nExpected:\n  expected-value\n\n'
+                 'Actual:\n  fixture-private-helper\n')
+        clean = PROFILES.diagnostic_text(value)
+        self.assertIn('boot_uImage', clean)
+        self.assertNotIn('fixture-arbitrary-value', clean)
+        self.assertNotIn('fixture-private-helper', clean)
+        self.assertNotIn('expected-value', clean)
+
+    def test_restore_rule_is_unchanged_for_every_known_state(self):
+        allowed = ('unknown/custom', 'stock-active-with-unknown-remnants',
+                   'known-cleanup-required', 'stock-restore-cleanup-required')
+        other = ('clean-stock', 'clean-managed', 'candidate-armed', 'candidate-passed',
+                 'promotion-not-committed', 'promotion-cleanup-required', 'inconsistent')
+        for state in allowed + other:
+            for manual in ('yes', 'no', None):
+                for matches in (True, False):
+                    with self.subTest(state=state, manual=manual, matches=matches):
+                        report = dict(self.report, boot_state=state, manual_recovery_required=manual,
+                                      hardware='untested', stock_helpers_valid='0')
+                        if not matches: report['stock_dtb_sha256'] = 'b' * 64
+                        self.assertEqual(self.tool.can_restore_stock(report),
+                                         state in allowed and manual != 'yes' and matches)
 
 
 if __name__ == "__main__":

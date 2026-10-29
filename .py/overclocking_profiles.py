@@ -9,6 +9,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 
 
@@ -21,6 +22,50 @@ _VALUE = re.compile(r"[A-Za-z0-9._:/,-]*\Z")
 # profile is its 25 MHz mode, so a separate 25 MHz entry would repeat it.
 STOCK_CPU_MHZ = 1008
 STOCK_EMMC_MHZ = 25
+
+
+# Diagnostics are an allowlisted view of the protocol, not an environment dump.
+_DIAGNOSTIC_FIELDS = (
+    "hardware", "family", "hardware_conflict", "cid_status", "model_identity", "model_support",
+    "matched_family", "runtime_family_evidence", "runtime_emmc_hz",
+    "runtime_timing", "runtime_voltage", "runtime_cpu_hz", "runtime_cpu_limit_hz",
+    "boot_state", "pending_boot", "stock_helpers_valid", "boot_graph_variables", "boot_file_references",
+    "missing_boot_dependencies", "unsafe_boot_paths", "unknown_boot_variables", "unknown_boot_files",
+    "stock_dtb_sha256",
+    "loaded_cpu_profile", "loaded_emmc_mhz", "loaded_emmc_family", "loaded_source_sha256",
+    "current_present", "current_valid", "candidate_present", "candidate_valid", "candidate_phase",
+    "manual_recovery_required", "cleanup_required", "cleanup_danger_required")
+
+
+def diagnostic_text(value, limit=4000):
+    """Keep useful utility output without specimen IDs or raw boot helper values."""
+    value = re.sub(r"(?i)(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", "<cid-redacted>", value)
+    value = re.sub(r"(?i)(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", "<mac-redacted>", value)
+    value = re.sub(r"(?im)\b(serial[#_a-z0-9]*|snum|mac(?:_addr)?|wifi_mac|bt_mac|ethaddr)\s*[=:]\s*[^\s;]+",
+                   r"\1=<redacted>", value)
+    value = re.sub(r"(?im)(\bbootcmd\s*[=:]\s*).*$", r"\1<boot-command-omitted>", value)
+    lines, helper_value = [], False
+    for line in value.splitlines():
+        if line.startswith("FGX_PROGRESS:"):
+            continue
+        if line in ("Expected:", "Actual:"):
+            helper_value = True
+            lines.append(line)
+        elif helper_value and line.startswith("  "):
+            lines.append("  <boot-helper-value-omitted>")
+        else:
+            helper_value = False
+            # Strip control characters so output cannot forge terminal/log records.
+            lines.append("".join(char if char.isprintable() else "?" for char in line))
+    value = "\n".join(lines)
+    if len(value) > limit:
+        value = "<truncated>\n" + value[-limit:]
+    return value
+
+
+def log_diagnostic(event, **fields):
+    print("Tuning diagnostic: " + json.dumps(dict(event=event, **fields), sort_keys=True),
+          file=sys.stderr, flush=True)
 
 
 class ProfileError(RuntimeError):
@@ -61,7 +106,10 @@ class ProfileTool:
         environment["PATH"] = "/opt/uboot:" + environment.get("PATH", "")
         started = time.monotonic()
         stage, displayed = "Starting command", None
-        process = None
+        process, operation_error = None, None
+        stdout, stderr, failure = "", "", "none"
+        # Arguments can include local paths; the operation name/flags are sufficient.
+        operation = " ".join(arg for arg in arguments if "/" not in arg)
         try:
             process = subprocess.Popen(
                 command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -84,12 +132,19 @@ class ProfileTool:
                     for line in diagnostic.splitlines():
                         if line.startswith("FGX_PROGRESS:"):
                             stage = line[len("FGX_PROGRESS:"):][:160]
+            for line in stderr.splitlines():
+                if line.startswith("FGX_PROGRESS:"):
+                    stage = line[len("FGX_PROGRESS:"):][:160]
             if self.progress is not None:
-                stage = "Command completed" if process.returncode == 0 else "Command failed"
-                self.progress(" ".join(["t113-profilectl"] + command[1:]), stage, int(time.monotonic() - started))
+                result_stage = "Command completed" if process.returncode == 0 else "Command failed"
+                self.progress(" ".join(["t113-profilectl"] + command[1:]), result_stage,
+                              int(time.monotonic() - started))
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise ProfileError("Profile operation could not finish during {} after {} s: {}".format(
-                stage, int(time.monotonic() - started), error)) from error
+            operation_error = error
+            failure = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "launch"
+        except BaseException:
+            failure = "client"
+            raise
         finally:
             if process is not None:
                 try:
@@ -99,10 +154,25 @@ class ProfileTool:
                 # A finished communicate() has closed the pipes; Python 3.7.2
                 # rejects a second call ("Invalid file object").
                 if process.returncode is None:
-                    process.communicate()
+                    stdout, stderr = process.communicate()
+            returncode = process.returncode if process is not None else None
+            if failure == "none" and returncode:
+                failure = "exit"
+            # snapshot contents are logged only after parsing and allowlisting below.
+            log_diagnostic("command", command="t113-profilectl " + diagnostic_text(operation, 160),
+                           apply=apply, phase=diagnostic_text(stage, 160),
+                           elapsed_s=round(time.monotonic() - started, 3), exit_code=returncode,
+                           failure=failure,
+                           stdout="" if any(arg in ("snapshot", "doctor") for arg in arguments)
+                           else diagnostic_text(stdout), stderr=diagnostic_text(stderr))
+        if operation_error is not None:
+            detail = diagnostic_text(stderr).strip()
+            raise ProfileError("Profile operation could not finish during {} after {} s: {}{}".format(
+                stage, int(time.monotonic() - started), diagnostic_text(str(operation_error)),
+                "\n" + detail if detail else "")) from operation_error
         if process.returncode:
             diagnostic = "\n".join(line for line in stderr.splitlines() if not line.startswith("FGX_PROGRESS:"))
-            detail = (diagnostic.strip() or stdout.strip())[-2000:]
+            detail = diagnostic_text(diagnostic.strip() or stdout.strip(), 2000)
             raise ProfileError(detail or "Profile operation failed.", process.returncode)
         return stdout
 
@@ -116,7 +186,20 @@ class ProfileTool:
         return report
 
     def snapshot(self):
-        return parse_snapshot(self.run("snapshot"))
+        output = self.run("snapshot")
+        try:
+            report = parse_snapshot(output)
+        except ProfileError as error:
+            log_diagnostic("snapshot-invalid", detail=str(error))
+            raise
+        fields = {key: diagnostic_text(report.get(key, "unavailable"), 256) for key in _DIAGNOSTIC_FIELDS}
+        identity = report.get("model_identity", "").split(":")
+        if len(identity) == 4 and re.fullmatch(r"[0-9a-f]{12}", identity[2]):
+            fields["product_name"] = diagnostic_text(bytes.fromhex(identity[2]).decode("ascii", errors="replace"), 32)
+        fields["stock_dtb_matches"] = report["stock_dtb_sha256"] == self.manifest["canonical_stock"]["sha256"]
+        fields["restore_stock_available"] = self.can_restore_stock(report)
+        log_diagnostic("snapshot", **fields)
+        return report
 
     def choices(self, axis, report):
         """(profile value, list label, frequency) per choice. Labels lead with the gain over

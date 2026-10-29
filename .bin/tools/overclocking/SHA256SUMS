@@ -1,8 +1,8 @@
-fcc47a4ea65fbaeb5bb4bdb4e018c7271f7040590e9da61eab0401ceda7bd6df  bin/t113-profilectl
-bfad00a907bc562162944c3de92e364041091f7a8eea4d316b04c2e9d9ebe6f4  manifest-v2.json
+bce98c5876e75e162f32e9e09856f7d20d4660edd44c2e90fd2230409dac2bb9  bin/t113-profilectl
+b282ab7fd60e515ca199b81915f8373cade47fa15fc4707b4ddd4533fb597412  manifest-v2.json
 57b02935038e3c808ebda964ac420198778dd8b4bbaa4aebc8331356d6214318  profiles/source/stock-uboot.env
 27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21  profiles/source/sunxi-stock.dtb
-7d1830fe8805434c7ac9d24d4f1ef1c954ee0378d91cbcee86f5a2d366e10ed0  schema/manifest-v2.schema.json
+0e0f91a780ccb89f20b51cd0769918608e2cf21a4b93699c9f569ca27ffe6852  schema/manifest-v2.schema.json
 f4958eb99845f6e315f60fdbf4c1425f3eb6e80433a99f346cb28816988a09b7  ../../exec/fgx-fdt
 59e04d7cb5aab1e51fd58d340339d53adf62f5ca10809e70507ee055e39f9794  ../../exec/fgx-lock
 0f1d1eaeb3437aa53f6d965307fdc70001c1b11968717fe2357ec93f61ada2ad  ../../exec/fgx-stress

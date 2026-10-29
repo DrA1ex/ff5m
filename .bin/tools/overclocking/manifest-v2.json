@@ -2,7 +2,7 @@
   "format": 2,
   "name": "t113-profilectl",
   "generator_version": "1.0.1",
-  "validator_version": 5,
+  "validator_version": 6,
   "canonical_stock": {"file":"profiles/source/sunxi-stock.dtb","sha256":"27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21","fdt_version":17,"size":55093},
   "stock_environment": {"id":"ad5m-stock-v1","file":"profiles/source/stock-uboot.env"},
   "boot": {"uimage_address":"0x43000000","dtb_address":"0x44864e70","minimum_padding":32768,"stock_bootcmd":"run setargs_mmc boot_dsp0 boot_uImage","slots":["FORGE_X_A.DTB","FORGE_X_B.DTB"]},
@@ -18,7 +18,7 @@
   "thermal": {"passive_mc":70000,"hysteresis_mc":2000,"critical_mc":90000,"cooling_floor_hz":1008000000,"sensor_path":"/soc@3000000/ths@02009400","sensor_index":0},
   "voltage": {"managed_opp_microvolt":950000},
   "hardware": [
-    {"kind":"hardware_family","family_id":"hs2001v8","cids":"15010048533230304700000000000002,d6010335384133393811732c45913b01","frequencies_mhz":"25,50,100,150","runtime":"HS200,1.8V"},
-    {"kind":"hardware_family","family_id":"legacy3v3","cids":"1501004d345846495500000000000001","frequencies_mhz":"25,50","runtime":"legacy-or-HS52,3.3V"}
+    {"kind":"hardware_family","family_id":"hs2001v8","models":"15:0100:485332303047:00,d6:0103:353841333938:11","frequencies_mhz":"25,50,100,150","runtime":"HS200,1.8V"},
+    {"kind":"hardware_family","family_id":"legacy3v3","models":"15:0100:4d3458464955:00","frequencies_mhz":"25,50","runtime":"legacy-or-HS52,3.3V"}
   ]
 }

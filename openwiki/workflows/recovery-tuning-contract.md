@@ -144,6 +144,53 @@ reports the display error. Killing profilectl in the middle of a mutation would
 be worse than a missing frame; profilectl's own timeout still bounds it. This
 change does not add cancellation or a deadline to filesystem operations.
 
+### Hardware identity and diagnostic records
+
+Manifest validator version 6 uses explicit model/revision keys in `hardware.models`:
+`MID:OEM:PNM-hex:PRV`. These are the Linux MMC v2+ CID fields at bits 127..120,
+119..104, 103..56 and 55..48. The six product-name bytes remain hex in the key;
+serial number, manufacture date and CRC/end bits never take part in equality.
+The field layout and sysfs word ordering follow Linux's
+[`mmc_decode_cid` and CID attribute](https://github.com/torvalds/linux/blob/master/drivers/mmc/core/mmc.c).
+An old exact-CID manifest must be replaced with the complete regenerated bundle;
+it is not silently reinterpreted. The validator version and bundle key invalidate
+old validation caches. Persisted profile metadata is unchanged.
+
+| Model | MID | OEM | Product bytes | PRV | Family |
+| --- | --- | --- | --- | --- | --- |
+| HS200G | 15 | 0100 | 485332303047 | 00 | hs2001v8 |
+| 58A398 | d6 | 0103 | 353841333938 | 11 | hs2001v8 |
+| M4XFIU | 15 | 0100 | 4d3458464955 | 00 | legacy3v3 |
+
+These exact revisions preserve the identities encoded in the previous table;
+`00` is not a wildcard or evidence about a different revision. The table means
+supported model/revision and runtime family, not individually certified samples.
+`hardware=known` requires both one matching model and positive runtime family
+evidence. Missing evidence remains `untested`; disagreement or ambiguous records
+block ordinary mutation. Frequencies and the explicit trial/mandatory verify
+workflow are unchanged; recognizing a model does not certify every specimen at
+150 MHz.
+
+Each entry records allowlisted `Tuning diagnostic` JSON lines in the existing
+Recovery log. A `command` record contains the operation, phase, duration, exit
+code, failure category and bounded stdout/stderr tails. Successful warnings are
+retained. Snapshot stdout is parsed as protocol data before logging; arbitrary
+environment variables, raw boot commands and full CID are omitted. Command output
+redacts specimen identifiers and boot-helper values. `snapshot` records include
+model support, runtime observations, boot graph names/file references, stock
+helper verdict, the observed DTB hash with whether it matches the bundle, and
+whether the repair page offers Restore. Observed runtime fields and model/family
+conclusions are named separately.
+
+A mutation is not followed by an extra snapshot: the page either reboots, and
+the next entry records a fresh snapshot, or observes the new state itself.
+Records cap each snapshot value at 256 characters and
+each command stream at 4,000 characters plus a truncation marker. Existing log
+rotation and CREATE DIAGNOSTICS include `recovery.log*`; no additional diagnostic
+file or U-Boot dump is created. Read-only CLI commands do not alter boot/profile
+state. The existing entry `prepare()` is a separate operation: it can migrate
+legacy state and finish a known interrupted promotion before showing the page.
+
 A confirmed-profile mismatch offers BACK, RESTORE STOCK and REBOOT;
 BACK never reboots. Stock CPU is U-Boot's 1008 MHz boot clock: stock `vdd-cpu`
 never registers, so there is no cpufreq policy and profilectl observes `cpux` in
