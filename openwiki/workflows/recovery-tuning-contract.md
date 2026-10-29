@@ -186,9 +186,19 @@ A mutation is not followed by an extra snapshot: the page either reboots, and
 the next entry records a fresh snapshot, or observes the new state itself.
 Records cap each snapshot value at 256 characters and
 each command stream at 4,000 characters plus a truncation marker. Existing log
-rotation and CREATE DIAGNOSTICS include `recovery.log*`; no additional diagnostic
-file or U-Boot dump is created. Read-only CLI commands do not alter boot/profile
-state. The existing entry `prepare()` is a separate operation: it can migrate
+rotation and CREATE DIAGNOSTICS include `recovery.log*`. No U-Boot dump is
+created. Read-only CLI commands do not alter boot/profile
+state.
+
+When `verify` rejects a trial for fatal kernel/MMC journal lines, the log and
+screen show only the first 20 matches, which usually name the symptom (for
+example `Buffer I/O error ... lost async page write`) rather than the host
+controller error that caused it. profilectl therefore saves the complete
+journal it judged, headed by the trial CPU, eMMC, family and boot ID, to
+`diagnostics/verify-dmesg.log` in its state directory and reports the path. Two
+previous generations are kept as `.1` and `.2`; dry runs and passing
+verifications write nothing. The file is written in the trial boot itself, so on badly failing
+storage it may be incomplete. CREATE DIAGNOSTICS includes all three. The existing entry `prepare()` is a separate operation: it can migrate
 legacy state and finish a known interrupted promotion before showing the page.
 
 A confirmed-profile mismatch offers BACK, RESTORE STOCK and REBOOT;

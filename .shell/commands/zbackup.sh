@@ -57,6 +57,7 @@ TAR_DEBUG_PARAMS=(
     /data/logFiles/filesystem-usage.txt
     /data/logFiles/dmesg-recovery.log
     /data/logFiles/recovery.log*
+    /data/.forge-x-overclocking/profile/diagnostics/verify-dmesg.log*
     /root/version
     /data/.mod/.forge-x/etc/os-release
     /data/.mod/.forge-x/version.txt

@@ -1,9 +1,10 @@
-"""eMMC recognition by the real profile utility from sysfs CID and debugfs ios.
+"""The real profile utility against fake sysfs, debugfs, kernel journal and boot files.
 
 Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 This file may be distributed under the terms of the GNU GPLv3 license.
 """
 
+import hashlib
 import os
 import pathlib
 import subprocess
@@ -69,6 +70,83 @@ class ProfilectlHardwareTest(unittest.TestCase):
                 detected = self.detect(text, HS200_IOS)
                 self.assertEqual(detected["hardware"], "untested")
                 self.assertEqual(detected["cid"], "unknown")
+
+
+
+class ProfilectlVerifyJournalTest(unittest.TestCase):
+    """A trial boot at eMMC 100 MHz, verified through profilectl's test mode."""
+
+    def setUp(self):
+        self.root = root = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        for name in ("bin", "boot", "state", "dt"):
+            (root / name).mkdir()
+        fallback = "run setargs_mmc boot_dsp0 boot_uImage"
+        self.tool("fw_printenv", "printf '%s\\n' 'bootcmd={}'".format(fallback))
+        self.tool("fw_setenv", "exit 0")
+        self.tool("fgx-fdt", "exit 0")
+        self.tool("fgx-lock", "exit 0")
+        for name in ("p1", "p2", "p3"):
+            (root / name).write_bytes(b"")
+        (root / "boot/FORGE_X_A.DTB").write_bytes(b"candidate")
+        digest = hashlib.sha256(b"candidate").hexdigest()
+        (root / "state/candidate").write_text("\n".join((
+            "format=2", "phase=armed", "axis=emmc", "value=100", "cpu_profile=stock", "cpu_hz=1008000000",
+            "emmc_mhz=100", "family=hs2001v8", "slot=FORGE_X_A.DTB", "dtb_sha256=" + digest,
+            "armed_boot_id=boot-a", "fallback_bootcmd=" + fallback, "untested_emmc_override=0")) + "\n")
+        (root / "boot_id").write_text("boot-b\n")
+        (root / "cpu").write_text("1008000\n")
+        (root / "ios").write_text(HS200_IOS.replace("25000000", "100000000"))
+        self.journal = root / "state/diagnostics/verify-dmesg.log"
+
+    def tool(self, name, body):
+        path = self.root / "bin" / name
+        path.write_text("#!/bin/sh\n" + body + "\n")
+        path.chmod(0o755)
+
+    def verify(self, kernel_journal, *options):
+        (self.root / "dmesg").write_text(kernel_journal)
+        root = self.root
+        environment = dict(
+            os.environ, PATH=str(root / "bin") + os.pathsep + os.environ.get("PATH", ""), T113_TEST_MODE="1",
+            T113_TEST_SKIP_SYNC="1", T113_STATE_DIR=str(root / "state"), T113_BOOT_DIR=str(root / "boot"),
+            T113_DEV_BOOT=str(root / "p1"), T113_DEV_ENV=str(root / "p2"), T113_DEV_ENV_REDUND=str(root / "p3"),
+            T113_FGX_FDT=str(root / "bin/fgx-fdt"), T113_FGX_LOCK=str(root / "bin/fgx-lock"),
+            T113_LOCK_DIR=str(root / "lock"), T113_BOOT_ID_FILE=str(root / "boot_id"),
+            T113_IOS_FILE=str(root / "ios"), T113_CID_FILE=str(root / "cid"), T113_DT_ROOT=str(root / "dt"),
+            T113_CPU_CUR_FILE=str(root / "cpu"), T113_CPU_MAX_FILE=str(root / "absent"),
+            T113_DMESG_FILE=str(root / "dmesg"), TMPDIR=str(root))
+        return subprocess.run([str(PROFILECTL)] + list(options or ("--apply",)) + ["verify"], env=environment,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_failed_verify_keeps_the_whole_journal_with_the_trial_settings(self):
+        failing = ("[    6.80] sunxi-mmc 4022000.sdmmc: smc 2 p0 err, cmd 25, DCE !!\n"
+                   "[    6.85] Buffer I/O error on dev mmcblk0p7, logical block 4456448, lost async page write\n")
+        result = self.verify(failing)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("new fatal kernel/MMC errors found", result.stderr)
+        self.assertIn(str(self.journal), result.stderr)
+        saved = self.journal.read_text()
+        self.assertIn("eMMC=100 MHz family=hs2001v8", saved)
+        self.assertIn("boot_id=boot-b", saved)
+        self.assertIn("smc 2 p0 err, cmd 25", saved)
+        self.assertIn("lost async page write", saved)
+
+        for block in ("77", "78", "79"):
+            self.assertEqual(self.verify(failing.replace("4456448", block)).returncode, 1)
+        generations = [self.journal.with_name(name) for name in ("verify-dmesg.log", "verify-dmesg.log.1",
+                                                                  "verify-dmesg.log.2", "verify-dmesg.log.3")]
+        self.assertFalse(generations[3].exists())
+        for path, block in zip(generations, ("79", "78", "77")):
+            self.assertIn("block {},".format(block), path.read_text())
+
+    def test_passed_or_dry_run_verify_saves_no_journal(self):
+        dry_run = self.verify("Buffer I/O error on dev mmcblk0p7\n", "--dry-run")
+        self.assertIn("new fatal kernel/MMC errors found", dry_run.stderr)
+        self.assertFalse(self.journal.exists())
+        result = self.verify("[    1.00] mmc0: new HS200 MMC card at address 0001\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Candidate verification: PASS", result.stdout)
+        self.assertFalse(self.journal.exists())
 
 
 if __name__ == "__main__":

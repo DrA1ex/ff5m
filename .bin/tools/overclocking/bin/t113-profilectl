@@ -947,6 +947,18 @@ fatal_dmesg(){
       *) return 1;;
     esac
 }
+# The matched lines name the symptom; the cause (host controller errors, the
+# failing requests) is usually nearby, so keep the whole journal of this boot.
+# Two previous generations survive retries at other frequencies.
+save_verify_journal(){
+    [ "$DRY_RUN" = 0 ] || return 0
+    svj_file=$STATE_DIR/diagnostics/verify-dmesg.log
+    if mkdir -p "${svj_file%/*}" && { say "candidate: CPU=$1 eMMC=$2 MHz family=$3"; say "boot_id=$4"; say; cat "$TMP_DIR/dmesg"; } >"$svj_file.part"; then
+      mv -f "$svj_file.1" "$svj_file.2" 2>/dev/null; mv -f "$svj_file" "$svj_file.1" 2>/dev/null
+      mv -f "$svj_file.part" "$svj_file" && { durable_sync; printf 'Kernel journal saved: %s\n' "$svj_file" >&2; return 0; }
+    fi
+    rm -f "$svj_file.part"; warn 'cannot save the kernel journal'
+}
 verify_cpu_runtime(){
     prof=$1; hz=$2
     if [ "$prof" = stock ]; then got=$(runtime_cpu_limit_hz 2>/dev/null || runtime_cpu_hz 2>/dev/null || true); [ "$got" = 1008000000 ] || die "runtime stock CPU clock mismatch: got ${got:-unknown}, expected 1008000000"; return; fi
@@ -994,7 +1006,7 @@ verify_cmd(){
     verify_emmc_runtime "$fam" "$emmc"
     ensure_tmp
     fatal=$(fatal_dmesg) || die 'cannot read kernel journal; candidate remains unverified'
-    [ -z "$fatal" ] || { printf '%s\n' "$fatal" >&2; die 'new fatal kernel/MMC errors found'; }
+    [ -z "$fatal" ] || { printf '%s\n' "$fatal" >&2; save_verify_journal "$cpu" "$emmc" "$fam" "$newid"; die 'new fatal kernel/MMC errors found'; }
     write_meta_atomic "$CANDIDATE_FILE" \
       'format=2' 'phase=passed' "axis=$(meta_get "$CANDIDATE_FILE" axis)" "value=$(meta_get "$CANDIDATE_FILE" value)" "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "slot=$slot" "dtb_sha256=$hash" "armed_boot_id=$oldid" "verified_boot_id=$newid" "fallback_bootcmd=$fallback" "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
     say 'Candidate verification: PASS'
