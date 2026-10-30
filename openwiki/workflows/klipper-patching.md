@@ -80,11 +80,25 @@ Keep an explanation close to the changed behavior in the file or commit. The wik
 ## Patch provenance and verification
 
 [`docs/klipper-ad5m-manifest.json`](../../docs/klipper-ad5m-manifest.json) pins
-the replacement sources to `6ea380d0e082a7ad6cae1bb97c0a5b540d340e2f` in
-[DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m). All 25 shipped
-Python replacements match that snapshot byte for byte. The manifest also
+the replacement sources to `d7da8a94eb9f4d464c5e98863d36f2387e8af4eb` in the
+[DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m) history. All 26 shipped
+Python replacements match that snapshot byte for byte. The template-cache
+snapshot is prepared locally; publish its corresponding history commit together
+with this overlay update before release. The manifest also
 records the SHA-256 of the rebuilt `c_helper.so`; the fork stores its C sources,
 not the prebuilt binary.
+
+The `extras/gcode_macro.py` replacement persists compiled Jinja templates using
+Jinja's filesystem bytecode cache. Its source checksum detects changed macros
+without relying on file timestamps; Python/Jinja versions and the loaded module
+identity separate incompatible compilers. Macro parameters, variables, printer
+status and action callbacks are evaluated on every invocation. `RESTART` reloads
+changed configuration using the existing interpreter; a hard process restart is
+required after deploying changed Python implementation files. Missing, truncated
+or unwritable cache data falls back to normal compilation. Cache files under the
+configuration directory's `.cache/gcode_macro/` are disposable derivative data.
+Compare this copied module with the supported stock Klipper version when updating
+Klipper, and rerun `tests/test_gcode_template_cache.py` on the supported runtime.
 
 The three UART changes after the previous snapshot `dfd1945` are:
 

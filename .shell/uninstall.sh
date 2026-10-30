@@ -133,6 +133,7 @@ uninstall() {
     
     rm -rf /opt/config/mod/
     rm -rf /root/printer_data
+    rm -rf /root/.forge-x/
     rm -rf /data/.mod
 
     rm -rf /data/.feather

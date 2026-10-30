@@ -6,7 +6,7 @@
       "sha256": "476b43ce5eeb766c418528d4cc7e2c5141269c8a435124df9fa11852feb405c3"
     }
   },
-  "commit": "6ea380d0e082a7ad6cae1bb97c0a5b540d340e2f",
+  "commit": "d7da8a94eb9f4d464c5e98863d36f2387e8af4eb",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -29,6 +29,10 @@
       "ff5m": ".py/klipper/patches/extras/gcode_button.py",
       "sha256": "6b1f62283185d85752eb3dc57604ddec1072ea653cb2cb2a3ad79ff23b499d0f"
     },
+    "klippy/extras/gcode_macro.py": {
+      "ff5m": ".py/klipper/patches/extras/gcode_macro.py",
+      "sha256": "0b2cb8a49083e206a12c3feefefddeee0a9b0b1ebdc1d82ee567d5268ab03764"
+    },
     "klippy/extras/gcode_move.py": {
       "ff5m": ".py/klipper/patches/extras/gcode_move.py",
       "sha256": "7fa7a91b5777ba578b221dca630a814563c5fc89e0325aa32a08dff7ed305b7a"
@@ -38,7 +42,7 @@
       "sha256": "1dd5de45f31e1fa33fb445258286e969c05b682022ce2e2e79035f7f9b49d72c"
     },
     "klippy/extras/heaters.py": {
-      "ff5m": ".py/klipper/patches/extras/heaters.py",
+    "ff5m": ".py/klipper/patches/extras/heaters.py",
       "sha256": "59c76c11eaedc491290ad46286936131a6c6f6c7abf4debb2dfc880f6f1e195b"
     },
     "klippy/extras/homing.py": {
