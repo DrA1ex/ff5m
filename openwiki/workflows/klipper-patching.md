@@ -26,6 +26,20 @@ extras and permitted Forge-X patch overrides are independent. Override priority
 does not modify stock backups. Stock boot preparation clears only the generated user config aggregate;
 Python links are left in place.
 
+The complete filesystem operation is implemented by `.bin/exec/overlay`.
+`.shell/klipper_overlay.sh` only preserves the shell entry points used by normal
+initialization and uninstall; it contains no link/restore policy. Native source,
+build/publish scripts and component lifecycle/C++ tests belong to ForgeX Private
+under `src/overlay`. The public tree keeps the ARM executable and product
+integration tests. Canonical commands are `overlay install` and `overlay uninstall`.
+
+When invalidating bytecode, the utility distinguishes a cache directory from an
+older regular file named `__pycache__`. It preserves non-directory entries while
+restoring the actual module from its stock backup. Real cache directories,
+including directory aliases, lose only the corresponding module's tagged `.pyc`
+files; unrelated entries remain. Adjacent `.pyc`/`.pyo` files are also removed.
+Directory access/read failures are reported rather than treated as an empty cache.
+
 The process is idempotent in the normal supported case:
 
 1. **Clean obsolete overlay entries.** The patcher scans symlinks under the target tree. A Forge-X link is retained only while its exact source-to-target mapping remains current. Stale Forge-X links and any broken link are removed, first restoring a neighboring `.bak`, `.backup`, `.old`, or `.orig` regular file when one exists. Live external symlinks are left alone.

@@ -16,6 +16,7 @@ The native programs that Forge-X ships in [`.bin/exec/`](.bin/exec/), built from
 - `logged`
 - `netd`
 - `netd-cli`
+- `overlay`
 - `splash`
 - `typer`
 

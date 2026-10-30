@@ -64,7 +64,6 @@ uninstall() {
     echo "// Restore klipper..."
     
     revert_klipper_patches || fail "@@ Failed to restore Klipper overlays"
-    rm -f "$KLIPPER_USER_CONFIG"
     
     echo "// Remove mod..."
     
