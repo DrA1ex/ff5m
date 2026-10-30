@@ -538,17 +538,23 @@ fix_config() {
     # Clean up the temporary files
     rm -f "$BATCH_FILE" "$actual_move_cfg" "$move_data_cfg"
 
-    # Restore optional legacy backup without blocking initialization.
-    if [ -f /opt/config/printer.base.cfg.bak ]; then
-        chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
-            --mode restore \
-            --avoid_writes \
-            --config /opt/config/printer.base.cfg \
-            --params /opt/config/mod_data/backup.params.cfg \
-            --data /opt/config/printer.base.cfg.bak \
-            || true
-        sync
-    fi
+    restore_legacy_config
+}
+
+restore_legacy_config() {
+    [ -f /opt/config/printer.base.cfg.bak ] || return 0
+    # Blank/comment-only rules have nothing to restore. Real or malformed
+    # rules still go through the original parser and optional failure path.
+    grep -q '^[[:space:]]*[^[:space:]#]' /opt/config/mod_data/backup.params.cfg || return 0
+
+    chroot "$MOD" /bin/python3 "$PY"/cfg_backup.py \
+        --mode restore \
+        --avoid_writes \
+        --config /opt/config/printer.base.cfg \
+        --params /opt/config/mod_data/backup.params.cfg \
+        --data /opt/config/printer.base.cfg.bak \
+        || true
+    sync
 }
 
 rotate_logs() {
