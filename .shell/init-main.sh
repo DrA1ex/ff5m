@@ -94,6 +94,10 @@ initialize() {
     
     # If we are here: mod loading not skipped
 
+    if ! "$SCRIPTS/boot/prepare-wired-link.sh"; then
+        echo "?? Ethernet carrier preparation unavailable; stock network startup will retry."
+    fi
+
     # Perform date fix before time was loaded
     date 2025.01.01-00:00:00 > /dev/null
 
