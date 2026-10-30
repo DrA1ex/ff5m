@@ -6,7 +6,7 @@
       "sha256": "476b43ce5eeb766c418528d4cc7e2c5141269c8a435124df9fa11852feb405c3"
     }
   },
-  "commit": "d7da8a94eb9f4d464c5e98863d36f2387e8af4eb",
+  "commit": "15957dd34a675daa93630afd2dd2dc85d76108a0",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -19,7 +19,7 @@
     },
     "klippy/extras/adxl345.py": {
       "ff5m": ".py/klipper/patches/extras/adxl345.py",
-      "sha256": "dbcfae1f9b679a41d499016ace4c7b9af3d002471ddb10922bcd770f9c32e2f2"
+      "sha256": "17040c508565d74e9f55d5fc97ef8f0a9a8acf2fc9ebf532e42d48b9cb8897e8"
     },
     "klippy/extras/buttons.py": {
       "ff5m": ".py/klipper/patches/extras/buttons.py",
@@ -42,7 +42,7 @@
       "sha256": "1dd5de45f31e1fa33fb445258286e969c05b682022ce2e2e79035f7f9b49d72c"
     },
     "klippy/extras/heaters.py": {
-    "ff5m": ".py/klipper/patches/extras/heaters.py",
+      "ff5m": ".py/klipper/patches/extras/heaters.py",
       "sha256": "59c76c11eaedc491290ad46286936131a6c6f6c7abf4debb2dfc880f6f1e195b"
     },
     "klippy/extras/homing.py": {
@@ -103,7 +103,7 @@
     },
     "klippy/serialhdl.py": {
       "ff5m": ".py/klipper/patches/serialhdl.py",
-      "sha256": "27adbff9f9d1f98bcb1bce2135abe11b6e5c72accd5c08920ee99bfa9abaabd8"
+      "sha256": "37d978c682c9e049be4266270e06c1a4356e8be0527caae52a8820fdf5a3f3ed"
     },
     "klippy/toolhead.py": {
       "ff5m": ".py/klipper/patches/toolhead.py",
