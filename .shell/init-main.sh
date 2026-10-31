@@ -331,6 +331,11 @@ init_buildroot() {
     # moon
     ln -fns /opt/config/mod/.root/moonraker "$MOD"/root/moonraker-env/moonraker
 
+    # Native themes are config assets; existing personal themes stay untouched.
+    if ! "$SCRIPTS/web_themes.sh" install /opt/config/mod/web-themes /opt/config; then
+        echo "@@ Unable to install optional web themes."
+    fi
+
     # web
     mkdir -p "$MOD"/root/www
     [ -d "$MOD"/root/fluidd ] && mv "$MOD"/root/fluidd "$MOD"/root/www/

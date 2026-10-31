@@ -129,6 +129,10 @@ uninstall() {
         cp /opt/config/mod/.shell/S60dropbear /etc/init.d/S60dropbear
     fi
 
+    # Remove only links owned by this installation, never personal theme files.
+    "$SCRIPTS/web_themes.sh" remove /opt/config/mod/web-themes /opt/config \
+        || echo "@@ Unable to remove web theme links."
+
     echo "// Removing mod files..."
     
     rm -rf /opt/config/mod/
