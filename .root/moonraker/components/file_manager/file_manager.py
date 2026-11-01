@@ -503,8 +503,7 @@ class FileManager:
         if metadata is None:
             raise self.server.error(
                 f"Metadata not available for <{requested_file}>", 404)
-        metadata['filename'] = requested_file
-        return metadata
+        return self._metadata_response(requested_file, metadata)
 
     async def _handle_metascan_request(
         self, web_request: WebRequest
@@ -528,8 +527,17 @@ class FileManager:
             if metadata is None:
                 raise self.server.error(
                     f"Failed to parse metadata for file '{requested_file}'", 500)
-            metadata['filename'] = requested_file
-            return metadata
+            return self._metadata_response(requested_file, metadata)
+
+    def _metadata_response(
+        self, filename: str, metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # Fluidd replaces its file-list entry with a metadata response. Include
+        # current access permissions just as directory listings do, otherwise
+        # the file context menu fails when reading permissions.includes(...).
+        path = pathlib.Path(self.file_paths["gcodes"]).joinpath(filename)
+        info = self.get_path_info(path, "gcodes", raise_error=False)
+        return dict(metadata, filename=filename, permissions=info["permissions"])
 
     async def _handle_list_roots(
         self, web_request: WebRequest
