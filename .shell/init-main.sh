@@ -188,6 +188,8 @@ initialize() {
         echo "@@ Stock firmware migration checks failed; continuing initialization."
     fi
 
+    migrate_probe_offset
+
     echo "// Apply database migrations..."
     
     # database
@@ -401,6 +403,13 @@ prepare_init_move() {
     [ -s "$actual" ]
 }
 
+migrate_probe_offset() {
+    # Stock firmware migration/legacy restoration may reintroduce this option.
+    if grep -q '^[[:space:]]*z_offset[[:space:]]*[:=]' /opt/config/printer.base.cfg; then
+        chroot "$MOD" /bin/python3 "$PY"/migrate_probe_offset.py
+    fi
+}
+
 fix_config() {
     local actual_move_cfg=/tmp/init.move.actual.cfg
     local move_data_cfg=/tmp/init.move.data.cfg
@@ -543,6 +552,7 @@ fix_config() {
     rm -f "$BATCH_FILE" "$actual_move_cfg" "$move_data_cfg"
 
     restore_legacy_config
+    migrate_probe_offset
 }
 
 restore_legacy_config() {
