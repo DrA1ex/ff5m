@@ -19,6 +19,6 @@
   "voltage": {"managed_opp_microvolt":950000},
   "hardware": [
     {"kind":"hardware_family","family_id":"hs2001v8","models":"15:0100:485332303047:00,d6:0103:353841333938:11","frequencies_mhz":"25,50,100,150","runtime":"HS200,1.8V"},
-    {"kind":"hardware_family","family_id":"legacy3v3","models":"15:0100:4d3458464955:00","frequencies_mhz":"25,50","runtime":"legacy-or-HS52,3.3V"}
+    {"kind":"hardware_family","family_id":"legacy3v3","models":"15:0100:4d3458464955:00,32:0101:4d4d43384742:51","frequencies_mhz":"25,50","runtime":"legacy-or-HS52,3.3V"}
   ]
 }

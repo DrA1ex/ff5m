@@ -5,6 +5,7 @@ This file may be distributed under the terms of the GNU GPLv3 license.
 """
 
 import hashlib
+import json
 import os
 import pathlib
 import subprocess
@@ -36,6 +37,8 @@ class ProfilectlHardwareTest(unittest.TestCase):
     def detect(self, cid_text=None, ios=None):
         environment = dict(os.environ, PATH=self.path, T113_STATE_DIR=str(self.root / "state"),
                            T113_CID_FILE=str(self.root / "cid"), T113_IOS_FILE=str(self.root / "ios"))
+        if (self.root / "manifest.json").exists():
+            environment["T113_MANIFEST"] = str(self.root / "manifest.json")
         if cid_text is not None:
             (self.root / "cid").write_text(cid_text + "\n")
         if ios is not None:
@@ -52,6 +55,29 @@ class ProfilectlHardwareTest(unittest.TestCase):
             with self.subTest(model=model):
                 detected = self.detect(cid(model).upper(), ios)
                 self.assertEqual((detected["hardware"], detected["family"]), ("known", family))
+
+    def test_model_added_only_to_manifest_is_recognized(self):
+        model = "aa:0001:414243444546:02"
+        for index, ios in enumerate((HS200_IOS, LEGACY_IOS)):
+            with self.subTest(family=index):
+                source = (PROFILECTL.parent.parent / "manifest-v2.json").read_text()
+                manifest = json.loads(source)
+                family = manifest["hardware"][index]
+                (self.root / "manifest.json").write_text(source.replace(family["models"], family["models"] + "," + model))
+                detected = self.detect(cid(model), ios)
+                self.assertEqual((detected["hardware"], detected["family"]), ("known", family["family_id"]))
+
+    def test_duplicate_model_is_never_selected_within_or_across_families(self):
+        for index in (0, 1):
+            with self.subTest(family=index):
+                source = (PROFILECTL.parent.parent / "manifest-v2.json").read_text()
+                manifest = json.loads(source)
+                model = manifest["hardware"][0]["models"].split(",")[0]
+                models = manifest["hardware"][index]["models"]
+                (self.root / "manifest.json").write_text(source.replace(models, models + "," + model))
+                detected = self.detect(cid(model), HS200_IOS)
+                self.assertEqual(detected["hardware"], "untested")
+                self.assertEqual(detected["hardware_conflict"], "1")
 
     def test_other_revision_of_a_supported_model_is_untested(self):
         detected = self.detect(cid("15:0100:485332303047:01"), HS200_IOS)

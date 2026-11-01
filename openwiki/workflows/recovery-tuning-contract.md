@@ -156,6 +156,18 @@ An old exact-CID manifest must be replaced with the complete regenerated bundle;
 it is not silently reinterpreted. The validator version and bundle key invalidate
 old validation caches. Persisted profile metadata is unchanged.
 
+Supported model lists belong to `manifest-v2.json`. The JSON Schema checks their
+`MID:OEM:PNM-hex:PRV` format without repeating the lists. Adding a model to an
+existing family requires editing only its `models` field and updating the
+manifest entry in `SHA256SUMS`; it does not certify overclock stability.
+Host tests validate the manifest with JSON Schema and exercise model detection,
+including ambiguous entries. CPU records share one schema for the seven T113
+modes; their aliases and warning text are manifest data. Host tests also check
+that the published CPU profiles agree with the profilectl CLI. The schema keeps
+the fixed eMMC family modes and boot, voltage and thermal constraints supported
+by this T113 generator. These remain independent limits in `t113-profilectl`
+and `fgx-fdt`; neither tool becomes a general manifest-driven hardware engine.
+
 | Model | MID | OEM | Product bytes | PRV | Family |
 | --- | --- | --- | --- | --- | --- |
 | HS200G | 15 | 0100 | 485332303047 | 00 | hs2001v8 |
