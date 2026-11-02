@@ -18,6 +18,7 @@ PAGES = frozenset((
     ScreenPage.CALIBRATION_RESULT,
 ))
 calibration_screws_ui = LazyModule("ff5m_ui.calibration_screws.runtime")
+shaper_calibration = LazyModule("feather.calibration.shaper")
 
 
 class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
@@ -27,6 +28,7 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         FeatureHostProxy.__init__(self, host)
         self.calibration_kind = None
         self.external_context_id = None
+        self.shaper = None  # ShaperSession, created when the shaper flow is first used
         self.calibration_page = 0
         materials = getattr(host, "heating_materials", ())
         self.calibration_material = materials[0] if materials else "n/a"
@@ -65,7 +67,10 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                 "cal.repeat", "cal.done", "cal.mesh.discard",
                 "cal.mesh.save", "cal.tuning.discard", "cal.tuning.save"),
         }
+        shaper = self._active_shaper()
         return (action in exact.get(page, ()) or
+                (page == ScreenPage.CALIBRATION_RESULT and action == "nav.back"
+                 and shaper is not None and shaper.view is not None) or
                 (page == ScreenPage.CALIBRATION_CONFIRM and
                  action.startswith("cal.material.") and
                  action.rsplit(".", 1)[1] in self.heating_materials))
@@ -73,10 +78,16 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
     def handle_action(self, page, action):
         if not action.startswith("cal."):
             return False
+        shaper = self._active_shaper()
+        if action == "cal.done" and shaper is not None and shaper.view is not None:
+            return self.back(page)
         self._handle_calibration_action(action)
         return True
 
     def resolve_semantic_action(self, page, wire_id):
+        shaper = self._active_shaper()
+        if shaper is not None:
+            return shaper.resolve(page, wire_id)
         if (page != ScreenPage.CALIBRATION_RESULT
                 or self.calibration_kind != "screws"
                 or not self.calibration_results):
@@ -84,11 +95,56 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         return calibration_screws_ui.PAGE.resolve_action(wire_id)
 
     def handle_semantic_action(self, page, action):
-        del page
+        shaper = self._active_shaper()
+        if shaper is not None:
+            return shaper.handle(page, action)
         if not isinstance(action, calibration_screws_ui.ScrewResultAction):
             return False
         self._handle_calibration_action(action.wire_id)
         return True
+
+    def _active_shaper(self):
+        """The native shaper flow, when the selected calibration uses it."""
+        if self.calibration_kind != "shaper" or self._forge_shaper() is None:
+            return None
+        if self.shaper is None:
+            self.shaper = shaper_calibration.ShaperSession(self)
+        return self.shaper
+
+    def confirm_shaper_action(self, kind):
+        shaper = self._active_shaper()
+        return shaper is not None and shaper.confirm(kind)
+
+    def _render_calibration_confirm(self):
+        shaper = self._active_shaper()
+        if shaper is None:
+            return super()._render_calibration_confirm()
+        shaper.render_start()
+
+    def _prepare_calibration_progress(self):
+        super()._prepare_calibration_progress()
+        # A new job starts a new flow; drop the previous one with its graph cache.
+        if self.shaper is not None:
+            self.shaper.deactivate()
+            self.shaper = None
+        shaper = self._active_shaper()
+        if shaper is not None:
+            shaper.follow_new_job()
+
+    def _render_calibration_progress(self):
+        shaper = self._active_shaper()
+        if shaper is None or not shaper.render_progress():
+            super()._render_calibration_progress()
+
+    def _update_calibration_progress(self):
+        shaper = self._active_shaper()
+        if shaper is None or not shaper.update_progress():
+            super()._update_calibration_progress()
+
+    def _render_calibration_result(self):
+        shaper = self._active_shaper()
+        if shaper is None or not shaper.render_result():
+            super()._render_calibration_result()
 
     def _start_z_calibration(self):
         self.feature_manager.get("z").start_calibration()
@@ -100,6 +156,9 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         self.feature_manager.get("extruder").start_calibration()
 
     def back(self, page):
+        shaper = self._active_shaper()
+        if shaper is not None and shaper.back(page):
+            return True
         if page == ScreenPage.CALIBRATION_HOME:
             self._show_page(ScreenPage.CONTROL_HOME)
         elif page == ScreenPage.CALIBRATION_GUIDE:
@@ -159,6 +218,9 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                                           or "Operation cleanup failed")
             else:
                 self.calibration_error = "Operation interrupted" if outcome == "interrupted" else None
+            shaper = self._active_shaper()
+            if shaper is not None:
+                shaper.apply_job_outcome()
             if self.calibration_kind == "recovery":
                 status = (self.resurrection.get_status(eventtime)
                           if self.resurrection is not None else {})
@@ -179,6 +241,10 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
     def update(self, eventtime):
         if self._page_paint_allowed(ScreenPage.CALIBRATION_PROGRESS):
             self._update_calibration_progress()
+        elif self._page_paint_allowed(ScreenPage.CALIBRATION_RESULT):
+            shaper = self._active_shaper()
+            if shaper is not None:
+                shaper.update_result()
 
     def on_gcode_output(self, message):
         if (self.calibration_kind == "screws" and
@@ -188,9 +254,12 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                 self.calibration_results.append(result)
 
     def handle_immediate_action(self, page, action):
-        if (action == "cal.cancel" and
-                page == ScreenPage.CALIBRATION_PROGRESS and
-                self.calibration_kind in ("screws", "mesh", "z")):
+        if action != "cal.cancel" or page != ScreenPage.CALIBRATION_PROGRESS:
+            return False
+        shaper = self._active_shaper()
+        if shaper is not None and shaper.cancel():
+            return True
+        if self.calibration_kind in ("screws", "mesh", "z"):
             self._open_calibration_cancel()
             return True
         return False
@@ -201,7 +270,13 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         return (("calibration-controls",)
                 if page == ScreenPage.CALIBRATION_PROGRESS else ())
 
+    def on_page_changed(self, _old_page, new_page):
+        if self.shaper is not None:
+            self.shaper.on_page_changed(new_page)
+
     def deactivate(self):
+        if self.shaper is not None:
+            self.shaper.deactivate()
         self.external_context_id = None
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False

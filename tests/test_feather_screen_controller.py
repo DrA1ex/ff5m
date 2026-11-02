@@ -646,13 +646,12 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("cal.material.PETG", drawing)
         self.assertNotIn("cal.clean.skip", drawing)
 
-    def test_pid_and_shaper_workflows_use_supported_macros(self):
+    def test_pid_workflows_use_supported_macros(self):
         cases = (
             ("pid_bed",
              ["PID_TUNE_BED TEMPERATURE=70", "TURN_OFF_HEATERS"]),
             ("pid_extruder",
              ["PID_TUNE_EXTRUDER TEMPERATURE=250", "TURN_OFF_HEATERS"]),
-            ("shaper", ["ZSHAPER"]),
         )
         for kind, expected in cases:
             with self.subTest(kind=kind):
@@ -676,16 +675,15 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_tuning_result_can_save_or_return_without_saving(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.renderer = FEATHER.FeatherRenderer()
-        batches = RenderCapture(controller.renderer).batches
+        capture = RenderCapture(controller.renderer)
         controller.calibration_kind = "shaper"
         controller.calibration_error = None
         controller.calibration_cancelled = False
 
         controller._render_calibration_result()
 
-        drawing = "\n".join(batches[-1])
-        self.assertIn("cal.tuning.discard", drawing)
-        self.assertIn("cal.tuning.save", drawing)
+        self.assertTrue(capture.latest.has_action('cal.tuning.discard'))
+        self.assertTrue(capture.latest.has_action('cal.tuning.save'))
         restarts = []
         pages = []
         controller._restart_klipper = restarts.append

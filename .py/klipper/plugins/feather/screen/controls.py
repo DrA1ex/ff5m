@@ -54,7 +54,7 @@ CALIBRATION_ITEMS = (
     ("cal.extruder", "EXTRUDER",
      ("MEASURE FILAMENT FEED", "AND CORRECT IT")),
     ("cal.shaper", "SHAPER",
-     ("MEASURE X/Y RESONANCE", "GENERATE CSV RESULTS")),
+     ("MEASURE X/Y RESONANCE", "COMPARE COMPENSATION")),
     ("cal.axes", "AXIS",
      ("PRINT, MEASURE AND", "UPDATE USER.CFG")),
     ("cal.pid_bed", "BED PID",
@@ -1487,7 +1487,16 @@ class FeatherControlsMixin:
         commands += self._calibration_stage_commands(label, operation)
         self.renderer.send(commands)
 
+    def _forge_shaper(self):
+        """The native shaper plugin; legacy configs and printer-less test hosts have none."""
+        printer = getattr(self, "printer", None)
+        return printer.lookup_object("forge_shaper", None) if printer is not None else None
+
     def _calibration_cancel_visible(self):
+        if self.calibration_kind == "shaper":
+            native = self._forge_shaper()
+            if native is not None and native.busy:
+                return True
         operation = self._operation_context_status()
         return (self.calibration_kind in ("screws", "mesh", "z")
                 and (operation["cancel_available"]
@@ -1679,7 +1688,7 @@ class FeatherControlsMixin:
                 self._run_script(
                     "PID_TUNE_EXTRUDER TEMPERATURE=%.0f" % nozzle)
             elif self.calibration_kind == "shaper":
-                self._run_script("ZSHAPER")
+                self._run_script("FORGE_SHAPER_CALIBRATE" if self._forge_shaper() is not None else "ZSHAPER")
             else:
                 raise RuntimeError("Unsupported calibration")
         except Exception as exc:

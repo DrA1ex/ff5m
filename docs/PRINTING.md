@@ -46,7 +46,8 @@ Use the Stock screen's supported workflow, Feather's **Control → Calibration**
 - `AUTO_FULL_BED_LEVEL` — creates a bed mesh.
 - `PID_TUNE_BED` — bed PID calibration.
 - `PID_TUNE_EXTRUDER` — hotend PID calibration.
-- `ZSHAPER` — input-shaper calibration.
+- `FORGE_SHAPER` — complete input-shaper calibration with PNG graphs. In Feather, use **Control → Calibration → Input Shaper**.
+- `ZSHAPER` — Legacy input-shaper workflow.
 
 > [!CAUTION]
 > Read [Before you start](CALIBRATION.md#before-you-start) before changing the mesh or Z geometry.

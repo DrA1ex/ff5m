@@ -44,7 +44,7 @@ class LazyMultiprocessingTest(unittest.TestCase):
 
     def test_sample_export_starts_the_worker_and_preserves_csv(self):
         self.run_isolated("""
-            import tempfile
+            import csv, tempfile
             workers = []
             class Process:
                 def __init__(self, target):
@@ -61,9 +61,10 @@ class LazyMultiprocessingTest(unittest.TestCase):
                 target = pathlib.Path(tmp) / 'samples.csv'
                 helper.write_to_file(str(target))
                 assert len(workers) == 1
-                assert target.read_text() == (
-                    '#time,accel_x,accel_y,accel_z\\n'
-                    '1.250000,2.000000,3.000000,4.000000\\n')
+                with target.open() as stream:
+                    rows = list(csv.reader(stream))
+                assert rows[0] == ['#time', 'accel_x', 'accel_y', 'accel_z']
+                assert [tuple(map(float, row)) for row in rows[1:]] == helper.samples
         """)
 
     @unittest.skipIf(sys.platform == "win32", "printer workers use POSIX fork")
@@ -93,8 +94,9 @@ class LazyMultiprocessingTest(unittest.TestCase):
             calibrator.printer, calibrator.error = printer, RuntimeError
             def large_result():
                 return b'x' * (256 * 1024)
+            message = 'worker failure fixture'
             def fail():
-                raise ValueError('calculation failed')
+                raise ValueError(message)
             try:
                 assert calibrator.background_process_exec(
                     large_result, ()) == large_result()
@@ -102,7 +104,7 @@ class LazyMultiprocessingTest(unittest.TestCase):
                 try:
                     calibrator.background_process_exec(fail, ())
                 except RuntimeError as exc:
-                    assert 'calculation failed' in str(exc)
+                    assert message in str(exc)
                 else:
                     raise AssertionError('child error was lost')
             finally:

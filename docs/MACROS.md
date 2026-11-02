@@ -1,7 +1,7 @@
 # 3D Printer Macros Documentation
 
 > [!NOTE]
-> This reference was generated with the help of an AI model. The macro definitions in `macros/base.cfg`, `macros/firmware.cfg`, `macros/headless.cfg`, and `config/stock.cfg` are the authoritative source, so check them if a description and the actual behavior differ.
+> This reference was generated with the help of an AI model. The definitions in `macros/base.cfg`, `macros/firmware.cfg`, `macros/headless.cfg`, `config/stock.cfg`, and `macros/shaper.cfg`, together with the shaper plugin commands, are the authoritative source, so check them if a description and the actual behavior differ.
 
 This document provides a concise overview of the G-code macros defined in `macros/` (`base.cfg`, `firmware.cfg`, `headless.cfg`, `client.cfg`, `timelapse.cfg`), `config/` (`stock.cfg`, `material.cfg`, `feather.cfg`), and `KAMP/` for the Flashforge Adventurer 5M / 5M Pro running the Klipper-based Forge-X firmware mod. They cover bed leveling, filament management, system control, user-interface interactions, and stock screen integration. Each macro is described with its parameters and default values where applicable.
 
@@ -47,10 +47,36 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
     - `PROFILE` (string, default: `auto` with Feather, Guppy, and Headless; `MESH_DATA` with the Stock screen): Bed mesh profile name.
   - **Defaults**: Calls `_FULL_BED_LEVEL` and stops heaters.
 
-- **ZSHAPER**
-  - **Description**: Runs input shaper calibration and provides instructions for analyzing results.
-  - **Parameters**: None.
-  - **Defaults**: Clears previous calibration data and generates CSV files for analysis.
+- **FORGE_SHAPER**
+  - **Description**: Calibrates input shapers, selects recommended settings, and generates PNG graphs. Run while the printer is idle.
+  - **Parameters**: `AXIS=x|y|xy` (default: `xy`); `MAX_SMOOTHING` (default: resonance tester setting). Optional sweep parameters: `FREQ_START`, `FREQ_END`, `HZ_PER_SEC`, `INPUT_SHAPING`.
+  - **Saving**: Review the results, then run `SAVE_CONFIG` to save the settings and restart Klipper.
+
+- **FORGE_SHAPER_CALIBRATE**
+  - **Description**: Measures input shapers for manual review and selection. Used by Feather.
+  - **Parameters**: Same as `FORGE_SHAPER`.
+
+- **FORGE_SHAPER_RESULTS**
+  - **Description**: Displays a saved measurement. Add `PLOT=1` to generate PNG graphs.
+  - **Parameters**: `RESULT=<id>` (optional); `AXIS=x|y|xy` (default: all measured axes); `PLOT=0|1` (default: `0`).
+
+- **FORGE_SHAPER_HISTORY**
+  - **Description**: Lists up to five saved measurements and their IDs for use with RESULTS or APPLY.
+
+- **FORGE_SHAPER_APPLY**
+  - **Description**: Selects settings from a saved measurement. Run `SAVE_CONFIG` afterward to save them.
+  - **Parameters**: `SHAPER=auto|zv|mzv|ei|2hump_ei|3hump_ei` (default: `auto`); `AXIS=x|y|xy` (default: all measured axes); `RESULT=<id>` (optional).
+  - **Selection**: `auto` uses each axis's recommendation. ZVD is for comparison only.
+
+- **FORGE_SHAPER_CANCEL**
+  - **Description**: Cancels the current shaper calibration.
+
+- **ZSHAPER — Legacy**
+  - **Description**: Legacy input-shaper calibration. Use Feather or `FORGE_SHAPER`.
+
+`FORGE_SHAPER_RESULTS` and `FORGE_SHAPER_APPLY` default to the open measurement, or the latest saved one.
+PNG graphs are available under **Configuration → mod_data → shaper → plots**.
+See [Input Shaper Calibration](CALIBRATION.md#input-shaper-calibration) for the normal workflow.
 
 - **KAMP**
   - **Description**: Executes KAMP-specific bed mesh calibration with nozzle cleaning.

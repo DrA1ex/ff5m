@@ -1278,6 +1278,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                   or (self.page == ScreenPage.WIFI_PASSWORD
                       and is_keyboard_action(action))):
                 self._handle_network_action(action)
+            elif action in ("shaper.save.confirm", "shaper.leave.confirm") and dialog == ScreenDialog.MESSAGE:
+                self.feature_manager.get("calibration").confirm_shaper_action(action.split(".")[1])
             elif action == "mesh.save":
                 self._require_idle()
                 mesh_status = (self.bed_mesh.get_status(now)
@@ -1712,9 +1714,13 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             ScreenPage.CONTROL_HOME, ScreenPage.CALIBRATION_HOME,
             ScreenPage.FILE_BROWSER, ScreenPage.SETTINGS,
         )
-        if self.page not in pages and not (
-                kind == "recovery" and self.page in (
-                    ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM)):
+        calibration = self.feature_manager.peek("calibration")
+        shaper_page = (kind == "shaper" and calibration is not None
+                       and calibration.calibration_kind == "shaper"
+                       and self.page in (ScreenPage.CALIBRATION_CONFIRM, ScreenPage.CALIBRATION_RESULT))
+        recovery_page = (kind == "recovery" and self.page in (
+            ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM))
+        if self.page not in pages and not (shaper_page or recovery_page):
             return
         try:
             if (self._safety_print_active(self.reactor.monotonic())

@@ -649,13 +649,6 @@ class WorkflowMacroTest(unittest.TestCase):
                 "_CONTEXT_STATE NAME=TUNING",
                 "PID_CALIBRATE HEATER=extruder TARGET=245",
                 "_CONTEXT_STATE NAME=COMPLETE", "_CONTEXT_END")),
-            ("ZSHAPER", {"toolhead": {"square_corner_velocity": 5}}, (
-                "_CONTEXT_BEGIN TYPE=input_shaper",
-                "_CONTEXT_STATE NAME=PREPARING", "_HOME_IF_NEEDED",
-                "_CONTEXT_STATE NAME=MEASURING", "SHAPER_CALIBRATE",
-                "_CONTEXT_STATE NAME=PROCESSING",
-                'RUN_SHELL_COMMAND CMD=zshaper PARAMS="--calculate"',
-                "_CONTEXT_STATE NAME=COMPLETE", "_CONTEXT_END")),
         )
         for name, printer, expected in cases:
             with self.subTest(name=name):

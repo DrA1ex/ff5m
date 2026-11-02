@@ -2,7 +2,7 @@
 #
 # Shaper plot generation script
 #
-# Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+# Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 #
 # Based on Klipper's shaper calculation script
 #
@@ -14,6 +14,7 @@
 import json
 import optparse
 import os
+import sys
 import matplotlib
 import numpy as np
 
@@ -101,11 +102,10 @@ def setup_matplotlib():
 
 def load_shapers(filename):
     with open(filename, "r") as f:
-        data = json.load(f)
+        return plot_data(json.load(f))
 
-    axis = lambda: None
-    axis.name = data["axis"]
 
+def plot_data(data):
     calibration_data = lambda: None
     calibration_data.freq_bins = np.array(data["calibration_data"]["freq_bins"])
     calibration_data.psd_sum = np.array(data["calibration_data"]["psd_sum"])
@@ -144,6 +144,22 @@ def load_shapers(filename):
     return result
 
 
+def history_graphs(directory, result_id, axes, output):
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.join(root, ".py", "klipper", "plugins"))
+    from shaper_storage import ResultHistory
+    results, saved_at = ResultHistory(directory).load(result_id)
+    if axes not in ("x", "y", "xy") or any(axis not in results for axis in axes):
+        raise ValueError("Requested axes are not present in this shaper result")
+    for axis in axes:
+        result = results[axis]
+        data = dict(axis=axis, scv=result["scv"], calibration_data=result, best_shaper=result["recommended"],
+                    all_shapers=[dict(fit, vals=fit["response"]) for fit in result["shapers"]
+                                 if not fit.get("reference_only", False)])
+        metadata = {"Description": "Forge-X shaper result %s; saved_at=%.6f; axis=%s" % (result_id, saved_at, axis)}
+        yield os.path.join(output, axis + ".png"), plot_data(data), metadata
+
+
 def main():
     usage = "%prog -d <json-data_path> -o <output_image_path>"
     opts = optparse.OptionParser(usage)
@@ -151,19 +167,25 @@ def main():
                     help="filename of output graph")
     opts.add_option("-d", "--data", type="string", dest="data",
                     help="filename of json file with precalculated shaper data")
+    opts.add_option("--history", action="store_true", help="export binary history: DIRECTORY RESULT_ID AXES OUTPUT_DIR")
     options, args = opts.parse_args()
 
-    data_filename = options.data
-    if not os.path.isfile(data_filename):
-        opts.error(f"File {data_filename} doesn't exists!")
-
-    result = load_shapers(data_filename)
-
+    if options.history:
+        if len(args) != 4:
+            opts.error("--history requires DIRECTORY RESULT_ID AXES OUTPUT_DIR")
+        graphs = history_graphs(*args)
+    else:
+        if not options.data or not os.path.isfile(options.data):
+            opts.error("Input JSON file does not exist")
+        graphs = [(options.output, load_shapers(options.data), {})]
     setup_matplotlib()
-    fig = plot_freq_response(result)
-
-    fig.set_size_inches(8, 6)
-    fig.savefig(options.output)
+    for output, result, metadata in graphs:
+        fig = plot_freq_response(result)
+        try:
+            fig.set_size_inches(8, 6)
+            fig.savefig(output, metadata=metadata)
+        finally:
+            matplotlib.pyplot.close(fig)
 
 
 if __name__ == '__main__':

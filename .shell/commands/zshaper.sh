@@ -2,7 +2,7 @@
 
 ## zshaper running script
 ##
-## Copyright (C) 2025, Alexander K <https://github.com/drA1ex>
+## Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>
 ## Copyright (C) 2025, Sergei Rozhkov <https://github.com/ghzserg>
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
@@ -26,6 +26,14 @@ clear_shaper_data() {
 }
 
 case $1 in
+    --plot)
+        # One Python child owns the complete export; exec preserves timeout cleanup.
+        if [ "$#" -ne 5 ]; then
+            echo "Use FORGE_SHAPER_RESULTS PLOT=1 in the G-code console to generate saved graphs." >&2
+            exit 2
+        fi
+        exec chroot "$MOD" /bin/python3 /opt/config/mod/.root/zshaper/calibrate_shaper.py --history "$2" "$3" "$4" "$5"
+    ;;
     --clear)
         clear_shaper_data "/opt/config/mod_data" "calibration_data_*.csv"
         clear_shaper_data "/opt/config/mod_data" "calibration_data_*.json"
