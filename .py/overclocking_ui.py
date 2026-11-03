@@ -16,7 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, wait
 
 import overclocking_tests
-from overclocking_profiles import ProfileTool, ProfileError
+from overclocking_profiles import ProfileTool, ProfileError, emmc_description
 from overclocking_results import TestResults
 from overclocking_tests import REFERENCE_BYTES, cleanup_owned_files, reference_path
 
@@ -199,10 +199,10 @@ class TuningUI:
         return commands, y
 
     def recover_configuration(self, report):
-        problem = self.profiles.hardware_problem(report)
+        problem = self.profiles.boot_problem(report)
         available = self.profiles.can_restore_stock(report)
         v = self.view
-        commands = v.begin_page("HARDWARE SETTINGS NEED REPAIR")
+        commands = v.begin_page("HARDWARE REPAIR")
         rows, y = self.detail_rows(84, problem)
         commands += rows + [v.rule(y + 10)]
         if available:
@@ -210,12 +210,17 @@ class TuningUI:
                                    h_align="left", v_align="top"))
             steps = ("Return CPU and eMMC to stock settings.", "Remove old boot entries and files; keep backups.")
         else:
-            commands.append(v.text(30, y + 30, "AUTOMATIC RESTORE IS UNAVAILABLE", color=v.WARNING,
+            # Automatic restore cannot help here; support needs the diagnostic logs.
+            commands.append(v.text(30, y + 30, "COLLECT DIAGNOSTICS", color=v.WARNING,
                                    font=v.FONT_LABEL, h_align="left", v_align="top"))
-            steps = ("Keep this firmware; collect diagnostics for support.",)
-        for index, line in enumerate(steps):
-            commands.append(v.text(30, y + 56 + index * 31, line, font=v.FONT_MEDIUM, h_align="left",
-                                   v_align="top", max_width=740))
+            steps = ("After booting, open the console in Fluidd or Mainsail, then run TAR_DEBUG "
+                     "to generate a diagnostic archive for support.",)
+        text_y = y + 56
+        for line in steps:
+            height = v.wrapped_lines(line, 740, v.FONT_MEDIUM) * v.line_height(v.FONT_MEDIUM)
+            commands.append(v.text(30, text_y, line, font=v.FONT_MEDIUM, h_align="left",
+                                   v_align="top", max_width=740, max_height=height, wrap=True, truncate=False))
+            text_y += height
         commands.extend(v.action_row((("recovery.back", "BACK"),) +
                                      ((("recovery.restore", "RESTORE STOCK", True),) if available else ())))
         v.send(commands)
@@ -246,7 +251,9 @@ class TuningUI:
 
         while True:
             try:
-                if self.profiles.hardware_problem(report):
+                # Only a damaged boot configuration replaces tuning with repair; an
+                # unsupported eMMC refuses new trials in select_profile instead.
+                if self.profiles.boot_problem(report):
                     return self.recover_configuration(report) and self.reboot()
                 if report["candidate_present"] == "yes":
                     decision = self.trial(report)
@@ -357,13 +364,20 @@ class TuningUI:
         return v.wait_action()
 
     def select_profile(self, axis, report):
-        problem = self.profiles.hardware_problem(report)
+        problem = self.profiles.axis_problem(axis, report)
         if problem:
-            raise ProfileError(problem)
+            self.view.message(AXIS_NAMES[axis] + " FREQUENCY", problem,
+                              headline=AXIS_NAMES[axis] + " frequency cannot be changed",
+                              headline_color=self.view.WARNING)
+            return False
         choices = self.profiles.choices(axis, report)
         if not choices:
             raise ProfileError("No supported frequencies for this hardware / " + report["family"])
-        selected = self.view.choose(AXIS_NAMES[axis] + " FREQUENCY", choices, lambda item: item[1])
+        # The eMMC chooser names the device and its actual clock; the CPU needs no identity.
+        heading = {}
+        if axis == "emmc":
+            heading = dict(subtitle=emmc_description(report), subtitle_detail=mhz(report.get("runtime_emmc_hz")))
+        selected = self.view.choose(AXIS_NAMES[axis] + " FREQUENCY", choices, lambda item: item[1], **heading)
         if selected is None:
             return False
         detail = "Only this setting changes. The printer reboots once into Recovery to check it; the confirmed " \

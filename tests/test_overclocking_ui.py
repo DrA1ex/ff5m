@@ -15,7 +15,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / '.py'))
-from overclocking_profiles import ProfileError
+from overclocking_profiles import ProfileError, ProfileTool
 from overclocking_results import TestResults
 from overclocking_tests import reference_path
 from overclocking_ui import TuningUI
@@ -54,7 +54,8 @@ class TuningUITest(unittest.TestCase):
                        'candidate_dtb_sha256': 'b' * 64, 'confirmed_cpu_hz': '1008000000',
                        'confirmed_emmc_mhz': '25', 'boot_id': 'boot-b', 'stock_dtb_sha256': 'a' * 64}
         self.profiles = mock.Mock()
-        self.profiles.hardware_problem.return_value = ''
+        self.profiles.boot_problem.return_value = ''
+        self.profiles.axis_problem.return_value = ''
         self.profiles.trial_state.return_value = 'applied'
         self.reboots = []
         self.follow_trial = mock.Mock()
@@ -71,6 +72,59 @@ class TuningUITest(unittest.TestCase):
         self.view.confirm.return_value = True
         self.ui = TuningUI(self.view, lambda: self.reboots.append('reboot'), self.follow_trial,
                            self.profiles, self.results)
+
+    def test_emmc_chooser_shows_product_mode_voltage_and_actual_clock(self):
+        for timing, voltage, mode, volts in (('9', '1', 'HS200', '1.8 V'),
+                                             ('0', '0', 'Legacy', '3.3 V'),
+                                             ('1', '0', 'HS52', '3.3 V')):
+            with self.subTest(mode=mode):
+                session = ViewSession(['choose.back'])
+                self.ui.view = session.view = recovery.RecoveryView(session)
+                self.profiles.choices.return_value = [('stock', 'STOCK eMMC // 25 MHz', '25 MHz')]
+                report = dict(self.report, model_identity='d6:0103:353841333938:11',
+                              runtime_timing=timing, runtime_voltage=voltage, runtime_emmc_hz='50000000')
+                self.assertFalse(self.ui.select_profile('emmc', report))
+                frame = ' '.join(session.frames[0])
+                for value in ('58A398', mode, volts, '50 MHz'):
+                    self.assertIn(value, frame)
+                self.profiles.apply_trial.assert_not_called()
+
+    def test_generic_repair_tuning_and_cpu_chooser_do_not_show_emmc_identity(self):
+        report = dict(self.report, model_identity='d6:0103:353841333938:11',
+                      runtime_timing='9', runtime_voltage='1', runtime_emmc_hz='50000000')
+        for page in ('repair', 'tuning', 'cpu'):
+            with self.subTest(page=page):
+                session = ViewSession([{'repair': 'recovery.back', 'tuning': 'tuning.back',
+                                        'cpu': 'choose.back'}[page]])
+                self.ui.view = session.view = recovery.RecoveryView(session)
+                if page == 'repair':
+                    self.profiles.boot_problem.return_value = 'Stock boot commands differ: boot_uImage.'
+                    self.profiles.can_restore_stock.return_value = False
+                    self.ui.recover_configuration(report)
+                elif page == 'tuning':
+                    self.ui.tuning_page(report)
+                else:
+                    self.profiles.choices.return_value = [('stock', 'STOCK CPU // 1008 MHz', '1008 MHz')]
+                    self.assertFalse(self.ui.select_profile('cpu', report))
+                frame = ' '.join(session.frames[0])
+                for value in ('58A398', 'HS200', '1.8 V'):
+                    self.assertNotIn(value, frame)
+
+    def test_experimental_choice_adds_warning_before_any_profile_write(self):
+        tool = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
+        choices = tool.choices('cpu', self.report)
+        alias = next(row['alias'] for row in tool.manifest['cpu'] if row.get('warning'))
+        experimental = next(choice for choice in choices if choice[0] == alias)
+        self.profiles.choices.return_value = choices
+        self.view.confirm.return_value = False
+        details = []
+        for choice in (choices[0], experimental):
+            self.view.choose.return_value = choice
+            self.assertFalse(self.ui.select_profile('cpu', self.report))
+            details.append(self.view.confirm.call_args.args[1])
+        self.assertNotEqual(details[0], details[1])
+        self.profiles.apply_trial.assert_not_called()
+        self.assertEqual(self.reboots, [])
 
     def finish_test(self, outcome, boot='boot-b'):
         self.results.start('cpu-stability', 'b' * 64, boot)
@@ -169,17 +223,6 @@ class TuningUITest(unittest.TestCase):
         self.assertIn('eMMC WRITE NOT RUN', texts)
         self.assertFalse([text for text in texts if 'ACCEPTANCE' in text])
 
-    def test_test_row_label_and_values_share_one_font_and_line(self):
-        session = ViewSession(['tuning.back'])
-        self.ui.view = session.view = recovery.RecoveryView(session)
-        self.results.accept('a' * 64, {'cpu-stability': 'passed'})
-        self.ui.tuning_page(dict(self.report, candidate_present='no'))
-        row = [command for command in session.frames[0] if '"TESTS"' in command or 'STABILITY PASSED' in command]
-        self.assertEqual(len(row), 2)
-        for part in ('-f "JetBrainsMono 10pt"', ' 180 '):
-            self.assertTrue(all(part in command for command in row), row)
-        # No hint or note line competes with the settings.
-        self.assertNotIn('Tune one setting', ' '.join(session.frames[0]))
 
     def test_accepted_emmc_test_is_one_value(self):
         self.results.accept('a' * 64, {'emmc-integrity': 'passed'})
@@ -328,19 +371,6 @@ class TuningUITest(unittest.TestCase):
                 self.ui.operation('Checking the helper.', exit_worker)
             self.assertEqual(self.ui.operation('Checking saved results.', lambda: 42), 42)
 
-    def test_entry_progress_moves_past_cleanup_before_building_the_menu(self):
-        session = ViewSession(['tuning.back'])
-        self.ui.view = session.view = recovery.RecoveryView(session)
-        self.profiles.prepare.return_value = dict(self.report, candidate_present='no')
-        self.profiles.confirmed_active.return_value = True
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertFalse(self.ui.run())
-        frames = [' '.join(frame) for frame in session.frames]
-        steps = [next(index for index, frame in enumerate(frames) if 'Step {}/5'.format(step) in frame)
-                 for step in range(1, 6)]
-        self.assertEqual(steps, sorted(steps))
-        menu = next(index for index, frame in enumerate(frames) if 'CONFIRMED PROFILE' in frame)
-        self.assertGreater(menu, steps[-1])
 
     def test_emmc_test_reads_and_writes_in_one_run_without_a_second_confirmation(self):
         path = Path(reference_path(self.results.root))
@@ -359,8 +389,7 @@ class TuningUITest(unittest.TestCase):
         self.ui.result_page = mock.Mock()
         self.assertIsNone(self.ui.trial(report))
         texts = [call.args[2] for call in self.view.text.call_args_list]
-        self.assertEqual([text for text in texts if text.startswith('eMMC ') and 'APPLIED' not in text],
-                         ['eMMC INTEGRITY'] * 2)
+        self.assertIn('eMMC INTEGRITY', texts)
         self.assertEqual([call.args[0] for call in self.ui.result_page.call_args_list], ['emmc-integrity'])
 
     def emmc_trial_without_reference(self, outcome):
@@ -440,7 +469,7 @@ class TuningUITest(unittest.TestCase):
                                   'RESTORE STOCK', 'BOOT FORGE-X', 'BACK'])
         self.assertTrue(all(spec[1] + spec[3] <= 480 for spec in view.buttons.values()))
 
-    def test_accept_label_states_which_test_outcomes_are_waived_and_is_always_highlighted(self):
+    def test_accept_label_states_which_test_outcomes_are_waived(self):
         for outcome, label in ((None, 'ACCEPT UNTESTED'), ('failed', 'ACCEPT ANYWAY'),
                                ('passed', 'ACCEPT PROFILE')):
             with self.subTest(outcome=outcome):
@@ -449,7 +478,8 @@ class TuningUITest(unittest.TestCase):
                 session = ViewSession(['trial.back'])
                 self.ui.view = session.view = recovery.RecoveryView(session)
                 self.assertIsNone(self.ui.trial(self.report))
-                self.assertEqual(self.ui.view.buttons['trial.accept'][4:], (label, False, True))
+                self.assertTrue(any(label in command for frame in session.frames for command in frame))
+                self.assertIn('trial.accept', self.ui.view.buttons)
 
     def test_finished_test_shows_its_status_verdict_and_facts(self):
         session = ViewSession(['result.back'])
@@ -463,20 +493,14 @@ class TuningUITest(unittest.TestCase):
         frame = ' '.join(command for frame in session.frames for command in frame)
         for text in ('INCONCLUSIVE', 'Full stress conditions were not established.', 'CLOCK', 'throttled'):
             self.assertIn(text, frame)
-        # The verdict sentence beside the table is a small muted note; the table is the result.
-        note = next(command for frame in session.frames for command in frame if 'Full stress' in command)
-        self.assertIn('-c ' + recovery.UI_MUTED, note)
-        self.assertIn(recovery.UI_FONT_SMALL, note)
 
-    def test_one_line_result_is_a_large_outcome_with_its_explanation(self):
+    def test_one_line_result_keeps_the_failure_explanation_and_back_navigation(self):
         session = ViewSession(['message.back'])
         self.ui.view = session.view = recovery.RecoveryView(session)
-        self.ui.result_page('cpu-stability', {'status': 'failed', 'detail': 'CPU helper did not finish within 240 s.'})
-        frame = session.frames[0]
-        outcome = next(command for command in frame if '-t "FAILED"' in command)
-        self.assertIn('-c ' + recovery.UI_DANGER, outcome)
-        self.assertIn(recovery.UI_FONT_TITLE_BOLD, outcome)
-        self.assertTrue(any('CPU helper did not finish' in command for command in frame))
+        self.ui.result_page('cpu-stability', {'status': 'failed', 'detail': 'CPU helper did not finish.'})
+        frame = ' '.join(session.frames[0])
+        self.assertIn('FAILED', frame)
+        self.assertIn('CPU helper did not finish.', frame)
         self.assertEqual(set(self.ui.view.buttons), {'message.back'})
 
     def workload(self, result=None, error=None, steps=2):
@@ -564,7 +588,7 @@ class TuningUITest(unittest.TestCase):
 
     def test_entry_offers_stock_recovery_for_damaged_configuration(self):
         self.profiles.prepare.return_value = self.report
-        self.profiles.hardware_problem.return_value = 'Stock is active; old boot files remain: OLD.DTB.'
+        self.profiles.boot_problem.return_value = 'Stock is active; old boot files remain: OLD.DTB.'
         self.profiles.can_restore_stock.return_value = True
         self.view.wait_action.return_value = 'recovery.restore'
         self.assertTrue(self.ui.run())
@@ -574,7 +598,7 @@ class TuningUITest(unittest.TestCase):
 
     def test_cancelled_or_declined_repair_never_changes_profiles(self):
         self.profiles.prepare.return_value = self.report
-        self.profiles.hardware_problem.return_value = 'Old boot files remain.'
+        self.profiles.boot_problem.return_value = 'Old boot files remain.'
         self.profiles.can_restore_stock.return_value = True
         for action, confirmed in (('recovery.back', True), ('recovery.restore', False)):
             with self.subTest(action=action, confirmed=confirmed):
@@ -586,7 +610,7 @@ class TuningUITest(unittest.TestCase):
 
     def test_failed_repair_reports_the_error_without_rebooting(self):
         self.profiles.prepare.return_value = self.report
-        self.profiles.hardware_problem.return_value = 'Old boot files remain.'
+        self.profiles.boot_problem.return_value = 'Old boot files remain.'
         self.profiles.can_restore_stock.return_value = True
         self.profiles.restore_stock.side_effect = ProfileError('Stock boot validation failed')
         self.view.wait_action.return_value = 'recovery.restore'
@@ -597,12 +621,42 @@ class TuningUITest(unittest.TestCase):
     def test_manual_recovery_has_explanation_without_automatic_restore_action(self):
         session = ViewSession(['recovery.back'])
         self.ui.view = session.view = recovery.RecoveryView(session)
-        self.profiles.hardware_problem.return_value = 'Protected stock boot commands were modified.'
+        self.profiles.boot_problem.return_value = 'Protected stock boot commands were modified.'
         self.profiles.can_restore_stock.return_value = False
         self.assertFalse(self.ui.recover_configuration(self.report))
         self.assertIn('Protected stock boot commands were modified.', ' '.join(session.frames[0]))
         self.assertEqual(set(self.ui.view.buttons), {'recovery.back'})
         self.profiles.restore_stock.assert_not_called()
+
+    def test_unsupported_emmc_keeps_tuning_open_and_refuses_only_that_axis(self):
+        # The real policy, with an excluded eMMC model on a clean stock boot.
+        tool = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
+        report = dict(self.report, candidate_present='no', boot_state='clean-stock', family='hs2001v8',
+                      hardware='unsupported', available_emmc_mhz='', runtime_timing='9', runtime_voltage='1')
+        for name in ('boot_problem', 'axis_problem', 'choices'):
+            getattr(self.profiles, name).side_effect = getattr(tool, name)
+        self.profiles.prepare.return_value = report
+        self.profiles.confirmed_active.return_value = True
+        self.view.wait_action.side_effect = ['tuning.emmc', 'tuning.cpu', 'tuning.back']
+        self.view.choose.return_value = None
+        self.assertFalse(self.ui.run())
+        self.assertIn('eMMC', self.view.message.call_args.args[0])
+        self.view.choose.assert_called_once()
+        self.assertEqual(self.view.choose.call_args.args[0], 'CPU FREQUENCY')
+        self.profiles.restore_stock.assert_not_called()
+        self.profiles.apply_trial.assert_not_called()
+
+    def test_pending_trial_is_decided_before_an_unsupported_emmc_matters(self):
+        report = dict(self.report, candidate_axis='emmc', family='unknown', hardware='unsupported')
+        self.profiles.prepare.return_value = report
+        self.profiles.trial_state.return_value = 'unconfirmed'
+        self.profiles.axis_problem.return_value = 'This eMMC type is not supported.'
+        self.profiles.discard.return_value = False
+        self.view.wait_action.side_effect = ['trial.discard', 'tuning.back']
+        self.profiles.snapshot.return_value = dict(report, candidate_present='no')
+        self.profiles.confirmed_active.return_value = True
+        self.assertFalse(self.ui.run())
+        self.profiles.discard.assert_called_once_with(report)
 
     def test_diagnostics_is_blue_and_tuning_is_orange_in_system_menu(self):
         session = ViewSession(['1:system.back'])

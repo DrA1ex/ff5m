@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+set -u
+[ -n "${T113_FAKE_ENV_DB:-}" ] || exit 2
+if [ "${1:-}" = -c ]; then shift 2; fi
+name=$1; shift
+[ -z "${T113_ENV_WRITE_LOG:-}" ] || printf '%s\n' "$name" >>"$T113_ENV_WRITE_LOG"
+[ "${T113_FAIL_SETENV_NAME:-}" != "$name" ] || exit 1
+[ "${T113_SETENV_NO_EFFECT_NAME:-}" != "$name" ] || exit 0
+tmp=$T113_FAKE_ENV_DB.tmp.$$
+awk -F= -v n="$name" '$1 != n { print }' "$T113_FAKE_ENV_DB" >"$tmp" || exit 1
+if [ "$#" -gt 0 ]; then
+    printf '%s=%s\n' "$name" "$1" >>"$tmp" || exit 1
+fi
+mv "$tmp" "$T113_FAKE_ENV_DB"

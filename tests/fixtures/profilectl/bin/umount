@@ -1,0 +1,12 @@
+#!/bin/sh
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+set -eu
+log=${T113_FAKE_MOUNT_LOG:-}
+mounts=${T113_MOUNTS_FILE:?}
+[ -z "$log" ] || printf 'umount %s\n' "$*" >>"$log"
+[ "$#" = 1 ] || exit 2
+mp=$1
+tmp=$mounts.tmp.$$
+awk -v m="$mp" '$2!=m{print}' "$mounts" >"$tmp"
+mv "$tmp" "$mounts"

@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -222,32 +223,66 @@ class RecoveryRFCToolsTest(unittest.TestCase):
         self.assertEqual(archive.read_bytes(), b"forge-x-backup")
         self.assertEqual(archive.name, "backup.tar.gz")
 
-    def test_zbackup_recovery_backup_reuses_normal_private_user_policy(self):
-        script = ZBACKUP_SH.read_text(encoding="utf-8")
-        self.assertIn("./mod_data/ssh.conf", script)
-        self.assertIn("./mod_data/ssh.key", script)
-        self.assertIn("./mod_data/ssh.pub.txt", script)
-        self.assertIn("./mod_data/user.moonraker.conf", script)
-        self.assertIn('recovery_archive backup TAR_BACKUP_PARAMS "$1"', script)
+    def archive_harness(self):
+        config, logs = self.root / 'config', self.root / 'installation-logs'
+        (config / 'mod_data').mkdir(parents=True)
+        defaults = config / 'mod/.cfg/default/backup.params.cfg'
+        defaults.parent.mkdir(parents=True)
+        defaults.write_text('fixture backup parameters\n')
+        logs.mkdir()
+        (self.root / 'console').touch()
+        (self.root / 'data/logFiles').mkdir(parents=True)
+        script = re.sub(r'^source\s+[^\n]*common\.sh\s*$', 'sync() { :; }',
+                        ZBACKUP_SH.read_text(), flags=re.MULTILINE)
+        for original, target in (('/opt/config', config), ('/opt/logFiles', logs),
+                                 ('/data', self.root / 'data'), ('/root', self.root / 'root'),
+                                 ('/tmp/printer', self.root / 'console')):
+            script = script.replace(original, str(target))
+        harness = self.root / 'zbackup.sh'
+        harness.write_text(script)
+        return config, logs, harness
 
-    def test_zbackup_normal_and_recovery_debug_share_runtime_snapshots(self):
-        script = ZBACKUP_SH.read_text(encoding="utf-8")
-        self.assertIn('create_debug_archive "$1"', script)
-        self.assertIn('recovery_archive debug TAR_DEBUG_PARAMS "$output"', script)
-        self.assertIn("/data/logFiles/recovery.log*", script)
-        self.assertIn("/data/logFiles/filesystem-usage.txt", script)
-        self.assertIn("/data/logFiles/dmesg-recovery.log", script)
-        self.assertIn('df -P > "$usage_part"', script)
-        self.assertIn('dmesg > "$kernel_part"', script)
-        self.assertNotIn("--recovery-debug", script)
-        self.assertNotIn("forge-x-recovery-debug", script)
+    def run_archive(self, harness, *arguments):
+        result = subprocess.run([shutil.which('bash'), str(harness), *arguments],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
-        debug_case = script.split("--tar-debug)", 1)[1].split(";;", 1)[0]
-        recovery_debug_case = script.split("--tar-debug-to)", 1)[1].split(";;", 1)[0]
-        self.assertIn("create_debug_archive", debug_case)
-        self.assertIn("create_debug_archive", recovery_debug_case)
-        self.assertNotIn("ensure_backup_params", debug_case)
-        self.assertNotIn("ensure_backup_params", recovery_debug_case)
+    def test_recovery_and_normal_backups_preserve_private_user_files(self):
+        config, _, harness = self.archive_harness()
+        expected = {'ssh.conf': b'fixture ssh configuration', 'ssh.key': b'fixture key data',
+                    'ssh.pub.txt': b'fixture public key', 'user.moonraker.conf': b'fixture user configuration'}
+        for name, content in expected.items():
+            (config / 'mod_data' / name).write_bytes(content)
+        destination = self.root / 'data/forge-x-recovery/backup.tar.gz'
+        for arguments in (('--tar-backup',), ('--tar-backup-to', str(destination))):
+            with self.subTest(arguments=arguments):
+                self.run_archive(harness, *arguments)
+                archive = destination if len(arguments) > 1 else next((config / 'mod_data').glob('backup_*.tar.gz'))
+                with tarfile.open(archive) as saved:
+                    members = {name.removeprefix('./'): name for name in saved.getnames()}
+                    for name, content in expected.items():
+                        self.assertEqual(saved.extractfile(members['mod_data/' + name]).read(), content)
+
+    def test_debug_archives_keep_installation_logs_and_runtime_snapshots(self):
+        config, logs, harness = self.archive_harness()
+        (logs / 'new-tool/nested').mkdir(parents=True)
+        expected = {'installer.log': b'current', 'installer.log.7': b'rotated',
+                    'new-tool/nested/unexpected-name.txt': b'new diagnostic', '.hidden-log': b'hidden'}
+        for name, content in expected.items():
+            (logs / name).write_bytes(content)
+        (self.root / 'data/logFiles/recovery.log.1').write_bytes(b'previous Recovery diagnostics')
+        destination = self.root / 'data/forge-x-recovery/debug.tar.gz'
+        for arguments in (('--tar-debug',), ('--tar-debug-to', str(destination))):
+            with self.subTest(arguments=arguments):
+                self.run_archive(harness, *arguments)
+                archive = destination if len(arguments) > 1 else next((config / 'mod_data').glob('debug_*.tar.gz'))
+                with tarfile.open(archive) as saved:
+                    for name, content in expected.items():
+                        self.assertEqual(saved.extractfile(str(logs / name).lstrip('/')).read(), content)
+                    for name in ('filesystem-usage.txt', 'dmesg-recovery.log'):
+                        self.assertIsNotNone(saved.getmember(str(self.root / 'data/logFiles' / name).lstrip('/')))
+                    member = str(self.root / 'data/logFiles/recovery.log.1').lstrip('/')
+                    self.assertEqual(saved.extractfile(member).read(), b'previous Recovery diagnostics')
 
     def test_archive_timeout_removes_partial_output(self):
         fake = self.root / "slow-zbackup.sh"

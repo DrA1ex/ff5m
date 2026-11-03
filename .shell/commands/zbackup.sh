@@ -38,6 +38,7 @@ TAR_BACKUP_PARAMS=(
 TAR_DEBUG_PARAMS=(
     "${COMMON_CFG_PARAMS[@]}"
     ./mod/sql/version
+    /opt/logFiles/
     /data/logFiles/boot.log*
     /data/logFiles/skip.log*
     /data/logFiles/ssh.log*

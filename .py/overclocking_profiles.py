@@ -26,10 +26,11 @@ STOCK_EMMC_MHZ = 25
 
 # Diagnostics are an allowlisted view of the protocol, not an environment dump.
 _DIAGNOSTIC_FIELDS = (
-    "hardware", "family", "hardware_conflict", "cid_status", "model_identity", "model_support",
-    "matched_family", "runtime_family_evidence", "runtime_emmc_hz",
+    "hardware", "family", "cid_status", "model_identity",
+    "runtime_family_evidence", "runtime_emmc_hz", "available_emmc_mhz",
     "runtime_timing", "runtime_voltage", "runtime_cpu_hz", "runtime_cpu_limit_hz",
-    "boot_state", "pending_boot", "stock_helpers_valid", "boot_graph_variables", "boot_file_references",
+    "boot_state", "pending_boot", "stock_helpers_valid", "stock_helper_mismatches",
+    "boot_graph_variables", "boot_file_references",
     "missing_boot_dependencies", "unsafe_boot_paths", "unknown_boot_variables", "unknown_boot_files",
     "stock_dtb_sha256",
     "loaded_cpu_profile", "loaded_emmc_mhz", "loaded_emmc_family", "loaded_source_sha256",
@@ -38,29 +39,43 @@ _DIAGNOSTIC_FIELDS = (
 
 
 def diagnostic_text(value, limit=4000):
-    """Keep useful utility output without specimen IDs or raw boot helper values."""
+    """Make utility output safe to log. profilectl redacts named U-Boot values
+    itself; this catches a raw CID (it holds the chip serial) or MAC address
+    that reaches any message, and control characters that could forge records."""
     value = re.sub(r"(?i)(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", "<cid-redacted>", value)
     value = re.sub(r"(?i)(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", "<mac-redacted>", value)
-    value = re.sub(r"(?im)\b(serial[#_a-z0-9]*|snum|mac(?:_addr)?|wifi_mac|bt_mac|ethaddr)\s*[=:]\s*[^\s;]+",
-                   r"\1=<redacted>", value)
-    value = re.sub(r"(?im)(\bbootcmd\s*[=:]\s*).*$", r"\1<boot-command-omitted>", value)
-    lines, helper_value = [], False
+    lines = []
     for line in value.splitlines():
         if line.startswith("FGX_PROGRESS:"):
             continue
-        if line in ("Expected:", "Actual:"):
-            helper_value = True
-            lines.append(line)
-        elif helper_value and line.startswith("  "):
-            lines.append("  <boot-helper-value-omitted>")
-        else:
-            helper_value = False
-            # Strip control characters so output cannot forge terminal/log records.
-            lines.append("".join(char if char.isprintable() else "?" for char in line))
+        lines.append("".join(char if char.isprintable() else "?" for char in line))
     value = "\n".join(lines)
     if len(value) > limit:
         value = "<truncated>\n" + value[-limit:]
     return value
+
+
+def product_name(report):
+    """The CID Product Name, six ASCII characters such as "58A398"."""
+    identity = report.get("model_identity", "").split(":")
+    if len(identity) == 4 and re.fullmatch(r"[0-9a-f]{12}", identity[2]):
+        name = bytes.fromhex(identity[2]).decode("ascii", errors="replace")
+        return "".join(char if char.isprintable() else "?" for char in name)
+    return "unavailable"
+
+
+def emmc_type(report):
+    """The observed bus mode and signal voltage, as /sys/kernel/debug/mmc0/ios numbers them."""
+    timing, voltage = report.get("runtime_timing") or "unknown", report.get("runtime_voltage") or "unknown"
+    mode = {"0": "Legacy", "1": "HS52", "9": "HS200", "unknown": "timing unknown"}.get(
+        timing, "timing spec " + timing)
+    volts = {"0": "3.3 V", "1": "1.8 V", "unknown": "voltage unknown"}.get(
+        voltage, "signal voltage " + voltage)
+    return mode + " / " + volts
+
+
+def emmc_description(report):
+    return "{} / {}".format(product_name(report), emmc_type(report))
 
 
 def log_diagnostic(event, **fields):
@@ -81,7 +96,7 @@ def parse_snapshot(output):
         if not separator or not _FIELD.fullmatch(key) or not _VALUE.fullmatch(value) or key in result:
             raise ProfileError("Invalid profile-tool snapshot.")
         result[key] = value
-    required = ("boot_state", "boot_id", "hardware", "family", "hardware_conflict",
+    required = ("boot_state", "boot_id", "hardware", "family",
                 "current_present", "candidate_present", "stock_dtb_sha256")
     if result.get("format") != "1" or any(key not in result for key in required):
         raise ProfileError("Incomplete or unsupported profile-tool snapshot.")
@@ -100,7 +115,8 @@ class ProfileTool:
         with open(os.path.join(self.bundle, "manifest-v2.json"), encoding="utf-8") as source:
             self.manifest = json.load(source)
 
-    def run(self, *arguments, apply=False, timeout=300):
+    def run(self, *arguments, apply=False, timeout=300, logged_stdout=4000):
+        """logged_stdout bounds the stdout kept in the command record; 0 omits it."""
         command = [self.executable] + (["--apply"] if apply else []) + list(arguments)
         environment = dict(os.environ, T113_STATE_DIR=self.state, T113_PROGRESS="1")
         environment["PATH"] = "/opt/uboot:" + environment.get("PATH", "")
@@ -158,13 +174,11 @@ class ProfileTool:
             returncode = process.returncode if process is not None else None
             if failure == "none" and returncode:
                 failure = "exit"
-            # snapshot contents are logged only after parsing and allowlisting below.
             log_diagnostic("command", command="t113-profilectl " + diagnostic_text(operation, 160),
                            apply=apply, phase=diagnostic_text(stage, 160),
                            elapsed_s=round(time.monotonic() - started, 3), exit_code=returncode,
-                           failure=failure,
-                           stdout="" if any(arg in ("snapshot", "doctor") for arg in arguments)
-                           else diagnostic_text(stdout), stderr=diagnostic_text(stderr))
+                           failure=failure, stdout=diagnostic_text(stdout, logged_stdout) if logged_stdout else "",
+                           stderr=diagnostic_text(stderr))
         if operation_error is not None:
             detail = diagnostic_text(stderr).strip()
             raise ProfileError("Profile operation could not finish during {} after {} s: {}{}".format(
@@ -183,19 +197,28 @@ class ProfileTool:
         if report["boot_state"] == "promotion-cleanup-required":
             self.run("cleanup", apply=True)
             report = self.snapshot()
+        if report["boot_state"] not in ("clean-stock", "clean-managed", "candidate-armed", "candidate-passed"):
+            self.log_boot_diagnostics()
         return report
 
+    def log_boot_diagnostics(self):
+        """Record profilectl's full boot report for support. Observation only: a
+        failure is logged and must not hide the repair screen that follows."""
+        try:
+            self.run("doctor", logged_stdout=16000)
+        except ProfileError as error:
+            log_diagnostic("boot-diagnostics-failed", detail=diagnostic_text(str(error)))
+
     def snapshot(self):
-        output = self.run("snapshot")
+        # The contents are logged only after parsing and allowlisting below.
+        output = self.run("snapshot", logged_stdout=0)
         try:
             report = parse_snapshot(output)
         except ProfileError as error:
             log_diagnostic("snapshot-invalid", detail=str(error))
             raise
         fields = {key: diagnostic_text(report.get(key, "unavailable"), 256) for key in _DIAGNOSTIC_FIELDS}
-        identity = report.get("model_identity", "").split(":")
-        if len(identity) == 4 and re.fullmatch(r"[0-9a-f]{12}", identity[2]):
-            fields["product_name"] = diagnostic_text(bytes.fromhex(identity[2]).decode("ascii", errors="replace"), 32)
+        fields["product_name"] = product_name(report)
         fields["stock_dtb_matches"] = report["stock_dtb_sha256"] == self.manifest["canonical_stock"]["sha256"]
         fields["restore_stock_available"] = self.can_restore_stock(report)
         log_diagnostic("snapshot", **fields)
@@ -212,22 +235,20 @@ class ProfileTool:
                 for row in self.manifest["cpu"]]
         if axis != "emmc":
             raise ProfileError("Unknown hardware setting.")
-        family = next((row for row in self.manifest["hardware"]
-                       if row["family_id"] == report["family"]), None)
-        if family is None:
-            return []
-        return [("stock", "STOCK eMMC  //  {} MHz".format(STOCK_EMMC_MHZ), "{} MHz".format(STOCK_EMMC_MHZ))] + [
-            (mhz, "{:g}x  //  {} MHz".format(int(mhz) / STOCK_EMMC_MHZ, mhz), mhz + " MHz")
-            for mhz in family["frequencies_mhz"].split(",") if int(mhz) != STOCK_EMMC_MHZ]
+        # profilectl owns eligibility: its list already applies the mode and model restrictions.
+        choices = []
+        for mhz in filter(None, report.get("available_emmc_mhz", "").split(",")):
+            if int(mhz) == STOCK_EMMC_MHZ:
+                choices.append(("stock", "STOCK eMMC  //  {} MHz".format(mhz), mhz + " MHz"))
+            else:
+                choices.append((mhz, "{:g}x  //  {} MHz".format(int(mhz) / STOCK_EMMC_MHZ, mhz), mhz + " MHz"))
+        return choices
 
-    def hardware_problem(self, report):
-        if report["hardware_conflict"] != "0":
-            return "Detected eMMC identity and runtime mode disagree. No profile was changed."
-        if report["hardware"] != "known":
-            return "This eMMC has not been validated with the available profiles."
+    def boot_problem(self, report):
+        """A boot configuration that must be repaired before any tuning, or ""."""
         state = report["boot_state"]
         if state in ("unknown/custom", "stock-active-with-unknown-remnants"):
-            detail = ("Stock is active, but old custom boot entries remain." if
+            detail = ("Stock boot is active; unrecognized boot objects were found." if
                       state == "stock-active-with-unknown-remnants" else "Custom boot settings must be restored before tuning.")
             for key, label in (("unknown_boot_files", "Boot files"), ("unknown_boot_variables", "Boot entries")):
                 if report.get(key):
@@ -235,7 +256,8 @@ class ProfileTool:
             return detail
         if state == "inconsistent":
             if report.get("stock_helpers_valid") == "0":
-                return "Protected stock boot commands were modified. Manual boot repair is required before tuning."
+                return "Stock boot commands differ: {}. Manual boot repair is required.".format(
+                    report.get("stock_helper_mismatches") or "details in diagnostics")
             if report.get("missing_boot_dependencies"):
                 return "Boot commands are missing: " + report["missing_boot_dependencies"].replace(",", ", ")
             if report.get("unsafe_boot_paths"):
@@ -243,6 +265,23 @@ class ProfileTool:
             return "Saved hardware settings or boot files are damaged or do not match. Manual boot repair is required."
         if state in ("known-cleanup-required", "stock-restore-cleanup-required"):
             return "A previous hardware settings change was interrupted. Restore stock settings before tuning."
+        return ""
+
+    def axis_problem(self, axis, report):
+        """Why a new trial on this axis cannot start, or "". An unsupported eMMC
+        blocks only new trials: deciding a pending trial and restoring stock remain."""
+        problem = self.boot_problem(report)
+        if problem:
+            return problem
+        # Every generated DTB states the eMMC family, so a CPU profile needs a known
+        # mode too. An unknown mode is a property of the interface type, not of this model.
+        if report["family"] == "unknown":
+            return "This eMMC type is not supported: {}. CPU and eMMC profiles both write eMMC boot " \
+                   "settings, so neither can be changed.".format(emmc_type(report))
+        # A CPU trial keeps the current eMMC frequency; only a new one must be eligible.
+        if axis == "emmc" and report["hardware"] != "supported":
+            return "This eMMC model is not supported: {}. eMMC frequency cannot be changed.".format(
+                emmc_description(report))
         return ""
 
     def can_restore_stock(self, report):
@@ -254,7 +293,7 @@ class ProfileTool:
     # Each operation decides from the report the user acted on; profilectl rechecks the
     # live state under its lock and refuses a stale request, so no snapshot is repeated here.
     def apply_trial(self, axis, value, report):
-        problem = self.hardware_problem(report)
+        problem = self.axis_problem(axis, report)
         if problem:
             raise ProfileError(problem)
         if report["candidate_present"] != "no":
@@ -323,7 +362,7 @@ class ProfileTool:
                 "Installed stock boot artifacts differ from this tuning bundle. "
                 "Use the installed firmware's restore mechanism; original backups are preserved.")
         if report["boot_state"] == "inconsistent" or report.get("manual_recovery_required") == "yes":
-            raise ProfileError(self.hardware_problem(report) or "Manual boot repair is required before restoring stock.")
+            raise ProfileError(self.boot_problem(report) or "Manual boot repair is required before restoring stock.")
         if report["boot_state"] == "clean-stock":
             return not self.confirmed_active(report)
         if report["boot_state"] in ("unknown/custom", "stock-active-with-unknown-remnants",
@@ -333,6 +372,7 @@ class ProfileTool:
                 arguments = ("--danger-cleanup-unknown",) + arguments
             self.run(*arguments, apply=True)
             if self.snapshot()["boot_state"] != "clean-stock":
+                self.log_boot_diagnostics()
                 raise ProfileError("Boot configuration is not clean stock after recovery. No trial was started.")
             return True
         if report["candidate_present"] == "yes":

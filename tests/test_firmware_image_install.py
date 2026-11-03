@@ -251,8 +251,9 @@ cat $WORK_DIR/payload > "$RESULT_PATH"
         result = self._run(image)
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self._wait_for(self.result.exists, "firmware entrypoint did not run")
-        self.assertEqual(self.result.read_text(encoding="utf-8"), "finished\n")
+        self._wait_for(
+            lambda: self.result.exists() and self.result.read_text(encoding="utf-8") == "finished\n",
+            "firmware entrypoint did not finish writing its result")
 
     # The steps by which the runner recognises a stock installer. The fixture
     # never calls them: its own steps below use test paths.

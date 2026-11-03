@@ -1,4 +1,4 @@
-"""The manifest owns eMMC model lists; the schema checks their format.
+"""The manifest supports unrestricted modes and optional exact model restrictions.
 
 Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 This file may be distributed under the terms of the GNU GPLv3 license.
@@ -27,14 +27,24 @@ class TuningManifestTest(unittest.TestCase):
     def test_current_manifest_matches_schema(self):
         self.validator.validate(self.manifest)
 
-    def test_model_can_be_added_to_either_family_without_changing_schema(self):
+    def test_modes_need_no_identity_but_can_have_narrower_model_records(self):
         for index in range(len(self.manifest["hardware"])):
             with self.subTest(family=index):
                 manifest = copy.deepcopy(self.manifest)
-                manifest["hardware"][index]["models"] += ",aa:0001:414243444546:02"
+                restricted = dict(manifest["hardware"][index], models="aa:0001:414243444546:02",
+                                  frequencies_mhz="50")
+                manifest["hardware"].append(restricted)
                 self.validator.validate(manifest)
 
+    def test_defaults_cannot_be_missing_duplicated_or_narrowed(self):
+        for hardware in (self.manifest["hardware"][:1], self.manifest["hardware"] * 2,
+                         [dict(self.manifest["hardware"][0], frequencies_mhz="50"),
+                          self.manifest["hardware"][1]]):
+            with self.subTest(hardware=hardware), self.assertRaises(ValidationError):
+                self.validator.validate(dict(self.manifest, hardware=hardware))
+
     def test_cpu_records_share_structure_without_pinning_aliases_or_order(self):
+        self.manifest["hardware"].reverse()
         self.manifest["cpu"].reverse()
         self.manifest["cpu"][0].update(alias="1.392", accepted_aliases="1392", warning="Trial required")
         self.validator.validate(self.manifest)
@@ -53,7 +63,9 @@ class TuningManifestTest(unittest.TestCase):
                              ("models", []), ("frequencies_mhz", "25,200"), ("kind", "other")):
             with self.subTest(field=field, value=value):
                 manifest = copy.deepcopy(self.manifest)
-                manifest["hardware"][0][field] = value
+                restricted = dict(manifest["hardware"][0], models="aa:0001:414243444546:02")
+                restricted[field] = value
+                manifest["hardware"].append(restricted)
                 with self.assertRaises(ValidationError):
                     self.validator.validate(manifest)
         for field, value in (("exact_mhz", 1128), ("exact_hz", 1400000000)):
@@ -62,7 +74,8 @@ class TuningManifestTest(unittest.TestCase):
                 manifest["cpu"][0][field] = value
                 with self.assertRaises(ValidationError):
                     self.validator.validate(manifest)
-        del self.manifest["cpu"][-1]["warning"]
+        experimental = next(row for row in self.manifest["cpu"] if "warning" in row)
+        del experimental["warning"]
         with self.assertRaises(ValidationError):
             self.validator.validate(self.manifest)
 

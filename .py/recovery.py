@@ -1334,14 +1334,20 @@ class RecoveryView:
         self.send(commands)
 
     def paged_list_page(self, title, entries, label, page, prefix,
-                        extra_action=None, items_long=False):
+                        extra_action=None, items_long=False, subtitle="", subtitle_detail=""):
         # An extra action occupies the fourth list row. Row geometry itself is
         # identical for every paged list.
         page_size = 3 if extra_action is not None else 4
         page_count = max(1, (len(entries) + page_size - 1) // page_size)
         page = min(max(0, page), page_count - 1)
-        commands = self.begin_page(
-            title, "Page {} of {}".format(page + 1, page_count))
+        # A caller's subtitle takes the header's first line; the page number
+        # always stays visible, after the caller's detail if there is one.
+        page_label = "Page {} of {}".format(page + 1, page_count)
+        if subtitle:
+            commands = self.begin_page(
+                title, subtitle, " / ".join(filter(None, (subtitle_detail, page_label))))
+        else:
+            commands = self.begin_page(title, page_label)
         start = page * page_size
 
         for row, entry in enumerate(entries[start:start + page_size]):
@@ -1375,11 +1381,12 @@ class RecoveryView:
         self.send(commands)
         return self.wait_action(), page
 
-    def choose(self, title, entries, label, items_long=False):
+    def choose(self, title, entries, label, items_long=False, subtitle="", subtitle_detail=""):
         page = 0
         while True:
             action, page = self.paged_list_page(
-                title, entries, label, page, "choose", items_long=items_long)
+                title, entries, label, page, "choose", items_long=items_long,
+                subtitle=subtitle, subtitle_detail=subtitle_detail)
             if action == "choose.back":
                 return None
             if action == "choose.prev":

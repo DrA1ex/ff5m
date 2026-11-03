@@ -1,0 +1,2 @@
+Linux version fixture
+mmc0: new HS200 MMC card at address 0001

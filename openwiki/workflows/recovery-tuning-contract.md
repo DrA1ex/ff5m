@@ -15,8 +15,17 @@ separate permission. Product authority lives in
 | Boot partition `FORGE_X_A.DTB` / `FORGE_X_B.DTB` | profilectl: the actual U-Boot inputs. |
 
 profilectl is the only owner of hardware profiles, backups, DTB generation,
-locking, U-Boot selection, promotion and rollback. Its native sources live in
-`forge-x-private/src/overclocking`; only built tools are published here.
+locking, U-Boot selection, promotion and rollback. The shell script, manifest,
+schema, runtime data and profilectl behavioral tests are maintained in FF5M.
+The shell script is covered by `LICENSE-BINARIES.md`.
+`forge-x-private/src/overclocking` owns only the native `fgx-fdt`, `fgx-lock` and
+`fgx-stress` helpers and their native contracts. Native publishing updates their
+executables and checksum entries without replacing the public shell script or data.
+
+Run the shell/native integration contracts with host-built helpers:
+`T113_HOST_BIN=/path/to/host/bin .venv/bin/python -m unittest tests.test_profilectl_transactions tests.test_profilectl_integration tests.test_profilectl_safety -q -b`.
+Without that environment variable these integration cases are skipped; the shell
+parser, mount-lifecycle, Recovery client and screen tests still run normally.
 
 ## The pending decision
 
@@ -119,6 +128,14 @@ profilectl reads the active eMMC clock from `/sys/kernel/debug/mmc0/ios`.
 Recovery runs before `boot.sh` mounts debugfs, so `recovery.sh` mounts it for
 its own lifetime when absent and unmounts only its own mount on exit.
 
+Read-only commands, including `doctor`, own any temporary boot mount in the main
+shell and release it on success or failure. An existing mount belongs to its
+original caller and is never unmounted or remounted automatically. Verification
+and diagnostic reports write only profile state under `/data`, so a read-only boot
+mount is sufficient and no boot files are removed. Accepting or cancelling a trial
+still needs writable boot access to clean up owned temporary DTBs; cancellation
+preserves the stock DTB and does not rewrite an already restored fallback bootcmd.
+
 ## Screens
 
 Blocking operations replace the buttons with a progress frame first, so stale
@@ -146,53 +163,100 @@ change does not add cancellation or a deadline to filesystem operations.
 
 ### Hardware identity and diagnostic records
 
-Manifest validator version 6 uses explicit model/revision keys in `hardware.models`:
-`MID:OEM:PNM-hex:PRV`. These are the Linux MMC v2+ CID fields at bits 127..120,
-119..104, 103..56 and 55..48. The six product-name bytes remain hex in the key;
-serial number, manufacture date and CRC/end bits never take part in equality.
-The field layout and sysfs word ordering follow Linux's
-[`mmc_decode_cid` and CID attribute](https://github.com/torvalds/linux/blob/master/drivers/mmc/core/mmc.c).
-An old exact-CID manifest must be replaced with the complete regenerated bundle;
-it is not silently reinterpreted. The validator version and bundle key invalidate
-old validation caches. Persisted profile metadata is unchanged.
+Manifest validator version 7 selects the base frequency list from the running
+MMC controller, independently of CID or Product Name:
 
-Supported model lists belong to `manifest-v2.json`. The JSON Schema checks their
-`MID:OEM:PNM-hex:PRV` format without repeating the lists. Adding a model to an
-existing family requires editing only its `models` field and updating the
-manifest entry in `SHA256SUMS`; it does not certify overclock stability.
-Host tests validate the manifest with JSON Schema and exercise model detection,
-including ambiguous entries. CPU records share one schema for the seven T113
-modes; their aliases and warning text are manifest data. Host tests also check
-that the published CPU profiles agree with the profilectl CLI. The schema keeps
-the fixed eMMC family modes and boot, voltage and thermal constraints supported
-by this T113 generator. These remain independent limits in `t113-profilectl`
-and `fgx-fdt`; neither tool becomes a general manifest-driven hardware engine.
+| Runtime timing | Signal voltage | Family | Frequencies (MHz) |
+| --- | --- | --- | --- |
+| 9 (HS200) | 1 (1.8 V) | hs2001v8 | 25, 50, 100, 150 |
+| 0 or 1 (Legacy / HS52) | 0 (3.3 V) | legacy3v3 | 25, 50 |
 
-| Model | MID | OEM | Product bytes | PRV | Family |
-| --- | --- | --- | --- | --- | --- |
-| HS200G | 15 | 0100 | 485332303047 | 00 | hs2001v8 |
-| 58A398 | d6 | 0103 | 353841333938 | 11 | hs2001v8 |
-| M4XFIU | 15 | 0100 | 4d3458464955 | 00 | legacy3v3 |
+Unknown, missing or ambiguous runtime evidence blocks profile changes. Missing,
+malformed or unlisted CID does not block a supported mode. The existing explicit
+trial and mandatory verification still determine whether a frequency works on
+this individual printer.
 
-These exact revisions preserve the identities encoded in the previous table;
-`00` is not a wildcard or evidence about a different revision. The table means
-supported model/revision and runtime family, not individually certified samples.
-`hardware=known` requires both one matching model and positive runtime family
-evidence. Missing evidence remains `untested`; disagreement or ambiguous records
-block ordinary mutation. Frequencies and the explicit trial/mandatory verify
-workflow are unchanged; recognizing a model does not certify every specimen at
-150 MHz.
+`manifest-v2.json` contains exactly one unrestricted `hardware_family` record
+per family, without `models`. Additional records may specify `models` as exact
+`MID:OEM:PNM-hex:PRV` identities and a narrower `frequencies_mhz` list. Serial,
+manufacturing date and CRC/end bits never participate. All matching restrictions
+for the observed family intersect with its base list; a nonmatching restriction
+does nothing. Restrictions cannot add frequencies or substitute for mode detection.
+An empty intersection offers no frequencies, including no implicit stock entry.
+For example, append this record to restrict one HS200 model to 25 and 50 MHz:
 
-Each entry records allowlisted `Tuning diagnostic` JSON lines in the existing
-Recovery log. A `command` record contains the operation, phase, duration, exit
-code, failure category and bounded stdout/stderr tails. Successful warnings are
-retained. Snapshot stdout is parsed as protocol data before logging; arbitrary
-environment variables, raw boot commands and full CID are omitted. Command output
-redacts specimen identifiers and boot-helper values. `snapshot` records include
-model support, runtime observations, boot graph names/file references, stock
-helper verdict, the observed DTB hash with whether it matches the bundle, and
-whether the repair page offers Restore. Observed runtime fields and model/family
-conclusions are named separately.
+```json
+{"kind":"hardware_family","family_id":"hs2001v8","models":"d6:0103:353841333938:11","frequencies_mhz":"25,50","runtime":"HS200,1.8V"}
+```
+
+To mark a model unsupported, give two matching records with disjoint lists
+(for example `25` and `50`): the intersection is empty. Snapshot and `detect`
+report `hardware=supported` exactly when the eligible list is not empty, so an
+unknown mode and an excluded model are both `unsupported`. Hardware support
+gates only new trials; it never replaces tuning with the repair page, and
+deciding a pending trial or RESTORE STOCK remains available. An excluded model
+refuses only new eMMC trials: a CPU trial keeps the effective eMMC frequency
+unchanged. An unknown mode refuses CPU trials too, because every generated DTB
+states the eMMC family. Recovery shows the refusal when that frequency page is
+opened, and profilectl repeats the check before writing. There is no override
+flag.
+
+Keep the published manifest representation with one hardware record per line;
+the constrained shell reader consumes that representation. Update `SHA256SUMS`
+after changing bundle data. JSON Schema and runtime validation require one base
+record per family and validate optional model keys and frequency subsets.
+The validator version and bundle key invalidate old validation caches; persisted
+candidate/current metadata and generated DTBs are unchanged.
+
+profilectl owns the eligibility calculation. The CLI list, snapshot field
+`available_emmc_mhz` and pre-write trial check use its result. Recovery uses that
+snapshot list directly, including restrictions that remove 25 MHz. The eMMC
+frequency chooser displays Product Name, runtime mode, voltage and actual clock.
+Generic repair/tuning and CPU pages omit the eMMC identity. Unsupported-type
+messages identify the observed timing and voltage without describing a model as
+having failed validation; only a model excluded by the manifest is named by its
+Product Name. The confirmed profile frequency remains separate from
+the observed clock.
+
+Each Recovery entry records `Tuning diagnostic` JSON lines in `recovery.log`.
+Snapshot fields include the compact model identity, runtime observations, boot
+graph/file references, mismatched stock helper names and restore availability.
+When the entry observation shows an abnormal boot state, and when RESTORE STOCK
+does not reach clean stock, Recovery also runs read-only `doctor`, retaining boot
+variable values, expected/actual protected helpers, the active and expected boot
+commands, referenced files, missing dependencies, unsafe paths and DTB hashes.
+Diagnostic failure is logged without hiding the original repair screen.
+
+`boot_normal` and `boot_recovery` are optional stock variables by explicit
+product policy. Their values, dependencies and file references are opaque to
+classification. Their presence or absence is harmless; tuning, cleanup and
+rollback never validate, delete, restore or create them. Protected `bootcmd` and
+the canonical `setargs_mmc` / `boot_dsp0` / `boot_uImage` checks still apply.
+Read-only diagnostics can display the optional helpers with normal redaction.
+
+Before the first boot mutation, profilectl saves the complete `fw_printenv`
+output in `/data/.forge-x-overclocking/profile/original/environment.txt`, alongside
+raw boot and both U-Boot environment partition images. This private immutable
+original includes arbitrary vendor variables, empty values and ignored helpers.
+It preserves the full values and participates in `original/SHA256SUMS` integrity
+checks. A later backup verifies and retains the first original; corruption blocks
+overwriting it. Files and the original directory are private to the owner.
+
+Diagnostic archives are shared publicly for support, so output redacts values
+that identify a specimen or grant access: a full CID contains the chip serial,
+and U-Boot holds the printer serial (`snum`, `serial#`) and MAC addresses. The
+printer model and boot commands are not private. profilectl owns redaction of
+named values: `doctor`, persistent diagnostic reports and its helper-mismatch
+errors redact a value whose name has a sensitive `_`-separated segment (`mac`,
+`wifi_mac`, `serial#`, `password`, `key`, ...), so `machine` stays visible.
+Boot command structure and harmless parameter references such as `${snum}`
+remain useful for comparison. The Recovery client only replaces raw 32-digit
+CIDs and MAC addresses that reach any message and strips control characters. Ordinary command streams are
+bounded at 4,000 characters; `doctor` stdout allows 16,000. Snapshot fields are
+bounded at 256 characters. Existing log rotation and CREATE DIAGNOSTICS include
+`recovery.log*`, and both TAR_DEBUG entry points recursively include the entire
+`/opt/logFiles/` installation log tree, including hidden and rotated files.
+Read-only CLI commands do not alter boot/profile state.
 
 A mutation is not followed by an extra snapshot: the page either reboots, and
 the next entry records a fresh snapshot, or observes the new state itself.

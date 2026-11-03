@@ -28,7 +28,7 @@
       "const": "1.0.1"
     },
     "validator_version": {
-      "const": 6
+      "const": 7
     },
     "canonical_stock": {
       "type": "object",
@@ -142,16 +142,56 @@
     "hardware": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 2,
-      "prefixItems": [
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/hs200"
+          },
+          {
+            "$ref": "#/$defs/legacy"
+          }
+        ]
+      },
+      "allOf": [
         {
-          "$ref": "#/$defs/hs200"
+          "contains": {
+            "properties": {
+              "family_id": {
+                "const": "hs2001v8"
+              }
+            },
+            "required": [
+              "family_id"
+            ],
+            "not": {
+              "required": [
+                "models"
+              ]
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
         },
         {
-          "$ref": "#/$defs/legacy"
+          "contains": {
+            "properties": {
+              "family_id": {
+                "const": "legacy3v3"
+              }
+            },
+            "required": [
+              "family_id"
+            ],
+            "not": {
+              "required": [
+                "models"
+              ]
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
         }
-      ],
-      "items": false
+      ]
     },
     "stock_environment": {
       "type": "object",
@@ -235,7 +275,6 @@
       "required": [
         "kind",
         "family_id",
-        "models",
         "frequencies_mhz",
         "runtime"
       ],
@@ -249,7 +288,7 @@
         "models": {
           "type": "string",
           "pattern": "^[0-9a-f]{2}:[0-9a-f]{4}:[0-9a-f]{12}:[0-9a-f]{2}(,[0-9a-f]{2}:[0-9a-f]{4}:[0-9a-f]{12}:[0-9a-f]{2})*$",
-          "description": "Supported MMC v2+ model/revision identities: MID:OEM:PNM-hex:PRV. Exact field values, no specimen serial/date/CRC and no wildcard revisions. Support is not individual frequency certification; explicit trial and verification remain mandatory."
+          "description": "Optional exact model/revision match: MID:OEM:PNM-hex:PRV. Matching records narrow the mode-based frequency list; serial/date/CRC never participate."
         },
         "frequencies_mhz": {
           "type": "string"
@@ -270,7 +309,8 @@
               "const": "hs2001v8"
             },
             "frequencies_mhz": {
-              "const": "25,50,100,150"
+              "type": "string",
+              "pattern": "^(25,)?(50,)?(100,)?150$|^(25,)?(50,)?100$|^(25,)?50$|^25$"
             },
             "runtime": {
               "const": "HS200,1.8V"
@@ -278,10 +318,23 @@
           },
           "required": [
             "family_id",
-            "models",
             "frequencies_mhz",
             "runtime"
-          ]
+          ],
+          "if": {
+            "not": {
+              "required": [
+                "models"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "frequencies_mhz": {
+                "const": "25,50,100,150"
+              }
+            }
+          }
         }
       ]
     },
@@ -296,7 +349,8 @@
               "const": "legacy3v3"
             },
             "frequencies_mhz": {
-              "const": "25,50"
+              "type": "string",
+              "pattern": "^(25,)?50$|^25$"
             },
             "runtime": {
               "const": "legacy-or-HS52,3.3V"
@@ -304,10 +358,23 @@
           },
           "required": [
             "family_id",
-            "models",
             "frequencies_mhz",
             "runtime"
-          ]
+          ],
+          "if": {
+            "not": {
+              "required": [
+                "models"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "frequencies_mhz": {
+                "const": "25,50"
+              }
+            }
+          }
         }
       ]
     }

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+set -eu
+log=${T113_FAKE_MOUNT_LOG:-}
+mounts=${T113_MOUNTS_FILE:?}
+[ -z "$log" ] || printf 'mount %s\n' "$*" >>"$log"
+# Like the printer's busybox mount, an untyped FAT mount uses the 8.3-only msdos driver.
+type=msdos; opts=rw
+if [ "${1:-}" = -t ]; then type=$2; shift 2; fi
+if [ "${1:-}" = -o ]; then opts=$2; shift 2; fi
+[ "$#" = 2 ] || exit 2
+dev=$1; mp=$2
+# Reject mounting over an existing fake mountpoint.
+if awk -v m="$mp" '$2==m{found=1} END{exit !found}' "$mounts" 2>/dev/null; then exit 1; fi
+printf '%s %s %s %s,relatime 0 0\n' "$dev" "$mp" "$type" "$opts" >>"$mounts"

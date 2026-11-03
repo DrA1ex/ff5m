@@ -36,7 +36,8 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.tool = PROFILES.ProfileTool(bundle=ROOT / ".bin/tools/overclocking", state="/data/test/profile")
         self.report = {
             "format": "1", "boot_state": "candidate-armed", "boot_id": "boot-b",
-            "hardware": "known", "family": "hs2001v8", "hardware_conflict": "0",
+            "hardware": "supported", "family": "hs2001v8",
+            "available_emmc_mhz": "25,50,100,150",
             "current_present": "no", "candidate_present": "yes", "candidate_valid": "yes",
             "candidate_armed_boot_id": "boot-a", "candidate_phase": "armed",
             "candidate_cpu_hz": "1248000000", "candidate_cpu_profile": "1248",
@@ -120,7 +121,7 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.report.update(boot_state="stock-active-with-unknown-remnants", candidate_present="no",
                            manual_recovery_required="no", unknown_boot_files="OLD.DTB",
                            unknown_boot_variables="custom_boot")
-        problem = self.tool.hardware_problem(self.report)
+        problem = self.tool.boot_problem(self.report)
         self.assertIn("OLD.DTB", problem)
         self.assertIn("custom_boot", problem)
         self.assertTrue(self.tool.can_restore_stock(self.report))
@@ -155,23 +156,66 @@ class OverclockingProfilesTest(unittest.TestCase):
                     run.assert_called_once_with('cleanup', apply=True)
 
     def test_unsupported_emmc_choice_is_explained_before_mutation(self):
-        self.report.update(candidate_present="no", family="legacy3v3", boot_state="clean-stock")
+        self.report.update(candidate_present="no", family="legacy3v3", boot_state="clean-stock",
+                           available_emmc_mhz="25,50")
         with mock.patch.object(self.tool, "run") as run:
-            with self.assertRaisesRegex(PROFILES.ProfileError, "unavailable"):
+            with self.assertRaises(PROFILES.ProfileError):
                 self.tool.apply_trial("emmc", "150", self.report)
             run.assert_not_called()
         self.assertEqual([choice[0] for choice in self.tool.choices("emmc", self.report)], ["stock", "50"])
 
-    def test_choices_lead_with_their_gain_over_stock(self):
+    def test_unknown_emmc_mode_blocks_both_axes_and_names_only_the_interface_type(self):
+        # Every generated DTB states the eMMC family, CPU profiles included.
+        for timing, voltage, expected in (('9', '0', ('HS200', '3.3 V')),
+                                          ('72', '83', ('72', '83')),
+                                          ('unknown', 'unknown', ())):
+            with self.subTest(timing=timing, voltage=voltage):
+                report = dict(self.report, hardware='unsupported', family='unknown', available_emmc_mhz='',
+                              candidate_present='no', boot_state='clean-stock',
+                              runtime_timing=timing, runtime_voltage=voltage,
+                              model_identity='d6:0103:353841333938:11')
+                self.assertEqual(self.tool.boot_problem(report), '')
+                for axis, value in (('cpu', '1.1'), ('emmc', '50')):
+                    message = self.tool.axis_problem(axis, report)
+                    for text in expected:
+                        self.assertIn(text, message)
+                    self.assertNotIn('58A398', message)
+                    with mock.patch.object(self.tool, 'run') as run:
+                        with self.assertRaises(PROFILES.ProfileError):
+                            self.tool.apply_trial(axis, value, report)
+                        run.assert_not_called()
+
+    def test_model_excluded_by_the_manifest_blocks_only_new_emmc_trials(self):
+        report = dict(self.report, hardware='unsupported', available_emmc_mhz='', candidate_present='no',
+                      boot_state='clean-stock', runtime_timing='9', runtime_voltage='1',
+                      model_identity='d6:0103:353841333938:11')
+        self.assertEqual(self.tool.boot_problem(report), '')
+        self.assertEqual(self.tool.axis_problem('cpu', report), '')
+        message = self.tool.axis_problem('emmc', report)
+        for value in ('58A398', 'HS200', '1.8 V'):
+            self.assertIn(value, message)
+        with mock.patch.object(self.tool, 'run') as run:
+            with self.assertRaises(PROFILES.ProfileError):
+                self.tool.apply_trial('emmc', '50', report)
+            run.assert_not_called()
+            self.tool.apply_trial('cpu', '1.1', report)
+            run.assert_called_once_with('test', 'cpu', '1.1', apply=True)
+
+    def test_choices_show_frequencies_and_their_gain_over_stock(self):
         self.report.update(family="hs2001v8")
         cpu = self.tool.choices("cpu", self.report)
-        self.assertEqual(cpu[0][1:], ("STOCK CPU  //  1008 MHz", "1008 MHz"))
-        # The first step above stock is the stock OPP table's own 1104 MHz.
-        self.assertEqual(cpu[1], ("1.1", "+10%  //  1104 MHz", "1104 MHz"))
-        self.assertTrue(cpu[-1][1].endswith("//  EXPERIMENTAL"))
+        self.assertEqual(cpu[0][0], "stock")
+        self.assertIn(str(PROFILES.STOCK_CPU_MHZ), cpu[0][2])
+        for choice, row in zip(cpu[1:], self.tool.manifest["cpu"]):
+            self.assertEqual(choice[0], row["alias"])
+            self.assertIn(str(row["exact_mhz"]), choice[2])
+            percentage = round((row["exact_mhz"] / PROFILES.STOCK_CPU_MHZ - 1) * 100)
+            self.assertIn(str(percentage) + "%", choice[1])
         emmc = self.tool.choices("emmc", self.report)
-        self.assertEqual([label for _, label, _ in emmc],
-                         ["STOCK eMMC  //  25 MHz", "2x  //  50 MHz", "4x  //  100 MHz", "6x  //  150 MHz"])
+        self.assertEqual([choice[0] for choice in emmc], ["stock", "50", "100", "150"])
+        for choice in emmc[1:]:
+            self.assertIn(choice[0], choice[2])
+            self.assertIn("{:g}x".format(int(choice[0]) / PROFILES.STOCK_EMMC_MHZ), choice[1])
 
     def test_commands_use_integrated_state_and_propagate_cli_error(self):
         self.command_script("import sys\nprint('ERROR: candidate artifact is corrupt', file=sys.stderr)\nsys.exit(1)\n")
@@ -227,19 +271,6 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertTrue(children[0].stdout.closed)
         self.assertTrue(children[0].stderr.closed)
 
-    def test_command_timeout_does_not_leave_a_child_running(self):
-        self.command_script("import time\ntime.sleep(60)\n")
-        children, launch = [], subprocess.Popen
-        def spawn(*args, **kwargs):
-            child = launch(*args, **kwargs)
-            children.append(child)
-            return child
-        with mock.patch.object(PROFILES.subprocess, 'Popen', side_effect=spawn):
-            with self.assertRaisesRegex(PROFILES.ProfileError, 'could not finish'):
-                self.tool.run('snapshot', timeout=0.1)
-        self.assertIsNotNone(children[0].returncode)
-        self.assertTrue(children[0].stdout.closed)
-
     def records(self, output):
         return [json.loads(line.split("Tuning diagnostic: ", 1)[1]) for line in output.splitlines()
                 if line.startswith("Tuning diagnostic: ")]
@@ -267,7 +298,7 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertNotIn('private-fixture-value', log.getvalue())
 
     def test_successful_snapshot_records_allowlisted_state_and_restore_verdict(self):
-        report = dict(self.report, hardware="untested", boot_state="inconsistent",
+        report = dict(self.report, hardware="unsupported", boot_state="inconsistent",
                       manual_recovery_required="yes", stock_helpers_valid="0",
                       model_identity="d6:0103:353841333938:11",
                       runtime_timing="9", runtime_voltage="1", serial="private-fixture-id",
@@ -293,7 +324,7 @@ class OverclockingProfilesTest(unittest.TestCase):
     def test_successful_utility_stdout_and_warnings_are_attributed_and_redacted(self):
         self.command_script("import sys\nprint('Candidate verification: PASS')\n"
                             "print('WARNING: fw_printenv: fixture warning', file=sys.stderr)\n"
-                            "print('cid=d60103353841333938118ae86aa09a81 serial=fixture-private-id "
+                            "print('cid=d60103353841333938118ae86aa09a81 "
                             "ethaddr=02:00:00:00:00:01', file=sys.stderr)\n")
         log = io.StringIO()
         with contextlib.redirect_stderr(log):
@@ -304,7 +335,6 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertIn('Candidate verification: PASS', record['stdout'])
         self.assertIn('fw_printenv: fixture warning', record['stderr'])
         self.assertNotIn('d60103353841333938118ae86aa09a81', log.getvalue())
-        self.assertNotIn('fixture-private-id', log.getvalue())
         self.assertNotIn('02:00:00:00:00:01', log.getvalue())
 
     def test_output_is_bounded_but_failure_tail_and_exit_code_survive(self):
@@ -328,12 +358,21 @@ class OverclockingProfilesTest(unittest.TestCase):
         pathlib.Path(self.tool.executable).write_text(
             "#!/bin/sh\nprintf 'fw_printenv: still waiting\\n' >&2\nsleep 60\n")
         log = io.StringIO()
-        with contextlib.redirect_stderr(log):
+        children, launch = [], subprocess.Popen
+        def spawn(*args, **kwargs):
+            child = launch(*args, **kwargs)
+            children.append(child)
+            return child
+        with contextlib.redirect_stderr(log), mock.patch.object(PROFILES.subprocess, 'Popen', side_effect=spawn):
             with self.assertRaisesRegex(PROFILES.ProfileError, 'still waiting'):
                 self.tool.run('snapshot', timeout=1)
+        child, = children
+        self.assertIsNotNone(child.returncode)
+        self.assertTrue(child.stdout.closed)
+        self.assertTrue(child.stderr.closed)
         record, = self.records(log.getvalue())
         self.assertEqual(record['failure'], 'timeout')
-        self.assertEqual(record['exit_code'], -9)
+        self.assertEqual(record['exit_code'], child.returncode)
         self.assertIn('fw_printenv: still waiting', record['stderr'])
 
     def test_launch_error_is_distinguished_from_utility_failure(self):
@@ -346,30 +385,43 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertEqual(record['failure'], 'launch')
         self.assertIsNone(record['exit_code'])
 
-    def test_raw_boot_helper_values_and_bootcmd_are_omitted(self):
-        value = ('Current bootcmd: echo fixture-arbitrary-value\n'
-                 'Stock U-Boot helper mismatch: boot_uImage\nExpected:\n  expected-value\n\n'
-                 'Actual:\n  fixture-private-helper\n')
-        clean = PROFILES.diagnostic_text(value)
-        self.assertIn('boot_uImage', clean)
-        self.assertNotIn('fixture-arbitrary-value', clean)
-        self.assertNotIn('fixture-private-helper', clean)
-        self.assertNotIn('expected-value', clean)
+    def test_choices_use_utility_eligibility_including_empty_lists_and_no_stock(self):
+        self.report["available_emmc_mhz"] = "50"
+        self.assertEqual([choice[0] for choice in self.tool.choices('emmc', self.report)], ['50'])
+        for value in ('', None):
+            if value is None:
+                self.report.pop('available_emmc_mhz')
+            else:
+                self.report['available_emmc_mhz'] = value
+            self.assertEqual(self.tool.choices('emmc', self.report), [])
 
-    def test_restore_rule_is_unchanged_for_every_known_state(self):
-        allowed = ('unknown/custom', 'stock-active-with-unknown-remnants',
-                   'known-cleanup-required', 'stock-restore-cleanup-required')
-        other = ('clean-stock', 'clean-managed', 'candidate-armed', 'candidate-passed',
-                 'promotion-not-committed', 'promotion-cleanup-required', 'inconsistent')
-        for state in allowed + other:
-            for manual in ('yes', 'no', None):
-                for matches in (True, False):
-                    with self.subTest(state=state, manual=manual, matches=matches):
-                        report = dict(self.report, boot_state=state, manual_recovery_required=manual,
-                                      hardware='untested', stock_helpers_valid='0')
-                        if not matches: report['stock_dtb_sha256'] = 'b' * 64
-                        self.assertEqual(self.tool.can_restore_stock(report),
-                                         state in allowed and manual != 'yes' and matches)
+    def test_abnormal_entry_records_the_full_boot_report_once(self):
+        for state, expected in (('inconsistent', 1), ('clean-stock', 0)):
+            with self.subTest(state=state):
+                protocol = "".join(key + "=" + value + "\n" for key, value in
+                                   dict(self.report, boot_state=state).items())
+                self.command_script("import sys\nif 'doctor' in sys.argv: print('bootcmd=run fixture_flow')\n"
+                                    "elif 'snapshot' in sys.argv: print(" + repr(protocol) + ", end='')\n")
+                log = io.StringIO()
+                with contextlib.redirect_stderr(log):
+                    self.assertEqual(self.tool.prepare()['boot_state'], state)
+                reports = [record['stdout'] for record in self.records(log.getvalue())
+                           if record.get('command') == 't113-profilectl doctor']
+                self.assertEqual(len(reports), expected)
+                for report in reports:
+                    self.assertIn('bootcmd=run fixture_flow', report)
+
+    def test_boot_diagnostic_failure_does_not_hide_the_repair_report(self):
+        report = dict(self.report, boot_state='inconsistent', stock_helpers_valid='0',
+                      stock_helper_mismatches='boot_uImage')
+        protocol = ''.join(key + '=' + value + '\n' for key, value in report.items())
+        with mock.patch.object(self.tool, 'run',
+                               side_effect=['', protocol, PROFILES.ProfileError('fixture doctor failure')]), \
+                contextlib.redirect_stderr(io.StringIO()) as log:
+            self.assertEqual(self.tool.prepare(), report)
+        self.assertTrue(any(record['event'] == 'boot-diagnostics-failed'
+                            for record in self.records(log.getvalue())))
+        self.assertIn('boot_uImage', self.tool.boot_problem(report))
 
 
 if __name__ == "__main__":

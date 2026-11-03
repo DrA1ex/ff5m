@@ -1,0 +1,12 @@
+#!/bin/sh
+# Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+# This file may be distributed under the terms of the GNU GPLv3 license.
+set -u
+[ -z "${T113_TEST_ENV_STDERR:-}" ] || printf '%s\n' "$T113_TEST_ENV_STDERR" >&2
+[ "${T113_TEST_ENV_EXIT:-0}" = 0 ] || exit "$T113_TEST_ENV_EXIT"
+[ -n "${T113_FAKE_ENV_DB:-}" ] || exit 2
+[ -z "${T113_ENV_READ_LOG:-}" ] || printf 'read\n' >>"$T113_ENV_READ_LOG"
+if [ "${1:-}" = -c ]; then shift 2; fi
+if [ "$#" -eq 0 ]; then cat "$T113_FAKE_ENV_DB"; exit 0; fi
+name=$1
+grep "^${name}=" "$T113_FAKE_ENV_DB" || exit 1
