@@ -181,5 +181,5 @@ Actual memory use depends on the camera, format, resolution, and number of viewe
 - **Defaults:** 640×480, 15 FPS, one V4L2 capture buffer, and three video clients. One extra worker is kept for snapshots and controls. Requests over the limit get HTTP `429`.
 - **Memory limits:** each worker thread has a 128 KiB stack. Frame buffers grow only to the largest frame actually seen. The control page is a 6 KiB static page.
 - **`REDUCE_MEMORY`:** maps to `--frame-cap`, which limits the capture buffer for cameras that report a 1080p-sized buffer at every resolution.
-- **Raw formats:** when built with libjpeg (`WITH_RAW_INPUT`), YUYV, UYVY, RGB24, and RGB565 input is encoded to JPEG. The MJPEG-only build does not link libjpeg.
+- **Raw formats:** the bundled binary encodes YUYV, UYVY, RGB24, and RGB565 input to JPEG using libjpeg. This software is based in part on the work of the Independent JPEG Group; see [the libjpeg notice](../LICENSE-LIBJPEG.txt). MJPEG-only builds do not link libjpeg.
 - **Standalone use:** forge-x-streamer builds on other Linux systems with V4L2 and is licensed under GPL-2.0-or-later. Its CI builds both variants and runs the tests. See its [repository](https://github.com/DrA1ex/forge-x-streamer) for build and runtime options.
