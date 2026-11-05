@@ -7,7 +7,9 @@
 This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
 The mod is based on ZMod, which itself is derived from Klipper-mod.
 
-**For 1.4.2 beta**, refer to this documentation instead: [1.4.2 README](https://github.com/DrA1ex/ff5m/blob/1.4.2/README.md)
+**For 1.4.2 beta**, refer to this documentation instead: [1.4.2 README](https://github.com/DrA1ex/ff5m/blob/1.4.2/README.md).   
+
+If you're interested in bringing Forge-X to the **AD5X** / **Creator 5**, join this discussion: [Help bring Forge-X / Feather to AD5X and Creator 5](https://github.com/DrA1ex/ff5m/discussions/81)
 
 
 > [!CAUTION]
@@ -66,8 +68,6 @@ The beta is already considered stable enough for regular use, but it is still a 
 If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the [**Releases**](https://github.com/DrA1ex/ff5m/releases) page for the latest `1.4.2` beta.
 
 Full details, installation notes, and beta-specific warnings are included in the release notes.
-
-If you're interested in bringing Forge-X to the AD5X / Creator 5, join this discussion: [Help bring Forge-X / Feather to AD5X and Creator 5](https://github.com/DrA1ex/ff5m/discussions/81)
 
 ## TL;DR
 
