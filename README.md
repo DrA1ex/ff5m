@@ -7,6 +7,9 @@
 This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
 The mod is based on ZMod, which itself is derived from Klipper-mod.
 
+**For 1.4.2 beta**, refer to this documentation instead: [1.4.2 README](https://github.com/DrA1ex/ff5m/blob/1.4.2/README.md)
+
+
 > [!CAUTION]
 > *If you choose to install this mod on your AD5M (Pro), be aware that you risk voiding your warranty or damaging your printer.*
 > *After installation or uninstallation, ensure that you check all printer parameters and perform a full recalibration. Failing to do so may result in damage to your printer.*
@@ -54,6 +57,18 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 - **Entware** package manager for additional software installation
 - **Dual boot** with stock Flashforge software / Klipper Mod
 
+## Public Beta of Upcoming 1.4.2 Release
+
+**Forge-X 1.4.2 is now available as a public beta.** This is a major update with a fully interactive **Feather** touchscreen and a heavily reworked Forge-X experience — much closer to what I originally wanted Forge-X to be from the beginning.
+
+The beta is already considered stable enough for regular use, but it is still a beta: some bugs, rough edges, or cosmetic issues may remain.
+
+If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the [**Releases**](https://github.com/DrA1ex/ff5m/releases) page for the latest `1.4.2` beta.
+
+Full details, installation notes, and beta-specific warnings are included in the release notes.
+
+If you're interested in bringing Forge-X to the AD5X / Creator 5, join this discussion: [Help bring Forge-X / Feather to AD5X and Creator 5](https://github.com/DrA1ex/ff5m/discussions/81)
+
 ## TL;DR
 
 > [!CAUTION]
@@ -77,16 +92,6 @@ It’s restorable though, but **it requires additional hardware** or soldering i
 16. **Optional**: Enable [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection).   
 17. **Optional**: Enable [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
 18. **Optional**: Enable [Power Loss Recovery](docs/PRINTING.md#power-loss-recovery-resurrection).   
-
-## Public Beta of Upcoming 1.4.2 Release
-
-**Forge-X 1.4.2 is now available as a public beta.** This is a major update with a fully interactive **Feather** touchscreen and a heavily reworked Forge-X experience — much closer to what I originally wanted Forge-X to be from the beginning.
-
-The beta is already considered stable enough for regular use, but it is still a beta: some bugs, rough edges, or cosmetic issues may remain.
-
-If you want to try the new Forge-X early, help find the remaining issues, and take part in shaping the upcoming release, check the [**Releases**](https://github.com/DrA1ex/ff5m/releases) page for the latest `1.4.2` beta.
-
-Full details, installation notes, and beta-specific warnings are included in the release notes.
 
 
 ## Get Started
