@@ -12,38 +12,25 @@
   </picture>
 </p>
 
-# Forge-X: Firmware Mod for Flashforge Adventurer 5M / 5M Pro
+# Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
-This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
-The mod is based on ZMod, which itself is derived from Klipper-mod.
-
-**For 1.4.2 beta**, refer to this documentation instead: [1.4.2 README](https://github.com/DrA1ex/ff5m/blob/1.4.2/README.md).   
-
-If you're interested in bringing Forge-X to the **AD5X** / **Creator 5**, join this discussion: [Help bring Forge-X / Feather to AD5X and Creator 5](https://github.com/DrA1ex/ff5m/discussions/81)
-
+**Forge-X** is a free, _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools. The mod can be fully removed.
 
 > [!CAUTION]
-> *If you choose to install this mod on your AD5M (Pro), be aware that you risk voiding your warranty or damaging your printer.*
-> *After installation or uninstallation, ensure that you check all printer parameters and perform a full recalibration. Failing to do so may result in damage to your printer.*
+> *If you install this mod on your AD5M (Pro), you risk voiding your warranty or damaging your printer.*
+> *After installation or uninstallation, check all printer parameters and perform a full recalibration. Skipping this step may damage your printer.*
 > *Proceed at your own risk!*
 
-## DISCLAIMER
+## Before you install
 
-The printer has Linux, but it’s not the Linux you’re used to.  
-**It’s not** like Ubuntu, Debian, Fedora, or other Linux distributions.  
-The printer **isn’t a desktop**. It uses firmware with a Linux core as its base.
+The printer runs vendor firmware on a Linux kernel. It is **not** a general-purpose computer and not Ubuntu, Debian, or any other desktop or server distribution.
 
-So, **read the documentation** before doing anything. Because you risk **completely bricking** your printer.   
-It’s restorable though, but **it requires additional hardware** or soldering in exceptional cases.
+**Read the documentation** before changing anything. A mistake can leave the printer unable to boot. It can be restored, but in rare cases that **requires additional hardware** or soldering.
 
-**Don’t flash different mod's firmware over another** unless you clearly understand what you are doing.   
-**Don’t delete** installation, uninstallation, or recovery **logs** — it’s may help to restore your printer.
+- Do not flash another mod's firmware over Forge-X (or Forge-X over another mod) unless you clearly understand what you are doing.
+- Do not delete installation, uninstallation, or recovery logs. They can help you restore the printer.
 
 ## Features
-<p align="center">
-<img width="400" src="https://github.com/user-attachments/assets/c7ff5d09-3786-4b69-b8d5-1f254c809de7" />
-<img width="400" src="https://github.com/user-attachments/assets/6f3b9343-d3d1-4f0e-b4cf-9ac1041502b2" />
-</p>
 
 - **Stock** Screen with option to disable it completely and switch to one of alternative screen versions to reduce resource consumption
 - **Klipper** with many patches/fixes/plugins specially adapted for AD5M
