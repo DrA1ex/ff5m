@@ -47,7 +47,8 @@ apply_migrations() {
         if [[ "$migration_number" > "$last_migration" ]]; then
             echo "Applying migration: $migration_file"
             
-            if sqlite3 "$DATABASE_PATH" < "$migration"; then
+            # Stop before COMMIT on errors; closing the connection rolls back.
+            if sqlite3 -bail "$DATABASE_PATH" < "$migration"; then
                 echo "$migration_number" > "$LAST_MIGRATION_FILE"
                 sync
                 migration_applied=1
