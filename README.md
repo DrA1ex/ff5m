@@ -1,8 +1,18 @@
 <p align="center">
-   <img width="600" src="https://github.com/user-attachments/assets/4e443f9c-02a7-483a-a9da-9afa6db6be2a" />
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="https://github.com/user-attachments/assets/74920f34-bb4e-4629-8f35-1b8cf4b8a49f">
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="https://github.com/user-attachments/assets/16a8c4cb-cd6f-4567-a90a-40401c543924">
+    <img alt="Forge-X"
+      src="https://github.com/user-attachments/assets/16a8c4cb-cd6f-4567-a90a-40401c543924"
+      width="700">
+  </picture>
 </p>
 
-# Flashforge Adventurer 5M (Pro) Firmware Mod
+# Forge-X: Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
 This is an _unofficial_ mod to run Moonraker, Klipper (with essential patches), Mainsail, and Fluidd on the Flashforge AD5M (Pro) 3D printers.
 The mod is based on ZMod, which itself is derived from Klipper-mod.
