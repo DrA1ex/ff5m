@@ -1,8 +1,18 @@
 <p align="center">
-   <img width="600" src="https://github.com/user-attachments/assets/4e443f9c-02a7-483a-a9da-9afa6db6be2a" />
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="https://github.com/user-attachments/assets/74920f34-bb4e-4629-8f35-1b8cf4b8a49f">
+    <source
+      media="(prefers-color-scheme: light)"
+      srcset="https://github.com/user-attachments/assets/16a8c4cb-cd6f-4567-a90a-40401c543924">
+    <img alt="Forge-X"
+      src="https://github.com/user-attachments/assets/16a8c4cb-cd6f-4567-a90a-40401c543924"
+      width="700">
+  </picture>
 </p>
 
-# Forge-X: Klipper Firmware Mod for Flashforge Adventurer 5M / 5M Pro
+# Forge-X: Firmware Mod for Flashforge Adventurer 5M / 5M Pro
 
 **Forge-X** is a free, _unofficial_ firmware mod for the **Flashforge Adventurer 5M and 5M Pro** (AD5M) 3D printers. It adds an adapted **Klipper** with **Moonraker**, **Fluidd**, and **Mainsail** on top of the stock firmware, together with a lightweight touchscreen (**Feather**), calibration tools, print-safety features, Power Loss Recovery, and recovery tools. The mod can be fully removed.
 
