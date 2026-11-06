@@ -38,7 +38,7 @@ At boot, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) checks whether the s
 
 - **Stock:** it leaves the vendor boot/application path active.
 - **Feather, Guppy, Headless:** the existing boot path starts `netd --adopt-existing` when `network.conf` is already present. A live connection is kept only when it matches the mod-owned desired transport and Wi-Fi SSID; otherwise the daemon cleans both transports and starts the saved target afresh. An older installation without that file starts in normal fresh mode once so netd can bootstrap its target. Feather continues immediately while networking establishes in the background; Guppy and Headless use the thin `netd-cli wait --timeout 180` before booting the MCU with `boot_mcu` and starting Klipper. Wi-Fi driver loading and all connection policy belong to the daemon.
-- **Interactive touch:** the later `S99root` stage runs `.root/start.sh`, which starts `S35tslib` for Feather and Guppy as part of the restartable service lifecycle. Typer retries `/dev/input/guppy` until that device appears; Headless does not start touch input.
+- **Interactive touch:** the later `S99root` stage applies the shared screen policy before running `.root/start.sh`; `AUTO` starts `S35tslib` for Feather and Guppy. Typer retries `/dev/input/fgx_touch` until that device appears; plain Headless does not start touch input unless explicitly requested or declared by a custom screen.
 - **Network failure:** Feather remains available offline and exposes its Network page. It no longer changes the selected display back to stock merely because DHCP or Wi-Fi failed.
 
 Saved Stock network configuration remains compatible through the one-shot bootstrap or `--migrate-existing` path, but the following interaction belongs specifically to **Feather**, not the Stock connection menu. Feather can scan for 2.4/5 GHz WPA/WPA2-PSK networks, enter a password, reconnect a saved profile without exposing its PSK to the UI, or select Ethernet DHCP locally. An explicit Wi-Fi connection publishes its current attempt and makes at most three attempts when the 4-way handshake times out; normal maintenance of the selected desired network remains continuous. Feather itself never blocks startup on network establishment and can explicitly cancel an in-progress startup/reconnect attempt to remain offline and choose another network. A terminal wrong-password dialog offers replacement of the password for that specific network; the scan list has no global password-reset action. The scan rows render band, SSID, and signal as separate columns.
@@ -63,7 +63,7 @@ config/feather.cfg
        ├─ feather/control/joystick.py owns touch normalization and motion ramps
        │    ├─ draw FIFO /tmp/typer → typer → framebuffer
        │    └─ event FIFO /tmp/feather-events ← tap or held-pointer actions
-       └─ /dev/input/guppy ← ts_uinput ← physical touchscreen
+       └─ /dev/input/fgx_touch ← ts_uinput ← physical touchscreen
 ```
 
 1. [`config/feather.cfg`](../../config/feather.cfg) includes common/headless/client macro layers and declares `[feather_screen]`.
@@ -144,7 +144,7 @@ Do **not** start a second process that writes arbitrary concurrent data to `/tmp
 
 ## Guppy versus Feather
 
-Guppy is an optional interactive screen integration, not the implementation base for Feather. Both modes reuse the small `ts_uinput` service and stable `/dev/input/guppy` link. Guppy additionally launches its separate multi-threaded application; Feather reads the normalized input directly from `typer` and keeps semantics in the existing Klipper process.
+Guppy is an optional interactive screen integration, not the implementation base for Feather. Both modes reuse the small `ts_uinput` service. Feather uses `/dev/input/fgx_touch`; Guppy uses its `/dev/input/guppy` compatibility alias. Guppy additionally launches its separate multi-threaded application; Feather reads the normalized input directly from `typer` and keeps semantics in the existing Klipper process.
 
 Choose Guppy for its broader independent UI. Choose Feather when the priority is essential local control with the smallest additional runtime and continued operation without a network.
 
@@ -152,7 +152,7 @@ Choose Guppy for its broader independent UI. Choose Feather when the priority is
 
 1. **Confirm selected mode:** run `GET_MOD PARAM=display`; check the active include in `/opt/config/printer.cfg` only when diagnosing configuration routing.
 2. **Check the panel and network independently:** Feather can be healthy while offline. Inspect its Network page and `/tmp/net_ip` before diagnosing Moonraker/web access.
-3. **Feather-specific checks:** inspect Klipper logs, verify `/dev/input/guppy`, `/tmp/typer`, and `/tmp/feather-events`, and avoid manually killing `typer` while Klippy owns the display.
+3. **Feather-specific checks:** inspect Klipper logs, verify `/dev/input/fgx_touch`, `/tmp/typer`, and `/tmp/feather-events`, and avoid manually killing `typer` while Klippy owns the display.
 4. **Recover safely:** boot through the documented dual-boot/skip path or use the documented display-off image if access is lost. From a recovered/stock-capable context, restore `STOCK` through `SET_MOD` or `zdisplay.sh stock`; use manual `variables.cfg` editing only as the documented last-resort recovery procedure.
 5. **Validate after changes:** exercise stock mode plus each affected alternative mode; verify the animated pre-ready state, offline startup, DHCP recovery, MCU/Klipper startup, `FIRMWARE_RESTART` recovery, browser control, status/error display, and a safe print lifecycle. Do not test mode changes during production prints.
 

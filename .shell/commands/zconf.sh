@@ -26,7 +26,7 @@ read_param() {
         
         # Check if the value starts and ends with a single quote
         if [[ "$value" =~ ^\'.*\'$ ]]; then
-            value="${value:1:-1}"
+            value="${value:1:${#value}-2}"
         fi
 
         echo "$value"

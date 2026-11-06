@@ -125,6 +125,7 @@ initialize() {
     ln -fs /opt/config/mod/.shell/S55boot /etc/init.d/
     ln -fs /opt/config/mod/.shell/S60dropbear /etc/init.d/
     ln -fs /opt/config/mod/.shell/S98camera /etc/init.d/
+    ln -fs /opt/config/mod/.shell/S98screen /etc/init.d/
     ln -fs /opt/config/mod/.shell/S98zssh /etc/init.d/
     ln -fs /opt/config/mod/.shell/S99root /etc/init.d/
     # rcK stops S?? services directly; remove the obsolete unused kill link.

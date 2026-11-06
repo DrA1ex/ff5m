@@ -1,7 +1,8 @@
-libjpeg 9e — used by the Forge-X camera streamer
+libjpeg 9d — optional software JPEG backend for Forge-X Streamer
 
 This software is based in part on the work of the Independent JPEG Group.
-The bundled mjpg_streamer statically includes libjpeg 9e (16-Jan-2022).
+Software builds can statically include libjpeg 9d (12-Jan-2020).
+The bundled hardware-JPEG forge_x_streamer does not link libjpeg.
 Its original copyright and distribution terms follow, unchanged from the
 LEGAL ISSUES section of the Independent JPEG Group README.
 
@@ -24,7 +25,7 @@ with respect to this software, its quality, accuracy, merchantability, or
 fitness for a particular purpose.  This software is provided "AS IS", and you,
 its user, assume the entire risk as to its quality and accuracy.
 
-This software is copyright (C) 1991-2022, Thomas G. Lane, Guido Vollbeding.
+This software is copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding.
 All Rights Reserved except as specified below.
 
 Permission is hereby granted to use, copy, modify, and distribute this

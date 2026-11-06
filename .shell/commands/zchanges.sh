@@ -50,24 +50,36 @@ case "$key" in
     camera)
         if [ "$value" -eq 1 ]; then
             message "You can change camera parameters here: Configuration -> mod_data -> camera.conf"
-            
-            cam_pid_file="/run/camera.pid"
-            ss -tuln | grep -q ":8080"; STREAM_ACTIVE=$(( $? == 0 ))
-            [ -f "$cam_pid_file" ] && kill -0 "$(cat $cam_pid_file)" 2>/dev/null; MOD_CAM_ACTIVE=$(( $? == 0 ))
-            
-            if [ "$STREAM_ACTIVE" -eq 1 ] && [ "$MOD_CAM_ACTIVE" -eq 0 ]; then
+
+            # Something other than our camera already serves the port: the stock camera.
+            if ss -tuln | grep -q ":8080 " && ! process_running "$CAMERA_PID_F"; then
                 printer_command "action:prompt_begin Camera"
                 printer_command 'action:prompt_text The camera is currently in use! Disable it in the Stock Screen settings and try again.'
                 printer_command "action:prompt_end"
                 printer_command "action:prompt_show"
-                
+
                 exit 1
             fi
-            
-            /etc/init.d/S98camera start
+
+            if ! /etc/init.d/S98camera start; then
+                message "Camera failed to start. Details: /data/logFiles/streamer.log" "!!"
+            fi
         else
             /etc/init.d/S98camera stop
         fi
+        "$CMDS/zstreams.sh" webcams
+    ;;
+
+    screen_stream)
+        "$CMDS/zstreams.sh" apply
+    ;;
+
+    touch_interface)
+        "$CMDS/zstreams.sh" touch
+    ;;
+
+    screen_stream_fps|screen_stream_quality)
+        /etc/init.d/S98screen restart
     ;;
 
     timelapse)

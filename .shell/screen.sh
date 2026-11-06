@@ -269,7 +269,10 @@ case "$1" in
 
         nozzle_temp="$1"
         bed_temp="$2"
-        camera_active=$( ps | grep -q "[m]jpg_streamer"; echo $(($? == 0)) )
+        camera_active=0
+        if process_running "$CAMERA_PID_F"; then
+            camera_active=1
+        fi
 
         wifi_color=$( [ -f "$WIFI_CONNECTED_F" ] && echo "ffffff" || echo "606060" )
         nozzle_color=$( [ "$nozzle_temp" -ge 50 ] && echo "ff0000" || echo "ffffff" )

@@ -40,7 +40,9 @@ create_link() {
     DEVICE=${DEVICE%/device/name}
     DEVICE="/dev/input/${DEVICE##*/}"
 
-    ln -fns "$DEVICE" /dev/input/guppy
+    ln -fns "$DEVICE" /dev/input/fgx_touch
+    # Guppy still uses this compatibility name.
+    ln -fns /dev/input/fgx_touch /dev/input/guppy
 }
 
 start() {
@@ -73,13 +75,13 @@ start() {
 stop() {
     echo "Stopping tslib uinput interface..."
     if [ ! -f "$PIDFILE" ]; then
-        rm -f /dev/input/guppy
+        rm -f /dev/input/fgx_touch /dev/input/guppy
         echo "Not running"
         return 0
     fi
     start-stop-daemon -K -q -p $PIDFILE
     result=$?
-    rm -f "$PIDFILE" /dev/input/guppy
+    rm -f "$PIDFILE" /dev/input/fgx_touch /dev/input/guppy
     [ $result = 0 ] && echo "OK" || echo "FAIL"
 }
 

@@ -422,7 +422,7 @@ This error occurs when the camera streamer encounters an invalid configuration o
 
 **Solutions**:
 - **Run CAMERA_RESTART**: Execute the `CAMERA_RESTART` macro to reset the camera service, which typically resolves the error.
-- **Disable REDUCE_MEMORY**: Verify that the `REDUCE_MEMORY` option is disabled in `camera.conf` (see Camera Configuration Guide). This option can cause format errors.
+- **Disable REDUCE_MEMORY**: Verify that the `REDUCE_MEMORY` option is disabled in `camera.conf` (see [Camera settings](CAMERA.md#camera-settings)). This option can cause format errors.
 
 ### How do I fix camera issues without rebooting the printer?
 
@@ -430,7 +430,7 @@ If the camera stream is unstable or stops working, you can restart the camera se
 
 **Solutions**:
 - **Run CAMERA_RESTART Macro**: Execute the `CAMERA_RESTART` macro in Fluidd/Mainsail or add it to your slicer’s start G-code to reset the camera before printing. This resolves most camera issues without a reboot.
-- **Check Camera Configuration**: Ensure the `REDUCE_MEMORY` option is disabled in `camera.conf` to avoid compatibility issues (see Camera Configuration Guide).
+- **Check Camera Configuration**: Ensure the `REDUCE_MEMORY` option is disabled in `camera.conf` to avoid compatibility issues (see [Camera settings](CAMERA.md#camera-settings)).
 
 ---
 

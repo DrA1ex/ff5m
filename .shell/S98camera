@@ -22,85 +22,115 @@ case "$BOOT_MODE" in
 esac
 
 source /opt/config/mod/.shell/common.sh
+
 CFG_PATH="/opt/config/mod_data/camera.conf"
-
-# Create default configuration if needed
-if [ ! -f "$CFG_PATH" ]; then
-    cp "/opt/config/mod/.cfg/default/camera.conf" "$CFG_PATH"
-fi
-
-VIDEO="video0"
-
-PID_FILE=/run/camera.pid
-source "/opt/config/mod_data/camera.conf"
-
-_STREAMER_DEVICE="/dev/${VIDEO}"
-
-_FRAME_CAP_ARGS=()
-if [ -z "$REDUCE_MEMORY" ] || [ "$REDUCE_MEMORY" == "1" ]; then
-    _FRAME_CAP_ARGS=(--frame-cap)
-fi
-
-if [ "$VIDEO" = "auto" ]; then
-    _STREAMER_DEVICE="auto"
-fi
+PID_FILE="$CAMERA_PID_F"
 
 [[ " $* " =~ " --silent " ]] && SILENT=1 || SILENT=0
+
+
+# Reads camera.conf (creating it from the default on first use).
+# Defaults are set before `source` so a config that omits a parameter still gets a sane value.
+load_config() {
+    [ -f "$CFG_PATH" ] || cp "/opt/config/mod/.cfg/default/camera.conf" "$CFG_PATH"
+
+    WIDTH=640
+    HEIGHT=480
+    FPS=15
+    VIDEO="auto"
+    BUFFERS=1
+    REDUCE_MEMORY=0
+
+    source "$CFG_PATH"
+}
+
+camera_enabled() { [ "$($CFG_SCRIPT "$VAR_PATH" --get "camera" "0")" -eq 1 ]; }
 
 start() {
     echo "Starting camera..."
 
-    enabled=$($CFG_SCRIPT "$VAR_PATH" --get "camera" "0")
-    if [ "$enabled" -eq 1 ]; then
-        start-stop-daemon -Sbm -p "$PID_FILE" --exec $BINS/mjpg_streamer -- \
-            --device "${_STREAMER_DEVICE}" \
-            --controls-file "$CFG_PATH" \
-            --resolution "${WIDTH}x${HEIGHT}" \
-            --fps "$FPS" \
-            --buffers 1 \
-            --listen 0.0.0.0 \
-            --port 8080 \
-            "${_FRAME_CAP_ARGS[@]}"
-
-        touch "$CAMERA_F"
-        echo "OK"
-    else
-        [ "$SILENT" -eq 0 ] && echo "Camera disabled in configuration"
+    if ! camera_enabled; then
+        if [ "$SILENT" -eq 0 ]; then echo "Camera disabled in configuration"; fi
+        return 0
     fi
+
+    if process_running "$PID_FILE"; then
+        echo "Already running"
+        return 0
+    fi
+
+    load_config
+
+    # "auto" lets the streamer detect the device; otherwise the user's videoN is used.
+    local device="/dev/$VIDEO"; [ "$VIDEO" = "auto" ] && device="auto"
+
+    local args=(
+        --device "$device"
+        --controls-file "$CFG_PATH"
+        --resolution "${WIDTH}x${HEIGHT}"
+        --fps "$FPS"
+        --buffers "$BUFFERS"
+        --listen 0.0.0.0
+        --port 8080
+        --log-file /data/logFiles/streamer.log
+    )
+
+    # Some cameras allocate a full-HD sized buffer even at 640x480; --frame-cap limits it.
+    # Only an explicit 1 turns it on.
+    [ "$REDUCE_MEMORY" = "1" ] && args+=(--frame-cap)
+
+    start-stop-daemon -Sbm -p "$PID_FILE" --exec "$BINS/forge_x_streamer" -- "${args[@]}"
+    local status=$?
+
+    if [ "$status" -ne 0 ]; then
+        echo "FAIL"
+        return "$status"
+    fi
+
+    echo "OK"
 }
 
 stop() {
     echo "Stopping camera..."
-    start-stop-daemon -K -p $PID_FILE > /dev/null 2>&1
-    rm -f "$CAMERA_F"
+    start-stop-daemon -K -p "$PID_FILE" > /dev/null 2>&1
+
+    # A streamer that ignores the request must not be forgotten: a new one could not take over its port.
+    if ! wait_process_exit "$PID_FILE"; then
+        echo "Camera did not stop in time, killing it" >&2
+        start-stop-daemon -K -s KILL -p "$PID_FILE" > /dev/null 2>&1
+
+        if ! wait_process_exit "$PID_FILE" 1; then
+            echo "FAIL"
+            return 1
+        fi
+    fi
+
+    rm -f "$PID_FILE"
     echo "OK"
 }
 
 restart() {
-    if [ -f $PID_FILE ] && kill -0 "$(cat $PID_FILE)" 2> /dev/null; then
-        stop
-        sleep 2
-    fi
+    if process_running "$PID_FILE"; then stop || return $?; fi
 
     start
 }
 
+# Rereads the image controls of a running camera. Resolution, fps, device and buffers need `restart`.
 reload() {
-    local enabled=$($CFG_SCRIPT "$VAR_PATH" --get "camera" "0")
-
-    if [ "$enabled" -eq "0" ]; then
+    if ! camera_enabled; then
         if [ "$SILENT" -eq 0 ]; then
             echo "Camera disabled in configuration."
             echo "To enable the camera, run: SET_MOD PARAM='camera' VALUE=1"
             echo "A detailed guide can be found here: https://github.com/DrA1ex/ff5m/blob/main/docs/CAMERA.md"
         fi
 
-        exit 1
+        return 1
     fi
 
-    if ! [ -f $PID_FILE ] || ! kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
+    # Nothing to signal: start it with the current configuration instead.
+    if ! process_running "$PID_FILE"; then
         restart
-        exit 0
+        return $?
     fi
 
     if ! kill -HUP "$(cat "$PID_FILE")"; then
@@ -108,30 +138,18 @@ reload() {
         return 1
     fi
 
-    [ "$SILENT" -eq 0 ] && echo "Effects applied"
+    if [ "$SILENT" -eq 0 ]; then echo "Effects applied"; fi
 }
 
 
 case "$1" in
-    start)
-        start
-    ;;
-
-    stop)
-        stop
-    ;;
-
-    restart)
-        restart
-    ;;
-
-    reload)
-        reload "$2"
-    ;;
+    start) start ;;
+    stop) stop ;;
+    restart) restart ;;
+    reload) reload ;;
 
     *)
         echo "Usage: $0 {start|stop|restart|reload}"
         exit 1
+    ;;
 esac
-
-exit $?

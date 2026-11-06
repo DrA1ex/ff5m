@@ -364,6 +364,9 @@ def getCmdName(pid, split_args, discriminate_by_pid, exe_only=False):
                     cmd = exe
     if sys.version_info >= (3,):
         cmd = cmd.encode(errors='replace').decode()
+    # Forge-X runs the camera and the screen stream as one binary: tell them apart by the capture source.
+    if exe == 'forge_x_streamer':
+        cmd = 'forge_x_screen' if '--source' in cmdline else 'forge_x_camera'
     if discriminate_by_pid:
         cmd = '%s [%d]' % (cmd, pid)
     return cmd

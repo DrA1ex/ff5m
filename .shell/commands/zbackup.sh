@@ -44,6 +44,7 @@ TAR_DEBUG_PARAMS=(
     /data/logFiles/ssh.log*
     /data/logFiles/wifi.log*
     /data/logFiles/netd.log*
+    /data/logFiles/streamer.log*
     /data/logFiles/service.log*
     /data/logFiles/uninstall.log*
     /data/logFiles/mod/*.log*

@@ -63,16 +63,10 @@ apply_display_mode() {
     # Start the selected alternative display before restarting Klipper.  This
     # function may be invoked by Klipper through SET_MOD; anything placed after
     # the hard restart is not guaranteed to run because the caller is stopped.
-    case "$display_mode" in
-        FEATHER)
-            # Feather only needs tslib's calibrated uinput device.
-            chroot "$MOD" /opt/config/mod/.root/S35tslib start
-        ;;
-        GUPPY)
-            # Guppy owns its UI process and shares the same tslib device.
-            chroot "$MOD" /opt/config/mod/.root/guppyscreen start
-        ;;
-    esac
+    "$CMDS/zstreams.sh" apply
+    if [ "$display_mode" = "GUPPY" ]; then
+        chroot "$MOD" /opt/config/mod/.root/guppyscreen start
+    fi
     
     # Stock -> Feather is the only path that asks a newly started daemon to
     # migrate the live vendor link. Between non-Stock modes the existing daemon

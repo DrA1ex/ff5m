@@ -1,0 +1,112 @@
+#!/bin/bash
+
+## Service for forge-x screen stream
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+##
+## This file may be distributed under the terms of the GNU GPLv3 license
+
+
+source /opt/config/mod/.shell/boot/boot_mode.sh || exit 0
+BOOT_MODE=$(forge_x_boot_mode)
+
+case "$BOOT_MODE" in
+    mod)
+    ;;
+
+    *)
+        echo "Screen stream disabled in $BOOT_MODE mode"
+        exit 0
+    ;;
+esac
+
+source /opt/config/mod/.shell/common.sh
+source "$SCRIPTS/screen_policy.sh"
+
+PID_FILE=/run/screen_stream.pid
+
+[[ " $* " =~ " --silent " ]] && SILENT=1 || SILENT=0
+
+
+start() {
+    echo "Starting screen stream..."
+
+    screen_policy || return $?
+
+    if [ "$SCREEN_STREAM_ENABLED" -ne 1 ]; then
+        if [ "$SILENT" -eq 0 ]; then echo "Screen stream disabled in configuration"; fi
+        return 0
+    fi
+
+    if process_running "$PID_FILE"; then
+        echo "Already running"
+        return 0
+    fi
+
+    local fps=$($CFG_SCRIPT "$VAR_PATH" --get "screen_stream_fps" "30")
+    local quality=$($CFG_SCRIPT "$VAR_PATH" --get "screen_stream_quality" "90")
+
+    # Remote touch goes to the raw device, which every screen reads directly or through ts_uinput.
+    local args=(
+        --source framebuffer
+        --resolution 800x480
+        --fps "$fps"
+        --quality "$quality"
+        --listen 127.0.0.1
+        --port 8081
+        --clients 2
+        --touch-device /dev/input/event0
+        --touch-calibration /opt/tslib-1.12/etc/pointercal
+        --log-file /data/logFiles/streamer.log
+    )
+
+    # Up to quality 90 even noise stays under 1 byte per pixel. Above it the streamer keeps its larger default.
+    [ "$quality" -le 90 ] && args+=(--frame-size 384000)
+
+    start-stop-daemon -Sbm -p "$PID_FILE" --exec "$BINS/forge_x_streamer" -- "${args[@]}"
+    local status=$?
+
+    if [ "$status" -ne 0 ]; then
+        echo "FAIL"
+        return "$status"
+    fi
+
+    echo "OK"
+}
+
+stop() {
+    echo "Stopping screen stream..."
+    start-stop-daemon -K -p "$PID_FILE" > /dev/null 2>&1
+
+    # A streamer that ignores the request must not be forgotten: a new one could not take over its port.
+    if ! wait_process_exit "$PID_FILE"; then
+        echo "Screen stream did not stop in time, killing it" >&2
+        start-stop-daemon -K -s KILL -p "$PID_FILE" > /dev/null 2>&1
+
+        if ! wait_process_exit "$PID_FILE" 1; then
+            echo "FAIL"
+            return 1
+        fi
+    fi
+
+    rm -f "$PID_FILE"
+    echo "OK"
+}
+
+restart() {
+    if process_running "$PID_FILE"; then stop || return $?; fi
+
+    start
+}
+
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) restart ;;  # The stream has no live-reload: new parameters need a new process.
+
+    *)
+        echo "Usage: $0 {start|stop|restart|reload}"
+        exit 1
+    ;;
+esac

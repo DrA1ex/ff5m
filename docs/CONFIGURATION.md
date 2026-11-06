@@ -65,7 +65,9 @@ The mod supports a wide range of parameters to customize printer behavior. Below
   > [!CAUTION]
   > Releases before **1.4.1-11** contain a Smart Park / `MOVE_SAFE` bug. Do **not** enable or use KAMP, or call `MOVE_SAFE`, while relative positioning (`G91`) is active. Upgrade to **1.4.1-11 or later** first.
 
-- **`camera`**: Enables the alternative camera implementation if set to `1`.  
+- **`camera`**: Enables the [Forge-X camera](CAMERA.md) if set to `1`. Setting it to `0` hides **4gx_camera** in the web interface and keeps its settings.
+
+- **`screen_stream`**: `AUTO` (default), `ON`, or `OFF`. Automatic mode streams Stock, Feather, and Guppy; Headless stays off. Use `ON` to stream a custom screen in Headless mode. Disabled streams retain their webcam settings. See [Viewing the printer screen](CAMERA.md#viewing-the-printer-screen).
 
 - **`timelapse`**: Takes photos during printing and creates a video. Off by default; see [Camera](CAMERA.md#timelapse) for setup.
 

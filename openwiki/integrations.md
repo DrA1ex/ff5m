@@ -36,6 +36,12 @@ The active driver's valid ranges and menu values are queried instead of assumed.
 Changes can be applied live; **Save** atomically updates the known `camera.conf` entries while preserving unrelated content.
 `CAMERA_RELOAD` uses `SIGHUP` to reread saved controls without restarting the HTTP service, and saved controls are reapplied after the first completed frame on every camera open/reconnect.
 
+Endpoints: `/?action=stream` (MJPEG; `POST /stream` also works), `/?action=snapshot` (JPEG), `/healthz` (`503` while the camera is offline), `/control.htm`, and `/controls` (read, apply, and save image controls). The stream format matches the previous MJPEG streamer, so existing clients keep working.
+Defaults are 640×480, 15 FPS, one V4L2 capture buffer, and three video clients plus one extra worker for snapshots and controls; requests over the limit get HTTP `429`. Each worker thread has a 128 KiB stack, frame buffers grow only to the largest frame seen, and the control page is a 6 KiB static page.
+`REDUCE_MEMORY` maps to `--frame-cap`, which limits the capture buffer for cameras that report a 1080p-sized buffer at every resolution.
+The bundled binary encodes YUYV, UYVY, RGB24, RGB565, and framebuffer input with the printer's hardware JPEG backend (G2D/CedarC); camera MJPEG/JPEG frames pass through without re-encoding. Optional software builds use libjpeg ([notice](../LICENSE-LIBJPEG.txt)). A camera that starts in an unsupported format is asked to switch to a supported one when it is reopened, and a failed `CAMERA_RELOAD` keeps the last valid settings.
+The streamer builds on other Linux systems with V4L2 and is licensed GPL-2.0-or-later; its CI builds both variants and runs the tests.
+
 The separate forge-x-streamer repository contains tests for capture recovery and device rediscovery, JPEG bounds/normalization, HTTP backpressure and routes, control persistence, NO SIGNAL behavior, publisher lifecycle, optional raw-format encoding, and process shutdown.
 Actual RAM and CPU use still depends on camera mode, negotiated buffers, resolution, and connected clients, so target measurements should be used for performance claims.
 
@@ -44,6 +50,121 @@ Camera is enabled through the persistent `camera` parameter. Keep these constrai
 - do not run stock and Forge-X camera paths simultaneously;
 - higher image rate/resolution can consume scarce RAM, so verify memory under expected print load;
 - port 8080 and its write-capable control panel have no separate authentication, so keep them on a trusted network or behind an authenticated proxy/tunnel.
+
+## Screen streaming and web interface entries
+
+### Ownership
+
+Everything here follows the parameters in `variables.cfg`, and each concern has one owner:
+
+| Concern | Owner |
+| --- | --- |
+| Inputs | `variables.cfg`: `display`, `camera`, `screen_stream`, `touch_interface`, `screen_stream_fps`, `screen_stream_quality` |
+| Policy: which stream and touch input must run | [`.shell/screen_policy.sh`](../.shell/screen_policy.sh), `screen_policy` |
+| Applying the policy | [`.shell/commands/zstreams.sh`](../.shell/commands/zstreams.sh) |
+| Processes | `S98camera`, `S98screen`, `S35tslib`: each owns its pid and arguments |
+| Existence of the `4gx_camera` / `4gx_screen` entries | SQL migration [`sql/00022-forge-x-webcams.sql`](../sql/00022-forge-x-webcams.sql) |
+| `enabled` flag of those entries | [`.py/set_webcams.py`](../.py/set_webcams.py), a Moonraker API client without policy |
+| Every other field of the entries | The user, through Fluidd or Mainsail; Forge-X never rewrites it |
+
+`screen_policy` is a pure mapping, sourced by `S98screen` and `zstreams.sh`. It sets `SCREEN_STREAM_ENABLED` and
+`SCREEN_TOUCH_ENABLED` and fails before setting anything when a parameter has an unknown value. With both preferences on `AUTO`:
+
+| Screen | Stream | Managed tslib touch |
+| --- | --- | --- |
+| Feather / Guppy | On | On, even with stream explicitly off |
+| Stock | On | Off; the Stock application owns its native input |
+| Headless | Off | Off |
+
+`screen_stream` supports `AUTO/ON/OFF`, `touch_interface` supports `AUTO/ON`. Screen `ON/OFF` override automatic
+selection; touch `ON` starts `ts_uinput` on any screen. There is no override that disables input a screen requires,
+and neither parameter changes how the stream injects remote touch.
+A custom screen runs under Headless and sets `screen_stream=ON` (and `touch_interface=ON` if it consumes the shared
+calibrated device); returning to `AUTO` removes these requests.
+
+### Applying
+
+`zstreams.sh` has three verbs, so callers never repeat the sequence:
+
+- `touch`: start or stop the shared touch input. `S99root` runs it before the UI starts, and `zchanges.sh` when
+  `touch_interface` changes.
+- `apply`: touch, restart the screen stream, update the entries. `zchanges.sh` runs it for `screen_stream`, and
+  `zdisplay.sh` for every display change before restarting Klipper.
+- `webcams`: update the entries only. `S99root` runs it with `--wait 10` after the environment started, because
+  `S98screen` and `S98camera` have already started themselves from the same parameters.
+
+Changing `camera` starts or stops `S98camera` in `zchanges.sh`, which also guards against a running stock camera, and
+then runs `webcams`. Changing `screen_stream_fps` or `screen_stream_quality` restarts only the stream.
+
+Updating the entries is optional web integration: a failure is printed and never fails the caller. The next change or
+boot corrects it, because every run of `set_webcams.py` compares `enabled` with the parameters and writes the entries
+that differ. It skips an entry that is missing (the user deleted it) or defined in the Moonraker configuration. A manual toggle of
+`enabled` in the web interface is therefore reset by the next run; Forge-X owns that flag.
+
+### Entries
+
+Moonraker keeps webcams created through its API in the database `webcams` namespace, keyed by UUID4. The migration
+inserts both entries when no entry of that name exists, hidden (`enabled: false`) until `webcams` shows them, with
+the proxied URLs `/webcam/` and `/screen/` (an `iframe` service, 5:3, for the screen). Nothing re-creates an entry the
+user deleted. On a first-ever boot `S99root` starts and stops the environment once so that Moonraker creates its
+database, then applies the migrations before the normal start, so the entries exist from the first boot.
+
+`4gx_camera` stays hidden while `camera=0`, which also covers a Stock screen using the stock camera. The old
+`[webcam cam]` section showed that camera too; such a user now adds their own entry.
+
+Older releases shipped a read-only `[webcam cam]` section in `user.moonraker.conf`. Once Moonraker is up,
+`.root/start.sh` copies the settings Moonraker parsed from it to `4gx_camera` through the API, leaving `enabled` alone,
+and then comments the section out, so the next Moonraker start shows one camera entry instead of two. If the copy fails
+or the entry does not exist yet, the section stays and the next boot tries again. This block is marked
+`TODO: remove in the next major release`.
+
+### Screen stream process
+
+[`.shell/S98screen`](../.shell/S98screen) runs a separate `forge_x_streamer` in framebuffer mode: 800×480, two
+clients, port 8081, bound to `127.0.0.1` so that the `/screen/` proxy on port 80 is the only way to reach it. The
+proxy has no authentication either: anyone who can reach port 80 can send touch input. `screen_stream_fps` defaults
+to 30 and `screen_stream_quality` to 90. On the AD5M framebuffer, the bundled binary encodes the visible page directly
+with CedarC. Hardware layouts that need padded rows or dimensions use the G2D conversion path.
+
+The encoder runs only while a stream or snapshot client is connected. The first client starts it and waits for a real
+frame. Five seconds after the last client leaves, the encoder and its DMA buffers are freed. At 800×480 the direct
+path uses 376 KiB of ION up to quality 90 and 752 KiB above it, where `S98screen` keeps the streamer's default JPEG
+limit. The G2D path needs another 564 KiB for its conversion buffer. `/healthz` stays 200 between viewers, and `MEM`
+reports ordinary process memory. A still screen repeats its frame every 2 s because
+the BusyBox proxy never reads from its client, so only a failed write reveals a closed viewer.
+
+Remote touch is written to the raw `/dev/input/event0`, converted from screen pixels to raw axes with the stock
+`/opt/tslib-1.12/etc/pointercal`. It reaches every screen like a physical press: Stock through its own tslib, Feather
+and Guppy through `ts_uinput`. The stream therefore depends neither on `touch_interface` nor on when `S35tslib` starts.
+The calibration is read when the stream starts; if it is missing or invalid, the streamer logs that and keeps streaming
+without remote touch.
+
+`S98camera` and `S98screen` pass `--log-file` with the same `/data/logFiles/streamer.log`, which the debug archive
+collects. Lines use the `logged` layout, `date | level | pid | source | message`, with `camera` or `screen` as the
+source. The streamer owns the file: at 100 KB it renames it to `streamer.log.YYYY-MM-DD_HH-MM-SS.mmm`, starts a new one
+and keeps the five newest renamed files, which the same debug archive pattern collects. A file lock keeps the two
+processes from rotating at once or corrupting each other's lines, so `rotate_logs` must not touch this file. A failure
+is written once when it starts and once more when it ends, not with every retry. Output of vendor libraries does not reach this file:
+`start-stop-daemon -b` sends it to `/dev/null`.
+
+The Buildroot image supplies `P:/webcam/:localhost:8080/` and `P:/screen/:localhost:8081/` in the chroot's
+`/etc/httpd.conf`. `.root/start.sh` has a temporary compatibility block that appends only missing routes for older
+images; existing routes, including customized backends, are preserved. The camera keeps the `/webcam/` proxy and the
+screen uses the same-origin `/screen/` proxy as an iframe entry, so relative image and touch URLs stay under the proxy
+prefix without storing a printer IP. Timelapse continues to take snapshots from camera port 8080.
+
+### Touch input
+
+The calibrated input device is published as `/dev/input/fgx_touch` by `S35tslib`; `/dev/input/guppy` is a
+compatibility symlink to the same device. Feather and recovery use the primary name. The Guppy wrapper also calls
+`S35tslib start` before starting or restarting its UI, including direct invocations; the idempotent tslib service
+keeps this a single process, and stopping only the Guppy UI does not stop shared touch.
+
+### Deployment and tests
+
+Remove the old deployed `mjpg_streamer` binary manually. Reboot after installing the update so the new init service
+and proxy configuration take effect. Tests are `test_screen_policy.py`, `test_stream_services.py`,
+`test_stream_startup.py`, `test_set_webcams.py`, and `test_webcam_migration.py` under `tests/`.
 
 ## Timelapse
 

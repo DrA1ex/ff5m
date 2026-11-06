@@ -42,6 +42,34 @@ class ModParameterTest(unittest.TestCase):
         self.path.write_text("[Variables]\n" + text, encoding="utf-8")
         self.manager._reload()
 
+    def test_screen_and_touch_modes_default_to_auto_and_round_trip(self):
+        for key in ('screen_stream', 'touch_interface'):
+            self.assertEqual(self.manager.variables[key], 'AUTO')
+            for mode in self.manager.params_map[key].type:
+                self.manager.set_value(key, mode.name)
+                self.manager._reload()
+                self.assertEqual(self.manager.variables[key], mode.name)
+
+    def test_touch_override_rejects_off_and_preserves_explicit_on(self):
+        with self.assertRaises(ValueError):
+            self.manager.set_value('touch_interface', 'OFF')
+        self.manager.set_value('touch_interface', 'ON')
+        self.manager._reload()
+        self.assertEqual(self.manager.variables['touch_interface'], 'ON')
+
+    def test_screen_stream_settings_validate_and_preserve_previous_values_on_error(self):
+        for key in ('screen_stream_fps', 'screen_stream_quality'):
+            parameter = self.manager.params_map[key]
+            for value in (parameter.minimum, parameter.default, parameter.maximum):
+                self.manager.set_value(key, value)
+                self.manager._reload()
+                self.assertEqual(self.manager.variables[key], value)
+            before = self.path.read_bytes()
+            for value in (parameter.minimum - 1, parameter.maximum + 1):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    self.manager.set_value(key, value)
+                self.assertEqual(self.path.read_bytes(), before)
+
     def test_one_corrupted_value_does_not_block_other_parameters(self):
         for broken in ("nan", "1e309", "%(broken)s", "[invalid"):
             with self.subTest(broken=broken), self.assertLogs(level="ERROR"):

@@ -42,7 +42,7 @@ named `--pipe`. End each pipe frame with `--end`; only one owner may write the
 pipe. In double-buffered mode the renderer uses the non-visible framebuffer
 page where possible and falls back safely to a heap buffer.
 
-Interactive mode uses `--touch-device /dev/input/guppy` and
+Interactive mode uses `--touch-device /dev/input/fgx_touch` and
 `--event-pipe /tmp/feather-events`. A `hitbox` maps a rectangle to an opaque,
 restricted action ID; `clear-hitboxes` replaces the previous page's regions.
 Regular hitboxes emit `button <id> down` at press and `button <id> up` at
@@ -180,7 +180,7 @@ hitboxes remain disabled until the nozzle is at least the configured extrusion
 minimum and within 2 °C of its active target. The action handler repeats the
 same predicate so a stale touch event cannot bypass the visual lock.
 
-`ts_uinput` is the only separate supporting service. The init-style [`S35tslib`](../../.root/S35tslib) helper starts it, calibrates/translates physical touch input, and maintains `/dev/input/guppy`, the stable device Typer reads.
+`ts_uinput` is the only separate supporting service. The init-style [`S35tslib`](../../.root/S35tslib) helper starts it, calibrates/translates physical touch input, and maintains `/dev/input/fgx_touch` as the primary name Typer reads, with `/dev/input/guppy` retained for Guppy compatibility.
 
 ## How the plugin is installed and loaded
 
@@ -220,13 +220,13 @@ macro. Filament and cold-pull workflows continue using their action prompts.
 
 ## Boot and restart chain
 
-On a non-Stock boot, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) starts `netd --adopt-existing` when the mod-owned `network.conf` already exists. The daemon preserves an already-working connection only when its transport, exact Wi-Fi SSID where applicable, address, and DHCP client all match that configuration. It takes ownership of the matching processes and removes the other transport without rewriting network configuration. If the live state cannot be accepted completely, `netd` performs a fresh cleanup and starts the saved target normally. An older installation without `network.conf` starts netd without the adoption flag so the existing one-shot bootstrap can create the mod target first. Feather then boots the MCU and launches [`.shell/commands/zstart_klipper.sh`](../../.shell/commands/zstart_klipper.sh) without waiting for connectivity. The later `S99root` stage invokes [`.root/start.sh`](../../.root/start.sh), which owns `S35tslib` startup for Feather and Guppy as part of the restartable Buildroot service lifecycle. Typer tolerates that startup order by retrying a missing touch device until it appears. Guppy and Headless instead invoke `netd-cli wait --timeout 180` before continuing, preserving their Stock fallback behavior. The three-minute limit belongs to boot only; the daemon has no retry quota for its desired network. The Klipper launcher executes `/opt/klipper/start.sh`, optionally under `chrt -r 5`.
+On a non-Stock boot, [`.shell/boot/boot.sh`](../../.shell/boot/boot.sh) starts `netd --adopt-existing` when the mod-owned `network.conf` already exists. The daemon preserves an already-working connection only when its transport, exact Wi-Fi SSID where applicable, address, and DHCP client all match that configuration. It takes ownership of the matching processes and removes the other transport without rewriting network configuration. If the live state cannot be accepted completely, `netd` performs a fresh cleanup and starts the saved target normally. An older installation without `network.conf` starts netd without the adoption flag so the existing one-shot bootstrap can create the mod target first. Feather then boots the MCU and launches [`.shell/commands/zstart_klipper.sh`](../../.shell/commands/zstart_klipper.sh) without waiting for connectivity. The later `S99root` stage invokes [`.root/start.sh`](../../.root/start.sh), after applying the shared screen policy through `zstreams.sh touch`; `AUTO` starts `S35tslib` for Feather and Guppy before their UI services. Typer tolerates that startup order by retrying a missing touch device until it appears. Guppy and Headless instead invoke `netd-cli wait --timeout 180` before continuing, preserving their Stock fallback behavior. The three-minute limit belongs to boot only; the daemon has no retry quota for its desired network. The Klipper launcher executes `/opt/klipper/start.sh`, optionally under `chrt -r 5`.
 
 A controlled `netd` shutdown stops its started or adopted supplicant and DHCP clients. Startup has three explicit contracts. `--migrate-existing` is the one-shot live Stock → Feather path: it determines the working vendor transport and may copy that selection and Wi-Fi profile into mod storage. `--adopt-existing` never migrates configuration: it accepts only the live connection matching the existing mod target and removes the other transport. With neither flag, fresh startup first loads the mod target. If it is absent, netd imports the Stock transport flags from `/opt/config/Adventurer5M.json`; an enabled Stock Wi-Fi target also imports only the enabled profile from `/etc/wpa_supplicant.conf`. A successful bootstrap becomes the normal mod-owned target. Missing, disabled, or incomplete Stock configuration leaves the printer offline. Startup then stops existing network processes, clears both interfaces, and establishes that target afresh.
 
-A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feather`. Its `apply_display_mode()` function stops `ffstartup-arm`, `firmwareExe`, and Guppy, starts `S35tslib`, draws the splash, reloads `S00init`, and runs `restart_klipper.sh --hard`. The hard restart terminates `klippy.py` and launches Klipper directly again.
+A switch to `display=FEATHER` reaches the same state through `zdisplay.sh feather`. Its `apply_display_mode()` function stops `ffstartup-arm`, `firmwareExe`, and Guppy, applies the shared touch/stream requirements through `zstreams.sh apply`, draws the splash, reloads `S00init`, and runs `restart_klipper.sh --hard`. The hard restart terminates `klippy.py` and launches Klipper directly again.
 
-`S35tslib` starts `/usr/bin/ts_uinput` with tslib variables, creates `/var/run/ts_uinput.pid`, discovers the generated event node under `/sys/class/input`, and symlinks it as `/dev/input/guppy`. Repeated `start` calls are idempotent while that PID is alive.
+`S35tslib` starts `/usr/bin/ts_uinput` with tslib variables, creates `/var/run/ts_uinput.pid`, discovers the generated event node under `/sys/class/input`, and symlinks it as `/dev/input/fgx_touch`, retaining `/dev/input/guppy` as a compatibility alias. Repeated `start` calls are idempotent while that PID is alive.
 
 ## Klippy and Typer lifecycle
 
@@ -240,7 +240,7 @@ process:
   --deferred-page-publish auto \
   --present-guard-us 3000 \
   --double-buffered \
-  --touch-device /dev/input/guppy \
+  --touch-device /dev/input/fgx_touch \
   --event-pipe /tmp/feather-events \
   batch --pipe /tmp/typer
 ```
@@ -285,7 +285,8 @@ and the two-second TERM/KILL escalation occur only in the worker.
 | Path | Creator / type | Purpose and lifetime |
 |---|---|---|
 | `/dev/fb0` | kernel framebuffer | Typer's render target. `--double-buffered` uses the second framebuffer page as scratch storage when possible, otherwise a heap buffer; `flush` copies a dirty rectangle and does not page-flip. |
-| `/dev/input/guppy` | `S35tslib` symlink | Calibrated 800×480 touch device. Removed by `S35tslib stop`. |
+| `/dev/input/fgx_touch` | `S35tslib` symlink | Calibrated 800×480 touch device. Removed by `S35tslib stop`. |
+| `/dev/input/guppy` | `S35tslib` compatibility symlink | Alias of `/dev/input/fgx_touch` for Guppy. Removed by `S35tslib stop`. |
 | `/var/run/ts_uinput.pid` | `S35tslib` | PID file for the support process, not for Feather or Typer. |
 | `/tmp/typer` | FIFO | Klippy writes complete display-list frames; Typer reads them. Typer unlinks it on normal exit. |
 | `/tmp/feather-events` | FIFO | Typer writes logical touch events; Klipper's reactor reads them. Typer unlinks it on normal exit. |
@@ -387,7 +388,7 @@ and high-watermark, submitted/rendered/coalesced/dropped batch counters,
 
 Every page starts with `clear-hitboxes`. Feather prefixes each action ID with a monotonically increasing page generation, for example `18:print.pause`; late events from a replaced page are discarded by the plugin.
 
-Typer polls the draw FIFO and `/dev/input/guppy` together. A normal tap generates `tap 18:print.pause`. A continuous hitbox generates records such as:
+Typer polls the draw FIFO and `/dev/input/fgx_touch` together. A normal tap generates `tap 18:print.pause`. A continuous hitbox generates records such as:
 
 ```text
 touch 18:move.joy.xy begin 400 210
@@ -422,7 +423,7 @@ graceful lifecycle.
 Feather discards every untouched render batch before queuing the shutdown
 surface, so a pending critical touch-unavailable warning cannot supersede it.
 It then freezes the shutdown surface as the final framebuffer owner. The
-shared service stop sequence removes `/dev/input/guppy` only after the marker
+shared service stop sequence removes `/dev/input/fgx_touch` only after the marker
 has had its bounded processing window; the touch transport does not own system
 lifecycle policy.
 
@@ -658,7 +659,7 @@ with a before/after PSS profile demonstrating a net process-total reduction.
 - Never add blocking I/O to Feather reactor callbacks. Use non-blocking FIFO retries, timers, or bounded child helpers.
 - New UI actions require a hitbox plus page/state validation in the Klipper plugin; do not treat Typer events as trusted printer commands.
 - Preserve padding through the shared hint/dialog primitives. Dynamic hint widths include their horizontal inset, and dialog lines are clipped to the padded content area.
-- For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/guppy`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
+- For an unresponsive screen, check: active Feather include, `klippy.py`, Typer child, `/dev/input/fgx_touch`, FIFO types (`test -p /tmp/typer`; `test -p /tmp/feather-events`), then `[feather_screen]` messages in the Klipper log.
 
 ### Reactor budget during homing and probing
 

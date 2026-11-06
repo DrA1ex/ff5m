@@ -45,7 +45,7 @@ Hitbox = namedtuple("Hitbox", "action x y width height continuous layer")
 
 DRAW_PIPE = "/tmp/typer"
 EVENT_PIPE = "/tmp/feather-events"
-TOUCH_DEVICE = "/dev/input/guppy"
+TOUCH_DEVICE = "/dev/input/fgx_touch"
 TYPER_BINARY = "/root/printer_data/bin/typer"
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480

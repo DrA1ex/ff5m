@@ -2115,7 +2115,7 @@ printf 'result=%s\n' "$status"
         recovery = self._patched_script(
             self.boot_scripts["recovery.sh"],
             "recovery-partial-touch.sh",
-            {"RECOVERY_TOUCH_DEVICE=/dev/input/guppy":
+            {"RECOVERY_TOUCH_DEVICE=/dev/input/fgx_touch":
              "RECOVERY_TOUCH_DEVICE=%s" % missing_device},
         )
 

@@ -117,6 +117,14 @@
         "256": 256
       }
     },
+    "TouchInterfaceModeEnum": {
+      "type": "str",
+      "values": {"AUTO": "AUTO", "ON": "ON"}
+    },
+    "AutoSwitchEnum": {
+      "type": "str",
+      "values": {"AUTO": "AUTO", "ON": "ON", "OFF": "OFF"}
+    },
     "FeatherPreviewFitEnum": {
       "type": "str",
       "values": {
@@ -209,6 +217,10 @@
         "label": "SYSTEM SERVICES",
         "order": 5,
         "parameters": [
+          "screen_stream",
+          "screen_stream_fps",
+          "screen_stream_quality",
+          "touch_interface",
           "use_swap",
           "check_md5",
           "mod_check_update",
@@ -312,6 +324,18 @@
         "depends_on": "display",
         "operator": "equals",
         "value": ["FEATHER", "GUPPY", "HEADLESS"]
+      },
+      {
+        "parameter": "screen_stream_fps",
+        "depends_on": "screen_stream",
+        "operator": "equals",
+        "value": ["AUTO", "ON"]
+      },
+      {
+        "parameter": "screen_stream_quality",
+        "depends_on": "screen_stream",
+        "operator": "equals",
+        "value": ["AUTO", "ON"]
       },
       {
         "parameter": "timelapse",
@@ -856,7 +880,42 @@
       "default": 0,
       "label": "Alt. camera",
       "description": "Enable the low-memory camera service.",
-      "options": ["not used", "enabled"],
+      "order": 100
+    },
+    {
+      "key": "screen_stream",
+      "type": "AutoSwitchEnum",
+      "default": "AUTO",
+      "label": "Screen stream",
+      "description": "AUTO follows the active screen.",
+      "order": 100
+    },
+    {
+      "key": "touch_interface",
+      "type": "TouchInterfaceModeEnum",
+      "default": "AUTO",
+      "label": "Touch interface",
+      "description": "AUTO follows the screen input.",
+      "order": 100
+    },
+    {
+      "key": "screen_stream_fps",
+      "type": "int",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 120,
+      "label": "Screen stream FPS",
+      "description": "Set screen stream frame rate.",
+      "order": 100
+    },
+    {
+      "key": "screen_stream_quality",
+      "type": "int",
+      "default": 90,
+      "minimum": 1,
+      "maximum": 100,
+      "label": "Screen JPEG quality",
+      "description": "Set screen stream JPEG quality.",
       "order": 100
     },
     {
@@ -865,7 +924,6 @@
       "default": 0,
       "label": "Timelapse",
       "description": "Capture print photos and make a video.",
-      "options": ["not used", "enabled"],
       "order": 101
     },
     {
@@ -931,7 +989,6 @@
       "default": 0,
       "label": "SSH tunnel",
       "description": "Enable the remote SSH tunnel service.",
-      "options": ["not used", "enabled"],
       "order": 100
     },
     {

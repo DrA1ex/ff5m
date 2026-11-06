@@ -11,7 +11,7 @@ source /opt/config/mod/.shell/common.sh || exit 1
 source /opt/config/mod/.shell/boot/stock_identity.sh || exit 1
 
 RECOVERY_ACTION=/tmp/forge_x_recovery_action
-RECOVERY_TOUCH_DEVICE=/dev/input/guppy
+RECOVERY_TOUCH_DEVICE=/dev/input/fgx_touch
 RECOVERY_LOG=/data/logFiles/recovery.log
 RECOVERY_INSTALL_IMAGE=/opt/config/mod/.shell/boot/install-image.sh
 RECOVERY_UNINSTALL=/opt/config/mod/.shell/uninstall.sh

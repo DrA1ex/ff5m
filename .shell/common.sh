@@ -17,7 +17,7 @@ MOD_DATA=/opt/config/mod_data
 NOT_FIRST_LAUNCH_F="/tmp/not_first_launch_f"
 CUSTOM_BOOT_F="/tmp/custom_boot_f"
 WIFI_CONNECTED_F="/tmp/wifi_connected_f"
-CAMERA_F="/tmp/camera_f"
+CAMERA_PID_F="/run/camera.pid"
 NET_IP_F="/tmp/net_ip"
 
 SCREEN_FOLLOW_UP_LOG="/tmp/logged_message_queue"
@@ -86,6 +86,31 @@ screen_typer() {
 
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
+
+# Whether the process named in a pid file is alive.
+process_running() {
+    local pid_file=$1
+
+    if [ ! -f "$pid_file" ]; then
+        return 1
+    fi
+
+    kill -0 "$(cat "$pid_file")" 2> /dev/null
+}
+
+# Waits until the process named in a pid file is gone; fails when it is still alive after $2 seconds (default 5).
+wait_process_exit() {
+    local pid_file=$1 attempts=$(( ${2:-5} * 10 ))
+
+    while process_running "$pid_file"; do
+        if [ "$attempts" -le 0 ]; then
+            return 1
+        fi
+
+        attempts=$((attempts - 1))
+        sleep 0.1
+    done
+}
 
 mount_data_partition() {
     # mount data - this would otherwise be mounted later by Flashforge's firmware

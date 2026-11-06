@@ -62,7 +62,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 **Optional**
 
 - [Z-Offset](/docs/PRINTING.md#z-offset), [LED lighting](/docs/PRINTING.md#led-light-control), [Bed Collision Protection](/docs/PRINTING.md#bed-collision-protection), [Bed Mesh Validation](/docs/PRINTING.md#bed-mesh-validation).
-- The mod's [camera](/docs/CAMERA.md#step-3-enable-mods-camera).
+- The mod's [camera](/docs/CAMERA.md#quick-start).
 - The [Feather or Guppy screen](/docs/SCREEN.md#switching-commands).
 - [Power Loss Recovery](/docs/POWER_LOSS_RECOVERY.md) is enabled by default; review its settings.
 
@@ -111,7 +111,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 ### Connectivity and extras
 
-- **[forge-x-streamer](/docs/CAMERA.md)**: a low-memory camera service with device autodetection, automatic reconnect, and live image controls
+- **[forge-x-streamer](/docs/CAMERA.md)**: a low-memory camera and screen streaming service with device autodetection, automatic reconnect, and live image controls
 - Built-in **Timelapse**: photos during printing and a finished video ([setup](/docs/CAMERA.md#timelapse)).
 - **Telegram bot** for remote printer control and timelapse videos ([setup](/docs/TELEGRAM.md)); runs on a separate computer or server.
 - Root access with zsh and oh-my-zsh, and the Entware package manager
