@@ -155,12 +155,8 @@ When `RESURRECT` is accepted, Forge-X performs the recovery in a controlled orde
 12. Restore the model list, the current model marker, and saved model exclusions.
 13. Resume virtual-SD printing from the saved file position.
 
-Models excluded in the saved checkpoint remain excluded after recovery, including
-models excluded during a previously recovered print. Exclusions use the same
-checkpoint interval as the rest of the print state. While paused, changes to the
-excluded-model list are saved without overwriting the position saved before parking.
-Older checkpoints remain usable; if they do not contain model exclusions, recovery
-has no saved exclusions to apply.
+Models excluded in the saved checkpoint remain excluded after recovery, including models excluded during a previously recovered print. Exclusions use the same checkpoint interval as the rest of the print state. While paused, changes to the excluded-model list are saved without overwriting the position saved before parking.
+Older checkpoints remain usable; if they do not contain model exclusions, recovery has no saved exclusions to apply.
 
 Heating the **bed before the nozzle** is intentional. After an outage, the bed has had time to cool and the model may have lost some adhesion. Restoring the bed first gives the part the best chance to stabilize before the nozzle becomes hot and the printer returns to the model. It also reduces the time a fully heated nozzle spends near a cold or poorly adhered part.
 

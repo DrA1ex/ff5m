@@ -578,26 +578,13 @@ Obico, a Python-based tool, may work as a standalone application (not as a Moonr
 ## Additional Configuration and Troubleshooting
 
 ### How do I adjust the camera settings?
-Open `http://printer_IP:8080/control.htm` for a continuously updating preview
-and the supported image controls. Each edit is applied to the running camera
-automatically. The panel reads ranges and menu entries from the camera, and
-**Save** atomically writes the visible values to `camera.conf` so they survive a
-restart. If you edit `camera.conf` manually, run `CAMERA_RELOAD` to apply it
-without restarting the HTTP stream service. The panel uses the existing camera
-HTTP server and MJPEG endpoint; it does not start a second server.
+Open `http://printer_IP:8080/control.htm` for a continuously updating preview and the supported image controls. Each edit is applied to the running camera automatically. The panel reads ranges and menu entries from the camera, and **Save** atomically writes the visible values to `camera.conf` so they survive a restart. If you edit `camera.conf` manually, run `CAMERA_RELOAD` to apply it without restarting the HTTP stream service. The panel uses the existing camera HTTP server and MJPEG endpoint; it does not start a second server.
 
-For numeric selectors whose camera-reported minimum is greater than zero, the
-panel adds `0 (special)` because some drivers still accept zero as an
-undocumented off value (for example, Gain). `Shift` + arrow changes numeric
-controls by ten steps instead of one. Holding an arrow key applies an
-intermediate value once per second, then applies the final value shortly after
-the key is released.
+For numeric selectors whose camera-reported minimum is greater than zero, the panel adds `0 (special)` because some drivers still accept zero as an undocumented off value (for example, Gain). `Shift` + arrow changes numeric controls by ten steps instead of one. Holding an arrow key applies an intermediate value once per second, then applies the final value shortly after the key is released.
 
 ### I adjusted the camera settings, but they are not applied after a reboot
-Make sure `POST_PROCESSING=1` and the desired `E_<parameter>` lines are
-uncommented in `camera.conf`, or use **Save** in the control panel.
-Saved controls are loaded on service start and applied after the camera's first
-completed frame. `CAMERA_RELOAD` can be used to reread the file manually.
+Make sure `POST_PROCESSING=1` and the desired `E_<parameter>` lines are uncommented in `camera.conf`, or use **Save** in the control panel.
+Saved controls are loaded on service start and applied after the camera's first completed frame. `CAMERA_RELOAD` can be used to reread the file manually.
 
 ### What should I do about the warning after an SSH connection: `wtmp_write: problem writing /dev/null/wtmp: Not a directory`?
 This warning is harmless and indicates an incomplete core system configuration in the firmware. It does not affect functionality and can be ignored.

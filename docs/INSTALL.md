@@ -15,8 +15,7 @@ Forge-X can be removed at any time, and the stock firmware stays available:
 
 
 > [!TIP]
-> It is not necessary to uninstall Forge-X before updating major versions
-> e.g. 1.3.x to 1.4.x
+> It is not necessary to uninstall Forge-X before updating major versions e.g. 1.3.x to 1.4.x
 
 ## Prerequisites
 

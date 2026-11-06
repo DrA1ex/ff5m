@@ -193,24 +193,20 @@ After saving, check that both temperatures remain stable.
 
 ## Input Shaper Calibration
 
-In Feather, open **Control → Calibration → Input Shaper** and follow the on-screen
-steps. From the Fluidd/Mainsail console, run while the printer is idle:
+In Feather, open **Control → Calibration → Input Shaper** and follow the on-screen steps. From the Fluidd/Mainsail console, run while the printer is idle:
 
 ```gcode
 FORGE_SHAPER
 ```
 
-The macro selects recommended settings and generates graphs under
-**Configuration → mod_data → shaper → plots** (dated filenames, up to five graphs per axis).
-The console prints the created paths. Review the results, then save
-the settings and restart Klipper:
+The macro selects recommended settings and generates graphs under **Configuration → mod_data → shaper → plots** (dated filenames, up to five graphs per axis).
+The console prints the created paths. Review the results, then save the settings and restart Klipper:
 
 ```gcode
 SAVE_CONFIG
 ```
 
-**Legacy:** `ZSHAPER` remains available. See the
-[macro reference](MACROS.md#bed-leveling-and-calibration) for additional commands.
+**Legacy:** `ZSHAPER` remains available. See the [macro reference](MACROS.md#bed-leveling-and-calibration) for additional commands.
 
 ## Axis Calibration Models
 

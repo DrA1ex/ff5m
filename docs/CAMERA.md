@@ -82,9 +82,7 @@ POST_PROCESSING=1
 # E_EXPOSURE_ABSOLUTE=80
 ```
 
-You can adjust these parameters to suit your camera. Increasing resolution or
-FPS can increase memory use, so check the result with the `MEM` macro under the
-same workload used while printing.
+You can adjust these parameters to suit your camera. Increasing resolution or FPS can increase memory use, so check the result with the `MEM` macro under the same workload used while printing.
 
 #### Image settings page
 
@@ -124,32 +122,21 @@ If you’re using Mainsail, the configuration process is nearly identical to Flu
 
 ### Timelapse
 
-Timelapse is off by default. Enable the mod camera, then turn on `timelapse`
-in the mod settings while the printer is idle. You can also run:
+Timelapse is off by default. Enable the mod camera, then turn on `timelapse` in the mod settings while the printer is idle. You can also run:
 
 ```gcode
 SET_MOD PARAM=timelapse VALUE=1
 ```
 
-Choose **layers**, **time**, or **progress** under Timelapse interval. The
-default is one photo per layer. Layer mode needs
-[OrcaSlicer setup](SLICING.md#timelapse); time and progress modes do not. The
-default progress interval is 0.5%, and you can enter decimals.
+Choose **layers**, **time**, or **progress** under Timelapse interval. The default is one photo per layer. Layer mode needs [OrcaSlicer setup](SLICING.md#timelapse); time and progress modes do not. The default progress interval is 0.5%, and you can enter decimals.
 
-A first photo is taken at the end of `START_PRINT`, in any mode. The nozzle
-cleaning line may be visible in it. Further photos follow the chosen interval.
+A first photo is taken at the end of `START_PRINT`, in any mode. The nozzle cleaning line may be visible in it. Further photos follow the chosen interval.
 
-**Park for photos** is off by default. When enabled, the head moves aside for
-photos during printing. **Final photo** is on by default and adds a photo of
-the finished print with the head parked. Turn it off to skip that photo.
+**Park for photos** is off by default. When enabled, the head moves aside for photos during printing. **Final photo** is on by default and adds a photo of the finished print with the head parked. Turn it off to skip that photo.
 
-To skip photos for one print, add `TIMELAPSE=0` to its `START_PRINT` line. This
-does not change the setting for later prints.
+To skip photos for one print, add `TIMELAPSE=0` to its `START_PRINT` line. This does not change the setting for later prints.
 
-Find finished videos in Mainsail's Timelapse view. In Feather, Guppy, and
-Headless modes, if the previous timelapse is still being converted before a
-new print starts, you will be offered a choice: wait for it to finish, cancel
-the new print, or cancel the timelapse and start printing.
+Find finished videos in Mainsail's Timelapse view. In Feather, Guppy, and Headless modes, if the previous timelapse is still being converted before a new print starts, you will be offered a choice: wait for it to finish, cancel the new print, or cancel the timelapse and start printing.
 
 ## Using the Stock Camera
 

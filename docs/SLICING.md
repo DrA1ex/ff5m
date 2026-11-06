@@ -43,9 +43,7 @@ END_PRINT
 
 ## Print preview thumbnails
 
-Feather shows the slicer's preview image in its file list (tile view) and on the
-print screen. For a clear preview, set the thumbnail size to
-**512 × 512 pixels** in your OrcaSlicer printer profile:
+Feather shows the slicer's preview image in its file list (tile view) and on the print screen. For a clear preview, set the thumbnail size to **512 × 512 pixels** in your OrcaSlicer printer profile:
 
 1. In **Prepare**, click **Edit preset** next to the printer profile name.
 2. Open **Basic information → Advanced** (enable **Advanced** mode if needed).
@@ -128,9 +126,7 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
 
 ## Timelapse
 
-If you choose **layers** in the printer's Timelapse interval setting, OrcaSlicer
-must send the current layer number. In **Printer settings → Machine G-code**,
-check these two fields and add the lines if they are missing:
+If you choose **layers** in the printer's Timelapse interval setting, OrcaSlicer must send the current layer number. In **Printer settings → Machine G-code**, check these two fields and add the lines if they are missing:
 
 **Start G-code**, before `START_PRINT`:
 
@@ -144,11 +140,7 @@ SET_PRINT_STATS_INFO TOTAL_LAYER=[total_layer_count]
 SET_PRINT_STATS_INFO CURRENT_LAYER={layer_num + 1}
 ```
 
-Slice the model again after changing these fields. The printer will then take
-photos automatically at the chosen layer interval. Do not add
-`TIMELAPSE_TAKE_FRAME`; remove it if an older profile already has it. If no
-layer numbers arrive, layer-change photos cannot be taken. **Time** and
-**progress** modes work without these lines.
+Slice the model again after changing these fields. The printer will then take photos automatically at the chosen layer interval. Do not add `TIMELAPSE_TAKE_FRAME`; remove it if an older profile already has it. If no layer numbers arrive, layer-change photos cannot be taken. **Time** and **progress** modes work without these lines.
 
 ## Pause at Layer
 

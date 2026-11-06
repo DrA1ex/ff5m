@@ -149,9 +149,7 @@ See [Input Shaper Calibration](CALIBRATION.md#input-shaper-calibration) for the 
   - **Parameters**: None (material selection via prompt).
   - **Defaults**: Offers every active `cold_pull_slots` profile in configured order. With no active Cold Pull slots it shows an informational prompt and Cancel without heating or moving.
 
-Material workflow macros and defaults live in `config/material.cfg`; see
-[Material slots](/docs/CONFIGURATION.md#material-slots) for ordering, disabling,
-validation, and persistent override examples.
+Material workflow macros and defaults live in `config/material.cfg`; see [Material slots](/docs/CONFIGURATION.md#material-slots) for ordering, disabling, validation, and persistent override examples.
 
 ### Nozzle Cleaning
 
@@ -557,20 +555,16 @@ validation, and persistent override examples.
     - `ZONE` (string, default: "Europe/Moscow"): Timezone (e.g., "Asia/Yekaterinburg").
   - **Defaults**: Sets to Europe/Moscow if unspecified.
   - Invalid timezone names are rejected without changing the current setting.
-  - Feather notices the change automatically; restarting Klipper is not
-    required for the dashboard clock.
+  - Feather notices the change automatically; restarting Klipper is not required for the dashboard clock.
 
 - **CAMERA_RELOAD**
-  - **Description**: Rereads image controls from `camera.conf` and applies them
-    without restarting the camera HTTP service.
+  - **Description**: Rereads image controls from `camera.conf` and applies them without restarting the camera HTTP service.
   - **Parameters**:
     - `SILENT` (int, default: 0): Suppress output (1 = yes).
   - **Defaults**: Runs `S98camera reload`.
 
 - **CAMERA_RESTART**
-  - **Description**: Restarts the camera service for startup-only changes such
-    as resolution, FPS, video device, or memory-reduction mode. Saved image
-    controls are reapplied after the first completed frame.
+  - **Description**: Restarts the camera service for startup-only changes such as resolution, FPS, video device, or memory-reduction mode. Saved image controls are reapplied after the first completed frame.
   - **Parameters**: None.
   - **Defaults**: Runs `S98camera restart`.
 

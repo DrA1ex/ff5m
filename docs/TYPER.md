@@ -1,27 +1,19 @@
 # Typer Command Documentation
 
-`typer` is an advanced utility for drawing on the Flashforge AD5M screen. It
-can render text and simple shapes, process batches of commands, and register
-touch regions for a custom screen. Feather starts and manages Typer itself, so
-normal printing and Feather use do not require this page.
+`typer` is an advanced utility for drawing on the Flashforge AD5M screen. It can render text and simple shapes, process batches of commands, and register touch regions for a custom screen. Feather starts and manages Typer itself, so normal printing and Feather use do not require this page.
 
 > [!WARNING]
-> Do not start another Typer process or write to Feather's display pipe while
-> Feather is enabled. Concurrent drawing can corrupt the screen. For a custom
-> display, switch to Headless mode and test it before starting a print.
+> Do not start another Typer process or write to Feather's display pipe while Feather is enabled. Concurrent drawing can corrupt the screen. For a custom display, switch to Headless mode and test it before starting a print.
 
 ## Overview
 
-Typer draws to the printer screen at a fixed resolution of **800×480**. It is
-installed at `/root/printer_data/bin/typer`. To add it to `PATH`, run:
+Typer draws to the printer screen at a fixed resolution of **800×480**. It is installed at `/root/printer_data/bin/typer`. To add it to `PATH`, run:
 
 ```sh
 source /opt/config/mod/.shell/common.sh
 ```
 
-All coordinates and sizes are pixels. Colours are hexadecimal values; for
-example, `ff0000` is red and `00ff00` is green. Use `typer --help` on the
-printer for the exact command-line help installed with that version.
+All coordinates and sizes are pixels. Colours are hexadecimal values; for example, `ff0000` is red and `00ff00` is green. Use `typer --help` on the printer for the exact command-line help installed with that version.
 
 ## Global Options
 
@@ -120,8 +112,7 @@ The optional `--color`, `-c <hex>` argument defaults to black.
 
 ### `flush` - Flush pending changes
 
-When using `--double-buffered`, call `flush` after drawing to show the pending
-changes:
+When using `--double-buffered`, call `flush` after drawing to show the pending changes:
 
 ```sh
 typer --double-buffered flush
@@ -131,8 +122,7 @@ typer --double-buffered flush
 
 ### `batch` - Process multiple commands
 
-`batch` processes multiple commands together. This is useful when a complete
-screen should appear at once.
+`batch` processes multiple commands together. This is useful when a complete screen should appear at once.
 
 ```sh
 typer --double-buffered batch \
@@ -148,8 +138,7 @@ For a custom display process, Typer can read batches from a named pipe:
 typer --double-buffered batch --pipe /tmp/typer_pipe
 ```
 
-Then write complete batches to that pipe. Quote text containing spaces and end
-the stream with `--end`:
+Then write complete batches to that pipe. Quote text containing spaces and end the stream with `--end`:
 
 ```sh
 printf '%s\n' '--batch clear -c 202020' > /tmp/typer_pipe
@@ -160,8 +149,7 @@ printf '%s\n' '--end' > /tmp/typer_pipe
 
 ## Touch controls
 
-Touch input is optional. Start pipe mode with both a normalized input device
-and an event pipe:
+Touch input is optional. Start pipe mode with both a normalized input device and an event pipe:
 
 ```sh
 typer --double-buffered \
@@ -182,8 +170,7 @@ For a normal tap, the event pipe receives:
 tap start_print
 ```
 
-Use `--continuous` for a held control such as a joystick. It emits begin,
-move, periodic stationary heartbeats, and end events with coordinates:
+Use `--continuous` for a held control such as a joystick. It emits begin, move, periodic stationary heartbeats, and end events with coordinates:
 
 ```sh
 typer hitbox --pos 300 300 --size 160 160 --id move_xy --continuous
@@ -203,8 +190,7 @@ typer clear-hitboxes
 
 ### `button` — draw a button and optionally make it touchable
 
-`button` combines a filled rectangle, border, centred text, and an optional
-touch region.
+`button` combines a filled rectangle, border, centred text, and an optional touch region.
 
 | Parameter | Description | Default |
 | --- | --- | --- |
@@ -234,22 +220,17 @@ Run the following command to list the fonts included with the installed Typer:
 typer --list-fonts
 ```
 
-Fonts include Roboto and JetBrains Mono variants at several sizes. Use the
-exact name returned by `--list-fonts` with `--font`.
+Fonts include Roboto and JetBrains Mono variants at several sizes. Use the exact name returned by `--list-fonts` with `--font`.
 
-`--font-manifest` is intended for tools that need font measurements in JSON;
-ordinary custom screens normally only need `--list-fonts`.
+`--font-manifest` is intended for tools that need font measurements in JSON; ordinary custom screens normally only need `--list-fonts`.
 
 ## Notes
 
 - Use double buffering and a final `flush` for a complete custom page.
 - Clear old hitboxes before changing pages so old actions cannot remain active.
-- A hitbox ID is a short ASCII action name; Typer reports it but never executes
-  printer commands itself.
-- Typer needs access to `/dev/fb0`. Test a custom screen while the printer is
-  idle and before relying on it for a print.
+- A hitbox ID is a short ASCII action name; Typer reports it but never executes printer commands itself.
+- Typer needs access to `/dev/fb0`. Test a custom screen while the printer is idle and before relying on it for a print.
 
 ## Copyright
 
-Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. `typer` is
-distributed under the [Forge-X Binary Components License](../LICENSE-BINARIES.md).
+Copyright (C) 2025-2026, Alexander K <https://github.com/drA1ex>. `typer` is distributed under the [Forge-X Binary Components License](../LICENSE-BINARIES.md).
