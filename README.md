@@ -117,23 +117,13 @@ If you encounter issues:
      → Navigate to: Forums → mods-and-projects → Forge-X
    - Only open a [GitHub issue](https://github.com/DrA1ex/ff5m/issues) if you're **absolutely certain** this is a bug.
 
-## Why This Mod Was Developed
-This mod was created to address several critical limitations and challenges faced by users of the Flashforge AD5M (Pro) 3D printer. Here are the key reasons behind its development:
+## Why Forge-X and how it is built
 
-**Instability and Resource Issues in Existing Klipper Mods:**
-The previous Klipper mod for the AD5M has stopped development and is no really stable. It consumes excessive RAM, leading to issues such as "Timer too close" errors and other performance problems. And some of typical AD5M issues not fixed at all. This mod aims to resolve these issues by optimizing resource usage and ensuring a stable, reliable experience.
+The AD5M hardware can produce good prints, but its software limits it. The host has only **128 MiB of RAM**, the bundled Klipper is from the older 0.11 generation, and the stock firmware exposes only a small part of what users expect from a Klipper-based printer.
 
-**Closed and Inflexible Development in ZMOD:**
-While ZMOD introduced significant improvements, it is not user-friendly for further enhancements or fixes. Its closed nature and unique development approach make it difficult to modify without deep knowledge of the entire system. This mod focuses on rewriting the foundation to provide advanced users with more control, making it easier to apply patches, additions, and customizations.
+Forge-X is built around these limits instead of assuming the resources of a newer printer. Memory, CPU load, background services, the screen, the camera, and Klipper timing are treated as one reliability problem: a service that takes too much memory or CPU can stop a print just as a Klipper bug can. Newer software is adapted to fit the hardware rather than added as it is.
 
-**Lack of Essential Functionality in Stock Firmware:**
-The stock firmware lacks many essential features that modern 3D printing enthusiasts expect. For example:
-The camera functionality is poorly optimized, consuming excessive RAM and delivering subpar performance.
-Users are unable to perform standard tasks that Klipper users typically rely on, such as advanced calibration, macros, and real-time monitoring.
-This mod addresses these shortcomings by integrating modern tools and features.
-
-**Outdated Klipper with Unresolved Bugs:**
-The existing Klipper implementation for the AD5M is outdated and plagued with bugs. This mod focuses on fixing these long-standing issues, modifying Klipper plugins, and enhancing core functionality to better suit the specific requirements of the AD5M (Pro) printer. The goal is to provide a stable, feature-rich platform tailored to this printer's unique hardware and user needs.
+Other problems are not about performance: missing Klipper workflows, long-standing AD5M-specific bugs, few ways to recover a printer that fails to boot, little diagnostic information, and no clean way to extend the system. Forge-X treats testing, failure handling, recovery, and documentation as part of the work itself. The goal is a system that can be maintained over time, where every change can be undone, and where others can add integrations or ports without relying on undocumented internals.
 
 
 ## Documentation
@@ -180,41 +170,33 @@ You can also join FlashForge community in [Discord](https://discord.gg/K7MH4hAfe
 
 ## Support Forge-X
 
-Forge-X is an open-source, free project built for the community, and everyone is welcome to use it without cost. However, developing new features, writing detailed documentation, and providing ongoing support through the community demands a significant amount of time and dedication. If you enjoy using Forge-X and appreciate the effort behind it, consider supporting the project with a donation. Your contributions help ensure the time needed to keep improving the mod, adding new features and maintaining active support.
+Forge-X is free, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
 
 - **[Lava (Donate)](https://app.lava.top/1535722070?tabId=donate)**
-
 - **[Boosty (Donate)](https://boosty.to/dra1ex/donate)**
-
 - **[Boosty (Subscribe)](https://boosty.to/dra1ex)**
-
-- **[Cryptocurrency Donations](https://telegra.ph/FORGE-X-10-24)**:
+- **[Cryptocurrency donations](https://telegra.ph/FORGE-X-10-24)**
 
 ## Credits
 
-Thanks [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) developers for their great work.
+Forge-X builds on the work of many people and projects:
 
-Thanks to the Klipper and Moonraker communities for their ongoing development.
+- Thanks to the [Klipper Mod](https://github.com/xblax/flashforge_ad5m_klipper_mod) developers for their excellent work.
+- The integration with the Stock screen is based on the implementation from [ZMod](https://github.com/ghzserg/zmod) by [ghzserg](https://github.com/ghzserg).
+- Thanks to the Klipper and Moonraker communities for their ongoing development.
 
-Thanks to the Russian FlashForge Adventurer 5M Telegram Community: [@FF_5M_5M_Pro](https://t.me/FF_5M_5M_Pro)
-
-Big thanks [@Zero](https://www.youtube.com/@zerodotcmd) for the awesome logo! 
-
-This mod is based on ZMod by [ghzserg](https://github.com/ghzserg).
-
-Thanks for the great open-source fonts:
+Thanks to the authors of these open-source fonts:
 - [Roboto Font](https://fonts.google.com/specimen/Roboto)
 - [JetBrains Mono Font](https://www.jetbrains.com/lp/mono)
 - [Typicons Icons Font](https://www.s-ings.com/typicons/)
 
 ### Special Thanks
 
-I’m truly thankful for everyone who has supported this project with their donations. Your contributions mean a lot to me and help make this work possible.
-Every contribution, no matter the size, makes a huge difference and shows the strength of our community.
+Thank you to everyone who has supported this project with a donation. Your support gives the project time to grow, and every contribution, whatever its size, is appreciated.
 
-Here are some of the wonderful people:   
+Supporters:
 **906Prints, MattArmfield, Stormage, Spud, Luigisvc, slydog43, Никита (motionpix), CHaucke, Andrew Popow, K3D // Dmitry Sorkin, D T, Kurt LaRue, jollyroger1789, Jules Woods**
 
 #### Anonymous donations
 
-I also want to express my heartfelt gratitude to those who have supported the project anonymously through cryptocurrency.
+Thank you also to everyone who supported the project anonymously with cryptocurrency.
