@@ -27,8 +27,9 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 **Read the documentation** before changing anything. A mistake can leave the printer unable to boot. It can be restored, but in rare cases that **requires additional hardware** or soldering.
 
-- Do not flash another mod's firmware over Forge-X (or Forge-X over another mod) unless you clearly understand what you are doing.
-- Do not delete installation, uninstallation, or recovery logs. They can help you restore the printer.
+- Do not flash another mod over Forge-X (or Forge-X over another mod).
+- Do not install additional software on the printer unless you fully understand what you're doing.
+- Do not delete installation, uninstallation, or recovery logs. They may be needed to restore the printer.
 
 ## Features
 
