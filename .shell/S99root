@@ -68,7 +68,6 @@ start() {
     if [ "$first_launch" -eq 1 ] && [ -f "$CUSTOM_BOOT_F" ]; then
         # Turn off and on display's backlight otherwise it's will not work.
         "$SCRIPTS"/screen.sh backlight 0
-        "$SCRIPTS"/screen.sh draw_splash
         "$SCRIPTS"/screen.sh backlight 100
 
         {
@@ -165,6 +164,12 @@ case "$1" in
     start)
         run_logged start
         status=$?
+
+        # Boot log lines stay on the screen; repaint it once the animated splash
+        # has stopped and the logger has finished, before Feather takes over.
+        if [ "$status" -eq 0 ] && [ "$first_launch" -eq 1 ] && [ -f "$CUSTOM_BOOT_F" ]; then
+            "$SCRIPTS"/screen.sh draw_splash
+        fi
 
         # Release Feather only after the startup logger has closed its output.
         rm -f "$FORGE_X_SCREEN_BUSY_F"

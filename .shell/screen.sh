@@ -130,21 +130,19 @@ splash_set_version() {
 }
 
 splash_stop() {
-    if [ ! -p "$SPLASH_CONTROL_FIFO" ]; then
-        return 0
+    if [ -p "$SPLASH_CONTROL_FIFO" ]; then
+        echo "Stopping splash..."
+        splash_command stop
     fi
 
-    echo "Stopping splash..."
-
-    splash_command stop || return 0
-
+    # The control FIFO is removed before the renderer releases the framebuffer.
     local attempts=0
-    while [ -p "$SPLASH_CONTROL_FIFO" ] && [ "$attempts" -lt 30 ]; do
+    while [ "$attempts" -lt 30 ] && pidof splash >/dev/null 2>&1; do
         sleep 0.1
         attempts=$((attempts + 1))
     done
 
-    if [ -p "$SPLASH_CONTROL_FIFO" ]; then
+    if pidof splash >/dev/null 2>&1; then
         echo "?? Splash: stop command timed out"
         return 1
     fi

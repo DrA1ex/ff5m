@@ -130,10 +130,7 @@ case "$1" in
     ;;
     
     test)
-        result="$(test)"
-        echo "Display: $result" 1>&2 
-        
-        echo "$result"
+        test
     ;;
     
     *)
