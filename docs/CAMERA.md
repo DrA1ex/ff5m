@@ -3,6 +3,7 @@
 Forge-X includes its own camera service, **forge-x-streamer**. It serves an MJPEG stream and snapshots from a USB camera and is built for the printer's 128 MiB of RAM:
 
 - **Low memory use.** Buffers and the number of viewers are strictly limited, so the camera leaves as much RAM as possible for Klipper, Moonraker, and the screen.
+- **Capture on demand.** The camera pauses when idle to reduce USB traffic and resumes when you open the stream or request a snapshot.
 - **Hardware acceleration.** Cameras that output raw video, and the screen stream, are compressed to JPEG by the printer's hardware encoder instead of the CPU. Cameras that already output MJPEG are passed through untouched.
 - **Self-healing.** If the camera disconnects or stalls, the service reconnects on its own. There is no need to restart Forge-X.
 - **Live image settings.** Brightness, contrast, exposure, and the rest can be tuned in the browser while watching the stream.
