@@ -20,9 +20,9 @@ source "$SCRIPTS/screen_policy.sh"
 
 # The entries are a convenience of the web interface: a failure is reported but never fails the caller.
 update_webcams() {
-    # Without Moonraker there is no web interface whose entries could be updated.
+    # With Moonraker disabled there are entries to update only while another server answers on its API port.
     local moonraker_disabled=$("$CFG_SCRIPT" "$VAR_PATH" --get "disable_moonraker" "0")
-    if [ "$moonraker_disabled" = "1" ]; then
+    if [ "$moonraker_disabled" = "1" ] && ! ss -tln | grep -q ":7125 "; then
         return 0
     fi
 

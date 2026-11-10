@@ -221,6 +221,26 @@ echo migrate >> "$TEST_EVENTS"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ['camera start'])
 
+    def test_entries_follow_the_parameters_when_another_server_answers_on_the_api_port(self):
+        listening = 'tcp LISTEN 0 128 0.0.0.0:7125 0.0.0.0:*'
+        self.variables.write_text("[Variables]\ndisplay='FEATHER'\ncamera=1\ndisable_moonraker=1\n")
+        result = self.run_s99(TEST_LISTENING=listening)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertEqual(calls[:2], ['touch start', 'services'])
+        flags = self.webcam_flags(calls[2])
+        self.assertEqual((flags['--camera'], flags['--screen']), ('1', '1'))
+
+        self.events.unlink()
+        camera = self.command('camera', 'echo "camera $*" >> "$TEST_EVENTS"\n')
+        result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['camera', '1'], (
+            ('/etc/init.d/S98camera', camera),
+        ), TEST_LISTENING=listening)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        camera_call, webcams = self.calls()
+        self.assertEqual(camera_call, 'camera start')
+        self.assertEqual(self.webcam_flags(webcams), {'--camera': '1', '--screen': '1'})
+
     def test_optional_webcam_failure_does_not_block_printer_startup(self):
         (self.root / 'boot-failure').touch()
         result = self.run_s99(TEST_WEBCAM_FAILURE='1')
