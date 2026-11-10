@@ -46,13 +46,11 @@ until the canonical close path restores it.
 
 ## Ownership and update flow
 
-`CpuUsageSampler` is a periodic service on the existing `FileWorker`. Once per
-second it reads only the aggregate CPU line from `/proc/stat`. The worker owns
-the previous counters and publishes one immutable `(sample_time, percent)`
-snapshot. Reactor readers copy that reference without acquiring a worker lock,
-performing I/O, or submitting another task. This follows the CPython runtime's
-reference publication semantics. No new thread, process, dependency, or callback
-queue is introduced.
+`SystemUsageSampler` runs once per second on the existing `FileWorker`. It reads
+the aggregate CPU line from `/proc/stat` and the memory counters from
+`/proc/meminfo`. The worker owns the previous CPU counters and publishes both
+metrics together in one immutable snapshot. The reactor reads the cached
+snapshot without acquiring a worker lock or performing I/O.
 
 Worker scheduling uses the worker's `time.monotonic()` clock. Snapshot
 timestamps use the injected reactor clock, because Klipper may use
@@ -65,23 +63,19 @@ core, so one fully occupied core out of two yields 50%, and both yield 100%.
 There is no fixed two-core divisor. Invalid counter deltas show an unknown
 value and establish a new baseline.
 
-The existing one-second Feather update reads the cached CPU percentage and
-`system_stats.get_status()`'s `mem_free_cache`. Klipper uses its existing
-`/proc/meminfo` read to sum `MemFree`, `Active(file)`, `Inactive(file)`, and
-`KReclaimable`. It uses `SReclaimable` when `KReclaimable` is absent.
-`memavail` still reports the kernel's separate `MemAvailable` estimate.
+Feather sums `MemFree`, `Active(file)`, `Inactive(file)`, and `KReclaimable`.
+It uses `SReclaimable` when `KReclaimable` is absent.
 The `FREE` value is displayed as whole MiB under the compact `MB` label,
 rounded to nearest with exact halves down. For example, 1.5 becomes 1 and 1.6 becomes 2.
 
 ## Failure, recovery, and lifecycle
 
-CPU shows `--%` before a second valid sample, after a read failure, after an
-invalid delta, or when the last sample is more than three seconds old. File
-tasks may delay sampling; the UI never waits for them. A read failure clears
-the baseline, and ordinary later polls recover it. Closing the worker closes
-the service; screen deactivation drops its reference before stopping the
-worker. Missing or invalid free RAM plus cache data displays `--MB` until the
-next valid sample.
+CPU shows `--%` before a second valid sample, after a read failure, or after an
+invalid delta. A CPU read failure clears the baseline. Missing or invalid
+memory data displays `--MB` until the next valid sample. File tasks may delay
+sampling. Both values show placeholders when the snapshot is more than three
+seconds old. Screen deactivation drops its sampler reference and stops the
+worker, which closes the sampler.
 
 The product renderer specializes footer drawing while retaining the inherited
 footer cache, modal suppression, frame restoration, and queue admission. The

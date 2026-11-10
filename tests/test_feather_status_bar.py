@@ -1,9 +1,8 @@
-## CPU telemetry and compact FF5M status bar behavior.
+## System telemetry and compact FF5M status bar behavior.
 ##
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import importlib.util
 import io
 import pathlib
 import queue
@@ -16,18 +15,11 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / '.py/klipper/plugins'))
 
-from feather.cpu_usage import CpuUsageSampler, read_cpu_counters
 from feather.files import FileWorker
+from feather.system_usage import SystemUsageSampler, read_cpu_counters, read_free_cache_kib
 from ff5m_ui.status_bar import PrinterRenderer, footer_values
 from tests.feather_render_test_helper import RenderCapture
 from ui import ThemeColor, ThemeRole
-
-
-STATS_SPEC = importlib.util.spec_from_file_location(
-    "forge_x_klipper_statistics",
-    pathlib.Path(__file__).parents[1] / ".py/klipper/patches/extras/statistics.py")
-STATS = importlib.util.module_from_spec(STATS_SPEC)
-STATS_SPEC.loader.exec_module(STATS)
 
 
 class SystemMemoryTest(unittest.TestCase):
@@ -37,40 +29,19 @@ class SystemMemoryTest(unittest.TestCase):
         "SReclaimable: 1024 kB\n"
     )
 
-    def test_one_read_publishes_both_metrics_without_counting_cache_twice(self):
-        meminfo = mock.Mock(wraps=io.StringIO(self.MEMINFO + "KReclaimable: 1792 kB\n"))
-        with mock.patch("builtins.open", return_value=meminfo) as opened:
-            stats = STATS.PrinterSysStats(mock.Mock())
-            _, message = stats.stats(1.0)
-            status = stats.get_status(1.0)
+    def test_one_read_returns_free_plus_cache_without_counting_cache_twice(self):
+        meminfo = mock.mock_open(read_data=self.MEMINFO + "KReclaimable: 1792 kB\n")
+        with mock.patch("builtins.open", meminfo):
+            self.assertEqual(read_free_cache_kib(), 30784)
 
-        opened.assert_called_once_with("/proc/meminfo", "r")
-        meminfo.read.assert_called_once_with()
-        self.assertEqual(status["mem_free_cache"], 30784)
-        self.assertEqual(status["memavail"], 20480)
-        self.assertIn(" memavail=20480", message)
+        meminfo.assert_called_once_with("/proc/meminfo", "r")
+        meminfo.return_value.read.assert_called_once_with()
 
     def test_reclaimable_fallback_is_only_used_when_the_new_counter_is_absent(self):
         for extra, expected in (("", 30016), ("KReclaimable: 0 kB\n", 28992)):
             with self.subTest(extra=extra), mock.patch(
                     "builtins.open", return_value=io.StringIO(self.MEMINFO + extra)):
-                stats = STATS.PrinterSysStats(mock.Mock())
-                stats.stats(1.0)
-                self.assertEqual(stats.get_status(1.0)["mem_free_cache"], expected)
-
-    def test_incomplete_or_unreadable_sample_clears_only_free_plus_cache_until_recovery(self):
-        samples = (self.MEMINFO, "MemAvailable: 16384 kB\nMemFree: 8192 kB\n",
-                   self.MEMINFO + "KReclaimable: invalid\n",
-                   OSError("read failed"), self.MEMINFO)
-        with mock.patch("builtins.open", return_value=mock.Mock()) as opened:
-            opened.return_value.read.side_effect = samples
-            stats = STATS.PrinterSysStats(mock.Mock())
-            self.assertIsNone(stats.get_status(0.0)["mem_free_cache"])
-            for now, expected in enumerate(((30016, 20480), (None, 16384),
-                                            (None, 20480), (None, 20480), (30016, 20480)), 1):
-                stats.stats(now)
-                status = stats.get_status(now)
-                self.assertEqual((status["mem_free_cache"], status["memavail"]), expected)
+                self.assertEqual(read_free_cache_kib(), expected)
 
 
 class WorkerServices:
@@ -82,11 +53,11 @@ class WorkerServices:
         return True
 
 
-class CpuUsageTest(unittest.TestCase):
+class SystemUsageTest(unittest.TestCase):
     def sampler(self, *samples):
         reader = mock.Mock(side_effect=samples)
         worker = WorkerServices()
-        sampler = CpuUsageSampler(worker, reader)
+        sampler = SystemUsageSampler(worker, reader, read_memory=lambda: 4096)
         self.assertEqual(worker.services, [sampler])
         return sampler, reader
 
@@ -106,24 +77,26 @@ class CpuUsageTest(unittest.TestCase):
     def test_two_core_aggregate_is_normalized_to_zero_through_one_hundred(self):
         # Each interval advances 200 total ticks across two cores.
         sampler, reader = self.sampler((200, 100), (400, 200), (600, 200), (800, 400))
-        self.assertIsNone(sampler.get_percent(0))
+        self.assertEqual(sampler.get_usage(0), (None, None))
         for now, expected in ((0, None), (1, 50), (2, 100), (3, 0)):
             sampler.poll(now)
-            self.assertEqual(sampler.get_percent(now), expected)
+            self.assertEqual(sampler.get_usage(now), (expected, 4096))
         self.assertEqual(reader.call_count, 4)
 
     def test_early_poll_and_cached_reads_do_not_collect_or_enqueue_work(self):
-        sampler, reader = self.sampler((100, 50), (200, 75))
+        cpu = mock.Mock(side_effect=((100, 50), (200, 75)))
+        memory = mock.Mock(side_effect=(2048, 4096))
+        sampler = SystemUsageSampler(WorkerServices(), cpu, memory)
         self.assertEqual(sampler.poll(0), 1)
         self.assertEqual(sampler.poll(0.5), 1)
-        sampler.poll(1)
-        reader.reset_mock()
+        self.assertEqual(sampler.poll(1), 2)
         for _ in range(100):
-            self.assertEqual(sampler.get_percent(2), 75)
-        reader.assert_not_called()
-        self.assertEqual(sampler.get_percent(4), 75)
-        self.assertIsNone(sampler.get_percent(4.01))
-        self.assertIsNone(sampler.get_percent(0.99))
+            self.assertEqual(sampler.get_usage(2), (75, 4096))
+        self.assertEqual(cpu.call_count, 2)
+        self.assertEqual(memory.call_count, 2)
+        self.assertEqual(sampler.get_usage(4), (75, 4096))
+        self.assertEqual(sampler.get_usage(4.01), (None, None))
+        self.assertEqual(sampler.get_usage(0.99), (None, None))
 
     def test_error_counter_reset_and_zero_delta_recover_without_bogus_percent(self):
         for invalid in (OSError('read failed'), ValueError('bad data'), (5, 1), (100, 50), (200, 40)):
@@ -131,26 +104,26 @@ class CpuUsageTest(unittest.TestCase):
                 sampler, _ = self.sampler((100, 50), invalid, (300, 100), (400, 125))
                 sampler.poll(0)
                 sampler.poll(1)
-                self.assertIsNone(sampler.get_percent(1))
+                self.assertEqual(sampler.get_usage(1), (None, 4096))
                 sampler.poll(2)
                 sampler.poll(3)
-                self.assertEqual(sampler.get_percent(3), 75)
+                self.assertEqual(sampler.get_usage(3), (75, 4096))
 
     def test_sample_age_uses_reactor_clock_instead_of_worker_scheduling_clock(self):
         reader = mock.Mock(side_effect=((100, 50), (200, 75)))
         clock = mock.Mock(side_effect=(1000.0, 1001.0))
-        sampler = CpuUsageSampler(WorkerServices(), reader, sample_clock=clock)
+        sampler = SystemUsageSampler(WorkerServices(), reader, read_memory=lambda: 4096, sample_clock=clock)
         self.assertEqual(sampler.poll(100.0), 101.0)
         self.assertEqual(sampler.poll(101.0), 102.0)
-        self.assertEqual(sampler.get_percent(1002.0), 75)
-        self.assertIsNone(sampler.get_percent(1004.1))
+        self.assertEqual(sampler.get_usage(1002.0), (75, 4096))
+        self.assertEqual(sampler.get_usage(1004.1), (None, None))
 
     def test_worker_close_clears_sample_and_stops_reads(self):
         sampler, reader = self.sampler((100, 50), (200, 75))
         sampler.poll(0)
         sampler.poll(1)
         sampler.close()
-        self.assertIsNone(sampler.get_percent(1))
+        self.assertEqual(sampler.get_usage(1), (None, None))
         self.assertIsNone(sampler.poll(2))
         self.assertEqual(reader.call_count, 2)
 
@@ -158,26 +131,30 @@ class CpuUsageTest(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         callbacks = queue.Queue()
         calls = []
+        memory_samples = iter((2048, 4096))
 
-        def blocked_read():
+        def read_memory():
+            sample = next(memory_samples, None)
+            if sample is not None:
+                return sample
             calls.append(threading.get_ident())
             entered.set()
             release.wait(3)
-            return 300, 100
+            return 8192
 
-        sampler, _ = self.sampler((100, 50), (200, 75))
+        cpu = mock.Mock(side_effect=((100, 50), (200, 75), (300, 125)))
+        sampler = SystemUsageSampler(WorkerServices(), cpu, read_memory)
         now = time.monotonic()
         sampler.poll(now - 2)
         sampler.poll(now - 1)
-        sampler._read_counters = blocked_read
         worker = FileWorker(callbacks.put)
         results = queue.Queue()
-        consumer = threading.Thread(target=lambda: results.put(sampler.get_percent(time.monotonic())))
+        consumer = threading.Thread(target=lambda: results.put(sampler.get_usage(time.monotonic())))
         try:
             worker.add_service(sampler)
             self.assertTrue(entered.wait(1))
             consumer.start()
-            self.assertEqual(results.get(timeout=1), 75)
+            self.assertEqual(results.get(timeout=1), (75, 4096))
             self.assertNotEqual(calls[0], threading.get_ident())
             self.assertTrue(callbacks.empty())
             worker.stop()
@@ -188,7 +165,22 @@ class CpuUsageTest(unittest.TestCase):
             if consumer.ident is not None:
                 consumer.join(1)
         self.assertFalse(worker._thread.is_alive())
-        self.assertIsNone(sampler.get_percent(time.monotonic()))
+        self.assertEqual(sampler.get_usage(time.monotonic()), (None, None))
+
+    def test_memory_failure_keeps_cpu_and_recovers_on_next_valid_sample(self):
+        samples = (SystemMemoryTest.MEMINFO, "MemAvailable: 16384 kB\nMemFree: 8192 kB\n",
+                   SystemMemoryTest.MEMINFO + "KReclaimable: invalid\n",
+                   OSError("read failed"), SystemMemoryTest.MEMINFO)
+        meminfo = mock.mock_open()
+        meminfo.return_value.read.side_effect = samples
+        cpu = mock.Mock(side_effect=((100, 50), (200, 75), (300, 100), (400, 125), (500, 150)))
+        sampler = SystemUsageSampler(WorkerServices(), read_counters=cpu)
+        self.assertEqual(sampler.get_usage(0), (None, None))
+        with mock.patch("builtins.open", meminfo):
+            for now, expected in enumerate(((None, 30016), (75, None),
+                                            (75, None), (75, None), (75, 30016))):
+                sampler.poll(now)
+                self.assertEqual(sampler.get_usage(now), expected)
 
 
 class StatusBarTest(unittest.TestCase):

@@ -40,7 +40,7 @@ from ff5m_ui.move import runtime as move_ui
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.status_bar import PrinterRenderer as FeatherRenderer, footer_values
-from feather.cpu_usage import CpuUsageSampler
+from feather.system_usage import SystemUsageSampler
 from feather.screen.model_preview import ModelPreviewEntryMixin
 from feather.screen.pages import FeatherPagesMixin, FILE_ROWS
 from feather.files import (
@@ -577,8 +577,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.file_view = self._configured_file_view()
         self.extruder = self.printer.lookup_object("extruder")
         self.heater_bed = self.printer.lookup_object("heater_bed")
-        self.system_stats = self.printer.lookup_object("system_stats", None)
-        self.cpu_usage = CpuUsageSampler(self.file_worker, sample_clock=self.reactor.monotonic)
+        self.system_usage = SystemUsageSampler(self.file_worker, sample_clock=self.reactor.monotonic)
         catalog = load_material_catalog(
             self.printer, self.extruder, self.heater_bed)
         self.heating_materials = catalog.heating_materials
@@ -717,8 +716,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self._cancel_gcode_preview()
         self._close_model_preview()
         file_worker = getattr(self, "file_worker", None)
-        self.cpu_usage = None
-        self.system_stats = None
+        self.system_usage = None
         if file_worker is not None:
             file_worker.stop()
             self.file_worker = None
@@ -2415,11 +2413,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         extruder = self.extruder.get_status(eventtime)
         bed = self.heater_bed.get_status(eventtime)
         network = self.network_status.get("ip") or "Offline"
-        sampler = getattr(self, "cpu_usage", None)
-        cpu = sampler.get_percent(eventtime) if sampler is not None else None
-        system_stats = getattr(self, "system_stats", None)
-        memory = (system_stats.get_status(eventtime).get("mem_free_cache")
-                  if system_stats is not None else None)
+        sampler = getattr(self, "system_usage", None)
+        cpu, memory = sampler.get_usage(eventtime) if sampler is not None else (None, None)
         self.renderer.footer(*footer_values(extruder, bed, cpu, memory, network, state, style),
                              paint=self._current_dialog() is None)
 
