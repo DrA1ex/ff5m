@@ -1,7 +1,7 @@
 # Feather status bar telemetry
 
 The compact 32 px status bar displays nozzle and bed temperatures, total CPU
-usage, available RAM, the network address, and print state. It uses JetBrains
+usage, free RAM plus cache, the network address, and print state. It uses JetBrains
 Mono 8pt, middle-dot separators, and the active theme's existing temperature
 roles and palette tokens. FF5M owns this product presentation in
 `ff5m_ui/status_bar.py`; the shared framework and Designer contracts are unchanged.
@@ -66,10 +66,12 @@ There is no fixed two-core divisor. Invalid counter deltas show an unknown
 value and establish a new baseline.
 
 The existing one-second Feather update reads the cached CPU percentage and
-`system_stats.get_status()`'s existing `memavail`. Klipper remains the owner of
-available-memory collection; Feather does not add another memory-file read.
-RAM is displayed as whole MiB under the compact `MB` label, rounded to nearest
-with exact halves down: 1.5 becomes 1, and 1.6 becomes 2.
+`system_stats.get_status()`'s `mem_free_cache`. Klipper uses its existing
+`/proc/meminfo` read to sum `MemFree`, `Active(file)`, `Inactive(file)`, and
+`KReclaimable`. It uses `SReclaimable` when `KReclaimable` is absent.
+`memavail` still reports the kernel's separate `MemAvailable` estimate.
+The `FREE` value is displayed as whole MiB under the compact `MB` label,
+rounded to nearest with exact halves down. For example, 1.5 becomes 1 and 1.6 becomes 2.
 
 ## Failure, recovery, and lifecycle
 
@@ -78,8 +80,8 @@ invalid delta, or when the last sample is more than three seconds old. File
 tasks may delay sampling; the UI never waits for them. A read failure clears
 the baseline, and ordinary later polls recover it. Closing the worker closes
 the service; screen deactivation drops its reference before stopping the
-worker. Available RAM follows Klipper's existing cached-memory behavior;
-missing or invalid data displays `--MB`.
+worker. Missing or invalid free RAM plus cache data displays `--MB` until the
+next valid sample.
 
 The product renderer specializes footer drawing while retaining the inherited
 footer cache, modal suppression, frame restoration, and queue admission. The

@@ -2418,7 +2418,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         sampler = getattr(self, "cpu_usage", None)
         cpu = sampler.get_percent(eventtime) if sampler is not None else None
         system_stats = getattr(self, "system_stats", None)
-        memory = (system_stats.get_status(eventtime).get("memavail")
+        memory = (system_stats.get_status(eventtime).get("mem_free_cache")
                   if system_stats is not None else None)
         self.renderer.footer(*footer_values(extruder, bed, cpu, memory, network, state, style),
                              paint=self._current_dialog() is None)

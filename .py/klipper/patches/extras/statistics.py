@@ -11,6 +11,7 @@ class PrinterSysStats:
         self.last_process_time = self.total_process_time = 0.
         self.last_load_avg = 0.
         self.last_mem_avail = 0
+        self.last_mem_free_cache = None
         self.mem_file = None
         try:
             self.mem_file = open("/proc/meminfo", "r")
@@ -31,23 +32,42 @@ class PrinterSysStats:
         self.last_load_avg = os.getloadavg()[0]
         msg = "sysload=%.2f cputime=%.3f" % (self.last_load_avg,
                                              self.total_process_time)
-        # Get available system memory
+        # Sample both memory metrics from the same read.
+        meminfo = {}
         if self.mem_file is not None:
             try:
                 self.mem_file.seek(0)
                 data = self.mem_file.read()
-                for line in data.split('\n'):
-                    if line.startswith("MemAvailable:"):
-                        self.last_mem_avail = int(line.split()[1])
-                        msg = "%s memavail=%d" % (msg, self.last_mem_avail)
-                        break
-            except:
+            except OSError:
                 pass
+            else:
+                for line in data.splitlines():
+                    field, _, raw = line.partition(":")
+                    if field not in ("MemAvailable", "MemFree", "Active(file)",
+                                     "Inactive(file)", "KReclaimable", "SReclaimable"):
+                        continue
+                    try:
+                        value = int(raw.split()[0])
+                    except (IndexError, ValueError):
+                        value = -1
+                    meminfo[field] = value if value >= 0 else None
+
+        memavail = meminfo.get("MemAvailable")
+        if memavail is not None:
+            self.last_mem_avail = memavail
+            msg = "%s memavail=%d" % (msg, memavail)
+
+        # KReclaimable already includes SReclaimable.
+        reclaimable = meminfo.get("KReclaimable", meminfo.get("SReclaimable"))
+        free_cache = (meminfo.get("MemFree"), meminfo.get("Active(file)"),
+                      meminfo.get("Inactive(file)"), reclaimable)
+        self.last_mem_free_cache = None if None in free_cache else sum(free_cache)
         return (False, msg)
     def get_status(self, eventtime):
         return {'sysload': self.last_load_avg,
                 'cputime': self.total_process_time,
-                'memavail': self.last_mem_avail}
+                'memavail': self.last_mem_avail,
+                'mem_free_cache': self.last_mem_free_cache}
 
 class PrinterStats:
     def __init__(self, config):

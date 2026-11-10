@@ -3,6 +3,7 @@
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import importlib.util
 import io
 import pathlib
 import queue
@@ -20,6 +21,56 @@ from feather.files import FileWorker
 from ff5m_ui.status_bar import PrinterRenderer, footer_values
 from tests.feather_render_test_helper import RenderCapture
 from ui import ThemeColor, ThemeRole
+
+
+STATS_SPEC = importlib.util.spec_from_file_location(
+    "forge_x_klipper_statistics",
+    pathlib.Path(__file__).parents[1] / ".py/klipper/patches/extras/statistics.py")
+STATS = importlib.util.module_from_spec(STATS_SPEC)
+STATS_SPEC.loader.exec_module(STATS)
+
+
+class SystemMemoryTest(unittest.TestCase):
+    MEMINFO = (
+        "MemFree: 8192 kB\nMemAvailable: 20480 kB\nBuffers: 512 kB\n"
+        "Cached: 22528 kB\nActive(file): 6400 kB\nInactive(file): 14400 kB\n"
+        "SReclaimable: 1024 kB\n"
+    )
+
+    def test_one_read_publishes_both_metrics_without_counting_cache_twice(self):
+        meminfo = mock.Mock(wraps=io.StringIO(self.MEMINFO + "KReclaimable: 1792 kB\n"))
+        with mock.patch("builtins.open", return_value=meminfo) as opened:
+            stats = STATS.PrinterSysStats(mock.Mock())
+            _, message = stats.stats(1.0)
+            status = stats.get_status(1.0)
+
+        opened.assert_called_once_with("/proc/meminfo", "r")
+        meminfo.read.assert_called_once_with()
+        self.assertEqual(status["mem_free_cache"], 30784)
+        self.assertEqual(status["memavail"], 20480)
+        self.assertIn(" memavail=20480", message)
+
+    def test_reclaimable_fallback_is_only_used_when_the_new_counter_is_absent(self):
+        for extra, expected in (("", 30016), ("KReclaimable: 0 kB\n", 28992)):
+            with self.subTest(extra=extra), mock.patch(
+                    "builtins.open", return_value=io.StringIO(self.MEMINFO + extra)):
+                stats = STATS.PrinterSysStats(mock.Mock())
+                stats.stats(1.0)
+                self.assertEqual(stats.get_status(1.0)["mem_free_cache"], expected)
+
+    def test_incomplete_or_unreadable_sample_clears_only_free_plus_cache_until_recovery(self):
+        samples = (self.MEMINFO, "MemAvailable: 16384 kB\nMemFree: 8192 kB\n",
+                   self.MEMINFO + "KReclaimable: invalid\n",
+                   OSError("read failed"), self.MEMINFO)
+        with mock.patch("builtins.open", return_value=mock.Mock()) as opened:
+            opened.return_value.read.side_effect = samples
+            stats = STATS.PrinterSysStats(mock.Mock())
+            self.assertIsNone(stats.get_status(0.0)["mem_free_cache"])
+            for now, expected in enumerate(((30016, 20480), (None, 16384),
+                                            (None, 20480), (None, 20480), (30016, 20480)), 1):
+                stats.stats(now)
+                status = stats.get_status(now)
+                self.assertEqual((status["mem_free_cache"], status["memavail"]), expected)
 
 
 class WorkerServices:

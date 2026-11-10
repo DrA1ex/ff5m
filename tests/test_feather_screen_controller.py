@@ -2924,7 +2924,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.cpu_usage = FEATHER.CpuUsageSampler(worker, reader)
         controller.cpu_usage.poll(0.0)
         controller.cpu_usage.poll(1.0)
-        controller.system_stats = StatusObject({"memavail": 1536})
+        controller.system_stats = StatusObject({"memavail": 512, "mem_free_cache": 1536})
 
         with mock.patch("builtins.open", side_effect=AssertionError("Reactor performed file I/O")):
             controller._update_cycle(1.0)
@@ -2933,7 +2933,7 @@ class ControllerSafetyTest(unittest.TestCase):
             self.assertTrue(capture.latest.has_text("CPU 75%"))
             self.assertTrue(capture.latest.has_text("FREE 1MB"))
             self.assertTrue(capture.latest.has_text("PRINTING"))
-            controller.system_stats.status["memavail"] = 1638
+            controller.system_stats.status["mem_free_cache"] = 1638
             controller._update_cycle(2.0)
             self.assertTrue(capture.latest.has_text("FREE 2MB"))
             controller._update_cycle(4.1)
