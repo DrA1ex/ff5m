@@ -182,8 +182,8 @@ start_recovery_touch() {
     local already_running=0
     local parent_mounted=0
 
-    if [ -f "$MOD/var/run/ts_uinput.pid" ] \
-            && kill -0 "$(cat "$MOD/var/run/ts_uinput.pid")" 2>/dev/null; then
+    if [ -f "$MOD/run/ts_uinput.pid" ] \
+            && kill -0 "$(cat "$MOD/run/ts_uinput.pid")" 2>/dev/null; then
         already_running=1
     fi
 

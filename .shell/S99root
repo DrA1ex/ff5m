@@ -85,7 +85,7 @@ start() {
         mount --rbind /dev/pts "$MOD"/dev/pts
     fi
 
-    "$SCRIPTS/commands/zstreams.sh" touch || echo "Touch setup failed; continuing printer startup."
+    "$SCRIPTS/commands/ztouch.sh" apply || echo "Touch setup failed; continuing printer startup."
 
     if ! /opt/config/mod/.shell/migrate_db.sh --check; then
         echo "// Initializing database..."
@@ -125,6 +125,7 @@ start() {
 stop() {
     echo "// Stopping Buildroot env..."
     chroot "$MOD" /opt/config/mod/.root/stop.sh
+    "$SCRIPTS/commands/ztouch.sh" stop
     echo "// Done"
 }
 
@@ -136,8 +137,7 @@ wait_stopped() {
         "$MOD/run/moonraker.pid" \
         "$MOD/run/httpd.pid" \
         "$MOD/run/ntpd.pid" \
-        "$MOD/run/guppyscreen.pid" \
-        "$MOD/var/run/ts_uinput.pid"
+        "$MOD/run/guppyscreen.pid"
     do
         wait_process_exit "$pid_file" 3600
     done

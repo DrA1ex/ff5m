@@ -63,6 +63,7 @@ apply_display_mode() {
     # Start the selected alternative display before restarting Klipper.  This
     # function may be invoked by Klipper through SET_MOD; anything placed after
     # the hard restart is not guaranteed to run because the caller is stopped.
+    "$CMDS/ztouch.sh" apply || echo "Touch setup failed; continuing display change." >&2
     "$CMDS/zstreams.sh" apply
     if [ "$display_mode" = "GUPPY" ]; then
         chroot "$MOD" /opt/config/mod/.root/guppyscreen start

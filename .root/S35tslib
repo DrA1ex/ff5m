@@ -7,10 +7,8 @@
 # This file may be distributed under the terms of the GNU GPLv3 license
 #
 
-mkdir -p /var/run/
-
 BIN=/usr/bin/ts_uinput
-PIDFILE=/var/run/ts_uinput.pid
+PIDFILE=/run/ts_uinput.pid
 NICENESS=9
 
 # variables must be present or ts_uinput will fail.
@@ -45,10 +43,14 @@ create_link() {
     ln -fns /dev/input/fgx_touch /dev/input/guppy
 }
 
+running() {
+    [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
 start() {
     echo "Starting tslib uinput interface..."
 
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    if running; then
         create_link
         echo "Already running"
         return 0
@@ -65,30 +67,32 @@ start() {
         ln -fns /tmp/parent_root/opt/tslib-1.12/etc/pointercal /etc/
     fi
     
-    if start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN; then
-        create_link 50 && echo "OK" || echo "FAIL"
+    if start-stop-daemon -S -q -b -m -p $PIDFILE -N $NICENESS --exec $BIN && create_link 50; then
+        echo "OK"
     else
         echo "FAIL"
+        return 1
     fi
 }
 
 stop() {
     echo "Stopping tslib uinput interface..."
-    if [ ! -f "$PIDFILE" ]; then
-        rm -f /dev/input/fgx_touch /dev/input/guppy
-        echo "Not running"
-        return 0
-    fi
     start-stop-daemon -K -q -p $PIDFILE
-    result=$?
+
+    # Keep the PID and device names until the daemon has released the device.
+    attempts=50
+    while running; do
+        [ "$attempts" -gt 0 ] || { echo "FAIL"; return 1; }
+        attempts=$((attempts - 1))
+        sleep 0.1
+    done
+
     rm -f "$PIDFILE" /dev/input/fgx_touch /dev/input/guppy
-    [ $result = 0 ] && echo "OK" || echo "FAIL"
+    echo "OK"
 }
 
 restart() {
-    stop
-    sleep 2
-    start
+    stop && start
 }
 
 case "$1" in

@@ -32,12 +32,19 @@ class StreamServicesTest(unittest.TestCase):
         self.boot = self.root / 'boot_mode.sh'
         self.boot.write_text('forge_x_boot_mode() { echo "${TEST_BOOT_MODE:-mod}"; }\n')
         self.common = self.root / 'common.sh'
+        commands = self.root / 'commands'
+        commands.mkdir()
+        (commands / 'zconf.sh').symlink_to(ROOT / '.shell/commands/zconf.sh')
+        display = commands / 'zdisplay.sh'
+        display.write_text((ROOT / '.shell/commands/zdisplay.sh').read_text()
+                           .replace('/opt/config/mod/.shell/common.sh', str(self.common)))
+        display.chmod(0o755)
         self.common.write_text(f'''source {ROOT}/.shell/common.sh
 BINS={self.root}
 MOD={self.root}/chroot
 PY={ROOT}/.py
 SCRIPTS={ROOT}/.shell
-CMDS={ROOT}/.shell/commands
+CMDS={commands}
 CFG_SCRIPT={ROOT}/.shell/commands/zconf.sh
 VAR_PATH={self.variables}
 CAMERA_PID_F={self.camera_pid}
@@ -105,6 +112,35 @@ sys.exit(int(os.environ.get('TEST_DAEMON_FAILURE', '0')))
         call, = self.calls()
         self.assertEqual(self.option(call, '--touch-device'), '/dev/input/event0')
         self.assertEqual(self.option(call, '--touch-calibration'), '/opt/tslib-1.12/etc/pointercal')
+
+    def test_auto_streams_local_displays_and_skips_headless(self):
+        for display, launches in (('STOCK', True), ('FEATHER', True), ('GUPPY', True), ('HEADLESS', False)):
+            with self.subTest(display=display):
+                self.events.unlink(missing_ok=True)
+                self.variables.write_text(f"[Variables]\ndisplay='{display}'\n")
+                result = self.run_service('S98screen')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(self.calls()), int(launches))
+
+    def test_explicit_off_suppresses_streaming_on_local_displays(self):
+        for display in ('STOCK', 'FEATHER', 'GUPPY'):
+            with self.subTest(display=display):
+                self.variables.write_text(f"[Variables]\ndisplay='{display}'\nscreen_stream='OFF'\n")
+                result = self.run_service('S98screen')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls(), [])
+
+    def test_invalid_display_keeps_the_default_stream_available(self):
+        self.variables.write_text("[Variables]\ndisplay='unknown'\n")
+        result = self.run_service('S98screen')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_enabling_calibrated_touch_keeps_headless_streaming_off(self):
+        self.variables.write_text("[Variables]\ndisplay='HEADLESS'\ntouch_interface='ON'\n")
+        result = self.run_service('S98screen')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), [])
 
     def test_both_streams_write_to_the_shared_log(self):
         self.variables.write_text('[Variables]\ncamera=1\n')

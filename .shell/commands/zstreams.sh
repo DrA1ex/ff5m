@@ -1,12 +1,11 @@
 #!/bin/bash
 
-## Bring the touch input, the screen stream, and the web interface entries in line with the parameters.
+## Bring the screen stream and the web interface entries in line with the parameters.
 ##
-##   touch    start or stop the shared touch input; run at boot before the UI starts and after `touch_interface` changes
-##   apply    touch, restart the screen stream, update the entries; run after `display` or `screen_stream` changes
+##   apply    restart the screen stream and update the entries after `display` or `screen_stream` changes
 ##   webcams  update the entries only; run at boot, once the services have started, and after `camera` changes
 ##
-## screen_policy.sh decides what must run; S98camera, S98screen and S35tslib own their processes. A `camera`
+## screen_policy.sh decides whether to stream; S98camera and S98screen own their processes. A `camera`
 ## change is applied by zchanges.sh, which first checks that the stock camera is not running.
 ##
 ## The `enabled` flag of the 4gx_camera and 4gx_screen entries always follows the parameters, so every run
@@ -18,14 +17,6 @@
 
 source /opt/config/mod/.shell/common.sh
 source "$SCRIPTS/screen_policy.sh"
-
-apply_touch() {
-    if [ "$SCREEN_TOUCH_ENABLED" -eq 1 ]; then
-        chroot "$MOD" /opt/config/mod/.root/S35tslib start
-    else
-        chroot "$MOD" /opt/config/mod/.root/S35tslib stop
-    fi
-}
 
 # The entries are a convenience of the web interface: a failure is reported but never fails the caller.
 update_webcams() {
@@ -46,14 +37,8 @@ command=$1
 shift
 
 case "$command" in
-    touch)
-        screen_policy || exit $?
-        apply_touch
-    ;;
-
     apply)
         screen_policy || exit $?
-        apply_touch || exit $?
         /etc/init.d/S98screen restart || echo "Screen stream failed to start. Details: /data/logFiles/streamer.log" >&2
         update_webcams
     ;;
@@ -64,6 +49,6 @@ case "$command" in
     ;;
 
     *)
-        echo "Usage: $0 {touch|apply|webcams [--wait SECONDS]}"
+        echo "Usage: $0 {apply|webcams [--wait SECONDS]}"
         exit 1
 esac

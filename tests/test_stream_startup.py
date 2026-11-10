@@ -53,36 +53,58 @@ message() {{ echo "$*" >> {self.root}/messages; }}
 printer_command() {{ echo "$*" >> {self.root}/prompts; }}
 ''')
         (self.root / 'not-first').touch()
+        (self.root / 'uptime').write_text('1 1\n')
         self.environment = dict(os.environ, TEST_EVENTS=str(self.events),
                                 PATH=str(self.commands) + ':' + os.environ['PATH'])
-        self.command('chroot', '''case "$*" in
-    *S35tslib*) shift; shift; echo "touch $*" >> "$TEST_EVENTS" ;;
-    *set_webcams.py*)
+        self.command('S35tslib', 'echo "touch $1" >> "$TEST_EVENTS"\n')
+        for name in ('S65moonraker', 'S70httpd', 'S45ntpd'):
+            self.command(name, 'exit 0\n')
+        self.command('S80guppyscreen', 'echo "guppy $*" >> "$TEST_EVENTS"\n')
+        for name in ('stop.sh', 'guppyscreen'):
+            self.copy_script(ROOT / '.root' / name, self.commands / name, (
+                ('/opt/config/mod/.root/', str(self.commands) + '/'),
+                ('/etc/init.d', self.root / 'user-init.d'),
+            ))
+        self.command('chroot', '''case "$2" in
+    */S35tslib|*/guppyscreen) exec "${0%/*}/${2##*/}" "$3" ;;
+    */stop.sh)
+        echo 'stop services' >> "$TEST_EVENTS"
+        # The host sh does not parse the stop script's process substitution.
+        exec bash "${0%/*}/stop.sh"
+        ;;
+    */restore_ota.sh) echo 'restore OTA' >> "$TEST_EVENTS" ;;
+    /bin/python3)
         shift; shift; shift
         echo "webcams $*" >> "$TEST_EVENTS"
         exit "${TEST_WEBCAM_FAILURE:-0}"
         ;;
-    *start.sh*)
+    */start.sh)
         echo services >> "$TEST_EVENTS"
-        exit "${TEST_SERVICE_FAILURE:-0}"
+        [ "${TEST_SERVICE_FAILURE:-0}" = 0 ] || exit "$TEST_SERVICE_FAILURE"
+        exec "${0%/*}/start.sh"
         ;;
 esac
 ''')
         self.command('ss', 'echo "$TEST_LISTENING"\n')
         self.command('ps', 'exit 0\n')
+        self.command('curl', 'exit 0\n')
         self.screen = self.command('screen', 'echo "screen $*" >> "$TEST_EVENTS"\nexit "${TEST_SCREEN_FAILURE:-0}"\n')
         (self.scripts / 'screen_policy.sh').write_text((ROOT / '.shell/screen_policy.sh').read_text())
-        for name in ('zconf.sh', 'zdisplay.sh'):
-            helper = self.scripts / 'commands' / name
-            helper.write_text((ROOT / '.shell/commands' / name).read_text()
-                              .replace('/opt/config/mod/.shell/common.sh', str(self.common)))
-            helper.chmod(0o755)
-        source = (ROOT / '.shell/commands/zstreams.sh').read_text()
-        source = source.replace('/opt/config/mod/.shell/common.sh', str(self.common))
-        source = source.replace('/etc/init.d/S98screen', str(self.screen))
-        helper = self.scripts / 'commands/zstreams.sh'
-        helper.write_text(source)
-        helper.chmod(0o755)
+        for name in ('zconf.sh', 'zdisplay.sh', 'zstreams.sh', 'ztouch.sh'):
+            self.copy_script(ROOT / '.shell/commands' / name, self.scripts / 'commands' / name, (
+                ('/etc/init.d/S98screen', self.screen),
+            ))
+        self.command('sync', 'exit 0\n')
+        self.copy_script(self.screen, self.scripts / 'screen.sh')
+        # Adapt in-place sed to the host. The Mainsail metadata file is absent in these fixtures.
+        self.command('sed', '''case "$*" in *release_info.json*) exit 0 ;; esac
+if [ "$1" = -i ]; then
+    shift
+    if /usr/bin/sed --version > /dev/null 2>&1; then exec /usr/bin/sed -i "$@"; fi
+    exec /usr/bin/sed -i "" "$@"
+fi
+exec /usr/bin/sed "$@"
+''')
 
     def command(self, name, body):
         command = self.commands / name
@@ -90,7 +112,7 @@ esac
         command.chmod(0o755)
         return command
 
-    def run_script(self, path, args, replacements=(), **environment):
+    def copy_script(self, path, destination, replacements=()):
         source = path.read_text()
         for old, new in (
             ('/opt/config/mod/.shell/common.sh', self.common),
@@ -98,9 +120,16 @@ esac
             *replacements,
         ):
             source = source.replace(old, str(new))
+        destination.write_text(source)
+        destination.chmod(0o755)
+
+    def run_script(self, path, args, replacements=(), **environment):
         script = self.root / path.name
-        script.write_text(source)
-        return subprocess.run(['bash', str(script), *args],
+        self.copy_script(path, script, replacements)
+        return self.invoke(script, args, **environment)
+
+    def invoke(self, script, args, **environment):
+        return subprocess.run([str(script), *args],
                               env=dict(self.environment, **environment),
                               text=True, capture_output=True, timeout=10)
 
@@ -112,27 +141,75 @@ esac
         self.assertEqual(command, 'webcams')
         return dict(zip(args[::2], args[1::2], strict=True))
 
-    def start(self, **environment):
-        migration = self.command('migrate-db', 'exit 0\n')
-        return self.run_script(ROOT / '.shell/S99root', ['start'], (
+    def run_s99(self, action='start', migration_needed=False, **environment):
+        self.isolate_root_start(self.root / 'user.moonraker.conf')
+        migration = self.command('migrate-db', '''if [ "$1" = --check ]; then
+    exit "$TEST_MIGRATION_NEEDED"
+fi
+echo migrate >> "$TEST_EVENTS"
+''')
+        return self.run_script(ROOT / '.shell/S99root', [action], (
             ('/opt/config/mod/.shell/migrate_db.sh', migration),
+            ('/opt/config/mod/sql/version', self.root / 'sql-version'),
             ('/opt/ffmpeg-4.0.2', self.root / 'unavailable-encoder'),
-        ), **environment)
+            ('/tmp/printer', self.root / 'printer'),
+            ('/proc/uptime', self.root / 'uptime'),
+        ), TEST_MIGRATION_NEEDED=str(int(migration_needed)), **environment)
 
     def test_startup_prepares_input_before_services_then_shows_the_wanted_entries(self):
-        self.variables.write_text("[Variables]\ndisplay='FEATHER'\ncamera=1\n")
-        result = self.start()
+        for display in ('FEATHER', 'GUPPY'):
+            with self.subTest(display=display):
+                (self.root / 'not-first').unlink()
+                self.events.unlink(missing_ok=True)
+                self.variables.write_text(f"[Variables]\ndisplay='{display}'\ncamera=1\n")
+                result = self.run_s99()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                self.assertEqual(calls.count('services'), 1)
+                self.assertEqual(calls.count('touch start'), 1)
+                self.assertLess(calls.index('touch start'), calls.index('services'))
+                if display == 'GUPPY':
+                    self.assertLess(calls.index('touch start'), calls.index('guppy start'))
+                webcams, = (call for call in calls if call.startswith('webcams '))
+                self.assertLess(calls.index('services'), calls.index(webcams))
+                flags = self.webcam_flags(webcams)
+                self.assertEqual((flags['--camera'], flags['--screen']), ('1', '1'))
+                self.assertGreater(int(flags['--wait']), 0)
+
+    def test_first_boot_preserves_touch_through_moonraker_database_bootstrap(self):
+        (self.root / 'not-first').unlink()
+        daemon = subprocess.Popen(['/bin/sleep', '30'])
+        self.addCleanup(daemon.wait, timeout=5)
+        self.addCleanup(daemon.kill)
+        pid_file = self.root / 'chroot/run/ts_uinput.pid'
+        pid_file.parent.mkdir(parents=True)
+        pid_file.write_text(f'{daemon.pid}\n')
+
+        result = self.run_s99(migration_needed=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        calls = self.calls()
-        self.assertEqual(calls[:2], ['touch start', 'services'])
-        flags = self.webcam_flags(calls[2])
-        self.assertEqual((flags['--camera'], flags['--screen']), ('1', '1'))
-        self.assertGreater(int(flags['--wait']), 0)
-        self.assertEqual(len(calls), 3, 'the services started by init must not be restarted')
+        self.assertIsNone(daemon.poll())
+        self.assertEqual(pid_file.read_text().strip(), str(daemon.pid))
+        lifecycle = [call for call in self.calls()
+                     if call.startswith('touch ') or call in ('services', 'stop services', 'migrate')]
+        self.assertEqual(lifecycle, ['touch start', 'services', 'stop services', 'migrate', 'services'])
+        self.assertTrue((self.root / 'not-first').exists())
+
+    def test_full_stop_owns_touch(self):
+        result = self.run_s99('stop')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lifecycle = [call for call in self.calls() if call.startswith('touch ') or call == 'stop services']
+        self.assertEqual(lifecycle, ['stop services', 'touch stop'])
+
+    def test_restart_restarts_touch_with_the_services(self):
+        self.variables.write_text("[Variables]\ndisplay='FEATHER'\n")
+        result = self.run_s99('restart')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lifecycle = [call for call in self.calls() if call.startswith('touch ') or call in ('services', 'stop services')]
+        self.assertEqual(lifecycle, ['stop services', 'touch stop', 'touch start', 'services'])
 
     def test_entries_are_left_alone_when_moonraker_is_disabled(self):
         self.variables.write_text("[Variables]\ndisplay='FEATHER'\ncamera=1\ndisable_moonraker=1\n")
-        result = self.start()
+        result = self.run_s99()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ['touch start', 'services'])
 
@@ -145,13 +222,14 @@ esac
         self.assertEqual(self.calls(), ['camera start'])
 
     def test_optional_webcam_failure_does_not_block_printer_startup(self):
-        result = self.start(TEST_WEBCAM_FAILURE='1')
+        (self.root / 'boot-failure').touch()
+        result = self.run_s99(TEST_WEBCAM_FAILURE='1')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('services', self.calls())
         self.assertFalse((self.root / 'boot-failure').exists())
 
     def test_service_start_failure_does_not_attempt_webcam_registration(self):
-        result = self.start(TEST_SERVICE_FAILURE='7')
+        result = self.run_s99(TEST_SERVICE_FAILURE='7')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.calls(), ['touch start', 'services'])
 
@@ -215,28 +293,49 @@ esac
                                  TEST_SCREEN_FAILURE='1')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Screen stream failed to start', result.stderr)
-        touch, screen, webcams = self.calls()
+        screen, webcams = self.calls()
+        self.assertEqual(screen, 'screen restart')
         self.assertEqual(self.webcam_flags(webcams), {'--camera': '0', '--screen': '1'})
 
-    def test_screen_stream_change_applies_input_stream_and_entries_together(self):
+    def test_screen_stream_change_applies_only_stream_and_entries(self):
         for mode, stream in (('AUTO', 0), ('ON', 1), ('OFF', 0)):
             with self.subTest(mode=mode):
                 self.events.unlink(missing_ok=True)
                 self.variables.write_text(f"[Variables]\ndisplay='HEADLESS'\nscreen_stream='{mode}'\n")
                 result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['screen_stream', mode])
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                touch, screen, webcams = self.calls()
-                self.assertEqual((touch, screen), ('touch stop', 'screen restart'))
+                screen, webcams = self.calls()
+                self.assertEqual(screen, 'screen restart')
                 self.assertEqual(self.webcam_flags(webcams), {'--camera': '0', '--screen': str(stream)})
 
     def test_touch_interface_change_controls_only_the_touch_service(self):
-        for display, mode, action in (('STOCK', 'ON', 'start'), ('HEADLESS', 'ON', 'start'), ('STOCK', 'AUTO', 'stop')):
-            with self.subTest(display=display, mode=mode):
-                self.events.unlink(missing_ok=True)
-                self.variables.write_text(f"[Variables]\ndisplay='{display}'\ntouch_interface='{mode}'\n")
-                result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['touch_interface', mode])
+        # An unknown display is read as the default Feather screen.
+        for display, automatic in (('FEATHER', 'start'), ('GUPPY', 'start'), ('STOCK', 'stop'), ('HEADLESS', 'stop'),
+                                   ('unknown', 'start')):
+            for mode, action in (('AUTO', automatic), ('ON', 'start')):
+                with self.subTest(display=display, mode=mode):
+                    self.events.unlink(missing_ok=True)
+                    self.variables.write_text(f"[Variables]\ndisplay='{display}'\nscreen_stream='OFF'\n"
+                                              f"touch_interface='{mode}'\n")
+                    result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['touch_interface', mode])
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self.calls(), [f'touch {action}'])
+
+    def test_explicit_touch_commands_ignore_configuration(self):
+        script = ROOT / '.shell/commands/ztouch.sh'
+        self.variables.write_text("[Variables]\ntouch_interface='broken'\n")
+        for action in ('start', 'stop'):
+            with self.subTest(action=action):
+                result = self.run_script(script, [action])
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(self.calls(), [f'touch {action}'])
+        self.assertEqual(self.calls(), ['touch start', 'touch stop'])
+
+    def test_touch_command_rejects_missing_or_unknown_actions(self):
+        for arguments in ([], ['restart']):
+            with self.subTest(arguments=arguments):
+                result = self.run_script(ROOT / '.shell/commands/ztouch.sh', arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.calls(), [])
 
     def test_entry_update_failure_is_reported_without_failing_the_change(self):
         self.variables.write_text("[Variables]\ndisplay='HEADLESS'\n")
@@ -246,12 +345,27 @@ esac
         self.assertIn('Camera entries were not updated', result.stdout)
 
     def test_invalid_preferences_do_not_change_running_services(self):
+        for parameter, values in (('screen_stream', ('1', '0', 'broken')), ('touch_interface', ('OFF', 'AUTO:FEATHER'))):
+            for value in values:
+                with self.subTest(parameter=parameter, value=value):
+                    self.variables.write_text(f"[Variables]\n{parameter}='{value}'\n")
+                    result = self.run_script(ROOT / '.shell/commands/zchanges.sh', [parameter, value])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(self.calls(), [])
+
+    def test_touch_and_stream_validate_only_their_own_preferences(self):
+        self.variables.write_text("[Variables]\nscreen_stream='broken'\n")
+        result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['touch_interface', 'AUTO'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ['touch start'])
+
+        self.events.unlink()
         self.variables.write_text("[Variables]\ntouch_interface='broken'\n")
-        result = self.run_script(ROOT / '.shell/commands/zstreams.sh', ['apply'], (
-            ('/etc/init.d/S98screen', self.screen),
-        ))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.calls(), [])
+        result = self.run_script(ROOT / '.shell/commands/zchanges.sh', ['screen_stream', 'AUTO'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        screen, webcams = self.calls()
+        self.assertEqual(screen, 'screen restart')
+        self.assertEqual(self.webcam_flags(webcams), {'--camera': '0', '--screen': '1'})
 
     def test_capture_setting_changes_restart_only_the_stream(self):
         for parameter in ('screen_stream_fps', 'screen_stream_quality'):
@@ -276,29 +390,35 @@ esac
             script = self.scripts / name
             script.write_text('#!/bin/sh\n' + body)
             script.chmod(0o755)
-        self.variables.write_text("[Variables]\ndisplay='FEATHER'\n")
-        result = self.run_script(ROOT / '.shell/commands/zdisplay.sh', ['apply'], (
-            ('/opt/config/mod/.shell/init-main.sh', init),
-            ('/run/netd.sock', self.root / 'netd.sock'),
-        ))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        touch, screen, webcams, klipper = self.calls()
-        self.assertEqual((touch, screen, klipper), ('touch start', 'screen restart', 'klipper-restart'))
-        self.assertEqual(self.webcam_flags(webcams), {'--camera': '0', '--screen': '1'})
+        for display, action, enabled in (('GUPPY', 'start', '1'), ('FEATHER', 'start', '1'), ('HEADLESS', 'stop', '0')):
+            with self.subTest(display=display):
+                self.events.unlink(missing_ok=True)
+                self.variables.write_text(f"[Variables]\ndisplay='{display}'\n")
+                result = self.run_script(ROOT / '.shell/commands/zdisplay.sh', ['apply'], (
+                    ('/opt/config/mod/.shell/init-main.sh', init),
+                    ('/run/netd.sock', self.root / 'netd.sock'),
+                ))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                touch = f'touch {action}'
+                webcams, = (call for call in calls if call.startswith('webcams '))
+                klipper = calls.index('klipper-restart')
+                for call in (touch, 'screen restart', webcams):
+                    self.assertLess(calls.index(call), klipper)
+                if display == 'GUPPY':
+                    self.assertLess(calls.index(touch), calls.index('guppy start'))
+                    self.assertLess(calls.index('guppy start'), klipper)
+                else:
+                    self.assertNotIn('guppy start', calls)
+                self.assertEqual(self.webcam_flags(webcams), {'--camera': '0', '--screen': enabled})
 
-    def test_guppy_start_and_restart_prepare_touch_before_the_ui(self):
-        touch = self.command('touch', 'echo "touch $*" >> "$TEST_EVENTS"\n')
-        ui = self.command('guppy-ui', 'echo "guppy $*" >> "$TEST_EVENTS"\n')
+    def test_guppy_lifecycle_leaves_touch_alone(self):
         for action in ('start', 'restart', 'stop'):
             with self.subTest(action=action):
                 self.events.unlink(missing_ok=True)
-                result = self.run_script(ROOT / '.root/guppyscreen', [action], (
-                    ('/opt/config/mod/.root/S35tslib', touch),
-                    ('/opt/config/mod/.root/S80guppyscreen', ui),
-                ))
+                result = self.invoke(self.commands / 'guppyscreen', [action])
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                expected = [f'guppy {action}'] if action == 'stop' else ['touch start', f'guppy {action}']
-                self.assertEqual(self.calls(), expected)
+                self.assertEqual(self.calls(), [f'guppy {action}'])
 
     def serve_webcam_api(self, *cams):
         """Serve the part of the Moonraker webcam API used by the legacy camera import."""
@@ -329,6 +449,24 @@ esac
         self.moonraker_url = f'http://127.0.0.1:{server.server_port}'
         return api
 
+    def isolate_root_start(self, conf):
+        script = self.commands / 'start.sh'
+        self.copy_script(ROOT / '.root/start.sh', script, (
+            ('/opt/config/mod/.shell/commands/zconf.sh', ROOT / '.shell/commands/zconf.sh'),
+            ('/opt/config/mod_data/variables.cfg', self.variables),
+            ('/opt/config/mod/.root/', str(self.commands) + '/'),
+            ('/opt/config/mod/.py', self.root / 'py'),
+            ('/bin/python3', sys.executable),
+            ('/usr/bin/ip', self.root / 'ip'),
+            ('/usr/bin/tc', self.root / 'tc'),
+            ('/usr/bin/sudo', self.root / 'sudo'),
+            ('/root/www/mainsail/release_info.json', self.root / 'release_info.json'),
+            ('/etc/httpd.conf', self.root / 'httpd.conf'),
+            ('/etc/init.d', self.root / 'user-init.d'),
+            ('/opt/config/mod_data/user.moonraker.conf', conf),
+        ))
+        return script
+
     def run_root_start(self, moonraker_conf=None, disable_moonraker=0):
         conf = moonraker_conf or self.root / 'user.moonraker.conf'
         self.variables.write_text(f"[Variables]\ndisplay='HEADLESS'\ndisable_moonraker={disable_moonraker}\n")
@@ -336,41 +474,14 @@ esac
         api_client.mkdir(exist_ok=True)
         (api_client / 'set_webcams.py').write_text(
             (ROOT / '.py/set_webcams.py').read_text().replace('http://127.0.0.1:7125', self.moonraker_url))
-        init = self.root / 'init.d'
-        init.mkdir(exist_ok=True)
         proxy = self.root / 'httpd.conf'
         loaded = self.root / 'httpd.loaded.conf'
-        # Mainsail metadata edits are outside this contract. The printer's sed edits files in place with a
-        # bare -i; the host's BSD or GNU sed needs the suffix argument spelled to match.
-        self.command('sed', '''case "$*" in *release_info.json*) exit 0 ;; esac
-if [ "$1" = -i ]; then
-    shift
-    if /usr/bin/sed --version > /dev/null 2>&1; then exec /usr/bin/sed -i "$@"; fi
-    exec /usr/bin/sed -i "" "$@"
-fi
-exec /usr/bin/sed "$@"
-''')
         # Moonraker reads its configuration whenever it starts, so record what each start would see.
         self.command('S65moonraker', 'cp "$TEST_CONF" "$TEST_CONF_SEEN.$1" 2>/dev/null\necho "moonraker $*" >> "$TEST_EVENTS"\n')
-        self.command('curl', 'exit 0\n')
         self.command('sleep', 'exit 0\n')
-        self.command('S45ntpd', 'echo "ntpd $*" >> "$TEST_EVENTS"\n')
         self.command('S70httpd', 'cp "$TEST_HTTPD" "$TEST_HTTPD_LOADED"\necho "httpd $*" >> "$TEST_EVENTS"\n')
-        result = self.run_script(ROOT / '.root/start.sh', [], (
-            ('/opt/config/mod/.shell/commands/zconf.sh', ROOT / '.shell/commands/zconf.sh'),
-            ('/opt/config/mod_data/variables.cfg', self.variables),
-            ('/opt/config/mod/.root/', str(self.commands) + '/'),
-            ('/opt/config/mod/.py', api_client),
-            ('/bin/python3', sys.executable),
-            ('/usr/bin/ip', self.root / 'ip'),
-            ('/usr/bin/tc', self.root / 'tc'),
-            ('/usr/bin/sudo', self.root / 'sudo'),
-            ('/root/www/mainsail/release_info.json', self.root / 'release_info.json'),
-            ('/etc/httpd.conf', proxy),
-            ('/etc/init.d', init),
-            ('/opt/config/mod_data/user.moonraker.conf', conf),
-        ), TEST_HTTPD=str(proxy), TEST_HTTPD_LOADED=str(loaded),
-            TEST_CONF=str(conf), TEST_CONF_SEEN=str(self.root / 'conf.seen'))
+        result = self.invoke(self.isolate_root_start(conf), [], TEST_HTTPD=str(proxy), TEST_HTTPD_LOADED=str(loaded),
+                             TEST_CONF=str(conf), TEST_CONF_SEEN=str(self.root / 'conf.seen'))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('httpd start', self.calls())
         self.assertEqual(loaded.read_bytes(), proxy.read_bytes())

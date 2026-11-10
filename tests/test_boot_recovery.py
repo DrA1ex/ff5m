@@ -2123,7 +2123,7 @@ printf 'result=%s\n' "$status"
 source "$1"
 trap - EXIT HUP INT TERM
 MOD="$2/mod"
-mkdir -p "$MOD/var/run"
+mkdir -p "$MOD/run"
 RECOVERY_ACTION="$2/recovery-action"
 TEST_STARTED="$2/tslib-started"
 LIFECYCLE_LOG="$2/lifecycle.log"
@@ -2153,6 +2153,50 @@ printf 'result=%s\n' "$status"
         self.assertIn("result=1", result.stdout)
         self.assertIn("S35tslib stop", lifecycle)
         self.assertIn("umount:/tmp/parent_root", lifecycle)
+
+    def test_recovery_leaves_an_already_running_touch_service_alone(self):
+        run_root = self.root / "running-touch"
+        (run_root / "mod/run").mkdir(parents=True)
+        device = run_root / "touch-device"
+        device.touch()
+        lifecycle_log = run_root / "lifecycle.log"
+        daemon = subprocess.Popen(["/bin/sleep", "30"])
+        self.addCleanup(daemon.wait, timeout=5)
+        self.addCleanup(daemon.kill)
+        (run_root / "mod/run/ts_uinput.pid").write_text(f"{daemon.pid}\n", encoding="utf-8")
+
+        recovery = self._patched_script(
+            self.boot_scripts["recovery.sh"],
+            "recovery-running-touch.sh",
+            {"RECOVERY_TOUCH_DEVICE=/dev/input/fgx_touch":
+             "RECOVERY_TOUCH_DEVICE=%s" % device},
+        )
+
+        command = r'''
+source "$1"
+trap - EXIT HUP INT TERM
+MOD="$2/mod"
+RECOVERY_ACTION="$2/recovery-action"
+LIFECYCLE_LOG="$2/lifecycle.log"
+chroot() { printf 'chroot:%s\n' "$*" >> "$LIFECYCLE_LOG"; }
+mount() { return 0; }
+umount() { printf 'umount:%s\n' "${*: -1}" >> "$LIFECYCLE_LOG"; }
+start_recovery_touch
+status=$?
+cleanup_recovery_runtime
+printf 'result=%s\n' "$status"
+'''
+        result = subprocess.run(
+            ["bash", "-c", command, "running-touch-harness",
+             str(recovery), str(run_root)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            check=False)
+        lifecycle = lifecycle_log.read_text(encoding="utf-8")
+
+        self.assertIn("result=0", result.stdout)
+        self.assertIn("S35tslib start", lifecycle)
+        self.assertNotIn("S35tslib stop", lifecycle)
+        self.assertIsNone(daemon.poll())
 
     def _s00_harness(self, case_name, recovery_script, boot_skip=False,
                      recovery_failure=False, boot_failure=False,
@@ -3032,6 +3076,12 @@ initialize
     def test_s99_distinguishes_system_shutdown_from_service_stop(self):
         self.boot_paths["INIT_FLAG"].touch()
         common = self.root / "power-common.sh"
+        scripts = self.root / "power-scripts"
+        (scripts / "commands").mkdir(parents=True)
+        self._patched_script(
+            ROOT / ".shell/commands/ztouch.sh", "power-scripts/commands/ztouch.sh", {
+                "/opt/config/mod/.shell/common.sh": str(common),
+            })
         mod = self.root / "mod"
         mod.mkdir()
         printer = self.root / "printer"
@@ -3039,6 +3089,7 @@ initialize
         caller = self.root / "caller-cmdline"
         common.write_text(
             "MOD={mod}\n"
+            "SCRIPTS={scripts}\n"
             "NOT_FIRST_LAUNCH_F={root}/not-first\n"
             "CUSTOM_BOOT_F={root}/custom-boot\n"
             "SCREEN_FOLLOW_UP_LOG={root}/screen-log\n"
@@ -3046,7 +3097,7 @@ initialize
             "FORGE_X_SCREEN_BUSY_F={root}/screen-busy\n"
             "logged() {{ cat; }}\n"
             "printer_command() {{ printf '%s\\n' \"$1\" > {printer}; }}\n".format(
-                mod=mod, root=self.root, printer=printer),
+                mod=mod, root=self.root, printer=printer, scripts=scripts),
             encoding="utf-8")
         s99 = self._patched_script(
             self.boot_scripts["S99root"], "S99root-power-test", {

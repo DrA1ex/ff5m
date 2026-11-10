@@ -9,7 +9,6 @@
 case "$1" in
     start)
         echo "Starting Guppy screen..."
-        /opt/config/mod/.root/S35tslib start
         /opt/config/mod/.root/S80guppyscreen start
         echo "Guppy screen started"
     ;;
@@ -22,7 +21,6 @@ case "$1" in
     
     restart)
         echo "Restarting Guppy screen..."
-        /opt/config/mod/.root/S35tslib start
         /opt/config/mod/.root/S80guppyscreen restart
         echo "Guppy screen restarted"
     ;;

@@ -5,7 +5,6 @@
 /opt/config/mod/.root/S65moonraker stop
 /opt/config/mod/.root/S70httpd stop
 /opt/config/mod/.root/S45ntpd stop
-/opt/config/mod/.root/S35tslib stop
 
 if [ -d /etc/init.d ]; then
     echo "Stoping user services..."

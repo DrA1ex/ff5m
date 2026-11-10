@@ -75,7 +75,7 @@ case "$key" in
     ;;
 
     touch_interface)
-        "$CMDS/zstreams.sh" touch
+        "$CMDS/ztouch.sh" apply
     ;;
 
     screen_stream_fps|screen_stream_quality)

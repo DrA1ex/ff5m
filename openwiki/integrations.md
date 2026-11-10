@@ -60,15 +60,17 @@ Everything here follows the parameters in `variables.cfg`, and each concern has 
 | Concern | Owner |
 | --- | --- |
 | Inputs | `variables.cfg`: `display`, `camera`, `screen_stream`, `touch_interface`, `screen_stream_fps`, `screen_stream_quality` |
-| Policy: which stream and touch input must run | [`.shell/screen_policy.sh`](../.shell/screen_policy.sh), `screen_policy` |
-| Applying the policy | [`.shell/commands/zstreams.sh`](../.shell/commands/zstreams.sh) |
+| Screen stream policy | [`.shell/screen_policy.sh`](../.shell/screen_policy.sh), `screen_policy` |
+| Applying stream settings | [`.shell/commands/zstreams.sh`](../.shell/commands/zstreams.sh) |
+| Touch input policy | [`.shell/commands/ztouch.sh`](../.shell/commands/ztouch.sh) |
+| Touch boot and shutdown | [`.shell/S99root`](../.shell/S99root) |
 | Processes | `S98camera`, `S98screen`, `S35tslib`: each owns its pid and arguments |
 | Existence of the `4gx_camera` / `4gx_screen` entries | SQL migration [`sql/00022-forge-x-webcams.sql`](../sql/00022-forge-x-webcams.sql) |
 | `enabled` flag of those entries | [`.py/set_webcams.py`](../.py/set_webcams.py), a Moonraker API client without policy |
 | Every other field of the entries | The user, through Fluidd or Mainsail; Forge-X never rewrites it |
 
-`screen_policy` is a pure mapping, sourced by `S98screen` and `zstreams.sh`. It sets `SCREEN_STREAM_ENABLED` and
-`SCREEN_TOUCH_ENABLED` and fails before setting anything when a parameter has an unknown value. With both preferences on `AUTO`:
+`S98screen` and `zstreams.sh` use `screen_policy` to validate `screen_stream` and resolve whether the stream is enabled.
+With both preferences on `AUTO`, the display mode determines the defaults.
 
 | Screen | Stream | Managed tslib touch |
 | --- | --- | --- |
@@ -84,13 +86,14 @@ calibrated device); returning to `AUTO` removes these requests.
 
 ### Applying
 
-`zstreams.sh` has three verbs, so callers never repeat the sequence:
-
-- `touch`: start or stop the shared touch input. `S99root` runs it before the UI starts, and `zchanges.sh` when
-  `touch_interface` changes.
-- `apply`: touch, restart the screen stream, update the entries. `zchanges.sh` runs it for `screen_stream`, and
-  `zdisplay.sh` for every display change before restarting Klipper.
-- `webcams`: update the entries only. `S99root` runs it with `--wait 10` after the environment started, because
+- `ztouch.sh apply` starts or stops the shared touch input according to the settings. `S99root` calls it before
+  starting Buildroot services. At runtime, `zchanges.sh` calls it for `touch_interface` and `zdisplay.sh` calls it
+  when applying a display change.
+- `ztouch.sh start` and `ztouch.sh stop` act regardless of the settings. `S99root` calls `stop` on shutdown and
+  restart.
+- `zstreams.sh apply` restarts the screen stream and updates the entries. `zchanges.sh` calls it for `screen_stream`,
+  and `zdisplay.sh` calls it when applying a display change before restarting Klipper.
+- `zstreams.sh webcams` updates the entries. `S99root` runs it with `--wait 10` after the environment starts, because
   `S98screen` and `S98camera` have already started themselves from the same parameters.
 
 Changing `camera` starts or stops `S98camera` in `zchanges.sh`, which also guards against a running stock camera, and
@@ -107,7 +110,8 @@ Moonraker keeps webcams created through its API in the database `webcams` namesp
 inserts both entries when no entry of that name exists, hidden (`enabled: false`) until `webcams` shows them, with
 the proxied URLs `/webcam/` and `/screen/` (an `iframe` service, 5:3, for the screen). Nothing re-creates an entry the
 user deleted. On a first-ever boot `S99root` starts and stops the environment once so that Moonraker creates its
-database, then applies the migrations before the normal start, so the entries exist from the first boot.
+database, then applies the migrations before the normal start, so the entries exist from the first boot. Touch stays
+running through this intermediate service restart.
 
 `4gx_camera` stays hidden while `camera=0`, which also covers a Stock screen using the stock camera. The old
 `[webcam cam]` section showed that camera too; such a user now adds their own entry.
@@ -156,15 +160,14 @@ prefix without storing a printer IP. Timelapse continues to take snapshots from 
 ### Touch input
 
 The calibrated input device is published as `/dev/input/fgx_touch` by `S35tslib`; `/dev/input/guppy` is a
-compatibility symlink to the same device. Feather and recovery use the primary name. The Guppy wrapper also calls
-`S35tslib start` before starting or restarting its UI, including direct invocations; the idempotent tslib service
-keeps this a single process, and stopping only the Guppy UI does not stop shared touch.
+compatibility symlink to the same device. Feather and recovery use the primary name. The Guppy wrapper manages
+the UI process. `S35tslib` keeps the PID file and device names until the touch process exits.
 
 ### Deployment and tests
 
 Remove the old deployed `mjpg_streamer` binary manually. Reboot after installing the update so the new init service
-and proxy configuration take effect. Tests are `test_screen_policy.py`, `test_stream_services.py`,
-`test_stream_startup.py`, `test_set_webcams.py`, and `test_webcam_migration.py` under `tests/`.
+and proxy configuration take effect. Tests are `test_stream_services.py`, `test_stream_startup.py`,
+`test_touch_service.py`, `test_set_webcams.py`, and `test_webcam_migration.py` under `tests/`.
 
 ## Timelapse
 

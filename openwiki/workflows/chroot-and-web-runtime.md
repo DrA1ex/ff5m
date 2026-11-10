@@ -41,7 +41,7 @@ It also links the vendored Moonraker application into the chroot Python environm
 
 | Service | Launcher | Role | Condition / notes |
 |---|---|---|---|
-| Interactive screen support | [`.root/S35tslib`](../../.root/S35tslib), [`.root/S80guppyscreen`](../../.root/S80guppyscreen) | Touch/input support for Feather and Guppy, plus the optional Guppy screen process. | `S35tslib` starts first for `FEATHER` and `GUPPY`; `S80guppyscreen` starts after the core services only for `GUPPY`. |
+| Interactive screen support | [`.root/S35tslib`](../../.root/S35tslib), [`.root/S80guppyscreen`](../../.root/S80guppyscreen) | Touch/input support for Feather and Guppy, plus the optional Guppy screen process. | `S35tslib` is not part of `start.sh`/`stop.sh`: `S99root` starts it through `ztouch.sh apply` before `start.sh` (by default for `FEATHER` and `GUPPY`) and stops it in `S99root stop` and `restart`. `S80guppyscreen` starts after the core services only for `GUPPY`. |
 | NTP | [`.root/S45ntpd`](../../.root/S45ntpd) | BusyBox `ntpd` syncs time with `pool.ntp.org` and runs `fake-hwclock` after sync. | Always started by the runtime script. |
 | Moonraker | [`.root/S65moonraker`](../../.root/S65moonraker) | Printer API, WebSocket/API bridge to Klipper, file/history/update management. | Skipped only when `disable_moonraker=1`; startup waits up to roughly 30 seconds for `http://localhost:7125`. |
 | Web server | [`.root/S70httpd`](../../.root/S70httpd) | BusyBox `httpd` serves static UI assets from `/root/www` on TCP port 80. | Skipped only when `disable_web=1`. |
