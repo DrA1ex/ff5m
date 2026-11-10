@@ -54,7 +54,7 @@ start() {
         --quality "$quality"
         --listen 127.0.0.1
         --port 8081
-        --clients 2
+        --clients 5
         --touch-device /dev/input/event0
         --touch-calibration /opt/tslib-1.12/etc/pointercal
         --log-file /data/logFiles/streamer.log
