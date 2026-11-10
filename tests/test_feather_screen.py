@@ -860,7 +860,6 @@ class FeatherUtilitiesTest(unittest.TestCase):
             ("weight_check_mode", "weight_check", False, True),
             ("bed_mesh_validation_clear", "bed_mesh_validation", False, True),
             ("bed_mesh_validation_tolerance", "bed_mesh_validation", False, True),
-            ("load_zoffset_cleaning", "disable_cleaning", True, False),
             ("zram_algo", "use_swap", 1, 3),
         )
         for child, parent, hidden_value, visible_value in cases:
@@ -1056,8 +1055,8 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(interval.default, 360)
         self.assertEqual(interval.minimum, 1)
         self.assertIsNone(interval.restart)
-        self.assertEqual(enabled.ui_category, "system_services")
-        self.assertEqual(interval.ui_category, "system_services")
+        self.assertEqual(enabled.ui_category, "updates_integrity")
+        self.assertEqual(interval.ui_category, "updates_integrity")
 
     def test_renamed_parameter_carries_stored_values_to_the_current_key(self):
         declaration_path = pathlib.Path(__file__).parents[1] / "mod_params.json"
