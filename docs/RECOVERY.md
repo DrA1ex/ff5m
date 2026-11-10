@@ -35,13 +35,13 @@ Use `BOOT OPTIONS` to start Forge-X or the stock firmware, `FIRMWARE / RESTORE` 
 
 `FIRMWARE / RESTORE → STOCK FIRMWARE` lists the stock firmware versions for your printer model, newest first; factory images are marked `Factory`. Installing a stock image also updates the MCU firmware in the same run; keep the printer powered until the screen shows "Upgrade completed". A factory image also resets the printer configuration. The list is read from the [Stock](https://github.com/DrA1ex/ff5m/releases/tag/Stock) and [factory](https://github.com/DrA1ex/ff5m/releases/tag/factory) releases, so it needs a network connection.
 
-### CPU and eMMC tuning
+### Hardware tuning
 
-This optional menu changes processor (CPU) and internal storage (eMMC) speed. You can leave the default settings if you are unsure.
+This optional menu changes processor (CPU) and internal storage (eMMC) speed or makes more RAM available. You can leave the default settings if you are unsure.
 
 1. Open **SYSTEM / DIAGNOSTICS → HARDWARE TUNING**.
-2. Choose a CPU or eMMC setting, then press **APPLY & REBOOT**. The printer restarts into Recovery.
-3. Run the suggested test. Testing is optional but recommended; it cannot guarantee stability during every print.
+2. Choose a setting, then press **APPLY & REBOOT**. The printer restarts into Recovery.
+3. Run the suggested test if offered. Testing is optional but recommended and cannot guarantee stability during every print.
 4. Choose **ACCEPT PROFILE** to keep the setting, or **DISCARD PROFILE** to return to the last confirmed settings. If a test fails or cannot confirm stability, discard the change.
 5. Choose **BOOT FORGE-X** when finished.
 
@@ -51,7 +51,11 @@ Until you accept or discard a trial, every restart returns to Recovery, and firm
 
 If the printer freezes, turn it off and on, then follow the on-screen instructions.
 
-To return CPU and eMMC to factory settings, choose **RESTORE STOCK**. Do this before changing firmware: reinstalling firmware or removing Forge-X does not reset these settings.
+**EXTRA RAM** frees about 7 MiB on compatible stock firmware. Recovery checks the change and shows the RAM totals before and after reboot. Select **EXTRA RAM** again to turn it off. Based on the [ad5m-extra-ram project](https://github.com/mlengle/ad5m-extra-ram) by [@mlengle](https://github.com/mlengle).
+
+For eligible legacy eMMC, **HS52 (2x)** and **DDR52 (4x)** both run at 50 MHz. DDR52 transfers twice as much data per clock.
+
+To return all hardware settings to factory defaults, choose **RESTORE STOCK**. Do this before changing firmware: reinstalling firmware or removing Forge-X does not reset these settings.
 
 ## Recovery Using Flashing Image
 

@@ -16,7 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, wait
 
 import overclocking_tests
-from overclocking_profiles import ProfileTool, ProfileError, emmc_description
+from overclocking_profiles import EMMC_TIMING_NAMES, ProfileTool, ProfileError, emmc_description
 from overclocking_results import TestResults
 from overclocking_tests import REFERENCE_BYTES, cleanup_owned_files, reference_path
 
@@ -34,7 +34,35 @@ def mhz(value):
         return "unavailable"
 
 
-AXIS_NAMES = {"cpu": "CPU", "emmc": "eMMC"}
+def ram_mib(value):
+    try:
+        return "{:.1f} MiB".format(int(value) / 1024)
+    except (TypeError, ValueError):
+        return "UNAVAILABLE"
+
+
+def emmc_profile_label(report, prefix):
+    clock = report.get(prefix + "emmc_mhz", "?")
+    family = report.get(prefix + "family")
+    if report.get(prefix + "emmc_mode") == "ddr52":
+        mode = "DDR52"
+    elif family == "hs2001v8":
+        mode = "HS200"
+    elif family == "legacy3v3":
+        mode = "HS52" if clock == "50" else "Legacy"
+    else:
+        mode = ""
+    return "{} MHz {}".format(clock, mode).rstrip()
+
+
+def active_emmc_label(report):
+    clock = mhz(report.get("runtime_emmc_hz"))
+    mode = EMMC_TIMING_NAMES.get(report.get("runtime_timing"), "")
+    return "{} {}".format(clock, mode).rstrip()
+
+
+AXIS_NAMES = {"cpu": "CPU", "emmc": "eMMC", "extra-ram": "EXTRA RAM"}
+EXTRA_RAM_FLASH_WARNING = "Turn off Extra RAM before flashing stock firmware."
 TEST_NAMES = {"cpu-stability": "CPU STABILITY", "emmc-prepare": "eMMC REFERENCE", "emmc-integrity": "eMMC INTEGRITY"}
 # Within one axis's results the axis is implied: "INTEGRITY", not "eMMC INTEGRITY". Profiles accepted
 # before the eMMC test became one read-then-write run still list its two parts.
@@ -271,7 +299,7 @@ class TuningUI:
                 action = self.tuning_page(report)
                 if action == "tuning.back":
                     return False
-                if action in ("tuning.cpu", "tuning.emmc"):
+                if action in ("tuning.cpu", "tuning.emmc", "tuning.extra-ram"):
                     if self.select_profile(action.split(".")[1], report):
                         return True
                 elif action == "tuning.tests":
@@ -279,7 +307,7 @@ class TuningUI:
                 elif action == "tuning.stock":
                     if self.view.confirm("RESTORE STOCK", "This replaces the confirmed overclock for the installed "
                                          "firmware. Original backups are preserved.", "RESTORE & REBOOT",
-                                         headline="Restore stock CPU and eMMC settings?"):
+                                         headline="Restore stock hardware settings?"):
                         if self.operation("Restoring stock hardware settings.", self.profiles.restore_stock, report):
                             return self.reboot()
                         self.view.message("RESTORE STOCK", "Nothing was changed.",
@@ -295,8 +323,8 @@ class TuningUI:
 
     def confirmed_mismatch(self, report):
         v = self.view
-        saved_cpu, saved_emmc = mhz(report.get("confirmed_cpu_hz")), str(report.get("confirmed_emmc_mhz")) + " MHz"
-        active_cpu, active_emmc = mhz(report.get("runtime_cpu_limit_hz")), mhz(report.get("runtime_emmc_hz"))
+        saved_cpu, saved_emmc = mhz(report.get("confirmed_cpu_hz")), emmc_profile_label(report, "confirmed_")
+        active_cpu, active_emmc = mhz(report.get("runtime_cpu_limit_hz")), active_emmc_label(report)
         stock = " (STOCK)" if report.get("confirmed_cpu_profile") == "stock" else ""
         commands = v.begin_page("HARDWARE SETTINGS CHECK")
         commands += [v.text(250, 88, "CPU", color=v.ACCENT, font=v.FONT_LABEL, h_align="left"),
@@ -310,9 +338,13 @@ class TuningUI:
             commands += [v.text(30, y, label, color=v.MUTED, font=v.FONT_LABEL, h_align="left", max_width=210),
                          v.text(250, y, cpu, color=cpu_color, font=v.FONT_VALUE, h_align="left", max_width=290),
                          v.text(560, y, emmc, color=emmc_color, font=v.FONT_VALUE, h_align="left", max_width=210)]
+        saved_ram = report.get("confirmed_extra_ram", "off")
+        active_ram = report.get("loaded_extra_ram", "unknown")
+        detail = "Active settings differ from the saved profile or cannot be read."
+        if saved_ram != active_ram and (saved_ram == "on" or active_ram == "on"):
+            detail = "Extra RAM is saved as {} and reported as {}. ".format(saved_ram.upper(), active_ram.upper()) + detail
         commands += [v.rule(226),
-                     v.text(30, 242, "Active clocks differ from the saved profile or cannot be read. Nothing "
-                            "was changed. BACK leaves without rebooting.",
+                     v.text(30, 242, detail + " Nothing was changed. BACK leaves without rebooting.",
                             font=v.FONT_MEDIUM, h_align="left", v_align="top", max_width=740, max_height=90,
                             wrap=True)]
         commands.extend(v.action_row((("mismatch.back", "BACK TO MENU"), ("mismatch.stock", "RESTORE STOCK", True),
@@ -323,7 +355,7 @@ class TuningUI:
             return self.reboot()
         if action == "mismatch.stock" and v.confirm(
                 "RESTORE STOCK", "The printer reboots. Original backups are preserved.", "RESTORE & REBOOT",
-                headline="Restore stock CPU and eMMC settings?"):
+                headline="Restore stock hardware settings?"):
             if self.operation("Restoring stock hardware settings.", self.profiles.restore_stock, report):
                 return self.reboot()
         return False
@@ -339,7 +371,7 @@ class TuningUI:
         commands += [v.text(30, 92, "CURRENT HARDWARE SETTINGS", color=v.ACCENT, font=v.FONT_LABEL,
                             h_align="left", max_width=740),
                      v.text(30, 126, "CPU " + cpu, font=v.FONT_VALUE, h_align="left", max_width=370),
-                     v.text(415, 126, "eMMC " + report["confirmed_emmc_mhz"] + " MHz", font=v.FONT_VALUE,
+                     v.text(415, 126, "eMMC " + emmc_profile_label(report, "confirmed_"), font=v.FONT_VALUE,
                             h_align="left", max_width=355),
                      v.rule(152),
                      v.text(30, 180, "TESTS", color=v.MUTED, font=v.FONT_MEDIUM, h_align="left")]
@@ -354,20 +386,29 @@ class TuningUI:
             x += v.text_width(text + "  ", v.FONT_MEDIUM)
         if not outcomes:
             commands.append(v.text(x, 180, "NOT RECORDED", color=v.MUTED, font=v.FONT_MEDIUM, h_align="left"))
-        actions = (("tuning.cpu", "CPU FREQUENCY"), ("tuning.emmc", "eMMC FREQUENCY"),
-                   ("tuning.tests", "SYSTEM TESTS"), ("tuning.stock", "RESTORE STOCK", True),
-                   ("tuning.finish", "BOOT FORGE-X", False, True), ("tuning.back", "BACK"))
-        for index, item in enumerate(actions):
-            commands.append(v.button(item[0], 30 + index % 2 * 385, 216 + index // 2 * 76,
-                                     355, 65, item[1], *item[2:]))
+        ram_state = report.get("confirmed_extra_ram", "off").upper()
+        if ram_state == "ON":
+            commands.append(v.text(30, 207, EXTRA_RAM_FLASH_WARNING, color=v.DANGER, font=v.FONT_LABEL,
+                                   h_align="left", max_width=740))
+        commands.extend(v.action_row((("tuning.cpu", "CPU FREQUENCY"), ("tuning.emmc", "eMMC FREQUENCY"),
+                                      ("tuning.extra-ram", "EXTRA RAM ({})".format(ram_state))),
+                                     y=228, height=65))
+        commands.extend(v.action_row((("tuning.tests", "SYSTEM TESTS"), ("tuning.stock", "RESTORE STOCK", True)),
+                                     y=313, height=65))
+        commands.extend(v.action_row((("tuning.finish", "BOOT FORGE-X", False, True), ("tuning.back", "BACK")),
+                                     y=398, height=65))
         v.send(commands)
         return v.wait_action()
 
     def select_profile(self, axis, report):
+        title = AXIS_NAMES[axis] + (" FREQUENCY" if axis != "extra-ram" else "")
         problem = self.profiles.axis_problem(axis, report)
+        if not problem and axis == "extra-ram" and report.get("confirmed_extra_ram") != "on":
+            problem = self.operation("Checking Extra RAM compatibility.", self.profiles.extra_ram_problem)
         if problem:
-            self.view.message(AXIS_NAMES[axis] + " FREQUENCY", problem,
-                              headline=AXIS_NAMES[axis] + " frequency cannot be changed",
+            headline = ("Extra RAM is unavailable" if axis == "extra-ram" else
+                        AXIS_NAMES[axis] + " frequency cannot be changed")
+            self.view.message(title, problem, headline=headline,
                               headline_color=self.view.WARNING)
             return False
         choices = self.profiles.choices(axis, report)
@@ -377,18 +418,24 @@ class TuningUI:
         heading = {}
         if axis == "emmc":
             heading = dict(subtitle=emmc_description(report), subtitle_detail=mhz(report.get("runtime_emmc_hz")))
-        selected = self.view.choose(AXIS_NAMES[axis] + " FREQUENCY", choices, lambda item: item[1], **heading)
+        selected = choices[0] if axis == "extra-ram" else self.view.choose(title, choices, lambda item: item[1], **heading)
         if selected is None:
             return False
-        detail = "Only this setting changes. The printer reboots once into Recovery to check it; the confirmed " \
-                 "profile stays as the fallback."
+        detail = "The printer restarts into Recovery to test this setting. " \
+                 "The next restart uses your saved profile unless you accept the trial."
+        headline = "Try {} {}?".format(AXIS_NAMES[axis], selected[2])
+        if axis == "extra-ram":
+            headline = "Try Extra RAM (+7 MiB)?" if selected[0] == "on" else "Try Stock RAM (-7 MiB)?"
+        elif axis == "emmc" and selected[0] == "ddr52":
+            detail += " DDR52 runs at 50 MHz on this printer and transfers data twice per clock."
+        elif axis == "emmc" and selected[0] == "50" and report.get("family") == "legacy3v3":
+            detail += " HS52 runs at 50 MHz on this printer."
         if "EXPERIMENTAL" in selected[1]:
             detail += " This frequency is unstable on some printers."
         reference = axis == "emmc" and not os.path.exists(reference_path(self.results.root))
         if reference:
             detail += " A {} MiB eMMC test file is written first.".format(REFERENCE_MIB)
-        if not self.view.confirm("APPLY TRIAL PROFILE", detail, "APPLY & REBOOT",
-                                 headline="Try {} {}?".format(AXIS_NAMES[axis], selected[2])):
+        if not self.view.confirm("APPLY TRIAL PROFILE", detail, "APPLY & REBOOT", headline=headline):
             return False
         if reference and not self.prepare_reference(report):
             return False
@@ -420,20 +467,25 @@ class TuningUI:
             self.operation("Verifying the trial boot settings.", self.profiles.verify_trial, report)
         except ProfileError as error:
             mandatory_error = str(error)
-        kinds = ("cpu-stability",) if axis == "cpu" else ("emmc-integrity",)
+        kinds = {"cpu": ("cpu-stability",), "emmc": ("emmc-integrity",), "extra-ram": ()}[axis]
         if axis == "cpu":
             before, now = mhz(report["confirmed_cpu_hz"]), mhz(report["candidate_cpu_hz"])
-            unchanged = "eMMC {} MHz".format(report["candidate_emmc_mhz"])
+            verified = "UNCHANGED: eMMC {}   BOOT / DTB VERIFIED".format(emmc_profile_label(report, "candidate_"))
+        elif axis == "emmc":
+            before, now = emmc_profile_label(report, "confirmed_"), emmc_profile_label(report, "candidate_")
+            verified = "UNCHANGED: CPU {}   BOOT / DTB VERIFIED".format(mhz(report["candidate_cpu_hz"]))
         else:
-            before, now = report["confirmed_emmc_mhz"] + " MHz", report["candidate_emmc_mhz"] + " MHz"
-            unchanged = "CPU " + mhz(report["candidate_cpu_hz"])
+            before = ram_mib(report.get("candidate_ram_before_kib"))
+            now = ram_mib(report.get("runtime_mem_total_kib"))
+            verified = "CPU AND eMMC UNCHANGED   //   RAM VERIFIED"
         v = self.view
         while True:
             # Re-read on every draw: a test run from this page records new results.
             results = {kind: self.result(kind, report) for kind in kinds}
             outcomes = {kind: result["status"] if result else "not-run" for kind, result in results.items()}
             commands = v.begin_page(AXIS_NAMES[axis] + " TRIAL", "UNCONFIRMED PROFILE")
-            commands += [v.text(30, 96, "{} {} APPLIED".format(AXIS_NAMES[axis], now), color=v.ACCENT,
+            heading = "RAM TOTAL" if axis == "extra-ram" else "{} {} APPLIED".format(AXIS_NAMES[axis], now)
+            commands += [v.text(30, 96, heading, color=v.ACCENT,
                                 font=v.FONT_HEADLINE, h_align="left", max_width=740),
                          v.text(30, 136, "BEFORE " + before, color=v.MUTED, font=v.FONT_MEDIUM, h_align="left",
                                 max_width=340),
@@ -444,9 +496,14 @@ class TuningUI:
                                        font=v.FONT_LABEL, h_align="left", v_align="top", max_width=740,
                                        max_height=48, wrap=True))
             else:
-                commands.append(v.text(30, 170, "UNCHANGED: {}   BOOT / DTB VERIFIED".format(unchanged),
+                commands.append(v.text(30, 170, verified,
                                        color=v.MUTED, font=v.FONT_LABEL, h_align="left", max_width=740))
             commands.append(v.rule(212))
+            if axis == "extra-ram" and report.get("candidate_extra_ram") == "on" and not mandatory_error:
+                commands += [v.text(30, 248, EXTRA_RAM_FLASH_WARNING, color=v.DANGER, font=v.FONT_MEDIUM,
+                                    h_align="left", max_width=740),
+                             v.text(30, 280, "A firmware change can make the printer hang at boot.",
+                                    color=v.DANGER, font=v.FONT_MEDIUM, h_align="left", max_width=740)]
             # One row per test: its name, its outcome and the speed it measured.
             for index, (kind, outcome) in enumerate(outcomes.items()):
                 y = 232 + index * 32
@@ -456,20 +513,23 @@ class TuningUI:
                 speed = results[kind] and results[kind].get("speed")
                 if speed:
                     commands.append(v.text(430, y, speed, font=v.FONT_MEDIUM, h_align="left", max_width=340))
-            # Accepting is always possible; its label states what is being waived, and its
-            # color marks it as the decision this page waits for.
+            # Optional tests never block accepting: the label states what is being waived, and its
+            # color marks it as the decision this page waits for. Extra RAM has no optional test,
+            # so only its passed mandatory verification offers ACCEPT.
             if all(value == "passed" for value in outcomes.values()):
                 accept_label = "ACCEPT PROFILE"
             elif all(value == "not-run" for value in outcomes.values()):
                 accept_label = "ACCEPT UNTESTED"
             else:
                 accept_label = "ACCEPT ANYWAY"
-            # Two columns: the test spans ACCEPT and DISCARD, DETAILS sits above BACK.
-            commands += [v.button("trial.test", 30, 290, 485, 56, "RUN " + AXIS_NAMES[axis] + " TEST"),
-                         v.button("trial.details", 540, 290, 230, 56, "RESULT DETAILS")]
-            commands.extend(v.action_row((("trial.accept", accept_label, False, True),
-                                          ("trial.discard", "DISCARD PROFILE", True),
-                                          ("trial.back", "BACK TO MENU")), y=364, height=76))
+            # With a test, two columns: the test spans ACCEPT and DISCARD, DETAILS sits above BACK.
+            if kinds:
+                commands += [v.button("trial.test", 30, 290, 485, 56, "RUN " + AXIS_NAMES[axis] + " TEST"),
+                             v.button("trial.details", 540, 290, 230, 56, "RESULT DETAILS")]
+            actions = (("trial.discard", "DISCARD PROFILE", True), ("trial.back", "BACK TO MENU"))
+            if kinds or not mandatory_error:
+                actions = (("trial.accept", accept_label, False, True),) + actions
+            commands.extend(v.action_row(actions, y=364, height=76))
             v.send(commands)
             action = v.wait_action()
             if action == "trial.back":
@@ -485,7 +545,8 @@ class TuningUI:
             elif action == "trial.accept":
                 if mandatory_error:
                     raise ProfileError("Required boot/profile verification failed: " + mandatory_error)
-                warning = "Tests: {}.".format(outcomes_text(outcomes))
+                warning = ("The RAM total and live memory reservations were verified." if not kinds else
+                           "Tests: {}.".format(outcomes_text(outcomes)))
                 if any(value != "passed" for value in outcomes.values()):
                     warning += " Stability is unverified: accept only if you take the risk of crashes or data corruption."
                 if v.confirm("CONFIRM PROFILE", warning, "CONFIRM ACCEPT",
@@ -501,11 +562,15 @@ class TuningUI:
         commands = v.begin_page(AXIS_NAMES[axis] + " TRIAL", "UNCONFIRMED PROFILE")
         commands.append(v.text(30, 96, "TRIAL DID NOT APPLY", color=v.DANGER, font=v.FONT_HEADLINE,
                                h_align="left", max_width=740))
-        rows = (("REQUESTED", "CPU {} / eMMC {} MHz".format(mhz(report.get("candidate_cpu_hz")),
-                                                          report.get("candidate_emmc_mhz")), v.TEXT),
-                ("ACTIVE", "CPU {} / eMMC {}".format(mhz(report.get("runtime_cpu_limit_hz")),
-                                                     mhz(report.get("runtime_emmc_hz"))), v.TEXT),
-                ("STATUS", state.upper(), v.WARNING))
+        if axis == "extra-ram":
+            requested = "EXTRA RAM " + report.get("candidate_extra_ram", "unknown").upper()
+            active = "EXTRA RAM " + report.get("loaded_extra_ram", "unknown").upper()
+        else:
+            requested = "CPU {} / eMMC {}".format(mhz(report.get("candidate_cpu_hz")),
+                                                  emmc_profile_label(report, "candidate_"))
+            active = "CPU {} / eMMC {}".format(mhz(report.get("runtime_cpu_limit_hz")),
+                                               active_emmc_label(report))
+        rows = (("REQUESTED", requested, v.TEXT), ("ACTIVE", active, v.TEXT), ("STATUS", state.upper(), v.WARNING))
         for index, (label, value, color) in enumerate(rows):
             y = 142 + index * 38
             commands += [v.text(30, y, label, color=v.MUTED, font=v.FONT_LABEL, h_align="left", max_width=170),

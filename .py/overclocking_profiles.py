@@ -22,6 +22,7 @@ _VALUE = re.compile(r"[A-Za-z0-9._:/,-]*\Z")
 # profile is its 25 MHz mode, so a separate 25 MHz entry would repeat it.
 STOCK_CPU_MHZ = 1008
 STOCK_EMMC_MHZ = 25
+EMMC_TIMING_NAMES = {"0": "Legacy", "1": "HS52", "8": "DDR52", "9": "HS200"}
 
 
 # Diagnostics are an allowlisted view of the protocol, not an environment dump.
@@ -33,7 +34,10 @@ _DIAGNOSTIC_FIELDS = (
     "boot_graph_variables", "boot_file_references",
     "missing_boot_dependencies", "unsafe_boot_paths", "unknown_boot_variables", "unknown_boot_files",
     "stock_dtb_sha256",
-    "loaded_cpu_profile", "loaded_emmc_mhz", "loaded_emmc_family", "loaded_source_sha256",
+    "loaded_cpu_profile", "loaded_emmc_mhz", "loaded_emmc_family", "loaded_emmc_mode", "loaded_source_sha256",
+    "confirmed_emmc_mode", "candidate_emmc_mode", "available_ddr52",
+    "confirmed_extra_ram", "candidate_extra_ram", "loaded_extra_ram",
+    "candidate_ram_before_kib", "runtime_mem_total_kib",
     "current_present", "current_valid", "candidate_present", "candidate_valid", "candidate_phase",
     "manual_recovery_required", "cleanup_required", "cleanup_danger_required")
 
@@ -67,8 +71,7 @@ def product_name(report):
 def emmc_type(report):
     """The observed bus mode and signal voltage, as /sys/kernel/debug/mmc0/ios numbers them."""
     timing, voltage = report.get("runtime_timing") or "unknown", report.get("runtime_voltage") or "unknown"
-    mode = {"0": "Legacy", "1": "HS52", "9": "HS200", "unknown": "timing unknown"}.get(
-        timing, "timing spec " + timing)
+    mode = EMMC_TIMING_NAMES.get(timing, "timing unknown" if timing == "unknown" else "timing spec " + timing)
     volts = {"0": "3.3 V", "1": "1.8 V", "unknown": "voltage unknown"}.get(
         voltage, "signal voltage " + voltage)
     return mode + " / " + volts
@@ -225,8 +228,11 @@ class ProfileTool:
         return report
 
     def choices(self, axis, report):
-        """(profile value, list label, frequency) per choice. Labels lead with the gain over
+        """(profile value, list label, displayed value) per choice. Labels lead with the gain over
         stock: a CPU percentage, an eMMC multiple."""
+        # Extra RAM is a toggle. Firmware support is checked only before enabling it.
+        if axis == "extra-ram":
+            return [("off", "OFF", "OFF")] if report.get("confirmed_extra_ram") == "on" else [("on", "ON", "ON")]
         if axis == "cpu":
             return [("stock", "STOCK CPU  //  {} MHz".format(STOCK_CPU_MHZ), "{} MHz".format(STOCK_CPU_MHZ))] + [
                 (row["alias"], "+{}%  //  {} MHz{}".format(
@@ -240,8 +246,13 @@ class ProfileTool:
         for mhz in filter(None, report.get("available_emmc_mhz", "").split(",")):
             if int(mhz) == STOCK_EMMC_MHZ:
                 choices.append(("stock", "STOCK eMMC  //  {} MHz".format(mhz), mhz + " MHz"))
+            # HS52 and DDR52 are mode names; the AD5M clocks both at 50 MHz.
+            elif mhz == "50" and report.get("family") == "legacy3v3":
+                choices.append(("50", "2x  //  50 MHz HS52", "50 MHz HS52"))
             else:
                 choices.append((mhz, "{:g}x  //  {} MHz".format(int(mhz) / STOCK_EMMC_MHZ, mhz), mhz + " MHz"))
+            if mhz == "50" and report.get("available_ddr52") == "yes":
+                choices.append(("ddr52", "4x  //  50 MHz DDR52", "50 MHz DDR52"))
         return choices
 
     def boot_problem(self, report):
@@ -284,6 +295,13 @@ class ProfileTool:
                 emmc_description(report))
         return ""
 
+    def extra_ram_problem(self):
+        """Why Extra RAM cannot be enabled on the installed firmware, or "". Reading both
+        boot packages and hashing the kernel is slow, so only enabling asks; arming rechecks."""
+        if self.run("extra-ram-support").strip() == "yes":
+            return ""
+        return "Extra RAM requires a verified stock kernel, device tree and OP-TEE image."
+
     def can_restore_stock(self, report):
         return (report.get("manual_recovery_required") != "yes" and report["boot_state"] in (
                     "unknown/custom", "stock-active-with-unknown-remnants",
@@ -299,7 +317,7 @@ class ProfileTool:
         if report["candidate_present"] != "no":
             raise ProfileError("Accept or discard the current trial first.")
         if value not in [choice[0] for choice in self.choices(axis, report)]:
-            raise ProfileError("This frequency is unavailable for the detected hardware.")
+            raise ProfileError("This setting is unavailable for the detected hardware.")
         self.run("test", axis, value, apply=True)
 
     def trial_state(self, report):
@@ -328,6 +346,17 @@ class ProfileTool:
             actual = report.get("loaded_" + loaded, "unknown")
             if actual != "unknown" and actual != report.get(prefix + expected):
                 return False
+        timing, mode = report.get("runtime_timing"), report.get("loaded_emmc_mode")
+        if report.get(prefix + "emmc_mode") == "ddr52":
+            if (timing, mode) != ("8", "ddr52") or report.get("runtime_voltage") not in ("0", "1"):
+                return False
+        elif timing == "8" or mode == "ddr52":
+            return False
+        expected_ram = report.get(prefix + "extra_ram", "off")
+        actual_ram = report.get("loaded_extra_ram", "unknown")
+        ram_trial = prefix == "candidate_" and report.get("candidate_axis") == "extra-ram"
+        if actual_ram != expected_ram and (actual_ram != "unknown" or expected_ram == "on" or ram_trial):
+            return False
         cpu = report.get("runtime_cpu_limit_hz", "unknown")
         if cpu == "unknown":
             cpu = report.get("runtime_cpu_hz", "unknown")

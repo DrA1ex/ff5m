@@ -1,8 +1,8 @@
 {
   "format": 2,
   "name": "t113-profilectl",
-  "generator_version": "1.0.1",
-  "validator_version": 7,
+  "generator_version": "1.2.0",
+  "validator_version": 9,
   "canonical_stock": {"file":"profiles/source/sunxi-stock.dtb","sha256":"27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21","fdt_version":17,"size":55093},
   "stock_environment": {"id":"ad5m-stock-v1","file":"profiles/source/stock-uboot.env"},
   "boot": {"uimage_address":"0x43000000","dtb_address":"0x44864e70","minimum_padding":32768,"stock_bootcmd":"run setargs_mmc boot_dsp0 boot_uImage","slots":["FORGE_X_A.DTB","FORGE_X_B.DTB"]},

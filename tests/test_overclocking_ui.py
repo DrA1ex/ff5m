@@ -465,9 +465,70 @@ class TuningUITest(unittest.TestCase):
         self.ui.view = view
         self.assertEqual(self.ui.tuning_page(self.report), 'tuning.back')
         labels = [item[4] for item in view.buttons.values()]
-        self.assertEqual(labels, ['CPU FREQUENCY', 'eMMC FREQUENCY', 'SYSTEM TESTS',
+        self.assertEqual(labels, ['CPU FREQUENCY', 'eMMC FREQUENCY', 'EXTRA RAM (OFF)', 'SYSTEM TESTS',
                                   'RESTORE STOCK', 'BOOT FORGE-X', 'BACK'])
         self.assertTrue(all(spec[1] + spec[3] <= 480 for spec in view.buttons.values()))
+
+    def test_extra_ram_checks_firmware_only_before_enabling(self):
+        tool = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
+        self.profiles.axis_problem.side_effect = tool.axis_problem
+        self.profiles.choices.side_effect = tool.choices
+        self.profiles.extra_ram_problem.return_value = 'Extra RAM requires a verified stock kernel.'
+        base = dict(self.report, candidate_present='no', boot_state='clean-stock', family='legacy3v3',
+                    hardware='supported')
+        self.assertFalse(self.ui.select_profile('extra-ram', dict(base, confirmed_extra_ram='off')))
+        self.assertEqual(self.view.message.call_args.kwargs['headline'], 'Extra RAM is unavailable')
+        self.profiles.apply_trial.assert_not_called()
+
+        self.profiles.extra_ram_problem.reset_mock()
+        report = dict(base, confirmed_extra_ram='on')
+        self.assertTrue(self.ui.select_profile('extra-ram', report))
+        self.profiles.extra_ram_problem.assert_not_called()
+        self.assertEqual(self.view.confirm.call_args.kwargs['headline'], 'Try Stock RAM (-7 MiB)?')
+        self.profiles.apply_trial.assert_called_once_with('extra-ram', 'off', report)
+        self.assertEqual(self.reboots, ['reboot'])
+
+    def test_extra_ram_offers_accept_only_after_required_verification(self):
+        report = dict(self.report, candidate_axis='extra-ram', candidate_extra_ram='on',
+                      confirmed_extra_ram='off', candidate_ram_before_kib='110404', runtime_mem_total_kib='117636')
+        for verified in (True, False):
+            with self.subTest(verified=verified):
+                session = ViewSession(['trial.back'])
+                self.ui.view = session.view = recovery.RecoveryView(session)
+                self.profiles.verify_trial.side_effect = None if verified else ProfileError('Invalid live RAM map')
+                self.assertIsNone(self.ui.trial(report))
+                self.assertEqual('trial.accept' in self.ui.view.buttons, verified)
+                self.assertNotIn('trial.test', self.ui.view.buttons)
+                visible = ' '.join(command for frame in session.frames for command in frame)
+                self.assertIn('BEFORE 107.8 MiB', visible)
+                self.assertIn('NOW 114.9 MiB', visible)
+
+    def test_firmware_warning_is_red_only_when_extra_ram_is_applied(self):
+        for page, state, verified in (('trial', 'on', True), ('trial', 'on', False), ('trial', 'off', True),
+                                      ('confirmed', 'on', True), ('confirmed', 'off', True)):
+            with self.subTest(page=page, state=state, verified=verified):
+                session = ViewSession(['trial.back' if page == 'trial' else 'tuning.back'])
+                self.ui.view = session.view = recovery.RecoveryView(session)
+                report = dict(self.report, candidate_axis='extra-ram', candidate_extra_ram=state,
+                              confirmed_extra_ram=state if page == 'confirmed' else ('off' if state == 'on' else 'on'),
+                              candidate_present='yes' if page == 'trial' else 'no')
+                self.profiles.verify_trial.side_effect = None if verified else ProfileError('Invalid live RAM map')
+                if page == 'trial':
+                    self.ui.trial(report)
+                else:
+                    self.ui.tuning_page(report)
+
+                warnings = [command for frame in session.frames for command in frame
+                            if 'before flashing stock firmware' in command or 'hang at boot' in command]
+                if state == 'on' and verified:
+                    self.assertEqual(len(warnings), 2 if page == 'trial' else 1)
+                    for warning in warnings:
+                        self.assertIn('-c ' + recovery.UI_DANGER, warning)
+                    self.assertIn('Turn off Extra RAM', warnings[0])
+                    if page == 'trial':
+                        self.assertIn('hang at boot', warnings[1])
+                else:
+                    self.assertEqual(warnings, [])
 
     def test_accept_label_states_which_test_outcomes_are_waived(self):
         for outcome, label in ((None, 'ACCEPT UNTESTED'), ('failed', 'ACCEPT ANYWAY'),
@@ -671,6 +732,8 @@ class TuningUITest(unittest.TestCase):
         self.view.wait_action.return_value = 'mismatch.back'
         self.assertFalse(self.ui.run())
         self.assertEqual(self.reboots, [])
+        shown = ' '.join(str(call.args[2]) for call in self.view.text.call_args_list if len(call.args) > 2)
+        self.assertIn('Nothing was changed.', shown)
 
     def test_confirmed_mismatch_reboot_is_explicit_and_accepts_nothing(self):
         self.profiles.prepare.return_value = dict(self.report, candidate_present='no')

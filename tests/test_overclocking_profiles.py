@@ -71,6 +71,15 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertEqual(self.tool.trial_state(self.report), "unconfirmed")
         self.assertFalse(self.tool.confirmed_active(self.report))
 
+    def test_ddr52_at_the_same_clock_is_distinct_from_normal_fallback(self):
+        self.report.update(candidate_cpu_hz="1008000000", candidate_cpu_profile="stock", candidate_emmc_mhz="50",
+                           candidate_emmc_mode="ddr52", confirmed_emmc_mhz="50", loaded_cpu_profile="stock",
+                           loaded_emmc_mhz="50", runtime_cpu_limit_hz="1008000000", runtime_emmc_hz="50000000",
+                           runtime_timing="9", runtime_voltage="1")
+        self.assertEqual(self.tool.trial_state(self.report), "fallback")
+        self.report.update(loaded_emmc_mode="ddr52", runtime_timing="8")
+        self.assertEqual(self.tool.trial_state(self.report), "applied")
+
     def test_low_policy_limit_does_not_mistake_loaded_trial_for_confirmed_fallback(self):
         self.report["runtime_cpu_limit_hz"] = self.report["confirmed_cpu_hz"]
         self.assertEqual(self.tool.trial_state(self.report), "unconfirmed")
@@ -225,6 +234,35 @@ class OverclockingProfilesTest(unittest.TestCase):
         arguments, options = run.call_args
         self.assertEqual(arguments[0], [self.tool.executable, "--apply", "verify"])
         self.assertEqual(options["env"]["T113_STATE_DIR"], self.tool.state)
+
+    def test_extra_ram_is_a_toggle_of_the_confirmed_setting(self):
+        for confirmed, expected in (("off", "on"), ("on", "off"), (None, "on")):
+            with self.subTest(confirmed=confirmed):
+                report = dict(self.report, candidate_present="no", boot_state="clean-stock")
+                if confirmed:
+                    report["confirmed_extra_ram"] = confirmed
+                self.assertEqual([choice[0] for choice in self.tool.choices("extra-ram", report)], [expected])
+                self.assertEqual(self.tool.axis_problem("extra-ram", report), "")
+
+    def test_legacy_50_mhz_modes_show_the_actual_clock(self):
+        report = dict(self.report, family="legacy3v3", available_emmc_mhz="25,50", available_ddr52="yes")
+        choices = self.tool.choices("emmc", report)
+        self.assertEqual([choice[0] for choice in choices], ["stock", "50", "ddr52"])
+        for choice, mode in zip(choices[1:], ("HS52", "DDR52")):
+            for text in choice[1:]:
+                self.assertIn("50 MHz " + mode, text)
+                self.assertNotIn("52 MHz", text)
+        report.update(available_ddr52="no")
+        self.assertNotIn("ddr52", [choice[0] for choice in self.tool.choices("emmc", report)])
+
+    def test_extra_ram_problem_follows_the_firmware_support_probe(self):
+        for output, supported in (("yes", True), ("no", False)):
+            with self.subTest(output=output):
+                self.command_script("print({!r})\n".format(output))
+                problem = self.tool.extra_ram_problem()
+                self.assertEqual(problem == "", supported)
+                if not supported:
+                    self.assertIn("OP-TEE", problem)
 
     def command_script(self, source):
         directory = tempfile.TemporaryDirectory()

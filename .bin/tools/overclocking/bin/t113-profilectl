@@ -9,8 +9,9 @@ umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}; export PATH
 
 VERSION=0.6.0-recovery
-VALIDATOR_VERSION=7
+VALIDATOR_VERSION=9
 STOCK_SHA=27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21
+EXTRA_RAM_KERNEL_SHA=13c17296c9ed34cff1c355dc717ab76803410bd872a495bdefaca07cdaf89c79
 STOCK_BOOTCMD='run setargs_mmc boot_dsp0 boot_uImage'
 MANAGED_BOOTCMD='run setargs_mmc boot_dsp0 fgx_boot_current'
 ONESHOT_BOOTCMD='run fgx_boot_restore fgx_boot_save setargs_mmc boot_dsp0 fgx_boot_test'
@@ -44,6 +45,10 @@ FW_CONFIG=${T113_FW_CONFIG:-/opt/uboot/fw_env.config}
 DEV_BOOT=${T113_DEV_BOOT:-/dev/mmcblk0p1}
 DEV_ENV=${T113_DEV_ENV:-/dev/mmcblk0p2}
 DEV_ENV_REDUND=${T113_DEV_ENV_REDUND:-/dev/mmcblk0p3}
+DEV_MMC=${T113_DEV_MMC:-/dev/mmcblk0}
+LIVE_FDT=${T113_LIVE_FDT:-/sys/firmware/fdt}
+MEMBLOCK_RESERVED=${T113_MEMBLOCK_RESERVED:-/sys/kernel/debug/memblock/reserved}
+MEMINFO=${T113_MEMINFO:-/proc/meminfo}
 IOS_FILE=${T113_IOS_FILE:-/sys/kernel/debug/mmc0/ios}
 CID_FILE=${T113_CID_FILE:-/sys/bus/mmc/devices/mmc0:0001/cid}
 BOOT_ID_FILE=${T113_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
@@ -116,13 +121,15 @@ Read-only:
   status
   snapshot
   doctor
+  extra-ram-support
   detect
   validate-bundle
 
 Mutating:
   --apply backup
   --apply test cpu stock|1.1|1.15|1.2|1.25|1.3|1.35|1.4
-  --apply test emmc stock|25|50|100|150
+  --apply test emmc stock|25|50|ddr52|100|150
+  --apply test extra-ram on|off
   --apply verify
   --apply enable
   --apply cancel
@@ -146,6 +153,106 @@ meta_get(){
     # Callers default optional fields on failure; an absent key must fail, while an empty value must not.
     awk -v key="$2" 'index($0,key "=")==1 { print substr($0,length(key)+2); found=1; exit }
       END { exit !found }' "$1"
+}
+
+profile_extra_ram(){ meta_get "$1" extra_ram || printf 'off\n'; }
+profile_emmc_mode(){ meta_get "$1" emmc_mode || printf 'normal\n'; }
+valid_extra_ram(){ case "$1" in on|off) return 0;; *) return 1;; esac; }
+
+profile_bootcmd(){
+    if [ "$2" = on ]; then
+      # Extra RAM reclaims the area where the vendor helper loads DSP firmware.
+      printf '%s %s\n' "${1% boot_dsp0 *}" "${1#* boot_dsp0 }"
+    else
+      say "$1"
+    fi
+}
+
+optee_supported(){
+    [ -r "$DEV_MMC" ] || return 1
+    if [ "$TEST_MODE" = 1 ]; then [ -f "$DEV_MMC" ] || return 1; fi
+    ensure_tmp
+    # Both boot_package copies must point to the known OP-TEE image. See
+    # mlengle/ad5m-extra-ram, TECH.md, for the AD5M TOC layout and fingerprint.
+    OPTEE_EXPECTED=5ed6ffabbadb9926c7d44a9b4b833683
+    if [ "$TEST_MODE" = 1 ]; then OPTEE_EXPECTED=${T113_TEST_OPTEE_MD5:-$OPTEE_EXPECTED}; fi
+    for OPTEE_SECTOR in 32800 24576; do
+      dd if="$DEV_MMC" bs=512 skip="$OPTEE_SECTOR" count=16 of="$TMP_DIR/boot-package" 2>/dev/null || return 1
+      OPTEE_HEADER=$TMP_DIR/boot-package
+      [ "$(head -c 13 "$OPTEE_HEADER" | tr -d '\000')" = sunxi-package ] || return 1
+      OPTEE_ENTRIES=$(hexdump -s 32 -n 4 -e '1/4 "%u"' "$OPTEE_HEADER") || return 1
+      [ "$OPTEE_ENTRIES" -gt 0 ] && [ "$OPTEE_ENTRIES" -le 22 ] || return 1
+      OPTEE_INDEX=0
+      OPTEE_FOUND=0
+      while [ "$OPTEE_INDEX" -lt "$OPTEE_ENTRIES" ]; do
+        OPTEE_ENTRY=$((64 + OPTEE_INDEX * 368))
+        OPTEE_NAME=$(hexdump -s "$OPTEE_ENTRY" -n 16 -e '16/1 "%02x"' "$OPTEE_HEADER") || return 1
+        if [ "$OPTEE_NAME" = 6f707465650000000000000000000000 ]; then
+          [ "$OPTEE_FOUND" = 0 ] || return 1
+          OPTEE_FOUND=1
+          OPTEE_OFFSET=$(hexdump -s "$((OPTEE_ENTRY + 64))" -n 4 -e '1/4 "%u"' "$OPTEE_HEADER") || return 1
+          OPTEE_SIZE=$(hexdump -s "$((OPTEE_ENTRY + 68))" -n 4 -e '1/4 "%u"' "$OPTEE_HEADER") || return 1
+          [ "$OPTEE_OFFSET:$OPTEE_SIZE" = 968704:300248 ] || return 1
+        fi
+        OPTEE_INDEX=$((OPTEE_INDEX + 1))
+      done
+      [ "$OPTEE_FOUND" = 1 ] || return 1
+      OPTEE_HASH=$(dd if="$DEV_MMC" bs=512 skip="$((OPTEE_SECTOR + OPTEE_OFFSET / 512))" \
+        count="$(((OPTEE_SIZE + 511) / 512))" 2>/dev/null | head -c "$OPTEE_SIZE" | md5sum | awk '{print $1}')
+      [ "$OPTEE_HASH" = "$OPTEE_EXPECTED" ] || return 1
+    done
+}
+
+extra_ram_firmware_supported(){
+    [ "$1" = "$STOCK_SHA" ] && optee_supported && [ -r "$BOOT_DIR/uImage" ] || return 1
+    # The verified kernel leaves OP-TEE's shared and application memory unused.
+    expected_kernel=$EXTRA_RAM_KERNEL_SHA
+    if [ "$TEST_MODE" = 1 ]; then expected_kernel=${T113_TEST_KERNEL_SHA:-$expected_kernel}; fi
+    [ "$(sha256_file "$BOOT_DIR/uImage")" = "$expected_kernel" ]
+}
+
+# Reads both boot packages and hashes the kernel, so the snapshot does not include it.
+extra_ram_support_cmd(){
+    ensure_boot_access ro
+    if extra_ram_firmware_supported "$(stock_dtb_hash)"; then say yes; else say no; fi
+}
+
+require_extra_ram_firmware(){
+    extra_ram_firmware_supported "$(stock_dtb_hash)" ||
+      die 'Extra RAM requires a verified stock kernel and DTB, with matching OP-TEE in both boot packages.'
+}
+
+loaded_extra_ram(){ "$FGX_FDT" memory-state --file "$LIVE_FDT" 2>/dev/null || printf 'unknown\n'; }
+
+valid_memory_total(){
+    case "$1" in ''|0*|*[!0-9]*) return 1;; esac
+    [ "${#1}" -le 9 ]
+}
+
+memory_total_kib(){
+    total=$(awk '$1 == "MemTotal:" && $3 == "kB" { print $2; exit }' "$MEMINFO" 2>/dev/null)
+    valid_memory_total "$total" || return 1
+    say "$total"
+}
+
+verify_memory_change(){
+    before=$(meta_get "$CANDIDATE_FILE" ram_before_kib || true)
+    valid_memory_total "$before" || die 'The RAM total before this trial is unavailable. Discard the trial and try again.'
+    after=$(memory_total_kib) || die 'Cannot read the RAM total for this boot.'
+    gain=$((after - before))
+    if [ "$1" = off ]; then gain=$((-gain)); fi
+    # The expected change is 7232 KiB. Allow 512 KiB for differing bootloader reservations.
+    [ "$gain" -ge 6720 ] && [ "$gain" -le 7744 ] ||
+      die "RAM total changed from $before to $after KiB, outside the expected range for Extra RAM $1."
+}
+
+verify_extra_ram_boot(){
+    [ "$(loaded_extra_ram)" = "$1" ] || die 'The live device tree does not match the trial RAM reservations.'
+    if [ "$1" = on ]; then
+      # The stock kernel reports inclusive ranges as 0xSTART..0xEND.
+      grep -Eiq '(^|[[:space:]])0x0*41b00000\.\.0x0*41bfffff([[:space:]]|$)' "$MEMBLOCK_RESERVED" 2>/dev/null ||
+        die 'Linux did not report the required OP-TEE memory reservation.'
+    fi
 }
 
 read_environment(){
@@ -378,9 +485,20 @@ loaded_cpu_matches(){
 }
 runtime_family_evidence(){
     runtime_ios || { printf unknown; return; }
-    if [ "$IOS_TIMING" = 9 ] && [ "$IOS_VOLTAGE" = 1 ]; then printf hs2001v8
-    elif { [ "$IOS_TIMING" = 0 ] || [ "$IOS_TIMING" = 1 ]; } && [ "$IOS_VOLTAGE" = 0 ]; then printf legacy3v3
-    else printf unknown; fi
+    case "$IOS_TIMING:$IOS_VOLTAGE" in
+      9:1) printf hs2001v8; return;;
+      [01]:0) printf legacy3v3; return;;
+      8:[01])
+        # DDR52 can negotiate on either family, even at the same reported voltage.
+        if [ "$(loaded_property source-sha256 || true)" = "$STOCK_SHA" ] &&
+           [ "$(loaded_property emmc-mode || true)" = ddr52 ]; then
+          case "$(loaded_property emmc-family || true)" in
+            legacy3v3) printf legacy3v3; return;;
+            hs2001v8) printf hs2001v8; return;;
+          esac
+        fi;;
+    esac
+    printf unknown
 }
 detect_hardware(){
     CID=unknown; CID_IDENTITY=unknown; CID_STATUS=unavailable
@@ -397,6 +515,8 @@ detect_hardware(){
     # A model restriction can leave no frequency; such an eMMC is unsupported
     # like an unknown mode, and no eMMC frequency can be selected.
     AVAILABLE_EMMC=$(eligible_emmc)
+    AVAILABLE_DDR52=no
+    case "$DETECT_FAMILY:,$AVAILABLE_EMMC," in legacy3v3:*,50,*) AVAILABLE_DDR52=yes;; esac
     if [ -n "$AVAILABLE_EMMC" ]; then HARDWARE_STATUS=supported; else HARDWARE_STATUS=unsupported; fi
 }
 
@@ -414,7 +534,15 @@ normalize_cpu(){
     esac
 }
 cpu_profile_from_hz(){ case "$1" in 1008000000) printf stock;; 1104000000) printf 1104;; 1152000000) printf 1152;; 1200000000) printf 1200;; 1248000000) printf 1248;; 1296000000) printf 1296;; 1344000000) printf 1344;; 1392000000) printf 1392;; *) return 1;; esac; }
-normalize_emmc(){ case "$1" in stock) EMMC_MHZ=25;; 25|50|100|150) EMMC_MHZ=$1;; *) return 1;; esac; }
+normalize_emmc(){
+    EMMC_MODE=normal
+    case "$1" in
+      stock) EMMC_MHZ=25;;
+      25|50|100|150) EMMC_MHZ=$1;;
+      ddr52) EMMC_MHZ=50; EMMC_MODE=ddr52;;
+      *) return 1;;
+    esac
+}
 family_allows_emmc(){ case "$1:$2" in legacy3v3:25|legacy3v3:50|hs2001v8:25|hs2001v8:50|hs2001v8:100|hs2001v8:150) return 0;; *) return 1;; esac; }
 
 managed_vars(){
@@ -540,15 +668,21 @@ current_slot_count(){ ensure_boot_access ro; n=0; [ -f "$BOOT_DIR/$SLOT_A" ] && 
 
 valid_hash(){ case "$1" in [0-9a-f][0-9a-f][0-9a-f]*) [ "${#1}" = 64 ] 2>/dev/null || return 1;; *) return 1;; esac; printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
 valid_cpu_metadata(){ prof=$1; hz=$2; case "$prof:$hz" in stock:1008000000|1104:1104000000|1152:1152000000|1200:1200000000|1248:1248000000|1296:1296000000|1344:1344000000|1392:1392000000) return 0;; *) return 1;; esac; }
-valid_family_emmc_metadata(){ family_allows_emmc "$1" "$2"; }
-valid_fallback_bootcmd(){ case "$1" in "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD") return 0;; *) return 1;; esac; }
+valid_family_emmc_metadata(){
+    family_allows_emmc "$1" "$2" || return 1
+    case "$3:$2" in normal:*|ddr52:50) return 0;; *) return 1;; esac
+}
+valid_fallback_bootcmd(){
+    case "$1" in "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD"|"$(profile_bootcmd "$MANAGED_BOOTCMD" on)") return 0;; *) return 1;; esac
+}
 current_metadata_valid(){
     [ -r "$CURRENT_FILE" ] || return 1
     [ "$(meta_get "$CURRENT_FILE" format || true)" = 2 ] && [ "$(meta_get "$CURRENT_FILE" phase || true)" = current ] || return 1
     CMV_SLOT=$(meta_get "$CURRENT_FILE" slot || true); case "$CMV_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
     CMV_CPU=$(meta_get "$CURRENT_FILE" cpu_profile || true); CMV_HZ=$(meta_get "$CURRENT_FILE" cpu_hz || true); valid_cpu_metadata "$CMV_CPU" "$CMV_HZ" || return 1
-    CMV_FAM=$(meta_get "$CURRENT_FILE" family || true); CMV_EMMC=$(meta_get "$CURRENT_FILE" emmc_mhz || true); valid_family_emmc_metadata "$CMV_FAM" "$CMV_EMMC" || return 1
+    CMV_FAM=$(meta_get "$CURRENT_FILE" family || true); CMV_EMMC=$(meta_get "$CURRENT_FILE" emmc_mhz || true); valid_family_emmc_metadata "$CMV_FAM" "$CMV_EMMC" "$(profile_emmc_mode "$CURRENT_FILE")" || return 1
     CMV_HASH=$(meta_get "$CURRENT_FILE" dtb_sha256 || true); valid_hash "$CMV_HASH" || return 1
+    valid_extra_ram "$(profile_extra_ram "$CURRENT_FILE")" || return 1
     CMV_UNTESTED=$(meta_get "$CURRENT_FILE" untested_emmc_override || printf 0); case "$CMV_UNTESTED" in 0|1) ;; *) return 1;; esac
 }
 candidate_metadata_valid(){
@@ -557,10 +691,18 @@ candidate_metadata_valid(){
     CM_PHASE=$(meta_get "$CANDIDATE_FILE" phase || true); case "$CM_PHASE" in armed|passed|committing) ;; *) return 1;; esac
     CM_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true); case "$CM_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
     CM_CPU=$(meta_get "$CANDIDATE_FILE" cpu_profile || true); CM_HZ=$(meta_get "$CANDIDATE_FILE" cpu_hz || true); valid_cpu_metadata "$CM_CPU" "$CM_HZ" || return 1
-    CM_FAM=$(meta_get "$CANDIDATE_FILE" family || true); CM_EMMC=$(meta_get "$CANDIDATE_FILE" emmc_mhz || true); valid_family_emmc_metadata "$CM_FAM" "$CM_EMMC" || return 1
+    CM_FAM=$(meta_get "$CANDIDATE_FILE" family || true); CM_EMMC=$(meta_get "$CANDIDATE_FILE" emmc_mhz || true)
+    CM_EMMC_MODE=$(profile_emmc_mode "$CANDIDATE_FILE")
+    valid_family_emmc_metadata "$CM_FAM" "$CM_EMMC" "$CM_EMMC_MODE" || return 1
     CM_HASH=$(meta_get "$CANDIDATE_FILE" dtb_sha256 || true); valid_hash "$CM_HASH" || return 1
+    CM_RAM=$(profile_extra_ram "$CANDIDATE_FILE"); valid_extra_ram "$CM_RAM" || return 1
     CM_AXIS=$(meta_get "$CANDIDATE_FILE" axis || true); CM_VALUE=$(meta_get "$CANDIDATE_FILE" value || true)
-    case "$CM_AXIS" in cpu) normalize_cpu "$CM_VALUE" >/dev/null 2>&1 || return 1; [ "$CPU_PROFILE" = "$CM_CPU" ] || return 1;; emmc) normalize_emmc "$CM_VALUE" >/dev/null 2>&1 || return 1; [ "$EMMC_MHZ" = "$CM_EMMC" ] || return 1;; *) return 1;; esac
+    case "$CM_AXIS" in
+      cpu) normalize_cpu "$CM_VALUE" || return 1; [ "$CPU_PROFILE" = "$CM_CPU" ] || return 1;;
+      emmc) normalize_emmc "$CM_VALUE" || return 1; [ "$EMMC_MHZ:$EMMC_MODE" = "$CM_EMMC:$CM_EMMC_MODE" ] || return 1;;
+      extra-ram) [ "$CM_VALUE" = "$CM_RAM" ] || return 1;;
+      *) return 1;;
+    esac
     CM_FALLBACK=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true); valid_fallback_bootcmd "$CM_FALLBACK" || return 1
     CM_UNTESTED=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0); case "$CM_UNTESTED" in 0|1) ;; *) return 1;; esac
     [ -n "$(meta_get "$CANDIDATE_FILE" armed_boot_id || true)" ] || return 1
@@ -581,7 +723,8 @@ current_valid(){
     [ -r "$BOOT_DIR/$CV_SLOT" ] || return 1
     [ "$(sha256_file "$BOOT_DIR/$CV_SLOT")" = "$CV_HASH" ] || return 1
     [ -x "$FGX_FDT" ] || return 1
-    "$FGX_FDT" verify --file "$BOOT_DIR/$CV_SLOT" --cpu "$CV_CPU" --emmc "$CV_EMMC" --family "$CV_FAMILY" >/dev/null 2>&1 || return 1
+    "$FGX_FDT" verify --file "$BOOT_DIR/$CV_SLOT" --cpu "$CV_CPU" --emmc "$CV_EMMC" --family "$CV_FAMILY" \
+      --extra-ram "$(profile_extra_ram "$CURRENT_FILE")" --emmc-mode "$(profile_emmc_mode "$CURRENT_FILE")" >/dev/null 2>&1 || return 1
     CV_HELPER=$(get_env fgx_boot_current || true); boot_script_matches "$CV_SLOT" "$CV_HELPER" || return 1
 }
 candidate_artifact_valid(){
@@ -594,7 +737,8 @@ candidate_artifact_valid(){
     [ -r "$BOOT_DIR/$CAV_SLOT" ] || return 1
     [ "$(sha256_file "$BOOT_DIR/$CAV_SLOT")" = "$CAV_HASH" ] || return 1
     [ -x "$FGX_FDT" ] || return 1
-    "$FGX_FDT" verify --file "$BOOT_DIR/$CAV_SLOT" --cpu "$CAV_CPU" --emmc "$CAV_EMMC" --family "$CAV_FAMILY" >/dev/null 2>&1
+    "$FGX_FDT" verify --file "$BOOT_DIR/$CAV_SLOT" --cpu "$CAV_CPU" --emmc "$CAV_EMMC" --family "$CAV_FAMILY" \
+      --extra-ram "$(profile_extra_ram "$CANDIDATE_FILE")" --emmc-mode "$(profile_emmc_mode "$CANDIDATE_FILE")" >/dev/null 2>&1
 }
 candidate_helpers_valid(){
     candidate_artifact_valid || return 1
@@ -609,8 +753,9 @@ candidate_helpers_valid(){
 candidate_functionally_committed(){
     [ -r "$CANDIDATE_FILE" ] || return 1
     CFC_BOOTCMD=$(get_env bootcmd || true)
-    [ "$CFC_BOOTCMD" = "$TRANSITION_BOOTCMD" ] && return 0
-    [ "$CFC_BOOTCMD" = "$MANAGED_BOOTCMD" ] || return 1
+    CFC_RAM=$(profile_extra_ram "$CANDIDATE_FILE")
+    [ "$CFC_BOOTCMD" = "$(profile_bootcmd "$TRANSITION_BOOTCMD" "$CFC_RAM")" ] && return 0
+    [ "$CFC_BOOTCMD" = "$(profile_bootcmd "$MANAGED_BOOTCMD" "$CFC_RAM")" ] || return 1
     CFC_SLOT=$(meta_get "$CANDIDATE_FILE" slot || true)
     case "$CFC_SLOT" in "$SLOT_A"|"$SLOT_B") ;; *) return 1;; esac
     CFC_HELPER=$(get_env fgx_boot_current || true)
@@ -648,12 +793,6 @@ classify_boot_state(){
     if [ -r "$CURRENT_FILE" ]; then current_metadata_valid || return; fi
     if [ -r "$CANDIDATE_FILE" ]; then candidate_metadata_valid || return; fi
 
-    # If a candidate falls back to managed state, that managed recovery path
-    # must itself still be valid before the transaction can be called known.
-    if [ -r "$CANDIDATE_FILE" ] && [ "$(meta_get "$CANDIDATE_FILE" fallback_bootcmd || true)" = "$MANAGED_BOOTCMD" ] && [ "$BOOTCMD" != "$TRANSITION_BOOTCMD" ]; then
-      current_valid || return
-    fi
-
     # Unknown/custom boot objects appearing during a Forge-X transaction are
     # not a known transaction state. They can be removed only with the danger
     # cleanup path, after the stock helper profile has already been proven.
@@ -663,19 +802,31 @@ classify_boot_state(){
 
     if [ -r "$CANDIDATE_FILE" ]; then
       candidate_artifact_valid || return
+      CBS_RAM=$(profile_extra_ram "$CANDIDATE_FILE")
+      CBS_TRIAL=$(profile_bootcmd "$ONESHOT_BOOTCMD" "$CBS_RAM")
+      CBS_FALLBACK=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd)
+      if [ "$CBS_PHASE" = committing ] && candidate_functionally_committed; then
+        if [ "$BOOTCMD" = "$(profile_bootcmd "$TRANSITION_BOOTCMD" "$CBS_RAM")" ]; then
+          candidate_helpers_valid || return
+        else
+          current_valid || return
+        fi
+        BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
+      fi
+
+      # Before the commit, the previous profile is still the one-shot fallback.
+      if [ "$CBS_FALLBACK" != "$STOCK_BOOTCMD" ]; then
+        current_valid || return
+        [ "$CBS_FALLBACK" = "$(profile_bootcmd "$MANAGED_BOOTCMD" "$(profile_extra_ram "$CURRENT_FILE")")" ] || return
+      fi
+      candidate_helpers_valid || return
       case "$CBS_PHASE:$BOOTCMD" in
-        armed:"$ONESHOT_BOOTCMD"|armed:"$STOCK_BOOTCMD"|armed:"$MANAGED_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=candidate-armed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
-        passed:"$STOCK_BOOTCMD"|passed:"$MANAGED_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=candidate-passed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
-        committing:"$STOCK_BOOTCMD"|committing:"$ONESHOT_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=promotion-not-committed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no; return;;
-        committing:"$TRANSITION_BOOTCMD") candidate_helpers_valid || return; BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return;;
-        committing:"$MANAGED_BOOTCMD")
-          if candidate_functionally_committed; then BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no
-          elif current_valid && candidate_helpers_valid; then BOOT_STATE=promotion-not-committed; CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no
-          else return
-          fi
-          return;;
+        armed:"$CBS_TRIAL"|armed:"$CBS_FALLBACK") BOOT_STATE=candidate-armed;;
+        passed:"$CBS_FALLBACK") BOOT_STATE=candidate-passed;;
+        committing:"$CBS_FALLBACK"|committing:"$CBS_TRIAL") BOOT_STATE=promotion-not-committed;;
+        *) return;;
       esac
-      if candidate_functionally_committed; then BOOT_STATE=promotion-cleanup-required; CLEANUP_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return; fi
+      CLEANUP_REQUIRED=no; MANUAL_RECOVERY_REQUIRED=no
       return
     fi
 
@@ -695,7 +846,7 @@ classify_boot_state(){
 
     # Managed state is considered clean only if the complete protected vendor
     # recovery helper profile remains canonical, including boot_uImage.
-    if [ "$BOOTCMD" = "$MANAGED_BOOTCMD" ]; then
+    if [ "$BOOTCMD" = "$(profile_bootcmd "$MANAGED_BOOTCMD" "$(profile_extra_ram "$CURRENT_FILE")")" ]; then
       current_valid || return
       if [ -n "$UVARS" ] || [ -n "$UFILES" ]; then
         BOOT_STATE=unknown/custom; CLEANUP_REQUIRED=yes; CLEANUP_DANGER_REQUIRED=yes; MANUAL_RECOVERY_REQUIRED=no; return
@@ -752,7 +903,7 @@ validate_manifest_constraints(){
     [ -r "$MANIFEST" ] && [ -r "$SCHEMA" ] && [ -r "$STOCK_ENV_FILE" ] || return 1
     VMS_JSON=$(tr -d '[:space:]' <"$MANIFEST") || return 1
     for VMS_NEEDLE in \
-      '"format":2' '"name":"t113-profilectl"' '"generator_version":"1.0.1"' '"validator_version":7' \
+      '"format":2' '"name":"t113-profilectl"' '"generator_version":"1.2.0"' '"validator_version":9' \
       '"file":"profiles/source/sunxi-stock.dtb"' '"sha256":"27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21"' \
       '"fdt_version":17' '"size":55093' '"uimage_address":"0x43000000"' '"dtb_address":"0x44864e70"' '"minimum_padding":32768' \
       '"slots":["FORGE_X_A.DTB","FORGE_X_B.DTB"]' '"stock_environment"' '"id":"ad5m-stock-v1"' '"file":"profiles/source/stock-uboot.env"' \
@@ -806,23 +957,32 @@ full_validate_bundle(){
     verify_sums
     validate_manifest_constraints || die 'manifest-v2 constrained runtime validation failed'
     [ "$(sha256_file "$STOCK_DTB")" = "$STOCK_SHA" ] || die 'canonical stock DTB hash mismatch'
-    VMS_SELFTEST=$("$FGX_FDT" --self-test 2>/dev/null || true); [ "$VMS_SELFTEST" = 'fgx-fdt 1.0.1 self-test PASS' ] || die 'fgx-fdt self-test/version mismatch'
+    VMS_SELFTEST=$("$FGX_FDT" --self-test 2>/dev/null || true); [ "$VMS_SELFTEST" = 'fgx-fdt 1.2.0 self-test PASS' ] || die 'fgx-fdt self-test/version mismatch'
+    # Every DTB profilectl can generate: 8 CPU profiles x (legacy 25/50, HS200 25/50/100/150,
+    # DDR52 per family) x Extra RAM off/on. CPU trials inherit an existing DDR52 profile.
     combos=0
     for cpu in stock 1104 1152 1200 1248 1296 1344 1392; do
       progress "Checking generated CPU profile: $cpu (fgx-fdt)"
       for fam in legacy3v3 hs2001v8; do
         if [ "$fam" = legacy3v3 ]; then freqs='25 50'; else freqs='25 50 100 150'; fi
-        for emmc in $freqs; do
-          out=$TMP_DIR/v-$cpu-$fam-$emmc.dtb
-          "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --output "$out" >/dev/null || die "DTB build validation failed: $cpu/$fam/$emmc"
-          "$FGX_FDT" verify --file "$out" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die "DTB semantic validation failed: $cpu/$fam/$emmc"
-          combos=$((combos+1))
+        for emmc_setting in $freqs ddr52; do
+          normalize_emmc "$emmc_setting" || die "invalid validation eMMC setting: $emmc_setting"
+          emmc=$EMMC_MHZ; emmc_mode=$EMMC_MODE
+          for ram in off on; do
+            out=$TMP_DIR/v-$cpu-$fam-$emmc_setting-$ram.dtb
+            "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+              --output "$out" >/dev/null || die "DTB build validation failed: $cpu/$fam/$emmc/$ram"
+            "$FGX_FDT" verify --file "$out" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+              >/dev/null || die "DTB semantic validation failed: $cpu/$fam/$emmc/$ram"
+            rm -f "$out"
+            combos=$((combos+1))
+          done
         done
       done
     done
-    [ "$combos" = 48 ] || die "internal validation matrix count is $combos, expected 48"
+    [ "$combos" = 128 ] || die "internal validation matrix count is $combos, expected 128"
     write_cache || die 'cannot write validation cache'
-    say 'Bundle validation: PASS (48 transient generated combinations)'
+    say 'Bundle validation: PASS (128 transient generated combinations)'
 }
 ensure_bundle_valid_cached(){ [ "$TEST_MODE" = 1 ] && [ "${T113_TEST_ASSUME_BUNDLE_VALID:-0}" = 1 ] && return 0; cache_valid && return 0; full_validate_bundle >/dev/null; }
 
@@ -876,21 +1036,25 @@ copy_stock_dtb_safe(){
 
 candidate_build_publish(){
     ensure_boot_mutation_access
-    cpu=$1; emmc=$2; fam=$3; slot=$4
-    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN generate canonical candidate cpu=$cpu emmc=$emmc family=$fam -> $slot"; CAND_HASH=dry-run; return; fi
+    cpu=$1; emmc=$2; fam=$3; slot=$4; ram=$5; emmc_mode=$6
+    if [ "$DRY_RUN" = 1 ]; then say "DRY-RUN generate canonical candidate cpu=$cpu emmc=$emmc family=$fam extra_ram=$ram emmc_mode=$emmc_mode -> $slot"; CAND_HASH=dry-run; return; fi
     build=$STATE_DIR/.dtb-build.tmp.$$
     rm -f "$build" "$BOOT_DIR/$SLOT_TMP"
-    "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --output "$build" || die 'candidate DTB generation failed'
-    "$FGX_FDT" verify --file "$build" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate semantic verify failed'
+    "$FGX_FDT" build --base "$STOCK_DTB" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      --output "$build" || die 'candidate DTB generation failed'
+    "$FGX_FDT" verify --file "$build" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      >/dev/null || die 'candidate semantic verify failed'
     hash=$(sha256_file "$build")
     cp "$build" "$BOOT_DIR/$SLOT_TMP" || die 'cannot copy candidate to FAT temp'
     [ "$(sha256_file "$BOOT_DIR/$SLOT_TMP")" = "$hash" ] || die 'FAT temp hash mismatch'
-    "$FGX_FDT" verify --file "$BOOT_DIR/$SLOT_TMP" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'FAT temp semantic verify failed'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$SLOT_TMP" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      >/dev/null || die 'FAT temp semantic verify failed'
     durable_sync; fault candidate:fat-temp
     mv "$BOOT_DIR/$SLOT_TMP" "$BOOT_DIR/$slot" || die 'cannot publish candidate slot'
     durable_sync; fault candidate:slot-published
     [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'candidate final slot hash mismatch'
-    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate final semantic verify failed'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      >/dev/null || die 'candidate final semantic verify failed'
     rm -f "$build"; CAND_HASH=$hash
 }
 
@@ -940,28 +1104,42 @@ arm_test(){
     prepare_hardware_for_mutation
     ensure_normal_mutation_state
     current_axes
+    NEW_RAM=$(profile_extra_ram "$CURRENT_FILE")
+    NEW_EMMC_MODE=$(profile_emmc_mode "$CURRENT_FILE")
+    RAM_BEFORE=
     case "$TEST_AXIS" in
       cpu) normalize_cpu "$TEST_VALUE" || die "invalid CPU profile: $TEST_VALUE"; NEW_CPU=$CPU_PROFILE; NEW_CPU_HZ=$CPU_HZ; NEW_EMMC=$EFFECTIVE_EMMC;;
-      emmc) normalize_emmc "$TEST_VALUE" || die "invalid eMMC frequency: $TEST_VALUE"; NEW_CPU=$EFFECTIVE_CPU; NEW_CPU_HZ=$EFFECTIVE_CPU_HZ; NEW_EMMC=$EMMC_MHZ
+      emmc) normalize_emmc "$TEST_VALUE" || die "invalid eMMC setting: $TEST_VALUE"; NEW_CPU=$EFFECTIVE_CPU; NEW_CPU_HZ=$EFFECTIVE_CPU_HZ; NEW_EMMC=$EMMC_MHZ; NEW_EMMC_MODE=$EMMC_MODE
+        if [ "$NEW_EMMC_MODE" = ddr52 ] && [ "$AVAILABLE_DDR52" != yes ]; then
+          die 'DDR52 trials require legacy eMMC eligible for 50 MHz.'
+        fi
         case ",$AVAILABLE_EMMC," in *",$NEW_EMMC,"*) ;; *) die "$NEW_EMMC MHz is unavailable for $DETECT_FAMILY and the optional model restrictions";; esac;;
-      *) die 'test axis must be cpu or emmc';;
+      extra-ram)
+        valid_extra_ram "$TEST_VALUE" || die 'Extra RAM setting must be on or off.'
+        [ "$TEST_VALUE" != "$NEW_RAM" ] || die 'Extra RAM is already set to this value.'
+        [ "$(loaded_extra_ram)" = "$NEW_RAM" ] || die 'The live RAM reservations differ from the confirmed profile.'
+        RAM_BEFORE=$(memory_total_kib) || die 'Cannot read the RAM total before the trial.'
+        [ "$DETECT_FAMILY" = "$EFFECTIVE_FAMILY" ] || die 'The active eMMC mode differs from the confirmed profile.'
+        NEW_CPU=$EFFECTIVE_CPU; NEW_CPU_HZ=$EFFECTIVE_CPU_HZ; NEW_EMMC=$EFFECTIVE_EMMC; NEW_RAM=$TEST_VALUE;;
+      *) die 'test axis must be cpu, emmc or extra-ram';;
     esac
+    if [ "$NEW_RAM" = on ]; then require_extra_ram_firmware; fi
     [ "$NEW_CPU" != stock ] || NEW_CPU_HZ=1008000000
     if [ "$NEW_CPU" = 1392 ]; then warn '1392 MHz is experimental and was unstable on at least one tested CPU sample.'; fi
     create_original
     choose_candidate_slot
-    candidate_build_publish "$NEW_CPU" "$NEW_EMMC" "$DETECT_FAMILY" "$CAND_SLOT"
+    candidate_build_publish "$NEW_CPU" "$NEW_EMMC" "$DETECT_FAMILY" "$CAND_SLOT" "$NEW_RAM" "$NEW_EMMC_MODE"
     cscript=$(boot_script "$CAND_SLOT")
-    if [ -r "$CURRENT_FILE" ]; then FALLBACK=$MANAGED_BOOTCMD; else FALLBACK=$STOCK_BOOTCMD; fi
+    if [ -r "$CURRENT_FILE" ]; then FALLBACK=$BOOTCMD; else FALLBACK=$STOCK_BOOTCMD; fi
     set_env fgx_boot_test "$cscript"
     set_env fgx_boot_restore "setenv bootcmd $FALLBACK"
     set_env fgx_boot_save 'saveenv'
     set_env fgx_candidate_axis "$TEST_AXIS"
     set_env fgx_candidate_value "$TEST_VALUE"
     write_meta_atomic "$CANDIDATE_FILE" \
-      'format=2' 'phase=armed' "axis=$TEST_AXIS" "value=$TEST_VALUE" "cpu_profile=$NEW_CPU" "cpu_hz=$NEW_CPU_HZ" "emmc_mhz=$NEW_EMMC" "family=$DETECT_FAMILY" "slot=$CAND_SLOT" "dtb_sha256=$CAND_HASH" "armed_boot_id=$(boot_id)" "fallback_bootcmd=$FALLBACK"
-    set_env bootcmd "$ONESHOT_BOOTCMD"
-    say "Candidate armed: CPU=$NEW_CPU eMMC=$NEW_EMMC MHz family=$DETECT_FAMILY slot=$CAND_SLOT"
+      'format=2' 'phase=armed' "axis=$TEST_AXIS" "value=$TEST_VALUE" "cpu_profile=$NEW_CPU" "cpu_hz=$NEW_CPU_HZ" "emmc_mhz=$NEW_EMMC" "family=$DETECT_FAMILY" "emmc_mode=$NEW_EMMC_MODE" "extra_ram=$NEW_RAM" "ram_before_kib=$RAM_BEFORE" "slot=$CAND_SLOT" "dtb_sha256=$CAND_HASH" "armed_boot_id=$(boot_id)" "fallback_bootcmd=$FALLBACK"
+    set_env bootcmd "$(profile_bootcmd "$ONESHOT_BOOTCMD" "$NEW_RAM")"
+    say "Candidate armed: CPU=$NEW_CPU eMMC=$NEW_EMMC MHz mode=$NEW_EMMC_MODE family=$DETECT_FAMILY extra_ram=$NEW_RAM slot=$CAND_SLOT"
     say 'Reboot manually, then run: t113-profilectl --apply verify'
 }
 
@@ -987,7 +1165,7 @@ fatal_dmesg(){
 save_verify_journal(){
     [ "$DRY_RUN" = 0 ] || return 0
     svj_file=$STATE_DIR/diagnostics/verify-dmesg.log
-    if mkdir -p "${svj_file%/*}" && { say "candidate: CPU=$1 eMMC=$2 MHz family=$3"; say "boot_id=$4"; say; cat "$TMP_DIR/dmesg"; } >"$svj_file.part"; then
+    if mkdir -p "${svj_file%/*}" && { say "candidate: CPU=$1 eMMC=$2 MHz mode=$5 family=$3 extra_ram=$6"; say "boot_id=$4"; say; cat "$TMP_DIR/dmesg"; } >"$svj_file.part"; then
       mv -f "$svj_file.1" "$svj_file.2" 2>/dev/null; mv -f "$svj_file" "$svj_file.1" 2>/dev/null
       mv -f "$svj_file.part" "$svj_file" && { durable_sync; printf 'Kernel journal saved: %s\n' "$svj_file" >&2; return 0; }
     fi
@@ -1013,6 +1191,10 @@ verify_cpu_runtime(){
 verify_emmc_runtime(){
     fam=$1; mhz=$2; runtime_ios || die 'cannot read MMC ios'
     [ "$IOS_CLOCK" = $((mhz*1000000)) ] || die "runtime eMMC clock mismatch: got $IOS_CLOCK expected $((mhz*1000000))"
+    if [ "$3" = ddr52 ]; then
+      case "$IOS_TIMING:$IOS_VOLTAGE" in 8:[01]) return 0;; esac
+      die "DDR52 runtime mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)"
+    fi
     case "$fam:$mhz" in
       hs2001v8:*) [ "$IOS_TIMING" = 9 ] && [ "$IOS_VOLTAGE" = 1 ] || die "HS200 runtime mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)";;
       legacy3v3:25) [ "$IOS_TIMING" = 0 ] && [ "$IOS_VOLTAGE" = 0 ] || die "legacy 25 MHz mode mismatch (timing=$IOS_TIMING voltage=$IOS_VOLTAGE)";;
@@ -1024,43 +1206,61 @@ verify_cmd(){
     need_mutation ro
     [ -r "$CANDIDATE_FILE" ] || die 'no candidate metadata'
     phase=$(meta_get "$CANDIDATE_FILE" phase || true); [ "$phase" = armed ] || die "candidate phase is $phase, expected armed"
+    candidate_metadata_valid || die 'invalid candidate metadata'
     oldid=$(meta_get "$CANDIDATE_FILE" armed_boot_id); newid=$(boot_id); [ "$oldid" != "$newid" ] || die 'boot ID did not change; candidate has not been reboot-tested'
     fallback=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd); bc=$(get_env bootcmd || true); [ "$bc" = "$fallback" ] || die "one-shot fallback was not restored before verify (bootcmd=$bc)"
     cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); hz=$(meta_get "$CANDIDATE_FILE" cpu_hz); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family); slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256)
+    ram=$(profile_extra_ram "$CANDIDATE_FILE")
+    emmc_mode=$(profile_emmc_mode "$CANDIDATE_FILE")
+    axis=$(meta_get "$CANDIDATE_FILE" axis)
     [ -r "$BOOT_DIR/$slot" ] || die 'candidate slot missing after reboot'
     [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'candidate DTB hash differs after reboot'
-    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'candidate DTB semantic verification failed after boot'
-    if [ -e "$DT_ROOT/forge-x,cpu-profile" ]; then
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      >/dev/null || die 'candidate DTB semantic verification failed after boot'
+    if [ "$emmc_mode" = ddr52 ] || [ -e "$DT_ROOT/forge-x,cpu-profile" ]; then
       loaded_cpu_matches "$cpu" &&
         [ "$(loaded_property emmc-mhz || true)" = "$emmc" ] &&
-        [ "$(loaded_property emmc-family || true)" = "$fam" ] || die 'booted DTB does not match the candidate'
+        [ "$(loaded_property emmc-family || true)" = "$fam" ] &&
+        [ "$(loaded_property emmc-mode || printf normal)" = "$emmc_mode" ] || die 'booted DTB does not match the candidate'
     fi
+    if [ "$ram" = on ]; then require_extra_ram_firmware; fi
+    if [ "$ram" = on ] || [ "$axis" = extra-ram ]; then verify_extra_ram_boot "$ram"; fi
+    if [ "$axis" = extra-ram ]; then verify_memory_change "$ram"; fi
+    verify_emmc_runtime "$fam" "$emmc" "$emmc_mode"
     detect_hardware; [ "$EVIDENCE_FAMILY" = "$fam" ] || die "runtime hardware family mismatch: got $EVIDENCE_FAMILY expected $fam"
     verify_cpu_runtime "$cpu" "$hz"
-    verify_emmc_runtime "$fam" "$emmc"
     ensure_tmp
     fatal=$(fatal_dmesg) || die 'cannot read kernel journal; candidate remains unverified'
-    [ -z "$fatal" ] || { printf '%s\n' "$fatal" >&2; save_verify_journal "$cpu" "$emmc" "$fam" "$newid"; die 'new fatal kernel/MMC errors found'; }
+    [ -z "$fatal" ] || { printf '%s\n' "$fatal" >&2; save_verify_journal "$cpu" "$emmc" "$fam" "$newid" "$emmc_mode" "$ram"; die 'new fatal kernel/MMC errors found'; }
     write_meta_atomic "$CANDIDATE_FILE" \
-      'format=2' 'phase=passed' "axis=$(meta_get "$CANDIDATE_FILE" axis)" "value=$(meta_get "$CANDIDATE_FILE" value)" "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "slot=$slot" "dtb_sha256=$hash" "armed_boot_id=$oldid" "verified_boot_id=$newid" "fallback_bootcmd=$fallback" "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
+      'format=2' 'phase=passed' "axis=$axis" "value=$(meta_get "$CANDIDATE_FILE" value)" \
+      "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "emmc_mode=$emmc_mode" "extra_ram=$ram" "slot=$slot" "dtb_sha256=$hash" \
+      "armed_boot_id=$oldid" "verified_boot_id=$newid" "fallback_bootcmd=$fallback" \
+      "ram_before_kib=$(meta_get "$CANDIDATE_FILE" ram_before_kib || true)" \
+      "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
     say 'Candidate verification: PASS'
 }
 
 candidate_to_current(){
     cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); hz=$(meta_get "$CANDIDATE_FILE" cpu_hz); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family); slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256); untested=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)
-    write_meta_atomic "$CURRENT_FILE" 'format=2' 'phase=current' "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" "family=$fam" "slot=$slot" "dtb_sha256=$hash" "untested_emmc_override=$untested"
+    write_meta_atomic "$CURRENT_FILE" 'format=2' 'phase=current' "cpu_profile=$cpu" "cpu_hz=$hz" "emmc_mhz=$emmc" \
+      "family=$fam" "emmc_mode=$(profile_emmc_mode "$CANDIDATE_FILE")" "extra_ram=$(profile_extra_ram "$CANDIDATE_FILE")" "slot=$slot" "dtb_sha256=$hash" \
+      "untested_emmc_override=$untested"
 }
 normalize_promotion(){
     [ -r "$CANDIDATE_FILE" ] || return 1
     slot=$(meta_get "$CANDIDATE_FILE" slot); hash=$(meta_get "$CANDIDATE_FILE" dtb_sha256); cpu=$(meta_get "$CANDIDATE_FILE" cpu_profile); emmc=$(meta_get "$CANDIDATE_FILE" emmc_mhz); fam=$(meta_get "$CANDIDATE_FILE" family)
+    ram=$(profile_extra_ram "$CANDIDATE_FILE")
+    emmc_mode=$(profile_emmc_mode "$CANDIDATE_FILE")
     [ -r "$BOOT_DIR/$slot" ] && [ "$(sha256_file "$BOOT_DIR/$slot")" = "$hash" ] || die 'committed candidate slot is missing or corrupt'
-    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" >/dev/null || die 'committed candidate DTB semantic verify failed'
+    "$FGX_FDT" verify --file "$BOOT_DIR/$slot" --cpu "$cpu" --emmc "$emmc" --family "$fam" --extra-ram "$ram" --emmc-mode "$emmc_mode" \
+      >/dev/null || die 'committed candidate DTB semantic verify failed'
     cscript=$(boot_script "$slot")
     candidate_to_current
     fault enable:after-current
     set_env fgx_boot_current "$cscript"
     fault enable:after-current-helper
-    set_env bootcmd "$MANAGED_BOOTCMD"
+    set_env bootcmd "$(profile_bootcmd "$MANAGED_BOOTCMD" "$ram")"
     fault enable:after-final-bootcmd
     del_env fgx_boot_test; del_env fgx_boot_restore; del_env fgx_boot_save; del_env fgx_candidate_axis; del_env fgx_candidate_value
     fault enable:after-helper-cleanup
@@ -1075,21 +1275,42 @@ enable_cmd(){
     need_mutation
     [ -r "$CANDIDATE_FILE" ] || die 'no candidate to enable'
     phase=$(meta_get "$CANDIDATE_FILE" phase || true)
-    bc=$(get_env bootcmd || true)
+    ram=$(profile_extra_ram "$CANDIDATE_FILE")
+    emmc_mode=$(profile_emmc_mode "$CANDIDATE_FILE")
+    axis=$(meta_get "$CANDIDATE_FILE" axis || true)
     if [ "$phase" = passed ]; then
       candidate_helpers_valid || die 'candidate helpers or artifact are invalid; refusing permanent commit'
+      if [ "$emmc_mode" = ddr52 ]; then
+        [ "$(meta_get "$CANDIDATE_FILE" verified_boot_id)" = "$(boot_id)" ] || die 'The DDR52 trial was verified in a previous boot.'
+        verify_emmc_runtime "$(meta_get "$CANDIDATE_FILE" family)" "$(meta_get "$CANDIDATE_FILE" emmc_mhz)" "$emmc_mode"
+      fi
+      if [ "$ram" = on ] || [ "$axis" = extra-ram ]; then
+        [ "$(meta_get "$CANDIDATE_FILE" verified_boot_id)" = "$(boot_id)" ] ||
+          die 'The Extra RAM trial was verified in a previous boot.'
+        verify_extra_ram_boot "$ram"
+      fi
+      if [ "$axis" = extra-ram ]; then verify_memory_change "$ram"; fi
+      if [ "$ram" = on ]; then require_extra_ram_firmware; fi
       # Publish committing before the first functional commit.
       write_meta_atomic "$CANDIDATE_FILE" \
-        'format=2' 'phase=committing' "axis=$(meta_get "$CANDIDATE_FILE" axis)" "value=$(meta_get "$CANDIDATE_FILE" value)" "cpu_profile=$(meta_get "$CANDIDATE_FILE" cpu_profile)" "cpu_hz=$(meta_get "$CANDIDATE_FILE" cpu_hz)" "emmc_mhz=$(meta_get "$CANDIDATE_FILE" emmc_mhz)" "family=$(meta_get "$CANDIDATE_FILE" family)" "slot=$(meta_get "$CANDIDATE_FILE" slot)" "dtb_sha256=$(meta_get "$CANDIDATE_FILE" dtb_sha256)" "armed_boot_id=$(meta_get "$CANDIDATE_FILE" armed_boot_id)" "verified_boot_id=$(meta_get "$CANDIDATE_FILE" verified_boot_id)" "fallback_bootcmd=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd)" "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
+        'format=2' 'phase=committing' "axis=$axis" "value=$(meta_get "$CANDIDATE_FILE" value)" \
+        "cpu_profile=$(meta_get "$CANDIDATE_FILE" cpu_profile)" "cpu_hz=$(meta_get "$CANDIDATE_FILE" cpu_hz)" \
+        "emmc_mhz=$(meta_get "$CANDIDATE_FILE" emmc_mhz)" "family=$(meta_get "$CANDIDATE_FILE" family)" \
+        "emmc_mode=$emmc_mode" "extra_ram=$ram" "slot=$(meta_get "$CANDIDATE_FILE" slot)" "dtb_sha256=$(meta_get "$CANDIDATE_FILE" dtb_sha256)" \
+        "armed_boot_id=$(meta_get "$CANDIDATE_FILE" armed_boot_id)" "verified_boot_id=$(meta_get "$CANDIDATE_FILE" verified_boot_id)" \
+        "fallback_bootcmd=$(meta_get "$CANDIDATE_FILE" fallback_bootcmd)" \
+        "ram_before_kib=$(meta_get "$CANDIDATE_FILE" ram_before_kib || true)" \
+        "untested_emmc_override=$(meta_get "$CANDIDATE_FILE" untested_emmc_override || printf 0)"
       fault enable:phase-committing
       set_env fgx_boot_test "$(boot_script "$(meta_get "$CANDIDATE_FILE" slot)")"
-      set_env bootcmd "$TRANSITION_BOOTCMD"
+      set_env bootcmd "$(profile_bootcmd "$TRANSITION_BOOTCMD" "$ram")"
       fault enable:functional-commit
     elif [ "$phase" = committing ]; then
       if ! candidate_functionally_committed; then
         candidate_helpers_valid || die 'candidate helpers or artifact are invalid; refusing permanent commit'
+        if [ "$ram" = on ]; then require_extra_ram_firmware; fi
         set_env fgx_boot_test "$(boot_script "$(meta_get "$CANDIDATE_FILE" slot)")"
-        set_env bootcmd "$TRANSITION_BOOTCMD"
+        set_env bootcmd "$(profile_bootcmd "$TRANSITION_BOOTCMD" "$ram")"
         fault enable:functional-commit
       fi
     else die "candidate must be verified before enable (phase=$phase)"; fi
@@ -1123,7 +1344,7 @@ known_cleanup(){
       # Candidate metadata already removed: keep valid current, remove stale second slot/helpers.
       current_valid || die 'cleanup-required state has no valid current'
       slot=$(meta_get "$CURRENT_FILE" slot); other=$SLOT_A; [ "$slot" = "$SLOT_A" ] && other=$SLOT_B
-      set_env bootcmd "$MANAGED_BOOTCMD"
+      set_env bootcmd "$(profile_bootcmd "$MANAGED_BOOTCMD" "$(profile_extra_ram "$CURRENT_FILE")")"
       for n in fgx_boot_test fgx_boot_restore fgx_boot_save fgx_candidate_axis fgx_candidate_value; do del_env "$n"; done
       [ "$DRY_RUN" = 1 ] || { rm -f "$BOOT_DIR/$other" "$BOOT_DIR/$SLOT_TMP"; durable_sync; }
       say 'Interrupted promotion cleanup completed.'; return
@@ -1312,6 +1533,8 @@ snapshot_profile(){
     case "$sp_prefix" in current) current_metadata_valid;; candidate) candidate_metadata_valid;; esac
     if [ "$?" != 0 ]; then snapshot_value "${sp_prefix}_valid" no; return; fi
     snapshot_value "${sp_prefix}_valid" yes
+    snapshot_value "${sp_prefix}_extra_ram" "$(profile_extra_ram "$sp_file")"
+    snapshot_value "${sp_prefix}_emmc_mode" "$(profile_emmc_mode "$sp_file")"
     for sp_key in phase cpu_profile cpu_hz emmc_mhz family dtb_sha256; do
       if [ "$sp_key" = cpu_hz ] && [ "$(meta_get "$sp_file" cpu_profile)" = stock ]; then
         snapshot_value "${sp_prefix}_cpu_hz" 1008000000; continue
@@ -1319,7 +1542,7 @@ snapshot_profile(){
       snapshot_value "${sp_prefix}_$sp_key" "$(meta_get "$sp_file" "$sp_key" || true)"
     done
     if [ "$sp_prefix" = candidate ]; then
-      for sp_key in axis armed_boot_id verified_boot_id; do
+      for sp_key in axis armed_boot_id verified_boot_id ram_before_kib; do
         snapshot_value "candidate_$sp_key" "$(meta_get "$sp_file" "$sp_key" || true)"
       done
     fi
@@ -1333,6 +1556,7 @@ snapshot_cmd(){
     snapshot_value hardware "$HARDWARE_STATUS"
     snapshot_value family "$DETECT_FAMILY"
     snapshot_value available_emmc_mhz "$AVAILABLE_EMMC"
+    snapshot_value available_ddr52 "$AVAILABLE_DDR52"
     snapshot_value cid_status "$CID_STATUS"
     snapshot_value model_identity "$CID_IDENTITY"
     snapshot_value runtime_family_evidence "$EVIDENCE_FAMILY"
@@ -1349,8 +1573,8 @@ snapshot_cmd(){
     snapshot_value unsafe_boot_paths "$(printf '%s\n' "$UUNSAFE" | comma_list)"
     snapshot_value boot_id "$(boot_id)"
     case "$BOOTCMD" in
-      "$ONESHOT_BOOTCMD") snapshot_value pending_boot candidate;;
-      "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD") snapshot_value pending_boot confirmed;;
+      "$ONESHOT_BOOTCMD"|"$(profile_bootcmd "$ONESHOT_BOOTCMD" on)") snapshot_value pending_boot candidate;;
+      "$STOCK_BOOTCMD"|"$MANAGED_BOOTCMD"|"$(profile_bootcmd "$MANAGED_BOOTCMD" on)") snapshot_value pending_boot confirmed;;
       *) snapshot_value pending_boot other;;
     esac
     snapshot_value runtime_cpu_hz "$(runtime_cpu_hz 2>/dev/null || printf unknown)"
@@ -1359,13 +1583,17 @@ snapshot_cmd(){
     snapshot_value runtime_emmc_hz "${IOS_CLOCK:-unknown}"
     snapshot_value runtime_timing "${IOS_TIMING:-unknown}"
     snapshot_value runtime_voltage "${IOS_VOLTAGE:-unknown}"
-    for ls_key in cpu-profile emmc-mhz emmc-family source-sha256; do
+    snapshot_value loaded_extra_ram "$(loaded_extra_ram)"
+    snapshot_value runtime_mem_total_kib "$(memory_total_kib || true)"
+    for ls_key in cpu-profile emmc-mhz emmc-family emmc-mode source-sha256; do
       ls_name=$(printf '%s' "$ls_key" | tr '-' '_')
       snapshot_value "loaded_$ls_name" "$(loaded_property "$ls_key" 2>/dev/null || printf unknown)"
     done
     snapshot_profile current "$CURRENT_FILE"
     snapshot_profile candidate "$CANDIDATE_FILE"
     if current_metadata_valid; then
+      snapshot_value confirmed_extra_ram "$(profile_extra_ram "$CURRENT_FILE")"
+      snapshot_value confirmed_emmc_mode "$(profile_emmc_mode "$CURRENT_FILE")"
       for cf_key in cpu_profile cpu_hz emmc_mhz family; do
         if [ "$cf_key" = cpu_hz ] && [ "$(meta_get "$CURRENT_FILE" cpu_profile)" = stock ]; then
           snapshot_value confirmed_cpu_hz 1008000000; continue
@@ -1373,6 +1601,8 @@ snapshot_cmd(){
         snapshot_value "confirmed_$cf_key" "$(meta_get "$CURRENT_FILE" "$cf_key")"
       done
     elif [ ! -e "$CURRENT_FILE" ] && [ "$STOCK_HASH" = "$STOCK_SHA" ]; then
+      snapshot_value confirmed_extra_ram off
+      snapshot_value confirmed_emmc_mode normal
       snapshot_value confirmed_cpu_profile stock
       snapshot_value confirmed_cpu_hz 1008000000
       snapshot_value confirmed_emmc_mhz 25
@@ -1392,7 +1622,7 @@ EOF2
 ;; emmc) detect_hardware; [ "$DETECT_FAMILY" != unknown ] || die 'cannot determine eMMC family'; printf '%s\n' "$AVAILABLE_EMMC" | tr ',' '\n' | while IFS= read -r freq; do [ -z "$freq" ] || printf '  %s MHz\n' "$freq"; done;; *) die 'list requires cpu or emmc';; esac; }
 cpu_display(){ case "$1" in stock) printf 'stock (1008 MHz)';; 1104) printf '1.1 (1104 MHz)';; 1152) printf '1.15 (1152 MHz)';; 1200) printf '1.2 (1200 MHz)';; 1248) printf '1.25 (1248 MHz)';; 1296) printf '1.3 (1296 MHz)';; 1344) printf '1.35 (1344 MHz)';; 1392) printf '1.4 (1392 MHz)';; *) printf '%s' "$1";; esac; }
 detect_cmd(){ detect_hardware; cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "family=$DETECT_FAMILY"; say "hardware=$HARDWARE_STATUS"; say "cid=$CID"; say "runtime_evidence=$EVIDENCE_FAMILY"; say "cpu_hz=$cpu"; say "emmc_hz=${IOS_CLOCK:-unknown}"; say "timing_spec=${IOS_TIMING:-unknown}"; say "signal_voltage=${IOS_VOLTAGE:-unknown}"; }
-status_cmd(){ classify_boot_state; detect_hardware; say "boot state: $BOOT_STATE"; if stock_helpers_valid; then say 'stock helpers: canonical'; else say 'stock helpers: modified'; fi; say "hardware: $HARDWARE_STATUS"; if [ -r "$CURRENT_FILE" ]; then sp=$(meta_get "$CURRENT_FILE" cpu_profile); say "CPU: $(cpu_display "$sp")"; say "eMMC: $(meta_get "$CURRENT_FILE" emmc_mhz) MHz"; say "current slot: $(meta_get "$CURRENT_FILE" slot)"; else cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "CPU: $cpu Hz"; say "eMMC: ${IOS_CLOCK:-unknown} Hz"; say 'current slot: none'; fi; if [ -r "$CANDIDATE_FILE" ]; then say "candidate: $(meta_get "$CANDIDATE_FILE" phase) $(meta_get "$CANDIDATE_FILE" axis)=$(meta_get "$CANDIDATE_FILE" value)"; else say 'candidate: none'; fi; say "cleanup required: $CLEANUP_REQUIRED"; say "cleanup danger required: $CLEANUP_DANGER_REQUIRED"; say "manual recovery required: $MANUAL_RECOVERY_REQUIRED"; }
+status_cmd(){ classify_boot_state; detect_hardware; say "boot state: $BOOT_STATE"; if stock_helpers_valid; then say 'stock helpers: canonical'; else say 'stock helpers: modified'; fi; say "hardware: $HARDWARE_STATUS"; if [ -r "$CURRENT_FILE" ]; then sp=$(meta_get "$CURRENT_FILE" cpu_profile); say "CPU: $(cpu_display "$sp")"; say "eMMC: $(meta_get "$CURRENT_FILE" emmc_mhz) MHz $(profile_emmc_mode "$CURRENT_FILE")"; say "extra RAM: $(profile_extra_ram "$CURRENT_FILE")"; say "current slot: $(meta_get "$CURRENT_FILE" slot)"; else cpu=$(runtime_cpu_hz 2>/dev/null || printf unknown); runtime_ios >/dev/null 2>&1 || true; say "CPU: $cpu Hz"; say "eMMC: ${IOS_CLOCK:-unknown} Hz"; say 'current slot: none'; fi; if [ -r "$CANDIDATE_FILE" ]; then say "candidate: $(meta_get "$CANDIDATE_FILE" phase) $(meta_get "$CANDIDATE_FILE" axis)=$(meta_get "$CANDIDATE_FILE" value)"; else say 'candidate: none'; fi; say "cleanup required: $CLEANUP_REQUIRED"; say "cleanup danger required: $CLEANUP_DANGER_REQUIRED"; say "manual recovery required: $MANUAL_RECOVERY_REQUIRED"; }
 # Redact credentials and specimen identifiers before diagnostics reach a terminal
 # or persistent file. Boot helper structure and nonsensitive values stay visible.
 redact_diagnostics(){
@@ -1443,8 +1673,8 @@ doctor_report(){
     show_stock_helper_mismatches
     say "bootcmd=$(get_env bootcmd || true)"
     say "expected_stock_bootcmd=$STOCK_BOOTCMD"
-    say "expected_managed_bootcmd=$MANAGED_BOOTCMD"
-    say "expected_trial_bootcmd=$ONESHOT_BOOTCMD"
+    say "expected_managed_bootcmd=$(profile_bootcmd "$MANAGED_BOOTCMD" "$(profile_extra_ram "$CURRENT_FILE")")"
+    say "expected_trial_bootcmd=$(profile_bootcmd "$ONESHOT_BOOTCMD" "$(profile_extra_ram "$CANDIDATE_FILE")")"
     say "stock_dtb_expected_sha256=$STOCK_SHA"
     say "stock_dtb_actual_sha256=$STOCK_HASH"
     say "missing_boot_dependencies=$(boot_graph_missing | comma_list)"
@@ -1521,6 +1751,7 @@ case "$cmd" in
   snapshot) [ "$#" = 0 ] || die 'snapshot takes no arguments'; snapshot_cmd;;
   migrate-state) [ "$#" = 1 ] || die 'migrate-state requires LEGACY_DIRECTORY'; migrate_state_cmd "$1";;
   doctor) [ "$#" = 0 ] || die 'doctor takes no arguments'; doctor_cmd;;
+  extra-ram-support) [ "$#" = 0 ] || die 'extra-ram-support takes no arguments'; extra_ram_support_cmd;;
   validate-bundle) [ "$#" = 0 ] || die 'validate-bundle takes no arguments'; full_validate_bundle;;
   backup) [ "$#" = 0 ] || die 'backup takes no arguments'; backup_cmd;;
   test) [ "$#" = 2 ] || die 'test requires AXIS VALUE'; arm_test "$1" "$2";;

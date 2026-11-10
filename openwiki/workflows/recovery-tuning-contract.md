@@ -1,4 +1,4 @@
-# Recovery CPU/eMMC tuning contract
+# Recovery hardware tuning contract
 
 Status: implemented and validated offline, 2026-10-27. Hardware acceptance requires
 separate permission. Product authority lives in
@@ -32,6 +32,17 @@ parser, mount-lifecycle, Recovery client and screen tests still run normally.
 An unresolved trial is exactly "profilectl's `candidate` exists". There is no
 separate session, marker or supervisor. Opening HARDWARE TUNING changes nothing;
 apply, accept, discard and restore are explicit profilectl operations.
+
+Extra RAM defaults to `off` in old metadata and preserves CPU and eMMC settings.
+Profilectl checks the stock kernel, DTB and both OP-TEE copies before arming or
+accepting an enabled profile. The enabled boot path skips `boot_dsp0` and keeps
+the OP-TEE reservation. The one-shot restores the exact previous boot command
+before trying the candidate. Verification checks live reservations and the
+expected change in `MemTotal`. Ordinary boots skip the compatibility check.
+
+New DDR52 trials require legacy eMMC eligible for 50 MHz. Profilectl verifies
+the clock, negotiated timing and reported voltage. Old metadata defaults to
+`normal`. Trials of other settings preserve an existing DDR52 profile.
 
 - Recovery start: if a candidate exists, Recovery opens tuning first. A UI
   restart inside the same Recovery (`RECOVERY_UI_RESTARTED=1`, for example

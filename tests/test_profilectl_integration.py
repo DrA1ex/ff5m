@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import pathlib
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -58,6 +59,161 @@ class RecoveryIntegrationTest(unittest.TestCase):
                 ('emmc-mhz', candidate['emmc_mhz']),
                 ('emmc-family', candidate['family'])):
             (self.dt / ('forge-x,' + name)).write_bytes(value.encode() + b'\0')
+        mode = self.dt / 'forge-x,emmc-mode'
+        if candidate.get('emmc_mode') == 'ddr52':
+            mode.write_bytes(b'ddr52\0')
+        elif mode.exists():
+            mode.unlink()
+
+    def extra_ram_firmware(self):
+        disk = self.fixture.d / 'mmc-user-area'
+        payload = (b'OP-TEE fixture\0' * 300248)[:300248]
+        with disk.open('wb') as raw:
+            for sector in (32800, 24576):
+                raw.seek(sector * 512)
+                header = bytearray(2048)
+                header[:13] = b'sunxi-package'
+                struct.pack_into('<I', header, 32, 2)
+                header[432:437] = b'optee'
+                struct.pack_into('<II', header, 496, 0xec800, len(payload))
+                raw.write(header)
+                raw.seek(sector * 512 + 0xec800)
+                raw.write(payload)
+        self.fixture.baseenv.update(T113_DEV_MMC=str(disk), T113_TEST_OPTEE_MD5=hashlib.md5(payload).hexdigest(),
+                                    T113_TEST_KERNEL_SHA=hashlib.sha256((self.fixture.boot / 'uImage').read_bytes()).hexdigest(),
+                                    T113_LIVE_FDT=str(self.fixture.d / 'live.dtb'),
+                                    T113_MEMBLOCK_RESERVED=str(self.fixture.d / 'reserved'),
+                                    T113_MEMINFO=str(self.fixture.d / 'meminfo'))
+        (self.fixture.d / 'live.dtb').write_bytes((self.fixture.boot / 'sunxi.dtb').read_bytes())
+        (self.fixture.d / 'meminfo').write_text('MemTotal: 110404 kB\n')
+        return disk
+
+    def boot_extra_ram_candidate(self, boot_id, kernel_reserves_tee=True):
+        fixture = self.fixture
+        fixture.simulate_candidate_boot(boot_id)
+        self.loaded_candidate()
+        candidate = meta(fixture.state / 'candidate')
+        (fixture.d / 'live.dtb').write_bytes((fixture.boot / candidate['slot']).read_bytes())
+        total = 117636 if candidate['extra_ram'] == 'on' else 110404
+        (fixture.d / 'meminfo').write_text(f'MemTotal: {total} kB\n')
+        (fixture.d / 'reserved').write_text('   0: 0x0000000041b00000..0x0000000041bfffff\n'
+                                            if kernel_reserves_tee else '   0: 0x40000000..0x40000fff\n')
+
+    def test_extra_ram_checks_both_boot_packages_before_arming(self):
+        disk = self.extra_ram_firmware()
+        self.assertEqual(self.fixture.run('extra-ram-support').stdout.strip(), 'yes')
+        with disk.open('r+b') as raw:
+            raw.seek(24576 * 512 + 0xec800)
+            raw.write(b'corrupt')
+        before = contents(self.fixture.boot), contents(self.fixture.state), self.fixture.envdb.read_bytes()
+        self.assertEqual(self.fixture.run('extra-ram-support').stdout.strip(), 'no')
+        result = self.fixture.run('--apply', 'test', 'extra-ram', 'on', ok=False)
+        self.assertIn('matching OP-TEE in both boot packages', result.stdout)
+        self.assertEqual((contents(self.fixture.boot), contents(self.fixture.state), self.fixture.envdb.read_bytes()), before)
+
+    def test_extra_ram_accept_rechecks_the_kernel_changed_after_verification(self):
+        self.extra_ram_firmware()
+        fixture = self.fixture
+        fixture.run('--apply', 'test', 'extra-ram', 'on')
+        self.boot_extra_ram_candidate('boot-b')
+        fixture.run('--apply', 'verify')
+        kernel = fixture.boot / 'uImage'
+        original = kernel.read_bytes()
+        kernel.write_bytes(original + b'updated firmware')
+        before = contents(fixture.state), fixture.envdb.read_bytes()
+        result = fixture.run('--apply', 'enable', ok=False)
+        self.assertIn('verified stock kernel', result.stdout)
+        self.assertEqual((contents(fixture.state), fixture.envdb.read_bytes()), before)
+        self.assertEqual(snapshot(fixture)['boot_state'], 'candidate-passed')
+        kernel.write_bytes(original)
+        fixture.run('--apply', 'enable')
+        self.assertEqual(snapshot(fixture)['confirmed_extra_ram'], 'on')
+
+    def test_extra_ram_requires_the_booted_map_and_kernel_reservation(self):
+        self.extra_ram_firmware()
+        fixture = self.fixture
+        fixture.run('--apply', 'test', 'extra-ram', 'on')
+        self.assertNotIn('boot_dsp0', fixture.env()['bootcmd'].split())
+        fixture.simulate_candidate_boot()
+        (fixture.d / 'live.dtb').write_bytes((fixture.boot / 'sunxi.dtb').read_bytes())
+        self.assertIn('live device tree', fixture.run('--apply', 'verify', ok=False).stdout)
+        self.boot_extra_ram_candidate('boot-b', kernel_reserves_tee=False)
+        self.assertIn('OP-TEE memory reservation', fixture.run('--apply', 'verify', ok=False).stdout)
+        self.boot_extra_ram_candidate('boot-b')
+        (fixture.d / 'meminfo').write_text('MemTotal: 110404 kB\n')
+        self.assertIn('outside the expected range', fixture.run('--apply', 'verify', ok=False).stdout)
+        fixture.run('--apply', 'enable', ok=False)
+        fixture.run('--apply', 'cancel')
+        self.assertEqual(fixture.env()['bootcmd'], STOCK_BOOT)
+        self.assertEqual(snapshot(fixture)['boot_state'], 'clean-stock')
+
+    def test_extra_ram_promotion_and_disabling_preserve_frequency_and_fallback(self):
+        self.extra_ram_firmware()
+        fixture = self.fixture
+        fixture.arm_verify_enable('emmc', '50')
+        previous_boot = fixture.env()['bootcmd']
+        fixture.run('--apply', 'test', 'extra-ram', 'on')
+        self.boot_extra_ram_candidate('boot-c')
+        self.assertEqual(fixture.env()['bootcmd'], previous_boot)
+        fixture.run('--apply', 'verify')
+        fixture.run('--apply', 'enable')
+        enabled_boot = fixture.env()['bootcmd']
+        self.assertNotIn('boot_dsp0', enabled_boot.split())
+        report = snapshot(fixture)
+        self.assertEqual((report['confirmed_extra_ram'], report['confirmed_emmc_mhz']), ('on', '50'))
+        self.assertEqual(report['runtime_mem_total_kib'], '117636')
+
+        fixture.run('--apply', 'test', 'cpu', '1.2')
+        self.assertEqual(snapshot(fixture)['candidate_extra_ram'], 'on')
+        self.boot_extra_ram_candidate('boot-d')
+        fixture.run('--apply', 'verify')
+        fixture.run('--apply', 'enable')
+        fixture.run('--apply', 'test', 'extra-ram', 'off')
+        self.assertIn('boot_dsp0', fixture.env()['bootcmd'].split())
+        self.boot_extra_ram_candidate('boot-e')
+        self.assertEqual(fixture.env()['bootcmd'], enabled_boot)
+        fixture.run('--apply', 'verify')
+        fault = fixture.run('--apply', 'enable', ok=False, extra={'T113_FAIL_POINT': 'enable:after-current-helper'})
+        self.assertIn('injected fault', fault.stdout)
+        self.assertEqual(snapshot(fixture)['boot_state'], 'promotion-cleanup-required')
+        fixture.run('--apply', 'cleanup')
+        report = snapshot(fixture)
+        self.assertEqual(report['boot_state'], 'clean-managed')
+        self.assertEqual((report['confirmed_extra_ram'], report['confirmed_cpu_hz'], report['confirmed_emmc_mhz']),
+                         ('off', '1200000000', '50'))
+        self.assertEqual(fixture.env()['bootcmd'], previous_boot)
+
+    def test_legacy_ddr52_requires_negotiated_timing_and_survives_later_trials(self):
+        fixture = self.fixture = Fixture(self.root, 'legacy', 'legacy3v3')
+        fixture.baseenv['T113_DT_ROOT'] = str(self.dt)
+        self.assertEqual(snapshot(fixture)['available_ddr52'], 'yes')
+        fixture.arm_verify_enable('emmc', '50')
+        fixture.run('--apply', 'test', 'emmc', 'ddr52')
+        fixture.simulate_candidate_boot('boot-c')
+        self.loaded_candidate()
+        fixture.set_ios(50, 1, 0)
+        result = fixture.run('--apply', 'verify', ok=False)
+        self.assertIn('DDR52 runtime mode mismatch', result.stdout)
+        fixture.set_ios(50, 8, 0)
+        self.assertEqual(snapshot(fixture)['family'], 'legacy3v3')
+        fixture.run('--apply', 'verify')
+        fixture.run('--apply', 'enable')
+        report = snapshot(fixture)
+        self.assertEqual((report['confirmed_emmc_mode'], report['confirmed_emmc_mhz']), ('ddr52', '50'))
+        fixture.run('--apply', 'test', 'cpu', '1.2')
+        self.assertEqual(snapshot(fixture)['candidate_emmc_mode'], 'ddr52')
+        fixture.run('--apply', 'cancel')
+
+    def test_hs200_refuses_new_ddr52_trials_without_changing_boot(self):
+        fixture = self.fixture
+        before = contents(fixture.boot), contents(fixture.state), fixture.envdb.read_bytes()
+        report = snapshot(fixture)
+        self.assertEqual(report['family'], 'hs2001v8')
+        self.assertEqual(report['available_ddr52'], 'no')
+        self.assertIn('50', report['available_emmc_mhz'].split(','))
+        result = fixture.run('--apply', 'test', 'emmc', 'ddr52', ok=False)
+        self.assertIn('DDR52 trials require legacy eMMC', result.stdout)
+        self.assertEqual((contents(fixture.boot), contents(fixture.state), fixture.envdb.read_bytes()), before)
 
     def test_diagnostics_need_no_boot_writes_and_preserve_boot_files_and_environment(self):
         fixture = self.fixture
@@ -83,22 +239,24 @@ class RecoveryIntegrationTest(unittest.TestCase):
                 self.assertIn('read-only', result.stdout)
                 self.assertEqual(contents(fixture.d), before)
 
-    def test_missing_legacy_override_remains_valid_through_verification_and_promotion(self):
+    def test_legacy_optional_metadata_remains_valid_through_verification_and_promotion(self):
         fixture = self.fixture
         fixture.run('--apply', 'test', 'emmc', '150')
         candidate = fixture.state / 'candidate'
-        candidate.write_text(candidate.read_text().replace('untested_emmc_override=0\n', ''))
-        self.assertEqual(snapshot(fixture)['candidate_valid'], 'yes')
+        candidate.write_text(candidate.read_text().replace('untested_emmc_override=0\n', '').replace('extra_ram=off\n', ''))
+        report = snapshot(fixture)
+        self.assertEqual((report['candidate_valid'], report['candidate_extra_ram']), ('yes', 'off'))
         fixture.simulate_candidate_boot()
         self.loaded_candidate()
         fixture.run('--apply', 'verify')
         self.assertEqual(meta(candidate)['untested_emmc_override'], '0')
         fixture.run('--apply', 'enable')
         current = fixture.state / 'current'
-        current.write_text(current.read_text().replace('untested_emmc_override=0\n', ''))
+        current.write_text(current.read_text().replace('untested_emmc_override=0\n', '').replace('extra_ram=off\n', ''))
         before = contents(fixture.d)
         report = snapshot(fixture)
         self.assertEqual(report['current_valid'], 'yes')
+        self.assertEqual(report['confirmed_extra_ram'], 'off')
         self.assertEqual(report['boot_state'], 'clean-managed')
         self.assertEqual(contents(fixture.d), before)
 

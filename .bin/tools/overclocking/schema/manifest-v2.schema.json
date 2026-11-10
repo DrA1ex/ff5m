@@ -25,10 +25,10 @@
       "const": "t113-profilectl"
     },
     "generator_version": {
-      "const": "1.0.1"
+      "const": "1.2.0"
     },
     "validator_version": {
-      "const": 7
+      "const": 9
     },
     "canonical_stock": {
       "type": "object",
