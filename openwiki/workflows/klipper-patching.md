@@ -80,11 +80,11 @@ Keep an explanation close to the changed behavior in the file or commit. The wik
 ## Patch provenance and verification
 
 [`docs/klipper-ad5m-manifest.json`](../../docs/klipper-ad5m-manifest.json) pins
-the replacement sources to `d7da8a94eb9f4d464c5e98863d36f2387e8af4eb` in the
-[DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m) history. All 26 shipped
-Python replacements match that snapshot byte for byte. The template-cache
-snapshot is prepared locally; publish its corresponding history commit together
-with this overlay update before release. The manifest also
+the replacement sources to `15957dd34a675daa93630afd2dd2dc85d76108a0` in the
+[DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m) history and lists
+the SHA-256 of all 26 shipped Python replacements. Earlier manifest snapshots
+were `6ea380d` (deferred multiprocessing imports) and `d7da8a9` (adds the
+`gcode_macro.py` template cache). The manifest also
 records the SHA-256 of the rebuilt `c_helper.so`; the fork stores its C sources,
 not the prebuilt binary.
 
@@ -95,8 +95,9 @@ identity separate incompatible compilers. Macro parameters, variables, printer
 status and action callbacks are evaluated on every invocation. `RESTART` reloads
 changed configuration using the existing interpreter; a hard process restart is
 required after deploying changed Python implementation files. Missing, truncated
-or unwritable cache data falls back to normal compilation. Cache files under the
-configuration directory's `.cache/gcode_macro/` are disposable derivative data.
+or unwritable cache data falls back to normal compilation. Cache files under
+`/root/.forge-x/cache/gcode_macro` are disposable derivative data; uninstall
+removes `/root/.forge-x/`.
 Compare this copied module with the supported stock Klipper version when updating
 Klipper, and rerun `tests/test_gcode_template_cache.py` on the supported runtime.
 
@@ -127,8 +128,8 @@ fallbacks apply only to sessions marked as UART (`serial_fd_type == b'u'`),
 and each fallback is logged. CAN frequency selection remains unchanged.
 These changes are unconditional host fixes, independent of `tune_klipper`.
 
-The snapshot is on `opt/lazy-multiprocessing-imports`, two commits after
-`main` at `4375de3`. Both are shipped:
+The `6ea380d` snapshot is on `opt/lazy-multiprocessing-imports`, two commits
+after `main` at `4375de3`. Both commits are shipped:
 
 - [`219e99c`](https://github.com/DrA1ex/klipper-ad5m/commit/219e99c435d80e1fe0733349fc350d944ef49f3a)
   moves the `adxl345.py` multiprocessing import into accelerometer CSV export.
@@ -186,8 +187,8 @@ Verify the shipped inventory and hashes offline, then compare Python sources
 against the manifest's exact published commit:
 
 ```shell
-.venv/bin/python tests/verify_klipper_fork.py
-.venv/bin/python tests/verify_klipper_fork.py --fork https://github.com/DrA1ex/klipper-ad5m
+python tests/verify_klipper_fork.py
+python tests/verify_klipper_fork.py --fork https://github.com/DrA1ex/klipper-ad5m
 ```
 
 The fork check must report no source mismatches. It does not compare the
@@ -227,7 +228,7 @@ That reversal relies on the backup convention created by the patcher. Never dele
 ## Change procedure
 
 1. **Classify the change.** Use `plugins/` for a new Forge-X extension and `patches/` only when replacing an existing native module. Record the target stock path and behavior being changed.
-2. **Check target compatibility.** Compare the replacement with the Klipper module/layout shipped by each supported stock firmware. The supported firmware range is in [`docs/INSTALL.md`](../../docs/INSTALL.md); do not assume mainline Klipper is a compatible baseline.
+2. **Check target compatibility.** Compare the replacement with the Klipper module/layout shipped by each supported stock firmware. The supported firmware range is in [`docs/COMPATIBILITY.md`](../../docs/COMPATIBILITY.md); do not assume mainline Klipper is a compatible baseline.
 3. **Preserve deployment symmetry.** Confirm the nested relative path works, a stock target exists to back up for replacements, stale-overlay cleanup recognizes the entry, and uninstall can restore it. Consider how removal/renaming behaves on an already patched printer.
 4. **Keep settings coherent.** If a patch depends on a user setting, update the parameter schema, Klipper configuration/macro exposure, shell reaction, migration/deprecation behavior, and operator documentation together.
 5. **Validate the exact feature on hardware.** A successful boot establishes only that imports/startup worked. Exercise the affected G-code, calibration, print, screen, or recovery path; inspect Klipper logs; and test the supported firmware/device combination. For tuning, test both enable and disable and confirm the reboot/restart result.
@@ -239,5 +240,5 @@ Recent history reinforces this discipline: the shaper-calibration deadlock fix r
 
 - **Deployment/reversal:** [`.shell/init-main.sh`](../../.shell/init-main.sh) (`apply_klipper_patches`) and [`.shell/uninstall.sh`](../../.shell/uninstall.sh) (`revert_klipper_patches`).
 - **Runtime selection:** [`.py/klipper/patches/mcu.py`](../../.py/klipper/patches/mcu.py), [`.py/klipper/patches/toolhead.py`](../../.py/klipper/patches/toolhead.py), [`.shell/commands/zchanges.sh`](../../.shell/commands/zchanges.sh), and [`mod_params.json`](../../mod_params.json).
-- **Supported firmware range:** [`docs/INSTALL.md`](../../docs/INSTALL.md).
+- **Supported firmware range:** [`docs/COMPATIBILITY.md`](../../docs/COMPATIBILITY.md).
 - **Validation posture:** [Testing and change guide](../testing-and-change-guide.md).

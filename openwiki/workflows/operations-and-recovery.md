@@ -2,7 +2,7 @@
 
 ## Supported installation envelope
 
-The documented target is Flashforge Adventurer 5M / 5M Pro stock firmware from 2.6.5 through the hardware-tested 5.1.7 release, with at least 512 MB free in `/data` and 128 MB free in `/` ([`docs/INSTALL.md`](../../docs/INSTALL.md)). Do not generalize support beyond this documented range based on the common architecture alone.
+The documented target is Flashforge Adventurer 5M / 5M Pro stock firmware from 2.6.5 through the hardware-tested 5.1.7 release, with at least 512 MB free in `/data` and 128 MB free in `/` ([`docs/INSTALL.md`](../../docs/INSTALL.md), [`docs/COMPATIBILITY.md`](../../docs/COMPATIBILITY.md)). Do not generalize support beyond this documented range based on the common architecture alone.
 
 Installation uses a FAT32 USB drive and an intact release archive named for the specific model. Follow the procedural source exactly: [`docs/INSTALL.md`](../../docs/INSTALL.md). Afterward, configure slicer G-code/host access and complete calibration before printing.
 
@@ -209,8 +209,8 @@ as safe firmware archives, and atomically renamed. Forge-X release entries
 take those values from the release listing; factory and file-recovery entries
 look their asset up live by release URL before the cache decision, so
 replacing an asset on the server automatically re-downloads an outdated saved
-copy. Assets that GitHub published without a digest — and an unreachable
-release API — fall back to matching a saved file by name plus archive
+copy. Assets that GitHub published without a digest, and an unreachable
+release API, fall back to matching a saved file by name plus archive
 validation alone. Because the stock Python lacks `_lzma`, `.tar.xz`
 validation streams through `/usr/bin/xz`, and SHA-256 is computed through the
 printer's `/usr/bin/sha256sum`. A saved image that no longer validates or no
@@ -264,7 +264,7 @@ new bottom-aligned log rows. A separate rotated
 and early-exit lifecycle events and is included in Forge-X debug archives;
 normal installer output remains owned by the installer's application log.
 
-The checksum command now returns non-zero when a listed file is missing or
+The checksum command returns non-zero when a listed file is missing or
 changed and prints live checked/failure counts plus a final result.
 `verify-plain` exposes that same behavior without starting a competing screen
 renderer. The recovery UI records every output line in
@@ -272,7 +272,7 @@ renderer. The recovery UI records every output line in
 seven recent status lines no more than once per second and always publishes the
 final state. Failures are rendered in red, and the UI offers the documented
 full recovery image after a failed check. Skipping the mod is still not
-equivalent to reverting configuration—keep that distinction clear in
+equivalent to reverting configuration; keep that distinction clear in
 support/runbook work.
 
 When the checksum list names a stock Klipper module currently replaced by the

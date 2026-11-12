@@ -255,8 +255,8 @@ publishes frames synchronously during calibration. Once the timing model has
 enough valid samples, later frames switch to deferred publication without a
 renderer restart or an unpublished startup frame.
 
-When a page-flipping Typer session ends — normal exit, `TERM`/`INT`, or
-renderer teardown — it copies the currently visible frame into the boot page
+When a page-flipping Typer session ends (normal exit, `TERM`/`INT`, or
+renderer teardown), it copies the currently visible frame into the boot page
 (y offset 0) and pans back before releasing the framebuffer. Fixed-page
 writers such as the boot `logged` renderer and raw `/dev/fb0` writes always
 stay visible after Typer exits.
@@ -286,7 +286,7 @@ and the two-second TERM/KILL escalation occur only in the worker.
 
 | Path | Creator / type | Purpose and lifetime |
 |---|---|---|
-| `/dev/fb0` | kernel framebuffer | Typer's render target. `--double-buffered` uses the second framebuffer page as scratch storage when possible, otherwise a heap buffer; `flush` copies a dirty rectangle and does not page-flip. |
+| `/dev/fb0` | kernel framebuffer | Typer's render target. `flush` publishes pending double-buffered drawing; page flipping, deferred publication, and synchronous fallback are described in [Klippy and Typer lifecycle](#klippy-and-typer-lifecycle). |
 | `/dev/input/fgx_touch` | `S35tslib` symlink | Calibrated 800×480 touch device. Removed by `S35tslib stop`. |
 | `/dev/input/guppy` | `S35tslib` compatibility symlink | Alias of `/dev/input/fgx_touch` for Guppy. Removed by `S35tslib stop`. |
 | `/run/ts_uinput.pid` | `S35tslib` | PID file for the support process, not for Feather or Typer. |
@@ -296,7 +296,7 @@ and the two-second TERM/KILL escalation occur only in the worker.
 | `/data/logFiles/netd.log` | `netd` daemon log | Event-oriented startup, adoption/migration decision, process lifecycle, connection-state and user network-action log. It is opened directly by `netd` so BusyBox daemonization cannot discard it and rotated by `init-main.sh` at boot. Lines use the same timestamp/level/PID/process/message format as `logged`. User actions include the selected transport and SSID, but never credentials or scan-result contents. `zbackup.sh --tar-debug` includes this file and its rotated copies. |
 | `/opt/config/mod_data/network.conf` | `netd` | Persistent desired transport and selected SSID. Vendor files are consulted only during one-shot bootstrap or `--migrate-existing`; `--adopt-existing` never changes this file. |
 | `/opt/config/mod_data/wpa_supplicant.conf` | `netd` | Mod-owned saved Wi-Fi definitions. New credentials are persisted only after association and DHCP succeed. |
-| `/tmp/net_ip` | `netd` | The published address. Written on a state transition only — never from a read, which is what made a 1 Hz `status` poll a mutation. |
+| `/tmp/net_ip` | `netd` | The published address. Written on a state transition only, never from a read, so a 1 Hz `status` poll does not mutate it. |
 | `/tmp/wifi_connected_f` | `netd` compatibility marker | Tells the stock shell status bar whether to draw the Wi-Fi icon as connected. Ethernet state has no marker; Feather and other current consumers use the daemon snapshot. |
 | `/data/USB` | Feather-owned mount or bind mount | Exposes one supported USB filesystem to Feather, Fluidd, and Klipper. It exists only while supported USB storage is attached. |
 | `/tmp/forge-x-usb-operation` | atomic lock directory with owner PID | Serializes Feather attach, destructive `PREPARE_USB`, and USB-swap initialization. Removed by the owning helper's exit trap; a later operation can reclaim it if that PID no longer exists. |

@@ -34,7 +34,7 @@ Switch the display mode from the console in Fluidd or Mainsail:
 SET_MOD PARAM=display VALUE=FEATHER
 ```
 
-Use `FEATHER`, `GUPPY`, `HEADLESS`, or `STOCK`. Switching away from Stock stops the FlashForge companion services, so slicer upload through the vendor path stops working and you upload through Moonraker instead. If the printer becomes unreachable, boot through [Dual Boot](DUAL_BOOT.md) and switch back to `STOCK`.
+Use `FEATHER`, `GUPPY`, `HEADLESS`, or `STOCK`. Leaving Stock disables the vendor upload path; see [Switching commands](#switching-commands) for what changes and how to recover an unreachable printer.
 
 **Details:**
 [Stock](#stock-screen) ·
@@ -81,9 +81,7 @@ Headless mode also uses the `auto` bed-mesh profile. Z offset, camera, and print
 
 #### Switching commands
 
-Use `SET_MOD PARAM=display VALUE=<mode>` in the Fluidd or Mainsail console,
-as shown in [Quick start](#quick-start). Valid modes are `FEATHER`, `GUPPY`,
-`HEADLESS`, and `STOCK`.
+Run `SET_MOD PARAM=display VALUE=<mode>` with `FEATHER`, `GUPPY`, `HEADLESS`, or `STOCK` ([Quick start](#quick-start)).
 
 Switching away from Stock stops the FlashForge companion services. As a result:
 

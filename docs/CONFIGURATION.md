@@ -23,7 +23,9 @@ The mod supports a wide range of parameters to customize printer behavior. Below
   - `SLOW`: Closes after 20s (GDB method, may not work in all firmware versions)     
   - `FAST`: Closes after 20s and clears the previous dialog before starting another Stock print (API method; enable LAN-mode when using the Stock screen).
 
-- **`disable_priming`**: Disables nozzle cleaning by line if set to `1`.  
+- **`disable_priming`**: Disables the purge line before printing if set to `1`.
+
+- **`disable_cleaning`**: Disables nozzle cleaning before bed probing if set to `1`.
 
 - **`disable_screen_led`**: Gives Forge-X exclusive control of the chamber light if set to `1`; Stock-screen light controls no longer work.
 
@@ -31,7 +33,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`disable_skew`**: Disables skew correction if set to `1`.  
 
-- **`block_cloud`**: Blocks the stock FlashForge cloud / telemetry endpoints (Flash Studio / MQTT, VoxelShare, stock OTA, NetEase IM) if set to `1`. Default `0` (off) — leave disabled if you use FlashForge cloud, video streaming or model sharing. Blocking is done at name-resolution level (`/etc/hosts`) only. Full air-gap additionally requires router-level blocking of AlibabaCloud OSS upload URLs.
+- **`block_cloud`**: Blocks the stock FlashForge cloud / telemetry endpoints (Flash Studio / MQTT, VoxelShare, stock OTA, NetEase IM) if set to `1`. Default `0` (off). Leave it disabled if you use FlashForge cloud, video streaming or model sharing. Blocking is done at name-resolution level (`/etc/hosts`) only. Full air-gap additionally requires router-level blocking of AlibabaCloud OSS upload URLs.
 
 - **`tune_klipper`**: Enables Forge-X timing adjustments for Communication Timeout (E0011) / Move Queue Overflow (E0017). Default `1` (on); an existing saved value is preserved on update. To use the stock FlashForge AD5M TRSYNC timeout and lookahead flush time, run:
 

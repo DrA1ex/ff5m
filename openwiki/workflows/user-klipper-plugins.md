@@ -187,15 +187,13 @@ and its bytecode even if generic backup restoration restored that file first.
 
 ## Validation
 
-Use the project's virtual environment. Install pytest there for these focused
-checks; the existing host runner and CI are unchanged:
+Run the focused checks with the standard library runner:
 
 ```bash
-.venv/bin/python -m pip install pytest
-.venv/bin/python -m pytest tests/test_klipper_plugins.py tests/test_klipper_overlay.py tests/test_boot_recovery.py -q
+python -m unittest tests.test_klipper_plugins tests.test_klipper_overlay tests.test_boot_recovery
 ```
 
-The existing unittest host runner also discovers the new module. The bytecode
+`python tests/run_host_tests.py` also runs these modules. The bytecode
 priority test explicitly enables bytecode writes, so it also runs with
 `PYTHONDONTWRITEBYTECODE=1`.
 
@@ -209,5 +207,5 @@ write failures, legacy reload behavior and complete soft/hard uninstall with
 deleted sources. A repeated boot with unchanged packages must leave every inode,
 mtime and ctime intact. Power loss is simulated after each filesystem change of
 install, retarget, disable and delete transitions: modules must stay present and
-the next boot must converge to the uninterrupted result. They also retain 1.4.2 recursive resources and native helper behavior.
+the next boot must converge to the uninterrupted result. They also cover 1.4.2 recursive resources and native helper behavior.
 Hardware operations are stubbed; actual printer/MCU validation remains separate.

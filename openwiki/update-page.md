@@ -33,15 +33,15 @@ offered again. Print activity interrupts the page without dismissing the
 offer; returning to safe idle presents its first page. Installation still
 uses Moonraker's existing OTA operation and the existing safety, timeout,
 retry, reset-confirmation, and completion paths. Recovery lists continue
-to paginate four rows. Printer deployment is outside this change.
+to paginate four rows.
 
 ## Verification
 
-Run `.venv/bin/python -m unittest tests.test_feather_update_notification` for
-focused coverage, then `.venv/bin/python -m unittest discover -s tests` for
-the repository suite. Coverage exercises full version visibility, seven-row
-capacity, pager alignment and end controls, the 2:1 button gaps, wider
-unwrapped notes, word-preserving wrapping across pages, unavailable notes,
-scrolled-page dismissal and print interruption, and the existing update and
-recovery contracts. Framework header-width coverage lives in the canonical
+Run `python -m unittest tests.test_feather_update_notification` for focused
+coverage, then `python tests/run_host_tests.py` for the repository suite.
+Coverage exercises full version visibility, seven-row capacity, pager
+alignment and end controls, the 2:1 button gaps, wider unwrapped notes,
+word-preserving wrapping across pages, unavailable notes, scrolled-page
+dismissal and print interruption, and the existing update and recovery
+contracts. Framework header-width coverage lives in the canonical
 Designer repository. Visual expectations describe the standalone page.

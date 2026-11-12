@@ -37,7 +37,7 @@ Changes can be applied live; **Save** atomically updates the known `camera.conf`
 `CAMERA_RELOAD` uses `SIGHUP` to reread saved controls without restarting the HTTP service, and saved controls are reapplied after the first completed frame on every camera open/reconnect.
 
 Endpoints: `/?action=stream` (MJPEG; `POST /stream` also works), `/?action=snapshot` (JPEG), `/healthz` (`503` while the camera is offline), `/control.htm`, and `/controls` (read, apply, and save image controls). The stream format matches the previous MJPEG streamer, so existing clients keep working.
-Defaults are 640×480, 15 FPS, one V4L2 capture buffer, and three video clients plus one extra worker for snapshots and controls; requests over the limit get HTTP `429`. Each worker thread has a 128 KiB stack, frame buffers grow only to the largest frame seen, and the control page is a 6 KiB static page.
+Defaults are 640×480, 15 FPS, one V4L2 capture buffer, and a five-client limit (`--clients 5` in `S98camera`); requests over the limit get HTTP `429`. Each worker thread has a 128 KiB stack, frame buffers grow only to the largest frame seen, and the control page is a 6 KiB static page.
 `REDUCE_MEMORY` maps to `--frame-cap`, which limits the capture buffer for cameras that report a 1080p-sized buffer at every resolution.
 The bundled binary encodes YUYV, UYVY, RGB24, RGB565, and framebuffer input with the printer's hardware JPEG backend (G2D/CedarC); camera MJPEG/JPEG frames pass through without re-encoding. Optional software builds use libjpeg ([notice](../LICENSE-LIBJPEG.txt)). A camera that starts in an unsupported format is asked to switch to a supported one when it is reopened, and a failed `CAMERA_RELOAD` keeps the last valid settings.
 The streamer builds on other Linux systems with V4L2 and is licensed GPL-2.0-or-later; its CI builds both variants and runs the tests.
@@ -124,8 +124,8 @@ or the entry does not exist yet, the section stays and the next boot tries again
 
 ### Screen stream process
 
-[`.shell/S98screen`](../.shell/S98screen) runs a separate `forge_x_streamer` in framebuffer mode: 800×480, two
-clients, port 8081, bound to `127.0.0.1` so that the `/screen/` proxy on port 80 is the only way to reach it. The
+[`.shell/S98screen`](../.shell/S98screen) runs a separate `forge_x_streamer` in framebuffer mode: 800×480, five
+clients (`--clients 5`), port 8081, bound to `127.0.0.1` so that the `/screen/` proxy on port 80 is the only way to reach it. The
 proxy has no authentication either: anyone who can reach port 80 can send touch input. `screen_stream_fps` defaults
 to 30 and `screen_stream_quality` to 90. On the AD5M framebuffer, the bundled binary encodes the visible page directly
 with CedarC. Hardware layouts that need padded rows or dimensions use the G2D conversion path.
@@ -205,7 +205,8 @@ parking move is skipped. A relative Z lift at or above the safe ceiling does
 not reverse direction or move the bed.
 
 The common start macro sets the per-print `TIMELAPSE_PRINT` override from the
-`START_PRINT` parameter (enabled by default), starts the time/progress poller
+`START_PRINT` parameter (enabled by default; only the Stock-screen
+`START_PRINT` in `config/stock.cfg` reads it, `macros/headless.cfg` does not), starts the time/progress poller
 after print preparation, requests an initial frame at the end of `START_PRINT`
 in every mode, and cancels the poller on stop. `START_PRINT TIMELAPSE=0`
 skips that frame and the rest of the print; disabling with
@@ -317,13 +318,13 @@ Operational considerations:
 
 ## OTA and stock-cloud interaction
 
-Moonraker Update Manager provides Forge-X, Fluidd, Mainsail, and Guppy update entries. Operator instructions and the supported stock-firmware range are in [`docs/INSTALL.md`](../docs/INSTALL.md).
+Moonraker Update Manager provides Forge-X, Fluidd, Mainsail, and Guppy update entries. Operator instructions are in [`docs/INSTALL.md`](../docs/INSTALL.md); the supported stock-firmware range is in [`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md).
 
 `block_cloud` is an optional mod parameter processed in [`.shell/init-main.sh`](../.shell/init-main.sh). When enabled, it adds mod-marked loopback host entries for selected vendor cloud/MQTT/model-sharing/OTA/video hosts and removes only its own marked entries when disabled. It is not a firewall or complete air-gap solution, and it can break stock cloud features by design.
 
 ## Integration change checklist
 
-1. Keep port/service ownership explicit: Moonraker 7125, mod camera 8080, web UI HTTP service.
+1. Keep port/service ownership explicit: Moonraker 7125, mod camera 8080, screen stream 8081 (loopback only), web UI HTTP service on port 80.
 2. Test behavior with stock, Feather, Guppy, and headless display modes as appropriate.
 3. Verify memory effects on the target hardware, particularly camera and UI changes.
 4. Document external prerequisites (remote host, network reachability, SSH policy) without embedding credentials.

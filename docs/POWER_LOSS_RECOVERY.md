@@ -200,7 +200,7 @@ A UPS with modest battery capacity but sufficient output power can be enough for
 
 ## Related documentation
 
-- [Printing](PRINTING.md) — normal print, pause/resume, safety, and calibration behavior.
-- [Configuration](CONFIGURATION.md) — Forge-X settings and `SET_MOD`.
-- [Firmware Recovery Guide](RECOVERY.md) — recovering the printer/firmware itself; this is separate from recovering an interrupted print.
-- [Forge-X Klipper extensions](../openwiki/workflows/klipper-extensions.md#resurrection-optional-power-loss-recovery) — engineering-level implementation notes.
+- [Printing](PRINTING.md): normal print, pause/resume, safety, and calibration behavior.
+- [Configuration](CONFIGURATION.md): Forge-X settings and `SET_MOD`.
+- [Firmware Recovery Guide](RECOVERY.md): recovering the printer/firmware itself; this is separate from recovering an interrupted print.
+- [Forge-X Klipper extensions](../openwiki/workflows/klipper-extensions.md#resurrection-optional-power-loss-recovery): engineering-level implementation notes.

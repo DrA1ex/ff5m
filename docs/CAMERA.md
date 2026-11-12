@@ -52,11 +52,13 @@ Camera settings live in `camera.conf`: in Fluidd, open _Configuration -> mod_dat
 WIDTH=640
 HEIGHT=480
 FPS=15
+BUFFERS=1
 VIDEO=auto
 REDUCE_MEMORY=0
 ```
 
 - `WIDTH`, `HEIGHT`, `FPS`: resolution and frame rate. Higher values use more memory, so check the result with the `MEM` macro under your usual print workload.
+- `BUFFERS`: number of V4L2 capture buffers. Increase it if the video stutters; each buffer uses more memory.
 - `VIDEO`: `auto` finds the camera by itself. Set `video0`, `video1`, and so on only if you have several video devices.
 - `REDUCE_MEMORY`: some cameras report a Full HD-sized buffer even at 640×480 and use memory as if they streamed 1080p. With `1`, Forge-X limits that buffer. Set `0` if the camera does not work properly with it.
 
@@ -89,7 +91,7 @@ SET_MOD PARAM=timelapse VALUE=1
 - **First photo:** taken at the end of `START_PRINT`, in any mode.
 - **Park for photos:** off by default. When enabled, the head moves aside for each photo.
 - **Final photo:** on by default. Adds a photo of the finished print with the head parked.
-- **Skip one print:** add `TIMELAPSE=0` to its `START_PRINT` line.
+- **Skip one print (Stock screen):** add `TIMELAPSE=0` to its `START_PRINT` line. The Feather, Guppy, and Headless `START_PRINT` ignores this parameter.
 
 Finished videos are in Mainsail's Timelapse view. On Feather, Guppy, and Headless, if the previous video is still being converted when you start a new print, you can wait for it, cancel the new print, or cancel the timelapse and print anyway.
 

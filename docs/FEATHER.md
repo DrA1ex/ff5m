@@ -40,8 +40,6 @@ Feather can scan for 2.4 and 5 GHz Wi-Fi networks, enter normal WPA/WPA2-PSK cre
 
 Feather starts without waiting for the saved network. While that startup connection is active, the dashboard shows **CONNECTING** and the Network page can either keep waiting or cancel it before choosing another network. The screen keeps the connection state current while the printer reconnects. Any network change may briefly take the printer offline. If a Wi-Fi change fails, Feather returns to the previous saved Wi-Fi network when possible.
 
-Static addressing and enterprise Wi-Fi still require advanced configuration outside Feather.
-
 Feather Settings provides display brightness, chamber-light level, sound feedback, Forge-X parameters, and theme selection. With the camera enabled, mod settings also include timelapse intervals, parking for photos, and the final photo. Settings that require a Klipper or printer restart are identified before they are applied.
 
 ## Limits

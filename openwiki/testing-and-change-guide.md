@@ -25,7 +25,7 @@ display restoration. A repeated boot with unchanged packages must not write to
 the filesystem, and simulated power loss after every switch step must keep modules
 present and converge. Focused plugin checks use `.venv/bin/python -m unittest tests.test_klipper_plugins`. See [User Klipper plugins](workflows/user-klipper-plugins.md).
 
-The repository now contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
+The repository contains small host-side tests for Feather utility/state helpers and the C++ interactive hitbox layer. They validate parsing and pure logic but cannot emulate framebuffer, touchscreen, boot, network, or physical motion. The effective validation model remains **focused host tests plus controlled on-device testing**.
 
 Create a local virtual environment and install the host-test dependency before
 running the suite:
@@ -33,7 +33,7 @@ running the suite:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r tests/requirements.txt
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/python tests/run_host_tests.py --verbose
 ```
 
 The G-code macro tests use the same Jinja delimiters and config-comment rules
@@ -339,11 +339,13 @@ own temporary G-code files and checkpoint. Before and after any live group,
 independently verify standby, zero heater targets, and inactive virtual SD, and
 retain the artifact directory plus deployed UI fingerprint.
 
-Mesh calibration and KAMP write the new mesh into the in-memory `auto` and
-`auto_prev` profiles and into Klipper's SAVE_CONFIG buffer even when the UI
-answer is DON'T SAVE or LATER. Every run therefore snapshots that buffer, its
-pending flags, and the bed-mesh profiles, and restores them during cleanup, so
-a later unrelated SAVE_CONFIG cannot persist test data.
+Full-bed calibration updates the requested mesh profile; rebuilding an existing
+`auto` on a non-Stock display also saves the previous mesh as `auto_prev`.
+KAMP generates the temporary `default` profile. These operations can change
+Klipper's SAVE_CONFIG buffer even when the UI answer is DON'T SAVE or LATER.
+Every run therefore snapshots that buffer, its pending flags, and the bed-mesh
+profiles, and restores them during cleanup, so a later unrelated SAVE_CONFIG
+cannot persist test data.
 
 #### What a passed run guarantees
 
@@ -495,7 +497,8 @@ computed exactly once, on the frame the loop finally accepts. The printer's
 Python is built without `zlib`, so `crc32` is unavailable, and hashing 1.5 MiB
 per 50 ms sample on the Cortex-A7 is host time taken from Klipper.
 Use `--screen-capture-interval <seconds>` to select an interval from 5 to 300
-seconds, or `--screen-capture-interval 0` to keep semantic captures only.
+seconds, or `--screen-capture-interval 0` to disable periodic captures while
+keeping semantic and operation-stage captures.
 Capture remains inside the lazy test runner and its existing background
 artifact worker; normal Feather runtime and the printer never encode video.
 
@@ -548,7 +551,7 @@ recording if the Klipper process or reactor fails. The host owns one persistent
 foreground SSH transport for the sampler instead of repeatedly opening
 Dropbear sessions, stops that exact local process after the physical suite,
 copies the exact remote file, and removes it only after the local file is
-verified to carry both the expected header and at least one sample row — a
+verified to carry both the expected header and at least one sample row. A
 header-only file means the printer-side pass never produced anything and is
 reported as a failure rather than as an idle host.
 Preflight, launch ownership, active waiting, and post-suite safety
@@ -557,9 +560,9 @@ observation use Moonraker and do not open additional SSH sessions.
 Because this sampler observes host overload, its own cost is part of the
 measurement. Each iteration therefore spawns one awk pass, one `tr` per Python
 process it inspects, and `sleep`: the wall clock is anchored once with
-`date` and advanced from the `/proc/uptime` delta, and every value in the row —
-system memory and CPU ticks plus each process's `stat`, `status`, `schedstat`,
-`io` and `wchan` — is produced by that awk pass in
+`date` and advanced from the `/proc/uptime` delta, and every value in the row
+(system memory and CPU ticks plus each process's `stat`, `status`, `schedstat`,
+`io` and `wchan`) is produced by that awk pass in
 `.shell/printer_resource_sample.awk`. That awk pass takes its tree from `root`,
 so `tests/test_printer_resource_monitor.py` runs it against a `/proc` fixture;
 the shell loop itself only gets a syntax check and a guard that no new command
@@ -569,8 +572,8 @@ which would make every Python process look identical to it.
 
 `--no-resource-monitor` leaves the sampler out entirely and records the report's
 resource status as `disabled`. Because the sampler is the only observer that
-runs for the whole run — and even in its reduced form it reads the Klipper
-process's `status` and `wchan` every second — excluding it is how a host
+runs for the whole run, and even in its reduced form it reads the Klipper
+process's `status` and `wchan` every second, excluding it is how a host
 overload investigation isolates its cost from the capture and telemetry paths.
 
 While the hidden test runner is active, a temporary 5 Hz reactor timer measures
@@ -1242,7 +1245,7 @@ behavior. Host checks cannot prove those outcomes on a physical printer.
 | Swap/ZRAM/memory tuning | Review defaults, bundled modules/scripts, and interactions with UI/services | Reboot, confirm selected swap mode and USB-to-eMMC fallback, observe service stability under representative load |
 | Camera, screen, remote access | Review mode-specific config routing, process/pipe ownership, port boundaries, user-state ownership, and stock fallback; see [Screen modes and Feather](workflows/screens-and-feather.md) | Enable/disable cleanly between stock, Feather, headless, and affected Guppy modes; verify DHCP/network prerequisites, display status/error output, browser control, fallback, and recovery route |
 
-Use the operator docs as test procedures where applicable—especially [`docs/PRINTING.md`](../docs/PRINTING.md), [`docs/CALIBRATION.md`](../docs/CALIBRATION.md), [`docs/SCREEN.md`](../docs/SCREEN.md), and [`docs/RECOVERY.md`](../docs/RECOVERY.md).
+Use the operator docs as test procedures where applicable, especially [`docs/PRINTING.md`](../docs/PRINTING.md), [`docs/CALIBRATION.md`](../docs/CALIBRATION.md), [`docs/SCREEN.md`](../docs/SCREEN.md), and [`docs/RECOVERY.md`](../docs/RECOVERY.md).
 
 ## Required safety gates
 

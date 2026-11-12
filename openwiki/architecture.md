@@ -30,11 +30,11 @@ Vendor init
 
 ## Chroot services and public surfaces
 
-[`.root/start.sh`](../.root/start.sh) starts NTP, Moonraker unless `disable_moonraker=1`, the HTTP server unless `disable_web=1`, Guppy dependencies when selected, and user init scripts. The chroot shares kernel resources and deliberate bind mounts with the stock root; Moonraker uses the shared `/tmp/uds` socket to reach stock Klipper, while BusyBox `httpd` serves Fluidd/Mainsail static assets and browsers call Moonraker directly. See [Chroot environment and web runtime](workflows/chroot-and-web-runtime.md) for mounts, service ownership, tooling, controls, and network boundaries.
+[`.root/start.sh`](../.root/start.sh) starts NTP, Moonraker unless `disable_moonraker=1`, the HTTP server unless `disable_web=1`, Guppy dependencies when selected, and user init scripts. The chroot shares kernel resources and deliberate bind mounts with the stock root; Moonraker uses the shared `/tmp/uds` socket to reach stock Klipper, while BusyBox `httpd` serves Fluidd/Mainsail static assets and proxies `/webcam/` and `/screen/` to the streamers; browsers call Moonraker directly. See [Chroot environment and web runtime](workflows/chroot-and-web-runtime.md) for mounts, service ownership, tooling, controls, and network boundaries.
 
 [`moonraker.conf`](../moonraker.conf) binds Moonraker to `0.0.0.0:7125` and connects it to Klipper through `/tmp/uds`. The repository serves Fluidd and Mainsail through the HTTP runtime. The tracked Moonraker config disables API-key authentication and includes mutable operator overrides from `mod_data/user.moonraker.conf`; network exposure is therefore a deliberate high-trust boundary.
 
-Recent low-memory work is architectural rather than cosmetic: `.root` service wrappers cap glibc allocator arenas, and [`.shell/boot/init_swap.sh`](../.shell/boot/init_swap.sh) provides ZRAM alongside eMMC/USB swap modes.
+`.root` service wrappers cap glibc allocator arenas, and [`.shell/boot/init_swap.sh`](../.shell/boot/init_swap.sh) provides ZRAM alongside eMMC/USB swap modes.
 
 ## Configuration and persistence
 

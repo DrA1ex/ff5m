@@ -22,8 +22,6 @@ Print with the normal macros: `START_PRINT` starts a job, `END_PRINT` finishes i
 
 In Feather, Guppy, and Headless modes, `PAUSE` saves the current bed and nozzle targets. On `RESUME`, Forge-X checks the filament sensor before heating, restores the bed temperature, runs the normal `G28` macro if the axes are no longer homed, then restores the nozzle temperature before continuing the paused print. A missing filament produces an error and leaves the print paused. Feather shows a blocking wait view during resume, with emergency `ABORT` available. The Stock screen uses its own pause/resume path.
 
-For the required slicer start/end G-code and upload configuration, see [Slicing](SLICING.md).
-
 > [!WARNING]
 > After installing or updating Forge-X, changing the nozzle or build plate, or enabling motion/config tuning, inspect the bed mesh and Z offset before the next real print. Incorrect values can damage the nozzle or bed.
 
@@ -41,13 +39,13 @@ For the required slicer start/end G-code and upload configuration, see [Slicing]
 
 Use the Stock screen's supported workflow, Feather's **Control → Calibration** pages, or the Forge-X macros exposed in Fluidd/Mainsail:
 
-- `BED_LEVEL_SCREWS_TUNE` — fully prepares the printer and calculates screw adjustments.
-- `BED_LEVEL_SCREWS_PROBE` — repeats only the probing stage after the initial preparation.
-- `AUTO_FULL_BED_LEVEL` — creates a bed mesh.
-- `PID_TUNE_BED` — bed PID calibration.
-- `PID_TUNE_EXTRUDER` — hotend PID calibration.
-- `FORGE_SHAPER` — complete input-shaper calibration with PNG graphs. In Feather, use **Control → Calibration → Input Shaper**.
-- `ZSHAPER` — Legacy input-shaper workflow.
+- `BED_LEVEL_SCREWS_TUNE`: fully prepares the printer and calculates screw adjustments.
+- `BED_LEVEL_SCREWS_PROBE`: repeats only the probing stage after the initial preparation.
+- `AUTO_FULL_BED_LEVEL`: creates a bed mesh.
+- `PID_TUNE_BED`: bed PID calibration.
+- `PID_TUNE_EXTRUDER`: hotend PID calibration.
+- `FORGE_SHAPER`: complete input-shaper calibration with PNG graphs. In Feather, use **Control → Calibration → Input Shaper**.
+- `ZSHAPER`: legacy input-shaper workflow.
 
 > [!CAUTION]
 > Read [Before you start](CALIBRATION.md#before-you-start) before changing the mesh or Z geometry.
@@ -117,9 +115,9 @@ SET_MOD PARAM=disable_priming VALUE=1
 
 Forge-X can stop a print when the load cell detects unexpected force. The related [configuration parameters](CONFIGURATION.md) are:
 
-- `weight_check` — enables collision detection;
-- `weight_check_mode` — `EMERGENCY` (default), `PAUSE`, or `WARNING`;
-- `weight_check_max` — maximum tolerated load in grams.
+- `weight_check`: enables collision detection;
+- `weight_check_mode`: `EMERGENCY` (default), `PAUSE`, or `WARNING`;
+- `weight_check_max`: maximum tolerated load in grams.
 
 `EMERGENCY` preserves the immediate shutdown during printer activity. `PAUSE` uses the existing `PAUSE` command only while virtual SD is printing, start preparation has finished, and no other operation or temporary timelapse hold is active. During preparation, cleaning, meshing, or a parked timelapse frame, it falls back to emergency shutdown. Between frames, normal print pause remains available. Repeated pressure readings do not restart an existing normal print pause. `WARNING` reports pressure and plays the alarm without requesting a pause or shutdown from this protection. Sound follows the `sound` setting.
 
@@ -145,7 +143,7 @@ Read the related troubleshooting notes before enabling or tightening the thresho
 
 Independently of `weight_check`, Forge-X checks the load cell right after the nozzle has parked at the start of every print. If the load is at or above `weight_check_max`, the print is cancelled with the message "the nozzle is pressing on the bed". This catches a wrong Z reference (for example after a reboot or update) before the nozzle can scratch the bed.
 
-- `nozzle_contact_check` — on by default; set it to `0` to disable the check.
+- `nozzle_contact_check`: on by default; set it to `0` to disable the check.
 
 If the check cancels a print although nothing touches the bed, the load cell probably reads a wrong value while idle. Recalibrate it as described in [Bed pressure detected](FAQ.md#why-am-i-getting-a-bed-pressure-detected-error), or raise `weight_check_max`.
 
@@ -175,11 +173,11 @@ Bed mesh validation checks the current geometry before printing and can cancel a
 
 Relevant [configuration parameters](CONFIGURATION.md):
 
-- `bed_mesh_validation` — enables validation;
-- `bed_mesh_validation_action` — `CANCEL` (default), `RECALIBRATE`, or `Z_OFFSET`; shown when validation is enabled;
-- `bed_mesh_validation_z_offset_mode` — `ADJUST` (default) or `REPLACE`; shown only for `Z_OFFSET`;
-- `bed_mesh_validation_clear` — cleans the nozzle before validation;
-- `bed_mesh_validation_tolerance` — maximum allowed difference in millimetres; default `0.2`. Shown when validation is enabled and the action is `CANCEL` or `RECALIBRATE`.
+- `bed_mesh_validation`: enables validation;
+- `bed_mesh_validation_action`: `CANCEL` (default), `RECALIBRATE`, or `Z_OFFSET`; shown when validation is enabled;
+- `bed_mesh_validation_z_offset_mode`: `ADJUST` (default) or `REPLACE`; shown only for `Z_OFFSET`;
+- `bed_mesh_validation_clear`: cleans the nozzle before validation;
+- `bed_mesh_validation_tolerance`: maximum allowed difference in millimetres; default `0.2`. Shown when validation is enabled and the action is `CANCEL` or `RECALIBRATE`.
 
 This can catch scenarios such as the wrong plate, a missing plate, a stale mesh, or motion parameters changed after calibration.
 
@@ -200,7 +198,7 @@ Choose ADJUST if the existing offset is a calibration adjustment that should rem
 
 The correction lasts until the print ends. When the print finishes or is canceled, Forge-X restores the Z-offset that was active before validation. The next print preparation does the same if the previous print stopped with an error. The correction is never saved.
 
-While the correction is active, any Z-offset change — Live Z on the screen, Fluidd, Mainsail or console `SET_GCODE_OFFSET` — applies to the current print only and is not saved. Feather's Live Z **Save** button is disabled. These changes are undone when the original offset is restored. To change the saved offset, adjust it in a print without a correction.
+While the correction is active, any Z-offset change (Live Z on the screen, Fluidd, Mainsail, or console `SET_GCODE_OFFSET`) applies to the current print only and is not saved. Feather's Live Z **Save** button is disabled. These changes are undone when the original offset is restored. To change the saved offset, adjust it in a print without a correction.
 
 > [!NOTE]
 > If power is lost during a print with an active correction, power-loss recovery restores the total offset, including the correction. After that print, Forge-X no longer knows that part of the offset was temporary. Avoid saving the Z-offset after such a print; start the next print to load the saved offset again, or use `LOAD_GCODE_OFFSET`.
@@ -238,8 +236,8 @@ To apply the saved offset during nozzle cleaning, enable `load_zoffset_cleaning`
 
 ### Macros
 
-- [`SET_GCODE_OFFSET`](https://www.klipper3d.org/G-Codes.html#set_gcode_offset) — applies an offset; the Forge-X wrapper also stores the selected value.
-- `LOAD_GCODE_OFFSET` — loads and applies the last saved Forge-X Z offset.
+- [`SET_GCODE_OFFSET`](https://www.klipper3d.org/G-Codes.html#set_gcode_offset): applies an offset; the Forge-X wrapper also stores the selected value.
+- `LOAD_GCODE_OFFSET`: loads and applies the last saved Forge-X Z offset.
 
 ### Example
 
@@ -263,10 +261,10 @@ Sound indications can be changed or disabled. MIDI files are stored in **Configu
 
 Related [configuration parameters](CONFIGURATION.md):
 
-- `sound` — set to `0` to disable sound indications;
-- `midi_on` — MIDI played at boot;
-- `midi_start` — MIDI played when printing starts;
-- `midi_end` — MIDI played when printing finishes.
+- `sound`: set to `0` to disable sound indications;
+- `midi_on`: MIDI played at boot;
+- `midi_start`: MIDI played when printing starts;
+- `midi_end`: MIDI played when printing finishes.
 
 ### Playing MIDI Files
 
@@ -317,17 +315,17 @@ When this is enabled, Stock-screen LED controls no longer work.
 
 Relevant [configuration parameters](CONFIGURATION.md):
 
-- `stop_motor` — disables motors after inactivity;
-- `auto_reboot` — controls automatic restart after a print;
-- `close_dialogs` — dismisses Stock firmware dialogs according to the selected mode.
+- `stop_motor`: disables motors after inactivity;
+- `auto_reboot`: controls automatic restart after a print;
+- `close_dialogs`: dismisses Stock firmware dialogs according to the selected mode.
 
 ## Nozzle Cleaning
 
 Forge-X provides several priming and cleaning controls:
 
-- `zclear` — selects the purge-line algorithm;
-- `disable_priming` — disables the purge line when set to `1`;
-- `disable_cleaning` — disables nozzle cleaning before bed probing when set to `1`.
+- `zclear`: selects the purge-line algorithm;
+- `disable_priming`: disables the purge line when set to `1`;
+- `disable_cleaning`: disables nozzle cleaning before bed probing when set to `1`.
 
 These are described in [Configuration](CONFIGURATION.md).
 
@@ -391,12 +389,7 @@ Test the complete start, finish, cancel, and failure paths before relying on thi
 
 Use these settings for timing/MCU errors, not merely because memory usage is high:
 
-- `tune_klipper` adjusts the Stock communication timeout and move-queue behavior for E0011/E0017 and is on by default. If it was previously disabled:
-
-  ```gcode
-  SET_MOD PARAM=tune_klipper VALUE=1
-  ```
-
+- `tune_klipper` adjusts the Stock communication timeout and move-queue behavior for E0011/E0017 and is on by default; see [the E0011/E0017 fix](#fixing-communication-timeout-e0011--move-queue-overflow-e0017-error).
 - `klipper_rt` starts Klipper with low-priority real-time scheduling:
 
   ```gcode
@@ -413,10 +406,10 @@ Older guides suggested turning swap off on very small setups without Moonraker. 
 
 Swap is a safety net, not additional free RAM. Available `use_swap` modes are:
 
-- `MMC` — eMMC swapfile; the predictable default for memory-intensive or latency-sensitive Klipper operations.
-- `USB` — swapfile on a prepared USB drive.
-- `ZRAM` — compressed RAM-backed swap with lower-priority eMMC overflow; it can reduce slow storage I/O but consumes CPU and RAM for compression.
-- `OFF` — disables swap.
+- `MMC`: eMMC swapfile; the predictable default for memory-intensive or latency-sensitive Klipper operations.
+- `USB`: swapfile on a prepared USB drive.
+- `ZRAM`: compressed RAM-backed swap with lower-priority eMMC overflow; it can reduce slow storage I/O but consumes CPU and RAM for compression.
+- `OFF`: disables swap.
 
 Change the mode with, for example:
 
@@ -442,4 +435,4 @@ The preparation workflow is unavailable while printing. It erases and reformats 
 
 This section is for advanced users and UI developers. Preparation and related workflows expose nested operation contexts such as `PRINT -> BED MESH -> HEATING BED` to supported UIs. `interruptible` work stops at the next managed boundary, while `cancelable` contexts additionally own cleanup domains; homing, probing, and other atomic commands finish first. `non_interruptible` work offers only Continue or the immediate emergency stop `M112`.
 
-Forge-X routes controllable nozzle/bed waits—including loading, Cold Pull, and resume reheating—through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.
+Forge-X routes controllable nozzle/bed waits, including loading, Cold Pull, and resume reheating, through `_WAIT_TEMPERATURE`; `M108` still interrupts an active managed wait. The wait has no `CONTEXT`, `STAGE`, or `ON_CANCEL` parameter. It derives a temporary heating/cooling state and restores the operation's previous state; cleanup belongs to the operation-context registry.

@@ -262,8 +262,9 @@ errors redact a value whose name has a sensitive `_`-separated segment (`mac`,
 `wifi_mac`, `serial#`, `password`, `key`, ...), so `machine` stays visible.
 Boot command structure and harmless parameter references such as `${snum}`
 remain useful for comparison. The Recovery client only replaces raw 32-digit
-CIDs and MAC addresses that reach any message and strips control characters. Ordinary command streams are
-bounded at 4,000 characters; `doctor` stdout allows 16,000. Snapshot fields are
+CIDs and MAC addresses that reach any message and strips control characters.
+Ordinary command streams are bounded at 4,000 characters plus a truncation
+marker; `doctor` stdout allows 16,000. Snapshot fields are
 bounded at 256 characters. Existing log rotation and CREATE DIAGNOSTICS include
 `recovery.log*`, and both TAR_DEBUG entry points recursively include the entire
 `/opt/logFiles/` installation log tree, including hidden and rotated files.
@@ -271,11 +272,7 @@ Read-only CLI commands do not alter boot/profile state.
 
 A mutation is not followed by an extra snapshot: the page either reboots, and
 the next entry records a fresh snapshot, or observes the new state itself.
-Records cap each snapshot value at 256 characters and
-each command stream at 4,000 characters plus a truncation marker. Existing log
-rotation and CREATE DIAGNOSTICS include `recovery.log*`. No U-Boot dump is
-created. Read-only CLI commands do not alter boot/profile
-state.
+No additional U-Boot dump is created for these diagnostic records.
 
 When `verify` rejects a trial for fatal kernel/MMC journal lines, the log and
 screen show only the first 20 matches, which usually name the symptom (for

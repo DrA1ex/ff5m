@@ -94,11 +94,11 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
 ### Parameters
 
 - `EXTRUDER_TEMP`: Sets the extruder temperature for the print. This is typically configured by the slicer.  
-  **Default**: 245  
+  **Default**: none (required; `START_PRINT` stops with an error without it)
   **Example**: `EXTRUDER_TEMP=230`  
 
 - `BED_TEMP`: Sets the bed temperature for the print. This is also typically configured by the slicer.  
-  **Default**: 80  
+  **Default**: none (required)
   **Example**: `BED_TEMP=60`  
 
 - `FORCE_KAMP`: Forces the KAMP (Klipper Adaptive Meshing and Purging) bed leveling process if set to 1.  
@@ -116,11 +116,11 @@ The `START_PRINT` macro is used to initialize the printing process with customiz
   **Default**: 0  
   **Example**: `SKIP_LEVELING=1`  
 
-- `MESH`: Loads specific mesh instead of default one.
+- `MESH`: Loads the named mesh profile instead of the default one.
   **Default**: None  
   **Example**: `MESH=PLA_profile`
 
-- `TIMELAPSE`: Set to 0 to skip all timelapse photos for this print.
+- `TIMELAPSE`: Set to 0 to skip all timelapse photos for this print. Only the Stock-screen `START_PRINT` (`config/stock.cfg`) reads this parameter; the Feather, Guppy, and Headless `START_PRINT` (`macros/headless.cfg`) ignores it.
   **Default**: 1
   **Example**: `TIMELAPSE=0`
 
@@ -147,7 +147,7 @@ Slice the model again after changing these fields. The printer will then take ph
 Pause at layer uses the same layer information configured above. It is available with Feather, Guppy, and Headless.
 
 #### Example
-To make a pause at 20 layer use this command after print started:
+To pause at layer 20, run this after the print has started:
 
 ```
 SET_PAUSE_AT_LAYER ENABLE=1 LAYER=20 MACRO=PAUSE
@@ -160,7 +160,7 @@ One of the main reasons for print failures on the AD5M printer is corrupted G-co
 ### Enabling MD5 Checksum Validation
 
 > [!NOTE]
-> Starting with Forge-X **1.4.2**, the separate MD5 check is unnecessary when using **3MF** files from OrcaSlicer: OrcaSlicer includes an MD5 checksum in the package by default. You can leave `check_md5` disabled and skip the post-processing script below. Enabling the option adds an extra check before printing, but corruption mainly occurs during file transfer, rather than when printing an already uploaded file again.
+> Starting with Forge-X **1.4.2**, the separate MD5 check is unnecessary when using **3MF** files from OrcaSlicer: OrcaSlicer includes an MD5 checksum in the package by default. You can skip the post-processing script below; a file without a `; MD5:` line only produces a warning, even with `check_md5` on (the default). Corruption mainly occurs during file transfer, rather than when printing an already uploaded file again.
 
 To use MD5 checksum validation, you need to add an MD5 checksum to your G-code file. This can be done by adding a post-processing script in your slicer.
 
@@ -189,10 +189,9 @@ You can download the required script from the repository:
 
 4. **Slice and Export**: When you slice a model and export the G-code, the script will automatically add the MD5 checksum to the file.
 
-### How It Works
-- The script calculates the MD5 checksum of the G-code file and appends it to the file as a comment.
-- Before starting a print, the mod verifies the checksum. If the checksum does not match, the file is considered corrupted, and the print is canceled.
+<a id="notes"></a>
 
-### Notes
-- If the checksum validation fails, the G-code file will be deleted to prevent accidental use in the future.
-- This feature is enabled by default in the mod but requires the MD5 checksum to be added to the G-code file for it to work.
+### How It Works
+- The script calculates the MD5 checksum of the G-code file and writes it as a `; MD5:` comment on the first line.
+- Before starting a print, the mod verifies the checksum. If it does not match, the print is canceled and the file is deleted.
+- `check_md5` is on by default, but it can verify only files that carry the checksum line.

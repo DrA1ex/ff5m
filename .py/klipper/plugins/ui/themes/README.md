@@ -112,7 +112,8 @@ Keep the terminal open while using the editor. Press `Ctrl+C` to stop it.
 
 The downloaded JSON file is your custom theme.
 
-When the editor is started from the printer, the **Save** menu also offers
+When the editor is started from the printer (run `THEME_EDITOR` in the Fluidd or
+Mainsail console; `_STOP_TM_EDITOR` stops it), the **Save** menu also offers
 **Apply to printer**. It saves the theme in `mod_data/themes/` and activates it
 immediately. Apply is disabled while a print is active or paused.
 

@@ -22,7 +22,7 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
   - **Parameters**:
     - `EXTRUDER_TEMP` (float, default: 230): Target extruder temperature used by `CLEAR_NOZZLE` (°C).
     - `BED_TEMP` (float, default: 80): Target bed temperature used by `CLEAR_NOZZLE` (°C).
-    - `CLEAN` (int, default: 1): Run `CLEAR_NOZZLE` before probing. With `CLEAN=0`, the macro skips cleaning, ignores `EXTRUDER_TEMP` and `BED_TEMP`, leaves the existing bed temperature target unchanged, homes the printer, and heats only the nozzle to `clear_cooldown_temp` (120°C by default).
+    - `CLEAN` (int, default: 1): Run `CLEAR_NOZZLE` before probing. With `CLEAN=0`, the macro skips cleaning, ignores `EXTRUDER_TEMP` and `BED_TEMP`, leaves the existing bed temperature target unchanged, homes the printer, and heats only the nozzle to `clear_cooldown_temp` (150°C by default).
   - **Defaults**: Clears the active bed mesh, prepares the printer, then calls `BED_LEVEL_SCREWS_PROBE`.
 
 - **BED_LEVEL_SCREWS_PROBE**
@@ -71,7 +71,7 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
 - **FORGE_SHAPER_CANCEL**
   - **Description**: Cancels the current shaper calibration.
 
-- **ZSHAPER — Legacy**
+- **ZSHAPER** (legacy)
   - **Description**: Legacy input-shaper calibration. Use Feather or `FORGE_SHAPER`.
 
 `FORGE_SHAPER_RESULTS` and `FORGE_SHAPER_APPLY` default to the open measurement, or the latest saved one.

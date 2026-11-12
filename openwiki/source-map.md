@@ -22,7 +22,7 @@ Use this map to start at the behavior boundary, then follow includes/calls rathe
 | Touch input | [`.shell/commands/ztouch.sh`](../.shell/commands/ztouch.sh) | `.shell/S99root`, `.root/S35tslib` | Shared calibrated input for Feather and Guppy. |
 | Screen stream and web interface entries | [`.shell/commands/zstreams.sh`](../.shell/commands/zstreams.sh) | `.shell/screen_policy.sh`, `.shell/S98screen`, `.py/set_webcams.py`, `sql/00022-forge-x-webcams.sql` | Framebuffer stream and the `4gx_camera` / `4gx_screen` entries in Fluidd and Mainsail. |
 | USB storage and memory | [`.shell/boot/usb_storage.sh`](../.shell/boot/usb_storage.sh) | `.shell/boot/init_swap.sh`, `.shell/boot/init_boot_flag.sh`, `.shell/commands/zusb.sh`, `.shell/commands/zusb_mount.sh`, `.py/klipper/plugins/feather/files.py`, `.shell/boot/zram/` | Early USB discovery, boot media, drive preparation, Feather file browsing, and swap fallback. |
-| Network peripherals | [`.shell/S98camera`](../.shell/S98camera) | `.shell/S98zssh`, `.shell/commands/zchanges.sh` | Camera and remote access. |
+| Remote SSH tunnel | [`.shell/S98zssh`](../.shell/S98zssh) | `telegram/`, `.shell/commands/zchanges.sh` | Remote access and Telegram connectivity. |
 | Packaging/maintenance helpers | `sync.sh`, `sync_remote.sh`, `addMD5.sh`, `addMD5.bat` | release/docs references | Synchronization and slicer checksum tooling. |
 
 ## Documentation map
@@ -31,9 +31,9 @@ Use this map to start at the behavior boundary, then follow includes/calls rathe
 
 - **Getting running:** `INSTALL.md`, `SLICING.md`, `PRINTING.md`, `CONFIGURATION.md`.
 - **Safety/calibration:** `CALIBRATION.md`, `MACROS.md`, `FAQ.md`.
-- **UI/peripherals:** `SCREEN.md`, `CAMERA.md`, `TELEGRAM.md`, `TYPER.md`.
-- **Lifecycle/recovery:** `DUAL_BOOT.md`, `UNINSTALL.md`, `RECOVERY.md`.
-- **Support/compatibility:** `INSTALL.md`.
+- **UI/peripherals:** `SCREEN.md`, `FEATHER.md`, `CAMERA.md`, `TELEGRAM.md`, `TYPER.md`.
+- **Lifecycle/recovery:** `DUAL_BOOT.md`, `UNINSTALL.md`, `RECOVERY.md`, `POWER_LOSS_RECOVERY.md`.
+- **Support/compatibility:** `COMPATIBILITY.md`, `FAQ.md`.
 
 When code and a doc disagree, prefer current source for implemented behavior and flag the documentation gap. For calibration and macro behavior specifically, verify claims in the active config/macro chain before recommending hardware operations.
 
@@ -43,9 +43,9 @@ When code and a doc disagree, prefer current source for implemented behavior and
 - **USB sysfs discovery → destructive preparation:** `PREPARE_USB` must accept only external direct-access USB disks and revalidate the device fingerprint immediately before erasure.
 - **Display config → boot path:** non-stock display modes need their own network/bootstrap behavior; Feather is the default, while Stock remains an explicit choice and recovery fallback.
 - **`mod_params.json` → mutable `variables.cfg`:** schema/default change may affect existing printers, not merely fresh installs.
-- **`.py/klipper/patches` → stock `/opt/klipper`:** compatibility depends on the supported firmware range documented in `docs/INSTALL.md` and must be validated against each stock layout.
+- **`.py/klipper/patches` → stock `/opt/klipper`:** compatibility depends on the supported firmware range documented in `docs/COMPATIBILITY.md` and must be validated against each stock layout.
 - **`moonraker.conf` → network:** default listener is all interfaces and API-key auth is disabled; changes have deployment/security consequences.
 
 ## What is not a product test suite
 
-The GitHub workflow at [`.github/workflows/stale.yml`](../.github/workflows/stale.yml) only marks inactive issues; it is not CI. Vendored `.zsh` test files do not provide Forge-X application coverage. See [Testing and change guide](testing-and-change-guide.md) for the actual validation posture.
+[`.github/workflows/tests.yml`](../.github/workflows/tests.yml) runs the host tests on pushes and pull requests to the `1.4.2` branch; [`.github/workflows/stale.yml`](../.github/workflows/stale.yml) only marks inactive issues. Vendored `.zsh` test files do not provide Forge-X application coverage. See [Testing and change guide](testing-and-change-guide.md) for the actual validation posture.

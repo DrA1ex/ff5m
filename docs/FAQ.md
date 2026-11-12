@@ -130,7 +130,7 @@ No. Running Forge-X together with Klipper Mod is not supported. [Uninstall](UNIN
 
 ### Why does my printer show a frozen spinner or fail to boot after installing a mod?
 A frozen spinner or boot failure typically indicates corrupted system files or configuration issues, often caused by:   
-- **Temporary Flickering**: Reboot the printer — this usually resolves the issue.   
+- **Temporary Flickering**: Reboot the printer; this usually resolves the issue.
 - **File Corruption**: A corrupted firmware image or incomplete flash.   
 - **Configuration Corruption**: Mod-related changes conflicting with the stock firmware.   
 
@@ -154,7 +154,7 @@ A bricked printer (unable to boot or stuck on a frozen spinner) can be restored 
 - If issues persist, contact the support group with detailed logs and error messages.
 
 ### What is the difference between the recovery image and the uninstaller?
-- **Uninstaller**: Removes Forge-X and ZMod files, restoring the printer’s original configuration without modifying system files. It’s useful for resolving mod-related issues or configuration corruption.
+- **Uninstaller**: Removes Forge-X and restores its managed configuration and system files. It’s useful for resolving mod-related issues or configuration corruption.
 - **Recovery Image**: Restores corrupted system files, including those critical to the printer’s operation. It’s a more comprehensive fix for bricked printers or severe file corruption. It includes a dry run option to verify compatibility without making changes.
 
 **When to Use**:
@@ -169,20 +169,20 @@ Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed 
 
 **Updating via OTA**:
 
-1. Temporarily switch to the Stock screen if using Feather or Headless mode (refer to Screen Switching Guide).
-2. Navigate to **Settings** &gt; **Check for Updates** on the Stock screen and follow the prompts to download and install the update.
+1. Temporarily switch to the Stock screen if using Feather, Guppy, or Headless mode (see [Switching commands](SCREEN.md#switching-commands)).
+2. Navigate to **Settings** → **Check for Updates** on the Stock screen and follow the prompts to download and install the update.
 3. After the update, boot into the stock firmware at least once to ensure the update is applied correctly.
-4. Switch back to Feather or Headless mode if desired.
+4. Switch back to Feather, Guppy, or Headless mode if desired.
 
 **Updating via USB**:
 
-1. Temporarily switch to the Stock screen if using Feather or Headless mode.
+1. Temporarily switch to the Stock screen if using Feather, Guppy, or Headless mode.
 2. Download the latest Flashforge firmware from their official support channels (e.g., Flashforge website or support portal).
 3. Copy the firmware file (e.g., `.tgz`) to a USB drive formatted to FAT32.
 4. Insert the USB drive into the printer and power on the printer.
 5. Follow the on-screen prompts on the Stock screen to flash the firmware.
 6. After the update, boot into the stock firmware at least once to confirm the update.
-7. Switch back to Feather or Headless mode if desired.
+7. Switch back to Feather, Guppy, or Headless mode if desired.
 
 ### My printer is stuck on the Stock initialization screen. How can I fix it?
 This issue is likely caused by a bug in the Flashforge firmware (seen in `3.1.*`), where the Stock screen freezes if it fails to connect to a network during initialization. It only concerns the start of the printer and does not affect printing: `3.1.x` is still the recommended version for the Stock screen because it is the most stable one **while printing**. Reboot the printer by powering it off and back on, and make sure the printer can connect to the network at startup. To avoid this issue completely, switch to the Feather screen, which operates independently of the Stock screen, or use firmware version `2.7.*`.
@@ -246,9 +246,9 @@ Issues accessing Mainsail or Fluidd on the Flashforge Adventurer 5M (AD5M) with 
   - Move the printer closer to your router to reduce signal interference.
   - Alternatively, use an Ethernet cable for a stable connection, bypassing Wi-Fi issues.
 - **Verify IP Address**: Check the printer’s current IP address on the touchscreen or in your router’s device list. Update your browser’s URL or router’s static IP settings if the address has changed.
-- **Clear Browser Cache***: Clear your browser’s cache to resolve issues caused by outdated or corrupted cache data (refer to your browser’s documentation for instructions). Alternatively, try accessing Mainsail/Fluidd using a different browser.   
+- **Clear Browser Cache**: Clear your browser’s cache to resolve issues caused by outdated or corrupted cache data (refer to your browser’s documentation for instructions). Alternatively, try accessing Mainsail/Fluidd using a different browser.
 - **Configure Wi-Fi Manually**:  If your router uses the same SSID for 5GHz and 2.4GHz bands, manually edit `/etc/wpa_supplicant.conf` to [force 2.4 GHz network](#the-mod-isnt-loading-and-is-stuck-at-the-network-connection-step). Restart the printer after editing.   
-- **Monitor Resources**: Run the `MEM` macro in Fluidd/Mainsail to check memory usage. If usage is high (e.g., >75%), reduce resource-intensive features like camera streaming or Spoolman (see [Reliability and resources](PRINTING.md#reducing-resource-usage)).
+- **Monitor Resources**: Run the `MEM` macro in Fluidd/Mainsail to check memory usage. If usage is high (e.g., >75%), reduce resource-intensive features like camera streaming or Spoolman (see [Reducing resource usage](PRINTING.md#reducing-resource-usage)).
 - **Ensure Mod Installation**: Confirm Forge-X is fully installed and running (e.g., GuppyScreen or Feather screen is active). Re-flash the mod if necessary (see [Installation Guide](/docs/INSTALL.md)).
 - **Restart Printer**: Reboot the printer to reset network services and clear potential resource bottlenecks.
 
@@ -256,7 +256,7 @@ Issues accessing Mainsail or Fluidd on the Flashforge Adventurer 5M (AD5M) with 
 
 ### Why can’t I connect via SSH?
 SSH connection issues may arise because:
-- The Klipper and Forge-X mods use different SSH private keys, causing certificate mismatches.
+- Klipper Mod and Forge-X use different SSH host keys, so an SSH client that connected before reports a host key mismatch.
 - The printer’s IP address may have changed.
 - Resource constraints may prevent the SSH service from running.
 
@@ -325,7 +325,7 @@ To reduce memory usage:
 - **Switch to Feather or Headless Mode**: The Stock screen normally uses roughly 10–20 MB of RAM, while Feather uses roughly 1–2 MB and Headless mode uses none. See [Reducing resource usage](PRINTING.md#reducing-resource-usage).
 - **Disable Resource-Intensive Features**: Spoolman, or KAMP’s “exclude objects” feature.
 - **Optimize Camera Settings**: Use the mod’s camera implementation for lower resource usage.
-- **Follow the Resource Guide**: Refer to [Reliability and resources](PRINTING.md#reducing-resource-usage).
+- **Follow the Resource Guide**: Refer to [Reducing resource usage](PRINTING.md#reducing-resource-usage).
 
 ### Can I use KlipperScreen or other resource-heavy features with Forge-X?
 KlipperScreen can be used with Forge-X by moving configs/binaries from Klipper Mod, as they are binary compatible. However, it consumes significant resources (75–80% memory usage when running with Mainsail, Fluidd, and a camera). This may lead to “Timer Too Close” or MCU errors, especially on resource-constrained AD5M printers.
@@ -340,14 +340,14 @@ Feather is Forge-X's lightweight interactive touchscreen. It uses much less memo
 
 From Feather you can browse and print local or USB files, control an active print, move and home the printer, manage temperatures and cooling, change filament, run supported calibrations, configure normal Wi-Fi or Ethernet, adjust lighting and sound, and change Forge-X settings. It also presents Forge-X power-loss recovery when a valid recovery state is available. See the [Power Loss Recovery guide](POWER_LOSS_RECOVERY.md) for limitations and safe use.
 
-Fluidd or Mainsail is still required for unrestricted G-code, file deletion, advanced networking, and detailed diagnostics. See the [Screen Configuration guide](SCREEN.md#feather-screen) for the current feature list and switching instructions.
+Fluidd or Mainsail is still required for unrestricted G-code, file deletion, advanced networking, and detailed diagnostics. See the [Feather guide](FEATHER.md) for the feature list and [Screens](SCREEN.md#switching-commands) for switching.
 
 ### Why am I getting MCU shutdown with “Unable to obtain ‘endstop_state’ response” or “Timer too close” during START_PRINT?
 This occurs when the printer’s weight sensor fails to respond within the requested time due to insufficient system resources or loose wiring.
 
 **Solutions**:
 - **Check Connections**: Reattach all wiring, especially for the weight sensor.
-- **Reduce Resource Usage**: Follow [Reliability and resources](PRINTING.md#reducing-resource-usage) and use Feather or Headless mode.
+- **Reduce Resource Usage**: Follow [Reducing resource usage](PRINTING.md#reducing-resource-usage) and use Feather or Headless mode.
 - **Update Forge-X**: Use the latest Forge-X release. The stock firmware version does not matter for this error.
 
 
@@ -409,7 +409,7 @@ This error may result from memory limitations, MCU issues, or overheating.
 - **Memory Issues**:
   - Run the `MEM` macro to check memory usage.
   - Switch to the mod’s [Camera Implementation](/docs/CAMERA.md) for lower resource usage.
-  - Follow [Reliability and resources](PRINTING.md#reducing-resource-usage).
+  - Follow [Reducing resource usage](PRINTING.md#reducing-resource-usage).
 - **MCU Issues**:
   - Disable `weight_check`, `filament_switch_sensor`, or similar parameters.
   - Avoid changing fan or LED settings during printing.
@@ -500,18 +500,21 @@ Nozzle gouging, where the nozzle scrapes or digs into the build plate during the
 - **Recalibrate Z-Offset**: After installing Forge-X, recalibrate the Z-offset to ensure the nozzle is at the correct height above the bed. Follow the [Z-Offset guidance](CALIBRATION.md#z-offset-calibration). On the FF5M, increase Z-Offset to move the bed farther from the nozzle when the first layer is too close.
 - **Run Bed Mesh Calibration**: Perform a full bed mesh calibration with `AUTO_FULL_BED_LEVEL` to ensure the bed mesh reflects the current plate and printer state. Save the mesh with `SAVE_CONFIG`.
 - **Check Weight Sensor**: Recalibrate the load cell following Flashforge’s guide.
-- **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see Uninstall Guide).
+- **Verify Settings**: Ensure no old settings (e.g., Stock bed mesh) are being used. Flash the Factory firmware to reset all configurations if needed (see [Flashing Factory Firmware](UNINSTALL.md#flashing-factory-firmware)).
 - Refer to the [Printing Page](/docs/PRINTING.md) for calibration details.
 
 ### How do I disable nozzle wiping to prevent scratching the build plate?
 
 Nozzle wiping, part of the cleaning procedure before printing, can sometimes scratch build plates.
 
-**Solution**   
-**Lower Nozzle Temperature**: Set the nozzle temperature below 120°C during bed leveling to skip the cleaning procedure. For example:
-```gcode
-AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=100 BED_TEMP=70
-```
+**Solutions**:
+- **Disable cleaning**: `SET_MOD PARAM=disable_cleaning VALUE=1` skips nozzle cleaning before bed probing.
+- **Lower nozzle temperature**: bed leveling also skips cleaning when the requested `EXTRUDER_TEMP` is at or below `clear_cooldown_temp` (150°C by default). For example:
+  ```gcode
+  AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=100 BED_TEMP=70
+  ```
+
+Clean the nozzle by hand before probing: residue on the tip affects the measurement.
 
 ### How do I customize the KAMP purge line length?
 
@@ -531,7 +534,7 @@ The KAMP purge line length can be adjusted to suit your preferences, such as inc
 
 ---
 
-###  I've changed to a longer nozzle, and now the nozzle hits the bed every time
+### I've changed to a longer nozzle, and now the nozzle hits the bed every time
 
 By default, the Z-axis is calibrated so the standard nozzle just clears the bed at its zero position, enabling prints up to 220mm tall.
 A longer nozzle effectively lowers this zero point, shifting the entire Z-axis reference.
@@ -550,7 +553,7 @@ Here’s how to update your configuration (example for a 20mm longer nozzle):
    ```
 
 2. **Update Slicer Settings**  
-   In your slicer software, reduce the maximum Z-height to match the new `Z-Position Max` (e.g., 200mm). This ensures the slicer doesn’t generate toolpaths that exceed the printer’s adjusted limits.
+   In your slicer software, reduce the maximum printable height by the same amount (200 mm in this example). This ensures the slicer doesn’t generate toolpaths that exceed the printer’s adjusted limits.
 
 3. **Recalibrate the Bed Mesh**  
   After updating the configuration, home the Z-axis and verify the new zero point. Ensure the nozzle is at the correct height above the bed to avoid collisions during printing.   

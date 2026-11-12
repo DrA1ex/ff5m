@@ -90,14 +90,7 @@ If the bed-height variation was greater than about 1 mm, recalibrate the load-ce
 
 ## Bed Mesh Calibration
 
-Run the Forge-X mesh workflow with the correct profile and realistic temperatures:
-
-```gcode
-AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=220 BED_TEMP=60 PROFILE=auto
-SAVE_CONFIG
-```
-
-Use `PROFILE=MESH_DATA` for the Stock screen. Inspect the resulting mesh in Fluidd or Mainsail and verify the first layer with a small test print.
+Run `AUTO_FULL_BED_LEVEL` with the profile for your screen and realistic temperatures, then `SAVE_CONFIG`, as shown in [Before you start](#before-you-start). Inspect the resulting mesh in Fluidd or Mainsail and verify the first layer with a small test print.
 
 ## Safe Z calibration
 

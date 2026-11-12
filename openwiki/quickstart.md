@@ -1,6 +1,6 @@
 # Forge-X repository quickstart
 
-Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 5M Pro printers. It runs an adapted Klipper/Moonraker stack with Fluidd and Mainsail and uses its built-in Feather screen by default; Stock, Guppy, and headless modes remain available as explicit choices. The project exists to make the printer's constrained stock platform more stable and configurable and to add printing, calibration, monitoring, and recovery capabilities. See [`README.md`](../README.md) and the user-facing docs in [`docs/`](../docs/).
+Forge-X adds Klipper patches, Moonraker, web clients, and the Feather touchscreen to the stock Adventurer 5M / 5M Pro system. For installation and printer operation, use the [operator guides](../README.md#documentation). This quickstart maps the code and contributor workflows.
 
 > **Safety boundary:** this repository changes boot-time behavior and motion/calibration logic on physical printers. Installation, uninstallation, display-mode changes, configuration tuning, and macro changes require checking printer settings and recalibrating bed mesh and Z offset before printing. The project explicitly warns that incorrect use can damage or brick a printer ([`README.md`](../README.md), [`docs/INSTALL.md`](../docs/INSTALL.md)).
 
@@ -11,7 +11,7 @@ Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 
 | Understand boot, service, and persistence boundaries | [Source map](source-map.md) | `.shell/S00init`, `.shell/boot/boot_mode.sh`, `.shell/init-main.sh`, `.shell/S99root`, `.root/start.sh` |
 | Change the chroot runtime, services, Moonraker, Fluidd, Mainsail, or web/API exposure | [Chroot environment and web runtime](workflows/chroot-and-web-runtime.md) | `.shell/S99root`, `.root/start.sh`, `moonraker.conf` |
 | Change a parameter, display mode, slicer behavior, macros, or calibration flow | [Configuration and printing](workflows/configuration-and-printing.md) | `mod_params.json`, `config/*.cfg`, `macros/base.cfg` |
-| Select, diagnose, or develop a screen mode—especially Forge-X’s built-in Feather display | [Screen modes and Feather](workflows/screens-and-feather.md) | `config/*.cfg`, `.shell/commands/zdisplay.sh`, `.py/klipper/plugins/feather_screen.py` |
+| Select, diagnose, or develop a screen mode | [Screen modes and Feather](workflows/screens-and-feather.md) | `config/*.cfg`, `.shell/commands/zdisplay.sh`, `.py/klipper/plugins/feather_screen.py` |
 | Change, diagnose, or safely remove built-in stock-Klipper replacements/plugins | [Built-in Klipper patching](workflows/klipper-patching.md) | `.shell/init-main.sh`, `.shell/uninstall.sh`, `.py/klipper/` |
 | Add or diagnose user Klipper packages | [User Klipper plugins](workflows/user-klipper-plugins.md) | `mod_data/plugins/`, `.shell/klipper_overlay.sh`, `.shell/S55boot` |
 | Use or change Forge-X Klipper extensions (settings, tare, checksum, audio, recovery, Feather) | [Forge-X Klipper extensions](workflows/klipper-extensions.md) | `.py/klipper/plugins/`, `macros/base.cfg`, `macros/headless.cfg` |
@@ -36,6 +36,8 @@ Forge-X is an unofficial firmware modification for Flashforge Adventurer 5M and 
 5. **Validate on the actual supported firmware/hardware combination.** The supported stock-firmware range is documented in [`docs/COMPATIBILITY.md`](../docs/COMPATIBILITY.md).
 6. **Do not store secrets in repository docs.** Mutable SSH and user override material belongs to the printer-side `mod_data` paths; this wiki deliberately does not inspect it.
 
-## Backlog
+<a id="backlog"></a>
 
-- **Update channel:** `version.txt` is 1.4.2, and the Forge-X entry in `moonraker.conf` tracks the `1.4.2` branch on the `dev` channel. The release policy is in [`docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md#release-policy); how the `dev` channel relates to it is not stated in source.
+## Update configuration
+
+[`moonraker.conf`](../moonraker.conf) selects the Forge-X updater branch and channel; [`version.txt`](../version.txt) records the runtime version. Check both when changing update behavior, together with the [release policy](../docs/DEVELOPMENT.md#release-policy).

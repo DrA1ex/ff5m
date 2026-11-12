@@ -56,7 +56,7 @@ The `tests/` directory contains dozens of host test modules for Forge-X's own co
 - network and Moonraker integration;
 - resource monitoring and the printer-regression tooling.
 
-GitHub Actions runs them on every push. Run them locally with:
+GitHub Actions runs them on pushes and pull requests to the `1.4.2` branch. Run them locally with:
 
 ```bash
 python tests/run_host_tests.py --verbose

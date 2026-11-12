@@ -33,7 +33,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 ## Quick facts
 
 - **Printers**: Flashforge Adventurer 5M and Adventurer 5M Pro.
-- **Stock firmware**: every version from 2.6.5 up to 5.1.7 (the newest checked). The version does not matter unless you use the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md).
+- **Stock firmware**: every version from 2.6.5 up to 5.1.7 (the newest hardware-tested version). Within this range, the version mainly affects the Stock screen; see [Compatibility](/docs/COMPATIBILITY.md).
 - **What it is**: a reversible mod on top of the stock firmware, not a replacement of the whole system.
 - **Klipper**: the FlashForge host Klipper (0.11 generation) with [fixes and backports from newer upstream Klipper](/docs/KLIPPER.md). The stock MCU firmware is not reflashed.
 - **Web interfaces**: Fluidd (`http://<printer_ip>/fluidd/`), Mainsail (`http://<printer_ip>/mainsail/`), and the Moonraker API on port `7125`. SSH: `root` / `root`.
@@ -120,19 +120,11 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 
 ## Why Forge-X and how it is built
 
-The AD5M hardware can produce good prints, but its software limits it. The host has only **128 MiB of RAM**, the bundled Klipper is from the older 0.11 generation, and the stock firmware exposes only a small part of what users expect from a Klipper-based printer.
+The AD5M has 128 MiB of RAM and a FlashForge Klipper host from the 0.11 generation. Forge-X backports fixes into that host instead of moving to Klipper 0.13, and keeps its own services small: Feather needs roughly 1–2 MB of RAM against 10–20 MB for the Stock screen. See [Klipper fixes](/docs/KLIPPER.md), [Why not Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013), and [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
 
-Forge-X is built around these limits instead of assuming the resources of a newer printer. Memory, CPU load, background services, the screen, the camera, and Klipper timing are treated as one reliability problem: a service that takes too much memory or CPU can stop a print just as a Klipper bug can. Newer software is adapted to fit the hardware rather than added as it is.
+Patched Klipper files retain `.bak` originals for uninstall. Failed startup returns to stock firmware on the next boot, and the recovery menu provides diagnostics and restore options. See [Lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
 
-Other problems are not about performance: missing Klipper workflows, long-standing AD5M-specific bugs, few ways to recover a printer that fails to boot, little diagnostic information, and no clean way to extend the system. Forge-X treats testing, failure handling, recovery, and documentation as part of the work itself. The goal is a system that can be maintained over time, where every change can be undone, and where others can add integrations or ports without relying on undocumented internals.
-
-In practice:
-
-- **Klipper.** Fixes and features from newer upstream Klipper are backported into the FlashForge host code instead of moving to Klipper 0.13. See [Klipper fixes](/docs/KLIPPER.md) and [Why doesn't Forge-X use Klipper 0.13?](/docs/FAQ.md#why-doesnt-forge-x-use-klipper-013)
-- **Failure handling.** If an update or configuration change fails, the next boot starts the stock firmware instead of repeating the failed start, and the recovery menu is available. Every patched Klipper file keeps a `.bak` original, and uninstall restores them. See [Stock firmware integration and lifecycle safety](/docs/DEVELOPMENT.md#stock-firmware-integration-and-lifecycle-safety).
-- **Memory.** Feather uses roughly 1–2 MB, compared with roughly 10–20 MB for the Stock screen, and the camera service is written for the same limit. See [Reducing resource usage](/docs/PRINTING.md#reducing-resource-usage).
-- **Testing.** Each release goes through automated host tests, visual UI tests, and physical tests on a printer. The tests are in [`tests/`](/tests), and the process is in [Development, testing, and release validation](/docs/DEVELOPMENT.md).
-- **Extensibility.** Your own macros, dialogs, Klipper modules, shell commands, and startup services can be added without editing Forge-X files, so they survive updates. See [Customizing and extending Forge-X](/docs/EXTENDING.md).
+[Release validation](/docs/DEVELOPMENT.md) covers host tests, visual checks, and physical printer tests. [Custom extensions](/docs/EXTENDING.md) can survive updates without modifying Forge-X files.
 
 ## Documentation
 
@@ -164,7 +156,7 @@ In practice:
 
 ## Support Forge-X
 
-Forge-X is free, and it is built for the community. Developing new features, writing documentation, testing on real hardware, and answering questions all take a lot of time. If Forge-X is useful to you, you can support the project with a donation. It helps keep the mod maintained and improving.
+Donations support development, documentation, testing on printers, and community support.
 
 - **[Boosty (Donate)](https://boosty.to/dra1ex/donate)**
 - **[Boosty (Subscribe)](https://boosty.to/dra1ex)**

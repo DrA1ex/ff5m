@@ -24,25 +24,25 @@ additional effect colors. Runtime override themes are not subject to this design
 
 Splash roles:
 
-- `background` — uniform screen background, painted once at splash startup;
-- `text` — main logo face;
-- `text_highlight` — face highlight;
-- `accent` — authored accent cells;
-- `wire` — wire/edge layer;
-- `shadow` — depth/shadow layer;
-- `beam` — diagonal light sweep;
-- `glitch_primary`, `glitch_secondary` — chromatic glitch channels;
-- `glitch_cut` — cut/erase color used by glitch;
-- `subtitle` — subtitle text.
+- `background`: uniform screen background, painted once at splash startup;
+- `text`: main logo face;
+- `text_highlight`: face highlight;
+- `accent`: authored accent cells;
+- `wire`: wire/edge layer;
+- `shadow`: depth/shadow layer;
+- `beam`: diagonal light sweep;
+- `glitch_primary`, `glitch_secondary`: chromatic glitch channels;
+- `glitch_cut`: cut/erase color used by glitch;
+- `subtitle`: subtitle text.
 
 Logged roles:
 
-- `background` — the same background as splash;
-- `debug` — DEBUG messages;
-- `info` — INFO messages;
-- `warn` — WARN messages;
-- `error` — ERROR messages;
-- `uptime` — boot uptime counter.
+- `background`: the same background as splash;
+- `debug`: DEBUG messages;
+- `info`: INFO messages;
+- `warn`: WARN messages;
+- `error`: ERROR messages;
+- `uptime`: boot uptime counter.
 
 Colors accept `RRGGBB` or `#RRGGBB`. Colors are not brightness-restricted.
 

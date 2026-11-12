@@ -1,6 +1,6 @@
 # Forge-X Klipper extensions
 
-Forge-X deploys **added Klipper `extras` modules** from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into stock Klipper’s `extras/` directory at boot. They are extensions—not the replacement stock-module patches described in [Built-in Klipper patching](klipper-patching.md). A plugin runs only when its matching configuration section is included by the active Klipper configuration.
+Forge-X deploys **added Klipper `extras` modules** from [`.py/klipper/plugins/`](../../.py/klipper/plugins/) into stock Klipper’s `extras/` directory at boot. They are extensions, not the replacement stock-module patches described in [Built-in Klipper patching](klipper-patching.md). A plugin runs only when its matching configuration section is included by the active Klipper configuration.
 
 The normal shared configuration, [`macros/base.cfg`](../../macros/base.cfg), includes [`macros/operation_context.cfg`](../../macros/operation_context.cfg) and loads `load_cell_tare`, `md5_check`, `tone_player`, and `mod_params`. The dedicated context file loads `operation_context` and defines its type registry. The alternative-display configuration [`macros/headless.cfg`](../../macros/headless.cfg) loads `resurrection`; Feather additionally loads `feather_screen` through [`config/feather.cfg`](../../config/feather.cfg). Its runtime ownership, FIFO protocol, and Typer lifecycle are documented in [Feather runtime, Typer, and Klipper plugin wiring](feather-runtime.md).
 
@@ -28,7 +28,7 @@ A damaged individual value falls back to its declared default without discarding
 
 The parameter store writes a complete adjacent temporary file before replacing the variables file. Failed writes or replacements preserve the previous file; the existing serialized change path also rolls back the in-memory value and schedules change hooks only after success. This protects against partial file writes; it does not promise durability through a power loss.
 
-A `deprecated` block names the retired key and translates its stored values through `mapping`; a value the mapping does not list is refused. `carry_over: true` relaxes that for a pure rename, keeping any other stored value as it was — the mapping then only translates the values that must change, such as a retired default. A value already stored under the current key always wins over the deprecated leftover.
+A `deprecated` block names the retired key and translates its stored values through `mapping`; a value the mapping does not list is refused. `carry_over: true` relaxes that for a pure rename, keeping any other stored value as it was; the mapping then only translates the values that must change, such as a retired default. A value already stored under the current key always wins over the deprecated leftover.
 
 Every UI-visible label and description shares one settings row on the local screen and is truncated to fit it, so both must stay within the row width measured from the shared font metrics.
 
@@ -56,7 +56,7 @@ The extension checks the current `temperature_sensor weightValue` reading agains
 
 Forge-X macros already call it before workflows that depend on accurate load-cell readings, including screw leveling, bed-mesh validation, start/print preparation, and resurrection recovery. Normal users should use those higher-level workflows. Run `LOAD_CELL_TARE` manually only to diagnose or prepare the sensor when the bed/nozzle state is known safe: remove pressure from the bed and be prepared for Z homing or a Z move if the plugin detects contact.
 
-The `cell_weight` mod parameter governs the threshold. This is physical-printer safety logic—not a generic sensor reset—so test any change with a clean bed and conservative motion conditions.
+The `cell_weight` mod parameter governs the threshold. This is physical-printer safety logic, not a generic sensor reset, so test any change with a clean bed and conservative motion conditions.
 
 ## `md5_check`: reject corrupt G-code
 
@@ -87,13 +87,13 @@ The extension drives the printer PWM audio output while yielding through Klipper
 
 Dedicated operator guidance, limitations, UPS advice, and the controlled-pause workflow are documented in [`docs/POWER_LOSS_RECOVERY.md`](../../docs/POWER_LOSS_RECOVERY.md).
 
-[`resurrection.py`](../../.py/klipper/plugins/resurrection.py) is configured only through `headless.cfg`, which is also included by Feather. It stores recovery state in `/opt/config/mod_data/resurrection.json`. It remains inactive unless:
+[`resurrection.py`](../../.py/klipper/plugins/resurrection.py) is configured only through `headless.cfg`, which is also included by Feather. It stores recovery state in `/opt/config/mod_data/resurrection.json`. It is active while `power_loss_recovery` is `1`, the default for new configurations:
 
 ```gcode
 SET_MOD PARAM=power_loss_recovery VALUE=1
 ```
 
-While an eligible print is running, it periodically saves the G-code path/position, machine position, temperature targets, mesh, Z offset, and object exclusions; `dump_time` in a user `[resurrection]` section controls the interval (default 3 seconds). On startup, a valid saved state makes a recovery prompt available in Fluidd/Mainsail and Guppy, and the extension exposes:
+While an eligible print is running, it periodically saves the G-code path/position, machine position, temperature targets, mesh, Z offset, and object exclusions; `dump_time` in a user `[resurrection]` section controls the interval (default 3 seconds). On startup, a valid saved state makes a recovery prompt available in Feather, Fluidd/Mainsail, and Guppy, and the extension exposes:
 
 ```gcode
 RESURRECT
@@ -163,7 +163,7 @@ before an abrupt outage. RFC review keeps one owner for live state, one checkpoi
 publication path, the existing reducer and rollback, and no new recovery framework.
 
 ```sh
-.venv/bin/python -m unittest tests.test_resurrection tests.test_resurrection_exclusions tests.test_feather_exclude_objects
+python -m unittest tests.test_resurrection tests.test_resurrection_exclusions tests.test_feather_exclude_objects
 ```
 
 The [`sdcard_cancel` plugin](../../.py/klipper/plugins/sdcard_cancel.py) exposes

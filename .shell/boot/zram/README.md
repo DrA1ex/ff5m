@@ -132,14 +132,16 @@ experiments rather than recommended project defaults.
   ZRAM. It is not a claim that ZRAM makes severe memory pressure safe.
 
 ## Files
-- `zsmalloc.ko`, `zram.ko` — built for the stock kernel, vermagic
+- `zsmalloc.ko`, `zram.ko`: built for the stock kernel, vermagic
   `5.4.61 SMP preempt mod_unload ARMv7 p2v8`. The stock kernel is byte-identical
   from stock firmware 3.1.3 through Pro 5.1.8 and 5M 5.1.9 (offline package
   comparison); it was not compared for versions before 3.1.3.
-- `swapon_prio` — tiny static helper to `swapon` at an explicit priority
+- `swapon_prio`: tiny static helper to `swapon` at an explicit priority
   (busybox `swapon` has no `-p`).
 
-## Rebuilding the modules (GPL — how they were built)
+<a id="rebuilding-the-modules-gpl--how-they-were-built"></a>
+
+## Rebuilding the modules (GPL: how they were built)
 
 **You must build from the Allwinner T113 (sun8iw20) VENDOR BSP source, not
 kernel.org.** Upstream `linux-5.4.61` builds with a matching vermagic but its

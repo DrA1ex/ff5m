@@ -4,7 +4,7 @@ The compact 32 px status bar displays nozzle and bed temperatures, total CPU
 usage, free RAM plus cache, the network address, and print state. It uses JetBrains
 Mono 8pt, middle-dot separators, and the active theme's existing temperature
 roles and palette tokens. FF5M owns this product presentation in
-`ff5m_ui/status_bar.py`; the shared framework and Designer contracts are unchanged.
+`ff5m_ui/status_bar.py`, not in the shared framework or Designer contracts.
 
 ## Layout selection and preview
 
@@ -98,8 +98,8 @@ The concrete problem is persistent CPU/RAM visibility without I/O or waiting
 in the reactor. Sampling and display formatting have separate owners; the
 only retained telemetry is the worker's baseline and latest snapshot. Existing
 page and dialog lifecycles, temperature refresh, and renderer transport are
-preserved. Per-process CPU, histories, graphs, new daemons, framework contract
-changes, and printer deployment are outside this change.
+preserved. Per-process CPU, histories, graphs, new daemons, and framework
+contract changes are not implemented.
 
 Behavioral tests cover aggregate two-core normalization, old and invalid proc
 input, stale samples, recovery, worker shutdown, reads during blocked worker

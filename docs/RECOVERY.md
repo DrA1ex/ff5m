@@ -81,7 +81,7 @@ If recovery doesn't work, flash the [Factory image](/docs/UNINSTALL.md#flashing-
 
 ## Recovery using UART
 
-If you’ve modified internal system files and something went wrong—your printer no longer responds to a USB drive (you can’t flash the Factory firmware), and it doesn’t progress past the boot screen—this is usually fixable and does not require advanced skills. Start by diagnosing the issue.
+If you’ve modified internal system files and something went wrong (the printer no longer responds to a USB drive, so you can’t flash the Factory firmware, and it doesn’t progress past the boot screen), this is usually fixable and does not require advanced skills. Start by diagnosing the issue.
 
 ### Diagnostics
 

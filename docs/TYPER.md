@@ -34,7 +34,7 @@ Draws text with a chosen font, colour, alignment, scale, and optional wrapping.
 
 | Parameter | Description | Default |
 | --- | --- | --- |
-| `--pos`, `-p <x> <y>` | Position. Required for a standalone command; a later text command in the same batch may reuse the previous position. | — |
+| `--pos`, `-p <x> <y>` | Position. Required for a standalone command; a later text command in the same batch may reuse the previous position. | None |
 | `--text`, `-t <text>` | Text to draw. | Empty |
 | `--color`, `-c <hex>` | Text colour. | White |
 | `--bg-color`, `-b <hex>` | Text background colour. | Transparent |
@@ -188,7 +188,9 @@ Clear all touch regions before drawing a new page:
 typer clear-hitboxes
 ```
 
-### `button` — draw a button and optionally make it touchable
+<a id="button--draw-a-button-and-optionally-make-it-touchable"></a>
+
+### `button` - draw a button and optionally make it touchable
 
 `button` combines a filled rectangle, border, centred text, and an optional touch region.
 

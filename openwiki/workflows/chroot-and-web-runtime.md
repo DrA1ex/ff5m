@@ -1,7 +1,5 @@
 # Chroot environment and web runtime
 
-# Chroot environment and web runtime
-
 Forge-X keeps the vendor root filesystem running, then mounts a second Buildroot-style root at `/data/.mod/.forge-x` and enters it with `chroot`. This is an execution boundary, not a VM or container: processes in the second root use the same kernel, devices, network stack, and host process namespace as the stock environment. The boundary supplies Forge-X’s userspace, Python/Moonraker environment, web assets, and service scripts while preserving a stock boot path.
 
 > **Operational boundary:** the chroot has deliberately shared host mounts. A command run inside it can affect shared printer state, including `/opt/config`, `/opt/klipper`, `/data`, `/tmp`, and devices. Treat it as privileged printer administration, not an isolated sandbox.
@@ -45,7 +43,7 @@ It also links the vendored Moonraker application into the chroot Python environm
 | NTP | [`.root/S45ntpd`](../../.root/S45ntpd) | BusyBox `ntpd` syncs time with `pool.ntp.org` and runs `fake-hwclock` after sync. | Always started by the runtime script. |
 | Moonraker | [`.root/S65moonraker`](../../.root/S65moonraker) | Printer API, WebSocket/API bridge to Klipper, file/history/update management. | Skipped only when `disable_moonraker=1`; startup waits up to roughly 30 seconds for `http://localhost:7125`. |
 | Web server | [`.root/S70httpd`](../../.root/S70httpd) | BusyBox `httpd` serves static UI assets from `/root/www` on TCP port 80. | Skipped only when `disable_web=1`. |
-| User services | `/etc/init.d/S*` inside the chroot | Extension point for user-installed runtime service scripts. | Started after the core services; stop uses reverse lexical traversal. |
+| User services | `/etc/init.d/S*` inside the chroot | Extension point for user-installed runtime service scripts. | Started after the core services in unsorted `find` order; stop uses reverse lexical order. |
 
 The stock-side boot script selects the display/network and MCU/Klipper startup paths. Standard reloads preserve the Stock-screen connection with the [WebHooks fix](klipper-patching.md#patch-intent-is-source-local). [`.shell/restart_klipper.sh`](../../.shell/restart_klipper.sh) remains for legacy shell callers; `--hard` replaces the Klipper process.
 
@@ -68,11 +66,12 @@ Browser
   │ HTTP :80 (static files)
   ▼
 BusyBox httpd in chroot ── serves /root/www/fluidd and /root/www/mainsail
+  │                         proxies /webcam/ → :8080 and /screen/ → :8081
   │                         UI configuration defaults to Moonraker port 7125
   │
   └──────────────────────────────────────────────────────┐
                                                          ▼
-Moonraker in chroot — HTTP/WebSocket API :7125 — Unix socket /tmp/uds — stock Klipper (klippy)
+Moonraker in chroot ── HTTP/WebSocket API :7125 ── Unix socket /tmp/uds ── stock Klipper (klippy)
        │                     │
        │                     ├─ file/history/database paths under /root/printer_data
        │                     └─ machine/update scripts under /opt/config/mod/.root
@@ -89,13 +88,13 @@ The built-in local control bridge, [`.shell/commands/zmoon.sh`](../../.shell/com
 
 ### Fluidd and Mainsail
 
-Fluidd and Mainsail are **static single-page web applications** in `/root/www/fluidd` and `/root/www/mainsail`. `S70httpd` serves that parent directory on port 80; it does not reverse-proxy API calls. Browser JavaScript connects directly to Moonraker on port 7125.
+Fluidd and Mainsail are static single-page web applications in `/root/www/fluidd` and `/root/www/mainsail`. `S70httpd` serves that parent directory on port 80. The chroot `/etc/httpd.conf` also proxies `/webcam/` and `/screen/` to the streamers on ports 8080 and 8081; `start.sh` appends only missing routes for older images. Browser JavaScript connects directly to Moonraker on port 7125 for API calls.
 
 The tracked [`.root/config.json`](../../.root/config.json) supplies UI defaults: a Mainsail theme, Moonraker port `7125`, and Moonraker-backed instance storage. `moonraker.conf` separately registers web updaters for Fluidd and Mainsail. Startup also rewrites specific Mainsail release metadata to use the project’s configured owner/version values, so do not assume the static release metadata is upstream-default at runtime.
 
 ### Network and security implications
 
-The default surface is two network listeners: static HTTP on port **80** and unauthenticated Moonraker on port **7125**. `moonraker.conf` explicitly sets `enable_api_key: false`. This is appropriate only for a trusted local network; it is not a hardened remote-management configuration. Any change to network exposure, API authorization, user Moonraker includes, or UI update behavior must be reviewed with [Integrations](../integrations.md), operator network expectations, and the actual deployment topology in mind.
+The web/API listeners are HTTP on port 80 and Moonraker on port 7125, with `enable_api_key: false` in `moonraker.conf`. The enabled camera binds all interfaces on port 8080. The screen streamer binds loopback on port 8081 and is exposed through `/screen/` on port 80. The stream controls remain unauthenticated through the HTTP proxies. Keep these services on a trusted network. Review exposure and authentication changes against [Integrations](../integrations.md), operator overrides, and the deployed service configuration.
 
 ## Safe change and diagnosis path
 

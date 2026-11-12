@@ -83,7 +83,5 @@ frames.
 Behavioral coverage includes frame restoration and user-pause handoff, held SD
 release/cancellation, missing contract fields, dialog recovery priority,
 prompt replacement admission, finalization cancellation, archive worker
-cleanup, and stale generation results. Shared UI geometry and framework
-behavior remain unchanged. These changes require matching Klipper plugin,
-macro, and Moonraker component versions; no live deployment is part of the
-refactor.
+cleanup, and stale generation results. These contracts require matching
+Klipper plugin, macro, and Moonraker component versions.
