@@ -2,7 +2,7 @@
 
 Status: implemented and validated offline, 2026-10-27. Hardware acceptance requires
 separate permission. Product authority lives in
-`/Users/akoreshnyak/dev/forge-x-docs/2026-10-26-recovery-overclocking/`.
+the maintainer's unpublished `2026-10-26-recovery-overclocking` design notes.
 
 ## Ownership
 

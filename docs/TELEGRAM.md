@@ -2,32 +2,27 @@
 
 The Telegram bot lets you control the printer remotely and create timelapse videos. If you only need timelapses, use Forge-X's built-in [`timelapse` setting](CAMERA.md#timelapse).
 
-The Flashforge AD5M (Pro) mod has limited hardware resources, making it impractical to run the bot directly on the printer. Instead, run it on an external server. It can connect over the local network or through an SSH tunnel.
+The printer has too few resources to run the bot itself, so run it on an external server. The server connects to the printer over the local network or through an SSH tunnel that the printer opens to the server.
 
 ## Bot Registration
-To register your Telegram bot:
 
-1. Visit [BotFather](https://t.me/BotFather) on Telegram.
-2. Use the `/newbot` command to create a new bot.
+1. Open [BotFather](https://t.me/BotFather) in Telegram.
+2. Send the `/newbot` command.
 3. Choose a name for your bot.
-4. Set a username ending with _bot (e.g., ff5m_super_bot).
-5. Receive a bot token (a long string) and save it for later use.
+4. Choose a username ending with `_bot` (for example, `ff5m_super_bot`).
+5. Save the bot token (a long string) that BotFather returns.
 
-## SSH-tunnel setup
+## Connecting the server to the printer
 
-### Local Network Setup
+### Local network
 
-If the printer and server are on the same network, SSH is not required. Instead, configure the bot using the telegram.conf file.
-You can download this file from the printer or from the repository: [telegram.conf](/telegram/telegram.conf).
+If the printer and the server are on the same network, no SSH tunnel is needed. Configure the bot in `telegram.conf`; download it from the printer or from the repository: [telegram.conf](/telegram/telegram.conf).
 
-### Remote Host Setup
+### Remote server through an SSH tunnel
 
-The mod automatically generates SSH keys for passwordless authentication. These keys are located at: **Configuration -> mod_data -> ssh.pub.txt**.  
-This is a public key, you need to add its contents to the `~/.ssh/authorized_keys file` on your server.
+The printer generates its own SSH key pair. Its public key is in Fluidd under **Configuration -> mod_data -> ssh.pub.txt**; add its contents to `~/.ssh/authorized_keys` of the user the printer logs in as on your server.
 
-#### Printer configuration
-
-To configure the printer for SSH access, edit the configuration file located in Fluidd under: **Configuration -> mod_data -> ssh.conf**
+Set the server details in Fluidd under **Configuration -> mod_data -> ssh.conf**:
 
 ```cfg
 # Remote SSH server
@@ -49,11 +44,19 @@ MOON_PORT=7125
 REMOTE_RUN=""
 ```
 
-## Host configuration
+The tunnel forwards the printer's camera (port `8080`) and Moonraker (port `7125`) to `VIDEO_PORT` and `MOON_PORT` on the server. Then enable it:
 
-#### Automatic Setup
+```gcode
+SET_MOD PARAM="zssh" VALUE=1
+```
 
-Note that the installation script is written for Ubuntu/Debian and won't work with non-Debian distributions.
+The mod manages the tunnel and restarts it if needed. Set `REMOTE_RUN` to restart the bot container whenever the tunnel is established, for example `REMOTE_RUN="docker restart <container_id>"`. Run `docker ps` on the server to find the container ID.
+
+## Server setup
+
+### Automatic setup
+
+The installation script is written for Ubuntu and Debian and does not work on other distributions. It installs Docker, sets up the bot, and creates the `ff5m` user.
 
 ```bash
 sudo su
@@ -61,9 +64,9 @@ apt update && apt install wget -y  # Ensure wget is installed
 bash <(wget --cache=off -q -O - https://raw.githubusercontent.com/DrA1ex/ff5m/refs/heads/main/telegram/telegram.sh)
 ```
 
-**For remote network**: After running the script, you will need to manually add the SSH public key to the server.
+For a remote server, add the printer's SSH public key to the `ff5m` user afterward, as described in [step 9](#9-configure-ssh-access).
 
-#### Manual setup
+### Manual setup
 
 ##### 1. Install Requirements
 Install Docker by following the [official documentation](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository).
@@ -84,23 +87,24 @@ chmod 777 config log timelapse_finished timelapse
 ```bash
 wget --cache=off -q -O docker-compose.yml https://raw.githubusercontent.com/dra1ex/ff5m/refs/heads/main/telegram/docker-compose.yml
 ```
-- **Note:** Review `docker-compose.yml` and apply any necessary changes.
+Review `docker-compose.yml` and adjust it if needed.
 
 ##### 5. Download `telegram.conf`
 ```bash
 wget --cache=off -q -O config/telegram.conf https://github.com/dra1ex/ff5m/raw/refs/heads/main/telegram/telegram.conf
 ```
-- **Note:** Review `telegram.conf` and apply any necessary changes.
+Review `telegram.conf` and adjust it if needed.
 
 ##### 6. Set Up Container and Run
 ```bash
 docker compose up -d
 ```
 
+Steps 7 to 9 are needed only for the SSH tunnel.
+
 ##### 7. Create a New User
 ```bash
-useradd ff5m
-usermod -a -G docker ff5m
+useradd -m -s /bin/bash -G docker ff5m
 ```
 
 ##### 8. Switch to the New User
@@ -109,37 +113,13 @@ su - ff5m
 ```
 
 ##### 9. Configure SSH Access
-- Create the `.ssh` directory:
-  ```bash
-  mkdir .ssh
-  ```
-
-- Add your SSH public key to `authorized_keys`:
-  ```bash
-  cat > .ssh/authorized_keys
-  ```
-
-  (Paste the contents of your public key file and press `Ctrl + D` to save.)
-
-## Printer configuration
-
-To enable SSH tunneling, modify the mod parameter:
-
-```
-SET_MOD PARAM="zssh" VALUE=1
+```bash
+mkdir -p .ssh
+cat > .ssh/authorized_keys
 ```
 
-The mod will automatically manage the SSH tunnel and restart it if needed. It is recommended to set the `REMOTE_RUN` parameter in `ssh.conf` to restart the bot container when the SSH tunnel is established.
-
-For example:
-```
-REMOTE_RUN="docker restart <container_id>"
-```
-
-You can obtain the container ID by running `docker ps` on the server.
+Paste the printer's public key (`ssh.pub.txt`) and press `Ctrl + D` to save.
 
 ## Telegram bot configuration
 
-For additional configuration options and advanced settings for the Telegram bot, refer to the official moonraker-telegram-bot [GitHub repository](https://github.com/nlef/moonraker-telegram-bot)
-
-This repository provides detailed documentation on configuring the bot, including custom commands, notifications, and timelapse settings.
+For the bot's own options (custom commands, notifications, and timelapse settings), see the [moonraker-telegram-bot repository](https://github.com/nlef/moonraker-telegram-bot).

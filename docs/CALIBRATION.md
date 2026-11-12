@@ -103,7 +103,9 @@ Use `PROFILE=MESH_DATA` for the Stock screen. Inspect the resulting mesh in Flui
 
 `safe_z` is the absolute Z height used before lateral parking, cleaning, and calibration moves. It is not the same as Z offset or `park_dz`.
 
-The default is 10 mm, but the real nozzle-to-bed clearance can be smaller after bed leveling or when a longer nozzle is installed. A value that exceeds the printer's real clearance can make a supposedly safe lateral move unsafe.
+The default is 10 mm, but this absolute Z coordinate does not guarantee 10 mm of
+physical clearance. Bed leveling or a longer nozzle can reduce the gap. Verify
+that the selected height clears the bed before making lateral moves.
 
 In Feather, **Control → Calibration → Z Offset** starts with Safe Z, before automatic nozzle cleaning. Re-run this step after changing the nozzle or bed setup; remove plastic from the nozzle tip before probing. It probes the current geometry, lets you review the calculated clearance, and saves the selected value. Skip it only when the existing Safe Z has already been verified.
 
@@ -153,7 +155,7 @@ For manual calibration:
 
    ```gcode
    M83
-   M104 S220
+   M109 S220
    ```
 
 2. Mark the filament, command 100 mm of extrusion, and measure the actual movement:
@@ -161,6 +163,8 @@ For manual calibration:
    ```gcode
    G1 E100 F100
    ```
+
+   After measuring, turn off the nozzle heater with `M104 S0`.
 
 3. Calculate:
 

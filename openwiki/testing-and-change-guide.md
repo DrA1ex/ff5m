@@ -5,6 +5,13 @@
 > validation policy, release gate, and contributor expectations, see
 > [Development, testing, and release validation](/docs/DEVELOPMENT.md).
 
+**Jump to:** [Host checks](#validation-posture) ·
+[Renderer benchmarks](#interactive-renderer-benchmarks) ·
+[Printer runner](#feather-on-printer-regression-runner) ·
+[Screenshot review](#development-only-semantic-screenshot-checks) ·
+[Checks by change area](#minimum-checks-by-change-area) ·
+[Safety gates](#required-safety-gates)
+
 ## Validation posture
 
 The [user Klipper package tests](../tests/test_klipper_plugins.py) exercise optional
@@ -317,7 +324,7 @@ Typer `presented` receipt. Framebuffer reads use the active page reported by
 flip occurs during the copy. Stability hashing, BMP encoding, log copying,
 CSV/JSON updates, and retention execute in the artifact worker thread. The
 reactor only schedules steps and receives completion callbacks.
-calibration stages/results. Context-enabled runs also write
+Context-enabled runs also write
 `operation_context.json` with each selected fixture variant, exact expected and
 actual traces, and scenario result; `summary.json` contains the compact context
 result.
@@ -862,7 +869,7 @@ alternative. `--mode` remains an alias for existing commands.
   current UI fingerprint, and the UI set must be complete before model review.
 - `designer`: automatically discovers every module-level `DeclarativePage`,
   renders its default state, and adds the meaningful typed state/action cases
-  in `scenarios.json`. The current corpus has 32 frames over 15 pages. Native
+  in `scenarios.json`. The corpus follows discovered pages and the checked-in scenarios. Native
   messages, errors, OTA notifications, and other imperative screens belong to
   the printer corpus; Designer scenarios cannot replace a page with drawing
   fixtures. A clean Designer result remains `partial` because native printer
@@ -1219,7 +1226,8 @@ can provide one. Both LM Studio's reported load time and independently
 measured load wall time are retained. Each model also has its own large-grid
 HTML report. The API key and endpoint are not included in any report.
 
-This is not a gap to hide: Forge-X changes early boot, services, printer motion, calibration, and low-memory behavior on specific hardware. A unit-like syntax check cannot prove the crucial outcomes.
+Forge-X changes early boot, services, motion, calibration, and low-memory
+behavior. Host checks cannot prove those outcomes on a physical printer.
 
 ## Minimum checks by change area
 

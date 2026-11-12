@@ -7,7 +7,7 @@
 
 ## Overview
 
-Typer draws to the printer screen at a fixed resolution of **800×480**. It is installed at `/root/printer_data/bin/typer`. To add it to `PATH`, run:
+Typer draws to the printer screen at a fixed resolution of **800×480**. It is installed at `/root/printer_data/bin/typer`; `/root/printer_data/bin` is a link to `/opt/config/mod/.bin/exec`. To add that directory to `PATH`, run:
 
 ```sh
 source /opt/config/mod/.shell/common.sh

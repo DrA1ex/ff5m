@@ -41,7 +41,7 @@ The project focuses on reliability on limited hardware: memory and CPU use, hand
 ### Which printers and firmware versions does Forge-X support?
 Forge-X supports only the **Flashforge Adventurer 5M** and **Adventurer 5M Pro**. Other Flashforge models are not supported.
 
-Every stock firmware version from **2.6.5 up to 5.1.7** (the newest checked) is supported. The stock firmware version does not matter unless you use the Stock screen, so there is no need to update or downgrade it for Forge-X. See [Compatibility](COMPATIBILITY.md) for the reasons, and [Installation → Prerequisites](INSTALL.md#prerequisites) for the verified versions.
+Every stock firmware version from **2.6.5 up to 5.1.7** (the newest hardware-tested version) is supported. Within that range the version matters only for the Stock screen, so there is no need to update or downgrade it for Forge-X. See [Compatibility](COMPATIBILITY.md) for the reasons, and [Installation → Prerequisites](INSTALL.md#prerequisites) for the verified versions.
 
 ### Is Forge-X reversible? Can I go back to the stock firmware?
 Yes. Forge-X is installed as a layer on top of the stock firmware and is designed to be removed at any time:
@@ -141,13 +141,13 @@ A frozen spinner or boot failure typically indicates corrupted system files or c
 
 ### How can I restore my printer if it’s bricked?
 A bricked printer (unable to boot or stuck on a frozen spinner) can be restored using:
-1. **Uninstaller**: Flash the uninstaller image to remove Forge-X/ZMod files and restore the original configuration.
+1. **Uninstall**: if the mod still starts, remove it with the `REMOVE_MOD` macro or USB file ([Uninstall](UNINSTALL.md)) to restore the original configuration.
 2. **Recovery Image**: Use the full recovery image (`Adventurer5M-3.x.x-2.2.3-recovery-full.tgz`) to restore system files. Start with a dry run (`Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz`) to verify compatibility.
 3. **Factory Firmware**: Flash a verified Flashforge factory image to reset the printer to its original state.
 4. **Debugging port (UART/FEL)**: As a last resort, use the motherboard’s debugging port to revive the printer. See the [Recovery guide](RECOVERY.md#recovery-using-uart).
 
 **Steps**:
-- Download the recovery or uninstaller images from the support group or GitHub.
+- Download the recovery images from GitHub (links in the [Recovery guide](RECOVERY.md#recovery-using-flashing-image)) or the support group.
 - Flash the image via USB, following the same process as mod installation.
 - Check logs (`recovery.log`) to confirm the process completed successfully.
 - Reboot and verify the printer boots into the stock UI.
@@ -163,7 +163,7 @@ A bricked printer (unable to boot or stuck on a frozen spinner) can be restored 
 
 ### How do I update the stock firmware?
 
-You usually do not need to. The stock firmware version does not matter unless you use the Stock screen. If you do, version 3.1.x is the recommended one (the most stable while printing), and a newer version is only needed if you use the FlashForge cloud services. See [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen).
+You usually do not need to. Within the supported range, the stock firmware version matters only for the Stock screen. If you use it, version 3.1.x is the recommended one (the most stable while printing), and a newer version is only needed if you use the FlashForge cloud services. See [Compatibility](COMPATIBILITY.md#which-firmware-to-use-with-the-stock-screen).
 
 Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed via the Stock screen interface using Over-The-Air (OTA) updates or by flashing a firmware image via USB.
 
@@ -188,13 +188,13 @@ Stock firmware updates for the Flashforge Adventurer 5M (AD5M) can be performed 
 This issue is likely caused by a bug in the Flashforge firmware (seen in `3.1.*`), where the Stock screen freezes if it fails to connect to a network during initialization. It only concerns the start of the printer and does not affect printing: `3.1.x` is still the recommended version for the Stock screen because it is the most stable one **while printing**. Reboot the printer by powering it off and back on, and make sure the printer can connect to the network at startup. To avoid this issue completely, switch to the Feather screen, which operates independently of the Stock screen, or use firmware version `2.7.*`.
 
 ### My printer is stuck on the screen with a black-and-white Flashforge logo. How can I fix it?
-This indicates a hardware or software issue preventing proper booting, not related to the mod. Try flashing the [Factory image](https://github.com/DrA1ex/ff5m/blob/main/docs/UNINSTALL.md#flashing-factory-firmware). If unsuccessful, flash the [Uninstall image](https://github.com/DrA1ex/ff5m/blob/main/docs/UNINSTALL.md#using-uninstall-image), then the [Recovery image](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md#recovery-using-flashing-image), and finally the Factory image again. Refer to the [Recovery Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md). If the issue persists, contact Flashforge support without mentioning mods to avoid warranty issues.
+A hardware fault, the stock firmware, or a modified system file (including the mod) can stop the boot at this screen. Try flashing the [Factory image](/docs/UNINSTALL.md#flashing-factory-firmware). If unsuccessful, flash the [Recovery image](/docs/RECOVERY.md#recovery-using-flashing-image), and then the Factory image again. Refer to the [Recovery Guide](/docs/RECOVERY.md); the [Uninstall guide](/docs/UNINSTALL.md) lists the ways to remove the mod. If the issue persists, contact Flashforge support with the firmware version, the symptoms, and the modifications installed.
 
 ### My printer is stuck on the screen with the Forge-X logo. How can I fix it?
-If the printer displays loading information and is stuck, it may be a Wi-Fi issue or a mod-related problem. Skip the mod during boot using the [Dual Boot instructions](https://github.com/DrA1ex/ff5m/blob/main/docs/DUAL_BOOT.md) or uninstall the mod following the [Uninstall guide](https://github.com/DrA1ex/ff5m/blob/main/docs/UNINSTALL.md). Avoid flashing over a different firmware version without removing the mod to prevent bricking. Refer to the [Recovery Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md) if needed.
+If the printer displays loading information and is stuck, it may be a Wi-Fi issue or a mod-related problem. Skip the mod during boot using the [Dual Boot instructions](/docs/DUAL_BOOT.md) or uninstall the mod following the [Uninstall guide](/docs/UNINSTALL.md). Avoid flashing over a different firmware version without removing the mod to prevent bricking. Refer to the [Recovery Guide](/docs/RECOVERY.md) if needed.
 
 ### My printer won’t boot. I can’t skip the mod, flash firmware, or do anything.
-This indicates a severe issue. Follow the [Recovery Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/RECOVERY.md) to unbrick the printer using recovery or uninstaller images. If unsuccessful, contact Flashforge support, avoiding mention of mods.
+This indicates a severe issue. Follow the [Recovery Guide](/docs/RECOVERY.md) to unbrick the printer using the recovery images. If unsuccessful, contact Flashforge support with the firmware version, the symptoms, and the modifications installed.
 
 ### Why do my custom settings persist in printer.cfg after uninstalling Forge-X and flashing stock firmware?
 
@@ -249,10 +249,10 @@ Issues accessing Mainsail or Fluidd on the Flashforge Adventurer 5M (AD5M) with 
 - **Clear Browser Cache***: Clear your browser’s cache to resolve issues caused by outdated or corrupted cache data (refer to your browser’s documentation for instructions). Alternatively, try accessing Mainsail/Fluidd using a different browser.   
 - **Configure Wi-Fi Manually**:  If your router uses the same SSID for 5GHz and 2.4GHz bands, manually edit `/etc/wpa_supplicant.conf` to [force 2.4 GHz network](#the-mod-isnt-loading-and-is-stuck-at-the-network-connection-step). Restart the printer after editing.   
 - **Monitor Resources**: Run the `MEM` macro in Fluidd/Mainsail to check memory usage. If usage is high (e.g., >75%), reduce resource-intensive features like camera streaming or Spoolman (see [Reliability and resources](PRINTING.md#reducing-resource-usage)).
-- **Ensure Mod Installation**: Confirm Forge-X is fully installed and running (e.g., GuppyScreen or Feather screen is active). Re-flash the mod if necessary (see [Installation Guide](https://github.com/DrA1ex/ff5m/blob/main/docs/INSTALL.md)).
+- **Ensure Mod Installation**: Confirm Forge-X is fully installed and running (e.g., GuppyScreen or Feather screen is active). Re-flash the mod if necessary (see [Installation Guide](/docs/INSTALL.md)).
 - **Restart Printer**: Reboot the printer to reset network services and clear potential resource bottlenecks.
 
-**Note**: If issues persist, consider testing with a different router or Wi-Fi channel to rule out interference. For hardware-related Wi-Fi module problems, contact Flashforge support, avoiding mention of mods to preserve warranty eligibility.
+**Note**: If issues persist, consider testing with a different router or Wi-Fi channel to rule out interference. For a faulty Wi-Fi module, contact Flashforge support with the firmware version, the symptoms, and the modifications installed.
 
 ### Why can’t I connect via SSH?
 SSH connection issues may arise because:
@@ -277,7 +277,7 @@ The **Feather Screen** does not wait for networking before loading. Its dashboar
 
 Printers are often metal-shielded, meaning Wi-Fi signals may struggle to reach the antenna.  
 Consider switching to a 2.4GHz Wi-Fi network. You can do this from the stock screen or by manually editing the `/etc/wpa_supplicant.conf` configuration file by adding `freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462` to the network section, example below.
-```bash
+```cfg
 network={
         ssid="example"
         psk="password"
@@ -375,7 +375,7 @@ trigger_value: 700
 
 Be careful: setting values greater than weight_check_max will increase the actual weight value when the error is triggered.
 
-For more information, refer to the [Printing Page](https://github.com/DrA1ex/ff5m/blob/main/docs/PRINTING.md) and the [Configuration Page](https://github.com/DrA1ex/ff5m/blob/main/docs/CONFIGURATION.md).  
+For more information, refer to the [Printing Page](/docs/PRINTING.md) and the [Configuration Page](/docs/CONFIGURATION.md).
 
 
 #### Possible causes of this error include:  
@@ -408,7 +408,7 @@ This error may result from memory limitations, MCU issues, or overheating.
 **Solutions**:
 - **Memory Issues**:
   - Run the `MEM` macro to check memory usage.
-  - Switch to the mod’s [Camera Implementation](https://github.com/DrA1ex/ff5m/blob/main/docs/CAMERA.md) for lower resource usage.
+  - Switch to the mod’s [Camera Implementation](/docs/CAMERA.md) for lower resource usage.
   - Follow [Reliability and resources](PRINTING.md#reducing-resource-usage).
 - **MCU Issues**:
   - Disable `weight_check`, `filament_switch_sensor`, or similar parameters.
@@ -467,7 +467,7 @@ Forge-X provides various macros for calibration and management, accessible via F
 For a complete list, see the [Macro Documentation](MACROS.md). Use the latest Forge-X release to make sure all macros are available in both Fluidd and Mainsail.
 
 ### What changes are needed to the G-code start and end commands when migrating from the old Klipper mod?
-For the Stock screen, update the G-code start commands as outlined in [Slicing Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/SLICING.md):
+For the Stock screen, update the G-code start commands as outlined in [Slicing Documentation](/docs/SLICING.md):
 ```gcode
 START_PRINT EXTRUDER_TEMP=[nozzle_temperature_initial_layer] BED_TEMP=[bed_temperature_initial_layer_single]
 M190 S[bed_temperature_initial_layer_single]
@@ -490,7 +490,7 @@ If the screen is already frozen, wait until the current print finishes and then 
 This occurs if Klipper or the MCU fails to become ready, often due to a broken configuration or an unreset MCU after a `reboot` command. Run `FIRMWARE_RESTART` or power cycle the printer. Access Fluidd or SSH to diagnose the issue.
 
 ### Why does the printer boot in Failsafe mode but still show Feather?
-Failsafe mode skips all mod code execution to prevent bricking but may still display Feather if the mod partially loads. Use [Dual Boot](https://github.com/DrA1ex/ff5m/blob/main/docs/DUAL_BOOT.md) to skip the mod gracefully and boot into the stock system.
+Failsafe mode skips all mod code execution to prevent bricking but may still display Feather if the mod partially loads. Use [Dual Boot](/docs/DUAL_BOOT.md) to skip the mod gracefully and boot into the stock system.
 
 ### Why is my nozzle gouging the build plate during the first layer?
 
@@ -527,7 +527,7 @@ The KAMP purge line length can be adjusted to suit your preferences, such as inc
   ```gcode
   SET_GCODE_VARIABLE MACRO='_KAMP_Settings' VARIABLE='purge_amount' VALUE=60
   ```
-- Refer to the [KAMP Configuration](https://github.com/DrA1ex/ff5m/blob/main/KAMP/KAMP_Settings.cfg#L27) for additional parameters.
+- Refer to the [KAMP Configuration](/KAMP/KAMP_Settings.cfg#L27) for additional parameters.
 
 ---
 
@@ -568,7 +568,7 @@ The older community script from the support group is no longer needed.
 ### How do I stay updated on new Forge-X releases?
 - Watch the [Forge-X GitHub releases page](https://github.com/DrA1ex/ff5m/releases) for new versions.
 - Join the Forge-X Telegram support group for announcements and help.
-- Check the [Macro Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/MACROS.md) and [Feather Drawing Utility Documentation](https://github.com/DrA1ex/ff5m/blob/main/docs/TYPER.md) for new features.
+- Check the [Macro Documentation](/docs/MACROS.md) and [Feather Drawing Utility Documentation](/docs/TYPER.md) for new features.
 
 ### Can I use third-party tools like Obico with Forge-X?
 Obico, a Python-based tool, may work as a standalone application (not as a Moonraker plugin), but it uses 5–10 MB of memory. Test it with the `MEM` macro to ensure it doesn’t cause resource issues. Consider using Feather or Headless mode to free up resources.

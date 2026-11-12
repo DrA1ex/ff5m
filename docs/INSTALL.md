@@ -1,11 +1,11 @@
-## Installation
+# Installation
 
 Forge-X can be removed at any time, and the stock firmware stays available:
 
 - [Uninstall](/docs/UNINSTALL.md) restores the original Klipper files and printer configuration.
 - [Dual Boot](/docs/DUAL_BOOT.md) starts the stock firmware without the mod.
 - If the mod fails to start, the next boot falls back to the stock firmware.
-- For harder cases there are recovery and uninstall images and a [recovery guide](/docs/RECOVERY.md).
+- For harder cases there are recovery images and a [recovery guide](/docs/RECOVERY.md).
 
 
 > [!CAUTION]
@@ -15,12 +15,12 @@ Forge-X can be removed at any time, and the stock firmware stays available:
 
 
 > [!TIP]
-> It is not necessary to uninstall Forge-X before updating major versions e.g. 1.3.x to 1.4.x
+> A new major version (for example, 1.3.x to 1.4.x) is flashed over the existing installation without uninstalling Forge-X; settings and calibration are kept. Minor versions update over the air; see [OTA Updates](#ota-updates).
 
 ## Prerequisites
 
-* Stock firmware version: any from **2.6.5** to **5.1.x**; you do not need to update or downgrade it (see [Compatibility](COMPATIBILITY.md)). Checked versions include **5.0.3/5.0.4** and **5.1.2–5.1.7**: 5.1.x was installed and tested on hardware, and its kernel, MCU firmware, and partition layout are identical to the 3.1.3 baseline.
-  * Follow the instructions [here](/docs/UNINSTALL.md#flashing-factory-firmware) to downgrade to a verified version if needed before proceeding.
+* Stock firmware version: any from **2.6.5** to **5.1.7** (the newest hardware-tested version); you do not need to update or downgrade it (see [Compatibility](COMPATIBILITY.md)). 5.1.x up to 5.1.7 was installed and tested on hardware.
+  * For a version outside this range, check [Compatibility](COMPATIBILITY.md) before installing. Changing the firmware version is described in [Flashing Factory Firmware](/docs/UNINSTALL.md#flashing-factory-firmware).
   * Note: the official **3.1.5** image does not include printer config files. If needed, flash a `-Factory` image first, then update to the target firmware.
 * A USB flash drive formatted to FAT32.
 * At least 512MB free space in the `/data` partition.
@@ -34,7 +34,7 @@ The mod uses the same installation mechanism as the stock firmware:
 2. Download the Forge-X image from the Release [page](https://github.com/drA1ex/ff5m/releases) onto a USB flash drive (⚠️ **Do NOT unpack it!**).  
 3. Rename the file to match your printer version. For Pro, rename the file to `Adventurer5MPro-ForgeX-x.x.x.tgz`. For non-Pro, it should remain named `Adventurer5M-ForgeX-x.x.x.tgz`.  
 4. Insert the USB flash drive into the printer before powering it on.  
-5. The printer will automatically install the update. After the installation is finished, you will see a message at the end of the screen.  
+5. The printer installs the update automatically and shows a message on the screen when the installation is finished.
 6. Eject the USB drive and reboot the printer.  
 
 After a fresh installation, the printer will boot into the modified firmware with Feather as its default local screen. An update preserves an existing explicit display choice.

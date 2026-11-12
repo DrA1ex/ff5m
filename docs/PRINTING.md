@@ -286,7 +286,16 @@ Set chamber-light brightness with:
 LED S=75
 ```
 
-Use `LED_ON` and `LED_OFF` to toggle it. The selected brightness is saved in Forge-X variables and restored after Klipper restarts. New installations default to 50%.
+Use `LED_ON` and `LED_OFF` to toggle it. `LED S=75` changes the current
+brightness; to save a brightness, use:
+
+```gcode
+SET_MOD PARAM=chamber_light VALUE=75
+```
+
+New installations default to 50%. `chamber_light_mode` controls when the saved
+value applies: `AT_BOOT` restores it after Klipper starts, `PRINT_ONLY` uses it
+during printing, and `MANUAL` leaves changes to manual control.
 
 For an inverted or non-standard LED connection, add an override to `user.cfg`:
 
@@ -357,7 +366,12 @@ Disable the camera, lower its resolution or frame rate, or use the Forge-X camer
 
 Moonraker can use around 30 MB. It is not required by the Stock screen or Feather during printing, but disabling it removes Fluidd/Mainsail and also stops integrations that depend on Moonraker.
 
-To stop it before a print and restart it after a successful finish:
+`STOP_MOD` stops the chroot services, not just Moonraker: this includes the web
+server, GuppyScreen, touch-input helper, and custom startup services. Feather
+can remain visible but loses touchscreen input until services restart. Keep an
+independent way to stop the printer before using this workflow.
+
+To stop those services before a print and restart them after a successful finish:
 
 **First line of start G-code:**
 

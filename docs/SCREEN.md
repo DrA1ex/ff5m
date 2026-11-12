@@ -12,7 +12,7 @@ HelixScreen is also available for the AD5M and the Pro, but it is not an interna
 - **Feather** uses roughly 1–2 MB of RAM, does not need the FlashForge services, and covers the everyday workflows.
 - **Stock** uses roughly 10–20 MB of RAM and gives the full vendor interface. Fluidd, Mainsail, and upload need LAN-mode.
 - **Guppy** has its own interface, needs no FlashForge services, and uses less RAM than Stock.
-- **Headless** has no local screen and uses no RAM.
+- **Headless** disables the local UI process and avoids its RAM usage.
 
 Forge-X Power Loss Recovery is used with Feather, Guppy, and Headless. The Stock screen uses the FlashForge implementation. The bed-mesh profile is `MESH_DATA` with Stock and `auto` with the other modes.
 
@@ -53,9 +53,7 @@ The Stock screen keeps the original FlashForge services and workflows. If you us
 When using the Stock screen:
 
 - the persistent bed-mesh profile is `MESH_DATA`;
-- Z offset is managed by the vendor workflow;
-- use `SAVE_CONFIG` to save calibration results and `RESTART` to reload configuration;
-- use `FIRMWARE_RESTART` when MCU recovery requires it.
+- Z offset is managed by the vendor workflow.
 
 ### Klipper restart and saving
 
@@ -83,14 +81,9 @@ Headless mode also uses the `auto` bed-mesh profile. Z offset, camera, and print
 
 #### Switching commands
 
-Run one of these commands from the Fluidd or Mainsail console:
-
-```gcode
-SET_MOD PARAM=display VALUE=FEATHER
-SET_MOD PARAM=display VALUE=GUPPY
-SET_MOD PARAM=display VALUE=HEADLESS
-SET_MOD PARAM=display VALUE=STOCK
-```
+Use `SET_MOD PARAM=display VALUE=<mode>` in the Fluidd or Mainsail console,
+as shown in [Quick start](#quick-start). Valid modes are `FEATHER`, `GUPPY`,
+`HEADLESS`, and `STOCK`.
 
 Switching away from Stock stops the FlashForge companion services. As a result:
 
@@ -107,27 +100,16 @@ If the selected mode leaves the printer inaccessible:
 1. Boot through the [Dual Boot recovery route](DUAL_BOOT.md).
 2. Restore `STOCK` mode with the console or configuration script.
 
-From SSH or a recovery shell, the mode can also be changed directly:
-
-```sh
-# Enable Stock
-/opt/config/mod/.shell/commands/zdisplay.sh stock
-
-# Enable Feather
-/opt/config/mod/.shell/commands/zdisplay.sh feather
-
-# Enable Guppy
-/opt/config/mod/.shell/commands/zdisplay.sh guppy
-
-# Enable Headless
-/opt/config/mod/.shell/commands/zdisplay.sh headless
-```
-
-As a last resort, update the stored parameter:
+From SSH or a recovery shell, store the desired mode, then reboot while the
+printer is idle so the normal boot path applies it:
 
 ```sh
 /opt/config/mod/.shell/commands/zconf.sh /opt/config/mod_data/variables.cfg --set "display='STOCK'"
 ```
+
+Replace `STOCK` with `FEATHER`, `GUPPY`, or `HEADLESS` as needed. This command
+only updates the stored setting. Prefer `SET_MOD` during normal operation;
+calling `zdisplay.sh` alone does not update that setting.
 
 ### Extending Screen Functionality
 

@@ -2,7 +2,7 @@
 
 ## Supported installation envelope
 
-The documented target is Flashforge Adventurer 5M / 5M Pro stock firmware from 2.6.5 through tested 5.1.x releases, with at least 512 MB free in `/data` and 128 MB free in `/` ([`docs/INSTALL.md`](../../docs/INSTALL.md)). Do not generalize support beyond this documented range based on the common architecture alone.
+The documented target is Flashforge Adventurer 5M / 5M Pro stock firmware from 2.6.5 through the hardware-tested 5.1.7 release, with at least 512 MB free in `/data` and 128 MB free in `/` ([`docs/INSTALL.md`](../../docs/INSTALL.md)). Do not generalize support beyond this documented range based on the common architecture alone.
 
 Installation uses a FAT32 USB drive and an intact release archive named for the specific model. Follow the procedural source exactly: [`docs/INSTALL.md`](../../docs/INSTALL.md). Afterward, configure slicer G-code/host access and complete calibration before printing.
 
@@ -113,7 +113,7 @@ This path intentionally depends on kernel block metadata rather than partition-t
 1. **Preserve evidence:** do not delete install, boot, uninstall, or recovery logs. The root README calls this out because logs can make recovery possible.
 2. **Check the current mode:** determine whether a `SKIP_MOD` condition, failed mod boot, network setup in alternate mode, or a service failure is responsible.
 3. **Use the lowest-risk documented escape hatch:** the project offers dual boot/failsafe before destructive recovery.
-4. **Use the documented recovery ladder:** debug image, dry-run image, full recovery, uninstall image, factory image; only then consider UART/U-Boot/FEL work.
+4. **Use the documented recovery ladder:** debug image, dry-run image, full recovery, factory image (other removal paths are in `docs/UNINSTALL.md`); only then consider UART/U-Boot/FEL work.
 
 ## Dual boot, uninstall, and recovery
 

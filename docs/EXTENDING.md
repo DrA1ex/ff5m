@@ -30,7 +30,10 @@ Files in `mod_data` are kept when you update Forge-X. Make a copy with `TAR_BACK
 
 ## Add or override settings and macros (`user.cfg`)
 
-`user.cfg` is loaded **last**, after the Forge-X configuration and after the optional `tune_config` settings. Klipper merges sections that appear more than once:
+`user.cfg` is loaded after the Forge-X configuration and optional `tune_config`
+settings. Its generated `plugins.cfg` include is appended at the end, so package
+configuration can override options earlier in `user.cfg`. Klipper merges
+sections that appear more than once:
 
 - an option you write in `user.cfg` replaces the earlier value of the same option;
 - options you do not write keep their original values;
@@ -200,7 +203,11 @@ Put scripts in `mod_data` so they survive updates. Make them executable with `ch
 
 ## Your own startup services
 
-Forge-X starts every script named `S<number><name>` from `/etc/init.d` inside the Forge-X environment (the chroot) after its own services, and stops them in reverse order. The path over SSH is `/data/.mod/.forge-x/etc/init.d/`.
+Forge-X runs regular files named `S*` in the chroot's `/etc/init.d` with the
+`start` argument after starting its built-in services. Startup does not sort
+these files, so do not rely on numeric prefixes for dependency ordering. Shutdown
+stops built-in services first, then calls user scripts with `stop` in reverse
+filename order. The path over SSH is `/data/.mod/.forge-x/etc/init.d/`.
 
 ```sh
 #!/bin/sh

@@ -173,12 +173,15 @@ From the printer console, the same screenshots are collected with `_FEATHER_UI_T
 
 #### Optional: check the screenshots with a vision model
 
-If you have a local OpenAI-compatible server with a vision model (for example LM Studio), you can run a quick check of the collected screenshots for clipping, overlaps, blank frames, and layout problems:
+The runner does not send screenshots unless `--enable` is set. Without
+`--base-url` it uses the Codex backend. For a local OpenAI-compatible server
+(for example LM Studio), pass that server's URL:
 
 ```bash
 python3 -m tests.visual_checks.run \
   tests/artifacts/printer-runs/<timestamp>/suites/ui/<run-id> \
   --enable \
+  --base-url http://127.0.0.1:1234/v1 \
   --model <loaded-vision-model>
 ```
 

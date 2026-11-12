@@ -133,8 +133,9 @@ experiments rather than recommended project defaults.
 
 ## Files
 - `zsmalloc.ko`, `zram.ko` — built for the stock kernel, vermagic
-  `5.4.61 SMP preempt mod_unload ARMv7 p2v8`. The AD5M kernel is byte-identical
-  across stock firmware 2.6.5–5.1.x, so these load on every supported version.
+  `5.4.61 SMP preempt mod_unload ARMv7 p2v8`. The stock kernel is byte-identical
+  from stock firmware 3.1.3 through Pro 5.1.8 and 5M 5.1.9 (offline package
+  comparison); it was not compared for versions before 3.1.3.
 - `swapon_prio` — tiny static helper to `swapon` at an explicit priority
   (busybox `swapon` has no `-p`).
 

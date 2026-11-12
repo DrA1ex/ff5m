@@ -64,7 +64,9 @@ Feather is not an init service and neither is Typer. The long-lived owner is the
 display=FEATHER
   -> printer.cfg includes config/feather.cfg
   -> [feather_screen] loads the feather_screen Klipper extra
-  -> config load starts /root/printer_data/bin/typer
+  -> config load registers a reactor callback
+  -> the callback starts the TyperRenderWorker daemon thread
+  -> the worker creates the FIFOs and launches /root/printer_data/bin/typer
   -> Feather shows Klipper startup/recovery state
   -> Typer renders /dev/fb0 and transports touch events
 ```
@@ -540,7 +542,7 @@ Frame transport and per-frame camera controls are unchanged.
 | `feather/screen/controls.py` | Move, heat, filament, live Z adjustment, screws, and mesh workflows | Network child processes and renderer lifecycle |
 | `feather/features/ui_test.py`, `feather_ui_test/` | Lazy command facade plus one-run lifecycle, page/action sequencing, reversible printer/context fixtures, exact operation-context traces, framebuffer artifact worker, stale-run cleanup, and bounded `/data` retention | Normal Feather startup, Headless, persistent calibration saves, or renderer ownership |
 | `feather/calibration/z.py` | Idle Z-calibration state, formula, zone aggregation, pressure hysteresis, pages, motion, and exact mesh/runtime restoration | Live-print Z adjustment or unrestricted G-code |
-| `feather_ui.py` | Layout primitives, frame construction, FIFO and Typer child lifecycle, generation-tagged hitboxes | Klipper state decisions and printer commands |
+| `ui/layout.py`, `ui/renderer.py`, `ui/render_worker.py` | Layout primitives, frame construction, generation-tagged hitboxes; the render worker owns the FIFOs and the Typer child process | Klipper state decisions and printer commands |
 | `feather/control/joystick.py` | Touch normalization, ramps/braking, bounded motion queue planning | Rendering or direct touch-fd I/O |
 | `feather/settings/mod.py` | Mod-settings editor helpers | Persistence side effects |
 | `typer` | Framebuffer, batch parsing, hitboxes, touch-to-event transport | Klipper, Moonraker, G-code, or printer policy |
@@ -711,7 +713,7 @@ The update cycle remains at 1 Hz and the preview loader at 12.5 Hz.
 
 Primary implementation references in this repository:
 [`feather_screen.py`](../../.py/klipper/plugins/feather_screen.py),
-[`feather_ui.py`](../../.py/klipper/plugins/feather_ui.py), the published
+the [`ui`](../../.py/klipper/plugins/ui) package, the published
 [`typer`](../../.bin/exec/typer) runtime, and
 [`S35tslib`](../../.root/S35tslib). Native source development is maintained
 separately from the public runtime repository.

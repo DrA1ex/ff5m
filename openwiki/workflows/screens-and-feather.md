@@ -59,10 +59,11 @@ The feature consists of three repository-owned pieces:
 config/feather.cfg
   └─ [feather_screen] enables the Forge-X Klipper extension
        ├─ feather_screen.py owns pages, validation, and actions
-       ├─ feather_ui.py owns drawing and fixed 800x480 layout primitives
        ├─ feather/control/joystick.py owns touch normalization and motion ramps
-       │    ├─ draw FIFO /tmp/typer → typer → framebuffer
-       │    └─ event FIFO /tmp/feather-events ← tap or held-pointer actions
+       ├─ ui/ (layout.py, renderer.py) owns drawing and fixed 800x480 layout primitives
+       │    └─ ui/render_worker.py owns the FIFOs and the Typer child process
+       │         ├─ draw FIFO /tmp/typer → typer → framebuffer
+       │         └─ event FIFO /tmp/feather-events ← tap or held-pointer actions
        └─ /dev/input/fgx_touch ← ts_uinput ← physical touchscreen
 ```
 

@@ -1,33 +1,30 @@
-## Uninstall
+# Uninstall
 
 > [!CAUTION]
-> After uninstalling the mod, some printer parameters will revert to stock defaults. This can affect settings like Z-Offset, Mesh Bed Leveling, and others.
-> It is **strongly recommended** to review all settings and recalibrate the printer to avoid potential damage.
+> Back up your configuration before uninstalling. Removing Forge-X restores stock
+> settings, which can change Z offset and bed leveling. Review the settings and
+> recalibrate before printing to avoid damage or poor print quality.
 
-> [!WARNING]
-> Uninstalling the mod will remove all custom configurations and settings. If you plan to reinstall the mod later, consider using the `REMOVE_MOD_SOFT` option to preserve root access and configurations.
+Choose the removal mode, then use either method below:
 
-
-To remove the mod, you have several options:
+| Command or USB filename | Result |
+| --- | --- |
+| `REMOVE_MOD` | Remove Forge-X, its saved configuration, root access, and audio tools |
+| `REMOVE_MOD_SOFT` | Remove Forge-X while keeping root access, audio tools, and saved mod configuration for reinstallation |
 
 ### Run Macro via Fluidd/Mainsail
 
-Run the macro in Klipper's console:  
-- `REMOVE_MOD` to completely remove the mod.  
-- `REMOVE_MOD_SOFT` to remove the mod but preserve the root, audio, and internal mod's configuration (in case you want to install it again).  
-
-The mod will automatically reboot and uninstall itself.
+Run the selected command in the Klipper console. The printer reboots and
+uninstalls Forge-X during startup.
 
 ### Using USB Drive
 
-Format a USB drive to FAT32 and place an empty file in the root directory:  
-- Named `REMOVE_MOD` to completely remove the mod.  
-- Named `REMOVE_MOD_SOFT` to remove the mod but preserve the root, audio, and internal mod's configuration (in case you want to install it again).  
-
-Insert USB drive and reboot the printer. The mod will uninstall itself during boot.
+Place an empty file named `REMOVE_MOD` or `REMOVE_MOD_SOFT` in the root of a
+FAT32 USB drive. Insert it before rebooting the printer. Forge-X detects the
+file and uninstalls itself during startup.
 
 ## Flashing Factory Firmware  
-If you encounter uninstallation issues or firmware not working correctly after removing the mod, you **can** try to restore it by flashing the factory firmware.  
+If uninstallation fails or the stock firmware does not work afterward, follow the factory-firmware steps below.
 
 1. Download the Factory Image:   
    Open the [factory firmware release](https://github.com/DrA1ex/ff5m/releases/tag/factory) and download the file for your model: `Adventurer5M-<version>-Factory.tgz` for the 5M or `Adventurer5MPro-<version>-Factory.tgz` for the 5M Pro. Regular (non-factory) images are in the [stock firmware release](https://github.com/DrA1ex/ff5m/releases/tag/Stock).
@@ -40,4 +37,4 @@ If you encounter uninstallation issues or firmware not working correctly after r
 6. Your printer's firmware should be restored to the stock version.  
 7. Don't forget to review the settings (or reset them using the Screen) and recalibrate the printer if you are planning to use the stock firmware.  
 
-In **hard** cases, refer to the [Recovery Guide](/docs/RECOVERY.md) or join the [Telegram group](https://t.me/+ihE2Ry8kBNkwYzhi) to get help.  
+If the printer still cannot start, refer to the [Recovery Guide](/docs/RECOVERY.md) or join the [Telegram group](https://t.me/+ihE2Ry8kBNkwYzhi) to get help.

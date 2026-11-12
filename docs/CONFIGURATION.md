@@ -1,4 +1,4 @@
-## Mod Configuration
+# Mod Configuration
 
 The mod uses its own global configuration management system. The configuration file is located in Fluidd under Configuration -> mod_data -> variables.cfg.
 
@@ -25,7 +25,7 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`disable_priming`**: Disables nozzle cleaning by line if set to `1`.  
 
-- **`disable_screen_led`**: Allows the mod to control the screen LED if set to `1`.  
+- **`disable_screen_led`**: Gives Forge-X exclusive control of the chamber light if set to `1`; Stock-screen light controls no longer work.
 
 - **`display_eco`**: Dims the display after inactivity when set to `1` (default).
 
@@ -41,7 +41,11 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
   Restore Forge-X timing with `SET_MOD PARAM=tune_klipper VALUE=1`. Changing this setting restarts Klipper. Other Forge-X fixes remain active; this does not restore the complete stock Klipper behavior. See [Klipper fixes](KLIPPER.md#all-changes) for the timing values.
 
-- **`klipper_rt`**: Runs the Klipper host under real-time scheduling (`SCHED_RR`, priority 5) if set to `1`. Default `0` (off). On the dual-core T113, Klipper otherwise competes with Moonraker, the web UI and the camera for CPU and can be preempted long enough to fall behind feeding the MCU, causing *Timer too close* / MCU timeout underruns under load. With this enabled the klippy process and all its threads preempt normal tasks. Safe by design: the low priority plus the kernel RT throttle (95% of a core) prevents a runaway from locking the system. Targets CPU-contention underruns, not memory-pressure stalls.  
+- **`klipper_rt`**: Runs Klipper under real-time scheduling (`SCHED_RR`, priority 5).
+  Default `0` (off). Use it when CPU contention delays Klipper enough to cause
+  *Timer too close* or MCU timeouts. Kernel RT throttling depends on the running
+  kernel; this setting does not guarantee responsiveness or solve memory-pressure
+  stalls.
 
 - **`use_swap`**: Selects the swap backend.  
   - `OFF`: Disables swap.  
@@ -104,8 +108,9 @@ Use Fluidd or Mainsail for parameters that are not exposed on the touchscreen or
 
 ## Backup Management
 
-The mod includes a backup and restore system for the printer's configuration (`printer.base.cfg`). This is essential because stock firmware updates can alter critical parameters, such as `rotation_distance` for steppers, which may even lead to printer damage if not corrected.
-To prevent this, the mod provides a backup management system.
+The mod can back up selected settings from `printer.base.cfg` and restore them
+after a stock firmware update. Review the selection before backing up: restoring
+an incorrect motion value such as `rotation_distance` can damage the printer.
 
 ### Configuring Backup Parameters
 
@@ -142,18 +147,21 @@ The following macros control this functionality:
 
 #### Mod & Klipper configuration Backup & Restore
 
-To preserve all your custom parameters and configurations within the mod, you can create a full backup archive. This allows you to restore the mod to its last state, even if it has been completely removed.
+Use `TAR_BACKUP` to archive the configuration files and user plugin packages
+listed in [zbackup.sh](../.shell/commands/zbackup.sh). It is not a disk image or
+a backup of every file in `mod_data`. The archive includes SSH configuration and
+keys when present; keep it private.
 
 ##### Macro
-- **`TAR_BACKUP`**: Creates a `.tar` archive containing all printer and mod configuration files for easy storage, transfer, and restoration.
+- **`TAR_BACKUP`**: Creates a compressed `.tar.gz` archive of the selected configuration and user plugins.
 
 ##### Backup Process
 1. Run the `TAR_BACKUP` macro.
 2. Download the generated archive from:  
-   **Fluidd → Configuration → mod_data → `debug_<date>.tar.gz`**
+   **Fluidd → Configuration → mod_data → `backup_<YYYYMMDD_HHMMSS>.tar.gz`**
 
 ##### Restore Process
-1. Unpack the `.tar` archive on your computer.
+1. Unpack the `.tar.gz` archive on your computer.
 2. Drag and drop all extracted files as-is into:  
    **Fluidd → Configuration**
 3. Reboot the printer to apply the restored configuration.

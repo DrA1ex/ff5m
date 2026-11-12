@@ -76,7 +76,7 @@ Recovery images:
 - Dry Run: [Adventurer5M-3.x.x-2.2.3-recovery-dry](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.x.x-2.2.3-recovery-dry.tgz)
 - Full Recovery: [Adventurer5M-3.x.x-2.2.3-recovery-full.tgz](https://github.com/DrA1ex/ff5m/releases/download/1.2.0/Adventurer5M-3.x.x-2.2.3-recovery-full.tgz)
 
-If recovery doesn't work, try flashing the [Uninstall image](/docs/UNINSTALL.md#using-uninstall-image), and then the [Factory image](/docs/UNINSTALL.md#flashing-factory-firmware). In most cases, this should restore your printer's functionality.
+If recovery doesn't work, flash the [Factory image](/docs/UNINSTALL.md#flashing-factory-firmware). In most cases, this restores the printer's functionality. The other ways to remove the mod are in [Uninstall](/docs/UNINSTALL.md).
 
 
 ## Recovery using UART

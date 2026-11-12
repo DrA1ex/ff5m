@@ -1,4 +1,4 @@
-## Dual Boot and Recovery Menu
+# Dual Boot and Recovery Menu
 
 The mod provides an early recovery menu before its normal services start. You can use it to start the stock firmware, check system files, download or flash a recovery image, or enable SSH access.
 
@@ -18,13 +18,13 @@ REBOOT THE PRINTER NOW TO ENTER RECOVERY!
 
 Reboot during this message. On the next startup, the **Forge-X Recovery** menu opens.
 
-The menu offers:
+The menu offers (full description in [Forge-X Recovery Menu](RECOVERY.md#forge-x-recovery-menu)):
 
-- **Stock + SSH** — starts stock firmware without Forge-X services while preserving SSH access.
-- **Stock Only** — starts stock firmware without any Forge-X services, including recovery SSH.
-- **Firmware Images** — downloads Forge-X releases, stock and factory firmware, or file-recovery images into `/data/forge-x-recovery`. Downloaded images can be flashed after two confirmations. Use **Clear All Downloads** in this menu to remove every downloaded file. To remove only one file, delete it from `/data/forge-x-recovery` in Fluidd or Mainsail.
-- **Check System Files** — compares system files with the bundled MD5 list and offers the full recovery image if files are missing or changed.
-- **Network / SSH** — uses Ethernet or a visible saved Wi-Fi profile and can start an SSH-only recovery shell. Configure a new Wi-Fi password later in stock firmware if no saved network is available.
+- **Boot Options**: **Stock + SSH** starts stock firmware without Forge-X services while preserving SSH access; **Stock Only** starts stock firmware without any Forge-X services, including recovery SSH.
+- **System / Diagnostics**: **Check System Files** compares system files with the bundled MD5 list and offers the full recovery image if files are missing or changed; it also covers storage checks, cleanup, diagnostics, and hardware tuning.
+- **Firmware / Restore**: downloads Forge-X releases, stock and factory firmware, or file-recovery images into `/data/forge-x-recovery`. Downloaded images can be flashed after two confirmations. Use **Clear Downloads** under **Downloaded Images** to remove every downloaded file. To remove only one file, delete it from `/data/forge-x-recovery` in Fluidd or Mainsail.
+- **Backup / Reset**: creates a settings backup, resets the configuration, or uninstalls Forge-X (**Soft Uninstall** keeps root/SSH access and reusable Forge-X data; **Hard Uninstall** also removes Forge-X data and root/SSH access).
+- **Network / SSH**: uses Ethernet or a visible saved Wi-Fi profile and can start an SSH-only recovery shell. Configure a new Wi-Fi password later in stock firmware if no saved network is available.
 
 The release list includes stable and beta releases. Keep the printer powered on until any firmware installation reports that it has finished.
 
