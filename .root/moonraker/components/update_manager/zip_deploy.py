@@ -44,6 +44,7 @@ class ZipDeploy(AppDeploy):
             self._configure_managed_services(config)
         elif self.type == AppType.WEB:
             self.prefix = f"Web Client {self.name}: "
+        self.asset_name = config.get('asset_name', None)
         self.repo = config.get('repo').strip().strip("/")
         self.owner, self.project_name = self.repo.split("/", 1)
         self.persistent_files: List[str] = []
@@ -254,12 +255,26 @@ class ZipDeploy(AppDeploy):
         self.last_error = ""
         return result
 
+    def _select_release_asset(self, release: Dict[str, Any]) -> Dict[str, Any]:
+        assets = release.get('assets', [])
+        if self.asset_name is None:
+            return assets[0] if assets else {}
+        name = self.asset_name
+        matches = [asset for asset in assets if asset.get('name') == name]
+        if len(matches) != 1:
+            raise self.server.error(
+                f"{self.prefix}Expected one release asset named '{name}', "
+                f"found {len(matches)}"
+            )
+        return matches[0]
+
     async def _get_remote_version(self) -> None:
         result = await self._fetch_github_version()
         if not result:
             return
-        self.remote_version = result.get('name', "?")
-        release_asset: Dict[str, Any] = result.get('assets', [{}])[0]
+        version_key = 'tag_name' if self.asset_name is not None else 'name'
+        self.remote_version = result.get(version_key, "?")
+        release_asset = self._select_release_asset(result)
         dl_url: str = release_asset.get('browser_download_url', "?")
         content_type: str = release_asset.get('content_type', "?")
         size: int = release_asset.get('size', 0)
@@ -410,7 +425,7 @@ class ZipDeploy(AppDeploy):
         )
         if not result:
             raise self.server.error("Failed to retrieve release asset data")
-        release_asset: Dict[str, Any] = result.get('assets', [{}])[0]
+        release_asset = self._select_release_asset(result)
         dl_url: str = release_asset.get('browser_download_url', "?")
         content_type: str = release_asset.get('content_type', "?")
         size: int = release_asset.get('size', 0)
