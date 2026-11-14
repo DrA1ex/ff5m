@@ -2469,38 +2469,6 @@ class RendererStateTest(unittest.TestCase):
             self.assertFalse(renderer.send(["--batch text -t " + ("Я" * 4100)]))
         self.assertEqual(sent, [])
 
-    def test_toast_registers_dismiss_hitbox_in_overlay_layer(self):
-        renderer = FEATHER.FeatherRenderer()
-        renderer.begin_page("Home")
-        sent = RenderCapture(renderer).batches
-
-        renderer.toast("Saved")
-
-        drawing = "\n".join(sent[-1])
-        self.assertIn("--batch hitbox", drawing)
-        self.assertIn(
-            "--id 1:%s" % FEATHER.DismissToast().wire_id,
-            drawing,
-        )
-        self.assertIn("--layer overlay", drawing)
-
-    def test_replacing_toast_hides_old_surface_before_drawing_new_one(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.reactor = Reactor()
-        controller.renderer = mock.Mock()
-        controller.page = FEATHER.ScreenPage.IDLE_HOME
-        controller.print_state = FEATHER.PrintState.IDLE
-        controller.toast_until = 101.0
-        controller.toast_message = "Old"
-        controller._show_page = mock.Mock()
-
-        controller._toast("New")
-
-        controller._show_page.assert_called_once_with(FEATHER.ScreenPage.IDLE_HOME)
-        controller.renderer.toast.assert_called_once_with("New")
-        self.assertEqual(controller.toast_message, "New")
-        self.assertEqual(controller.toast_until, 102.0)
-
     def test_toast_touch_action_dismisses_before_normal_routing(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller._hide_toast = mock.Mock()
@@ -2508,18 +2476,6 @@ class RendererStateTest(unittest.TestCase):
         controller._handle_touch_action(FEATHER.DismissToast().wire_id)
 
         controller._hide_toast.assert_called_once_with()
-
-    def test_toast_hitbox_can_be_cleared_without_page_redraw(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        controller.renderer = mock.Mock()
-        controller.toast_until = 101.0
-        controller.toast_message = "Visible"
-
-        self.assertTrue(controller._hide_toast(redraw=False))
-
-        controller.renderer.clear_toast_hitbox.assert_called_once_with()
-        self.assertEqual(controller.toast_until, 0.0)
-        self.assertEqual(controller.toast_message, "")
 
     def test_render_batch_serialized_size_is_bounded(self):
         renderer = FEATHER.FeatherRenderer()

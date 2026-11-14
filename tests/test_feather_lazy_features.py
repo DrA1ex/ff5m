@@ -772,7 +772,7 @@ class ControllerFeatureRoutingTest(unittest.TestCase):
         controller.pending_action = None
         controller.command_depth = 0
         controller.busy_message = None
-        controller.toast_until = 0.0
+        controller.toast_until, controller.toast_message = 0.0, ""
         controller.boot_screen_held = False
         controller.touch_available = None
         controller.system_shutdown_active = False

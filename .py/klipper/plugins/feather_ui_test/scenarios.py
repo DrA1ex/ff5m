@@ -20,6 +20,7 @@ from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
 from feather.files import FileEntry
+from feather.screen.pagination import Pagination
 from timelapse_state import TimelapsePhase
 from ui import Button, StateStore, action_wire_id
 from . import memory
@@ -31,6 +32,9 @@ from .context_fixtures import (
 
 MOTION_STEP_TIMEOUT = 10.0
 MOTION_STEP_INTERVAL = 0.1
+# The printer's file scan and the preview tiles of one page: a few previews decoded on the file worker.
+FILE_LOAD_TIMEOUT = 15.0
+FILE_LOAD_INTERVAL = 0.1
 COMPONENT_CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,95}$")
 MAX_COMPONENT_CASE_BYTES = 32 * 1024
 MAX_COMPONENT_CASES = 64
@@ -289,10 +293,16 @@ class ScenarioCatalog:
         self._add_tap(steps, "nav.back", ScreenPage.MAIN_MENU,
                       label="ui-prompt-return-to-menu")
         self._add_tap(steps, "nav.files", ScreenPage.FILE_BROWSER)
+        # Opening the browser scans the files and the tiles load their previews on the file worker; the
+        # captures wait for both, or they show the loader or LOADING tiles instead of the browser.
+        self._add_wait(steps, "ui-files-scanned", lambda: not self.host.file_scan_loading,
+                       FILE_LOAD_TIMEOUT, FILE_LOAD_INTERVAL)
         self._add_render_capture(
             steps, "ui-files", lambda: self._render_file_view("list"))
-        self._add_render_capture(
-            steps, "ui-files-previews", lambda: self._render_file_view("tiles"))
+        self._add_call(steps, "ui-files-previews", lambda: self._render_file_view("tiles"))
+        self._add_wait(steps, "ui-files-previews-loaded", self._file_previews_loaded,
+                       FILE_LOAD_TIMEOUT, FILE_LOAD_INTERVAL)
+        self._add_capture(steps, "ui-files-previews")
         for label, callback in (
                 ("ui-files-loading", self._render_file_loading_snapshot),
                 ("ui-files-empty", self._render_empty_file_browser),
@@ -510,6 +520,9 @@ class ScenarioCatalog:
             steps, "ui-busy-notice", self._render_busy_notice)
         self._add_call(steps, "ui-busy-clear", self._clear_busy_notice)
         self._add_render_capture(steps, "ui-toast", self._render_toast)
+        # The test's toast has no expiry: it stays for a steady capture, so the suite hides it itself, or the next
+        # captures (the leak suite's second pass) still show it.
+        self._add_call(steps, "ui-toast-hide", lambda: self.host._hide_toast())
         self._add_call(steps, "ui-resume-timer", self._resume_ui_timer)
 
     def _add_operation_context_visuals(self, steps):
@@ -772,6 +785,12 @@ class ScenarioCatalog:
         self.host.file_view = view
         self.host.file_page = 0
         self.host._render_file_entries()
+
+    def _file_previews_loaded(self):
+        """Whether no tile of the shown page waits for its preview (a failed one shows NO PREVIEW)."""
+        host = self.host
+        visible = Pagination(host.file_entries, host.file_page, host._file_page_size()).visible
+        return all(host._file_tile_view(entry).content != "loading" for entry in visible)
 
     def _render_empty_file_browser(self):
         with _temporary_attributes(self.host, {
@@ -1275,7 +1294,7 @@ class ScenarioCatalog:
                 return "/data/OPERATION_CONTEXT_VISUAL_TEST.gcode"
 
             def get_status(self, _eventtime):
-                return {"progress": 0.42, "estimate_print_time": 1800.0}
+                return {"progress": 0.15, "estimate_print_time": 2800.0}
 
             def is_active(self):
                 return True
@@ -1300,6 +1319,12 @@ class ScenarioCatalog:
                     "position": (110.0, 110.0, 2.4, 0.0),
                 }),
                 "motion_report": None,
+                # A print past its start macro, measured from its beginning: 420 s of 2800 s is layer 12 of 80.
+                "start_print_macro": SimpleNamespace(variables={"print_started": True}),
+                "display_status": None,
+                "_m73_active": False,
+                "_progress_start": (0.0, 0.0),
+                "_progress_floor": 0.0,
                 "_operation_context_status":
                     lambda eventtime=None: operation,
         }):
@@ -1353,12 +1378,16 @@ class ScenarioCatalog:
                 else ScreenPage.FILAMENT_ACTION)
         materials = tuple(self.host.heating_materials)
         material = self.material or (materials[0] if materials else "PLA")
-        with _temporary_attributes(self.host, {
-                "extruder": SnapshotExtruder(),
-                "filament_material": material,
-                "_operation_context_status":
-                    lambda eventtime=None: operation,
-        }):
+        values = {
+            "extruder": SnapshotExtruder(),
+            "filament_material": material,
+            "_operation_context_status":
+                lambda eventtime=None: operation,
+        }
+        if state == "EXECUTING ACTION":
+            # A running load, unload or purge covers the page with the loader (_run_blocking_gcode).
+            values.update({"busy_message": "LOAD FILAMENT...", "busy_phase": 0})
+        with _temporary_attributes(self.host, values):
             self._show(page)
 
     def _render_operation_cold_pull_snapshot(self, operation, state):

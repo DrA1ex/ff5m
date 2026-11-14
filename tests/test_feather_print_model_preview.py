@@ -51,7 +51,7 @@ class LiveController(Controller, PrintingPagesMixin):
         self.pending_action, self.command_depth, self.debug = None, 0, False
         self.joystick_suppressed = None
         self.joystick = mock.Mock()
-        for name in ("_run_script", "_run_immediate_command", "_toast", "_cancel_file_preview",
+        for name in ("_run_script", "_run_immediate_command", "_toast", "_hide_toast", "_cancel_file_preview",
                      "_cancel_gcode_preview", "_apply_safety_visibility", "_notify_features", "_show_print_result"):
             setattr(self, name, mock.Mock())
         self._wake_if_dimmed = mock.Mock(return_value=False)

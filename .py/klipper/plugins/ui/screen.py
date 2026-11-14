@@ -53,6 +53,19 @@ class _Recorded(Node):
         self.commands = None
 
 
+class _Toast(ImperativeSurface):
+    """The screen's toast (ScreenRoot.show_toast): the renderer's toast drawing of
+    its message in its box."""
+
+    def __init__(self, message, box):
+        super().__init__()
+        self.message = message
+        self.box = box
+
+    def render(self, renderer, state, layout):
+        return renderer.toast_commands(self.message, self.box)
+
+
 class _PageSlot(Overlay):
     """The place of a declarative page in the screen tree: its header (with a
     title) under the page's root, placed at the page's bounds.
@@ -181,7 +194,8 @@ class ScreenRoot:
     (_record), on the reactor until such nodes are native. The renderer's
     footer is a persisting layer of that tree, between the content and the
     layers, while it shows and its strip lies in the screen; the content is
-    then sized above it.
+    then sized above it. The renderer's toast is the tree's top layer
+    (show_toast).
     """
 
     def __init__(self, renderer, content, bounds, page_id, select_content=None, write_content=None):
@@ -237,6 +251,8 @@ class ScreenRoot:
         # That slot while the last placement (_place_footer) left it in the tree and uncovered: until the next
         # one, the footer's values alone change it (chrome_changed).
         self._footer_shown = None
+        # The toast (show_toast): the tree's top layer, over the product's layers but not one of them.
+        self._toast = None
         self.replace_content(content)
         renderer.configure_frame_owner(self)
 
@@ -266,6 +282,28 @@ class ScreenRoot:
         if layer not in self.layers or layer.suspended == bool(suspended):
             return False
         layer.suspended = bool(suspended)
+        self._rebuild = True
+        if paint:
+            self.paint()
+        return True
+
+    def show_toast(self, message, box):
+        """Show message in box (x, y, width, height) as the screen's toast, in place
+        of the one it shows: a layer over the content and every other layer, drawn
+        by the renderer's toast_commands. It is none of the product's layers
+        (layers, visible_layers), so it changes no dialog's place and takes no
+        input but its own."""
+        if self._toast is not None and (self._toast.node.message, self._toast.node.box) == (message, box):
+            return True
+        self._toast = ScreenLayer(_Toast(message, box))
+        self._rebuild = True
+        return self.paint()
+
+    def hide_toast(self, paint=True):
+        """Remove the toast; False when none shows."""
+        if self._toast is None:
+            return False
+        self._toast = None
         self._rebuild = True
         if paint:
             self.paint()
@@ -489,7 +527,13 @@ class ScreenRoot:
         node = self._recorded.get(layer)
         page = layer.node
         if not isinstance(page, DeclarativePage):
-            return node or _Recorded()
+            if node is None:
+                node = _Recorded()
+                if isinstance(page, _Toast):
+                    # At its box, so that the content's repaints beneath draw it again only where they meet it.
+                    x, y, width, height = page.box
+                    node.offset(x - self.bounds.x, y - self.bounds.y).size(width, height)
+            return node
         keeps = resolve(getattr(page.root, "preserve_header_action", False), page.state)
         header_action = getattr(self.renderer, "_header_action", None) if keeps else None
         if isinstance(node, _LayerSlot) and node.header_action == header_action:
@@ -511,7 +555,7 @@ class ScreenRoot:
         try:
             self._write_inside()
             shown = self._shown
-            sources, changed = self._screen_layers(layers)
+            sources, changed = self._screen_layers(layers + ((self._toast,) if self._toast is not None else ()))
             slot = sources[0][1] if isinstance(sources[0][1], _PageSlot) else None
             if slot is not None:
                 slot.apply_header(self.renderer)
@@ -746,8 +790,8 @@ class ScreenRoot:
     def submit(self, commands, **metadata):
         """Admit a legacy page delta or repaint its surrounding composition (also
         when the footer joins the screen or has values to draw: a delta draws
-        neither)."""
-        if (self._rebuild or self._paint_again or self.visible_layers
+        neither; and under the toast, which a delta would draw over)."""
+        if (self._rebuild or self._paint_again or self.visible_layers or self._toast is not None
                 or any(not layer.suspended for layer in self.layers)
                 or not getattr(self.content, "accepts_deltas", False) or self._footer_joins()
                 or (self._held_footer() is not None and self.renderer.footer_chrome.pending)):

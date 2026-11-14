@@ -706,8 +706,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.operation_cancel_target_name = None
         self.operation_cancel_target_mode = None
         self.busy_message = None
-        self.toast_until = 0.0
-        self.toast_message = ""
+        self._hide_toast(redraw=False)
         self._prompt_draft = None
         self._clear_dialogs()
         wait = getattr(self, "temperature_wait", None)
@@ -1418,11 +1417,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         if getattr(getattr(self, "renderer", None), "output_frozen", False):
             return
         self._cancel_file_preview()
-        # A complete surface repaint removes every visual toast and commits a
-        # cleared overlay hitbox layer, so its controller state must not outlive
-        # that surface generation.
-        self.toast_until = 0.0
-        self.toast_message = ""
+        # A toast belongs to the page it was shown over; the page's paint below draws the screen without it.
+        self._hide_toast(redraw=False)
         manager = getattr(self, "feature_manager", None)
         feature = None
         if manager is not None and manager.owner_name(page) is not None:
@@ -2070,29 +2066,20 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                     self._show_page(page)
 
     def _hide_toast(self, redraw=True):
+        """Hide the toast: the screen draws what lies beneath it, or, without
+        redraw, the caller's next paint does. The renderer's screen owns whether
+        one shows (a UI test shows one with no expiry), so it is always asked."""
         active = bool(self.toast_until or self.toast_message)
         self.toast_until = 0.0
         self.toast_message = ""
-        if not active:
-            return False
-
-        if (redraw
-                and getattr(self, "print_state", None) != PrintState.DESTROYED
-                and getattr(self, "page", None) is not None):
-            # TODO: Render toasts as transient visual overlays and restore only
-            # their dirty rectangle from the base backbuffer instead of
-            # redrawing the page.
-            self._show_page(self.page)
-        else:
-            clear_hitbox = getattr(
-                getattr(self, "renderer", None), "clear_toast_hitbox", None)
-            if clear_hitbox is not None:
-                clear_hitbox()
-        return True
+        renderer = getattr(self, "renderer", None)
+        if renderer is None:
+            return active
+        paint = redraw and getattr(self, "print_state", None) != PrintState.DESTROYED
+        return renderer.hide_toast(paint=paint) or active
 
     def _toast(self, message):
-        if self.toast_until or self.toast_message:
-            self._hide_toast()
+        # The screen shows the new toast in place of the old one.
         self.toast_until = self.reactor.monotonic() + 2.0
         self.toast_message = str(message)
         self.renderer.toast(self.toast_message)

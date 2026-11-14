@@ -825,10 +825,9 @@ class FeatherControlsMixin:
                                       self.reactor.monotonic() + 0.1)
 
     def _refresh_heat_after_action(self, eventtime):
+        # The toast the action showed stays over the page's new frame.
         if self.page == ScreenPage.CONTROL_HEAT:
             self._render_screen()
-        if self.toast_until > eventtime:
-            self.renderer.toast(self.toast_message)
 
     @staticmethod
     def _clamp_heater_target(target, heater, default_max):

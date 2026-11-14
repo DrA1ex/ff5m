@@ -133,6 +133,12 @@ BUSY_NOTICE_X = 622
 BUSY_NOTICE_Y = 9
 BUSY_NOTICE_WIDTH = 160
 BUSY_NOTICE_HEIGHT = 38
+# The toast's hint box: centered on the screen, its bottom 8 px above the content's.
+TOAST_CENTER_X = SCREEN_WIDTH // 2
+TOAST_HEIGHT = 44
+TOAST_MIN_WIDTH = 180
+TOAST_MAX_WIDTH = 740
+TOAST_FONT = "JetBrainsMono 8pt"
 # What one send() may carry: one transaction must hold the largest frame the
 # screen shows, a full 800x480 picture at 4 bits per pixel (192,000 bytes, as
 # bands of at most MAX_ATOMIC_DRAW) with a page around it. It only checks a
@@ -1620,25 +1626,34 @@ class FeatherRenderer(RendererBase):
             return False
 
     def toast(self, message):
-        height = 44
-        y = CONTENT_BOTTOM - height - 8
+        """Show message as the screen's toast until hide_toast(): a one-line hint
+        near the content's bottom over everything else, whose tap reports
+        DismissToast. The frame owner's screen draws it as its top layer
+        (ScreenRoot.show_toast), so the page's later frames keep it; nothing
+        shows while output is frozen."""
+        owner = self._frame_owner
+        if owner is None or self._output_frozen:
+            return False
+        message = str(message)
         _label, _font, _available, x, width = self._hint_box_geometry(
-            message, 400, 740, 180, "JetBrainsMono 8pt")
-        commands = self.hint_box(
-            message, 400, y, max_width=740, min_width=180, height=height,
-            border=ThemeColor.SECONDARY, background=ThemeColor.BACKGROUND,
-            font="JetBrainsMono 8pt")
-        commands.append(self.overlay_hitbox(
-            DismissToast(), x, y, width, height))
-        self.prioritize_next_batch("state", "toast")
-        self.send(commands)
+            message, TOAST_CENTER_X, TOAST_MAX_WIDTH, TOAST_MIN_WIDTH, TOAST_FONT)
+        return owner.show_toast(message, (x, CONTENT_BOTTOM - TOAST_HEIGHT - 8, width, TOAST_HEIGHT))
 
-    def clear_toast_hitbox(self):
-        if not self._prepare_surface():
-            return
-        self._overlay_hitboxes = []
-        self.prioritize_next_batch("state", "toast-hitbox")
-        self.send([self.clear_hitboxes("overlay")])
+    def hide_toast(self, paint=True):
+        """Hide the toast toast() showed: the frame shows what lies beneath it.
+        Without paint, the owner's next paint draws that."""
+        owner = self._frame_owner
+        return owner is not None and owner.hide_toast(paint=paint)
+
+    def toast_commands(self, message, box):
+        """The toast's drawing in its box (x, y, width, height), as toast() placed
+        it: the hint box and the dismiss region over it."""
+        x, y, width, height = box
+        commands = self.hint_box(
+            message, TOAST_CENTER_X, y, max_width=TOAST_MAX_WIDTH, min_width=TOAST_MIN_WIDTH, height=height,
+            border=ThemeColor.SECONDARY, background=ThemeColor.BACKGROUND, font=TOAST_FONT)
+        commands.append(self.overlay_hitbox(DismissToast(), x, y, width, height))
+        return commands
 
     def _header_drawn(self):
         """Whether the frame owner's tree draws the header (a page's slot), which

@@ -74,6 +74,8 @@ class ScenarioController(FeatherZCalibrationMixin,
     timelapse_state = make_timelapse_state()
     touch_available = None
     system_shutdown_active = False
+    toast_until = 0.0
+    toast_message = ""
 
 
 class BedMeshState(StatusObject):

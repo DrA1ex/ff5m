@@ -13,6 +13,7 @@ from tests.feather_typer_loop import TyperLoop, wait_for
 from feather_ui_test import runner as UI_TEST
 
 from feather.previews import PREVIEW_MASK_SIZE
+from ff5m_ui import file_browser as file_browser_ui
 from ff5m_ui.file_browser import TILE_HEIGHT, TILE_WIDTH, TILE_X, TILE_Y
 from ui.theme import ThemeRole
 
@@ -131,6 +132,34 @@ class FileBrowserOnTheLoopTest(unittest.TestCase):
         self.assertEqual(list(drawn[:2]), expected)
         self.assertTrue(any(getattr(command, "payload", None) == mask(0x3c) for command in drawn))
 
+
+    def test_the_ui_test_captures_the_browser_once_its_scan_and_previews_are_in(self):
+        controller, typer = self.browser("list")
+        del controller.file_entry_cache["internal"]
+        steps = UI_TEST.ScenarioCatalog(UI_TEST.UITestRun(controller)).build_steps("UI")
+        labels = [step["label"] for step in steps]
+        scanned = steps[labels.index("ui-files-scanned")]
+        loaded = steps[labels.index("ui-files-previews-loaded")]
+        show_tiles = next(step for step in steps if step["label"] == "ui-files-previews" and step["kind"] == "call")
+        # Each wait comes before the capture it guards.
+        self.assertLess(labels.index("ui-files-scanned"), labels.index("ui-files"))
+        following = steps[labels.index("ui-files-previews-loaded") + 1]
+        self.assertEqual((following["kind"], following["label"]), ("capture", "ui-files-previews"))
+
+        controller._show_page(FEATHER.ScreenPage.FILE_BROWSER)
+        self.assertFalse(scanned["predicate"]())
+        controller.file_worker.callbacks[-1](entries(4), None)
+        self.assertTrue(scanned["predicate"]())
+
+        show_tiles["callback"]()
+        self.assertTrue(typer.drew("LOADING..."))
+        self.assertFalse(loaded["predicate"]())
+        # The tiles of the first page load one at a time; a preview that fails shows NO PREVIEW, which is loaded too.
+        controller.file_worker.callbacks[-1](None, RuntimeError("no thumbnail"))
+        self.assertFalse(loaded["predicate"]())
+        for _tile in range(len(file_browser_ui.TILES) - 1):
+            self.preview_done(controller, 0x0f)
+        self.assertTrue(loaded["predicate"]())
 
 if __name__ == "__main__":
     unittest.main()

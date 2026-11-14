@@ -15,7 +15,7 @@ from tests.test_feather_screen import FEATHER, GCodeRecorder, Reactor, StatusObj
 from tests.test_feather_screen_controller import ScenarioController
 from ff5m_ui import state_screens as state_ui
 from tests.feather_render_test_helper import prompt_wire, refresh_prompt, shown_actions, touchable_actions
-from tests.feather_typer_loop import TyperLoop
+from tests.feather_typer_loop import TyperLoop, wait_for
 from tests.feather_exclude_test_helper import make_screen, tap
 from feather.screen.pages.exclude_objects import object_action
 from ff5m_ui.move import runtime as MOVE_UI
@@ -26,7 +26,7 @@ from ff5m_ui.print_state import PrintState
 from ff5m_ui.shaper.actions import ShaperAction
 from ff5m_ui.z_offset import actions as Z_ACTIONS
 from ff5m_ui.z_offset import runtime as Z_OFFSET_PAGES
-from ui.actions import SetValue
+from ui.actions import DismissToast, SetValue
 from ui.render_receipts import RenderReceipt
 from ui.components import Component
 from ui.layout import PageTree
@@ -272,6 +272,79 @@ class ScreenLoopTest(unittest.TestCase):
             controller._render_screen()
             self.assertTrue(typer.drew("215"))
             typer.take(lambda events: False, timeout=0.2)
+
+    def test_the_ui_test_toast_is_gone_before_the_next_capture(self):
+        from feather_ui_test import runner as UI_TEST
+
+        controller = home_controller()
+        controller.print_state = PrintState.IDLE
+        typer = TyperLoop(controller.renderer)
+        self.addCleanup(typer.close)
+        typer.start()
+        steps = {step["label"]: step for step in
+                 UI_TEST.ScenarioCatalog(UI_TEST.UITestRun(controller)).build_steps("UI") if step["kind"] == "call"}
+        dismiss = DismissToast().wire_id
+
+        controller._render_screen()
+        root = controller._screen_root
+        self.assertTrue(typer.drew("192.168.2.124"))
+        steps["ui-toast"]["callback"]()
+        self.assertTrue(typer.drew("SETTINGS UPDATED"))
+        self.assertTrue(wait_for(lambda: dismiss in shown_actions(root)))
+
+        steps["ui-toast-hide"]["callback"]()
+        self.assertTrue(wait_for(lambda: dismiss not in shown_actions(root)))
+        self.assertTrue(typer.drew("192.168.2.124"))
+        self.assertFalse(any("SETTINGS UPDATED" in str(getattr(command, "command", command))
+                             for command in typer.history()[-1]))
+
+    def test_a_toast_shows_over_home_until_it_expires_or_is_tapped(self):
+        controller = home_controller()
+        controller.print_state = PrintState.IDLE
+        controller.last_action_time = controller.last_touch_time = 0
+        controller.pending_action, controller.dimmed = None, False
+        typer = TyperLoop(controller.renderer)
+        self.addCleanup(typer.close)
+        typer.start()
+        dismiss = DismissToast().wire_id
+
+        def last_frame_shows(text):
+            return any(text in str(getattr(command, "command", command)) for command in typer.history()[-1])
+
+        with self.assertNoLogs(level="WARNING"):
+            controller._render_screen()
+            root = controller._screen_root
+            self.assertTrue(typer.drew("192.168.2.124"))
+            for hide in ("expiry", "tap", "page"):
+                with self.subTest(hide=hide):
+                    controller._toast("Load filament")
+                    self.assertTrue(typer.drew("LOAD FILAMENT"))
+                    # A new toast takes the old one's place.
+                    controller._toast("Fan: 50%")
+                    self.assertTrue(typer.drew("FAN: 50%"))
+                    self.assertFalse(last_frame_shows("LOAD FILAMENT"))
+                    self.assertTrue(wait_for(lambda: dismiss in shown_actions(root)))
+                    # The page's own update keeps the toast over it.
+                    controller.extruder.status["temperature"] += 1.0
+                    controller._render_screen()
+                    self.assertTrue(typer.drew("%.0f" % controller.extruder.status["temperature"]))
+                    typer.take(lambda events: False, timeout=0.1)
+                    self.assertIn(dismiss, shown_actions(root))
+
+                    if hide == "expiry":
+                        controller.reactor.now = controller.toast_until
+                        controller._hide_toast()
+                    elif hide == "page":
+                        controller._show_page(FEATHER.ScreenPage.IDLE_HOME)
+                    else:
+                        controller.reactor.now += 1
+                        typer.tell("tap %s" % typer.wire(dismiss))
+                        self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
+                                                 or not controller.toast_message))
+                    self.assertTrue(wait_for(lambda: dismiss not in shown_actions(root)))
+                    self.assertTrue(typer.drew("192.168.2.124"))
+                    self.assertFalse(last_frame_shows("FAN: 50%"))
+                    self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
 
     def test_the_loop_draws_the_filament_material_page(self):
         controller = home_controller()

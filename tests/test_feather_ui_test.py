@@ -3876,5 +3876,49 @@ class LeakSuiteTest(unittest.TestCase):
         self.assertEqual(record["grown"], {})
 
 
+class OperationContextScreensTest(unittest.TestCase):
+    """The operation-context captures put the real screen in the state the label names."""
+
+    def setUp(self):
+        from tests.test_feather_screen_loop import home_controller
+
+        self.host = home_controller()
+        self.host.extruder.heater = object()
+        self.host.heating_materials = ("PLA",)
+        self.scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": self.host, "material": None})())
+
+    def render(self, context_type, state, observe):
+        specification = next(item for item in CONTEXT_FIXTURES.VISUAL_CONTEXTS if item["type"] == context_type)
+        operation = self.scenarios._operation_context_snapshot(specification, state)
+        seen = []
+        self.scenarios._show = lambda page, content=None: seen.append((page, observe()))
+        if context_type == "filament":
+            self.scenarios._render_operation_filament(operation, state)
+        else:
+            self.scenarios._render_operation_print(operation, specification["surface"], state)
+        return seen[0]
+
+    def test_an_executing_filament_action_shows_the_loader_a_running_action_shows(self):
+        page, covering = self.render("filament", "EXECUTING ACTION", self.host._state_screen)
+
+        self.assertEqual(page, FEATHER.ScreenPage.FILAMENT_ACTION)
+        self.assertEqual(covering.title, state_ui.LOADER_TITLE)
+        self.assertEqual(covering.values[state_ui.LoaderState.MESSAGE], "LOAD FILAMENT...")
+        self.assertIsNone(getattr(self.host, "busy_message", None))
+        self.assertIsNone(self.render("filament", "SELECT ACTION", self.host._state_screen)[1])
+
+    def test_the_printing_context_shows_the_progress_of_a_started_print(self):
+        # On the printer the start macro of the idle printer has not started a print.
+        self.host.start_print_macro = type("Macro", (), {"variables": {"print_started": False}})()
+
+        page, (progress, (elapsed, remaining, layer, height)) = self.render(
+            "print", "PRINTING", lambda: self.host._current_print_progress_values(0.0))
+
+        self.assertEqual(page, FEATHER.ScreenPage.PRINTING)
+        # Layer 12 of 80 is 15 %, and the progress agrees with it.
+        self.assertEqual((progress, layer), (15, "12 / 80"))
+        self.assertFalse(self.host.start_print_macro.variables["print_started"])
+
+
 if __name__ == "__main__":
     unittest.main()
