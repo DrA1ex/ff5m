@@ -6,15 +6,19 @@
 
 import pathlib
 import shlex
+import sys
 import unittest
 
-from tests.gcode_macro_harness import load_macro, render_macro
-from ff5m_ui import dialogs as dialog_ui
-from tests.feather_render_test_helper import RenderCapture, press, refresh_prompt
-from tests.test_feather_screen import (
+PLUGINS = pathlib.Path(__file__).parents[1] / ".py" / "klipper" / "plugins"
+sys.path.insert(0, str(PLUGINS))
+
+from tests.gcode_macro_harness import load_macro, render_macro  # noqa: E402
+from ff5m_ui import dialogs as dialog_ui  # noqa: E402
+from tests.feather_render_test_helper import RenderCapture, press, refresh_prompt  # noqa: E402
+from tests.test_feather_screen import (  # noqa: E402
     FEATHER, GCodeRecorder, Reactor, StatusObject, blank_page,
 )
-from ui.font_metrics import get_font_metrics
+from ui.font_metrics import get_font_metrics  # noqa: E402
 
 
 MATERIAL = pathlib.Path(__file__).parents[1] / "config/material.cfg"

@@ -637,10 +637,25 @@ class ReopenedPagesTest(unittest.TestCase):
         controller.last_action_time = -100.0
         self.catalog = ScenarioCatalog(runner.UITestRun(controller))
         self.settings = controller.feature_manager.get("settings")
+        self.receipts = 0
+
+    def presented(self):
+        """Waits until Typer presents everything drawn so far. The loop snapshots the screen only between write
+        transactions, so a state replaced before its frame is never snapshotted: the item nodes a list keeps for
+        reuse hold an image only if a frame showed them, which would make the count depend on the loop's timing."""
+        from ui.render_receipts import RenderReceipt
+
+        self.receipts += 1
+        token = "presented-%d" % self.receipts
+        self.assertTrue(self.controller.renderer.request_presented_receipt(token))
+        events = self.typer.take(lambda events: any(
+            isinstance(event, RenderReceipt) and event.token == token for event in events))
+        self.assertTrue(any(isinstance(event, RenderReceipt) and event.token == token for event in events))
 
     def show_mod_page(self, index):
         self.settings.mod_page = index
         self.catalog._show(feather_screen.ScreenPage.MOD_SETTINGS)
+        self.presented()
 
     def home(self):
         self.catalog._show(feather_screen.ScreenPage.IDLE_HOME)
@@ -661,7 +676,9 @@ class ReopenedPagesTest(unittest.TestCase):
             for index in pages:
                 self.show_mod_page(index)
             self.catalog._render_parameter_options(disabled_page=True)
+            self.presented()
             self.catalog._render_parameter_options()
+            self.presented()
             self.home()
 
         forward()

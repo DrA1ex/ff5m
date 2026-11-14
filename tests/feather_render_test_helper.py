@@ -6,13 +6,18 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import pathlib
 import shlex
+import sys
 from unittest import mock
 
 from types import SimpleNamespace
 
-from ui.engine import CommandBatch, FrameLoop
-from ui.renderer import MAX_ATOMIC_DRAW, MAX_BATCH_BYTES, BinaryCommand, FeatherRenderer, Hitbox
+PLUGINS = pathlib.Path(__file__).parents[1] / ".py" / "klipper" / "plugins"
+sys.path.insert(0, str(PLUGINS))
+
+from ui.engine import CommandBatch, FrameLoop  # noqa: E402
+from ui.renderer import MAX_ATOMIC_DRAW, MAX_BATCH_BYTES, BinaryCommand, FeatherRenderer, Hitbox  # noqa: E402
 
 
 @dataclass(frozen=True)
