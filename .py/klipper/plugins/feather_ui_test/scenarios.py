@@ -21,7 +21,7 @@ from ff5m_ui.move import actions as move_actions
 from ff5m_ui.z_offset import actions as z_actions
 from feather.files import FileEntry
 from timelapse_state import TimelapsePhase
-from ui import StateStore
+from ui import Button, StateStore, action_wire_id
 from . import memory
 from . import shaper_visuals
 from .context_fixtures import (
@@ -1864,9 +1864,41 @@ class ScenarioCatalog:
             "page": page, "label": "prompt-%s" % button_label,
         })
 
+    def shown_regions(self):
+        """The input regions Typer holds of the screen, in order (a later one wins): (action, x, y, width, height,
+        continuous, layer). A page the frame loop draws is only here; the renderer's painters register just what
+        they paint themselves."""
+        owner = self.host.renderer._frame_owner
+        shown = owner.shown_input() if owner is not None else None
+        if shown is None:
+            return tuple(
+                (region.action, region.x, region.y, region.width, region.height, region.continuous, region.layer)
+                for region in self.host.renderer.hitboxes)
+        return tuple((*region[:6], layer) for layer in ("base", "overlay") for region in shown[layer])
+
+    def shown_buttons(self):
+        """The visible screen's buttons by logical action, each with bounds, label and state: the painters' buttons,
+        and the Button nodes of the screen's tree that Typer holds input for (a declarative page's buttons have no
+        other record, and the input regions carry no label)."""
+        renderer = self.host.renderer
+        buttons = {
+            str(action): {"x": spec[0], "y": spec[1], "width": spec[2], "height": spec[3],
+                          "label": str(spec[4]), "state": str(spec[5])}
+            for action, spec in renderer._visible_input("_buttons").items()}
+        bounds = {region[0]: region[1:5] for region in self.shown_regions()}
+        for node in self.host._ensure_screen_root()._screen_tree.walk():
+            if not isinstance(node, Button) or node.action is None:
+                continue
+            action = action_wire_id(node.action)
+            if action in bounds and action not in buttons:
+                x, y, width, height = bounds[action]
+                buttons[action] = {"x": x, "y": y, "width": width, "height": height,
+                                   "label": str(node.label), "state": str(node.state)}
+        return buttons
+
     def _action_for_label(self, label):
-        matches = [action for action, spec in self.host.renderer._buttons.items()
-                   if str(spec[4]).upper() == str(label).upper()]
+        matches = [action for action, button in self.shown_buttons().items()
+                   if button["label"].upper() == str(label).upper()]
         if len(matches) != 1:
             raise RuntimeError(
                 "Expected one button labelled %s, found %d" %

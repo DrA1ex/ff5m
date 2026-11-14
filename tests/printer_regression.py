@@ -24,7 +24,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 from tests import printer_report
 from tests.visual_checks import hybrid
@@ -567,15 +569,46 @@ class PrinterRunClient:
         value = self.connection.request_json("GET", "/server/webcams/list")
         result = value.get("result", value)
         webcams = result.get("webcams", []) if isinstance(result, dict) else []
-        for camera in webcams:
+        cameras = [
+            camera for camera in webcams
             if (isinstance(camera, dict) and camera.get("enabled", False)
-                    and str(camera.get("stream_url") or "").strip()):
-                return {
-                    "url": resolve_camera_url(
-                        self.connection, camera.get("stream_url")),
-                    "metadata": camera_metadata(camera),
-                }
-        return None
+                and camera.get("name") != "4gx_screen"
+                and camera.get("service") != "iframe"
+                and str(camera.get("stream_url") or "").strip())
+        ]
+        if not cameras:
+            return None
+
+        camera = next((item for item in cameras
+                       if item.get("name") == "4gx_camera"), cameras[0])
+        return {
+            "url": resolve_camera_url(self.connection, camera.get("stream_url")),
+            "metadata": camera_metadata(camera),
+        }
+
+    def discover_screen(self):
+        value = self.connection.request_json("GET", "/server/webcams/list")
+        result = value.get("result", value)
+        webcams = result.get("webcams", []) if isinstance(result, dict) else []
+        for screen in webcams:
+            if (isinstance(screen, dict)
+                    and screen.get("name") == "4gx_screen"
+                    and screen.get("enabled", False)
+                    and str(screen.get("snapshot_url") or "").strip()):
+                return resolve_camera_url(self.connection, screen["snapshot_url"])
+        raise RegressionError("no enabled 4gx_screen snapshot URL was available")
+
+    def screen_snapshot(self, url):
+        request = urllib.request.Request(url, headers={"Accept": "image/jpeg"})
+        try:
+            with self.connection.requester(request, timeout=2.0) as response:
+                data = response.read(4 * 1024 * 1024 + 1)
+        except (OSError, urllib.error.URLError) as exc:
+            raise RegressionError("screen streamer snapshot is unavailable") from exc
+        if (len(data) > 4 * 1024 * 1024
+                or not data.startswith(b"\xff\xd8") or not data.endswith(b"\xff\xd9")):
+            raise RegressionError("screen streamer returned an invalid JPEG snapshot")
+        return data
 
     def telemetry_snapshot(self):
         value = self.connection.request_json(
@@ -587,13 +620,15 @@ class PrinterRunClient:
                 "printer telemetry status is incomplete")
         return status
 
-    def launch(self, spec, material=None, screen_capture_interval=0.0,
-               start_timeout=20):
+    def launch(self, spec, material=None, start_timeout=20):
         if self._ui_test_running():
             raise RegressionError("another Feather UI test is active")
         command = "_FEATHER_UI_TEST ACTION=RUN SUITE=%s CONFIRM=%d" % (
             spec["printer_suite"], spec["confirm"])
-        command += " CAPTURE_INTERVAL=%g" % float(screen_capture_interval)
+        # The printer takes the steps' and operation stages' captures itself, as JPEGs from its screen streamer,
+        # in step with the screen and with their hitboxes. Only the periodic timeline is taken here, from the same
+        # streamer.
+        command += " CAPTURE=1 CAPTURE_INTERVAL=0"
         if material and spec["printer_suite"] in MATERIAL_SUITES:
             if not SAFE_MATERIAL.match(material):
                 raise RegressionError("material name contains unsafe characters")
@@ -622,7 +657,8 @@ class PrinterRunClient:
         raise RegressionError("printer did not publish the launched run id")
 
     def wait(self, marker, timeout, run_state=None, events_alive=None,
-             camera_alive=None, progress=None, abort_grace=60):
+             camera_alive=None, progress=None, abort_grace=60,
+             screen_capture=None):
         run_id, _directory = _safe_remote_run(marker)
         started = self.clock()
         deadline = started + float(timeout)
@@ -651,6 +687,12 @@ class PrinterRunClient:
                 raise RegressionError("printer active run ownership changed")
             if state not in ("pending", "active"):
                 raise RegressionError("printer run status is invalid")
+            if screen_capture is not None:
+                try:
+                    screen_capture()
+                except (PrinterConnectionError, RegressionError, OSError):
+                    self.abort(marker, abort_grace=abort_grace)
+                    raise
             now = self.clock()
             if progress is not None and now >= next_progress:
                 progress(max(0.0, now - started))
@@ -771,6 +813,62 @@ class PrinterRunClient:
             (expected, expected), timeout=60)
         if output != "removed":
             raise RegressionError("unable to remove copied printer artifacts")
+
+
+class ScreenSnapshots:
+    """Save the screen streamer's JPEG frames directly into local artifacts."""
+
+    def __init__(self, directory, snapshot, interval, origin, clock=None,
+                 wall_clock=None, context=None):
+        self.directory = pathlib.Path(directory)
+        self.snapshot = snapshot
+        self.interval = float(interval)
+        self.origin = origin
+        self.clock = clock or time.monotonic
+        self.wall_clock = wall_clock or time.time
+        self.context = context or (lambda: {})
+        self.next_capture = self.clock()
+        self.records = []
+
+    def capture_due(self):
+        if self.clock() < self.next_capture:
+            return
+        data = self.snapshot()
+        observed = self.clock()
+        number = len(self.records) + 1
+        filename = "stream-%04d.jpg" % number
+        self.directory.mkdir(parents=True, exist_ok=True)
+        (self.directory / filename).write_bytes(data)
+        context = self.context() or {}
+        self.records.append({
+            "number": number, "label": "stream-%04d" % number,
+            "file": filename, "time": self.wall_clock(),
+            "host_offset": max(0.0, observed - self.origin),
+            "capture_kind": "periodic", "source": "screen_stream", "passed": True,
+            "phase": context.get("phase"), "step": context.get("step"),
+        })
+        self.next_capture = observed + self.interval
+        self.publish(self.directory)
+
+    def publish(self, directory, summary=None):
+        """Write the manifest of both sources: the printer's own captures (the copied manifest, once
+        copied) and these stream frames, in time order."""
+        directory = pathlib.Path(directory)
+        try:
+            copied = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            copied = []
+        printer = [record for record in copied
+                   if isinstance(record, dict) and record.get("source") != "screen_stream"]
+        records = sorted(printer + self.records, key=lambda record: float(record.get("time") or 0.0))
+        (directory / "manifest.json").write_text(
+            json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        if summary is not None:
+            summary["screenshots"] = len(records)
+            summary["screenshot_source"] = "screen_streamer_steps_and_timeline"
+            (directory / "summary.json").write_text(
+                json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        return records
 
 
 class ResourceMonitor:
@@ -999,11 +1097,13 @@ class MediaPipeline:
                 path = pathlib.Path(artifact) / filename
                 if not filename or not path.is_file():
                     continue
-                capture_time = float(record.get("time", printer_start) or
-                                     printer_start)
-                frames.append((
-                    max(anchor, anchor + capture_time - printer_start), path,
-                ))
+                if "host_offset" in record:
+                    offset = max(0.0, float(record["host_offset"]))
+                else:
+                    capture_time = float(record.get("time", printer_start) or
+                                         printer_start)
+                    offset = max(anchor, anchor + capture_time - printer_start)
+                frames.append((offset, path))
         return sorted(frames, key=lambda item: item[0])
 
     def _screen_video(self, suites, duration):
@@ -1468,6 +1568,7 @@ class RegressionRun:
         self.progress = progress or (lambda message: print(
             message, file=sys.stderr, flush=True))
         self.connection = None
+        self.screen_url = None
         self.client = client
         self.media = media
         self.telemetry = telemetry
@@ -1534,9 +1635,11 @@ class RegressionRun:
             for name in ARTIFACT_LINKS if (local / name).is_file()
         }
 
-    def _salvage_suite(self, suite, marker):
+    def _salvage_suite(self, suite, marker, captures=None):
         local = self.client.copy_partial(
             marker, self.output / "suites" / suite["name"])
+        if captures is not None:
+            captures.publish(local)
         suite["artifact_path"] = str(local)
         suite["artifact"] = _relative_artifact(self.output, local)
         suite["links"] = {
@@ -1594,21 +1697,28 @@ class RegressionRun:
             self.current_suite = suite
             self.report["suites"].append(suite)
             marker = None
+            captures = None
             timed_out = False
             try:
                 if not no_camera and not self.media.camera_alive():
                     raise RegressionError(
                         "camera recording stopped before the printer suite")
-                marker = self.client.launch(
-                    spec, self.args.material,
-                    self.args.screen_capture_interval)
-                # The runner becomes observable only after its lazy setup has
-                # completed. Anchor printer-relative screenshot timestamps at
-                # that observation, not before the launch request, otherwise
-                # the screen track advances ahead of the continuous camera.
+                marker = self.client.launch(spec, self.args.material)
+                # Printer logs and legacy captures use the suite's observation
+                # after lazy setup; stream frames carry their own host offsets.
                 suite["timeline_start_seconds"] = max(
                     0.0, self.clock() - self.started_monotonic)
                 self.current_marker = marker
+                if self.screen_url is not None:
+                    _run_id, _remote = _safe_remote_run(marker)
+                    captures = ScreenSnapshots(
+                        self.output / "suites" / spec["name"] / _run_id,
+                        lambda: self.client.screen_snapshot(self.screen_url),
+                        self.args.screen_capture_interval,
+                        self.started_monotonic, clock=self.clock,
+                        wall_clock=self.wall_clock,
+                        context=lambda: getattr(
+                            self.telemetry, "latest_test_status", None))
                 self.telemetry.expect_run(marker["run_id"])
                 timed_out = self.client.wait(
                     marker, self.args.run_timeout,
@@ -1618,10 +1728,14 @@ class RegressionRun:
                                   if self.args.telemetry_rate else None),
                     camera_alive=(None if no_camera
                                   else self.media.camera_alive),
-                    progress=self._suite_progress)
+                    progress=self._suite_progress,
+                    screen_capture=(None if captures is None
+                                    else captures.capture_due))
                 self.progress("%s: downloading artifacts" % spec["name"])
                 local, summary, manifest = self.client.copy_and_verify(
                     marker, self.output / "suites" / spec["name"])
+                if captures is not None:
+                    manifest = captures.publish(local, summary)
                 self._finish_suite(
                     suite, local, summary, manifest, self.wall_clock())
                 try:
@@ -1639,10 +1753,16 @@ class RegressionRun:
                     raise RegressionError(
                         "printer runner reported a cleanup failure")
                 self.client.require_safe_idle()
+            except KeyboardInterrupt:
+                if captures is not None:
+                    suite["artifact_path"] = str(captures.directory)
+                    suite["artifact"] = _relative_artifact(self.output, captures.directory)
+                    suite["screenshot_count"] = len(captures.records)
+                raise
             except (PrinterConnectionError, RegressionError, OSError) as exc:
                 if marker is not None and suite["status"] == "running":
                     try:
-                        self._salvage_suite(suite, marker)
+                        self._salvage_suite(suite, marker, captures)
                     except (PrinterConnectionError, RegressionError, OSError) \
                             as salvage_exc:
                         self.report["warnings"].append(
@@ -1686,6 +1806,9 @@ class RegressionRun:
                     self.connection, clock=self.clock, sleeper=self.sleeper,
                     ui_fingerprint=hybrid.ui_fingerprint(ROOT))
             self.client.preflight()
+            if self.args.screen_capture_interval:
+                self.screen_url = self.client.discover_screen()
+                self.client.screen_snapshot(self.screen_url)
         except KeyboardInterrupt:
             self._fail("UserCancelled", "run cancelled by the operator")
             self._skip_remaining(0, "run cancelled by the operator")
@@ -1859,9 +1982,9 @@ def _screen_capture_interval(value):
             "screen capture interval must be a number") from exc
     if result == 0.0:
         return result
-    if result < 5.0 or result > 300.0 or not math.isfinite(result):
+    if result < 0.5 or result > 300.0 or not math.isfinite(result):
         raise argparse.ArgumentTypeError(
-            "screen capture interval must be 0 or between 5 and 300 seconds")
+            "screen capture interval must be 0 or between 0.5 and 300 seconds")
     return result
 
 
@@ -1891,9 +2014,10 @@ def _arguments(argv=None):
     parser.add_argument("--fps", type=_fps, default=10)
     parser.add_argument(
         "--screen-capture-interval", type=_screen_capture_interval,
-        default=5.0,
-        help="capture the latest stable Feather screen at least this often; "
-             "0 keeps semantic captures only")
+        default=1.0,
+        help="save a JPEG from the screen streamer locally at this interval; "
+             "0 disables the background screen snapshots; the printer's own "
+             "step and stage captures are always taken")
     parser.add_argument(
         "--telemetry-rate", type=_telemetry_rate, default=1.0,
         help="collect host-side RT printer telemetry at this rate in Hz; "

@@ -7,6 +7,7 @@
 import configparser
 import copy
 import csv
+import http.server
 import importlib.util
 import json
 import pathlib
@@ -63,6 +64,44 @@ class GCmd:
         return RuntimeError(message)
 
 
+JPEG = b"\xff\xd8\xff\xe0 screen picture \xff\xd9"
+
+
+class ScreenStreamer:
+    """A local HTTP server in place of the screen streamer: it answers each request with the next queued
+    (status, headers, body), repeating the last one, and records the paths it was asked for."""
+
+    SNAPSHOT_HEADERS = {"Content-Type": "image/jpeg", "X-Snapshot-Read": "after-request"}
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.paths = []
+        streamer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                streamer.paths.append(self.path)
+                status, headers, body = (
+                    streamer.responses.pop(0) if len(streamer.responses) > 1 else streamer.responses[0])
+                self.send_response(status)
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.address = self.server.server_address
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
 class ArtifactWorkerTest(unittest.TestCase):
     def test_frame_capture_requires_continuous_quiet_window(self):
         worker = object.__new__(ARTIFACTS.ArtifactWorker)
@@ -100,9 +139,9 @@ class ArtifactWorkerTest(unittest.TestCase):
                                   side_effect=real_sha256) as sha256:
             data, digest, observed_time = worker._stable_frame()
 
-        # Change detection must not cost a SHA-256 pass over 1.5 MiB per
-        # sample: the printer's Cortex-A7 shares its cores with Klipper, and
-        # the loop samples every 50 ms until the screen goes quiet.
+        # Change detection must not cost a SHA-256 pass per sample: the
+        # printer's Cortex-A7 shares its cores with Klipper, and the loop
+        # samples every 50 ms until the screen goes quiet.
         self.assertEqual(sha256.call_count, 1)
         self.assertEqual(data, b"second")
         self.assertEqual(digest, real_sha256(b"second").hexdigest())
@@ -131,59 +170,20 @@ class ArtifactWorkerTest(unittest.TestCase):
         worker._stable_frame.assert_not_called()
         atomic_json.assert_not_called()
 
-    def test_frame_capture_reads_the_active_virtual_page(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
-            framebuffer = root / "fb0"
-            pan = root / "pan"
-            stride = root / "stride"
-            first = b"\x11\x22\x33\xff" * (
-                ARTIFACTS.SCREEN_WIDTH * ARTIFACTS.SCREEN_HEIGHT)
-            second = b"\xaa\xbb\xcc\xff" * (
-                ARTIFACTS.SCREEN_WIDTH * ARTIFACTS.SCREEN_HEIGHT)
-            framebuffer.write_bytes(first + second)
-            pan.write_text("0,480\n", encoding="ascii")
-            stride.write_text("3200\n", encoding="ascii")
-            worker = object.__new__(ARTIFACTS.ArtifactWorker)
-            worker.framebuffer = str(framebuffer)
-            worker.framebuffer_pan = str(pan)
-            worker.framebuffer_stride = str(stride)
-
-            self.assertEqual(worker._read_frame(), second)
-
-    def test_frame_capture_retries_if_page_flips_during_read(self):
-        worker = object.__new__(ARTIFACTS.ArtifactWorker)
-        first = b"first"
-        second = b"second"
-        worker._read_stride = mock.Mock(return_value=3200)
-        worker._read_pan = mock.Mock(side_effect=(
-            (0, 0), (0, 480), (0, 480), (0, 480)))
-        worker._read_frame_at = mock.Mock(side_effect=(first, second))
-
-        self.assertEqual(worker._read_frame(), second)
-        self.assertEqual(worker._read_frame_at.call_count, 2)
-
-    def test_writes_bmp_manifest_telemetry_and_log_slice(self):
+    def test_writes_streamer_jpeg_manifest_telemetry_and_log_slice(self):
+        streamer = ScreenStreamer((200, ScreenStreamer.SNAPSHOT_HEADERS, JPEG))
+        self.addCleanup(streamer.close)
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             run = root / "20260729-120000-ui"
             run.mkdir()
-            framebuffer = root / "fb0"
-            pixels = bytearray(ARTIFACTS.FRAME_BYTES)
-            pixels[0:4] = b"\x03\x06\x07\xff"
-            framebuffer.write_bytes(pixels)
             printer_log = root / "printer.log"
             printer_log.write_text("before\n", encoding="utf-8")
             active = root / "active.json"
             active.write_text("{}\n", encoding="utf-8")
 
-            pan = root / "pan"
-            pan.write_text("0,0\n", encoding="ascii")
-            stride = root / "stride"
-            stride.write_text("3200\n", encoding="ascii")
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(run), str(framebuffer), str(printer_log),
-                str(pan), str(stride))
+                AsyncReactor(), str(run), str(printer_log), streamer.address)
             printer_log.write_text("before\nafter\n", encoding="utf-8")
             captured = []
             captured_event = threading.Event()
@@ -221,10 +221,13 @@ class ArtifactWorkerTest(unittest.TestCase):
                 self.assertTrue(finished_event.wait(3.0))
             worker.stop()
 
-            bmp = run / captured[0]["file"]
-            self.assertEqual(bmp.read_bytes()[:2], b"BM")
-            self.assertEqual(
-                bmp.stat().st_size, ARTIFACTS.FRAME_BYTES + 54)
+            # The streamer's JPEG is the artifact, byte for byte; this settled
+            # capture asked again until the picture stayed the same.
+            self.assertGreater(len(streamer.paths), 1)
+            self.assertEqual(set(streamer.paths), {"/?action=snapshot"})
+            self.assertTrue(captured[0]["file"].endswith(".jpg"))
+            self.assertEqual((run / captured[0]["file"]).read_bytes(), JPEG)
+            self.assertEqual(captured[0]["sha256"], ARTIFACTS.hashlib.sha256(JPEG).hexdigest())
             manifest = json.loads((run / "manifest.json").read_text())
             self.assertEqual(manifest[0]["page"], "MAIN_MENU")
             self.assertTrue(manifest[0]["passed"])
@@ -250,8 +253,7 @@ class ArtifactWorkerTest(unittest.TestCase):
                 "  before this run started\n", encoding="utf-8")
             active = root / "active.json"
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(run), str(root / "fb0"),
-                str(printer_log))
+                AsyncReactor(), str(run), str(printer_log))
             with printer_log.open("a", encoding="utf-8") as stream:
                 stream.write("".join(line + "\n" for line in lines))
             finished = []
@@ -316,8 +318,7 @@ class ArtifactWorkerTest(unittest.TestCase):
             printer_log = root / "printer.log"
             printer_log.write_text("", encoding="utf-8")
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(run), str(root / "unused-fb"),
-                str(printer_log))
+                AsyncReactor(), str(run), str(printer_log))
             started = threading.Event()
             release = threading.Event()
             done = threading.Event()
@@ -325,7 +326,7 @@ class ArtifactWorkerTest(unittest.TestCase):
             def capture(*_args):
                 started.set()
                 release.wait(3.0)
-                return {"file": "screen.bmp"}
+                return {"file": "screen.jpg"}
 
             worker._capture = capture
             worker.capture(1, "held", {}, lambda _value: done.set())
@@ -339,32 +340,50 @@ class ArtifactWorkerTest(unittest.TestCase):
 
         self.assertEqual(worker.captures_finished, 1)
 
-    def test_capture_finished_counter_includes_failed_frame_work(self):
+    def _failed_capture(self, streamer_address):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             run = root / "20260729-120000-ui"
             run.mkdir()
-            framebuffer = root / "fb0"
-            framebuffer.write_bytes(bytes(ARTIFACTS.FRAME_BYTES))
             printer_log = root / "printer.log"
             printer_log.write_text("", encoding="utf-8")
-
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(run), str(framebuffer), str(printer_log))
+                AsyncReactor(), str(run), str(printer_log), streamer_address)
             results = []
             done = threading.Event()
             worker.capture(
-                1, "blank", {},
+                1, "screen", {},
                 lambda value: (results.append(value), done.set()),
                 settle=False)
             self.assertTrue(done.wait(3.0))
             worker.stop()
+            worker.thread.join(3.0)
+            self.assertEqual([path.suffix for path in run.iterdir()], [".csv"])
 
-        # An all-zero framebuffer fails the capture. The finished counter still
-        # has to move, otherwise a failed capture and a hung one look the same.
-        self.assertIsInstance(results[0], Exception)
+        # The finished counter still has to move, otherwise a failed capture
+        # and a hung one look the same.
         self.assertEqual(worker.captures_started, 1)
         self.assertEqual(worker.captures_finished, 1)
+        self.assertIsInstance(results[0], Exception)
+        return str(results[0])
+
+    def test_capture_fails_without_a_current_screen_jpeg(self):
+        cases = (
+            ((503, {}, b"Source Offline"), "answered 503"),
+            # An older streamer answers with its latest frame, which may show the screen before the change.
+            ((200, {"Content-Type": "image/jpeg"}, JPEG), "restart S98screen"),
+            ((200, ScreenStreamer.SNAPSHOT_HEADERS, b"<html>"), "did not return a JPEG"),
+        )
+        for response, error in cases:
+            with self.subTest(error=error):
+                streamer = ScreenStreamer(response)
+                self.addCleanup(streamer.close)
+                self.assertIn(error, self._failed_capture(streamer.address))
+
+        closed = ScreenStreamer()
+        address = closed.address
+        closed.close()
+        self.assertIn("unavailable", self._failed_capture(address))
 
     def test_retention_preserves_newest_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -383,7 +402,7 @@ class ArtifactWorkerTest(unittest.TestCase):
                 (directory / "summary.json").write_text(
                     json.dumps({"outcome": outcome}), encoding="utf-8")
             worker = ARTIFACTS.ArtifactWorker(
-                AsyncReactor(), str(current), "/missing-fb", "/missing-log")
+                AsyncReactor(), str(current), "/missing-log")
 
             with mock.patch.object(ARTIFACTS, "MAX_RUNS", 3), \
                     mock.patch.object(ARTIFACTS, "MAX_BYTES", 1024 * 1024):
@@ -396,6 +415,36 @@ class ArtifactWorkerTest(unittest.TestCase):
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_disabled_captures_skip_all_framebuffer_paths_but_keep_operation_stages(self):
+        host = mock.Mock()
+        host._operation_context_status.return_value = {
+            "revision": 1, "context_types": ["mesh"],
+            "context_path": ["mesh"], "current_state": "HEATING",
+        }
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run.capture_screenshots = False
+        run.screen_capture_interval = 5.0
+        run.next_periodic_capture = 1.0
+        run.worker = mock.Mock()
+        run._schedule = mock.Mock()
+        run._screen_metadata = mock.Mock(return_value={"page": "CALIBRATION_PROGRESS"})
+        run.steps = [{"kind": "capture", "label": "ui-home"}, {"kind": "assert"}]
+
+        run.update(1.0)
+        run._periodic_capture_tick(1.0)
+        run._capture(run.steps[0])
+
+        self.assertEqual(run.step_index, 1)
+        self.assertEqual(run.step_runtime, {})
+        self.assertEqual(run.calibration_stages[0]["current_state"], "HEATING")
+        run.worker.capture.assert_not_called()
+        run._screen_metadata.assert_not_called()
+        host.renderer.request_presented_receipt.assert_not_called()
+        host.reactor.register_callback.assert_not_called()
+        run._schedule.assert_called_once()
+        self.assertFalse(run.get_status()["capture_screenshots"])
+
     def test_initial_idle_stage_capture_has_a_review_expectation(self):
         host = type("Host", (), {
             "_operation_context_status": lambda self, eventtime: {
@@ -749,7 +798,7 @@ class RunnerContractTest(unittest.TestCase):
         feature._screen_metadata = lambda: {"page": "IDLE_HOME"}
         captures = []
         feature.worker = type("Worker", (), {
-            "capture": lambda self, *args: captures.append(args),
+            "capture": lambda self, *args, **kwargs: captures.append(args),
             "log": lambda self, message: None,
         })()
         step = {"kind": "capture", "label": "presented"}
@@ -769,6 +818,26 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(len(captures), 1)
         self.assertNotIn(token, feature.capture_receipts)
         self.assertEqual(step, {"kind": "capture", "label": "presented"})
+
+    def test_step_capture_reads_the_framebuffer_without_waiting_for_a_quiet_window(self):
+        host = mock.Mock()
+        host.page.name = "CONTROL_HEAT"
+        host.reactor.monotonic = lambda: 10.0
+        run = UI_TEST.UITestRun(host)
+        run.running = True
+        run._schedule = mock.Mock()
+        run._screen_metadata = lambda: {"page": "CONTROL_HEAT"}
+        run.worker = mock.Mock()
+        step = {"kind": "capture", "label": "heat-cold"}
+
+        run._capture(step)
+        run.on_render_receipt(type("Receipt", (), {
+            "token": run.step_runtime["capture_receipt"], "success": True})(), 10.0)
+        run._capture(step)
+
+        args, kwargs = run.worker.capture.call_args
+        self.assertEqual(args[1], "heat-cold")
+        self.assertIs(kwargs["settle"], False)
 
     def test_capture_receipt_can_queue_while_dialog_is_visible(self):
         from ui import Dialog, Rect, ScreenLayer, ScreenRoot, Text
@@ -808,6 +877,8 @@ class RunnerContractTest(unittest.TestCase):
         renderer = type("Renderer", (), {
             "generation": 7,
             "_buttons": {}, "_hitboxes": {}, "_toggles": {},
+            "_frame_owner": None, "hitboxes": (),
+            "_visible_input": lambda self, name: {},
             "get_status": lambda self: {
                 "semantic_page_id": "home", "dropped_batches": 0,
             },
@@ -817,6 +888,8 @@ class RunnerContractTest(unittest.TestCase):
                 "monotonic": lambda self: 12.5,
             })(),
             "renderer": renderer,
+            "_ensure_screen_root": lambda self: type("Root", (), {
+                "_screen_tree": type("Tree", (), {"walk": lambda self: ()})()})(),
             "page": FEATHER.ScreenPage.IDLE_HOME,
             "extruder": Status({"temperature": 31.5, "target": 0.0}),
             "heater_bed": Status({"temperature": 29.0, "target": 0.0}),
@@ -846,6 +919,24 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(telemetry[1][2]["z"], 3.0)
         self.assertTrue(logs[0].startswith("TEMPERATURE "))
         self.assertEqual(logs[1], "POSITION [1.0, 2.0, 3.0]")
+
+    def test_label_lookup_finds_buttons_of_a_page_the_frame_loop_draws(self):
+        from ff5m_ui.heat import runtime as heat
+
+        renderer = FEATHER.FeatherRenderer()
+        RenderCapture(renderer)
+        root = state_screen(renderer, heat.get_page(("PLA", "PETG", "ABS")), {}, title="Heat")
+        host = type("Host", (), {"renderer": renderer, "_ensure_screen_root": lambda self: root})()
+        scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": host})())
+
+        tapped = {label: scenarios._action_for_label(label) for label in ("PLA", "petg", "ABS", "COOLDOWN")}
+
+        self.assertEqual(len(set(tapped.values())), 4)
+        self.assertLessEqual(set(tapped.values()), renderer.shown_actions())
+        with self.assertRaisesRegex(RuntimeError, "found 0"):
+            scenarios._action_for_label("NYLON")
+        with self.assertRaisesRegex(RuntimeError, "found 2"):
+            scenarios._action_for_label("OFF")
 
     def test_full_suite_order_and_z_safety_sequence(self):
         renderer = type("Renderer", (), {
@@ -1901,7 +1992,15 @@ class RunnerContractTest(unittest.TestCase):
         feature = controller.feature_manager.peek("ui_test")
         self.assertIsNotNone(feature)
         self.assertEqual(calls, [(
-            feature, (gcmd, "UI", "", 1, "", "5"))])
+            feature, (gcmd, "UI", "", 1, "", "5", True))])
+
+    def test_host_command_disables_captures_through_the_feature(self):
+        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
+        controller.feature_manager = LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
+        gcmd = GCmd({"ACTION": "RUN", "SUITE": "UI", "CONFIRM": 1, "CAPTURE": 0})
+        with mock.patch.object(UI_TEST.UITestRun, "run") as start:
+            controller.cmd_FEATHER_UI_TEST(gcmd)
+        self.assertIs(start.call_args.args[-1], False)
 
     def test_feature_publishes_only_a_successfully_started_run(self):
         host = object()
@@ -1938,7 +2037,7 @@ class RunnerContractTest(unittest.TestCase):
         self.assertIs(feature.current_run, newer)
 
     def test_running_feature_exposes_current_test_step_for_host_telemetry(self):
-        run = object.__new__(UI_TEST.UITestRun)
+        run = UI_TEST.UITestRun(object())
         run.running = True
         run.finalizing = False
         run.suite = "CONTEXT_MATERIAL"
@@ -1955,18 +2054,16 @@ class RunnerContractTest(unittest.TestCase):
         feature = UI_TEST_FEATURE.UITestFeature(object())
         feature.current_run = run
 
-        self.assertEqual(feature.get_status(), {
-            "running": True,
-            "finalizing": False,
-            "run_id": "synthetic-run",
-            "directory": "/data/feather-ui-tests/synthetic-run",
-            "suite": "CONTEXT_MATERIAL",
-            "phase": "cold_pull",
-            "step": "cool",
-            "step_index": 2,
-            "step_count": 3,
-            "ui_fingerprint": "deployed-ui",
-        })
+        status = feature.get_status()
+        self.assertTrue(status["running"])
+        self.assertFalse(status["finalizing"])
+        self.assertEqual(status["run_id"], "synthetic-run")
+        self.assertEqual(status["directory"], run.run_directory)
+        self.assertEqual(status["ui_fingerprint"], "deployed-ui")
+        self.assertEqual(
+            (status["suite"], status["phase"], status["step"],
+             status["step_index"], status["step_count"]),
+            ("CONTEXT_MATERIAL", "cold_pull", "cool", 2, 3))
 
     def test_failed_run_setup_removes_marker_directory_and_worker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -2003,9 +2100,12 @@ class RunnerContractTest(unittest.TestCase):
                     mock.patch.object(UI_TEST, "ArtifactWorker", Worker):
                 with self.assertRaisesRegex(
                         RuntimeError, "recorder setup failed"):
-                    run.run(GCmd(), "UI", "", 1)
+                    run.run(GCmd(), "UI", "", 1, screen_capture_interval=5.0,
+                            capture_screenshots=False)
 
             self.assertEqual(len(workers), 1)
+            self.assertFalse(run.capture_screenshots)
+            self.assertEqual(run.screen_capture_interval, 0.0)
             self.assertTrue(workers[0].stopped)
             self.assertIsNone(run.run_directory)
             self.assertEqual(list(root.iterdir()), [])

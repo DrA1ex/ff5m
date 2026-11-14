@@ -18,6 +18,7 @@ import unittest
 from unittest import mock
 
 from tests import printer_regression as REGRESSION
+from tests import printer_run_data
 from tests.printer_connection import PrinterConnection, PrinterConnectionError
 
 
@@ -57,11 +58,15 @@ class FakeClient:
             "metadata": {"name": "cam", "rotation": 0},
         }
 
-    def launch(self, spec, material, screen_capture_interval,
-               start_timeout=20):
+    def discover_screen(self):
+        return "http://printer.invalid/screen/?action=snapshot"
+
+    def screen_snapshot(self, _url):
+        return b"\xff\xd8fake screen\xff\xd9"
+
+    def launch(self, spec, material, start_timeout=20):
         del start_timeout
         del material
-        self.screen_capture_interval = screen_capture_interval
         self.launched.append(spec["name"])
         suffix = spec["printer_suite"].lower()
         run_id = "20260811-120000-%06d-%s" % (len(self.launched), suffix)
@@ -72,7 +77,7 @@ class FakeClient:
         }
 
     def wait(self, marker, timeout, run_state=None, events_alive=None,
-             camera_alive=None, progress=None):
+             camera_alive=None, progress=None, screen_capture=None):
         del marker, timeout, run_state
         del progress
         if events_alive is not None and not events_alive():
@@ -81,6 +86,8 @@ class FakeClient:
         if camera_alive is not None and not camera_alive():
             raise REGRESSION.RegressionError(
                 "camera recording stopped during the printer suite")
+        if screen_capture is not None:
+            screen_capture()
         return False
 
     def telemetry_snapshot(self):
@@ -107,7 +114,7 @@ class FakeClient:
             raise REGRESSION.RegressionError("synthetic copy failure")
         run_id = marker["run_id"]
         local = pathlib.Path(output_parent) / run_id
-        local.mkdir(parents=True)
+        local.mkdir(parents=True, exist_ok=True)
         outcome = self.outcomes.get(name, "passed")
         summary = {
             "run_id": run_id,
@@ -116,13 +123,10 @@ class FakeClient:
             "duration": 2.0,
             "started_at": 5000.0,
             "finished_at": 5002.0,
-            "screenshots": 1,
+            "screenshots": 0,
             "failures": [],
         }
-        manifest = [{
-            "file": "001-screen.bmp", "time": 5001.0,
-        }]
-        (local / "001-screen.bmp").write_bytes(b"BMsynthetic")
+        manifest = []
         (local / "summary.json").write_text(
             json.dumps(summary), encoding="utf-8")
         (local / "manifest.json").write_text(
@@ -318,12 +322,12 @@ class SuiteSelectionTest(unittest.TestCase):
                 REGRESSION._arguments([
                     "--printer", "printer.invalid", "--fps", "0"])
 
-    def test_screen_capture_interval_defaults_to_five_and_zero_disables_it(self):
+    def test_screen_capture_interval_defaults_to_one_second_and_zero_disables_it(self):
         self.assertEqual(
             REGRESSION._arguments([
                 "--printer", "printer.invalid",
             ]).screen_capture_interval,
-            5.0)
+            1.0)
         self.assertEqual(
             REGRESSION._arguments([
                 "--printer", "printer.invalid",
@@ -331,7 +335,7 @@ class SuiteSelectionTest(unittest.TestCase):
             ]).screen_capture_interval,
             0.0)
         with mock.patch("sys.stderr", new=io.StringIO()):
-            for value in ("4.9", "301", "nan"):
+            for value in ("0.4", "301", "nan"):
                 with self.subTest(value=value), self.assertRaises(SystemExit):
                     REGRESSION._arguments([
                         "--printer", "printer.invalid",
@@ -368,6 +372,75 @@ class SuiteSelectionTest(unittest.TestCase):
 
 
 class CameraContractTest(unittest.TestCase):
+    def discover(self, webcams):
+        response = io.BytesIO(json.dumps({
+            "result": {"webcams": webcams},
+        }).encode("utf-8"))
+
+        def request(request, timeout):
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(
+                request.full_url, "http://192.0.2.4:7125/server/webcams/list")
+            return response
+
+        connection = PrinterConnection("192.0.2.4", requester=request)
+        return REGRESSION.PrinterRunClient(connection).discover_camera()
+
+    def test_managed_camera_has_priority_over_screen_and_other_cameras(self):
+        camera = {
+            "name": "4gx_camera", "enabled": True,
+            "service": "mjpegstreamer-adaptive",
+            "stream_url": "/custom-camera/", "rotation": 90,
+        }
+        screen = {
+            "name": "4gx_screen", "enabled": True,
+            "service": "iframe", "stream_url": "/screen/",
+        }
+        other = {
+            "name": "Other", "enabled": True,
+            "stream_url": "/other-camera/",
+        }
+        for webcams in ([screen, other, camera], [other, camera, screen],
+                        [camera, screen, other]):
+            with self.subTest(order=[item["name"] for item in webcams]):
+                selected = self.discover(webcams)
+                self.assertEqual(selected["url"], "http://192.0.2.4/custom-camera/")
+                self.assertEqual(selected["metadata"]["name"], "4gx_camera")
+                self.assertEqual(selected["metadata"]["rotation"], 90)
+
+    def test_legacy_and_user_cameras_remain_available(self):
+        for name in ("cam", "My camera"):
+            with self.subTest(name=name):
+                selected = self.discover([
+                    {"name": "4gx_camera", "enabled": False,
+                     "stream_url": "/disabled/"},
+                    {"name": "4gx_screen", "enabled": True,
+                     "service": "iframe", "stream_url": "/screen/"},
+                    {"name": name, "enabled": True,
+                     "stream_url": "/webcam/?action=stream"},
+                ])
+                self.assertEqual(
+                    selected["url"], "http://192.0.2.4/webcam/?action=stream")
+                self.assertEqual(selected["metadata"]["name"], name)
+
+    def test_screen_entries_are_never_selected_as_cameras(self):
+        for entry in (
+                {"name": "4gx_screen", "service": "mjpegstreamer"},
+                {"name": "Custom screen", "service": "iframe"}):
+            with self.subTest(entry=entry):
+                self.assertIsNone(self.discover([
+                    dict(entry, enabled=True, stream_url="/screen/"),
+                ]))
+
+    def test_unavailable_cameras_are_not_selected(self):
+        self.assertIsNone(self.discover([
+            None,
+            {"name": "4gx_camera", "enabled": False,
+             "stream_url": "/webcam/?action=stream"},
+            {"name": "cam", "enabled": True, "stream_url": "  "},
+        ]))
+        self.assertIsNone(self.discover([]))
+
     def test_relative_camera_url_uses_printer_port_80(self):
         connection = PrinterConnection("192.0.2.4")
         self.assertEqual(
@@ -435,6 +508,106 @@ class CameraContractTest(unittest.TestCase):
         self.assertEqual(media.camera["status"], "unavailable")
 
 
+class ScreenSnapshotsTest(unittest.TestCase):
+    def test_discovery_uses_the_screen_snapshot_url(self):
+        connection = mock.Mock()
+        connection.web_base_url = "http://printer.invalid/"
+        connection.request_json.return_value = {"result": {"webcams": [
+            {"name": "4gx_camera", "enabled": True,
+             "snapshot_url": "/camera/snapshot"},
+            {"name": "4gx_screen", "enabled": True,
+             "stream_url": "/screen/", "snapshot_url": "/custom/snapshot"},
+        ]}}
+        client = REGRESSION.PrinterRunClient(connection)
+        self.assertEqual(client.discover_screen(), "http://printer.invalid/custom/snapshot")
+        connection.request_json.return_value["result"]["webcams"][1]["enabled"] = False
+        with self.assertRaisesRegex(REGRESSION.RegressionError, "4gx_screen"):
+            client.discover_screen()
+
+    def test_snapshot_transport_preserves_jpeg_and_rejects_html_or_truncated_data(self):
+        for data, valid in ((b"\xff\xd8frame\xff\xd9", True),
+                            (b"<html>screen</html>", False),
+                            (b"\xff\xd8truncated", False)):
+            with self.subTest(valid=valid, data=data):
+                def request(req, timeout):
+                    self.assertEqual(req.full_url, "http://printer.invalid/snapshot")
+                    self.assertEqual(timeout, 2.0)
+                    return io.BytesIO(data)
+
+                client = REGRESSION.PrinterRunClient(
+                    PrinterConnection("printer.invalid", requester=request))
+                if valid:
+                    self.assertEqual(client.screen_snapshot("http://printer.invalid/snapshot"), data)
+                else:
+                    with self.assertRaisesRegex(REGRESSION.RegressionError, "invalid JPEG"):
+                        client.screen_snapshot("http://printer.invalid/snapshot")
+
+    def test_local_frames_keep_host_timing_and_survive_remote_manifest_copy(self):
+        now = [100.0]
+        snapshot = mock.Mock(side_effect=[b"first JPEG", b"second JPEG"])
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            captures = REGRESSION.ScreenSnapshots(
+                directory, snapshot, 5.0, 90.0,
+                clock=lambda: now[0], wall_clock=lambda: -5000.0)
+            captures.capture_due()
+            now[0] = 104.9
+            captures.capture_due()
+            self.assertEqual(snapshot.call_count, 1)
+            now[0] = 105.0
+            captures.capture_due()
+            (directory / "manifest.json").write_text("[]")
+            summary = {"started_at": 5000.0, "screenshots": 0, "outcome": "passed"}
+            manifest = captures.publish(directory, summary)
+            self.assertEqual(
+                [(directory / item["file"]).read_bytes() for item in manifest],
+                [b"first JPEG", b"second JPEG"])
+            self.assertEqual(summary["screenshots"], 2)
+            self.assertEqual(json.loads((directory / "manifest.json").read_text()), manifest)
+            suite = {"artifact_path": str(directory), "summary": summary,
+                     "manifest": manifest, "timeline_start_seconds": 1.0,
+                     "timing": {}, "artifact": "suites/ui"}
+            video = REGRESSION.MediaPipeline(directory, 10)._screen_frames([suite])
+            gallery = printer_run_data.frames({"suites": [suite]})
+            self.assertEqual([offset for offset, _path in video], [10.0, 15.0])
+            self.assertEqual([frame["video"] for frame in gallery], [10.0, 15.0])
+
+    def test_published_manifest_keeps_printer_captures_beside_stream_frames(self):
+        now = [100.0]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            captures = REGRESSION.ScreenSnapshots(
+                directory, mock.Mock(side_effect=[b"first JPEG", b"second JPEG"]), 5.0, 90.0,
+                clock=lambda: now[0], wall_clock=lambda: 1000.0 + now[0])
+            captures.capture_due()
+            # The copy brings the printer's manifest over the host's.
+            (directory / "manifest.json").write_text(json.dumps([
+                {"number": 1, "label": "heat-cold", "file": "heat-cold.bmp", "time": 1102.0,
+                 "page": "CONTROL_HEAT"}]))
+            now[0] = 106.0
+            captures.capture_due()
+            summary = {"started_at": 1000.0, "screenshots": 1, "outcome": "passed"}
+
+            manifest = captures.publish(directory, summary)
+            again = captures.publish(directory)
+
+            self.assertEqual([item["file"] for item in manifest],
+                             ["stream-0001.jpg", "heat-cold.bmp", "stream-0002.jpg"])
+            self.assertEqual(again, manifest)
+            self.assertEqual(summary["screenshots"], 3)
+            self.assertEqual(json.loads((directory / "manifest.json").read_text()), manifest)
+
+    def test_snapshot_failure_aborts_the_active_suite(self):
+        client = REGRESSION.PrinterRunClient(object())
+        client.abort = mock.Mock()
+        marker = {"run_id": "20260811-120000-000001-ui", "suite": "UI",
+                  "directory": REGRESSION.ARTIFACT_ROOT + "/20260811-120000-000001-ui"}
+        capture = mock.Mock(side_effect=REGRESSION.RegressionError("stream lost"))
+        with self.assertRaisesRegex(REGRESSION.RegressionError, "stream lost"):
+            client.wait(marker, 20, run_state=lambda _run_id: "active", screen_capture=capture)
+        client.abort.assert_called_once_with(marker, abort_grace=60)
+
+
 class LaunchContractTest(unittest.TestCase):
     @staticmethod
     def _launch(name, material):
@@ -459,13 +632,14 @@ class LaunchContractTest(unittest.TestCase):
                     return {"result": {"status": {"feather_screen": {
                         "ui_test": ({"running": False}
                                     if self.status_reads == 1 else
-                                    dict(marker, running=True)),
+                                    dict(marker, running=True,
+                                         capture_screenshots=True)),
                     }}}}
                 return {"result": "ok"}
 
         connection = Connection()
         client = REGRESSION.PrinterRunClient(connection)
-        client.launch(spec, material, 5.0)
+        client.launch(spec, material)
         return next(payload["script"] for method, _path, payload
                     in connection.requests if method == "POST")
 
@@ -473,8 +647,12 @@ class LaunchContractTest(unittest.TestCase):
         self.assertIn("MATERIAL=PLA", self._launch("core", "PLA"))
         self.assertNotIn("MATERIAL=PLA", self._launch("ui", "PLA"))
 
-    def test_periodic_capture_interval_is_forwarded(self):
-        self.assertIn("CAPTURE_INTERVAL=5", self._launch("ui", None))
+    def test_host_launch_keeps_printer_captures_and_moves_only_the_periodic_one_to_the_stream(self):
+        fields = dict(item.split("=", 1) for item in
+                      self._launch("ui", None).split() if "=" in item)
+        self.assertEqual(fields["CAPTURE"], "1")
+        self.assertEqual(fields["CAPTURE_INTERVAL"], "0")
+        self.assertNotIn("STAGE_CAPTURES", fields)
 
 
 class DeployedBuildTest(unittest.TestCase):
@@ -497,6 +675,7 @@ class DeployedBuildTest(unittest.TestCase):
                 "running": running, "run_id": run_id, "suite": "FULL",
                 "directory": REGRESSION.ARTIFACT_ROOT + "/" + run_id,
                 "ui_fingerprint": self.fingerprint,
+                "capture_screenshots": True,
             }}}}}
 
     def _launch(self, deployed):
@@ -602,6 +781,55 @@ class OrchestrationTest(unittest.TestCase):
                 REGRESSION, "_host_preflight", side_effect=fake_host_preflight):
             return run.run()
 
+    def test_stream_frames_are_saved_locally_even_without_video(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            client = FakeClient()
+            report, output = self._run(
+                temporary, client, FakeMedia(), suite="core", extra=("--no-video",))
+            suite = report["suites"][0]
+            local = output / suite["artifact"]
+            manifest = json.loads((local / "manifest.json").read_text())
+            self.assertEqual(suite["screenshot_count"], 1)
+            self.assertEqual((local / manifest[0]["file"]).read_bytes(), b"\xff\xd8fake screen\xff\xd9")
+            self.assertEqual(list(local.glob("*.bmp")), [])
+            self.assertEqual(report["media"]["status"], "disabled")
+
+    def test_zero_capture_interval_does_not_access_screen_stream(self):
+        client = FakeClient()
+        client.discover_screen = mock.Mock(side_effect=AssertionError("screen discovery"))
+        client.screen_snapshot = mock.Mock(side_effect=AssertionError("screen access"))
+        with tempfile.TemporaryDirectory() as temporary:
+            report, _output = self._run(
+                temporary, client, FakeMedia(), suite="ui",
+                extra=("--screen-capture-interval", "0"))
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["suites"][0]["screenshot_count"], 0)
+
+    def test_unavailable_screen_stream_stops_before_any_suite(self):
+        client = FakeClient()
+        client.screen_snapshot = mock.Mock(side_effect=REGRESSION.RegressionError("stream down"))
+        with tempfile.TemporaryDirectory() as temporary:
+            report, _output = self._run(temporary, client, FakeMedia(), suite="core")
+        self.assertEqual(client.launched, [])
+        self.assertEqual(report["status"], "error")
+
+    def test_cancel_keeps_completed_local_frames_and_aborts_the_runner(self):
+        class CancelledClient(FakeClient):
+            def wait(self, marker, timeout, **kwargs):
+                kwargs["screen_capture"]()
+                raise KeyboardInterrupt()
+
+        client = CancelledClient()
+        with tempfile.TemporaryDirectory() as temporary:
+            report, output = self._run(temporary, client, FakeMedia(), suite="core")
+            suite = report["suites"][0]
+            local = output / suite["artifact"]
+            manifest = json.loads((local / "manifest.json").read_text())
+            self.assertTrue((local / manifest[0]["file"]).is_file())
+            self.assertEqual(suite["screenshot_count"], 1)
+            self.assertEqual(len(client.aborted), 1)
+            self.assertEqual(report["infrastructure_error"]["category"], "UserCancelled")
+
     def test_normal_suite_failure_does_not_block_later_suites(self):
         with tempfile.TemporaryDirectory() as temporary:
             client = FakeClient({"core": "failed"})
@@ -638,8 +866,11 @@ class OrchestrationTest(unittest.TestCase):
     def test_console_progress_uses_already_sampled_test_status(self):
         class ProgressClient(FakeClient):
             def wait(self, marker, timeout, run_state=None,
-                     events_alive=None, camera_alive=None, progress=None):
+                     events_alive=None, camera_alive=None, progress=None,
+                     screen_capture=None):
                 del marker, timeout, run_state, events_alive, camera_alive
+                if screen_capture is not None:
+                    screen_capture()
                 progress(65.0)
                 return False
 

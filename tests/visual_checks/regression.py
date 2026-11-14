@@ -408,7 +408,7 @@ def _pipeline_stages(mode, designer_records, printer_runs, merged,
             "status": "completed",
             "title": "Real-printer UI capture",
             "summary": (
-                "%d framebuffer frames downloaded from %d completed "
+                "%d screen frames downloaded from %d completed "
                 "printer suite run(s)." %
                 (printer_captured, len(printer_runs))),
             "counts": {"captured_frames": printer_captured},

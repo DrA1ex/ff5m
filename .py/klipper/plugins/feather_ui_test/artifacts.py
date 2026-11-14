@@ -1,4 +1,4 @@
-## Framebuffer capture and report artifacts for Feather UI test runs.
+## Screen capture and report artifacts for Feather UI test runs.
 ##
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ##
@@ -6,13 +6,13 @@
 
 import csv
 import hashlib
+import http.client
 import json
 import logging
 import os
 import queue
 import re
 import shutil
-import struct
 import threading
 import time
 from datetime import datetime
@@ -20,15 +20,18 @@ from datetime import datetime
 
 ARTIFACT_ROOT = "/data/feather-ui-tests"
 ACTIVE_MARKER = os.path.join(ARTIFACT_ROOT, "active.json")
-FRAMEBUFFER = "/dev/fb0"
-FRAMEBUFFER_PAN = "/sys/class/graphics/fb0/pan"
-FRAMEBUFFER_STRIDE = "/sys/class/graphics/fb0/stride"
 PRINTER_LOG = "/data/logFiles/printer.log"
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
-FRAME_BYTES_PER_PIXEL = 4
-FRAME_BYTES = SCREEN_WIDTH * SCREEN_HEIGHT * 4
-FRAME_PAN_RETRIES = 4
+# The screen streamer started by S98screen, on loopback only. Its snapshot shows the screen as it is after the
+# request, already encoded by the hardware JPEG encoder: a capture costs a few milliseconds and a small file,
+# where reading the framebuffer and writing a 1.5 MiB BMP cost 100 ms and dominated the artifact transfer.
+SCREEN_STREAMER = ("127.0.0.1", 8081)
+SNAPSHOT_PATH = "/?action=snapshot"
+# An older streamer answers with its latest published frame, which can predate the change being captured.
+SNAPSHOT_READ_HEADER = "X-Snapshot-Read"
+SNAPSHOT_TIMEOUT = 5.0
+MAX_SNAPSHOT_BYTES = 1024 * 1024
 FRAME_SAMPLE_INTERVAL = 0.05
 FRAME_SETTLE_INTERVAL = 0.25
 FRAME_SETTLE_TIMEOUT = 3.0
@@ -99,25 +102,22 @@ def _directory_size(path):
 
 
 class ArtifactWorker:
-    """Perform framebuffer and artifact IO away from Klipper's reactor."""
+    """Perform screen capture and artifact IO away from Klipper's reactor."""
 
-    def __init__(self, reactor, run_directory, framebuffer=FRAMEBUFFER,
-                 printer_log=PRINTER_LOG, framebuffer_pan=FRAMEBUFFER_PAN,
-                 framebuffer_stride=FRAMEBUFFER_STRIDE):
+    def __init__(self, reactor, run_directory, printer_log=PRINTER_LOG,
+                 screen_streamer=SCREEN_STREAMER):
         self.reactor = reactor
         self.run_directory = run_directory
-        self.framebuffer = framebuffer
-        self.framebuffer_pan = framebuffer_pan
-        self.framebuffer_stride = framebuffer_stride
+        self.screen_streamer = screen_streamer
         self.printer_log = printer_log
         # SimpleQueue.put() is unbounded and never waits for the artifact
         # thread. Reactor callbacks only enqueue short work descriptions;
-        # framebuffer, telemetry and filesystem work remain off-thread.
+        # capture, telemetry and filesystem work remain off-thread.
         self.tasks = queue.SimpleQueue()
         self.records = []
         self.log_start = self._file_size(printer_log)
         # Cumulative capture accounting, so a reactor sample can distinguish a
-        # queued request from framebuffer work that actually started while the
+        # queued request from capture work that actually started while the
         # reactor was late.  Only the reactor thread advances captures_queued;
         # only the artifact thread advances captures_started and
         # captures_finished, so none of the counters needs a lock.  The
@@ -270,121 +270,55 @@ class ArtifactWorker:
             stream.write(",".join(str(values.get(field, ""))
                                   for field in fields) + "\n")
 
-    def _read_pan(self):
-        try:
-            with open(self.framebuffer_pan, "r", encoding="ascii") as stream:
-                fields = stream.read(64).strip().split(",")
-        except OSError as exc:
-            if self.framebuffer == FRAMEBUFFER:
-                raise RuntimeError("Framebuffer pan is unavailable") from exc
-            return 0, 0
-        try:
-            if len(fields) != 2:
-                raise ValueError()
-            xoffset, yoffset = (int(field) for field in fields)
-        except ValueError as exc:
-            raise RuntimeError("Framebuffer pan is invalid") from exc
-        if xoffset < 0 or yoffset < 0:
-            raise RuntimeError("Framebuffer pan is invalid")
-        return xoffset, yoffset
-
-    def _read_stride(self):
-        try:
-            with open(self.framebuffer_stride, "r",
-                      encoding="ascii") as stream:
-                stride = int(stream.read(64).strip())
-        except OSError as exc:
-            if self.framebuffer == FRAMEBUFFER:
-                raise RuntimeError(
-                    "Framebuffer stride is unavailable") from exc
-            stride = SCREEN_WIDTH * FRAME_BYTES_PER_PIXEL
-        except ValueError as exc:
-            raise RuntimeError("Framebuffer stride is invalid") from exc
-        if stride < SCREEN_WIDTH * FRAME_BYTES_PER_PIXEL:
-            raise RuntimeError("Framebuffer stride is invalid")
-        return stride
-
-    def _read_frame_at(self, pan, stride):
-        xoffset, yoffset = pan
-        row_bytes = SCREEN_WIDTH * FRAME_BYTES_PER_PIXEL
-        if (xoffset + SCREEN_WIDTH) * FRAME_BYTES_PER_PIXEL > stride:
-            raise RuntimeError("Framebuffer pan exceeds its stride")
-        rows = []
-        with open(self.framebuffer, "rb", buffering=0) as stream:
-            if stride == row_bytes and xoffset == 0:
-                stream.seek(yoffset * stride)
-                data = stream.read(FRAME_BYTES)
-                if len(data) != FRAME_BYTES:
-                    raise RuntimeError(
-                        "Framebuffer has %d bytes, expected %d" %
-                        (len(data), FRAME_BYTES))
-                return data
-            for row in range(SCREEN_HEIGHT):
-                stream.seek(
-                    (yoffset + row) * stride
-                    + xoffset * FRAME_BYTES_PER_PIXEL)
-                data = stream.read(row_bytes)
-                if len(data) != row_bytes:
-                    raise RuntimeError(
-                        "Framebuffer row has %d bytes, expected %d" %
-                        (len(data), row_bytes))
-                rows.append(data)
-        return b"".join(rows)
-
     def _read_frame(self):
-        stride = self._read_stride()
-        for _attempt in range(FRAME_PAN_RETRIES):
-            before = self._read_pan()
-            data = self._read_frame_at(before, stride)
-            if self._read_pan() == before:
-                self.last_frame_geometry = {
-                    "xoffset": before[0], "yoffset": before[1],
-                    "stride": stride,
-                }
-                return data
-        raise RuntimeError("Framebuffer page changed during capture")
+        """One JPEG of the screen as it is now, from the screen streamer."""
+        host, port = self.screen_streamer
+        connection = http.client.HTTPConnection(host, port, timeout=SNAPSHOT_TIMEOUT)
+        try:
+            connection.request("GET", SNAPSHOT_PATH)
+            response = connection.getresponse()
+            data = response.read(MAX_SNAPSHOT_BYTES + 1)
+        except (OSError, http.client.HTTPException) as exc:
+            raise RuntimeError(
+                "Screen streamer is unavailable at %s:%d (%s); it runs while "
+                "screen_stream is enabled" % (host, port, exc)) from exc
+        finally:
+            connection.close()
+        if response.status != 200:
+            raise RuntimeError("Screen streamer answered %d %s" % (
+                response.status, response.reason))
+        if response.getheader(SNAPSHOT_READ_HEADER) != "after-request":
+            raise RuntimeError(
+                "Screen streamer can return a stale snapshot; restart S98screen "
+                "after updating forge_x_streamer")
+        if len(data) > MAX_SNAPSHOT_BYTES or not data.startswith(b"\xff\xd8"):
+            raise RuntimeError("Screen streamer did not return a JPEG")
+        return data
 
     def _stable_frame(self):
+        # Each snapshot already shows a complete picture taken after the
+        # request; a stage capture also waits for the screen to stop changing,
+        # because nothing tells it when the new stage has been drawn.  Equal
+        # pictures encode to equal JPEG bytes.
         deadline = time.monotonic() + FRAME_SETTLE_TIMEOUT
         previous = None
         changed_at = time.monotonic()
         data = None
         while True:
             data = self._read_frame()
-            # Settling only needs to notice that the framebuffer moved, so it
-            # uses the interpreter's own bytes hash: it runs in C over the
-            # whole frame, costs a fraction of SHA-256 on the printer's
-            # Cortex-A7 and keeps one integer instead of a second 1.5 MiB
-            # frame to diff against.  zlib is absent from this Python build,
-            # so crc32 is not available here.  The value is process-local by
-            # design; the published digest is still SHA-256, taken once below
-            # on the frame the loop accepts.
-            token = hash(data)
             now = time.monotonic()
-            if token != previous:
-                previous = token
+            if data != previous:
+                previous = data
                 changed_at = now
             elif now - changed_at >= FRAME_SETTLE_INTERVAL:
                 break
             if now >= deadline:
                 break
-            # Typer may still be consuming later protocol frames after the
-            # render worker has completed its FIFO writes.  Require a quiet
-            # framebuffer window instead of accepting the first equal pair;
-            # this wait belongs only to the artifact thread, never Klipper's
+            # This wait belongs only to the artifact thread, never Klipper's
             # reactor.
             time.sleep(FRAME_SAMPLE_INTERVAL)
         observed_time = time.time()
         return data, hashlib.sha256(data).hexdigest(), observed_time
-
-    @staticmethod
-    def _bmp_header(data_size):
-        size = 54 + data_size
-        header = struct.pack("<2sIHHI", b"BM", size, 0, 0, 54)
-        header += struct.pack(
-            "<IiiHHIIIIII", 40, SCREEN_WIDTH, -SCREEN_HEIGHT,
-            1, 32, 0, data_size, 2835, 2835, 0, 0)
-        return header
 
     def _capture(self, number, label, metadata, settle):
         if settle:
@@ -393,21 +327,17 @@ class ArtifactWorker:
             data = self._read_frame()
             observed_time = time.time()
             digest = hashlib.sha256(data).hexdigest()
-        if not any(data):
-            raise RuntimeError("Framebuffer is blank")
         safe_label = "".join(
             char.lower() if char.isalnum() else "_" for char in label)
         safe_label = "_".join(filter(None, safe_label.split("_")))[:48]
-        filename = "%03d-%s.bmp" % (number, safe_label or "screen")
+        filename = "%03d-%s.jpg" % (number, safe_label or "screen")
         with open(os.path.join(self.run_directory, filename), "wb") as stream:
-            stream.write(self._bmp_header(len(data)))
             stream.write(data)
         record = dict(metadata)
         record.update({
             "number": number, "label": label, "file": filename,
             "time": observed_time,
             "sha256": digest, "frame_bytes": len(data), "passed": True,
-            "framebuffer": getattr(self, "last_frame_geometry", None),
         })
         self.records.append(record)
         return record

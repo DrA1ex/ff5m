@@ -788,7 +788,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                 str(gcmd.get("MATERIAL", "")).strip(),
                 int(gcmd.get_int("CONFIRM", 0)),
                 str(gcmd.get("CASES", "")).strip(),
-                str(gcmd.get("CAPTURE_INTERVAL", "0")).strip())
+                str(gcmd.get("CAPTURE_INTERVAL", "0")).strip(),
+                bool(gcmd.get_int("CAPTURE", 1)))
         except Exception as exc:
             raise gcmd.error(str(exc))
 

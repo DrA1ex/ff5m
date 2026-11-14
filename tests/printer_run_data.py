@@ -130,7 +130,8 @@ def _file_list(directory):
         return []
     files = []
     for path in sorted(directory.iterdir()):
-        if path.is_file() and path.suffix.lower() != ".bmp":
+        # Screenshots have their own page; listing hundreds of them here hides the logs and data.
+        if path.is_file() and path.suffix.lower() not in (".bmp", ".jpg"):
             files.append({"name": path.name, "size": path.stat().st_size})
     return files
 
@@ -364,8 +365,9 @@ def frames(data):
                 "phase": record.get("phase") or "",
                 "page": record.get("page") or "",
                 "kind": record.get("capture_kind") or "semantic",
-                "video": video_time(
-                    suite, epoch=number(record.get("time"))),
+                "video": (number(record["host_offset"])
+                          if "host_offset" in record else video_time(
+                              suite, epoch=number(record.get("time")))),
                 "url": _quote("%s/%s" % (suite["artifact"], record["file"]))
                 if suite["artifact"] else None,
             })

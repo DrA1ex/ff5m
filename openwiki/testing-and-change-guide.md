@@ -381,15 +381,23 @@ recovery turns off heaters, restores the recorded runtime Z-offset and named
 mesh state, and disables motors. A changed session treats volatile state as
 already cleared by Klipper restart and marks the previous trace interrupted.
 
-Artifacts live under `/data/feather-ui-tests/<timestamp>-<suite>/`: top-down
-32-bit BMP files, `manifest.json`, `environment.json`, `run.log`, a sliced
+Artifacts live under `/data/feather-ui-tests/<timestamp>-<suite>/`: JPEG
+screenshots, `manifest.json`, `environment.json`, `run.log`, a sliced
 `printer.log`, `temperatures.csv`, `positions.csv`, and `summary.json` with
 calibration stages/results. Before a step capture, the test harness waits for a
-Typer `presented` receipt. Framebuffer reads use the active page reported by
-`/sys/class/graphics/fb0/pan`, honor the reported stride, and retry if a page
-flip occurs during the copy. Stability hashing, BMP encoding, log copying,
-CSV/JSON updates, and retention execute in the artifact worker thread. The
-reactor only schedules steps and receives completion callbacks.
+Typer `presented` receipt. The screenshot itself comes from the screen streamer
+on `127.0.0.1:8081`: its `/?action=snapshot` waits for a screen read that
+starts after the request, so it never returns the picture from before the
+presented change, and the hardware encoder makes a capture cost a few
+milliseconds and about 65 KiB instead of a 100 ms framebuffer read and a
+1.5 MiB BMP. The streamer owns page flips and half-written frames. A streamer
+whose answer lacks `X-Snapshot-Read: after-request` predates this guarantee;
+captures then fail until `S98screen` is restarted on the updated binary, since
+printer sync does not restart it. A run with captures therefore needs the
+screen stream (`screen_stream` on, the default for Feather); use `CAPTURE=0`
+without it. Snapshot requests, stage settling, log copying, CSV/JSON updates,
+and retention execute in the artifact worker thread. The reactor only schedules
+steps and receives completion callbacks.
 calibration stages/results. Context-enabled runs also write
 `operation_context.json` with each selected fixture variant, exact expected and
 actual traces, and scenario result; `summary.json` contains the compact context
@@ -446,9 +454,8 @@ print is complete only when `print_stats.state` is `complete`.
 `tests.printer_regression` is the separate developer-machine entry point for
 recording and collecting the real printer suites. It does not replace the
 on-printer runner: Feather still owns each scenario, its safety preflight, state
-snapshot/restore, semantic screenshots, and suite outcome. The host owns only
-suite ordering, camera capture, verified artifact transfer, video assembly, and
-the local report.
+snapshot/restore, and suite outcome. The host owns suite ordering, screen and
+camera capture, verified artifact transfer, video assembly, and the local report.
 
 Run the existing core `FULL` suite from the repository root with:
 
@@ -499,55 +506,43 @@ not a host-facing alias. Use `--material PLA` only when an explicit profile is
 needed; otherwise material selection remains owned by Feather.
 
 The default recording rate is 10 FPS and the accepted range is 1-30 FPS. The
-host discovers enabled webcams through Moonraker and records the camera
-directly with FFmpeg. Because MJPEG does not provide a reliable media clock,
-FFmpeg timestamps incoming frames by their host arrival time before normalizing
-the recording to start at zero. A fluctuating or lower-than-declared camera FPS
-therefore changes frame cadence without stretching the camera away from the
+host discovers enabled webcams through Moonraker, preferring `4gx_camera`
+and otherwise using the first enabled camera with a stream URL. The
+`4gx_screen` entry and `iframe` services are excluded from camera selection.
+The host records the camera directly with FFmpeg. Because MJPEG does not provide
+a reliable media clock, FFmpeg timestamps incoming frames by their host arrival
+time before normalizing the recording to start at zero. A fluctuating or
+lower-than-declared camera FPS therefore changes frame cadence without stretching the camera away from the
 screen and telemetry timelines. Relative webcam URLs resolve to the printer's
 HTTP port 80. Camera recording is required by default: host preflight rejects a
 broken FFmpeg installation before contacting the printer, initial camera failure
 stops the run before its first suite, and loss of the recorder aborts an active
 suite. `--no-camera` is the explicit opt-out for a screen-only run.
 
-The host also requests one coherent Feather framebuffer snapshot every 5
-seconds by default. These periodic timeline records complement rather than
-replace the settled semantic captures attached to meaningful test states, so
-both small screen updates and unchanged holds remain visible in the assembled
-video. A periodic snapshot reads the active framebuffer once and stores only
-minimal timeline metadata; it does not wait for the UI to become visually
-quiet. If the previous periodic snapshot is still pending, the next tick is
-skipped instead of building an artifact backlog inside the Klipper process.
-A periodic tick is also skipped while the toolhead has queued move time or an
-unfinished lookahead, and while the operation context reports a state that
-drives the toolhead against the bed: `HOMING`, `PROBING`, `LEVELING`,
-`CHECKING MESH`, or `TARING`. Reading 1.5 MiB from the framebuffer during those
-states competes with Klipper for the host and can end the run with an MCU
-"Timer too close" shutdown. Every accepted semantic, stage, or periodic capture
-first writes a `CAPTURE_QUEUED <label> eventtime=<t>` line to `run.log`, so a
-post-mortem can distinguish a queued request from one the guard declined. The
-reactor counters described below record whether the worker actually started it.
-The worker writes each BMP as a small header plus the framebuffer payload and
-publishes `manifest.json` once during finalization. It deliberately does not
-fsync and rewrite the growing manifest after every periodic frame, because
-that storage latency can delay the Klipper reactor during probing.
-All reactor callbacks submit artifact work through an unbounded
-`SimpleQueue`; only the single artifact thread opens the framebuffer or output
-files. Each completed capture is appended immediately, without `fsync`, to
-`artifact_timing.csv`. Its queued, worker-started, and worker-finished wall and
-monotonic timestamps, queue delay, duration, kind, phase, and page survive a
-later Klipper failure and distinguish scheduling delay from framebuffer and
-file work. The kind separates the three request paths: `semantic` for a test
-step's own capture, `stage` for one the printer's operation context triggered,
-and `periodic` for the timeline interval. Stage capture follows every real
-operation-context state change regardless of the current test phase. A long
-action therefore updates the screen timeline while it remains active, and a
-new workflow does not need to be added to a capture whitelist. A stage that
-enters one of the same toolhead-against-bed states as the periodic guard is
-still recorded in `calibration_stages` and in `run.log` as `STAGE ...
-screenshot skipped during <state>`, but its framebuffer is not read: a
-settled capture there caused an MCU "Timer too close" shutdown on homing. The
-next stage after the motion carries the screenshot.
+The screen has two sources, both the screen streamer. Every `capture` step of a
+suite and every operation stage is photographed on the printer, in step with the
+screen and with its hitbox metadata, and these JPEGs are downloaded with the
+other artifacts. A step capture waits for Typer's presented receipt and then
+takes one snapshot, without waiting for a quiet window: the receipt already says
+the frame is on the panel, the snapshot is read after the request, and an
+animated screen never goes quiet. A stage capture has no receipt, so it repeats
+snapshots until the picture holds for 250 ms (at most 3 s). The host launches
+every suite with `CAPTURE=1 CAPTURE_INTERVAL=0`: only the periodic timeline is
+taken by the host.
+
+The timeline frames come from the enabled `4gx_screen` entry's `snapshot_url`,
+served by the screen streamer. The host saves each JPEG directly in the local
+suite artifact directory, when the suite first becomes active and every second
+thereafter. Use `--screen-capture-interval <seconds>` for intervals from 0.5 to
+300 seconds, or `0` to disable the timeline (the printer's captures stay).
+Timeline sampling remains active with `--no-camera` and `--no-video` and does not
+require FFmpeg. The screen stream and its snapshot URL are checked before launching
+a suite; loss of the snapshot source during a run aborts the suite and retains
+completed local frames. The host publishes `manifest.json` after artifact transfer
+as the printer's captures plus its own stream frames in time order, so the copied
+printer manifest cannot replace the stream frames. Stream frames carry the latest
+observed phase and step but no hitbox metadata. The separate hybrid/LLM visual
+checks use the same step and stage captures.
 
 When Klipper shuts down during a run, Feather deactivates the runner before it
 paints the shutdown screen. The runner then finalizes its artifacts as
@@ -555,15 +550,6 @@ paints the shutdown screen. The runner then finalizes its artifacts as
 run, it could wait for the interrupted command's G-code lock and keep the
 shutdown screen from appearing, the restart clears volatile state, and the
 next run removes the owned files and timelapse flag.
-Settled semantic and stage captures wait for a quiet framebuffer by comparing
-the interpreter's own `hash()` of each sampled frame, not a digest: SHA-256 is
-computed exactly once, on the frame the loop finally accepts. The printer's
-Python is built without `zlib`, so `crc32` is unavailable, and hashing 1.5 MiB
-per 50 ms sample on the Cortex-A7 is host time taken from Klipper.
-Use `--screen-capture-interval <seconds>` to select an interval from 5 to 300
-seconds, or `--screen-capture-interval 0` to keep semantic captures only.
-Capture remains inside the lazy test runner and its existing background
-artifact worker; normal Feather runtime and the printer never encode video.
 
 While a suite is active, the host records `telemetry.jsonl` at 1 Hz by
 default. Each timestamped sample contains the live XYZ position and velocity,
@@ -662,12 +648,11 @@ raw in-memory bitmap stream; the host does not retain one uncompressed image
 per telemetry sample. Its five compact rows show test/step, UI and printer
 state, integer motion/heater values, operation context, and time-aligned
 Klipper/Typer/Dropbear CPU plus RSS, available memory, and load from
-`resources.tsv`. Screen transitions use printer-relative capture times
-anchored only after the lazy runner is observed active; setup latency therefore
-cannot advance the screen track ahead of the continuously recorded camera. Each
-manifest timestamp describes when the artifact worker accepted the framebuffer,
-not when the reactor queued the request. The screen area remains neutral until
-the first observed frame instead of showing that future frame from time zero. A
+`resources.tsv`. Screen samples carry a monotonic host offset from the recording
+origin; both the video and the report gallery use that offset, independently of
+the printer's wall clock or lazy setup duration. Older saved framebuffer captures
+retain their printer-relative timing. The screen area remains neutral until the
+first observed frame instead of showing that future frame from time zero. A
 missing screen or camera gets an explicit placeholder so the layout and timeline
 remain stable.
 
@@ -796,9 +781,9 @@ to review them through the installed Codex CLI, or `--backend openai-compatible`
 to use a local vision LLM through `/models` and `/chat/completions`. Without an
 explicit backend, a configured base URL selects the HTTP backend; otherwise
 Codex is selected. There is no model download or service management.
-Feather's uncompressed 24/32-bit BMP frames are converted in memory to PNG
-with the Python standard library before submission because some compatible
-servers reject BMP vision input. The saved source artifact, its hash, and its
+Uncompressed 24/32-bit BMP frames, which older runs saved, are converted in
+memory to PNG with the Python standard library before submission because some
+compatible servers reject BMP vision input. The saved source artifact, its hash, and its
 byte count remain unchanged. Both backends use the same prompts and JSON
 schemas, and responses are independently validated again by the checker.
 

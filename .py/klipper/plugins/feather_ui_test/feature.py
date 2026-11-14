@@ -151,7 +151,7 @@ class UITestFeature:
         run.abort(gcmd)
 
     def run(self, gcmd, suite, material, confirm, encoded_cases="",
-            screen_capture_interval=0.0):
+            screen_capture_interval=0.0, capture_screenshots=True):
         if self.cpu_profile is not None and self.cpu_profile.running:
             raise gcmd.error("A Feather CPU profile is running")
         if self.running:
@@ -161,7 +161,7 @@ class UITestFeature:
             on_finished=self._run_finished)
         candidate.run(
             gcmd, suite, material, confirm, encoded_cases,
-            screen_capture_interval)
+            screen_capture_interval, capture_screenshots)
         self.current_run = candidate
 
     def _profile_safe(self):

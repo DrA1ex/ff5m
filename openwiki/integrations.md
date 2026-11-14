@@ -130,7 +130,10 @@ proxy has no authentication either: anyone who can reach port 80 can send touch 
 to 30 and `screen_stream_quality` to 90. On the AD5M framebuffer, the bundled binary encodes the visible page directly
 with CedarC. Hardware layouts that need padded rows or dimensions use the G2D conversion path.
 
-The encoder runs only while a stream or snapshot client is connected. The first client starts it and waits for a real
+A snapshot waits for a screen read that starts after the request and wakes the capture loop instead of waiting
+for its next slot, so it shows the screen as it is when asked, about 7 ms on a warm encoder; the Feather UI test
+runner relies on this (see the testing guide). The encoder runs only while a stream or snapshot client is
+connected. The first client starts it and waits for a real
 frame. Five seconds after the last client leaves, the encoder and its DMA buffers are freed. At 800×480 the direct
 path uses 376 KiB of ION up to quality 90 and 752 KiB above it, where `S98screen` keeps the streamer's default JPEG
 limit. The G2D path needs another 564 KiB for its conversion buffer. `/healthz` stays 200 between viewers, and `MEM`

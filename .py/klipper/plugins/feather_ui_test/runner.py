@@ -37,9 +37,9 @@ CAPTURE_RECEIPT_TIMEOUT = 6.0
 TAP_OPERATION_TIMEOUT = 1900.0
 REACTOR_PROBE_INTERVAL = 0.2
 REACTOR_PROBE_FLUSH_INTERVAL = 1.0
-# Operation states that drive the toolhead against the bed.  A framebuffer
-# capture during one of these competes with Klipper for the host, so periodic
-# captures wait.  The names are the ones the macros and plugins actually
+# Operation states that drive the toolhead against the bed.  A screen capture
+# during one of these competes with Klipper for the host, so periodic and stage
+# captures are skipped.  The names are the ones the macros and plugins actually
 # publish: PROBING and LEVELING from [gcode_macro] bed_screws/bed_level,
 # "CHECKING MESH" from the mesh validation macro, and TARING from the load cell
 # probe in feather.calibration.z.  HOMING is included because _HOME_IF_NEEDED
@@ -90,6 +90,7 @@ class UITestRun:
         self.run_directory = None
         self.worker = None
         self.capture_number = 0
+        self.capture_screenshots = True
         self.screen_capture_interval = 0.0
         self.next_periodic_capture = None
         self.periodic_capture_pending = 0
@@ -166,11 +167,15 @@ class UITestRun:
             "context_path": signature[1],
             "current_state": signature[2],
         })
+        if not self.capture_screenshots:
+            return
+
         label = "%s-stage-%s" % (self.phase, status)
         state = str(signature[2] or "").upper()
         if state in PROBING_STATES:
             # Even one framebuffer read while the toolhead works against the
-            # bed can cost the MCU its deadline ("Timer too close").  The stage
+            # bed has cost the MCU its deadline ("Timer too close"); the
+            # streamer's capture is lighter, but the guard stays.  The stage
             # stays on the timeline; the next stage, after the motion, carries
             # the screenshot.
             self._event("STAGE %s page=%s screenshot skipped during %s" % (
@@ -183,8 +188,9 @@ class UITestRun:
         except Exception:
             logging.exception("[feather_ui_test] unable to snapshot stage")
             return
-        # Stage captures settle the framebuffer like semantic ones but are
-        # driven by the printer's own operation context, not by a test step.
+        # Stage captures wait for a quiet screen: they are driven by the
+        # printer's own operation context, not by a test step, and no presented
+        # receipt says when the new stage is on the panel.
         # artifact_timing.csv has to separate the two, or a cost measured
         # there cannot be attributed to a capture path.
         metadata["capture_kind"] = "stage"
@@ -214,7 +220,7 @@ class UITestRun:
         return None
 
     def _periodic_capture_tick(self, eventtime):
-        if (not self.running or self.finalizing
+        if (not self.running or self.finalizing or not self.capture_screenshots
                 or not self.screen_capture_interval
                 or self.worker is None
                 or self.next_periodic_capture is None
@@ -405,6 +411,7 @@ class UITestRun:
             "step_index": self.step_index,
             "step_count": len(self.steps),
             "ui_fingerprint": self.ui_fingerprint,
+            "capture_screenshots": self.capture_screenshots,
         }
 
     def abort(self, gcmd):
@@ -422,7 +429,7 @@ class UITestRun:
         self._schedule(0.0)
 
     def run(self, gcmd, suite, material, confirm, encoded_cases="",
-            screen_capture_interval=0.0):
+            screen_capture_interval=0.0, capture_screenshots=True):
         if self.running:
             raise gcmd.error("Feather UI test is already running")
         if suite not in VALID_SUITES:
@@ -447,7 +454,9 @@ class UITestRun:
                 "CAPTURE_INTERVAL must be 0 or between 5 and 300 seconds")
         self._preflight(suite, hardware_targets=False)
         self.suite = suite
-        self.screen_capture_interval = screen_capture_interval
+        self.capture_screenshots = bool(capture_screenshots)
+        self.screen_capture_interval = (
+            screen_capture_interval if self.capture_screenshots else 0.0)
         self.component_cases = self.scenarios._decode_component_cases(
             encoded_cases) if suite == "COMPONENT" else ()
         self.material = self._resolve_material(material, suite)
@@ -719,6 +728,7 @@ class UITestRun:
             "material": self.material,
             "pid": os.getpid(),
             "screen_capture_interval": self.screen_capture_interval,
+            "capture_screenshots": self.capture_screenshots,
             "software_version": start_args.get("software_version"),
             "ui_fingerprint": self.ui_fingerprint,
             "theme": getattr(self.host.renderer, "theme_name", None),
@@ -880,6 +890,12 @@ class UITestRun:
             self._schedule(delay)
 
     def _capture(self, step):
+        if not self.capture_screenshots:
+            self.step_index += 1
+            self.step_runtime = {}
+            self._schedule(0.02)
+            return
+
         if self.step_runtime.get("capture_pending"):
             return
         # Typer applies transactions in order and drops none, so the frame
@@ -913,9 +929,12 @@ class UITestRun:
             metadata["case_id"] = step["case_id"]
         self._event("CAPTURE_QUEUED %s eventtime=%.6f" % (
             step["label"], self.reactor.monotonic()))
+        # The presented receipt above already guarantees the frame is on the panel, and the streamer's snapshot
+        # is taken after the request, so one snapshot is enough: waiting for a quiet window only delays the step
+        # (an animated screen never goes quiet).
         self.worker.capture(
             self.capture_number, step["label"], metadata,
-            lambda result, item=step: self._capture_finished(item, result))
+            lambda result, item=step: self._capture_finished(item, result), settle=False)
 
     def _capture_finished(self, step, result):
         if not self.running or self.finalizing:
@@ -932,24 +951,18 @@ class UITestRun:
     def _screen_metadata(self):
         renderer = self.host.renderer
         renderer_status = renderer.get_status()
-        buttons = {}
-        for action, spec in getattr(renderer, "_buttons", {}).items():
-            buttons[str(action)] = {
-                "x": spec[0], "y": spec[1], "width": spec[2],
-                "height": spec[3], "label": str(spec[4]),
-                "state": str(spec[5]),
-            }
-            if (spec[0] < 0 or spec[1] < 0 or spec[2] <= 0 or spec[3] <= 0
-                    or spec[0] + spec[2] > SCREEN_WIDTH
-                    or spec[1] + spec[3] > SCREEN_HEIGHT):
+        buttons = self.scenarios.shown_buttons()
+        for action, button in buttons.items():
+            if (button["x"] < 0 or button["y"] < 0 or button["width"] <= 0 or button["height"] <= 0
+                    or button["x"] + button["width"] > SCREEN_WIDTH
+                    or button["y"] + button["height"] > SCREEN_HEIGHT):
                 raise RuntimeError("Invalid hitbox: %s" % action)
         hitboxes = []
-        for region in getattr(renderer, "hitboxes", ()):
-            hitboxes.append(region._asdict())
-            if (region.x < 0 or region.y < 0 or region.width <= 0 or region.height <= 0
-                    or region.x + region.width > SCREEN_WIDTH
-                    or region.y + region.height > SCREEN_HEIGHT):
-                raise RuntimeError("Invalid hitbox: %s" % region.action)
+        for action, x, y, width, height, continuous, layer in self.scenarios.shown_regions():
+            hitboxes.append({"action": action, "x": x, "y": y, "width": width, "height": height,
+                             "continuous": bool(continuous), "layer": layer})
+            if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > SCREEN_WIDTH or y + height > SCREEN_HEIGHT:
+                raise RuntimeError("Invalid hitbox: %s" % action)
         return {
             "time": time.time(), "phase": self.phase,
             "page": self.host.page.name,
@@ -1106,6 +1119,7 @@ class UITestRun:
             "material": self.material,
             "outcome": outcome,
             "screen_capture_interval": self.screen_capture_interval,
+            "capture_screenshots": self.capture_screenshots,
             "reason": reason, "failures": self.failures,
             "gcode_errors": self.gcode_errors,
             "calibration_stages": self.calibration_stages,
