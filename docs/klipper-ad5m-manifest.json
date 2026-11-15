@@ -83,7 +83,9 @@
     },
     "klippy/extras/virtual_sdcard.py": {
       "ff5m": ".py/klipper/patches/extras/virtual_sdcard.py",
-      "sha256": "449a5d1bef1cf29533b4138d39739160b98ed36b5dcff7f9fd2dc918cddc3245"
+      "sha256": "c81b303234085d921793946b990a35631de798ed4cbee9b4135c7372e530f0f9",
+      "upstream_sha256": "449a5d1bef1cf29533b4138d39739160b98ed36b5dcff7f9fd2dc918cddc3245",
+      "local_change": "Fork-local ETA parsing: skip saved settings templates and invalid duration comments."
     },
     "klippy/gcode.py": {
       "ff5m": ".py/klipper/patches/gcode.py",

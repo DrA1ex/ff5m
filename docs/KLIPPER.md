@@ -46,7 +46,7 @@ Forge-X 1.4.2 fixes this in Klipper itself: `toolhead.py` periodically yields to
 
 ## All changes
 
-Each row is one topic. "Based on" is the upstream Klipper commit, where there is one. Some commits are cherry-picked, and others are adapted to the 0.11 code; the commit message in the history says which. "History" links to published commits in the [history repository](#source-history-of-the-patches); all shipped Python replacements match the snapshot recorded in the manifest.
+Each row is one topic. "Based on" is the upstream Klipper commit, where there is one. Some commits are cherry-picked, and others are adapted to the 0.11 code; the commit message in the history says which. "History" links to published commits in the [history repository](#source-history-of-the-patches); the manifest records the shipped checksums and identifies the fork-local ETA correction below.
 
 | Area | What changes | Based on | History |
 | --- | --- | --- | --- |
@@ -78,6 +78,29 @@ Each row is one topic. "Based on" is the upstream Klipper commit, where there is
 | Stock screen reloads | `webhooks.py` preserves the Stock API socket and output subscription across in-process `RESTART`, `FIRMWARE_RESTART`, and `SAVE_CONFIG`. A hard process restart still closes them. | Forge-X | [`c0b26da`](https://github.com/DrA1ex/klipper-ad5m/commit/c0b26daa5a54de73fe70619e1e6294149ce2b4c4) |
 
 ## Source history of the patches
+
+### Fork-local ETA correction
+
+In `iKnowMYABGZ/ff5m206`, `virtual_sdcard.py` additionally skips saved
+Orca/Prusa settings templates and invalid duration comments when reading the
+estimated print time. Moonraker's metadata parser applies the same correction.
+This changes estimate extraction only; G-code execution and motion limits are
+unchanged. `tests/test_slicer_estimated_time.py` covers the original zero-time
+regression and valid/missing durations.
+
+The manifest's `sha256` for `virtual_sdcard.py` identifies the shipped local
+file; `upstream_sha256` preserves its checksum at the recorded upstream
+`commit`, and `local_change` describes the intentional divergence. The
+upstream snapshot statements below describe the baseline, before this local
+correction. Comparing against that upstream commit reports this intentional
+difference; `verify_klipper_fork.py --sync` would restore the upstream file
+and remove the local correction.
+
+Existing G-code metadata can still retain a cached zero after updating.
+Re-extract a completed file through Moonraker's `POST /server/files/metascan`
+with its `filename` to rebuild its metadata without removing the G-code or
+print history. This also resets that file's cached `job_id`/`print_start_time`,
+so do it only for an idle, completed file. New uploads use the fixed parser.
 
 The Klipper backports in `.py/klipper/patches/`, together with the startup garbage-collection module in `.py/klipper/plugins/`, are published as a Git history in [DrA1ex/klipper-ad5m](https://github.com/DrA1ex/klipper-ad5m), a copy of Klipper with these commits on top of each other:
 

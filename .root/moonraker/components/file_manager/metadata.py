@@ -382,22 +382,29 @@ class PrusaSlicer(BaseSlicer):
         )
 
     def parse_estimated_time(self) -> Optional[float]:
-        time_match = re.search(
-            r';\sestimated\sprinting\stime.*', self.footer_data)
-        if not time_match:
-            return None
-        total_time = 0
-        time_group = time_match.group()
         time_patterns = [(r"(\d+)d", 24*60*60), (r"(\d+)h", 60*60),
                          (r"(\d+)m", 60), (r"(\d+)s", 1)]
-        try:
-            for pattern, multiplier in time_patterns:
-                t = re.search(pattern, time_group)
-                if t:
-                    total_time += int(t.group(1)) * multiplier
-        except Exception:
-            return None
-        return round(total_time, 2)
+        # Ignore templates embedded in saved settings; inspect real comments.
+        for time_match in re.finditer(
+                r'^[ \t]*;[ \t]*(?:OrcaSlicer[ \t]+)?estimated[ \t]+'
+                r'(?:printing|extrusion)[ \t]+time[^\r\n]*',
+                self.footer_data, re.IGNORECASE | re.MULTILINE):
+            time_group = time_match.group()
+            if "{" in time_group or "}" in time_group:
+                continue
+            total_time = 0
+            has_duration = False
+            try:
+                for pattern, multiplier in time_patterns:
+                    t = re.search(pattern, time_group)
+                    if t:
+                        total_time += int(t.group(1)) * multiplier
+                        has_duration = True
+            except Exception:
+                continue
+            if has_duration:
+                return round(total_time, 2)
+        return None
 
     def parse_first_layer_extr_temp(self) -> Optional[float]:
         return regex_find_float(
