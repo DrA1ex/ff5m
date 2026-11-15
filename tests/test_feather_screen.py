@@ -67,7 +67,6 @@ from feather.settings import mod as MOD_UI
 from feather.features import settings as SETTINGS
 from feather.screen import pages as PAGES
 from feather.screen.pages import files as FILE_PAGES
-from feather.screen.pages import home as HOME_PAGES
 from feather.screen import keyboard as KEYBOARD
 from feather.screen import pagination as PAGINATION
 
@@ -415,19 +414,6 @@ class FeatherUtilitiesTest(unittest.TestCase):
         self.assertEqual(clock(None), "--:--:--")
         self.assertEqual(clock(4354), "01:12:34")
         self.assertEqual(clock(90061), "1d 01:01:01")
-
-    def test_dashboard_reloads_timezone_only_when_localtime_changes(self):
-        controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
-        stat_result = type("Stat", (), {"st_ino": 10, "st_mtime": 20})()
-        with (mock.patch.object(HOME_PAGES.os, "lstat", return_value=stat_result),
-              mock.patch.object(HOME_PAGES.os.path, "islink", return_value=True),
-              mock.patch.object(
-                  HOME_PAGES.os, "readlink",
-                  return_value="/usr/share/zoneinfo/Asia/Yekaterinburg"),
-              mock.patch.object(HOME_PAGES.time, "tzset") as tzset):
-            controller._refresh_local_timezone()
-            controller._refresh_local_timezone()
-        tzset.assert_called_once_with()
 
     def test_stale_actions_are_rejected(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)

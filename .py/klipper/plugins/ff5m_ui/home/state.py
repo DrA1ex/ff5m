@@ -79,7 +79,6 @@ def dashboard_values(snapshot):
 
 def collect_dashboard(host, eventtime, clock=None):
     """Collect one immutable dashboard snapshot from the controller."""
-    host._refresh_local_timezone()
     material = host._current_material()
     host.filament_material = material
     extruder = host.extruder.get_status(eventtime)

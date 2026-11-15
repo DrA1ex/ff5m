@@ -4,9 +4,6 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import os
-import time
-
 from ui.lazy import LazyModule
 from ff5m_ui.screen import ScreenPage
 
@@ -54,21 +51,9 @@ class HomePagesMixin:
     def _dashboard_job(self, eventtime):
         return home_state.dashboard_job(self, eventtime)
 
-    def _refresh_local_timezone(self):
-        """Reload libc timezone data after SET_TIMEZONE replaces localtime."""
-        try:
-            stat_result = os.lstat("/etc/localtime")
-            signature = (
-                stat_result.st_ino, stat_result.st_mtime,
-                os.readlink("/etc/localtime")
-                if os.path.islink("/etc/localtime") else "")
-        except OSError:
-            signature = None
-        if signature == getattr(self, "_timezone_signature", object()):
-            return
-        if hasattr(time, "tzset"):
-            time.tzset()
-        self._timezone_signature = signature
+    def _handle_timezone_changed(self):
+        if self.page == ScreenPage.IDLE_HOME:
+            self._update_dashboard(self.reactor.monotonic())
 
     def _render_control_home(self):
         commands = self.renderer.begin_page("Control menu", back=True)

@@ -393,6 +393,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.printer.register_event_handler(
             "mod_params:changed", self.update_notification.on_mod_params_changed)
         self.printer.register_event_handler("mod_params:changed", self._refresh_status_bar)
+        self.printer.register_event_handler("system_time:timezone_changed", self._handle_timezone_changed)
         self.gcode.register_command(
             "FEATHER_ABORT", self.cmd_FEATHER_ABORT,
             desc=self.cmd_FEATHER_ABORT_help)

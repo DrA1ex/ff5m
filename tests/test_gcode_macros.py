@@ -1560,15 +1560,6 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
 
         self.assertEqual(result.commands[0], "PAUSE X=10.0 Y=20.0")
 
-    def test_timezone_macro_passes_the_selected_zone_to_helper(self):
-        result = render_macro(
-            BASE, "SET_TIMEZONE",
-            params={"ZONE": "Asia/Yekaterinburg"})
-
-        self.assertEqual(result.commands[-1],
-                         'RUN_SHELL_COMMAND CMD=ztimezone '
-                         'PARAMS="Asia/Yekaterinburg"')
-
     def test_usb_prepare_blocks_printing_and_preserves_confirmed_identity(self):
         idle = render_macro(
             FIRMWARE, "PREPARE_USB",

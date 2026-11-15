@@ -123,12 +123,34 @@ The dashboard wall clock reads the printer's Linux system clock, which
 [`.root/S45ntpd`](../../.root/S45ntpd) keeps synchronized through
 `pool.ntp.org`. It converts that time through the timezone selected by
 `/etc/localtime`, not a Klipper print-time counter or a browser timezone.
-`SET_TIMEZONE ZONE=Area/City` delegates to
-[`.shell/commands/ztimezone.sh`](../../.shell/commands/ztimezone.sh), which
-validates the requested entry under `/usr/share/zoneinfo` and atomically
-replaces the symlink. Feather watches that symlink and calls `time.tzset()` when
-it changes, so an already running Klipper process starts using the new timezone
-without a restart.
+The `[system_time]` Klipper plugin owns `SET_TIMEZONE` and atomically replaces
+`/etc/localtime` in one of two ways. A named zone becomes a symlink to a
+validated TZif entry under `/usr/share/zoneinfo`; leap-second `right/` entries
+are rejected. `UTC+H[:MM]` and `UTC-H[:MM]` become a regular fixed-offset TZif
+file written directly to `/etc/localtime`, so the timezone database is never
+modified and a firmware update cannot leave a dangling selection. The signs
+follow ordinary UTC notation, unlike the database's POSIX-signed `Etc/GMT`
+names, and fixed offsets have no seasonal changes. A zero offset selects the
+database `UTC` entry. The reported name is the symlink's database path, or the
+current offset for a regular file. Invalid input or a failed replacement leaves
+the selected zone intact; temporary files are removed on failure.
+
+After applying a selection and at `klippy:ready`, the plugin points the
+process's `TZ` at `/etc/localtime` and makes libc reload it. The printer's
+Python 3.7 is built without `time.tzset`, so the plugin calls `time.mktime()`,
+which POSIX requires to act as if `tzset()` were called. libc rereads zone data
+only when `TZ` changes, so the plugin passes through `UTC0` first; explicit
+`TZ` also overrides an inherited process setting. It then emits
+`system_time:timezone_changed`. Feather subscribes to that event and updates a
+visible dashboard immediately through its ordinary page-value transaction.
+Other pages read the updated process time when they next render. There is no
+timezone polling in the dashboard. The native renderer and shared framework
+are unchanged.
+
+`SET_TIMEZONE` without `ZONE` only reports the current zone, local date/time,
+and examples; it never selects a default. User-facing formats and examples are
+in [MACROS.md](../../docs/MACROS.md). This selection changes the
+interpretation of wall time, not the UTC system clock maintained by NTP.
 
 Feather stores the selected material in `mod_params` as `current_material`. Selection through Feather, the interactive `LOAD_MATERIAL` prompt, `PREHEAT_MATERIAL`, or `LOAD_FILAMENT MATERIAL=...` updates the same value, so Fluidd actions and the local dashboard remain consistent after restarts. A saved name no longer present in `heating_slots` is normalized to `n/a`; calibration selects the first active Heating slot. Touch, dim/wake, action and long-operation diagnostics use the `[feather_screen]` prefix in the normal Klipper log.
 

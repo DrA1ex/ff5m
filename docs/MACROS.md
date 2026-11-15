@@ -551,12 +551,21 @@ Material workflow macros and defaults live in `config/material.cfg`; see [Materi
   - **Defaults**: Sets to default if no value provided.
 
 - **SET_TIMEZONE**
-  - **Description**: Validates and changes the printer timezone.
+  - **Description**: Shows or changes the printer timezone. Run `SET_TIMEZONE` without parameters to see the current timezone, local date/time, and usage examples. This does not change the setting.
   - **Parameters**:
-    - `ZONE` (string, default: "Europe/Moscow"): Timezone (e.g., "Asia/Yekaterinburg").
-  - **Defaults**: Sets to Europe/Moscow if unspecified.
-  - Invalid timezone names are rejected without changing the current setting.
-  - Feather notices the change automatically; restarting Klipper is not required for the dashboard clock.
+    - `ZONE` (optional string): A name from the printer's timezone database or a fixed UTC offset. There is no default zone.
+  - **Examples**:
+    - `SET_TIMEZONE ZONE=Europe/Berlin` — follows Berlin's winter/summer time rules.
+    - `SET_TIMEZONE ZONE=Europe/Moscow` — uses Moscow's timezone rules.
+    - `SET_TIMEZONE ZONE="America/Los_Angeles"` — follows Los Angeles's winter/summer time rules. Quotes are optional.
+    - `SET_TIMEZONE ZONE=Asia/Tokyo` — uses Tokyo's timezone rules.
+    - `SET_TIMEZONE ZONE=UTC` — UTC with no offset.
+    - `SET_TIMEZONE ZONE=UTC+3` — always three hours ahead of UTC.
+    - `SET_TIMEZONE ZONE=UTC-8` — always eight hours behind UTC.
+    - `SET_TIMEZONE ZONE=UTC+5:30` or `ZONE=UTC-3:30` — fixed offsets including minutes.
+  - Fixed offsets accept `UTC+H`, `UTC-H`, `UTC+H:MM`, and `UTC-H:MM`, with one or two hour digits and exactly two minute digits. The supported range is -23:59 through +23:59. Fixed offsets never switch for daylight saving time; use a named zone for automatic seasonal changes.
+  - Zone names are case-sensitive. Any timezone data entry installed on the printer is accepted; unknown names and invalid offsets leave the current setting unchanged.
+  - Feather updates its dashboard clock immediately. Restarting Klipper is not required. Changing a timezone does not change the underlying system time.
 
 - **CAMERA_RELOAD**
   - **Description**: Rereads image controls from `camera.conf` and applies them without restarting the camera HTTP service.

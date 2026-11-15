@@ -204,7 +204,6 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.last_job_name = "NONE"
         controller._current_material = lambda: "PLA"
         controller._read_text = lambda _path: ""
-        controller._refresh_local_timezone = lambda: None
         batches = RenderCapture(controller.renderer).batches
 
         controller._render_screen()
@@ -618,7 +617,6 @@ class ControllerSafetyTest(unittest.TestCase):
         })
         controller._last_dashboard = None
         controller._read_text = lambda path: ""
-        controller._refresh_local_timezone = lambda: None
 
         controller._render_screen()
 

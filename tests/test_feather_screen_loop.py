@@ -185,7 +185,6 @@ def home_controller():
     controller.last_job_name = "NONE"
     controller._current_material = lambda: "PLA"
     controller._read_text = lambda _path: ""
-    controller._refresh_local_timezone = lambda: None
     return controller
 
 
