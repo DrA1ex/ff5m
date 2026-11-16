@@ -53,7 +53,7 @@ If the printer freezes, turn it off and on, then follow the on-screen instructio
 
 **EXTRA RAM** frees about 7 MiB on compatible stock firmware. Recovery checks the change and shows the RAM totals before and after reboot. Select **EXTRA RAM** again to turn it off. Based on the [ad5m-extra-ram project](https://github.com/mlengle/ad5m-extra-ram) by [@mlengle](https://github.com/mlengle).
 
-For eligible legacy eMMC, **HS52 (2x)** and **DDR52 (4x)** both run at 50 MHz. DDR52 transfers twice as much data per clock.
+**DDR52** runs at 50 MHz but transfers twice as much data per clock, so it is listed as 4x.
 
 To return all hardware settings to factory defaults, choose **RESTORE STOCK**. Do this before changing firmware: reinstalling firmware or removing Forge-X does not reset these settings.
 

@@ -32,7 +32,11 @@ class ViewSession:
     def next_tap(self, timeout=None):
         if not self.actions:
             raise AssertionError("Unexpected navigation after test actions")
-        return "{}:{}".format(self.view.generation, self.actions.pop(0))
+        action = self.actions.pop(0)
+        # A tap can only reach a button the current screen draws.
+        if action not in self.view.buttons:
+            raise AssertionError("{} is not on the screen: {}".format(action, sorted(self.view.buttons)))
+        return "{}:{}".format(self.view.generation, action)
 
 
 class RecoveryTrialGateTest(unittest.TestCase):
@@ -103,14 +107,14 @@ class RecoveryTrialGateTest(unittest.TestCase):
     def test_ui_restart_inside_recovery_does_not_reopen_tuning_but_keeps_the_gate(self):
         self.candidate.touch()
         with mock.patch.dict(recovery.os.environ, {"RECOVERY_UI_RESTARTED": "1"}):
-            ui = self.ui(["main.boot", "message.back", "main.reboot", "confirm.accept"])
+            ui = self.ui(["main.boot", "pending.tuning", "main.reboot", "confirm.accept"])
         ui.run()
         self.assertEqual(self.tuning.return_value.run.call_count, 1)
         self.assertEqual(self.action(), "recovery-reboot")
 
     def test_main_menu_actions_that_leave_recovery_wait_for_the_trial(self):
         self.candidate.touch()
-        ui = self.ui(["main.boot", "message.back", "main.reboot", "confirm.accept"])
+        ui = self.ui(["main.boot", "pending.tuning", "main.reboot", "confirm.accept"])
         ui.run()
         self.assertEqual(self.tuning.return_value.run.call_count, 2)
         self.assertEqual(self.action(), "recovery-reboot")

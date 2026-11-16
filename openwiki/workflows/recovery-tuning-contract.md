@@ -1,6 +1,6 @@
 # Recovery hardware tuning contract
 
-Status: implemented and validated offline, 2026-10-27. Hardware acceptance requires
+Status: native profile control implemented and validated offline, 2026-11-15. Hardware acceptance requires
 separate permission. Product authority lives in
 `/Users/akoreshnyak/dev/forge-x-docs/2026-10-26-recovery-overclocking/`.
 
@@ -15,23 +15,52 @@ separate permission. Product authority lives in
 | Boot partition `FORGE_X_A.DTB` / `FORGE_X_B.DTB` | profilectl: the actual U-Boot inputs. |
 
 profilectl is the only owner of hardware profiles, backups, DTB generation,
-locking, U-Boot selection, promotion and rollback. The shell script, manifest,
-schema, runtime data and profilectl behavioral tests are maintained in FF5M.
-The shell script is covered by `LICENSE-BINARIES.md`.
-`forge-x-private/src/overclocking` owns only the native `fgx-fdt`, `fgx-lock` and
-`fgx-stress` helpers and their native contracts. Native publishing updates their
-executables and checksum entries without replacing the public shell script or data.
+locking, U-Boot selection, promotion and rollback. The C++20 implementation lives
+in `forge-x-private/src/overclocking/src/profilectl`; FF5M owns the manifest,
+runtime data and Recovery integration. Each repository tests its side of
+the public protocol. The native program at `.bin/tools/overclocking/bin/t113-profilectl` is covered by
+`LICENSE-BINARIES.md`. No shell wrapper or shell implementation is shipped.
+`fgx-fdt`, `fgx-lock` and `fgx-stress` remain separate native helpers.
+`publish.sh --overclocking-only --public-root /path/to/ff5m` publishes the ARM
+program and helpers and updates their bundle checksum entries, preserving public data.
 
-Run the shell/native integration contracts with host-built helpers:
-`T113_HOST_BIN=/path/to/host/bin .venv/bin/python -m unittest tests.test_profilectl_transactions tests.test_profilectl_integration tests.test_profilectl_safety -q -b`.
-Without that environment variable these integration cases are skipped; the shell
-parser, mount-lifecycle, Recovery client and screen tests still run normally.
+FF5M tests the Recovery client through mocked operations, fixture executables and
+reviewed protocol examples under `tests/fixtures/profilectl-protocol`. These tests
+exercise the real parser, manifest loader, process handling and Recovery decisions;
+they need no host profilectl build or private checkout:
+
+```sh
+.venv/bin/python -m unittest tests.test_overclocking_profiles \
+  tests.test_overclocking_ui -q -b
+```
+
+`forge-x-private/src/overclocking` owns the real executable's behavior and public
+producer contracts: CLI, snapshot/progress output, transactions, fault recovery,
+hardware detection, and state and fault sweeps. Its CTest suite and
+`Overclocking contracts` CI build every native dependency. Its test data lives
+there, so neither a public checkout nor its Git history is required. Missing
+dependencies and unexpectedly skipped contracts fail that suite. Python remains
+the subprocess and filesystem test harness.
+
+The protocol examples have independent copies on each side: private compares real
+output against their required fields; FF5M feeds them to the real client. They are
+reviewed examples, not a complete frozen output schema. Additive fields remain
+allowed. Update both copies deliberately for a contract change; never regenerate
+expected results automatically from the implementation under test.
+
+Use `build.sh` in private for the printer Release build. It loads libstdc++ from
+Forge-X's `/opt/lib/14.2.0` (RPATH), which `init-main.sh` links to
+`.bin/runtime/14.2.0`; Recovery's display (Typer) already depends on that runtime.
+The build favors size over speed. This test ownership change does not alter the
+published ARM utilities or runtime behavior.
 
 ## The pending decision
 
 An unresolved trial is exactly "profilectl's `candidate` exists". There is no
 separate session, marker or supervisor. Opening HARDWARE TUNING changes nothing;
-apply, accept, discard and restore are explicit profilectl operations.
+apply, accept, discard and restore are explicit profilectl operations. Discard
+and RESTORE STOCK remove `candidate` right after the fallback boot is durable, so
+an interrupted discard leaves ordinary cleanup, not a pending trial.
 
 Extra RAM defaults to `off` in old metadata and preserves CPU and eMMC settings.
 Profilectl checks the stock kernel, DTB and both OP-TEE copies before arming or
@@ -40,9 +69,80 @@ the OP-TEE reservation. The one-shot restores the exact previous boot command
 before trying the candidate. Verification checks live reservations and the
 expected change in `MemTotal`. Ordinary boots skip the compatibility check.
 
-New DDR52 trials require legacy eMMC eligible for 50 MHz. Profilectl verifies
-the clock, negotiated timing and reported voltage. Old metadata defaults to
-`normal`. Trials of other settings preserve an existing DDR52 profile.
+Old metadata defaults to eMMC mode `normal`. Trials of other settings preserve
+the eMMC setting of the confirmed profile, including a marked one such as DDR52.
+
+### Tuning manifest
+
+`manifest-v2.json` holds the tuning settings and nothing else profilectl owns:
+`cpu_setting` rows in `cpu`; `emmc_family`, `emmc_setting` and optional
+`emmc_restriction` rows in `emmc`; and `canonical_stock.sha256`, which Recovery
+compares with the reported stock DTB hash. Boot addresses, slots, thermal trips,
+voltages and tool versions are code in profilectl and fgx-fdt. profilectl parses
+the JSON once per run into typed records. Objects, arrays, strings and non-negative
+32-bit integers are accepted; duplicate/unknown keys, wrong types, fractions,
+overflow, control characters, BOM, incomplete input and trailing data are refused.
+Only escaped quotes and backslashes are supported. Nesting is bounded to protect
+the loader; record layout and whitespace do not matter. A broken manifest makes
+bundle validation and every mutation fail before state or boot writes, and
+read-only commands then report no settings and an unknown eMMC family. A bundle
+whose files only fail their checksums still reports its settings. Semantic
+validation keeps CPU aliases, recipe keys, bus modes, stock rows, family references
+and model restrictions unambiguous. It also requires at least one CPU setting and
+a `gain` such as `2x` or `1.5x` on every eMMC setting, because Recovery labels
+settings by gain and name. Bundle validation then builds and verifies
+every CPU × eMMC row × Extra RAM state with fgx-fdt.
+
+A `cpu_setting` row has `alias` and `accepted_aliases` (CLI values of `--apply
+test cpu`), `exact_mhz` and an optional `warning` that Recovery shows as
+EXPERIMENTAL. `exact_mhz` is the profile id saved as `cpu_profile` and passed to
+fgx-fdt, which owns the OPP recipe of each profile and refuses any other. `stock`
+is not a row: it is U-Boot's 1008 MHz boot clock.
+
+### eMMC settings
+
+`manifest-v2.json` describes every eMMC setting as an `emmc_setting` row in its
+`emmc` array; nothing else in profilectl, fgx-fdt or Recovery names a setting.
+A row is keyed by `(family_id, mhz, mode)`, the same values saved profile metadata
+stores as `family`, `emmc_mhz` and `emmc_mode`, so a row change never rewrites
+metadata. Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `aliases` | CLI values of `--apply test emmc`; unique within the family. |
+| `mhz` | Generated `max-frequency`: 25, 50, 100 or 150. |
+| `mode` | `normal`, or a token written as the `forge-x,emmc-mode` marker. |
+| `remove` | Capabilities removed from the eMMC node: `mmc-hs200-1_8v`, `mmc-ddr-1_8v`. |
+| `timing`, `voltage` | Accepted `ios` timing and signal voltage after boot. |
+| `gain`, `name`, `note` | Recovery label (`2x  //  50 MHz HS52`) and confirmation note. |
+
+Each family has exactly one `stock` row at 25 MHz `normal`. Rows of a family
+appear in display order. fgx-fdt applies a row's recipe exactly (`--emmc`,
+`--family`, `--emmc-remove`, `--emmc-mode`) and only within fixed limits: the
+four clocks, the two removable capabilities and a `[a-z0-9]{1,16}` mode token.
+Verification requires the same recipe. Bundle validation refuses ambiguous rows
+(repeated ids, aliases, recipe keys or family bus modes, an unknown family, a
+family without its stock row) and then builds and verifies every eMMC row with
+every CPU profile and both Extra RAM states, so fgx-fdt refuses a recipe outside
+its limits there. Removing a row that saved profiles use makes those profiles
+invalid; keep such rows.
+
+Current rows: HS200 eMMC offers stock, HS52, 50, DDR52, 100 and 150; legacy eMMC
+offers stock, HS52 (`50`) and DDR52. HS52 on HS200 eMMC removes both 1.8 V
+capabilities and negotiates timing 1; DDR52 removes `mmc-hs200-1_8v` and
+negotiates timing 8. profilectl verifies the clock, negotiated timing and
+reported voltage against the row; a mismatch fails as `<name> runtime mode
+mismatch`. Adding a setting inside those limits is a manifest row plus
+`SHA256SUMS`.
+
+Snapshot publishes `available_emmc_settings` (row ids in display order, after
+family and model restrictions), `<profile>_emmc_setting` and the verdicts
+`confirmed_active` and `candidate_active`. A profile is active when the loaded
+DTB provenance matches it where readable, its row's marker and bus mode match
+(a normal row is not active under a marker or a timing only marked rows
+negotiate), Extra RAM matches and the observed CPU and eMMC clocks equal it.
+Recovery renders these values and the row labels; it does not decide
+eligibility or which profile runs.
 
 - Recovery start: if a candidate exists, Recovery opens tuning first. A UI
   restart inside the same Recovery (`RECOVERY_UI_RESTARTED=1`, for example
@@ -139,8 +239,8 @@ profilectl reads the active eMMC clock from `/sys/kernel/debug/mmc0/ios`.
 Recovery runs before `boot.sh` mounts debugfs, so `recovery.sh` mounts it for
 its own lifetime when absent and unmounts only its own mount on exit.
 
-Read-only commands, including `doctor`, own any temporary boot mount in the main
-shell and release it on success or failure. An existing mount belongs to its
+Read-only commands, including `doctor`, own any temporary boot mount in the invoking
+process and release it on success or failure. An existing mount belongs to its
 original caller and is never unmounted or remounted automatically. Verification
 and diagnostic reports write only profile state under `/data`, so a read-only boot
 mount is sufficient and no boot files are removed. Accepting or cancelling a trial
@@ -174,8 +274,12 @@ change does not add cancellation or a deadline to filesystem operations.
 
 ### Hardware identity and diagnostic records
 
-Manifest validator version 7 selects the base frequency list from the running
-MMC controller, independently of CID or Product Name:
+Manifest validator version 11 selects the family from the running MMC
+controller, independently of CID or Product Name. `emmc_family` records map the
+observed bus mode to a family; a loaded Forge-X DTB with an eMMC mode marker
+names its own family when its row expects the observed bus mode, because a
+marked setting can look like the other family (HS52 on HS200 eMMC) or negotiate
+a mode of either (DDR52):
 
 | Runtime timing | Signal voltage | Family | Frequencies (MHz) |
 | --- | --- | --- | --- |
@@ -187,17 +291,17 @@ malformed or unlisted CID does not block a supported mode. The existing explicit
 trial and mandatory verification still determine whether a frequency works on
 this individual printer.
 
-`manifest-v2.json` contains exactly one unrestricted `hardware_family` record
-per family, without `models`. Additional records may specify `models` as exact
-`MID:OEM:PNM-hex:PRV` identities and a narrower `frequencies_mhz` list. Serial,
-manufacturing date and CRC/end bits never participate. All matching restrictions
-for the observed family intersect with its base list; a nonmatching restriction
-does nothing. Restrictions cannot add frequencies or substitute for mode detection.
-An empty intersection offers no frequencies, including no implicit stock entry.
-For example, append this record to restrict one HS200 model to 25 and 50 MHz:
+A family's eligible clocks are the clocks of its `emmc_setting` rows. Optional
+`emmc_restriction` rows name `models` as exact `MID:OEM:PNM-hex:PRV` identities
+and a `frequencies_mhz` list. Serial, manufacturing date and CRC/end bits never
+participate. Every restriction matching the observed family and model intersects
+the eligible clocks; a nonmatching restriction does nothing. Restrictions cannot
+add clocks or substitute for mode detection. An empty intersection offers no
+setting, including no implicit stock entry. For example, append this row to
+restrict one HS200 model to 25 and 50 MHz:
 
 ```json
-{"kind":"hardware_family","family_id":"hs2001v8","models":"d6:0103:353841333938:11","frequencies_mhz":"25,50","runtime":"HS200,1.8V"}
+{"kind":"emmc_restriction","family_id":"hs2001v8","models":"d6:0103:353841333938:11","frequencies_mhz":"25,50"}
 ```
 
 To mark a model unsupported, give two matching records with disjoint lists
@@ -212,16 +316,16 @@ states the eMMC family. Recovery shows the refusal when that frequency page is
 opened, and profilectl repeats the check before writing. There is no override
 flag.
 
-Keep the published manifest representation with one hardware record per line;
-the constrained shell reader consumes that representation. Update `SHA256SUMS`
-after changing bundle data. JSON Schema and runtime validation require one base
-record per family and validate optional model keys and frequency subsets.
-The validator version and bundle key invalidate old validation caches; persisted
-candidate/current metadata and generated DTBs are unchanged.
+Manifest rows may use any JSON layout. Update `SHA256SUMS` after changing bundle data. The bundle has no JSON
+Schema: profilectl's loader is the only manifest validator, including model keys and that a restriction lists
+only clocks of its family. After editing the manifest, run the private suite with `src/test.sh --public-root`
+pointing at this checkout; its `overclocking_public_manifest` test loads this manifest with the native loader. The bundle key invalidates old
+validation caches; persisted candidate/current metadata and generated DTBs are
+unchanged.
 
-profilectl owns the eligibility calculation. The CLI list, snapshot field
-`available_emmc_mhz` and pre-write trial check use its result. Recovery uses that
-snapshot list directly, including restrictions that remove 25 MHz. The eMMC
+profilectl owns the eligibility calculation. `list emmc`, the snapshot field
+`available_emmc_settings` and the pre-write trial check use its result. Recovery
+uses that snapshot list directly, including restrictions that remove 25 MHz. The eMMC
 frequency chooser displays Product Name, runtime mode, voltage and actual clock.
 Generic repair/tuning and CPU pages omit the eMMC identity. Unsupported-type
 messages identify the observed timing and voltage without describing a model as

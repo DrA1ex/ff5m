@@ -41,20 +41,6 @@ def ram_mib(value):
         return "UNAVAILABLE"
 
 
-def emmc_profile_label(report, prefix):
-    clock = report.get(prefix + "emmc_mhz", "?")
-    family = report.get(prefix + "family")
-    if report.get(prefix + "emmc_mode") == "ddr52":
-        mode = "DDR52"
-    elif family == "hs2001v8":
-        mode = "HS200"
-    elif family == "legacy3v3":
-        mode = "HS52" if clock == "50" else "Legacy"
-    else:
-        mode = ""
-    return "{} MHz {}".format(clock, mode).rstrip()
-
-
 def active_emmc_label(report):
     clock = mhz(report.get("runtime_emmc_hz"))
     mode = EMMC_TIMING_NAMES.get(report.get("runtime_timing"), "")
@@ -323,7 +309,7 @@ class TuningUI:
 
     def confirmed_mismatch(self, report):
         v = self.view
-        saved_cpu, saved_emmc = mhz(report.get("confirmed_cpu_hz")), emmc_profile_label(report, "confirmed_")
+        saved_cpu, saved_emmc = mhz(report.get("confirmed_cpu_hz")), self.profiles.emmc_label(report, "confirmed_")
         active_cpu, active_emmc = mhz(report.get("runtime_cpu_limit_hz")), active_emmc_label(report)
         stock = " (STOCK)" if report.get("confirmed_cpu_profile") == "stock" else ""
         commands = v.begin_page("HARDWARE SETTINGS CHECK")
@@ -367,11 +353,14 @@ class TuningUI:
         cpu = mhz(report["confirmed_cpu_hz"])
         if report.get("confirmed_cpu_profile") == "stock":
             cpu += " (STOCK)"
+        emmc = self.profiles.emmc_label(report, "confirmed_")
+        if report.get("confirmed_emmc_setting") == "stock":
+            emmc = "{} MHz (STOCK)".format(report.get("confirmed_emmc_mhz", "?"))
         commands = v.begin_page("HARDWARE TUNING", "CONFIRMED PROFILE")
         commands += [v.text(30, 92, "CURRENT HARDWARE SETTINGS", color=v.ACCENT, font=v.FONT_LABEL,
                             h_align="left", max_width=740),
                      v.text(30, 126, "CPU " + cpu, font=v.FONT_VALUE, h_align="left", max_width=370),
-                     v.text(415, 126, "eMMC " + emmc_profile_label(report, "confirmed_"), font=v.FONT_VALUE,
+                     v.text(415, 126, "eMMC " + emmc, font=v.FONT_VALUE,
                             h_align="left", max_width=355),
                      v.rule(152),
                      v.text(30, 180, "TESTS", color=v.MUTED, font=v.FONT_MEDIUM, h_align="left")]
@@ -426,10 +415,9 @@ class TuningUI:
         headline = "Try {} {}?".format(AXIS_NAMES[axis], selected[2])
         if axis == "extra-ram":
             headline = "Try Extra RAM (+7 MiB)?" if selected[0] == "on" else "Try Stock RAM (-7 MiB)?"
-        elif axis == "emmc" and selected[0] == "ddr52":
-            detail += " DDR52 runs at 50 MHz on this printer and transfers data twice per clock."
-        elif axis == "emmc" and selected[0] == "50" and report.get("family") == "legacy3v3":
-            detail += " HS52 runs at 50 MHz on this printer."
+        elif axis == "emmc":
+            note = self.profiles.emmc_setting(report["family"], selected[0]).get("note")
+            detail += " " + note if note else ""
         if "EXPERIMENTAL" in selected[1]:
             detail += " This frequency is unstable on some printers."
         reference = axis == "emmc" and not os.path.exists(reference_path(self.results.root))
@@ -458,8 +446,7 @@ class TuningUI:
             while True:
                 if self.not_applied(report, axis, state) != "trial.discard":
                     return None
-                if self.view.confirm("DISCARD UNCONFIRMED TRIAL", "", "DISCARD",
-                                     headline="Return to the last confirmed settings?"):
+                if self.confirm_discard(report):
                     return self.discard(report)
         # Keep mandatory boot/artifact checks separate from optional stress outcomes.
         mandatory_error = ""
@@ -470,9 +457,9 @@ class TuningUI:
         kinds = {"cpu": ("cpu-stability",), "emmc": ("emmc-integrity",), "extra-ram": ()}[axis]
         if axis == "cpu":
             before, now = mhz(report["confirmed_cpu_hz"]), mhz(report["candidate_cpu_hz"])
-            verified = "UNCHANGED: eMMC {}   BOOT / DTB VERIFIED".format(emmc_profile_label(report, "candidate_"))
+            verified = "UNCHANGED: eMMC {}   BOOT / DTB VERIFIED".format(self.profiles.emmc_label(report, "candidate_"))
         elif axis == "emmc":
-            before, now = emmc_profile_label(report, "confirmed_"), emmc_profile_label(report, "candidate_")
+            before, now = self.profiles.emmc_label(report, "confirmed_"), self.profiles.emmc_label(report, "candidate_")
             verified = "UNCHANGED: CPU {}   BOOT / DTB VERIFIED".format(mhz(report["candidate_cpu_hz"]))
         else:
             before = ram_mib(report.get("candidate_ram_before_kib"))
@@ -540,7 +527,7 @@ class TuningUI:
                 for kind, result in results.items():
                     self.result_page(kind, result)
             elif action == "trial.discard":
-                if v.confirm("DISCARD PROFILE", "", "DISCARD", headline="Return to the last confirmed settings?"):
+                if self.confirm_discard(report):
                     return self.discard(report)
             elif action == "trial.accept":
                 if mandatory_error:
@@ -567,7 +554,7 @@ class TuningUI:
             active = "EXTRA RAM " + report.get("loaded_extra_ram", "unknown").upper()
         else:
             requested = "CPU {} / eMMC {}".format(mhz(report.get("candidate_cpu_hz")),
-                                                  emmc_profile_label(report, "candidate_"))
+                                                  self.profiles.emmc_label(report, "candidate_"))
             active = "CPU {} / eMMC {}".format(mhz(report.get("runtime_cpu_limit_hz")),
                                                active_emmc_label(report))
         rows = (("REQUESTED", requested, v.TEXT), ("ACTIVE", active, v.TEXT), ("STATUS", state.upper(), v.WARNING))
@@ -582,6 +569,15 @@ class TuningUI:
         commands.extend(v.action_row((("trial.back", "BACK TO MENU"), ("trial.discard", "DISCARD PROFILE", True))))
         v.send(commands)
         return v.wait_action()
+
+    def confirm_discard(self, report):
+        # Like APPLY & REBOOT, the button names the reboot that leaving a booted trial needs.
+        if self.profiles.discard_reboots(report):
+            detail, label = "The printer reboots with the last confirmed settings.", "DISCARD & REBOOT"
+        else:
+            detail, label = "", "DISCARD"
+        return self.view.confirm("DISCARD UNCONFIRMED TRIAL", detail, label,
+                                 headline="Return to the last confirmed settings?")
 
     def discard(self, report):
         if self.operation("Restoring the last confirmed settings.", self.profiles.discard, report):

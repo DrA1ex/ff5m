@@ -15,8 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-
 ROOT = pathlib.Path(__file__).parents[1]
+PROTOCOL = ROOT / 'tests/fixtures/profilectl-protocol'
 SPEC = importlib.util.spec_from_file_location("overclocking_profiles", ROOT / ".py/overclocking_profiles.py")
 PROFILES = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PROFILES)
@@ -34,55 +34,66 @@ class Python372Popen(subprocess.Popen):
 class OverclockingProfilesTest(unittest.TestCase):
     def setUp(self):
         self.tool = PROFILES.ProfileTool(bundle=ROOT / ".bin/tools/overclocking", state="/data/test/profile")
-        self.report = {
-            "format": "1", "boot_state": "candidate-armed", "boot_id": "boot-b",
-            "hardware": "supported", "family": "hs2001v8",
-            "available_emmc_mhz": "25,50,100,150",
-            "current_present": "no", "candidate_present": "yes", "candidate_valid": "yes",
-            "candidate_armed_boot_id": "boot-a", "candidate_phase": "armed",
-            "candidate_cpu_hz": "1248000000", "candidate_cpu_profile": "1248",
-            "candidate_emmc_mhz": "25", "candidate_family": "hs2001v8",
-            "runtime_cpu_limit_hz": "1248000000", "runtime_cpu_hz": "480000000",
-            "runtime_emmc_hz": "25000000", "loaded_cpu_profile": "1248",
-            "loaded_emmc_mhz": "25", "loaded_emmc_family": "hs2001v8",
-            "confirmed_cpu_profile": "stock", "confirmed_cpu_hz": "1008000000",
-            "confirmed_emmc_mhz": "25", "confirmed_family": "hs2001v8",
-            "stock_dtb_sha256": self.tool.manifest["canonical_stock"]["sha256"],
-        }
+        self.report = dict(line.split('=', 1) for line in (PROTOCOL / 'cpu-trial.snapshot').read_text().splitlines())
 
     def test_snapshot_parser_accepts_public_fields_without_evaluating_data(self):
-        text = "".join(key + "=" + value + "\n" for key, value in self.report.items())
+        text = (PROTOCOL / 'cpu-trial.snapshot').read_text()
         self.assertEqual(PROFILES.parse_snapshot(text), self.report)
         for invalid in (text + "format=1\n", text.replace("family=hs2001v8", "family=$(touch /tmp/injection)"),
                         "format=2\n", text + "human readable diagnostic\n"):
             with self.assertRaises(PROFILES.ProfileError):
                 PROFILES.parse_snapshot(invalid)
 
+    def test_snapshot_reads_the_protocol_fixture_through_the_process_boundary(self):
+        text = (PROTOCOL / 'cpu-trial.snapshot').read_text()
+        self.command_script('print({!r}, end="")\n'.format(text))
+        report = self.tool.snapshot()
+        self.assertEqual(report, self.report)
+        self.assertEqual(self.tool.trial_state(report), 'applied')
+
+    def test_hs200_chooser_names_and_orders_the_settings_offered_by_the_utility(self):
+        choices = self.tool.choices('emmc', self.report)
+        self.assertEqual([label for _, label, _ in choices], [
+            'STOCK eMMC  //  25 MHz', '2x  //  50 MHz HS52', '2x  //  50 MHz HS200', '4x  //  50 MHz DDR52',
+            '4x  //  100 MHz HS200', '6x  //  150 MHz HS200'])
+
+    def test_new_manifest_setting_is_offered_and_named_from_the_protocol_fixture(self):
+        root = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        manifest = json.loads((ROOT / '.bin/tools/overclocking/manifest-v2.json').read_text())
+        manifest['emmc'].append(dict(kind='emmc_setting', family_id='hs2001v8', id='hs25', mhz=25,
+                                     mode='hs25', remove='mmc-hs200-1_8v,mmc-ddr-1_8v', timing='1', voltage='0,1',
+                                     gain='1x', name='HS25', note='HS25 is a test setting.'))
+        (root / 'manifest-v2.json').write_text(json.dumps(manifest))
+        tool = PROFILES.ProfileTool(bundle=root)
+        output = (PROTOCOL / 'emmc-hs25.snapshot').read_text()
+        with mock.patch.object(tool, 'run', return_value=output):
+            report = tool.snapshot()
+        self.assertIn(('hs25', '1x  //  25 MHz HS25', '25 MHz HS25'), tool.choices('emmc', report))
+        self.assertEqual(tool.emmc_label(report, 'confirmed_'), '25 MHz HS25')
+
     def test_trial_is_applied_even_though_persistent_boot_already_selects_fallback(self):
         self.report["pending_boot"] = "confirmed"
         self.assertEqual(self.tool.trial_state(self.report), "applied")
         self.assertFalse(self.tool.confirmed_active(self.report))
 
-    def test_confirmed_fallback_is_detected_from_loaded_settings(self):
-        self.report.update(runtime_cpu_limit_hz="unknown", runtime_cpu_hz="1008000000", loaded_cpu_profile="stock")
-        self.assertEqual(self.tool.trial_state(self.report), "fallback")
-        self.assertTrue(self.tool.confirmed_active(self.report))
-        self.report.update(runtime_cpu_limit_hz="912000000", loaded_cpu_profile="1200")
-        self.assertEqual(self.tool.trial_state(self.report), "unconfirmed")
-        self.assertFalse(self.tool.confirmed_active(self.report))
+    def test_trial_state_renders_the_utility_verdicts(self):
+        # profilectl decides which profile this boot runs; the client only names the outcome.
+        for candidate, confirmed, state in (("yes", "no", "applied"), ("no", "yes", "fallback"),
+                                            ("no", "no", "unconfirmed")):
+            with self.subTest(candidate=candidate, confirmed=confirmed):
+                report = dict(self.report, candidate_active=candidate, confirmed_active=confirmed)
+                self.assertEqual(self.tool.trial_state(report), state)
+                self.assertEqual(self.tool.confirmed_active(report), confirmed == "yes")
+        report = dict(self.report, boot_id="boot-a")
+        self.assertEqual(self.tool.trial_state(report), "reboot-required")
+        report = dict(self.report)
+        del report["candidate_active"], report["confirmed_active"]
+        self.assertEqual(self.tool.trial_state(report), "unconfirmed")
 
-    def test_ddr52_at_the_same_clock_is_distinct_from_normal_fallback(self):
-        self.report.update(candidate_cpu_hz="1008000000", candidate_cpu_profile="stock", candidate_emmc_mhz="50",
-                           candidate_emmc_mode="ddr52", confirmed_emmc_mhz="50", loaded_cpu_profile="stock",
-                           loaded_emmc_mhz="50", runtime_cpu_limit_hz="1008000000", runtime_emmc_hz="50000000",
-                           runtime_timing="9", runtime_voltage="1")
-        self.assertEqual(self.tool.trial_state(self.report), "fallback")
-        self.report.update(loaded_emmc_mode="ddr52", runtime_timing="8")
-        self.assertEqual(self.tool.trial_state(self.report), "applied")
-
-    def test_low_policy_limit_does_not_mistake_loaded_trial_for_confirmed_fallback(self):
-        self.report["runtime_cpu_limit_hz"] = self.report["confirmed_cpu_hz"]
+    def test_unconfirmed_trial_discard_reboots_into_the_confirmed_profile(self):
+        self.report.update(candidate_active="no")
         self.assertEqual(self.tool.trial_state(self.report), "unconfirmed")
+        self.assertTrue(self.tool.discard_reboots(self.report))
         with mock.patch.object(self.tool, "run") as run:
             self.assertTrue(self.tool.discard(self.report))
             run.assert_called_once_with("cancel", apply=True)
@@ -109,7 +120,8 @@ class OverclockingProfilesTest(unittest.TestCase):
             run.assert_not_called()
 
     def test_discard_requires_no_reboot_if_confirmed_profile_is_already_active(self):
-        self.report.update(runtime_cpu_limit_hz="unknown", runtime_cpu_hz="1008000000", loaded_cpu_profile="stock")
+        self.report.update(candidate_active="no", confirmed_active="yes")
+        self.assertFalse(self.tool.discard_reboots(self.report))
         with mock.patch.object(self.tool, "run") as run:
             self.assertFalse(self.tool.discard(self.report))
             run.assert_called_once_with("cancel", apply=True)
@@ -166,7 +178,7 @@ class OverclockingProfilesTest(unittest.TestCase):
 
     def test_unsupported_emmc_choice_is_explained_before_mutation(self):
         self.report.update(candidate_present="no", family="legacy3v3", boot_state="clean-stock",
-                           available_emmc_mhz="25,50")
+                           available_emmc_settings="stock,50")
         with mock.patch.object(self.tool, "run") as run:
             with self.assertRaises(PROFILES.ProfileError):
                 self.tool.apply_trial("emmc", "150", self.report)
@@ -179,7 +191,7 @@ class OverclockingProfilesTest(unittest.TestCase):
                                           ('72', '83', ('72', '83')),
                                           ('unknown', 'unknown', ())):
             with self.subTest(timing=timing, voltage=voltage):
-                report = dict(self.report, hardware='unsupported', family='unknown', available_emmc_mhz='',
+                report = dict(self.report, hardware='unsupported', family='unknown', 
                               candidate_present='no', boot_state='clean-stock',
                               runtime_timing=timing, runtime_voltage=voltage,
                               model_identity='d6:0103:353841333938:11')
@@ -195,7 +207,7 @@ class OverclockingProfilesTest(unittest.TestCase):
                         run.assert_not_called()
 
     def test_model_excluded_by_the_manifest_blocks_only_new_emmc_trials(self):
-        report = dict(self.report, hardware='unsupported', available_emmc_mhz='', candidate_present='no',
+        report = dict(self.report, hardware='unsupported', candidate_present='no',
                       boot_state='clean-stock', runtime_timing='9', runtime_voltage='1',
                       model_identity='d6:0103:353841333938:11')
         self.assertEqual(self.tool.boot_problem(report), '')
@@ -211,7 +223,7 @@ class OverclockingProfilesTest(unittest.TestCase):
             run.assert_called_once_with('test', 'cpu', '1.1', apply=True)
 
     def test_choices_show_frequencies_and_their_gain_over_stock(self):
-        self.report.update(family="hs2001v8")
+        self.report.update(family="hs2001v8", available_emmc_settings="stock,50,100,150")
         cpu = self.tool.choices("cpu", self.report)
         self.assertEqual(cpu[0][0], "stock")
         self.assertIn(str(PROFILES.STOCK_CPU_MHZ), cpu[0][2])
@@ -222,9 +234,10 @@ class OverclockingProfilesTest(unittest.TestCase):
             self.assertIn(str(percentage) + "%", choice[1])
         emmc = self.tool.choices("emmc", self.report)
         self.assertEqual([choice[0] for choice in emmc], ["stock", "50", "100", "150"])
-        for choice in emmc[1:]:
-            self.assertIn(choice[0], choice[2])
-            self.assertIn("{:g}x".format(int(choice[0]) / PROFILES.STOCK_EMMC_MHZ), choice[1])
+        self.assertEqual(emmc[0][1:], ("STOCK eMMC  //  25 MHz", "25 MHz"))
+        # Settings can share a clock, so each label names the mode next to the gain over stock.
+        for choice, gain in zip(emmc[1:], ("2x", "4x", "6x")):
+            self.assertEqual(choice[1:], ("{}  //  {} MHz HS200".format(gain, choice[0]), choice[0] + " MHz HS200"))
 
     def test_commands_use_integrated_state_and_propagate_cli_error(self):
         self.command_script("import sys\nprint('ERROR: candidate artifact is corrupt', file=sys.stderr)\nsys.exit(1)\n")
@@ -245,15 +258,29 @@ class OverclockingProfilesTest(unittest.TestCase):
                 self.assertEqual(self.tool.axis_problem("extra-ram", report), "")
 
     def test_legacy_50_mhz_modes_show_the_actual_clock(self):
-        report = dict(self.report, family="legacy3v3", available_emmc_mhz="25,50", available_ddr52="yes")
+        report = dict(self.report, family="legacy3v3", 
+                      available_emmc_settings="stock,50,ddr52")
         choices = self.tool.choices("emmc", report)
-        self.assertEqual([choice[0] for choice in choices], ["stock", "50", "ddr52"])
-        for choice, mode in zip(choices[1:], ("HS52", "DDR52")):
-            for text in choice[1:]:
-                self.assertIn("50 MHz " + mode, text)
-                self.assertNotIn("52 MHz", text)
-        report.update(available_ddr52="no")
+        self.assertEqual([choice[1:] for choice in choices], [
+            ("STOCK eMMC  //  25 MHz", "25 MHz"), ("2x  //  50 MHz HS52", "50 MHz HS52"),
+            ("4x  //  50 MHz DDR52", "50 MHz DDR52")])
+        report.update(available_emmc_settings="stock,50")
         self.assertNotIn("ddr52", [choice[0] for choice in self.tool.choices("emmc", report)])
+
+    def test_saved_profile_labels_name_the_setting_of_its_family(self):
+        for family, setting, mhz, label in (("legacy3v3", "stock", "25", "25 MHz Legacy"),
+                                            ("legacy3v3", "50", "50", "50 MHz HS52"),
+                                            ("legacy3v3", "ddr52", "50", "50 MHz DDR52"),
+                                            ("hs2001v8", "100", "100", "100 MHz HS200"),
+                                            ("unknown", "", "25", "25 MHz")):
+            with self.subTest(family=family, setting=setting):
+                report = dict(confirmed_family=family, confirmed_emmc_setting=setting, confirmed_emmc_mhz=mhz)
+                self.assertEqual(self.tool.emmc_label(report, "confirmed_"), label)
+
+    def test_a_setting_missing_from_the_bundle_is_refused_instead_of_guessed(self):
+        report = dict(self.report, available_emmc_settings="stock,hs400")
+        with self.assertRaises(PROFILES.ProfileError):
+            self.tool.choices("emmc", report)
 
     def test_extra_ram_problem_follows_the_firmware_support_probe(self):
         for output, supported in (("yes", True), ("no", False)):
@@ -424,13 +451,13 @@ class OverclockingProfilesTest(unittest.TestCase):
         self.assertIsNone(record['exit_code'])
 
     def test_choices_use_utility_eligibility_including_empty_lists_and_no_stock(self):
-        self.report["available_emmc_mhz"] = "50"
+        self.report["available_emmc_settings"] = "50"
         self.assertEqual([choice[0] for choice in self.tool.choices('emmc', self.report)], ['50'])
         for value in ('', None):
             if value is None:
-                self.report.pop('available_emmc_mhz')
+                self.report.pop('available_emmc_settings')
             else:
-                self.report['available_emmc_mhz'] = value
+                self.report['available_emmc_settings'] = value
             self.assertEqual(self.tool.choices('emmc', self.report), [])
 
     def test_abnormal_entry_records_the_full_boot_report_once(self):

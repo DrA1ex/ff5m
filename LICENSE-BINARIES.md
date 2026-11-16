@@ -13,6 +13,7 @@ The native programs that Forge-X ships in [`.bin/exec/`](.bin/exec/), built from
 - `fgx-fdt`
 - `fgx-lock`
 - `fgx-stress`
+- `t113-profilectl`
 - `forge-shaper`
 - `logged`
 - `netd`
@@ -21,8 +22,7 @@ The native programs that Forge-X ships in [`.bin/exec/`](.bin/exec/), built from
 - `splash`
 - `typer`
 
-the accompanying profile control tool in `.bin/tools/overclocking/bin/t113-profilectl`,
-and the native Feather UI engine, also built from the author's own source code:
+the native Feather UI engine, also built from the author's own source code:
 
 - `feather_engine.abi3.so` in [`.py/klipper/plugins/ui/`](.py/klipper/plugins/ui/)
 

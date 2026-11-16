@@ -1,7 +1,6 @@
-ec9afb63330d72308e789b4f8f3b79ee9c22de929269febe89a0a5270e9c7f5a  bin/t113-profilectl
-d752c950a7bb6dd4574476e2f12c45fbc2dcdaa1fb946d969d4c6daf690c9e0b  manifest-v2.json
+6ce89682f5ba63443290a69b01d0395358bd24aa4535cb47f0734daedad142b0  bin/t113-profilectl
+b7e9e2e44f18f7b6bed499ceeefb8b372f1617b089abef20f8eb87f5deed3161  manifest-v2.json
 57b02935038e3c808ebda964ac420198778dd8b4bbaa4aebc8331356d6214318  profiles/source/stock-uboot.env
 27501dc48c5ad4c71e3a12742e3ef2a162d6a2d8285bbbac82488c7fade79e21  profiles/source/sunxi-stock.dtb
-7a35125414c912b47dcdcb8e408424032e0308c4d1d4805b87d435e5df229d35  schema/manifest-v2.schema.json
-7cba7437936156c178ffd6b9c7a3eb3707b2eda622b6f2ca4f6db8afd32aa885  ../../exec/fgx-fdt
+4d0c922530bbd6254218910d027a0443a7eaa39ee138c440a0b3a5c6b01cba35  ../../exec/fgx-fdt
 59e04d7cb5aab1e51fd58d340339d53adf62f5ca10809e70507ee055e39f9794  ../../exec/fgx-lock

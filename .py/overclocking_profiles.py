@@ -18,24 +18,24 @@ STATE = "/data/.forge-x-overclocking/profile"
 LEGACY_STATE = "/data/.t113-profilectl"
 _FIELD = re.compile(r"[a-z][a-z0-9_]*\Z")
 _VALUE = re.compile(r"[A-Za-z0-9._:/,-]*\Z")
-# profilectl's stock settings: stock CPU runs at U-Boot's boot clock, and the stock eMMC
-# profile is its 25 MHz mode, so a separate 25 MHz entry would repeat it.
+# profilectl's stock CPU runs at U-Boot's boot clock.
 STOCK_CPU_MHZ = 1008
-STOCK_EMMC_MHZ = 25
+# Linux mmc ios numbering of the observed bus mode; eMMC settings themselves are manifest rows.
 EMMC_TIMING_NAMES = {"0": "Legacy", "1": "HS52", "8": "DDR52", "9": "HS200"}
 
 
 # Diagnostics are an allowlisted view of the protocol, not an environment dump.
 _DIAGNOSTIC_FIELDS = (
     "hardware", "family", "cid_status", "model_identity",
-    "runtime_family_evidence", "runtime_emmc_hz", "available_emmc_mhz",
+    "runtime_family_evidence", "runtime_emmc_hz",
     "runtime_timing", "runtime_voltage", "runtime_cpu_hz", "runtime_cpu_limit_hz",
     "boot_state", "pending_boot", "stock_helpers_valid", "stock_helper_mismatches",
     "boot_graph_variables", "boot_file_references",
     "missing_boot_dependencies", "unsafe_boot_paths", "unknown_boot_variables", "unknown_boot_files",
     "stock_dtb_sha256",
     "loaded_cpu_profile", "loaded_emmc_mhz", "loaded_emmc_family", "loaded_emmc_mode", "loaded_source_sha256",
-    "confirmed_emmc_mode", "candidate_emmc_mode", "available_ddr52",
+    "confirmed_emmc_mode", "candidate_emmc_mode", "available_emmc_settings",
+    "confirmed_emmc_setting", "candidate_emmc_setting", "confirmed_active", "candidate_active",
     "confirmed_extra_ram", "candidate_extra_ram", "loaded_extra_ram",
     "candidate_ram_before_kib", "runtime_mem_total_kib",
     "current_present", "current_valid", "candidate_present", "candidate_valid", "candidate_phase",
@@ -109,12 +109,13 @@ def parse_snapshot(output):
 class ProfileTool:
     """profilectl remains the sole owner of profiles, backup and boot mutations."""
 
-    def __init__(self, bundle=BUNDLE, state=STATE, legacy=LEGACY_STATE, progress=None):
+    def __init__(self, bundle=BUNDLE, state=STATE, legacy=LEGACY_STATE, progress=None, executable=None):
         self.bundle = os.fspath(bundle)
         self.state = os.fspath(state)
         self.legacy = os.fspath(legacy)
         self.progress = progress
-        self.executable = os.path.join(self.bundle, "bin", "t113-profilectl")
+        self.executable = (os.fspath(executable) if executable is not None else
+                           os.path.join(self.bundle, "bin", "t113-profilectl"))
         with open(os.path.join(self.bundle, "manifest-v2.json"), encoding="utf-8") as source:
             self.manifest = json.load(source)
 
@@ -241,19 +242,31 @@ class ProfileTool:
                 for row in self.manifest["cpu"]]
         if axis != "emmc":
             raise ProfileError("Unknown hardware setting.")
-        # profilectl owns eligibility: its list already applies the mode and model restrictions.
+        # profilectl owns eligibility: its list applies the family, model restrictions and display order.
+        # Several settings can share a clock, so every label names the mode.
         choices = []
-        for mhz in filter(None, report.get("available_emmc_mhz", "").split(",")):
-            if int(mhz) == STOCK_EMMC_MHZ:
-                choices.append(("stock", "STOCK eMMC  //  {} MHz".format(mhz), mhz + " MHz"))
-            # HS52 and DDR52 are mode names; the AD5M clocks both at 50 MHz.
-            elif mhz == "50" and report.get("family") == "legacy3v3":
-                choices.append(("50", "2x  //  50 MHz HS52", "50 MHz HS52"))
+        for setting in filter(None, report.get("available_emmc_settings", "").split(",")):
+            row = self.emmc_setting(report["family"], setting)
+            if row is None:
+                raise ProfileError("The profile tool offers an eMMC setting this bundle does not describe.")
+            if setting == "stock":
+                choices.append(("stock", "STOCK eMMC  //  {} MHz".format(row["mhz"]), "{} MHz".format(row["mhz"])))
             else:
-                choices.append((mhz, "{:g}x  //  {} MHz".format(int(mhz) / STOCK_EMMC_MHZ, mhz), mhz + " MHz"))
-            if mhz == "50" and report.get("available_ddr52") == "yes":
-                choices.append(("ddr52", "4x  //  50 MHz DDR52", "50 MHz DDR52"))
+                display = "{} MHz {}".format(row["mhz"], row["name"])
+                choices.append((setting, "{}  //  {}".format(row["gain"], display), display))
         return choices
+
+    def emmc_setting(self, family, setting):
+        """The manifest row of an eMMC setting id, or None."""
+        for row in self.manifest["emmc"]:
+            if row["kind"] == "emmc_setting" and row["family_id"] == family and row["id"] == setting:
+                return row
+        return None
+
+    def emmc_label(self, report, prefix):
+        """The saved clock and its eMMC setting's name, for the candidate_ or confirmed_ profile."""
+        row = self.emmc_setting(report.get(prefix + "family"), report.get(prefix + "emmc_setting"))
+        return "{} MHz {}".format(report.get(prefix + "emmc_mhz", "?"), row["name"] if row else "").rstrip()
 
     def boot_problem(self, report):
         """A boot configuration that must be repaired before any tuning, or ""."""
@@ -328,39 +341,14 @@ class ProfileTool:
             return "inconsistent"
         if report["boot_id"] == report.get("candidate_armed_boot_id"):
             return "reboot-required"
-        if self.active(report, "candidate_"):
+        # profilectl decides whether a profile is what this boot runs.
+        if report.get("candidate_active") == "yes":
             return "applied"
         return "fallback" if self.confirmed_active(report) else "unconfirmed"
 
-    def confirmed_active(self, report):
-        return self.active(report, "confirmed_")
-
     @staticmethod
-    def active(report, prefix):
-        """Whether the loaded DTB and observed clocks match the candidate_ or confirmed_ profile."""
-        expected_cpu, expected_emmc = report.get(prefix + "cpu_hz"), report.get(prefix + "emmc_mhz")
-        if expected_cpu is None or expected_emmc is None:
-            return False
-        for loaded, expected in (("cpu_profile", "cpu_profile"), ("emmc_mhz", "emmc_mhz"),
-                                 ("emmc_family", "family")):
-            actual = report.get("loaded_" + loaded, "unknown")
-            if actual != "unknown" and actual != report.get(prefix + expected):
-                return False
-        timing, mode = report.get("runtime_timing"), report.get("loaded_emmc_mode")
-        if report.get(prefix + "emmc_mode") == "ddr52":
-            if (timing, mode) != ("8", "ddr52") or report.get("runtime_voltage") not in ("0", "1"):
-                return False
-        elif timing == "8" or mode == "ddr52":
-            return False
-        expected_ram = report.get(prefix + "extra_ram", "off")
-        actual_ram = report.get("loaded_extra_ram", "unknown")
-        ram_trial = prefix == "candidate_" and report.get("candidate_axis") == "extra-ram"
-        if actual_ram != expected_ram and (actual_ram != "unknown" or expected_ram == "on" or ram_trial):
-            return False
-        cpu = report.get("runtime_cpu_limit_hz", "unknown")
-        if cpu == "unknown":
-            cpu = report.get("runtime_cpu_hz", "unknown")
-        return cpu == expected_cpu and report.get("runtime_emmc_hz") == str(int(expected_emmc) * 1000000)
+    def confirmed_active(report):
+        return report.get("confirmed_active") == "yes"
 
     def verify_trial(self, report):
         if self.trial_state(report) != "applied":
@@ -377,10 +365,15 @@ class ProfileTool:
         """Promote a trial verified in this boot; profilectl refuses an unverified one."""
         self.run("enable", apply=True)
 
+    def discard_reboots(self, report):
+        """Whether leaving this trial needs a reboot: a booted candidate still runs until then."""
+        return (report["candidate_present"] == "yes" and self.trial_state(report) != "reboot-required"
+                and not self.confirmed_active(report))
+
     def discard(self, report):
         if report["candidate_present"] != "yes":
             return False
-        reboot = self.trial_state(report) != "reboot-required" and not self.confirmed_active(report)
+        reboot = self.discard_reboots(report)
         self.run("cancel", apply=True)
         return reboot
 

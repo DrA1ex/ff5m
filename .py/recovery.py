@@ -1494,8 +1494,9 @@ class RecoveryUI:
         while True:
             action = self.view.wait_action()
             if action in ("main.boot", "main.firmware", "main.backup") and self.trial_blocks_exit():
-                self.view.message("HARDWARE TRIAL PENDING", "Accept or discard the trial in Hardware Tuning "
-                                  "before other Recovery actions.")
+                # The only way on is tuning, so the button says where it leads.
+                self.view.dialog("HARDWARE TRIAL PENDING", "Accept or discard the trial in Hardware Tuning "
+                                 "before other Recovery actions.", (("pending.tuning", "OPEN TUNING"),))
                 if self.hardware_tuning():
                     return
                 self.render_main()

@@ -54,6 +54,10 @@ class TuningUITest(unittest.TestCase):
                        'candidate_dtb_sha256': 'b' * 64, 'confirmed_cpu_hz': '1008000000',
                        'confirmed_emmc_mhz': '25', 'boot_id': 'boot-b', 'stock_dtb_sha256': 'a' * 64}
         self.profiles = mock.Mock()
+        # Setting names and notes are manifest data, read through the real loader.
+        bundle = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
+        self.profiles.emmc_setting.side_effect = bundle.emmc_setting
+        self.profiles.emmc_label.side_effect = bundle.emmc_label
         self.profiles.boot_problem.return_value = ''
         self.profiles.axis_problem.return_value = ''
         self.profiles.trial_state.return_value = 'applied'
@@ -88,6 +92,26 @@ class TuningUITest(unittest.TestCase):
                 for value in ('58A398', mode, volts, '50 MHz'):
                     self.assertIn(value, frame)
                 self.profiles.apply_trial.assert_not_called()
+
+    def test_six_hs200_settings_fill_one_chooser_page_and_continue_on_the_next(self):
+        report = dict(self.report, family='hs2001v8', available_emmc_settings='stock,hs52,50,ddr52,100,150',
+                      model_identity='15:0100:485332303047:00', runtime_timing='9', runtime_voltage='1',
+                      runtime_emmc_hz='25000000')
+        choices = ProfileTool(bundle=ROOT / '.bin/tools/overclocking').choices('emmc', report)
+        self.profiles.choices.return_value = choices
+        session = ViewSession(['choose.next', 'choose.back'])
+        self.ui.view = session.view = recovery.RecoveryView(session)
+        self.assertFalse(self.ui.select_profile('emmc', report))
+        # Tap feedback frames come between the two list pages.
+        frames = [' '.join(frame) for frame in session.frames if 'Page ' in ' '.join(frame)]
+        self.assertEqual(['Page 1 of 2' in frames[0], 'Page 2 of 2' in frames[1], len(frames)], [True, True, 2])
+        labels = [label for _, label, _ in choices]
+        for page, shown in ((0, labels[:4]), (1, labels[4:])):
+            for label in labels:
+                self.assertEqual(label in frames[page], label in shown, (page, label))
+        self.assertIn('"NEXT"', frames[0])
+        self.assertNotIn('"NEXT"', frames[1])
+        self.profiles.apply_trial.assert_not_called()
 
     def test_generic_repair_tuning_and_cpu_chooser_do_not_show_emmc_identity(self):
         report = dict(self.report, model_identity='d6:0103:353841333938:11',
@@ -262,6 +286,21 @@ class TuningUITest(unittest.TestCase):
         self.profiles.discard.return_value = True
         self.assertTrue(self.ui.trial(self.report))
         self.assertEqual(self.reboots, ['reboot'])
+
+    def test_discard_confirmation_says_when_the_printer_reboots(self):
+        # An applied trial is left by a reboot; a fallback boot already runs the confirmed profile.
+        for state, reboots, label in (('applied', True, 'DISCARD & REBOOT'), ('fallback', False, 'DISCARD')):
+            with self.subTest(state=state):
+                self.profiles.trial_state.return_value = state
+                self.profiles.discard_reboots.return_value = reboots
+                self.profiles.discard.return_value = reboots
+                self.view.wait_action.return_value = 'trial.discard'
+                self.view.confirm.reset_mock()
+                self.ui.not_applied = mock.Mock(return_value='trial.discard')
+                self.ui.trial(self.report)
+                self.assertEqual(self.view.confirm.call_args.args[2], label)
+                self.assertEqual(bool(self.view.confirm.call_args.args[1]), reboots)
+                self.profiles.discard_reboots.assert_called_with(self.report)
 
     def test_reset_route_follows_the_trial_only_after_a_frame_is_drawn(self):
         session = ViewSession(['trial.back'])
@@ -468,6 +507,17 @@ class TuningUITest(unittest.TestCase):
         self.assertEqual(labels, ['CPU FREQUENCY', 'eMMC FREQUENCY', 'EXTRA RAM (OFF)', 'SYSTEM TESTS',
                                   'RESTORE STOCK', 'BOOT FORGE-X', 'BACK'])
         self.assertTrue(all(spec[1] + spec[3] <= 480 for spec in view.buttons.values()))
+
+    def test_tuning_page_marks_stock_emmc_like_stock_cpu(self):
+        base = dict(self.report, candidate_present='no', confirmed_family='hs2001v8', confirmed_cpu_profile='stock')
+        for setting, mhz, label in (('stock', '25', 'eMMC 25 MHz (STOCK)'), ('150', '150', 'eMMC 150 MHz HS200')):
+            with self.subTest(setting=setting):
+                session = ViewSession(['tuning.back'])
+                self.ui.view = session.view = recovery.RecoveryView(session)
+                self.ui.tuning_page(dict(base, confirmed_emmc_setting=setting, confirmed_emmc_mhz=mhz))
+                frame = ' '.join(session.frames[0])
+                self.assertIn(recovery.quote('CPU 1008 MHz (STOCK)'), frame)
+                self.assertIn(recovery.quote(label), frame)
 
     def test_extra_ram_checks_firmware_only_before_enabling(self):
         tool = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
@@ -693,7 +743,7 @@ class TuningUITest(unittest.TestCase):
         # The real policy, with an excluded eMMC model on a clean stock boot.
         tool = ProfileTool(bundle=ROOT / '.bin/tools/overclocking')
         report = dict(self.report, candidate_present='no', boot_state='clean-stock', family='hs2001v8',
-                      hardware='unsupported', available_emmc_mhz='', runtime_timing='9', runtime_voltage='1')
+                      hardware='unsupported', runtime_timing='9', runtime_voltage='1')
         for name in ('boot_problem', 'axis_problem', 'choices'):
             getattr(self.profiles, name).side_effect = getattr(tool, name)
         self.profiles.prepare.return_value = report
