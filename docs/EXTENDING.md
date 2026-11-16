@@ -229,6 +229,49 @@ body: Print finished
 
 Restart Moonraker or the printer afterwards. See the [Moonraker documentation](https://moonraker.readthedocs.io/en/latest/configuration/) for all options.
 
+### Spoolman
+
+Forge-X includes Moonraker's Spoolman component, but the shipped configuration does not enable it. Spoolman itself runs on another computer on your network, not on the printer; replace `<spoolman-host>` with that computer's address. To connect Moonraker to it, add this to `mod_data/user.moonraker.conf` and restart Moonraker:
+
+```cfg
+[spoolman]
+server: http://<spoolman-host>:7912
+sync_rate: 5
+```
+
+Moonraker then charges filament use to the active spool while a print runs, and Fluidd and Mainsail show the spool selector. Like any extra Moonraker feature it uses memory, see the [FAQ](FAQ.md).
+
+To choose the active spool on the Feather screen, add a dialog (see [Your own dialogs on the Feather screen](#your-own-dialogs-on-the-feather-screen)) with one button per spool. Replace the IDs and names with your own spools from Spoolman:
+
+```ini
+[gcode_macro SPOOL_MENU]
+description: Choose the active Spoolman spool
+gcode:
+  RESPOND TYPE=command MSG="action:prompt_begin Active spool"
+  RESPOND TYPE=command MSG="action:prompt_button 12 - Black PLA|SET_ACTIVE_SPOOL ID=12"
+  RESPOND TYPE=command MSG="action:prompt_button 15 - White PETG|SET_ACTIVE_SPOOL ID=15"
+  RESPOND TYPE=command MSG="action:prompt_footer_button No spool|CLEAR_ACTIVE_SPOOL|secondary"
+  RESPOND TYPE=command MSG="action:prompt_footer_button Cancel|RESPOND TYPE=command MSG=action:prompt_end|secondary"
+  RESPOND TYPE=command MSG="action:prompt_show"
+
+[gcode_macro SET_ACTIVE_SPOOL]
+description: Set the active Spoolman spool
+gcode:
+  {% set spool_id = params.ID|int %}
+  {action_call_remote_method("spoolman_set_active_spool", spool_id=spool_id)}
+  RESPOND TYPE=command MSG="action:prompt_end"
+  RESPOND MSG="Active spool: {spool_id}"
+
+[gcode_macro CLEAR_ACTIVE_SPOOL]
+description: Clear the active Spoolman spool
+gcode:
+  {action_call_remote_method("spoolman_set_active_spool", spool_id=None)}
+  RESPOND TYPE=command MSG="action:prompt_end"
+  RESPOND MSG="Active spool cleared"
+```
+
+Run `SPOOL_MENU` from the console or a macro button. `SET_ACTIVE_SPOOL` and `CLEAR_ACTIVE_SPOOL` are the macros from the [Moonraker Spoolman documentation](https://moonraker.readthedocs.io/en/latest/configuration/#spoolman); `SET_ACTIVE_SPOOL ID=<id>` also works on its own, for example in a filament-change macro. The spool list in the dialog is fixed; edit the macro when you add or retire a spool.
+
 ## Other options
 
 - **Linux packages:** install more software with the Entware package manager.
