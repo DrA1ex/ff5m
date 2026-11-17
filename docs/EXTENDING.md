@@ -229,6 +229,22 @@ body: Print finished
 
 Restart Moonraker or the printer afterwards. See the [Moonraker documentation](https://moonraker.readthedocs.io/en/latest/configuration/) for all options.
 
+### Spoolman
+
+Forge-X includes Moonraker's [Spoolman](https://github.com/Donkie/Spoolman) component, but the shipped configuration does not enable it. Spoolman itself runs on another computer on your network, not on the printer. To connect Moonraker to it, add this to `mod_data/user.moonraker.conf`, replace `<spoolman-host>` with that computer's address, and restart Moonraker:
+
+```cfg
+[spoolman]
+server: http://<spoolman-host>:7912
+sync_rate: 5
+```
+
+Moonraker then reports filament use for the active spool to Spoolman while a print runs, and Fluidd and Mainsail show their spool selector. Like any extra Moonraker feature it uses memory; see the [FAQ](FAQ.md).
+
+To set or clear the active spool from G-code, Moonraker provides the `spoolman_set_active_spool` remote method. Its documentation shows the usual `SET_ACTIVE_SPOOL ID=<id>` and `CLEAR_ACTIVE_SPOOL` macros to add to `mod_data/user.cfg`. These commands can also be used from a Feather dialog; see [Your own dialogs on the Feather screen](#your-own-dialogs-on-the-feather-screen).
+
+See the Moonraker documentation for the [Spoolman options](https://moonraker.readthedocs.io/en/latest/configuration/#spoolman) and [setting the active spool from Klipper](https://moonraker.readthedocs.io/en/latest/configuration/#setting-the-active-spool-from-klipper).
+
 ## Other options
 
 - **Linux packages:** install more software with the Entware package manager.
