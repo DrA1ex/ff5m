@@ -27,6 +27,10 @@ class StreamStartupTest(unittest.TestCase):
         self.events = self.root / 'events'
         self.commands = self.root / 'bin'
         self.commands.mkdir()
+        # Share one executable so the host checks it once across all stub names.
+        self.stub_launcher = self.root / 'stub-launcher'
+        self.stub_launcher.write_text('#!/bin/sh\n. "$0.body"\n')
+        self.stub_launcher.chmod(0o755)
         self.scripts = self.root / 'scripts'
         (self.scripts / 'commands').mkdir(parents=True)
         self.variables = self.root / 'variables.cfg'
@@ -88,14 +92,15 @@ esac
         self.command('ss', 'echo "$TEST_LISTENING"\n')
         self.command('ps', 'exit 0\n')
         self.command('curl', 'exit 0\n')
-        self.screen = self.command('screen', 'echo "screen $*" >> "$TEST_EVENTS"\nexit "${TEST_SCREEN_FAILURE:-0}"\n')
+        screen_body = 'echo "screen $*" >> "$TEST_EVENTS"\nexit "${TEST_SCREEN_FAILURE:-0}"\n'
+        self.screen = self.command('screen', screen_body)
+        self.command('screen.sh', screen_body, directory=self.scripts)
         (self.scripts / 'screen_policy.sh').write_text((ROOT / '.shell/screen_policy.sh').read_text())
         for name in ('zconf.sh', 'zdisplay.sh', 'zstreams.sh', 'ztouch.sh'):
             self.copy_script(ROOT / '.shell/commands' / name, self.scripts / 'commands' / name, (
                 ('/etc/init.d/S98screen', self.screen),
             ))
         self.command('sync', 'exit 0\n')
-        self.copy_script(self.screen, self.scripts / 'screen.sh')
         # Adapt in-place sed to the host. The Mainsail metadata file is absent in these fixtures.
         self.command('sed', '''case "$*" in *release_info.json*) exit 0 ;; esac
 if [ "$1" = -i ]; then
@@ -106,10 +111,11 @@ fi
 exec /usr/bin/sed "$@"
 ''')
 
-    def command(self, name, body):
-        command = self.commands / name
-        command.write_text('#!/bin/sh\n' + body)
-        command.chmod(0o755)
+    def command(self, name, body, *, directory=None):
+        command = (self.commands if directory is None else directory) / name
+        command.with_name(command.name + '.body').write_text(body)
+        if not command.exists():
+            command.hardlink_to(self.stub_launcher)
         return command
 
     def copy_script(self, path, destination, replacements=()):
@@ -383,13 +389,8 @@ echo migrate >> "$TEST_EVENTS"
         self.command('start-stop-daemon', 'exit 0\n')
         self.command('netd', 'exit 0\n')
         init = self.command('init-main', 'exit 0\n')
-        for name, body in (
-            ('screen.sh', 'exit 0\n'),
-            ('restart_klipper.sh', 'echo klipper-restart >> "$TEST_EVENTS"\n'),
-        ):
-            script = self.scripts / name
-            script.write_text('#!/bin/sh\n' + body)
-            script.chmod(0o755)
+        self.command('screen.sh', 'exit 0\n', directory=self.scripts)
+        self.command('restart_klipper.sh', 'echo klipper-restart >> "$TEST_EVENTS"\n', directory=self.scripts)
         for display, action, enabled in (('GUPPY', 'start', '1'), ('FEATHER', 'start', '1'), ('HEADLESS', 'stop', '0')):
             with self.subTest(display=display):
                 self.events.unlink(missing_ok=True)

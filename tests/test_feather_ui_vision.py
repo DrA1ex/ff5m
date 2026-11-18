@@ -1322,17 +1322,21 @@ class HybridCompositionTest(unittest.TestCase):
         script = pathlib.Path(
             HYBRID.__file__).with_name("designer_capture.cjs")
         program = """
+const { setImmediate } = require("node:timers/promises");
 const capture = require(process.argv[1]);
 let active = 0;
 let maximum = 0;
-capture.mapConcurrent([40, 5, 20, 1], 2, async (delay, index) => {
+const completed = [];
+capture.mapConcurrent(["first", "second", "third", "fourth"], 2, async (name, index) => {
   active += 1;
   maximum = Math.max(maximum, active);
-  await new Promise((resolve) => setTimeout(resolve, delay));
+  // Let the second worker finish its queued jobs before releasing the first.
+  await (index === 0 ? setImmediate() : Promise.resolve());
   active -= 1;
-  return `case-${index}`;
+  completed.push(name);
+  return name;
 }).then((results) => {
-  process.stdout.write(JSON.stringify({ maximum, results }));
+  process.stdout.write(JSON.stringify({ maximum, completed, results }));
 });
 """
 
@@ -1343,7 +1347,8 @@ capture.mapConcurrent([40, 5, 20, 1], 2, async (delay, index) => {
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
             "maximum": 2,
-            "results": ["case-0", "case-1", "case-2", "case-3"],
+            "completed": ["second", "third", "fourth", "first"],
+            "results": ["first", "second", "third", "fourth"],
         })
 
     def test_designer_capture_command_streams_frame_count_and_eta(self):

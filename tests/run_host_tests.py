@@ -31,6 +31,19 @@ def run_module(filename):
     return result.returncode, time.monotonic() - started, result.stdout
 
 
+def run_modules(modules, jobs):
+    # Run the short Node subprocess before starting parallel Python workers.
+    visual_module = "test_feather_ui_vision.py"
+    if visual_module in modules:
+        yield visual_module, run_module(visual_module)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(run_module, name): name
+                   for name in modules if name != visual_module}
+        for future in concurrent.futures.as_completed(futures):
+            yield futures[future], future.result()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -53,20 +66,16 @@ def main():
     started = time.monotonic()
     failed = []
     total_tests = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(run_module, name): name for name in modules}
-        for future in concurrent.futures.as_completed(futures):
-            name = futures[future]
-            status, duration, output = future.result()
-            match = re.search(r"Ran (\d+) tests? in", output)
-            total_tests += int(match.group(1)) if match else 0
-            print("{} {} ({:.1f}s)".format(
-                "PASS" if status == 0 else "FAIL", name, duration),
-                flush=True)
-            if status or args.verbose:
-                print(output, end="" if output.endswith("\n") else "\n", flush=True)
-            if status:
-                failed.append(name)
+    for name, (status, duration, output) in run_modules(modules, args.jobs):
+        match = re.search(r"Ran (\d+) tests? in", output)
+        total_tests += int(match.group(1)) if match else 0
+        print("{} {} ({:.1f}s)".format(
+            "PASS" if status == 0 else "FAIL", name, duration),
+            flush=True)
+        if status or args.verbose:
+            print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        if status:
+            failed.append(name)
 
     print("{} tests in {:.1f}s across {} modules; {} failed".format(
         total_tests, time.monotonic() - started, len(modules), len(failed)))
