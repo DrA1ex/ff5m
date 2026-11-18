@@ -87,7 +87,7 @@ The printer runs vendor firmware on a Linux kernel. It is **not** a general-purp
 - **Feather**: local touchscreen with G-code browsing (local and USB) and print control
 - **Stock** screen, which can be switched off in favor of a lighter one to save memory
 - Adapted **Guppy Screen**
-- **Fluidd** and **Mainsail** web interfaces, **Moonraker** API
+- **Fluidd** and **Mainsail** web interfaces with Feather-styled [web themes](/web-themes/README.md), **Moonraker** API
 
 ### Klipper and reliability
 

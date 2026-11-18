@@ -1,0 +1,140 @@
+/* Feather DEFAULT palette: DrA1ex/ff5m 1ceaff18, ui/themes/default.json.
+   Adapted for the web; brighter secondary text preserves readable contrast. */
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('__FONT_REGULAR__') format('woff2');
+    font-display: swap;
+    font-weight: 400;
+}
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('__FONT_BOLD__') format('woff2');
+    font-display: swap;
+    font-weight: 700;
+}
+:root {
+    --v-primary-base: #35d9e6;
+    --v-secondary-base: #b47aff;
+    --v-error-base: #ff4d5a;
+    --v-warning-base: #f2c94c;
+    --v-success-base: #56c596;
+    --feather-background: #030607;
+    --feather-panel: #050c0f;
+    --feather-primary: #35d9e6;
+    --feather-selected: #b47aff;
+    --feather-text: #d9e4e8;
+    --feather-dim: #91a6ae;
+    --feather-border: #295c66;
+    --feather-pressed: #103238;
+    scrollbar-color: var(--feather-border) var(--feather-background);
+}
+body { background: var(--feather-background); }
+::selection { color: #030607; background: #35d9e6; }
+.v-application.theme--dark {
+    background: var(--feather-background);
+    color: var(--feather-text);
+    caret-color: var(--feather-primary);
+}
+.theme--dark.v-navigation-drawer,
+.theme--dark.v-app-bar.v-toolbar,
+.theme--dark.v-sheet,
+.theme--dark.v-card,
+.theme--dark.v-data-table,
+.theme--dark.v-tabs-items,
+.theme--dark.v-list {
+    background-color: var(--feather-panel);
+    color: var(--feather-text);
+}
+.theme--dark.v-card,
+.theme--dark.v-menu__content {
+    border: 1px solid var(--feather-border);
+    border-radius: 2px;
+    box-shadow: none;
+}
+.theme--dark .panel-toolbar.v-toolbar {
+    background-color: var(--feather-panel) !important;
+    border-bottom: 1px solid var(--feather-border);
+}
+.theme--dark .panel-toolbar .v-toolbar__title {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--feather-primary);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+}
+.topbar .v-toolbar__title { font-size: 14px; color: var(--feather-dim); }
+.theme--dark .topbar { border-bottom: 1px solid var(--feather-border); }
+.theme--dark.v-navigation-drawer { border-right: 1px solid var(--feather-border); }
+.theme--dark .v-navigation-drawer__border { display: none; }
+.theme--dark .v-navigation-drawer .v-list-item {
+    margin: 5px 10px;
+    border: 1px solid transparent;
+    border-radius: 2px;
+}
+.theme--dark .v-navigation-drawer .v-list-item__title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.035em;
+}
+.theme--dark .v-list-item--active {
+    color: var(--feather-selected) !important;
+    border-color: var(--feather-selected) !important;
+}
+.theme--dark .v-btn:not(.v-btn--round):not(.v-btn--icon) {
+    border-radius: 2px;
+    box-shadow: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.025em;
+}
+.theme--dark .v-btn:not(.v-btn--text):not(.v-btn--icon):not(.v-btn--disabled):not(.v-btn--round) {
+    border: 1px solid currentColor;
+}
+.theme--dark .v-btn.primary:not(.v-btn--disabled) {
+    background-color: var(--feather-pressed) !important;
+    color: var(--feather-primary) !important;
+}
+.theme--dark .v-btn.error:not(.v-btn--disabled) {
+    background-color: #120708 !important;
+    color: #ff4d5a !important;
+}
+.theme--dark .v-btn:hover::before { opacity: 0.12; }
+.v-application :focus-visible { outline: 2px solid #b47aff; outline-offset: 3px; }
+.theme--dark .v-input__slot { border-radius: 2px !important; }
+.theme--dark .v-text-field--outlined fieldset { border-color: var(--feather-border); }
+.theme--dark .v-text-field--outlined.v-input--is-focused fieldset { border-color: var(--feather-primary); }
+.theme--dark.v-application .text--secondary { color: var(--feather-dim) !important; }
+.theme--dark .v-data-table tbody tr:hover:not(.v-data-table__expanded__content) {
+    background-color: var(--feather-pressed) !important;
+}
+.theme--dark .v-data-table td,
+.theme--dark .v-data-table th { border-color: var(--feather-border) !important; }
+.theme--dark .v-progress-linear { border-radius: 0; }
+.theme--dark .v-slider__thumb { border-radius: 2px; }
+.theme--dark .consoleTable,
+.theme--dark .v-text-field input[type='number'],
+.theme--dark .temperature-panel { font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+    .topbar .v-toolbar__title { max-width: 120px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .v-application *, .v-application *::before { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* Use Mainsail's existing components; no markup or behavior overrides. */
+.v-application.theme--dark .primary--text { color: #35d9e6 !important; caret-color: #35d9e6 !important; }
+.v-application.theme--dark .primary { background-color: #35d9e6 !important; border-color: #35d9e6 !important; }
+.v-application.theme--dark .secondary--text { color: #b47aff !important; }
+.v-application.theme--dark .warning--text { color: #f2c94c !important; }
+.v-application.theme--dark .error--text { color: #ff4d5a !important; }
+.v-application.theme--dark .success--text { color: #56c596 !important; }
+.theme--dark.v-navigation-drawer .v-image { background-image: none !important; opacity: 0; }
+
+.theme--dark.v-toolbar.topbar { background-color: var(--feather-panel) !important; }
+.theme--dark .v-tabs > .v-tabs-bar { background-color: var(--feather-panel); }
+.theme--dark .v-tab--active { color: var(--feather-primary) !important; }
+/* SVG chart labels remain legible without changing plotted-series colors. */
+.theme--dark .temperature-panel svg text,
+.theme--dark .temperature-chart svg text { fill: #91a6ae !important; fill-opacity: 1 !important; opacity: 1 !important; }
