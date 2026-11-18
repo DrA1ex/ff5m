@@ -123,6 +123,9 @@ class UpdateManager:
                     )
                 continue
             try:
+                if cfg.getboolean('enable_if_path_exists', False):
+                    if not pathlib.Path(cfg.get('path')).expanduser().is_dir():
+                        continue
                 client_type = cfg.get("type")
                 deployer = get_deploy_class(client_type, None)
                 if deployer is None:
