@@ -31,6 +31,7 @@ class DialogState(StateKey):
 
 class DialogRoute(Enum):
     OK = "message.ok"
+    RENDER_HOME = "error.screen_home"
     SAVE_MESH = "mesh.save"
     EXCLUDE_MODELS = "exclude.confirm"
     CANCEL_HELD_PRINT = "timelapse.wait.cancel"
@@ -40,6 +41,9 @@ class DialogRoute(Enum):
     RESTART = "error.restart"
     FIRMWARE_RESTART = "error.firmware_restart"
     CANCEL_COLD_PULL = "coldpull.cancel"
+    SETUP_APPLY = "setup.apply.confirm"
+    SETUP_FINISH = "setup.finish.confirm"
+    SETUP_SKIP = "setup.skip.confirm"
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,7 @@ class DialogAction(Action):
 
 
 OK = DialogAction(DialogRoute.OK)
+RENDER_HOME = DialogAction(DialogRoute.RENDER_HOME)
 SAVE_MESH = DialogAction(DialogRoute.SAVE_MESH)
 EXCLUDE_MODELS = DialogAction(DialogRoute.EXCLUDE_MODELS)
 CANCEL_HELD_PRINT = DialogAction(DialogRoute.CANCEL_HELD_PRINT)
@@ -71,6 +76,9 @@ RESET_WIFI_PASSWORD = DialogAction(DialogRoute.RESET_WIFI_PASSWORD)
 RESTART = DialogAction(DialogRoute.RESTART)
 FIRMWARE_RESTART = DialogAction(DialogRoute.FIRMWARE_RESTART)
 CANCEL_COLD_PULL = DialogAction(DialogRoute.CANCEL_COLD_PULL)
+SETUP_APPLY = DialogAction(DialogRoute.SETUP_APPLY)
+SETUP_FINISH = DialogAction(DialogRoute.SETUP_FINISH)
+SETUP_SKIP = DialogAction(DialogRoute.SETUP_SKIP)
 
 PREVIOUS_PAGE = Increment(DialogState.PAGE, -1)
 NEXT_PAGE = Increment(DialogState.PAGE, 1)

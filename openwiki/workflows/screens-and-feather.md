@@ -131,8 +131,9 @@ file written directly to `/etc/localtime`, so the timezone database is never
 modified and a firmware update cannot leave a dangling selection. The signs
 follow ordinary UTC notation, unlike the database's POSIX-signed `Etc/GMT`
 names, and fixed offsets have no seasonal changes. A zero offset selects the
-database `UTC` entry. The reported name is the symlink's database path, or the
-current offset for a regular file. Invalid input or a failed replacement leaves
+database `UTC` entry. Feather reads the zone name from the database link. For a copied TZif
+it also accepts the name in `/etc/timezone` when the zone data matches. The picker
+uses the current abbreviation or UTC offset when a location name is unavailable. Invalid input or a failed replacement leaves
 the selected zone intact; temporary files are removed on failure.
 
 After applying a selection and at `klippy:ready`, the plugin points the

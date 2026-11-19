@@ -61,6 +61,20 @@ class ZCalibrationFeature(FeatherZCalibrationMixin, FeatherControlsMixin,
     def start_preparation(self):
         self._start_z_calibration_preparation()
 
+    def _begin_safe_z_calibration(self, preserve_result=False):
+        setup = self._setup_calibration()
+        if setup is not None:
+            self._require_idle()
+            setup.calibration_started()
+        super()._begin_safe_z_calibration(preserve_result)
+
+    def _continue_after_safe_z(self, saved=False):
+        if self._setup_calibration() is None:
+            super()._continue_after_safe_z(saved)
+        else:
+            self._finish_z_calibration(None)
+            self._return_from_calibration(done=saved)
+
     def cancel_calibration(self):
         self._cancel_z_calibration()
 

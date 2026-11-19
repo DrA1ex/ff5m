@@ -69,7 +69,9 @@ class NetworkClient:
         self._set_unavailable(eventtime)
 
     def get_state(self):
-        return self._send("GET")
+        # SUBSCRIBE sends a snapshot without an OK that could be mistaken for
+        # completion of an asynchronous scan or connection on this socket.
+        return self._send("SUBSCRIBE")
 
     def scan(self):
         return self._send("SCAN")
@@ -94,7 +96,7 @@ class NetworkClient:
     def _attach(self):
         if not self._transport.connect():
             return False
-        if not self._transport.send("SUBSCRIBE"):
+        if not self.get_state():
             self._transport.close()
             return False
         descriptor = self._transport.fileno()

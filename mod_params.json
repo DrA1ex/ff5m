@@ -259,7 +259,7 @@
       },
       {
         "id": "screen_stream_touch",
-        "label": "SCREEN STREAM & TOUCH",
+        "label": "SCREEN MIRRORING & TOUCH",
         "order": 11,
         "parameters": [
           "screen_stream",
@@ -553,6 +553,7 @@
       "description": "Control the purge line before printing.",
       "options": ["YES", "NO"],
       "ui": {
+        "setup_help": "Prime the nozzle before printing when enabled in the UI. KAMP normally uses its own LINE_PURGE instead of the conventional purge algorithm.",
         "inverted": true
       },
       "order": 20000
@@ -606,8 +607,9 @@
       "type": "bool",
       "default": 1,
       "label": "Tune klipper parameters",
+      "ui": {"setup_description": "Reduce communication errors during prints.", "setup_help": "Forge-X timing adjustments reduce communication timeouts and move-queue errors. Applying a change requires a hard restart of the Klipper process, not a printer reboot."},
       "description": "Apply Forge-X Klipper tuning.",
-      "restart": "printer",
+      "restart": "klipper_hard",
       "deprecated": {
         "key": "fix_e0017",
         "mapping": {
@@ -621,6 +623,7 @@
       "type": "bool",
       "default": 1,
       "label": "MD5 verification",
+      "ui": {"setup_description": "Check files from a slicer with addMD5.", "setup_help": "Check G-code files for incomplete transfers or corruption. For the addMD5 script and slicer setup, see Slicing > MD5 Checksum Validation in the README documentation."},
       "description": "Verify supported G-code file checksums.",
       "warning": "To make the checksum validation work, you need to add a post-processing script to your slicer.\nScripts can be downloaded from 'Configuration -> mod' (addMD5.sh or addMD5.bat)"
     },
@@ -652,6 +655,7 @@
       "type": "bool",
       "default": 0,
       "label": "Load Z-OFFSET",
+      "ui": {"setup_description": "Use your saved nozzle height after startup.", "setup_help": "Automatically restore the saved Z Offset. This does not calibrate Z Offset or create a saved result. Check Z Offset separately under Control > Calibration > Z Offset."},
       "description": "Load the saved Z offset during startup.",
       "order": 10000
     },
@@ -690,6 +694,7 @@
       "default": 50.0,
       "label": "Pause minimum Z, mm",
       "description": "Set the minimum Z for pause parking.",
+      "ui": {"setup_help": "When parking for a pause, the bed lowers to at least this Z coordinate or by the normal clearance distance, whichever moves it farther. Z travel limits still apply."},
       "minimum": 0.0,
       "fraction_digits": 1,
       "order": 10004,
@@ -764,7 +769,7 @@
       "type": "int",
       "default": 50,
       "label": "Chamber light brightness",
-      "description": "Last selected light brightness.",
+      "description": "Set the chamber light level.",
       "order": 50003
     },
     {
@@ -772,11 +777,11 @@
       "type": "ChamberLightModeEnum",
       "default": "AT_BOOT",
       "label": "Chamber light mode",
-      "description": "Choose when brightness is applied.",
+      "description": "Choose when the chamber light turns on.",
       "options": {
-        "MANUAL": "change the light only when adjusted manually",
-        "AT_BOOT": "restore saved brightness at startup",
-        "PRINT_ONLY": "turn on only during printing"
+        "MANUAL": "Control the light manually.",
+        "AT_BOOT": "Restore saved brightness at startup.",
+        "PRINT_ONLY": "Turn on at print start and off at print end."
       },
       "order": 50004
     },
@@ -824,6 +829,7 @@
     },
     {
       "key": "print_leveling",
+      "ui": {"setup_description": "Measure the entire bed before printing."},
       "type": "bool",
       "default": 0,
       "label": "Mesh bed before printing",
@@ -834,9 +840,10 @@
       "key": "stop_motor",
       "type": "bool",
       "default": 1,
-      "label": "Motors",
-      "description": "Choose motor behavior after a print.",
-      "options": ["Do not turn off", "Turn off automatically"],
+      "label": "Disable Motors",
+      "description": "Turn off motors after a print.",
+      "options": ["OFF", "ON"],
+      "ui": {"setup_help": "ON schedules motor shutdown 90 seconds after a print finishes or is cancelled. OFF skips this timer. The idle timeout can still turn off the motors."},
       "order": 30000
     },
     {
@@ -844,6 +851,7 @@
       "type": "bool",
       "default": 0,
       "label": "Use KAMP",
+      "ui": {"setup_description": "Slicer labels and start G-code required.", "setup_help": "KAMP meshes the print area and uses Line Purge when priming is enabled. It needs slicer object labels and start G-code that defines the print area. See Printing > KAMP in the README documentation."},
       "description": "Use adaptive meshing and purging.",
       "order": 20000
     },
@@ -877,15 +885,32 @@
       "type": "LinePurgeEnum",
       "default": "ORCA",
       "label": "Purge algorithm",
+      "ui": {
+        "setup_help": "Choose which purge line runs before printing with conventional priming.",
+        "visible_if": {
+          "all_of": [
+            {"parameter": "disable_priming", "operator": "equals", "value": false},
+            {"parameter": "use_kamp", "operator": "equals", "value": false}
+          ]
+        }
+      },
       "description": "Select the purge-line implementation.",
+      "options": {
+        "ORCA": "Two round trips at different Z heights",
+        "FF1": "Front-edge line with pre-prime and retract",
+        "FF2": "Shorter front-edge line without pre-prime",
+        "SCHREIDER": "Single line along the right edge",
+        "WILD_BILL": "Two passes near the print, then a wipe"
+      },
       "order": 20000
     },
     {
       "key": "park_dz",
       "type": "int",
       "default": 50,
-      "label": "Parking offset after print, mm",
-      "description": "Set the Z lift after a print.",
+      "label": "Parking offset, mm",
+      "description": "Set the Z move before parking.",
+      "ui": {"setup_help": "Relative Z move before end-of-print parking, including for the final timelapse photo. Positive values lower the bed. If parking on cancel is enabled, the offset sets the requested drop."},
       "order": 20000
     },
     {
@@ -893,6 +918,7 @@
       "type": "int",
       "default": 150,
       "label": "CLEAR_NOZZLE temperature, Cº",
+      "ui": {"setup_help": "Nozzle-cleaning preparation cooldown temperature, not purge extrusion temperature. A lower temperature allows more cooling before cleaning; preserve your verified setting."},
       "description": "Set the nozzle cooldown temperature.",
       "order": 20000
     },
@@ -929,7 +955,8 @@
       "key": "camera",
       "type": "bool",
       "default": 0,
-      "label": "Alt. camera",
+      "label": "Camera",
+      "ui": {"setup_help": "Enable the physical camera service. A compatible camera can be connected later. Explicit user preferences override automatic detection."},
       "description": "Enable the low-memory camera service.",
       "order": 100
     },
@@ -937,8 +964,9 @@
       "key": "screen_stream",
       "type": "AutoSwitchEnum",
       "default": "AUTO",
-      "label": "Screen stream",
-      "description": "AUTO follows the active screen.",
+      "label": "Screen mirroring",
+      "ui": {"setup_help": "View the printer display in a browser. AUTO follows the active display. ON always enables mirroring. OFF turns it off."},
+      "description": "View the printer screen in a browser.",
       "order": 100
     },
     {
@@ -955,8 +983,8 @@
       "default": 30,
       "minimum": 1,
       "maximum": 120,
-      "label": "Screen stream FPS",
-      "description": "Set screen stream frame rate.",
+      "label": "Screen mirroring FPS",
+      "description": "Set the mirroring frame rate.",
       "order": 100
     },
     {
@@ -966,7 +994,7 @@
       "minimum": 1,
       "maximum": 100,
       "label": "Screen JPEG quality",
-      "description": "Set screen stream JPEG quality.",
+      "description": "Set the mirroring JPEG quality.",
       "order": 100
     },
     {
@@ -1055,6 +1083,7 @@
       "type": "bool",
       "default": 0,
       "label": "Bed collision protection",
+      "ui": {"setup_description": "Detect unexpected force with the load cell.", "setup_help": "Detect unexpected force with the load cell. Incorrect measurements can cause false alarms. Review the action and keep the advanced load limit in Mod Parameters; do not enable until measurements are reliable."},
       "description": "Enable load-cell collision protection.",
       "order": 10
     },
@@ -1063,6 +1092,7 @@
       "type": "BedCollisionModeEnum",
       "default": "EMERGENCY",
       "label": "Collision action",
+      "ui": {"setup_help": "EMERGENCY stops immediately. PAUSE pauses an active print when possible, otherwise shuts down. PAUSE cannot immediately interrupt commands already queued. WARNING reports the load without stopping."},
       "description": "Pause print, stop printer, or warn.",
       "options": {
         "EMERGENCY": "Emergency shutdown",
@@ -1092,6 +1122,7 @@
       "type": "bool",
       "default": 0,
       "label": "Bed Mesh Validation",
+      "ui": {"setup_help": "Validate the existing mesh before a print. Advanced tolerance and nozzle-cleaning options remain in Mod Parameters."},
       "description": "Validate bed mesh measurements.",
       "order": 12
     },
@@ -1100,6 +1131,7 @@
       "type": "BedMeshValidationActionEnum",
       "default": "CANCEL",
       "label": "Bed Mesh Validation Action",
+      "ui": {"setup_help": "CANCEL stops the print on disagreement. RECALIBRATE recreates the mesh. Z_OFFSET applies temporary compensation; it never replaces normal Z Offset calibration. Unsafe corrections or a significant bed-shape change cancel the print."},
       "description": "Choose mesh validation behavior.",
       "options": {
         "CANCEL": "Cancel print",
@@ -1113,6 +1145,7 @@
       "type": "BedMeshValidationZOffsetModeEnum",
       "default": "ADJUST",
       "label": "Bed Mesh Validation Z-Offset Mode",
+      "ui": {"setup_help": "ADJUST adds a temporary correction to the current Z Offset. REPLACE uses the temporary correction instead. This correction is not saved as permanent calibration."},
       "description": "Add to or replace the current Z-offset.",
       "options": {
         "ADJUST": "Add correction to current Z-offset",
@@ -1141,6 +1174,7 @@
       "type": "bool",
       "default": 0,
       "label": "Firmware parameter tuning",
+      "ui": {"setup_description": "Retune motors and bed probing.", "setup_help": "Apply optimized baseline motor, extruder and probing configuration. Klipper must restart before calibration. Changing this can invalidate Bed Mesh, Z Offset and dimensional calibration; flow and Pressure Advance may also need recalibration."},
       "description": "Apply tuned Forge-X printer parameters.",
       "restart": "klipper",
       "order": 17,
@@ -1151,6 +1185,7 @@
       "type": "bool",
       "default": 1,
       "label": "Use filament switch sensor",
+      "ui": {"setup_help": "Pause when the filament runout switch detects missing filament."},
       "description": "Pause when the sensor triggers.",
       "order": 100
     },
@@ -1176,6 +1211,7 @@
       "type": "bool",
       "default": 1,
       "label": "Enable Power Loss Recovery Feature",
+      "ui": {"setup_help": "Offer recovery after a print is interrupted by power loss. Recovery is not guaranteed in every situation. Changing this option requires a Klipper restart."},
       "description": "Offer recovery after power loss.",
       "restart": "klipper",
       "order": 30000

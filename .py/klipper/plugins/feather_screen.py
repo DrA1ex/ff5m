@@ -100,6 +100,7 @@ EXACT_ACTIONS = {
     ScreenPage.CONTROL_MOVE: ("nav.back",),
     ScreenPage.CONTROL_HEAT: ("nav.back",),
     ScreenPage.NETWORK_HOME: ("nav.back", "net.scan", "net.ethernet"),
+    ScreenPage.SETUP_NETWORK: ("nav.back",),
     ScreenPage.WIFI_SCAN: ("nav.back", "net.prev", "net.next", "net.rescan"),
     ScreenPage.WIFI_PASSWORD: ("nav.back", "net.connect", "net.password.toggle"),
     ScreenPage.NETWORK_PROGRESS: ("net.cancel", "net.keep"),
@@ -146,11 +147,15 @@ DIALOGS = {
         "_action_prompt_page", 0, frozenset(), False, False),
     ScreenDialog.MESSAGE: DialogSpec(
         "_message_page", 0, frozenset((ScreenDialog.ACTION_PROMPT,)), False, False),
+    ScreenDialog.RENDER_ERROR: DialogSpec(
+        "_message_page", 0, frozenset(), False, False, backdrop=False),
     ScreenDialog.ERROR: DialogSpec(
         "_error_page", RECOVERY_DIALOG_PRIORITY, frozenset(), True, False),
     ScreenDialog.TOUCH_UNAVAILABLE: DialogSpec(
         "_touch_unavailable_page", RECOVERY_DIALOG_PRIORITY, frozenset(ScreenDialog), False, True),
 }
+
+NETWORK_SELECTION_PAGES = (ScreenPage.NETWORK_HOME, ScreenPage.SETUP_NETWORK, ScreenPage.WIFI_SCAN)
 
 ACTIVE_PRINT_STATES = frozenset((
     PrintState.PREPARING, PrintState.PRINTING, PrintState.PAUSED,
@@ -177,6 +182,9 @@ def _feature_module(name):
 
 
 FEATURE_SPECS = (
+    FeatureSpec("setup", _feature_module("setup"), "SetupFeature",
+                (ScreenPage.SETUP, ScreenPage.SETUP_OPTIONS, ScreenPage.SETUP_CALIBRATION,
+                 ScreenPage.SETUP_TIMEZONE, ScreenPage.SETUP_WELCOME)),
     FeatureSpec("model_preview", "feather.screen.pages.model_preview",
                 "ModelPreviewFeature"),
     FeatureSpec("ui_test", _feature_module("ui_test"),
@@ -479,6 +487,34 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         if not self.renderer.output_frozen:
             self._notify_features("on_renderer_restarted")
 
+    def _renderer_screen_failed(self, message, generation, superseded):
+        current_generation = self.renderer.generation
+        if superseded or generation != current_generation:
+            logging.error("[feather_screen] superseded frame failed generation=%d current=%d: %s",
+                          generation, current_generation, message)
+            return
+        page = self.page
+        previous = getattr(self, "previous_page", page)
+        logging.error("[feather_screen] UI frame failed page=%s previous=%s generation=%d: %s",
+                      page.name, previous.name, generation, message)
+        if (self.renderer.output_frozen or self.print_state == PrintState.DESTROYED
+                or self._state_screen() is not None
+                or self._find_dialog(ScreenDialog.ERROR) is not None
+                or self._find_dialog(ScreenDialog.TOUCH_UNAVAILABLE) is not None
+                or self._find_dialog(ScreenDialog.RENDER_ERROR) is not None):
+            return
+
+        try:
+            self.home_during_print = self.print_state in ACTIVE_PRINT_STATES
+            self._show_dialog(ScreenDialog.RENDER_ERROR, page=ScreenPage.IDLE_HOME, content={
+                "title": "Unable to display page",
+                "message": "Return to the home screen to continue.",
+                "tone": "warning",
+                "actions": ((dialog_ui.RENDER_HOME, "HOME", "enabled"),),
+            })
+        except Exception:
+            logging.exception("[feather_screen] unable to display UI recovery after frame failure")
+
     def _ensure_renderer_started(self):
         if self.renderer.active or getattr(self, "boot_screen_held", False):
             return False
@@ -622,6 +658,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             self._show_page(ScreenPage.IDLE_HOME)
         self.update_notification.start()
         self._initialize_network_monitoring()
+        self._setup_startup_pending = True
         self.timer = self.reactor.register_timer(self._update, self.reactor.NOW)
 
     def _shutdown(self):
@@ -1090,8 +1127,12 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             return
         owner = None
         dialog = self._current_dialog()
+        network_content = (self._network_page_content(self.page)
+                           if dialog is None and self.page in NETWORK_SELECTION_PAGES else None)
         if dialog is not None:
             semantic_action = self._current_dialog_instance().resolve_action(action)
+        elif network_content is not None:
+            semantic_action = network_content[0].resolve_action(action)
         elif manager is not None and manager.owner_name(self.page) is not None:
             try:
                 owner, semantic_action = manager.resolve_semantic_action(
@@ -1133,6 +1174,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             if semantic_action is not None:
                 if owner is not None:
                     owner.handle_semantic_action(self.page, semantic_action)
+                elif network_content is not None:
+                    self._handle_network_ui_action(semantic_action)
                 else:
                     self._dispatch_semantic_ui_action(semantic_action)
             elif action == "nav.back":
@@ -1263,12 +1306,16 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         state_screen = self._state_screen()
         if state_screen is not None:
             return state_screen.page, state_screen.title, False
+        if self.page in NETWORK_SELECTION_PAGES:
+            return self._network_page_content(self.page)
         manager = getattr(self, "feature_manager", None)
         if manager is not None and manager.owner_name(self.page) is not None:
             content = manager.get_for_page(self.page).page_content(self.page)
             if content is not None:
                 return content
         elif self.page == ScreenPage.IDLE_HOME:
+            if self._find_dialog(ScreenDialog.RENDER_ERROR) is not None:
+                return state_ui.render_error_background(), None, False
             return self._home_content()
         elif self.page == ScreenPage.CONTROL_HEAT:
             return self._heat_content()
@@ -1315,8 +1362,11 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             self._write_exclude_values()
         elif not due:
             return
+        elif self.page in NETWORK_SELECTION_PAGES:
+            self._write_network_page(self.page)
         elif self.page == ScreenPage.IDLE_HOME:
-            self._write_dashboard(self.reactor.monotonic())
+            if self._find_dialog(ScreenDialog.RENDER_ERROR) is None:
+                self._write_dashboard(self.reactor.monotonic())
         elif self.page == ScreenPage.CONTROL_HEAT:
             self._write_heat_values(self.reactor.monotonic())
         elif self.page == ScreenPage.FILE_CONFIRM:
@@ -1513,10 +1563,6 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             self._render_control_home()
         elif page == ScreenPage.TIMELAPSE_WAIT:
             self._render_timelapse_wait()
-        elif page == ScreenPage.NETWORK_HOME:
-            self._render_network_home()
-        elif page == ScreenPage.WIFI_SCAN:
-            self._render_wifi_scan()
         elif page == ScreenPage.WIFI_PASSWORD:
             self._render_keyboard()
         elif page == ScreenPage.NETWORK_PROGRESS:
@@ -1573,6 +1619,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         elif self.page == ScreenPage.NETWORK_HOME:
             self._show_page(getattr(
                 self, "network_parent_page", ScreenPage.MAIN_MENU))
+        elif self.page == ScreenPage.SETUP_NETWORK:
+            self.feature_manager.get("setup").go_to_intro("welcome")
         elif self.page == ScreenPage.MAIN_MENU:
             self._show_page(ScreenPage.IDLE_HOME)
         elif self.page == ScreenPage.CONTROL_HEAT:
@@ -1584,7 +1632,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         elif self.page == ScreenPage.RECOVERY_CONFIRM:
             self._show_page(ScreenPage.RECOVERY_PROMPT)
         elif self.page in (ScreenPage.WIFI_SCAN, ScreenPage.WIFI_PASSWORD):
-            self._show_page(ScreenPage.NETWORK_HOME if self.page == ScreenPage.WIFI_SCAN
+            self._show_page(self._network_home_page() if self.page == ScreenPage.WIFI_SCAN
                             else ScreenPage.WIFI_SCAN)
         else:
             self._show_page(ScreenPage.IDLE_HOME)
@@ -2085,7 +2133,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.toast_message = str(message)
         self.renderer.toast(self.toast_message)
 
-    def _show_message(self, message, return_page, actions=None, title=None):
+    def _show_message(self, message, return_page, actions=None, title=None, *, tone="info", min_height=None):
         recovery = self._classify_error(message)
         if recovery is not None:
             self._show_error(message, "runtime", recovery)
@@ -2093,6 +2141,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         return self._show_dialog(ScreenDialog.MESSAGE, page=return_page, content={
             "message": str(message),
             "title": None if title is None else str(title),
+            "tone": tone,
+            "min_height": min_height,
             "actions": tuple(actions) if actions is not None
                        else ((dialog_ui.OK, "OK", "enabled"),),
         })
@@ -2110,10 +2160,10 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             for action, _label, _state in actions)
         title = (content["title"] or
                  ("Save bed mesh?" if save_mesh else "Message"))
-        title_only = not message
+        height = content.get("min_height") or (220 if message else 194)
         return dialog_ui.dialog_page(
             title, (message,) if message else (), actions,
-            width=620, height=194 if title_only else 220, tone="info")
+            width=620, height=height, tone=content.get("tone", "info"))
 
     @staticmethod
     def _classify_error(message, category=""):
@@ -2216,6 +2266,9 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
     def _handle_dialog_action(self, route):
         if route == DialogRoute.OK:
             self._close_dialog(ScreenDialog.MESSAGE)
+        elif route == DialogRoute.RENDER_HOME:
+            self._page_values_due = True
+            self._close_dialog(ScreenDialog.RENDER_ERROR)
         elif route == DialogRoute.RESTART:
             self._restart_klipper("RESTART")
         elif route == DialogRoute.FIRMWARE_RESTART:
@@ -2237,6 +2290,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             self._handle_network_action(route.value)
         elif route == DialogRoute.CANCEL_COLD_PULL:
             self._open_operation_cancel(self.page)
+        elif route in (DialogRoute.SETUP_APPLY, DialogRoute.SETUP_FINISH, DialogRoute.SETUP_SKIP):
+            self.feature_manager.get("setup").confirm_dialog(route)
         else:
             self.feature_manager.get("calibration").confirm_shaper_action(
                 "save" if route == DialogRoute.SAVE_SHAPER else "leave")
@@ -2261,6 +2316,17 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                 pass
             self.timer = None
         self._start_pre_ready_ui(restarting=True)
+        return True
+
+    def _cancel_restart_ui(self):
+        """Restore normal screen updates when a requested restart did not happen."""
+        if not self.restart_pending:
+            return False
+        self.restart_pending = False
+        self.startup_restarting = False
+        self._stop_startup_animation()
+        if self.timer is None:
+            self.timer = self.reactor.register_timer(self._update, self.reactor.NOW)
         return True
 
     def _begin_system_shutdown(self):
@@ -2330,6 +2396,12 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self._poll_usb_storage(eventtime)
         self._release_stale_file_entries()
         self._update_operation_context(eventtime)
+        if getattr(self, "_setup_startup_pending", False):
+            self._setup_startup_pending = False
+            if (self.page == ScreenPage.IDLE_HOME and not self._safety_print_active(eventtime)
+                    and not self._operation_context_status(eventtime).get("contexts")
+                    and self._current_dialog() is None):
+                self.feature_manager.get("setup").startup()
         if manager is not None:
             manager.update(eventtime)
         emergency_refreshed = self._refresh_emergency_stop(eventtime)

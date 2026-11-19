@@ -1139,19 +1139,31 @@ class FeatherControlsMixin:
                 self.calibration_repeat_probe = False
                 self._show_page(ScreenPage.CALIBRATION_CONFIRM)
         elif action == "cal.done":
-            self._show_page(ScreenPage.CALIBRATION_HOME)
+            self._return_from_calibration()
         elif action == "cal.mesh.discard":
             if self._mesh_save_available():
-                self._show_page(ScreenPage.CALIBRATION_HOME)
+                self._return_from_calibration()
         elif action == "cal.mesh.save":
             if self._mesh_save_available():
                 self._restart_klipper("SAVE_CONFIG")
         elif action == "cal.tuning.discard":
             if self._tuning_save_available():
-                self._show_page(ScreenPage.CALIBRATION_HOME)
+                self._return_from_calibration()
         elif action == "cal.tuning.save":
             if self._tuning_save_available():
                 self._restart_klipper("SAVE_CONFIG")
+
+    def _setup_calibration(self):
+        manager = getattr(self, "feature_manager", None)
+        setup = manager.peek("setup") if manager is not None else None
+        return setup if setup is not None and setup.running_step() is not None else None
+
+    def _return_from_calibration(self, done=False):
+        setup = self._setup_calibration()
+        if setup is None:
+            self._show_page(ScreenPage.CALIBRATION_HOME)
+        else:
+            setup.calibration_return(done)
 
     def _reset_calibration_progress(self):
         self.calibration_progress_key = None

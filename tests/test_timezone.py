@@ -11,6 +11,7 @@ import os
 import pathlib
 import shutil
 import stat
+import struct
 import tempfile
 import threading
 import time
@@ -71,6 +72,76 @@ class Printer:
 
 
 class SystemTimeTest(unittest.TestCase):
+    def test_setup_choices_group_locations_and_canonicalize_fixed_selection(self):
+        self.assertIn("Europe", SYSTEM.timezone_regions())
+        self.assertNotIn("fixed", SYSTEM.timezone_regions())
+        choices = dict(SYSTEM.timezone_cities("Europe"))
+        self.assertEqual(choices["Europe/Berlin"], "Berlin")
+        self.assertNotIn("Asia/Kathmandu", choices)
+        self.assertEqual(dict(SYSTEM.timezone_cities("Asia"))["Asia/Kathmandu"], "Kathmandu")
+        self.printer.command("SET_TIMEZONE ZONE=UTC+03:00")
+        fixed = SYSTEM.fixed_offsets()
+        self.assertIn("UTC+03:00", fixed)
+        self.assertEqual(fixed.count("UTC"), 1)
+        self.assertIn("UTC-02:30", fixed)  # Newfoundland daylight time
+        self.assertIn("UTC+13:45", fixed)  # Chatham Islands daylight time
+        self.printer.command("SET_TIMEZONE ZONE=UTC+5:37")
+        self.assertEqual(SYSTEM.current_zone(), "UTC+05:37")
+        self.assertEqual(SYSTEM.fixed_offsets(), fixed)
+        self.assertNotIn("UTC+05:37", fixed)
+
+    def test_browsing_reads_only_the_location_index_and_slim_zones_use_libc(self):
+        slim = self.zoneinfo / "Europe/Slim"
+        def header():
+            return b"TZif2" + bytes(15) + struct.pack(">6I", 0, 0, 0, 0, 1, 4)
+        slim.write_bytes(header() + struct.pack(">iBB", 0, 0, 0) + b"UTC\0"
+                         + header() + struct.pack(">iBB", 10800, 0, 0) + b"+03\0" + b"\n<+03>-3\n")
+        (self.zoneinfo / "zone.tab").write_text("ZZ\t+0000+00000\tEurope/Slim\nZZ\t+0000+00000\tAsia/Kathmandu\n")
+        opened = []
+        original_open = pathlib.Path.open
+        def recording_open(path, *args, **kwargs):
+            opened.append(path)
+            return original_open(path, *args, **kwargs)
+        with mock.patch.object(pathlib.Path, "open", recording_open):
+            self.assertIn("Europe", SYSTEM.timezone_regions())
+            self.assertEqual(dict(SYSTEM.timezone_cities("Europe")), {"Europe/Berlin": "Berlin", "Europe/Slim": "Slim"})
+        self.assertTrue(opened)
+        self.assertEqual(set(opened), {self.zoneinfo / "zone.tab"})
+        self.printer.command("SET_TIMEZONE ZONE=Europe/Slim")
+        self.assertEqual(self.wall_time(WINTER), "15:00 +0300")
+        self.assertEqual(self.wall_time(SUMMER), "15:00 +0300")
+
+    def test_city_offsets_follow_dst_on_a_new_day_and_restore_selected_timezone(self):
+        gmtime, strftime = time.gmtime, time.strftime
+        moment = [WINTER]
+        def clock_gmtime(seconds=None):
+            return gmtime(moment[0] if seconds is None else seconds)
+        def clock_strftime(format, value=None):
+            return strftime(format, time.localtime(moment[0]) if value is None else value)
+        with mock.patch.object(time, "gmtime", clock_gmtime), mock.patch.object(time, "strftime", clock_strftime):
+            self.assertEqual(SYSTEM.zone_offsets(["Europe/Berlin", "Asia/Kathmandu"]),
+                             {"Europe/Berlin": "UTC+01:00", "Asia/Kathmandu": "UTC+05:45"})
+            self.assertEqual(self.wall_time(WINTER), "13:00 +0100")
+            moment[0] = SUMMER
+            self.assertEqual(SYSTEM.zone_offsets(["Europe/Berlin", "Asia/Kathmandu"]),
+                             {"Europe/Berlin": "UTC+02:00", "Asia/Kathmandu": "UTC+05:45"})
+            self.assertEqual(self.wall_time(SUMMER), "14:00 +0200")
+
+    def test_city_offsets_work_when_libc_cannot_convert_times_before_the_epoch(self):
+        mktime, strftime = time.mktime, time.strftime
+
+        def bounded_mktime(wall):
+            seconds = mktime(wall)
+            if seconds < 0:
+                raise OverflowError("mktime argument out of range")
+            return seconds
+
+        with mock.patch.object(time, "mktime", side_effect=bounded_mktime), \
+                mock.patch.object(time, "strftime", side_effect=lambda fmt: strftime(fmt, time.localtime(WINTER))):
+            self.assertEqual(SYSTEM.zone_offsets(["Europe/Berlin", "America/Los_Angeles"]),
+                             {"Europe/Berlin": "UTC+01:00", "America/Los_Angeles": "UTC-08:00"})
+        self.assertEqual(self.wall_time(WINTER), "13:00 +0100")
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -99,6 +170,26 @@ class SystemTimeTest(unittest.TestCase):
     @staticmethod
     def wall_time(epoch):
         return time.strftime("%H:%M %z", time.localtime(epoch))
+
+    def test_named_zone_uses_the_database_identity_through_relative_and_alternate_paths(self):
+        database = self.root / "shared-zoneinfo"
+        database.symlink_to(self.zoneinfo)
+        (self.zoneinfo / "Alias").symlink_to("Europe/Berlin")
+        with mock.patch.object(SYSTEM, "ZONEINFO_ROOT", database):
+            for target, expected in ((self.zoneinfo / "Alias", "Alias"),
+                                     ("zoneinfo/Asia/Kathmandu", "Asia/Kathmandu")):
+                with self.subTest(target=target):
+                    self.localtime.unlink()
+                    self.localtime.symlink_to(target)
+                    self.assertEqual(SYSTEM.current_zone(), expected)
+
+    def test_copied_zone_uses_a_matching_system_name_and_ignores_a_stale_one(self):
+        self.localtime.unlink()
+        shutil.copyfile(self.zoneinfo / "Europe/Berlin", self.localtime)
+        (self.root / "timezone").write_text("Europe/Berlin\n")
+        self.assertEqual(SYSTEM.current_zone(), "Europe/Berlin")
+        self.printer.command("SET_TIMEZONE ZONE=UTC+5:30")
+        self.assertEqual(SYSTEM.current_zone(), "UTC+05:30")
 
     def test_named_zones_quotes_dst_and_repeated_switches(self):
         for name, winter, summer in (

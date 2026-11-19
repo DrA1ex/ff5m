@@ -93,6 +93,12 @@ def _full_screen(*content, page_id, state_schema=()):
 
 
 @lru_cache(maxsize=None)
+def render_error_background():
+    """A render error dialog can be drawn without arranging the failed page again."""
+    return _full_screen(page_id=AppPage.RENDER_ERROR)
+
+
+@lru_cache(maxsize=None)
 def startup_page():
     """The screen while Klipper starts, restarts or shuts down: it owns the panel until the host is ready."""
     from ui.components import Disc, Fill, Panel, Text

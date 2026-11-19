@@ -22,6 +22,8 @@ from ff5m_ui import dialogs as dialog_ui
 from ff5m_ui.screen import ScreenPage
 
 
+network_ui = LazyModule("ff5m_ui.network")
+setup_ui = LazyModule("ff5m_ui.setup")
 keyboard_ui = LazyModule("feather.screen.keyboard")
 NETWORK_ROWS = 5
 NETWORK_WATCHDOG = 20.0
@@ -93,35 +95,63 @@ class FeatherNetworkPagesMixin:
         self.keyboard_symbols = False
         self.password_visible = False
 
+    def _network_page_content(self, page):
+        if page in (ScreenPage.NETWORK_HOME, ScreenPage.SETUP_NETWORK):
+            return network_ui.HOME_PAGE, "Network", True
+        if page == ScreenPage.WIFI_SCAN:
+            return network_ui.SCAN_PAGE, "Select Wi-Fi", True
+        return None
+
+    def _write_network_page(self, page):
+        if page == ScreenPage.WIFI_SCAN:
+            network_ui.SCAN_PAGE.state.update(self._wifi_scan_values())
+        else:
+            network_ui.HOME_PAGE.state.update(self._network_values())
+
+    def _handle_network_ui_action(self, action):
+        command = network_ui.NetworkCommand
+        if action.key == command.CONTINUE:
+            setup = self.feature_manager.get("setup")
+            setup._require_setup_idle()
+            setup.go_to_intro("theme")
+            return
+        if action.key == command.SELECT:
+            self._handle_network_action("net.item%d" % action.payload)
+            return
+        routes = {
+            command.SCAN: "net.scan",
+            command.ETHERNET: "net.ethernet",
+            setup_ui.SetupCommand.PREVIOUS: "net.prev",
+            setup_ui.SetupCommand.NEXT: "net.next",
+        }
+        self._handle_network_action(routes[action.key])
+
+    def _network_values(self):
+        state = network_ui.NetworkState
+        status = getattr(self, "network_status", None) or {}
+        address = status.get("ip")
+        connected = status.get("state") == "CONNECTED" and bool(address)
+        ethernet = status.get("mode") == "ETHERNET"
+        available = self._network_available()
+        busy = self._network_busy()
+        if connected:
+            name = "Ethernet" if ethernet else ("Wi-Fi %s" % status["ssid"] if status.get("ssid") else "Wi-Fi")
+            heading, detail = "CONNECTED", "%s - %s" % (name, address)
+        elif busy:
+            heading, detail = "CONNECTING", "Waiting for the network connection."
+        elif available:
+            heading, detail = "NOT CONNECTED", "Connect your printer for updates and browser access."
+        else:
+            heading, detail = "NETWORK UNAVAILABLE", "Network daemon is not available."
+        enabled = available and not busy
+        return {state.STATUS: heading, state.DETAIL: detail, state.CONNECTED: connected,
+                state.WIFI: "enabled" if enabled else "disabled",
+                state.ETHERNET: "enabled" if enabled and not (connected and ethernet) else "disabled",
+                state.ACTION: ("CONTINUE" if connected else "CONTINUE OFFLINE")
+                if self.page == ScreenPage.SETUP_NETWORK else ""}
+
     def _render_network_home(self):
-        status = self.network_status
-        commands = self.renderer.begin_page("Network", back=True)
-        lines = ["Mode: %s   State: %s" % (
-            status.get("mode", "OFFLINE"),
-            status.get("state", "DISCONNECTED"))]
-        if status.get("ssid"):
-            lines.append("SSID: %s   Signal: %s dBm" %
-                         (status["ssid"], status.get("signal") or "?"))
-        if not self._network_available():
-            lines.append("Network daemon unavailable")
-        lines.append("IP: %s" % (status.get("ip") or "Offline"))
-        for index, line in enumerate(lines):
-            commands.append(self.renderer.text(
-                400, 75 + index * 35, line, ThemeColor.BRIGHT, "Roboto 10pt", "center",
-                max_width=660, truncate=True))
-        available = self._network_available() and not self._network_busy()
-        commands += self.renderer.button(
-            "net.scan", 55, 190, 320, 150, "WI-FI", active=available,
-            font="JetBrainsMono 12pt")
-        ethernet_selected = (
-            status.get("mode") == "ETHERNET"
-            and status.get("state") == "CONNECTED")
-        commands += self.renderer.button(
-            "net.ethernet", 425, 190, 320, 150, "ETHERNET DHCP",
-            active=available and not ethernet_selected,
-            font="JetBrainsMono 12pt",
-            subtitle="(ALREADY SELECTED)" if ethernet_selected else None)
-        self.renderer.send(commands)
+        self._paint_page_values()
 
     def _open_network_page(self):
         # CONNECTING from boot, the CLI or another client is daemon state. The
@@ -132,6 +162,11 @@ class FeatherNetworkPagesMixin:
             return
         self._request_network_snapshot()
         self._show_page(ScreenPage.NETWORK_HOME)
+
+    def _network_home_page(self):
+        if getattr(self, "network_parent_page", None) == ScreenPage.SETUP_NETWORK:
+            return ScreenPage.SETUP_NETWORK
+        return ScreenPage.NETWORK_HOME
 
     def _handle_network_action(self, action):
         if action in ("net.scan", "net.rescan"):
@@ -199,13 +234,13 @@ class FeatherNetworkPagesMixin:
         self.networks = []
         if not self.network_client.scan():
             raise RuntimeError("Network service is unavailable")
-        self._begin_network_operation("scan", ScreenPage.NETWORK_HOME)
+        self._begin_network_operation("scan", self._network_home_page())
 
     def _start_ethernet(self):
         self._require_network_ready()
         if not self.network_client.use_ethernet():
             raise RuntimeError("Network service is unavailable")
-        self._begin_network_operation("ethernet", ScreenPage.NETWORK_HOME)
+        self._begin_network_operation("ethernet", self._network_home_page())
 
     def _network_available(self):
         return self.network_client is not None and self.network_client.connected
@@ -253,7 +288,7 @@ class FeatherNetworkPagesMixin:
         self.network_cancel_pending = False
 
     def _repaint_network(self, eventtime):
-        if self._page_paint_allowed(ScreenPage.NETWORK_HOME):
+        if self._page_paint_allowed(ScreenPage.NETWORK_HOME, ScreenPage.SETUP_NETWORK):
             self._render_network_home()
         elif self._page_paint_allowed(ScreenPage.NETWORK_PROGRESS):
             self._render_network_progress()
@@ -277,6 +312,9 @@ class FeatherNetworkPagesMixin:
             self.network_deadline = eventtime + interval
 
         if kind == "snapshot":
+            if self.network_probe_pending:
+                self.network_probe_pending = False
+                self.network_deadline = eventtime + NETWORK_WATCHDOG
             if value:
                 if (self.page == ScreenPage.NETWORK_HOME
                         and self.network_status.get("state") == "CONNECTING"):
@@ -286,7 +324,7 @@ class FeatherNetworkPagesMixin:
                         and self.network_operation is None
                         and not self.network_cancel_pending
                         and self.network_status.get("state") != "CONNECTING"):
-                    self._show_page(ScreenPage.NETWORK_HOME)
+                    self._show_page(self._network_home_page())
                     return
                 self._repaint_network(eventtime)
             return
@@ -299,16 +337,12 @@ class FeatherNetworkPagesMixin:
             return
 
         if kind == "ok":
-            if self.network_probe_pending:
-                self.network_probe_pending = False
-                self.network_deadline = eventtime + NETWORK_WATCHDOG
-                return
             cancelled_daemon_operation = (
                 self.network_cancel_pending
                 and self.network_operation is None)
             self.network_cancel_pending = False
             if cancelled_daemon_operation:
-                self._show_page(ScreenPage.NETWORK_HOME)
+                self._show_page(self._network_home_page())
                 return
             self._finish_network_operation(None, eventtime)
             return
@@ -356,7 +390,7 @@ class FeatherNetworkPagesMixin:
             self._show_page(ScreenPage.WIFI_SCAN)
             return
 
-        self._show_page(ScreenPage.NETWORK_HOME)
+        self._show_page(self._network_home_page())
         if self.network_status.get("state") == "CONNECTED":
             self._toast("Network connected")
 
@@ -412,49 +446,30 @@ class FeatherNetworkPagesMixin:
                 state="disabled" if self.network_cancel_pending else "danger")
         self.renderer.send(commands)
 
-    def _render_wifi_scan(self):
-        pagination = Pagination(
-            self.networks, self.network_page, NETWORK_ROWS)
+    def _wifi_scan_values(self):
+        state = network_ui.ScanState
+        pagination = Pagination(self.networks, self.network_page, NETWORK_ROWS)
         self.network_page = pagination.page
-        commands = self.renderer.begin_page("Select Wi-Fi", back=True)
-        rows = pagination.visible
-        for index, network in enumerate(rows):
-            y = 62 + index * 65
+
+        rows = []
+        for index, network in enumerate(pagination.visible):
             frequency = network.get("frequency", 0)
-            band = ("5 GHz" if frequency >= 5000 else
-                    "2.4 GHz" if frequency >= 2400 else "Wi-Fi")
-            commands += self.renderer.button(
-                "net.item%d" % index, 30, y, 740, 56, "")
-            side_y = y + (18 if network.get("saved") else 28)
-            commands.append(self.renderer.text(
-                55, side_y, band, ThemeColor.DIM, "JetBrainsMono 8pt",
-                "left", "middle", max_width=145, truncate=True))
-            if network.get("saved"):
-                commands.append(self.renderer.text(
-                    55, y + 39, "SAVED", ThemeColor.DIM,
-                    "JetBrainsMono 7pt", "left", "middle",
-                    max_width=145, truncate=True))
-            commands.append(self.renderer.text(
-                400, y + 28, network["ssid"], ThemeColor.TEXT,
-                "JetBrainsMono 12pt", "center", "middle",
-                max_width=420, truncate=True))
-            commands.append(self.renderer.text(
-                745, y + 28, "%d dBm" % network["signal"],
-                ThemeColor.DIM, "JetBrainsMono 8pt", "right", "middle",
-                max_width=135, truncate=True))
-        commands += self.renderer.button(
-            "net.prev", 25, 384, 190, 50, "< PAGE",
-            active=pagination.has_previous)
-        commands += self.renderer.button(
-            "net.rescan", 305, 384, 190, 50, "RESCAN")
-        commands += self.renderer.button(
-            "net.next", 585, 384, 190, 50, "PAGE >",
-            active=pagination.has_next)
-        if not rows:
-            commands.append(self.renderer.text(
-                400, 230, "No supported networks", ThemeColor.DIM,
-                "Roboto 16pt", "center", "middle"))
-        self.renderer.send(commands)
+            band = "5 GHz" if frequency >= 5000 else "2.4 GHz" if frequency >= 2400 else "Wi-Fi"
+            rows.append(dict(
+                index=index,
+                ssid=network["ssid"],
+                band=band,
+                signal="%d dBm" % network["signal"],
+                saved=bool(network.get("saved")),
+            ))
+
+        return {state.ROWS: rows, state.EMPTY: not rows,
+                state.PAGE: pagination.page, state.PAGE_COUNT: pagination.page_count,
+                state.PREVIOUS: "enabled" if pagination.has_previous else "disabled",
+                state.NEXT: "enabled" if pagination.has_next else "disabled"}
+
+    def _render_wifi_scan(self):
+        self._paint_page_values()
 
     def _render_keyboard(self):
         ssid = self.selected_network["ssid"]

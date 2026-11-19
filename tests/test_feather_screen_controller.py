@@ -301,8 +301,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.ScreenPage.MOD_SETTINGS: "_render_mod_settings",
             FEATHER.ScreenPage.PARAMETER_OPTIONS: "_render_parameter_options",
             FEATHER.ScreenPage.MOD_VALUE: "_render_mod_value",
-            FEATHER.ScreenPage.NETWORK_HOME: "_render_network_home",
-            FEATHER.ScreenPage.WIFI_SCAN: "_render_wifi_scan",
             FEATHER.ScreenPage.WIFI_PASSWORD: "_render_keyboard",
             FEATHER.ScreenPage.NETWORK_PROGRESS: "_render_network_progress",
             FEATHER.ScreenPage.RECOVERY_PROMPT: "_render_recovery_prompt",

@@ -66,20 +66,24 @@ class SettingsPagesMixin:
         ]
         commands += self.renderer.toggle("settings.sound", 679, 249, 76, 38,
                                          sound)
-        commands += self.renderer.button(
-            "settings.theme", 25, 317, 360, 100, "COLOR THEME",
-            subtitle=theme.replace("_", " "), layout="center",
-            font="JetBrainsMono Bold 8pt")
-        commands += self.renderer.button(
-            "settings.mod", 415, 317, 360, 100, "MOD PARAMETERS",
-            subtitle="ALL FORGE-X OPTIONS", layout="center",
-            font="JetBrainsMono Bold 8pt")
+        entries = (
+            ("settings.theme", "COLOR THEME", theme.replace("_", " ")),
+            ("settings.mod", "MOD PARAMETERS", "ALL FORGE-X OPTIONS"),
+            ("settings.setup", "SETUP WIZARD", "CONFIGURATION GUIDE"),
+        )
+        for index, (action, label, subtitle) in enumerate(entries):
+            commands += self.renderer.button(
+                action, 25 + index * 254, 317, 242, 100, label,
+                subtitle=subtitle, layout="center", font="JetBrainsMono Bold 8pt")
         self.renderer.send(commands)
 
     def _handle_settings_action(self, action):
         self._require_idle()
         if action == "settings.benchmark.tap":
             self._handle_benchmark_tap()
+            return
+        if action == "settings.setup":
+            self.feature_manager.get("setup").open(ScreenPage.SETTINGS)
             return
         if action == "settings.theme":
             parameters = self._mod_parameters()

@@ -171,9 +171,8 @@ class ModSettingsPagesMixin:
         page = pages[max(0, min(getattr(self, "mod_page", 0), len(pages) - 1))]
         rows = mod_ui.page_parameters(page)
         self.mod_restore_anchor_key = rows[0][1].key if rows else None
-        self.mod_return_page = return_page
-        kind = mod_ui.parameter_kind(param)
-        if kind == "bool":
+        if mod_ui.parameter_kind(param) == "bool":
+            self.mod_return_page = return_page
             current = bool(self.params.variables.get(param.key, param.default))
             new_value = not current
             self._move_mod_toggle(param.key, mod_ui.bool_display_active(param, new_value))
@@ -185,12 +184,16 @@ class ModSettingsPagesMixin:
             self._set_mod_value(param, "1" if new_value else "0",
                                 complete, minimum_duration=0.14)
             return
+        self.open_parameter_editor(param, return_page)
+
+    def open_parameter_editor(self, param, return_page):
+        self.mod_return_page = return_page
         self.mod_parameter = param
         self.mod_edit_value = mod_ui.current_edit_value(self.params, param)
         self.mod_edit_cursor = len(self.mod_edit_value)
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
-        if kind == "enum" or param.key == "feather_theme":
+        if mod_ui.parameter_kind(param) == "enum" or param.key == "feather_theme":
             if param.key == "feather_theme":
                 # User files are writable at runtime. Refresh them exactly once
                 # when entering the picker, then keep a stable option snapshot
@@ -242,6 +245,8 @@ class ModSettingsPagesMixin:
                 now + 0.3)
         try:
             result = setter(param.key, value)
+            if getattr(self, "mod_return_page", None) in (ScreenPage.SETUP_OPTIONS, ScreenPage.SETUP_NETWORK):
+                self.feature_manager.get("setup").progress.record_options({param.key: result})
         except Exception:
             self.mod_update_pending = False
             self.mod_update_token += 1
@@ -324,10 +329,7 @@ class ModSettingsPagesMixin:
                 int(action.rsplit(".", 1)[1]), self.page)
             return
         if action == "mod.cancel":
-            self._restore_setting_preview()
-            self.mod_parameter = None
-            self._show_page(getattr(
-                self, "mod_return_page", ScreenPage.MOD_SETTINGS))
+            self._cancel_parameter_editor()
             return
         param = self.mod_parameter
         if param is None:
@@ -351,6 +353,12 @@ class ModSettingsPagesMixin:
                     self.mod_theme_original = None
                 return_page = getattr(
                     self, "mod_return_page", ScreenPage.MOD_SETTINGS)
+                if return_page == ScreenPage.SETUP_NETWORK:
+                    try:
+                        self.feature_manager.get("setup").go_to_intro("done")
+                    except OSError as exc:
+                        self._show_message(str(exc), self.page, title="Setup progress could not be saved")
+                    return
                 self.mod_parameter = None
                 self._show_page(return_page)
                 self._toast("UPDATED: %s" % param.label)
@@ -406,6 +414,15 @@ class ModSettingsPagesMixin:
         self._render_parameter_options()
         if param.key == "feather_status_bar":
             self._refresh_status_bar(style=option.value)
+
+    def _cancel_parameter_editor(self):
+        return_page = getattr(self, "mod_return_page", ScreenPage.MOD_SETTINGS)
+        if return_page == ScreenPage.SETUP_NETWORK:
+            self.feature_manager.get("setup").go_to_intro("network")
+        else:
+            self._restore_setting_preview()
+            self.mod_parameter = None
+            self._show_page(return_page)
 
     def _restore_setting_preview(self):
         param = getattr(self, "mod_parameter", None)

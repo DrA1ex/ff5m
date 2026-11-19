@@ -2549,8 +2549,11 @@ class RendererStateTest(unittest.TestCase):
             {"ssid": "Workshop-%d" % index, "signal": -40 - index}
             for index in range(5)]
         controller.network_page = 0
-        controller._render_wifi_scan()
-        wifi_buttons = dict(controller.renderer._buttons)
+        network = controller._network_page_content(FEATHER.ScreenPage.WIFI_SCAN)
+        controller._write_network_page(FEATHER.ScreenPage.WIFI_SCAN)
+        paint_content(controller, network)
+        wifi_buttons = {hit.action: (hit.x, hit.y, hit.width, hit.height)
+                        for hit in shown_hitboxes(controller.renderer) if hit.action != "global.wake"}
         self.assertNotIn("net.reset.saved", wifi_buttons)
 
         controller.selected_network = {"ssid": "Workshop"}

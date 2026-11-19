@@ -52,7 +52,9 @@ class HomePagesMixin:
         return home_state.dashboard_job(self, eventtime)
 
     def _handle_timezone_changed(self):
-        if self.page == ScreenPage.IDLE_HOME:
+        if self.page == ScreenPage.SETUP_TIMEZONE:
+            self._paint_page_values()
+        elif self.page == ScreenPage.IDLE_HOME:
             self._update_dashboard(self.reactor.monotonic())
 
     def _render_control_home(self):

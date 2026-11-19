@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 from ui import (FLEX, ArrowButton, Button, ButtonSurface, Column, Command, CommandKey, Equal, Fill, Flex, Grid,
                 Hitbox, Image, ItemCommand, ListView, NumericKeypad, Overlay, PageTree, Panel, Rect, Row,
-                ScrollIndicator, StateKey, Stroke, Template, Text, TextField, ThemeColor, ThemeRole, bind, item, state)
+                ScrollIndicator, Spacer, StateKey, Stroke, Template, Text, TextField, ThemeColor, ThemeRole,
+                bind, item, state)
 from ui.bindings import Binding
 from ui.font_metrics import get_font_metrics
 from ui.renderer import FeatherRenderer, HEADER_BOTTOM, SCREEN_HEIGHT, SCREEN_WIDTH
@@ -25,6 +26,9 @@ ROW_LABEL_FONT = "JetBrainsMono Bold 8pt"
 ROW_TEXT_FONT = "JetBrainsMono 8pt"
 COMPACT_ROW_PADDING = 8
 COMPACT_ROW_GAP = 4
+TOGGLE_WIDTH = 76
+TOGGLE_HEIGHT = 38
+VALUE_WIDTH = 180
 VALUE_HEIGHT = 46
 
 
@@ -129,7 +133,7 @@ def parameter_pitch(param, row_width):
 
 
 def control_row(label, subtitle, description, control, row_width=mod.LIST_WIDTH):
-    value = Overlay(control.align("right", "center")).width(180)
+    value = Overlay(control.align("right", "center")).width(VALUE_WIDTH)
     if row_width >= 600:
         content = Grid(
             matrix=((Column(
@@ -137,7 +141,7 @@ def control_row(label, subtitle, description, control, row_width=mod.LIST_WIDTH)
                 Text(subtitle, color=ThemeColor.DIM, font="JetBrainsMono 8pt", horizontal="left", truncate=True).height(18),
                 Text(description, color=ThemeColor.TEXT, font=ROW_TEXT_FONT, horizontal="left", truncate=True).height(18),
                 gap=0), value),),
-            columns=(FLEX, 180), rows=(FLEX,), gap=15,
+            columns=(FLEX, VALUE_WIDTH), rows=(FLEX,), gap=15,
         ).padding(left=15, right=15, top=5, bottom=5)
     else:
         content = Column(
@@ -187,12 +191,13 @@ def _list_template(kind, width):
         return Template(kind, next_category_card(item("label")))
     action = ItemCommand(ParameterCommand.OPEN, item("parameter"))
     if kind == "toggle":
-        control = ToggleSwitch(action, item("active"), enabled=item("enabled"), progress=item("progress")).size(76, 38)
+        control = ToggleSwitch(action, item("active"), enabled=item("enabled"),
+                               progress=item("progress")).size(TOGGLE_WIDTH, TOGGLE_HEIGHT)
     elif kind == "value":
-        control = Button(action, item("value"), state=item("state"), font="JetBrainsMono 8pt").size(180, 46)
+        control = Button(action, item("value"), state=item("state"), font=ROW_TEXT_FONT).size(VALUE_WIDTH, VALUE_HEIGHT)
     elif kind == "current":
         from .model_preview.actions import PreviewAction, PreviewRoute
-        control = Button(PreviewAction(PreviewRoute.CAPTURE_VIEW), "USE CURRENT", font="JetBrainsMono 8pt").size(180, 46)
+        control = Button(PreviewAction(PreviewRoute.CAPTURE_VIEW), "USE CURRENT", font=ROW_TEXT_FONT).size(VALUE_WIDTH, VALUE_HEIGHT)
     else:
         raise ValueError("Unknown parameter list template: %s" % kind)
     return Template(kind, control_row(item("label"), item("subtitle"), item("description"), control,
@@ -387,7 +392,7 @@ def _theme_preview(compact=False):
                    Column(*children, gap=6 if compact else 16).padding(10 if compact else 20))
 
 
-def create_theme_page(bounds=None):
+def create_theme_page(bounds=None, *, setup=False):
     """The theme picker with a preview of the selected theme; its values are theme_values'."""
     bounds = bounds or content_bounds()
     choices = _choice_rows(44, 6)
@@ -396,15 +401,17 @@ def create_theme_page(bounds=None):
     counter = Text(bind(ParameterOptionsState.COUNTER), color=ThemeColor.DIM, font="JetBrainsMono 8pt")
     previous = _button("options.prev", "<", bind(ParameterOptionsState.PREVIOUS))
     following = _button("options.next", ">", bind(ParameterOptionsState.NEXT))
+    cancel = Spacer() if setup else _button("cancel", "CANCEL", "danger")
+    apply = _button("apply", "CONTINUE" if setup else "SAVE", "selected" if setup else "enabled")
     if compact:
         body = Grid(matrix=((choices,), (preview,)), columns=(FLEX,), rows=(FLEX, 120), gap=12)
         footer = Grid(matrix=((
-            previous, counter, following, _button("cancel", "CANCEL", "danger"), _button("apply", "SAVE"),
+            previous, counter, following, cancel, apply,
         ),), columns=(44, 40, 44, FLEX, FLEX), rows=(FLEX,), gap=8)
     else:
         body = Grid(matrix=((choices, preview),), columns=(Flex(27), Flex(46)), rows=(FLEX,), gap=20)
         pager = Grid(matrix=((previous, counter, following),), columns=(90, FLEX, 90), rows=(FLEX,))
-        actions = Row(_button("cancel", "CANCEL", "danger").width(125), _button("apply", "SAVE").width(125), gap=20)
+        actions = Row(cancel.width(125), apply.width(125), gap=20)
         footer = Grid(matrix=((pager, actions.width("content").align(horizontal="right")),),
                       columns=(Flex(27), Flex(46)), rows=(FLEX,), gap=20)
     root = Grid(matrix=((body,), (footer,)), columns=(FLEX,), rows=(FLEX, 47), gap=11).padding(top=8)

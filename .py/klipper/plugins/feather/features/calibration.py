@@ -140,6 +140,22 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         shaper = self._active_shaper()
         return shaper is not None and shaper.confirm(kind)
 
+    def start_mesh(self):
+        self._handle_calibration_action("cal.mesh")
+
+    def start_shaper(self):
+        if self._forge_shaper() is None:
+            raise RuntimeError("Input Shaper is unavailable")
+        if self.shaper is not None:
+            self.shaper.sweep = False
+        self._handle_calibration_action("cal.shaper")
+
+    def _run_calibration(self, eventtime):
+        setup = self._setup_calibration()
+        if setup is not None and not self._safety_print_active(eventtime):
+            setup.calibration_started()
+        super()._run_calibration(eventtime)
+
     def _prepare_calibration_progress(self):
         super()._prepare_calibration_progress()
         # A new job drops the previous flow's views and graph cache. The
@@ -177,15 +193,22 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         if page == ScreenPage.CALIBRATION_HOME:
             self._show_page(ScreenPage.CONTROL_HOME)
         elif page == ScreenPage.CALIBRATION_GUIDE:
-            self._show_page(ScreenPage.CALIBRATION_HOME)
+            self._return_from_calibration()
         elif page == ScreenPage.CALIBRATION_CONFIRM:
             if self.calibration_kind == "z":
                 self.feature_manager.get("z").cancel_calibration()
             else:
-                self._show_page(ScreenPage.CALIBRATION_HOME)
+                self._return_from_calibration()
         else:
             return False
         return True
+
+    def _restart_klipper(self, command):
+        setup = self._setup_calibration()
+        if command == "SAVE_CONFIG" and setup is not None and setup.running_step() in ("mesh", "shaper"):
+            setup.save_calibration()
+            return
+        self._host._restart_klipper(command)
 
     def begin_recovery(self):
         self.calibration_kind = "recovery"

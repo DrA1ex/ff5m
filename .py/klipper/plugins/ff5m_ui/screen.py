@@ -52,6 +52,12 @@ class ScreenPage(Enum):
     EXCLUDE_MODEL = 46
     PREVIEW_SETTINGS = 47
     UI_TEST_PREVIEW = 48
+    SETUP = 49
+    SETUP_OPTIONS = 50
+    SETUP_CALIBRATION = 51
+    SETUP_TIMEZONE = 52
+    SETUP_WELCOME = 53
+    SETUP_NETWORK = 54
 
 
 class ScreenDialog(Enum):
@@ -60,3 +66,4 @@ class ScreenDialog(Enum):
     ERROR = 4
     TOUCH_UNAVAILABLE = 5
     PRINT_MORE = 6
+    RENDER_ERROR = 7

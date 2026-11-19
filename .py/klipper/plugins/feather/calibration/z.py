@@ -538,7 +538,7 @@ class FeatherZCalibrationMixin:
             "\n".join(commands), "POSITIONING HEAD AND TARING...",
             next_page=ScreenPage.SAFE_Z_CALIBRATION)
 
-    def _continue_after_safe_z(self):
+    def _continue_after_safe_z(self, saved=False):
         self._show_page(ScreenPage.CALIBRATION_CONFIRM)
 
     def _skip_safe_z_calibration(self):
@@ -578,8 +578,8 @@ class FeatherZCalibrationMixin:
     def _save_safe_z(self):
         value = self.z_calibration.accept_safe_z()
         self._run_script("SET_MOD PARAM=safe_z VALUE=%.3f" % value)
+        self._continue_after_safe_z(saved=True)
         self._toast("Safe Z saved %.3f mm" % value)
-        self._continue_after_safe_z()
 
     def _enter_z_zone(self):
         point = ZONE_BY_KEY[self.z_calibration.zone]
@@ -716,4 +716,4 @@ class FeatherZCalibrationMixin:
 
     def _cancel_z_calibration(self):
         self._finish_z_calibration(None)
-        self._show_page(ScreenPage.CALIBRATION_HOME)
+        self._return_from_calibration()

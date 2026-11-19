@@ -205,6 +205,8 @@ class ExternalWorkflowTest(unittest.TestCase):
                                           "footer": [], "buttons": {}, "kind": None},
                     Dialog.MESSAGE: {"message": "Notice", "title": None,
                                      "actions": ((dialog_ui.OK, "OK", "enabled"),)},
+                    Dialog.RENDER_ERROR: {"message": "Frame failed", "title": None,
+                                          "actions": ((dialog_ui.RENDER_HOME, "HOME", "enabled"),)},
                     Dialog.ERROR: {"message": "Configuration failed", "category": "error",
                                    "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},

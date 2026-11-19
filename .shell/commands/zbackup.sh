@@ -185,12 +185,16 @@ collect_debug_snapshots() {
 
 create_debug_archive() {
     local output="${1:-}"
+    local -a debug_params=("${TAR_DEBUG_PARAMS[@]}")
 
     collect_debug_snapshots || return 1
+    if [ -f /opt/config/mod_data/feather_setup.json ]; then
+        debug_params+=(./mod_data/feather_setup.json)
+    fi
     if [ -n "$output" ]; then
-        recovery_archive debug TAR_DEBUG_PARAMS "$output"
+        recovery_archive debug debug_params "$output"
     else
-        tar_backup "debug" TAR_DEBUG_PARAMS
+        tar_backup "debug" debug_params
     fi
 }
 

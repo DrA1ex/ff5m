@@ -284,6 +284,29 @@ class RecoveryRFCToolsTest(unittest.TestCase):
                     member = str(self.root / 'data/logFiles/recovery.log.1').lstrip('/')
                     self.assertEqual(saved.extractfile(member).read(), b'previous Recovery diagnostics')
 
+    def test_debug_archives_include_setup_progress_only_when_present(self):
+        config, _, harness = self.archive_harness()
+        progress = config / 'mod_data/feather_setup.json'
+        destination = self.root / 'data/forge-x-recovery/debug.tar.gz'
+        checkpoint = b'{"completed_version": 1, "selections": {"stop_motor": 0}}'
+
+        for present in (False, True):
+            if present:
+                progress.write_bytes(checkpoint)
+            for arguments in (('--tar-debug',), ('--tar-debug-to', str(destination))):
+                with self.subTest(present=present, arguments=arguments):
+                    self.run_archive(harness, *arguments)
+                    archive = destination if len(arguments) > 1 else next((config / 'mod_data').glob('debug_*.tar.gz'))
+                    with tarfile.open(archive) as saved:
+                        members = {name.removeprefix('./'): name for name in saved.getnames()}
+                        member = members.get('mod_data/feather_setup.json')
+                        if present:
+                            self.assertIsNotNone(member)
+                            self.assertEqual(saved.extractfile(member).read(), checkpoint)
+                        else:
+                            self.assertIsNone(member)
+                    archive.unlink()
+
     def test_archive_timeout_removes_partial_output(self):
         fake = self.root / "slow-zbackup.sh"
         fake.write_text(

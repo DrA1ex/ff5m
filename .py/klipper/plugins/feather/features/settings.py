@@ -153,7 +153,8 @@ class SettingsFeature(
                 "nav.back", "settings.brightness.minus",
                 "settings.brightness.plus", "settings.led.minus",
                 "settings.led.plus", "settings.sound", "settings.theme",
-                "settings.mod", "settings.benchmark.tap"),
+                "settings.mod", "settings.setup",
+                "settings.benchmark.tap"),
             ScreenPage.MOD_SETTINGS: ("nav.back", "mod.prev", "mod.next", "mod.more"),
             ScreenPage.PREVIEW_SETTINGS: ("nav.back", "mod.prev", "mod.next", "mod.more", "model.capture_view"),
             ScreenPage.PARAMETER_OPTIONS: (
@@ -221,9 +222,7 @@ class SettingsFeature(
             self._show_page(ScreenPage.MODEL_PREVIEW if state and state["mode"] == "lab"
                             else ScreenPage.PRINT_PREVIEW)
         elif page in (ScreenPage.PARAMETER_OPTIONS, ScreenPage.MOD_VALUE):
-            self._restore_setting_preview()
-            self.mod_parameter = None
-            self._show_page(self.mod_return_page)
+            self._cancel_parameter_editor()
         else:
             return False
         return True

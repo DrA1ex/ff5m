@@ -11,6 +11,8 @@ source /opt/config/mod/.shell/common.sh
 
 key=$1
 value=$2
+apply_only=0
+[ "$3" = "--apply-only" ] && apply_only=1
 
 if [ -z "$key" ]; then
     echo "Usage: $0 <key> <value>"
@@ -95,6 +97,7 @@ case "$key" in
     ;;
 
     tune_klipper)
+        [ "$apply_only" -eq 1 ] && exit 0
         message "Klipper will be restarted to apply tuning."
         "$SCRIPTS"/restart_klipper.sh --hard
     ;;
@@ -135,11 +138,16 @@ case "$key" in
                 --params /opt/config/mod/.cfg/tuning.off.cfg
         fi
 
+        status=$?
+        [ "$status" -eq 0 ] || exit "$status"
+        [ "$apply_only" -eq 1 ] && exit 0
+
         message "Klipper will be restarted to apply changes."
         "$SCRIPTS"/restart_klipper.sh
     ;;
     power_loss_recovery)
-        rm -f /opt/config/mod_data/resurrection.json
+        rm -f /opt/config/mod_data/resurrection.json || exit $?
+        [ "$apply_only" -eq 1 ] && exit 0
 
         screen=$("$CMDS"/zdisplay.sh test)
         if [ "$screen" != "STOCK" ]; then

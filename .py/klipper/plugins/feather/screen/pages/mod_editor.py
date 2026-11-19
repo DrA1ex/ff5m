@@ -34,12 +34,13 @@ class ModEditorPagesMixin:
         whether its options need pages."""
         param = self.mod_parameter
         theme, bounds, capacity = self._parameter_options_layout()
-        variant = param.key, bounds, len(self.parameter_option_entries) > capacity
+        setup_theme = theme and self.mod_return_page == ScreenPage.SETUP_NETWORK
+        variant = param.key, bounds, len(self.parameter_option_entries) > capacity, setup_theme
         if getattr(self, "_options_tree_variant", None) != variant:
-            self._options_tree = (parameter_ui.create_theme_page(bounds) if theme
+            self._options_tree = (parameter_ui.create_theme_page(bounds, setup=setup_theme) if theme
                                   else parameter_ui.create_options_page(param, variant[2], bounds))
             self._options_tree_variant = variant
-        return self._options_tree, str(self.mod_parameter.label), True
+        return self._options_tree, "Color theme" if setup_theme else str(param.label), True
 
     def _write_parameter_options_values(self):
         theme, _bounds, capacity = self._parameter_options_layout()

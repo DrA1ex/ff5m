@@ -46,6 +46,8 @@ class Parameter:
     ui_category: Optional[str] = None
     ui_visible_if: Optional[Dict[str, Any]] = None
     ui_order: Optional[int] = None
+    setup_help: Optional[str] = None
+    setup_description: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -215,16 +217,17 @@ class ModParamManagement:
                 if ui_category not in self.ui_categories_map:
                     raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" uses unknown ui.category!')
 
-            # An explicit ui.visible_if is a single condition; strict dependencies
-            # (already validated above) may also carry several alternatives.
             ui_visible_if = ui_data.get("visible_if")
             if ui_visible_if is None:
                 ui_visible_if = dependency_by_parameter.get(param_data["key"])
-            elif (not isinstance(ui_visible_if, dict)
-                    or not isinstance(ui_visible_if.get("parameter"), str)
-                    or ui_visible_if.get("operator") != "equals"
-                    or "value" not in ui_visible_if):
-                raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" has invalid ui.visible_if!')
+            else:
+                conditions = ui_visible_if.get("all_of", [ui_visible_if]) if isinstance(ui_visible_if, dict) else None
+                if (not isinstance(conditions, list) or not conditions
+                        or any(not isinstance(condition, dict)
+                               or not isinstance(condition.get("parameter"), str)
+                               or condition.get("operator") != "equals"
+                               or "value" not in condition for condition in conditions)):
+                    raise ValueError(f'[mod_params]: Parameter "{param_data["key"]}" has invalid ui.visible_if!')
             if ui_visible_if is not None:
                 ui_visible_if = dict(ui_visible_if)
 
@@ -263,6 +266,8 @@ class ModParamManagement:
                 ui_category=ui_category,
                 ui_visible_if=ui_visible_if,
                 ui_order=ui_order,
+                setup_help=ui_data.get("setup_help"),
+                setup_description=ui_data.get("setup_description"),
                 deprecated=DeprecationParameter(
                     key=deprecated["key"],
                     new_key=param_data["key"],
@@ -413,6 +418,23 @@ class ModParamManagement:
             logging.exception(msg)
             raise self.gcode.error(msg)
 
+    def normalize_value(self, key, value):
+        """Validate a value and return its persistent representation without changing settings."""
+        param = self.params_map[key]
+        try:
+            loaded = str(value) if param.type == str else self._load_param(param, str(value))
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('Invalid value for "%s"' % key) from None
+        return self._transform(param, loaded)
+
+    def snapshot(self, keys):
+        """Current persistent representations for an explicit set of parameters."""
+        return {key: self._transform(self.params_map[key], self.variables[key]) for key in keys}
+
+    def publish_changes(self):
+        """Notify observers after a caller commits a batch without ordinary change hooks."""
+        self._emit_changed_event()
+
     def set_value(self, key: str, value: Any, force: bool = False):
         """Set a parameter without passing user text through the G-code parser.
 
@@ -422,8 +444,12 @@ class ModParamManagement:
         """
         return self.set_values({key: value}, force=force)[key]
 
-    def set_values(self, values: Dict[str, Any], force: bool = False):
-        """Validate related settings before committing one complete snapshot."""
+    def set_values(self, values: Dict[str, Any], force: bool = False, *, notify=True):
+        """Validate related settings before committing one complete snapshot.
+
+        notify=False is for setup's explicit effect/restart path. The caller
+        must perform required service/configuration effects itself.
+        """
         loaded = {}
         for key, value in values.items():
             if key not in self.params_map:
@@ -436,7 +462,7 @@ class ModParamManagement:
             except Exception:
                 raise ValueError('Failed to update parameter "%s"' % key)
 
-        self._store_values(loaded)
+        self._store_values(loaded, notify=notify)
 
         lock = getattr(self, "_variables_lock", None)
         with lock:
@@ -445,7 +471,7 @@ class ModParamManagement:
     def _store_value(self, param: Parameter, new_value: Any):
         return self._store_values({param.key: new_value})
 
-    def _store_values(self, values):
+    def _store_values(self, values, notify=True):
         """Atomically persist changes, rolling back every affected value on failure."""
         lock = getattr(self, "_variables_lock", None)
         if lock is None:
@@ -462,7 +488,7 @@ class ModParamManagement:
                     self.variables.update(previous)
                     raise
 
-        for key in changed:
+        for key in changed if notify else ():
             self.reactor.register_callback(
                 lambda _, p=self.params_map[key]: self._notify_committed_change(p))
 

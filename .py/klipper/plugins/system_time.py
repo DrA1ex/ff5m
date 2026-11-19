@@ -14,6 +14,8 @@ import time
 
 ZONEINFO_ROOT = Path("/usr/share/zoneinfo")
 LOCALTIME_PATH = Path("/etc/localtime")
+# Midday on 2000-01-01 stays inside 32-bit time_t in every zone.
+TZ_RELOAD_TIME = 946728000
 
 
 def set_timezone(zone):
@@ -35,11 +37,134 @@ def set_timezone(zone):
 
 def current_zone():
     try:
-        return str(Path(os.readlink(str(LOCALTIME_PATH))).relative_to(ZONEINFO_ROOT))
-    except (OSError, ValueError):
-        # A fixed offset is a regular file, so libc's current offset is its name.
-        offset = time.strftime("%z")
-        return "UTC%s:%s" % (offset[:3], offset[3:])
+        target = LOCALTIME_PATH.parent / os.readlink(str(LOCALTIME_PATH))
+        if ZONEINFO_ROOT in target.parents and ".." not in target.parts:
+            return str(target.relative_to(ZONEINFO_ROOT))
+        # Preserve the selected alias, even if the database directory is itself a link.
+        root = ZONEINFO_ROOT.resolve(strict=True)
+        path = target.parent.resolve(strict=True) / target.name
+        if root not in path.parents:
+            path = target.resolve(strict=True)
+        return str(path.relative_to(root))
+    except (OSError, ValueError, RuntimeError):
+        pass
+
+    # Some installations copy the TZif and keep its name in /etc/timezone.
+    # A previous name can outlive a change to a fixed offset.
+    try:
+        name = LOCALTIME_PATH.with_name("timezone").read_text(encoding="utf-8").strip()
+        if _named_zone(name).read_bytes() == LOCALTIME_PATH.read_bytes():
+            return name
+    except (OSError, ValueError, RuntimeError):
+        pass
+
+    offset = time.strftime("%z")
+    return "UTC%s:%s" % (offset[:3], offset[3:])
+
+
+def canonical_timezone(name):
+    match = re.fullmatch(r"UTC([+-])([0-9]{1,2})(?::([0-9]{2}))?", name)
+    if match is None:
+        return name
+    hours, minutes = int(match.group(2)), int(match.group(3) or 0)
+    if not hours and not minutes:
+        return "UTC"
+    return "UTC%s%d%s" % (match.group(1), hours, ":%02d" % minutes if minutes else "")
+
+
+def _location_names():
+    names = set()
+    try:
+        with (ZONEINFO_ROOT / "zone.tab").open(encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip() and not line.startswith("#"):
+                    names.add(line.split()[2])
+    except FileNotFoundError:
+        # Directory names are enough for browsing; SET_TIMEZONE validates the selected TZif file.
+        for path in ZONEINFO_ROOT.rglob("*"):
+            relative = path.relative_to(ZONEINFO_ROOT)
+            if relative.parts[0] not in ("right", "posix", "Etc") and len(relative.parts) > 1 and path.is_file():
+                names.add(str(relative))
+    current = current_zone()
+    if "/" in current:
+        names.add(current)
+    return sorted(names)
+
+
+def timezone_regions():
+    """The continents the database knows, as the picker's first level."""
+    return sorted({name.split("/", 1)[0] for name in _location_names() if "/" in name})
+
+
+def timezone_cities(region, prefix=None):
+    """The cities of one region, optionally limited to a letter range.
+
+    Browsing never opens a TZif file: only the zones actually shown are asked
+    for their offset, and libc answers that question when they are.
+    """
+    cities = []
+    for name in _location_names():
+        if not name.startswith(region + "/"):
+            continue
+        label = name.rsplit("/", 1)[1].replace("_", " ")
+        if prefix is None or prefix[0] <= label[:1].upper() <= prefix[-1]:
+            cities.append((name, label))
+    return sorted(cities, key=lambda entry: entry[1].upper())
+
+
+def timezone_letter_ranges(region, bucket, maximum=None):
+    """Split a long region into letter ranges, each small enough to browse.
+
+    Both limits are the picker's: a range should fill at most one page of
+    cities, and the ranges themselves should stay on one page of their own.
+    """
+    counts = {}
+    for _name, label in timezone_cities(region):
+        counts[label[:1].upper()] = counts.get(label[:1].upper(), 0) + 1
+    while True:
+        ranges, first, total = [], None, 0
+        for letter in sorted(counts):
+            if first is not None and total + counts[letter] > bucket:
+                ranges.append((first, last))
+                first, total = None, 0
+            if first is None:
+                first = letter
+            last, total = letter, total + counts[letter]
+        if first is not None:
+            ranges.append((first, last))
+        if maximum is None or len(ranges) <= maximum:
+            return ranges
+        bucket += max(1, bucket // 4)
+
+
+def fixed_offsets():
+    """Offer offsets from IANA tzdb's etcetera and zonenow.tab, including seasonal offsets."""
+    fractional = ((-9, 30), (-3, 30), (-2, 30), (3, 30), (4, 30), (5, 30), (5, 45),
+                  (6, 30), (8, 45), (9, 30), (10, 30), (12, 45), (13, 45))
+    offsets = list(range(-12 * 60, 14 * 60 + 1, 60))
+    offsets.extend(hours * 60 + (-minutes if hours < 0 else minutes) for hours, minutes in fractional)
+    return ["UTC" if offset == 0 else "UTC%s%02d:%02d" % (
+        "-" if offset < 0 else "+", abs(offset) // 60, abs(offset) % 60) for offset in sorted(offsets)]
+
+
+def zone_offsets(names):
+    """Read the current offsets for the visible cities, including DST transitions."""
+    offsets = {}
+    try:
+        for name in names:
+            try:
+                path = _named_zone(name)
+            except (OSError, ValueError):
+                offsets[name] = None
+                continue
+            os.environ["TZ"] = ":" + str(path)
+            time.mktime(time.gmtime(TZ_RELOAD_TIME))
+            offset = time.strftime("%z")
+            offsets[name] = "UTC%s:%s" % (offset[:3], offset[3:]) if len(offset) == 5 else None
+    finally:
+        if names:
+            reload_timezone()
+    return offsets
 
 
 def reload_timezone():
@@ -48,9 +173,9 @@ def reload_timezone():
     # when TZ changes, so pass through UTC before pointing TZ back at the
     # selection. Explicit TZ also overrides one that Klipper may have inherited.
     os.environ["TZ"] = "UTC0"
-    time.mktime(time.gmtime(0))
+    time.mktime(time.gmtime(TZ_RELOAD_TIME))
     os.environ["TZ"] = ":" + str(LOCALTIME_PATH)
-    time.mktime(time.gmtime(0))
+    time.mktime(time.gmtime(TZ_RELOAD_TIME))
 
 
 def _named_zone(name):

@@ -15,7 +15,7 @@ from ui import CONTENT_BOTTOM, NumericInputSpec
 
 
 MAX_VALUE_LENGTH = 64
-RESTART_EFFECTS = frozenset(("klipper", "printer"))
+RESTART_EFFECTS = frozenset(("klipper", "klipper_hard", "printer"))
 
 ## Geometry of the parameter list.  The list is paginated by pixels instead of a
 ## fixed row count because a category band shares the page with its rows.  The
@@ -49,17 +49,20 @@ def visible_parameters(manager):
                 and parameter_is_visible(manager, param))]
 
 
-def parameter_is_visible(manager, param):
+def parameter_is_visible(manager, param, overrides=None):
     condition = getattr(param, "ui_visible_if", None)
     if not condition:
         return True
-    return _condition_holds(manager, condition)
+    return _condition_holds(manager, condition, overrides)
 
 
-def _condition_holds(manager, condition):
+def _condition_holds(manager, condition, overrides=None):
+    required = condition.get("all_of")
+    if required is not None:
+        return all(_condition_holds(manager, item, overrides) for item in required)
     alternatives = condition.get("any_of")
     if alternatives is not None:
-        return any(_condition_holds(manager, item) for item in alternatives)
+        return any(_condition_holds(manager, item, overrides) for item in alternatives)
     if condition.get("operator") != "equals":
         return True
     parent_key = condition.get("parameter")
@@ -70,14 +73,17 @@ def _condition_holds(manager, condition):
              if candidate.key == parent_key), None)
     if parent is None:
         return True
-    if not parameter_is_visible(manager, parent):
+    if not parameter_is_visible(manager, parent, overrides):
         return False
-    current = manager.variables.get(parent.key, parent.default)
+    current = (overrides or {}).get(parent.key, manager.variables.get(parent.key, parent.default))
     expected = condition.get("value")
     if parameter_kind(parent) == "enum":
         try:
-            current = parent.type(current).name
-        except (TypeError, ValueError):
+            if overrides is not None and parent.key in overrides:
+                current = parent.type[current].name
+            else:
+                current = parent.type(current).name
+        except (KeyError, TypeError, ValueError):
             return False
     return current == expected
 
@@ -225,12 +231,14 @@ def current_edit_value(manager, param):
     return str(value)
 
 
-def display_value(manager, param):
+def display_value(manager, param, overrides=None):
     kind = parameter_kind(param)
-    value = manager.variables.get(param.key, param.default)
+    value = (overrides or {}).get(param.key, manager.variables.get(param.key, param.default))
     if kind == "bool":
-        return "ON" if value else "OFF"
+        return "ON" if bool_display_active(param, value) else "OFF"
     if kind == "enum":
+        if overrides is not None and param.key in overrides:
+            return param.type[value].name
         return param.type(value).name
     if kind == "float":
         return "%g" % value
