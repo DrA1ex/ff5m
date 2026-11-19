@@ -18,39 +18,29 @@ from .common import (
 from .state import SetupCommand, TimezoneState
 
 
-def _cell(column, city):
+def _cell(column, city, font):
     zone = item("zone%d" % column)
     label = item("label%d" % column)
     state = item("state%d" % column)
     action = ItemCommand(SetupCommand.ZONE, zone)
     if city:
-        lines = Column(
-            Text(label, font=TITLE_FONT, truncate=True).style(UiStyle.TEXT).height(22),
-            Text(item("note%d" % column), font=TEXT_FONT).style(UiStyle.DIM).height(22),
-            gap=2).height("content").align(vertical="center").margin(left=8, right=8)
-        tile = Overlay(Button(action, "", state=state), lines)
+        tile = Button(action, label, state=state, font=font,
+                      subtitle=item("note%d" % column), subtitle_font=TEXT_FONT)
     else:
-        tile = Button(action, label, state=state, font=TITLE_FONT)
+        tile = Button(action, label, state=state, font=font)
     return When(zone, tile).grow()
 
 
-def _grid(kind, columns, height):
-    return Template(kind, Row(*(_cell(i, kind == "cities") for i in range(columns)),
+def _grid(kind, columns, height, font=TITLE_FONT):
+    return Template(kind, Row(*(_cell(i, kind == "cities", font) for i in range(columns)),
                               gap=ROW_GAP).height(height))
 
 
 def _fixed_grid():
-    cells = []
-    for column in range(FIXED_UTC_COLUMNS):
-        zone = item("zone%d" % column)
-        label = item("label%d" % column)
-        state = item("state%d" % column)
-        tile = Overlay(Button(ItemCommand(SetupCommand.ZONE, zone), "", state=state),
-                       Text(label, color=ThemeColor.TEXT, font=TITLE_FONT).margin(left=6, right=6))
-        cells.append(When(zone, tile).grow())
     rows = derived(lambda fixed, rows: rows if fixed else [], bind(TimezoneState.FIXED), bind(TimezoneState.ROWS))
+    # The compact numerals leave room for the button's text padding at narrower widths.
     return ListView(rows, item("id"), item("kind"),
-                    (Template("grid7", Row(*cells, gap=ROW_GAP).height(44)),),
+                    (_grid("grid7", FIXED_UTC_COLUMNS, 44, "Roboto Bold 8pt"),),
                     reuse_items=True, gap=6).height("content").align(vertical="top")
 
 

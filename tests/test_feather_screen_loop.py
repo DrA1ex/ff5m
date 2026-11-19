@@ -6,6 +6,7 @@
 
 import json
 import os
+import select
 import time
 import unittest
 from types import SimpleNamespace
@@ -28,9 +29,9 @@ from ff5m_ui.z_offset import actions as Z_ACTIONS
 from ff5m_ui.z_offset import runtime as Z_OFFSET_PAGES
 from ui.actions import DismissToast, SetValue
 from ui.render_receipts import RenderReceipt
-from ui.components import Component
+from ui.components import Component, Fill
 from ui.layout import PageTree
-from ui import PageKey, Rect
+from ui import PageKey, Rect, ThemeColor
 
 
 class MoveAndExcludeOnTheLoopTest(unittest.TestCase):
@@ -215,6 +216,156 @@ class _PythonRender(Component):
 
 
 class ScreenLoopTest(unittest.TestCase):
+    def _network_on_loop(self):
+        from tests.test_feather_workflows import attach_network
+
+        controller = home_controller()
+        controller.print_state = PrintState.IDLE
+        controller.last_action_time = controller.last_touch_time = 0
+        controller.pending_action, controller.dimmed = None, False
+        controller._init_network_ui()
+        controller.network_status.update(mode="ETHERNET", state="CONNECTED", ip="192.0.2.14")
+        socket = attach_network(controller)
+        controller.renderer.set_screen_error_handler(controller._renderer_screen_failed)
+        typer = TyperLoop(controller.renderer)
+        self.addCleanup(typer.close)
+        typer.start()
+        controller._render_screen()
+        self.assertTrue(typer.drew("192.0.2.14"))
+        return controller, typer, socket
+
+    def _tap_on_loop(self, controller, typer, action, page):
+        controller.reactor.now += 1
+        typer.tell("tap %s" % typer.wire(action))
+        self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
+                                or controller.page == page))
+
+    def test_wifi_scan_results_draw_and_select_a_network(self):
+        from feather.network.protocol import encode_field
+        from ff5m_ui.network import NetworkCommand
+        from ff5m_ui.setup.state import SetupCommand
+        from ui import Command
+
+        controller, typer, socket = self._network_on_loop()
+        with self.assertNoLogs(level="WARNING"):
+            self._tap_on_loop(controller, typer, "nav.network", FEATHER.ScreenPage.NETWORK_HOME)
+            self.assertTrue(typer.drew("FIND A NETWORK"))
+            self._tap_on_loop(controller, typer, Command(NetworkCommand.SCAN).wire_id,
+                              FEATHER.ScreenPage.NETWORK_PROGRESS)
+            self.assertTrue(typer.drew("Scanning Wi-Fi"))
+            self.assertIn("SCAN", socket.sent)
+            rows = [(5180, -41, 1, "Workshop"), (2437, -59, 0, "Home Wi-Fi"),
+                    (2412, -63, 0, "Office"), (2412, -65, 0, "Printer Lab"),
+                    (2412, -71, 0, "First page last network"), (2412, -76, 0, "Second page network")]
+            socket.pending.append("".join(
+                "FREQUENCY=%d SIGNAL=%d SECURITY=[WPA2-PSK-CCMP][ESS] SAVED=%d NETWORK=%s\n"
+                % (frequency, signal, saved, encode_field(ssid))
+                for frequency, signal, saved, ssid in rows) + "OK\n")
+            controller.network_client._on_readable(controller.reactor.now)
+            self.assertTrue(typer.drew("First page last network"))
+            self.assertTrue(typer.drew("-41 dBm"))
+            self.assertTrue(typer.drew("5 GHz"))
+            self.assertTrue(typer.drew("2.4 GHz"))
+            self.assertTrue(typer.drew("SAVED"))
+            controller.reactor.now += 1
+            typer.tell("tap %s" % typer.wire(Command(SetupCommand.NEXT).wire_id))
+            self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
+                                    or controller.network_page == 1))
+            self.assertTrue(typer.drew("Second page network"))
+            self._tap_on_loop(controller, typer, Command(NetworkCommand.SELECT, 0).wire_id,
+                              FEATHER.ScreenPage.WIFI_PASSWORD)
+            self.assertTrue(typer.drew("WI-FI PASSWORD"))
+        self.assertEqual(controller.selected_network["ssid"], "Second page network")
+
+    def test_a_failed_page_logs_geometry_and_has_a_working_home_button(self):
+        controller, typer, _socket = self._network_on_loop()
+        self._declare_oversized_network_page(controller)
+
+        with self.assertLogs(level="WARNING") as logs:
+            self._tap_on_loop(controller, typer, "nav.network", FEATHER.ScreenPage.NETWORK_HOME)
+            self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
+                                    or controller._current_dialog() == FEATHER.ScreenDialog.RENDER_ERROR))
+        logged = "\n".join(logs.output)
+        for value in ("IDLE_HOME", "NETWORK_HOME", "layout", "oversized", "900x130", "800"):
+            self.assertIn(value, logged)
+        self.assertTrue(typer.drew("UNABLE TO DISPLAY PAGE"))
+        self.assertTrue(typer.drew("HOME"))
+        home = dialog_ui.RENDER_HOME.wire_id
+        self.assertIn(home, controller.renderer.shown_actions())
+        controller.reactor.now += 1
+        typer.tell("tap %s" % typer.wire(home))
+        self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
+                                or controller._current_dialog() is None))
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        self.assertTrue(wait_for(lambda: "nav.network" in controller.renderer.shown_actions()))
+        self.assertEqual(controller.renderer.get_status()["typer_restarts"], 0)
+
+    @staticmethod
+    def _declare_oversized_network_page(controller):
+        fill = Fill(ThemeColor.PRIMARY, key="oversized")
+        oversized = PageTree(fill, Rect(0, 56, 800, 386), page_id=_Pages.PYTHON_RENDER)
+        fill.size(900, 130)
+        controller._network_page_content = lambda page: (oversized, "Network", True)
+        return fill
+
+    def test_a_failed_frame_cannot_recover_over_a_newer_page(self):
+        controller, typer, _socket = self._network_on_loop()
+        self._declare_oversized_network_page(controller)
+        controller._open_network_page()
+        event_fd = controller.renderer.event_fd
+        self.assertTrue(select.select([event_fd], [], [], 5)[0])
+
+        controller._show_page(FEATHER.ScreenPage.IDLE_HOME)
+        with self.assertLogs(level="ERROR") as logs:
+            controller._process_touch_events(controller.reactor.now)
+
+        self.assertIn("superseded frame failed", logs.output[0])
+        self.assertIn("oversized", logs.output[0])
+        self.assertIsNone(controller._current_dialog())
+        self.assertTrue(typer.drew("192.0.2.14"))
+
+    def test_a_failed_frame_cannot_recover_over_a_good_frame_of_the_same_page(self):
+        controller, typer, _socket = self._network_on_loop()
+        fill = self._declare_oversized_network_page(controller)
+        controller._open_network_page()
+        self.assertTrue(select.select([controller.renderer.event_fd], [], [], 5)[0])
+        generation = controller.renderer.generation
+
+        frames = controller._screen_root.frames
+        frames.begin()
+        fill.size(100, 130)
+        frames.receipt("repaired")
+        frames.end(controller.renderer)
+        self.assertTrue(wait_for(lambda: any(entry.get("token") == "repaired" for entry in typer.entries())))
+        self.assertTrue(wait_for(lambda: controller.renderer.get_status()["in_flight"] == 0))
+        self.assertEqual(controller.renderer.generation, generation)
+        with self.assertLogs(level="ERROR") as logs:
+            controller._process_touch_events(controller.reactor.now)
+
+        self.assertIn("superseded frame failed", logs.output[0])
+        self.assertIn("oversized", logs.output[0])
+        self.assertEqual(controller.renderer.get_status()["screen_errors"], 1)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.NETWORK_HOME)
+        self.assertIsNone(controller._current_dialog())
+        self.assertIn("nav.back", controller.renderer.shown_actions())
+
+    def test_a_queued_ok_tap_cannot_dismiss_the_recovery_dialog(self):
+        controller, typer, _socket = self._network_on_loop()
+        controller._show_message("Previous dialog", FEATHER.ScreenPage.IDLE_HOME)
+        self.assertTrue(typer.drew("Previous dialog"))
+        typer.tell("tap %s" % typer.wire(dialog_ui.OK.wire_id))
+        self.assertTrue(select.select([controller.renderer.event_fd], [], [], 5)[0])
+
+        self._declare_oversized_network_page(controller)
+        controller._open_network_page()
+        controller.renderer.request_presented_receipt("after-failure")
+        self.assertTrue(wait_for(lambda: any(entry.get("token") == "after-failure" for entry in typer.entries())))
+        with self.assertLogs(level="ERROR"):
+            controller._process_touch_events(controller.reactor.now)
+
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.RENDER_ERROR)
+        self.assertTrue(typer.drew("UNABLE TO DISPLAY PAGE"))
+
     def test_the_loop_draws_home_and_its_updates_without_the_reactor(self):
         controller = home_controller()
         typer = TyperLoop(controller.renderer)
@@ -977,8 +1128,10 @@ class ScreenLoopTest(unittest.TestCase):
             typer.take(lambda events: controller.renderer.get_status()["screen_errors"])
 
         self.assertIn("needs Python", logs.output[0])
-        self.assertEqual([failure["error"] for failure in run._health_failures()],
-                         ["1 screen frame(s) not drawn; last: the screen's frame needs Python"])
+        (error,) = [failure["error"] for failure in run._health_failures()]
+        self.assertIn("1 screen frame(s) not drawn", error)
+        self.assertIn("paint needs Python", error)
+        self.assertIn("_PythonRender", error)
 
     def test_a_restarted_typer_shows_home_again(self):
         controller = home_controller()

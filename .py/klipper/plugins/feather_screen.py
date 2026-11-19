@@ -274,6 +274,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.renderer.configure_worker(
             self._renderer_event_fd_changed, self._renderer_restarted)
         self.renderer.set_sent_handler(self._renderer_sent)
+        self.renderer.set_screen_error_handler(self._renderer_screen_failed)
         # While Forge-X's boot screen owns the panel the renderer is not
         # started: its frames are admitted without being written.
         self.boot_screen_held = os.path.exists(FORGE_X_SCREEN_BUSY_PATH)

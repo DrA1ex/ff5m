@@ -42,9 +42,9 @@ jobs:
       - name: Install the Feather native engine
         env:
           GH_TOKEN: ${{ secrets.FEATHER_RUNTIME_TOKEN }}
-          RUNTIME_RELEASE: runtime-v117.0.0
-          ENGINE_WHEEL: feather_engine-117.0.0-cp37-abi3-manylinux_2_28_x86_64.whl
-          ENGINE_SHA256: 04b789bfa3547b6925d0744bc5ba8c7360b58e11cac6133229e5788168736fb4
+          RUNTIME_RELEASE: runtime-v118.0.0
+          ENGINE_WHEEL: feather_engine-118.0.0-cp37-abi3-manylinux_2_28_x86_64.whl
+          ENGINE_SHA256: acdb9adf83e05cd2b7d79ce07e063db1c274c20c00c2b0bbab854300b2e575fb
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::Set the FEATHER_RUNTIME_TOKEN secret: a token with Contents: read on DrA1ex/feather-ui-designer"

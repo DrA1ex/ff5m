@@ -19,6 +19,7 @@ from tests.test_mod_params import MOD_PARAMS, ROOT
 from tests.test_feather_workflows import base_controller, StatusObject
 from tests.test_feather_preview_settings import EditorReactor
 from tests.feather_render_test_helper import RenderCapture, shown_actions
+from tests.feather_typer_loop import TyperLoop, wait_for
 from feather.features.manager import LazyFeatureManager
 from feather.setup import SetupProgress
 from ff5m_ui.parameter_controls import ParameterCommand
@@ -547,21 +548,58 @@ class SetupTest(unittest.TestCase):
         utc = regions[utc_action]
         self.assertAlmostEqual(utc.x + utc.width / 2, 400, delta=1)
         self.assertGreaterEqual(utc.height, 44)
-        labels = [text for text in frame.texts if text.value.strip()[:1] in ("+", "-") and ":" in text.value]
-        self.assertEqual(len(labels), 39)
+        buttons = [button for button in frame.buttons.values()
+                   if button.label.strip()[:1] in ("+", "-") and ":" in button.label]
+        self.assertEqual(len(buttons), 39)
         ordered = []
-        for label in sorted(labels, key=lambda text: (text.y, text.x)):
-            value = label.value.strip()
+        for button in sorted(buttons, key=lambda item: (item.bounds.y, item.bounds.x)):
+            value = button.label.strip()
             self.assertRegex(value, r"^[+-][0-9]{2}:[0-9]{2}$")
             hours, minutes = map(int, value[1:].split(":"))
             ordered.append((-1 if value.startswith("-") else 1) * (60 * hours + minutes))
             action = Command(SetupCommand.ZONE, canonical_timezone("UTC" + value)).wire_id
-            self.assertLess(get_font_metrics().text_width(value, label.font), regions[action].width)
+            self.assertEqual(button.action, action)
+            available = button.bounds.width - 2 * self.host.renderer.BUTTON_TEXT_PADDING
+            self.assertLessEqual(get_font_metrics().text_width(value, button.font), available)
             self.assertGreaterEqual(regions[action].height, 44)
         self.assertEqual(ordered, sorted(set(ordered)))
-        self.assertTrue(frame.has_text("+13:45"))
+        self.assertEqual(frame.button(Command(SetupCommand.ZONE, "UTC+13:45").wire_id).label, "+13:45")
         self.tap(SetupCommand.ZONE, "UTC+13:45")
         self.assertEqual(self.events[-1][0], "SET_TIMEZONE ZONE=UTC+13:45")
+
+    def test_timezone_button_feedback_draws_labels_on_press_and_cancel(self):
+        self.host.renderer = FeatherRenderer()
+        typer = TyperLoop(self.host.renderer)
+        self.addCleanup(typer.close)
+        typer.start()
+
+        def tap_when_shown(key, value):
+            wire = Command(key, value).wire_id
+            self.assertTrue(wait_for(lambda: wire in shown_actions(self.host._screen_root)))
+            self.tap(key, value)
+
+        with mock.patch("system_time.timezone_cities", return_value=[("Europe/Tallinn", "Tallinn")]), \
+                mock.patch("system_time.zone_offsets", return_value={"Europe/Tallinn": "UTC+02:00"}):
+            for region, value, labels in (
+                    ("fixed", "UTC+13:45", ("+13:45",)),
+                    ("Europe", "Europe/Tallinn", ("TALLINN", "UTC+02:00"))):
+                with self.subTest(region=region):
+                    self.feature.open()
+                    tap_when_shown(SetupCommand.OPEN, "timezone")
+                    tap_when_shown(SetupCommand.ZONE, region)
+                    self.assertTrue(typer.drew(labels[0]))
+                    wire = typer.wire(Command(SetupCommand.ZONE, value).wire_id)
+
+                    for phase in ("down", "up"):
+                        with self.subTest(phase=phase):
+                            before = len(typer.history())
+                            typer.tell("button %s %s" % (wire, phase))
+                            self.assertTrue(wait_for(lambda: len(typer.history()) > before))
+                            commands = [shlex.split(str(command)) for command in typer.history()[-1]]
+                            drawn = {tokens[tokens.index("-t") + 1] for tokens in commands if "-t" in tokens}
+                            self.assertTrue(set(labels) <= drawn, drawn)
+                    self.assertEqual(self.host.page, ScreenPage.SETUP_TIMEZONE)
+        self.assertEqual(self.events, [])
 
     def test_safe_z_saves_and_marks_done_even_if_the_value_matches(self):
         self.manager.set_value("safe_z", 6.0)

@@ -292,6 +292,7 @@ class FeatherRenderer(RendererBase):
         # Screen frames the loop could not draw, and the last one's reason: a bug, reported in the status.
         self._screen_errors = 0
         self._screen_error = ""
+        self._screen_error_handler = None
         self._next_batch_kind = None
         self._next_batch_key = None
         self._composite_commands = None
@@ -507,6 +508,10 @@ class FeatherRenderer(RendererBase):
         """
         self._sent_handler = callback
 
+    def set_screen_error_handler(self, callback):
+        """Report failed native builds as (message, generation, superseded) on the reactor."""
+        self._screen_error_handler = callback
+
     def process_events(self, eventtime):
         """On the reactor, once event_fd is readable: deliver the frame loop's
         sent and restart notices and return Typer's events in order: TapEvent,
@@ -534,7 +539,10 @@ class FeatherRenderer(RendererBase):
             elif kind == "screen-error":
                 self._screen_errors += 1
                 self._screen_error = event[1]
-                screen_failed(event[1])
+                if self._screen_error_handler is None:
+                    screen_failed(event[1])
+                else:
+                    self._screen_error_handler(*event[1:])
             else:
                 logging.warning("[feather_screen] typer restarted (last error: %s)",
                                 self._loop.status()["last_error"] or "none")
@@ -1168,26 +1176,32 @@ class FeatherRenderer(RendererBase):
 
     def _toggle_commands(self, x, y, width, height, thumb_x, enabled):
         background, border, thumb_color = self.BUTTON_COLORS["toggle" if enabled else "toggle-disabled"]
-        inset = 5
-        thumb_size = max(1, height - 2 * inset)
+        thumb_size, _, inset_y = self._toggle_geometry(width, height)
         return [
             self.fill(x, y, width, height, background),
             self.stroke(x, y, width, height, border, 2),
-            self.fill(thumb_x, y + inset, thumb_size, thumb_size, thumb_color),
+            self.fill(thumb_x, y + inset_y, thumb_size, thumb_size, thumb_color),
         ]
 
     @staticmethod
-    def _toggle_places(x, width, height):
-        """The thumb's x, off and on: centered in each half."""
-        thumb_size = max(1, height - 10)
+    def _toggle_geometry(width, height):
         half = width // 2
-        margin = (half - thumb_size) // 2
-        return x + margin, x + half + margin
+        thumb_size = max(1, min(height, half) - 10)
+        inset_y = (height - thumb_size) // 2
+        # Keep each resting thumb in its own half, even on a tall or narrow track.
+        inset_x = min(inset_y, max(0, half - thumb_size))
+        return thumb_size, inset_x, inset_y
+
+    @classmethod
+    def _toggle_places(cls, x, width, height):
+        """The thumb's x, off and on: equal insets at both ends of the track."""
+        thumb_size, inset_x, _ = cls._toggle_geometry(width, height)
+        return x + inset_x, x + width - inset_x - thumb_size
 
     def toggle(self, action, x, y, width, height, active, enabled=True, progress=None):
         """Draw a rectangular switch with a centered square thumb and no text;
         moving to active, progress (0 to 1) of the way from the other side."""
-        if not self._prepare_surface():
+        if width <= 0 or height <= 0 or not self._prepare_surface():
             return []
         logical_action = action_wire_id(action) if isinstance(action, Action) else str(action)
         left, right = self._toggle_places(x, width, height)
