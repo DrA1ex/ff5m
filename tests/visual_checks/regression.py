@@ -135,7 +135,10 @@ def _arguments(argv=None):
     parser.add_argument("--reasoning-effort", help="reasoning effort (Codex default: high)")
     parser.add_argument(
         "--review-workers", type=int,
-        help="parallel screenshot reviews (1-32; default: Codex 8, HTTP 1)")
+        help="parallel review batches (1-32; default: Codex 8, HTTP 1)")
+    parser.add_argument(
+        "--review-batch-size", type=int,
+        help="screenshots per Codex request (1-%d; default: 1)" % vision.MAX_CODEX_BATCH_SIZE)
     parser.add_argument("--codex-command", help="Codex CLI executable path")
     parser.add_argument("--timeout", type=float, help="timeout per model request in seconds")
     parser.add_argument(
@@ -175,7 +178,9 @@ def _visual_settings(args):
         codex_command=(args.codex_command
                        or os.environ.get("FF5M_VISUAL_CODEX_COMMAND", "codex")),
         review_workers=(args.review_workers if args.review_workers is not None
-                        else os.environ.get("FF5M_VISUAL_REVIEW_WORKERS")))
+                        else os.environ.get("FF5M_VISUAL_REVIEW_WORKERS")),
+        review_batch_size=(args.review_batch_size if args.review_batch_size is not None
+                           else os.environ.get("FF5M_VISUAL_REVIEW_BATCH_SIZE")))
 
 
 def _output_directory(value):
@@ -574,6 +579,7 @@ def _markdown_report(report):
         "- Reasoning effort: `%s`" % (
             report.get("configuration", {}).get("reasoning_effort") or "server default"),
         "- Review workers: `%s`" % report.get("configuration", {}).get("review_workers", 1),
+        "- Review batch size: `%s`" % report.get("configuration", {}).get("review_batch_size", 1),
         "- Designer cases: %d" % coverage["designer"],
         "- Printer cases: %d" % coverage["legacy_printer"],
         "- Replaced printer duplicates: %d" % coverage["replaced"],
@@ -615,7 +621,7 @@ def _write_reports(output, report):
         command = [".venv/bin/python", "-m", "tests.visual_checks.regression",
                    "--review-run", str(output), "--enable"]
         configuration = report.get("configuration", {})
-        for option in ("backend", "model", "reasoning_effort", "review_workers", "timeout"):
+        for option in ("backend", "model", "reasoning_effort", "review_workers", "review_batch_size", "timeout"):
             if configuration.get(option) is not None and configuration[option] != "":
                 command.extend(["--" + option.replace("_", "-"), str(configuration[option])])
         report["repeat_review"] = {

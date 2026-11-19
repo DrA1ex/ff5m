@@ -49,7 +49,7 @@ def bed_object_rect(bounds, bed):
 
 def exclude_values(objects, excluded, bed, selected=None, page=0):
     """Produce one UI snapshot from supplied object definitions, without effects."""
-    from ff5m_ui.exclude_model import ExcludeState, object_style
+    from ff5m_ui.exclude_model import ExcludeState, OBJECT_KINDS
     selected = selected or set()
     pending = selected - excluded
     page_count = max(1, (len(objects) + OBJECT_ROWS - 1) // OBJECT_ROWS)
@@ -63,9 +63,9 @@ def exclude_values(objects, excluded, bed, selected=None, page=0):
         if rectangle is None:
             note += " / NO GEOMETRY"
         items.append(dict(
-            name=name, kind="object", label="%02d  %s" % (index + 1, name.replace("_", " ")),
+            name=name, kind=OBJECT_KINDS[name in selected, name in excluded],
+            label="%02d  %s" % (index + 1, name.replace("_", " ")),
             note=note, marker=str(index + 1), rectangle=rectangle,
-            **object_style(name in selected, name in excluded),
         ))
     mapped = [item for item in items if item["rectangle"] is not None]
     return {

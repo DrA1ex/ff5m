@@ -442,11 +442,19 @@ class ScreenLoopTest(unittest.TestCase):
         self.assertTrue(typer.drew("SETTINGS UPDATED"))
         self.assertTrue(wait_for(lambda: dismiss in shown_actions(root)))
 
+        previous_frames = len(typer.history())
         steps["ui-toast-hide"]["callback"]()
         self.assertTrue(wait_for(lambda: dismiss not in shown_actions(root)))
-        self.assertTrue(typer.drew("192.168.2.124"))
-        self.assertFalse(any("SETTINGS UPDATED" in str(getattr(command, "command", command))
-                             for command in typer.history()[-1]))
+
+        def drew_home_without_toast():
+            frames = typer.history()
+            if len(frames) <= previous_frames:
+                return False
+            commands = [str(getattr(command, "command", command)) for command in frames[-1]]
+            return (any("192.168.2.124" in command for command in commands)
+                    and all("SETTINGS UPDATED" not in command for command in commands))
+
+        self.assertTrue(wait_for(drew_home_without_toast))
 
     def test_a_toast_shows_over_home_until_it_expires_or_is_tapped(self):
         controller = home_controller()

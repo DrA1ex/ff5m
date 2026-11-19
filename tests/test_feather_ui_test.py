@@ -1148,36 +1148,39 @@ class RunnerContractTest(unittest.TestCase):
             self.assertEqual(host.last_job_path, "previous.gcode")
             self.assertEqual(host.last_job_name, "previous.gcode")
 
-    def test_usb_browser_snapshot_uses_file_entries_and_restores_state(self):
-        rendered = []
-        original_entries = [FileEntry("original.gcode", "/data/original.gcode")]
+    def test_file_browser_snapshots_render_cached_entries_without_scanning(self):
+        from tests.test_feather_setup import SetupTest
 
-        class Host:
-            file_entries = original_entries
-            file_page = 3
-            file_source = "internal"
+        fixture = SetupTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        host = fixture.host
+        host.page = FEATHER.ScreenPage.FILE_BROWSER
+        host.file_worker = mock.Mock()
+        host.file_entries = [FileEntry("part.gcode", "/data/part.gcode")]
+        host.file_entry_cache = {"internal": host.file_entries}
+        host.file_page = 3
+        original_entries = host.file_entries
+        original_storage = host.usb_storage
+        cache = host.file_entry_cache
+        scenario = SCENARIOS.ScenarioCatalog(UI_TEST.UITestRun(host))
+        steps = {step["label"]: step["callback"] for step in scenario.build_steps("UI")
+                 if step["kind"] == "call" and step["label"] in ("ui-files-empty", "ui-files-usb")}
 
-            def _render_file_entries(self):
-                rendered.append((
-                    list(self.file_entries), self.file_page, self.file_source))
-
-        host = Host()
-        scenarios = SCENARIOS.ScenarioCatalog(
-            type("Run", (), {"host": host})())
-
-        scenarios._render_usb_file_browser()
-
-        entries, page, source = rendered[0]
-        self.assertTrue(all(isinstance(entry, FileEntry) for entry in entries))
-        self.assertEqual(
-            [(entry.name, entry.path, entry.directory) for entry in entries],
-            [
-                ("USB_BENCHY.gcode", "/mnt/usb/USB_BENCHY.gcode", False),
-                ("CALIBRATION", "/mnt/usb/CALIBRATION", True),
-            ])
-        self.assertEqual((page, source), (0, "usb"))
+        steps["ui-files-empty"]()
+        frame = fixture.capture.latest
+        self.assertTrue(frame.has_text("PRINT FILES"))
+        self.assertTrue(frame.has_text("No G-code files"))
+        steps["ui-files-usb"]()
+        frame = fixture.capture.latest
+        self.assertTrue(frame.has_text("USB FILES"))
+        self.assertEqual(frame.button("file.item0").label, "USB_BENCHY.gcode")
+        self.assertIn("CALIBRATION", frame.button("file.item1").label)
+        self.assertIs(host.file_entry_cache, cache)
         self.assertIs(host.file_entries, original_entries)
+        self.assertIs(host.usb_storage, original_storage)
         self.assertEqual((host.file_page, host.file_source), (3, "internal"))
+        host.file_worker.submit.assert_not_called()
 
     def test_file_browser_visuals_render_list_and_previews_then_restore_view(self):
         rendered = []
@@ -1449,6 +1452,39 @@ class RunnerContractTest(unittest.TestCase):
             if "printer:" + label not in expectations)
 
         self.assertEqual(missing, [])
+
+    def test_setup_capture_steps_render_without_changing_saved_setup_or_running_commands(self):
+        from tests.test_feather_setup import SetupTest
+
+        fixture = SetupTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        host, setup = fixture.host, fixture.feature
+        setup.progress.write(intro="done", skipped=True, draft={"tune_config": 0})
+        before = pathlib.Path(setup.progress.filename).read_bytes()
+        variables = fixture.manager.variables.copy()
+        scenario = SCENARIOS.ScenarioCatalog(UI_TEST.UITestRun(host))
+        steps = [step for step in scenario.build_steps("UI")
+                 if step["kind"] == "call" and step["label"].startswith("ui-setup-")]
+        frames = {}
+        for step in steps:
+            with self.subTest(case=step["label"]):
+                count = len(fixture.capture.frames)
+                step["callback"]()
+                self.assertGreater(len(fixture.capture.frames), count)
+                frames[step["label"]] = fixture.capture.latest
+
+        self.assertTrue(frames["ui-setup-welcome"].has_text("Get ready for your first print"))
+        self.assertIn("ui-setup-network-connected", frames)
+        self.assertIn("ui-setup-network-offline", frames)
+        self.assertEqual(frames["ui-setup-theme"].button("mod.apply").label, "CONTINUE")
+        self.assertTrue(frames["ui-setup-calibration-required"].has_text("REQUIRED"))
+        self.assertTrue(frames["ui-setup-calibration-done"].has_text("DONE"))
+        self.assertEqual(pathlib.Path(setup.progress.filename).read_bytes(), before)
+        self.assertEqual(fixture.manager.variables, variables)
+        self.assertTrue(setup.progress.data["skipped"])
+        self.assertEqual(host.page, FEATHER.ScreenPage.SETTINGS)
+        self.assertEqual(fixture.events, [])
 
     def test_synthetic_ui_inputs_restore_absent_and_existing_fields(self):
         target = type("Target", (), {"existing": "before"})()

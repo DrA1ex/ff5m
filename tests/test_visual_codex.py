@@ -43,6 +43,10 @@ def verdict():
     }
 
 
+def batch_entries(prompt):
+    return [json.loads(line) for line in prompt.split("\n\n") if line.startswith("{")]
+
+
 class CodexProtocolTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="ff5m-codex-test-")
@@ -108,6 +112,81 @@ if "missing" not in response:
     def settings(self, **kwargs):
         return vision.VisualCheckSettings(
             enabled=True, backend="codex", codex_command=str(self.command), **kwargs)
+
+    def test_run_groups_six_screenshots_and_preserves_individual_reports(self):
+        ids = range(1, 7)
+        defect = dict(spacing(), defect=True, gap_relation="touching", reason="Body text touches the header.")
+        self.responses(
+            {"answer": {"results": [{"id": i, "result": defect if i == 3 else spacing()} for i in ids]}},
+            {"answer": {"results": [{"id": i, "result": verdict()} for i in reversed(ids)]}},
+            {"answer": spacing()}, {"answer": verdict()},
+        )
+        images = []
+        for i in range(1, 8):
+            path = self.root / ("frame-%d.png" % i)
+            path.write_bytes(bytes([i]))
+            images.append({"path": path, "mime_type": "image/png", "context": {
+                "case_id": "case-%d" % i, "expectation": {"required": ["unique label %d" % i]},
+            }})
+        events = []
+        artifact = run.run_checks(
+            self.settings(review_batch_size=6, review_workers=1), images, progress=events.append)
+
+        calls = self.requests()
+        self.assertEqual([len(call["images"]) for call in calls], [6, 6, 1, 1])
+        self.assertEqual(calls[1]["images"], [bytes([i]).hex() for i in ids])
+        self.assertEqual(calls[1]["prompt"].count('"checklist":'), 1)
+        self.assertEqual([
+            (entry["id"], entry["attachments"], entry["textual_expectation"]["required"])
+            for entry in batch_entries(calls[1]["prompt"])
+        ], [(i, [i], ["unique label %d" % i]) for i in ids])
+        frames = artifact["screenshots"]
+        self.assertEqual([frame["screenshot"]["case_id"] for frame in frames], ["case-%d" % i for i in range(1, 8)])
+        self.assertEqual([frame["models"][0]["verdict"] for frame in frames],
+                         ["pass", "pass", "fail", "pass", "pass", "pass", "pass"])
+        self.assertEqual([event["completed"] for event in events], list(range(8)))
+
+    def test_batch_retries_duplicate_and_missing_ids_without_resending_accepted_frames(self):
+        response = verdict()
+        self.responses(
+            {"answer": {"results": [{"id": i, "result": spacing()} for i in (1, 2, 3)]}},
+            {"answer": {"results": [
+                {"id": 2, "result": response}, {"id": 1, "result": response}, {"id": 2, "result": response},
+            ]}},
+            {"answer": {"results": [{"id": 3, "result": dict(response, verdict=[])}, {"id": 2, "result": response}]}},
+        )
+        evaluator = vision.VisualCheckEvaluator(self.settings(review_batch_size=9, mode="strict"))
+        results = evaluator.evaluate_batch([(bytes([i]), "image/png", {}) for i in (1, 2, 3)])
+
+        self.assertEqual([call["images"] for call in self.requests()],
+                         [["01", "02", "03"], ["01", "02", "03"], ["02", "03"]])
+        self.assertEqual([(item["models"][0]["status"], item["models"][0]["attempts"]) for item in results],
+                         [("completed", 1), ("completed", 2), ("invalid_response", 2)])
+        self.assertEqual([item["strict_failure"] for item in results], [False, False, True])
+
+    def test_parity_batch_keeps_pairs_together_and_counts_both_attachments(self):
+        self.responses(
+            {"answer": {"results": [{"id": i, "result": spacing()} for i in range(1, 5)]}},
+            {"answer": {"results": [{"id": i, "result": verdict()} for i in (1, 2)]}},
+            {"answer": {"results": [{"id": i, "result": spacing()} for i in (1, 2)]}},
+            {"answer": verdict()},
+        )
+        images = []
+        for primary, comparison in ((1, 2), (3, 4), (5, 6)):
+            paths = [self.root / ("%d.png" % i) for i in (primary, comparison)]
+            for i, path in zip((primary, comparison), paths):
+                path.write_bytes(bytes([i]))
+            images.append({"path": paths[0], "comparison_path": paths[1], "mime_type": "image/png",
+                           "context": {"case_id": str(primary)}})
+        settings = self.settings(review_batch_size=5, review_workers=1)
+        artifact = run.run_checks(settings, images)
+
+        calls = self.requests()
+        self.assertEqual([call["images"] for call in calls],
+                         [["01", "02", "03", "04"], ["01", "02", "03", "04"], ["05", "06"], ["05", "06"]])
+        self.assertEqual([(entry["id"], entry["attachments"]) for entry in batch_entries(calls[1]["prompt"])],
+                         [(1, [1, 2]), (2, [3, 4])])
+        self.assertEqual(artifact["status"], "passed")
 
     def test_parity_attaches_both_images_in_order_and_preserves_shared_prompts(self):
         self.responses({"answer": spacing()}, {"answer": spacing()}, {"answer": verdict()})
@@ -504,6 +583,19 @@ class VisualBackendSettingsTest(unittest.TestCase):
         for value in (0, 33, -1, "bad", 1.5, True):
             with self.subTest(value=value), self.assertRaises(vision.VisualCheckConfigurationError):
                 vision.VisualCheckSettings(review_workers=value)
+
+    def test_batch_size_options_and_backend_validation(self):
+        self.assertEqual(vision.VisualCheckSettings().review_batch_size, 1)
+        self.assertEqual(vision.VisualCheckSettings.from_mapping({"review_batch_size": "9"}).review_batch_size, 9)
+        with mock.patch.dict(os.environ, {"FF5M_VISUAL_REVIEW_BATCH_SIZE": "6"}, clear=True):
+            for argv, expected in (([], 6), (["--review-batch-size", "9"], 9)):
+                self.assertEqual(run._arguments(["/unused.png", *argv]).review_batch_size, expected)
+                self.assertEqual(regression._visual_settings(regression._arguments(argv)).review_batch_size, expected)
+        for value in (0, 10, "bad", 1.5, True):
+            with self.subTest(value=value), self.assertRaises(vision.VisualCheckConfigurationError):
+                vision.VisualCheckSettings(review_batch_size=value)
+        with self.assertRaisesRegex(vision.VisualCheckConfigurationError, "requires the Codex backend"):
+            vision.VisualCheckSettings(backend="openai-compatible", review_batch_size=6)
 
     def test_invalid_backend_effort_and_http_configuration_are_rejected(self):
         for values in ({"backend": "unknown"}, {"reasoning_effort": "invalid"},

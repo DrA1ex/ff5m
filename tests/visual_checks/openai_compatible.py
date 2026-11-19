@@ -32,6 +32,7 @@ VALID_MODES = frozenset(("advisory", "strict"))
 VALID_BACKENDS = ("openai-compatible", "codex")
 DEFAULT_CODEX_MODEL = "gpt-6-luna"
 DEFAULT_CODEX_EFFORT = "high"
+MAX_CODEX_BATCH_SIZE = 9
 VALID_VERDICTS = frozenset(("pass", "warn", "fail"))
 STANDALONE_VERDICTS = VALID_VERDICTS - frozenset(("warn",))
 EVIDENCE_CLASSES = frozenset((
@@ -159,7 +160,8 @@ def _model_name(value):
 class VisualCheckSettings:
     def __init__(self, enabled=False, base_url="", model="", api_key="",
                  timeout=None, mode="advisory", backend=None,
-                 reasoning_effort=None, codex_command="codex", review_workers=None):
+                 reasoning_effort=None, codex_command="codex", review_workers=None,
+                 review_batch_size=None):
         self.enabled = bool(enabled)
         self.base_url = str(base_url or "").strip().rstrip("/")
         self.backend = backend or ("openai-compatible" if self.base_url else "codex")
@@ -181,6 +183,17 @@ class VisualCheckSettings:
             self.review_workers = int(review_workers)
         except ValueError:
             raise VisualCheckConfigurationError("visual review workers must be an integer between 1 and 32")
+        if review_batch_size is None:
+            review_batch_size = 1
+        try:
+            if isinstance(review_batch_size, bool) or not isinstance(review_batch_size, (int, str)):
+                raise ValueError()
+            self.review_batch_size = int(review_batch_size)
+            if not 1 <= self.review_batch_size <= MAX_CODEX_BATCH_SIZE:
+                raise ValueError()
+        except ValueError:
+            raise VisualCheckConfigurationError(
+                "visual review batch size must be an integer between 1 and %d" % MAX_CODEX_BATCH_SIZE)
         self._validate()
 
     @classmethod
@@ -197,6 +210,7 @@ class VisualCheckSettings:
             reasoning_effort=value.get("reasoning_effort"),
             codex_command=value.get("codex_command", "codex"),
             review_workers=value.get("review_workers"),
+            review_batch_size=value.get("review_batch_size"),
         )
 
     def _validate(self):
@@ -204,6 +218,8 @@ class VisualCheckSettings:
             raise VisualCheckConfigurationError("unknown visual check backend")
         if not 1 <= self.review_workers <= 32:
             raise VisualCheckConfigurationError("visual review workers must be between 1 and 32")
+        if self.backend != "codex" and self.review_batch_size > 1:
+            raise VisualCheckConfigurationError("visual review batching requires the Codex backend")
         if (self.reasoning_effort and self.reasoning_effort not in (
                 "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")):
             raise VisualCheckConfigurationError("invalid visual reasoning effort")
@@ -240,6 +256,7 @@ class VisualCheckSettings:
             "backend": self.backend,
             "reasoning_effort": self.reasoning_effort or None,
             "review_workers": self.review_workers,
+            "review_batch_size": self.review_batch_size,
             "timeout": self.timeout,
             "api_key_configured": bool(self.api_key),
         }
@@ -839,6 +856,73 @@ def _completion_content(response):
         raise ValueError("completion content is not valid JSON")
 
 
+def _batch_payload(requests):
+    first = next(iter(requests.values()))
+    format_info = first["response_format"]["json_schema"]
+    audit = format_info["name"] == "ff5m_ui_spacing_audit"
+    instruction = first["messages"][0]["content"]
+    instruction += (
+        " Apply these instructions independently to each review listed below. "
+        "Return one JSON object with a results array. Include each listed id exactly once "
+        "with its own result object. The single-review response fields go inside that result. "
+        "Use only the numbered attachments assigned to that id. Within a result, primary and comparison "
+        "refer to that id's first and second attachments, respectively.")
+    content = []
+    image_number = 1
+    for identifier, payload in requests.items():
+        details, *images = payload["messages"][1]["content"]
+        if audit:
+            review = {"task": details["text"]}
+        else:
+            policy = json.loads(details["text"])
+            review = {"screenshot": policy.pop("screenshot")}
+            if "textual_expectation" in policy:
+                review["textual_expectation"] = policy.pop("textual_expectation")
+            if not content:
+                instruction += " Shared review policy: " + json.dumps(policy, separators=(",", ":"))
+        review["id"] = identifier
+        review["attachments"] = list(range(image_number, image_number + len(images)))
+        image_number += len(images)
+        content.append({"type": "text", "text": json.dumps(review, separators=(",", ":"))})
+        content.extend(images)
+    return {
+        "model": first["model"],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": format_info["name"] + "_batch",
+                "strict": True,
+                "schema": {
+                    "type": "object", "additionalProperties": False, "required": ["results"],
+                    "properties": {"results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object", "additionalProperties": False, "required": ["id", "result"],
+                            "properties": {
+                                "id": {"type": "integer", "enum": list(requests)},
+                                "result": format_info["schema"],
+                            },
+                        },
+                    }},
+                },
+            },
+        },
+        "messages": [{"role": "system", "content": instruction}, {"role": "user", "content": content}],
+    }
+
+
+def _batch_answers(response):
+    if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+        raise ValueError("batch response must contain a results array")
+    answers = {}
+    for item in response["results"]:
+        if not isinstance(item, dict) or type(item.get("id")) is not int:
+            continue
+        identifier = item["id"]
+        answers[identifier] = item["result"] if identifier not in answers and set(item) == {"id", "result"} else None
+    return answers
+
+
 def validate_spacing_audit(value):
     required = {"defect", "subject", "gap_relation", "reason"}
     if (not isinstance(value, dict) or not required <= set(value)
@@ -857,7 +941,7 @@ def validate_spacing_audit(value):
         raise ValueError("spacing audit subject must be a short string")
     defect_relations = frozenset((
         "touching", "near_touching", "clipped", "outside", "overlapping"))
-    if relation not in defect_relations | frozenset(("clear", "uncertain")):
+    if not isinstance(relation, str) or relation not in defect_relations | frozenset(("clear", "uncertain")):
         raise ValueError("invalid spacing audit gap relation")
     if (not isinstance(reason, str) or not reason.strip()
             or len(reason) > MAX_REASON_LENGTH):
@@ -915,7 +999,7 @@ def validate_verdict(value, allow_design_mismatch=False):
         raise ValueError(
             "verdict must contain only verdict, checks, and summary")
     verdict = value["verdict"]
-    if verdict not in VALID_VERDICTS:
+    if not isinstance(verdict, str) or verdict not in VALID_VERDICTS:
         raise ValueError("invalid overall verdict")
     summary = value["summary"]
     if not isinstance(summary, str) or len(summary) > MAX_SUMMARY_LENGTH:
@@ -936,9 +1020,9 @@ def validate_verdict(value, allow_design_mismatch=False):
         status = item["status"]
         evidence_class = item["evidence_class"]
         reason = item["reason"]
-        if status not in VALID_VERDICTS:
+        if not isinstance(status, str) or status not in VALID_VERDICTS:
             raise ValueError("invalid checklist status for %s" % expected_id)
-        if evidence_class not in EVIDENCE_CLASSES:
+        if not isinstance(evidence_class, str) or evidence_class not in EVIDENCE_CLASSES:
             raise ValueError(
                 "invalid evidence class for %s" % expected_id)
         if (expected_id == "source_parity" and not allow_design_mismatch
@@ -1047,9 +1131,12 @@ class VisualCheckEvaluator:
             return self._catalog, self._catalog_error, elapsed, False
 
     def evaluate(self, image_bytes, mime_type, context):
+        return self.evaluate_batch([(image_bytes, mime_type, context)])[0]
+
+    def evaluate_batch(self, frames):
         self._check_cancelled()
         if not self.settings.enabled:
-            return {
+            return [{
                 "schema_version": SCHEMA_VERSION,
                 "status": "disabled",
                 "mode": self.settings.mode,
@@ -1059,7 +1146,7 @@ class VisualCheckEvaluator:
                     "elapsed_seconds": 0.0, "error": None,
                 },
                 "models": [],
-            }
+            } for _ in frames]
         catalog, preflight_error, preflight_elapsed, cached = self._models()
         preflight = {
             "status": (
@@ -1072,97 +1159,124 @@ class VisualCheckEvaluator:
                     "message": _safe_text(preflight_error.message, 300),
                 }),
         }
-        results = []
+        model = self.settings.model
         if preflight_error is not None:
-            for model in self.settings.models:
-                results.append(_error_result(
-                    model, preflight_error.category,
-                    preflight_error.message))
+            results = [_error_result(model, preflight_error.category, preflight_error.message)
+                       for _ in frames]
+        elif model not in catalog:
+            results = [_error_result(
+                model, "model_unavailable", "configured model is absent from the endpoint catalog")
+                for _ in frames]
         else:
-            for model in self.settings.models:
-                if model not in catalog:
-                    results.append(_error_result(
-                        model, "model_unavailable",
-                        "configured model is absent from the endpoint catalog"))
-                    continue
-                results.append(self._evaluate_model(
-                    model, image_bytes, mime_type, context))
-        has_problem = any(
-            item["status"] != "completed" or item["verdict"] != "pass"
-            for item in results)
-        strict_failure = self.settings.mode == "strict" and has_problem
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "status": (
-                "failed" if strict_failure else
-                "warning" if has_problem else "passed"),
-            "mode": self.settings.mode,
-            "strict_failure": strict_failure,
-            "preflight": preflight,
-            "models": results,
-        }
+            results = self._evaluate_model(model, frames)
 
-    def _evaluate_model(self, model, image_bytes, mime_type, context):
-        started = self.clock()
-        audit_inputs = [
-            ("supplied screenshot", image_bytes, mime_type),
-        ]
-        comparison = context.get("_comparison_image")
-        if comparison is not None:
-            audit_inputs = [
-                ("Designer reference", image_bytes, mime_type),
-                ("printer screenshot", comparison[0], comparison[1]),
-            ]
-        audits = []
-        for image_index, (role, audit_bytes, audit_mime) in enumerate(audit_inputs):
-            for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
-                self._check_cancelled()
-                try:
-                    response = self.transport.complete(_spacing_audit_payload(
-                        model, audit_bytes, audit_mime, role,
-                        corrective_retry=attempt > 1))
-                    audit = validate_spacing_audit(response)
-                    break
-                except TransportFailure as exc:
-                    return _error_result(
-                        model, exc.category, exc.message,
-                        self.clock() - started, attempts=attempt)
-                except ValueError as exc:
-                    last_validation_error = str(exc)
-            else:
-                return _error_result(
-                    model, "invalid_response", last_validation_error,
-                    self.clock() - started, json_status="invalid",
-                    attempts=MAX_VALIDATION_ATTEMPTS)
-            audits.append({"role": role, "audit": audit,
-                           "image": "comparison" if image_index else "primary"})
-        last_validation_error = None
+        reviews = []
+        for index, result in enumerate(results):
+            has_problem = result["status"] != "completed" or result["verdict"] != "pass"
+            strict_failure = self.settings.mode == "strict" and has_problem
+            reviews.append({
+                "schema_version": SCHEMA_VERSION,
+                "status": "failed" if strict_failure else "warning" if has_problem else "passed",
+                "mode": self.settings.mode,
+                "strict_failure": strict_failure,
+                "preflight": preflight if index == 0 else dict(preflight, cached=True, elapsed_seconds=0.0),
+                "models": [result],
+            })
+        return reviews
+
+    def _review_requests(self, requests, payload, validate, started):
+        # Keep accepted results when only part of a batch needs correction.
+        pending = list(requests)
+        results = {}
+        batched = len(pending) > 1
         for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
             self._check_cancelled()
             try:
-                response = self.transport.complete(_completion_payload(
-                    model, image_bytes, mime_type, context,
-                    corrective_retry=attempt > 1))
+                payloads = {key: payload(*requests[key], corrective_retry=attempt > 1) for key in pending}
+                response = self.transport.complete(
+                    _batch_payload(payloads) if batched else next(iter(payloads.values())))
+                answers = _batch_answers(response) if batched else {pending[0]: response}
+                response_error = None
             except TransportFailure as exc:
-                return _error_result(
-                    model, exc.category, exc.message,
-                    self.clock() - started, attempts=attempt)
-            except ValueError as exc:
-                last_validation_error = str(exc)
-                continue
-            try:
-                verdict = validate_verdict(
-                    response,
-                    allow_design_mismatch=(
-                        context.get("_comparison_image") is not None))
+                for key in pending:
+                    results[key] = (None, attempt, _error_result(
+                        self.settings.model, exc.category, exc.message,
+                        self.clock() - started, attempts=attempt))
                 break
             except ValueError as exc:
-                last_validation_error = str(exc)
-        else:
-            return _error_result(
-                model, "invalid_response", last_validation_error,
-                self.clock() - started, json_status="invalid",
-                attempts=MAX_VALIDATION_ATTEMPTS)
+                response_error = str(exc)
+                answers = {}
+
+            invalid = []
+            for key in pending:
+                try:
+                    if key not in answers:
+                        raise ValueError(response_error or "batch response is missing review id %d" % key)
+                    value = validate(answers[key])
+                except ValueError as exc:
+                    if attempt < MAX_VALIDATION_ATTEMPTS:
+                        invalid.append(key)
+                    else:
+                        results[key] = (None, attempt, _error_result(
+                            self.settings.model, "invalid_response", str(exc), self.clock() - started,
+                            json_status="invalid", attempts=attempt))
+                else:
+                    results[key] = (value, attempt, None)
+            if not invalid:
+                break
+            pending = invalid
+        return results
+
+    def _evaluate_model(self, model, frames):
+        started = self.clock()
+        audit_requests = {}
+        audits = [[] for _ in frames]
+        for index, (image_bytes, mime_type, context) in enumerate(frames):
+            comparison = context.get("_comparison_image")
+            if comparison is None:
+                inputs = [("supplied screenshot", image_bytes, mime_type)]
+            else:
+                inputs = [("Designer reference", image_bytes, mime_type), ("printer screenshot", *comparison)]
+            for image_index, (role, data, mime) in enumerate(inputs):
+                identifier = len(audit_requests) + 1
+                audit_requests[identifier] = (model, data, mime, role)
+                audits[index].append((identifier, role, "comparison" if image_index else "primary"))
+
+        audit_results = {}
+        audit_ids = list(audit_requests)
+        size = self.settings.review_batch_size
+        for offset in range(0, len(audit_ids), size):
+            requests = {key: audit_requests[key] for key in audit_ids[offset:offset + size]}
+            audit_results.update(self._review_requests(
+                requests, _spacing_audit_payload, validate_spacing_audit, started))
+            # In the one-frame path a failed first audit has always stopped the review.
+            if len(frames) == 1 and audit_results[audit_ids[offset]][2] is not None:
+                return [audit_results[audit_ids[offset]][2]]
+
+        results = [None] * len(frames)
+        standalone = {}
+        parity = {}
+        for index, (image_bytes, mime_type, context) in enumerate(frames):
+            error = next((audit_results[key][2] for key, _, _ in audits[index] if audit_results[key][2]), None)
+            if error is not None:
+                results[index] = error
+                continue
+            group = parity if context.get("_comparison_image") is not None else standalone
+            group[index + 1] = (model, image_bytes, mime_type, context)
+        for requests, compare in ((standalone, False), (parity, True)):
+            if not requests:
+                continue
+            verdicts = self._review_requests(
+                requests, _completion_payload,
+                lambda value: validate_verdict(value, allow_design_mismatch=compare), started)
+            for identifier, (verdict, attempt, error) in verdicts.items():
+                index = identifier - 1
+                results[index] = error or self._model_result(
+                    model, verdict, [{"role": role, "image": image, "audit": audit_results[key][0]}
+                                     for key, role, image in audits[index]], attempt, started)
+        return results
+
+    def _model_result(self, model, verdict, audits, attempt, started):
         verdict = _apply_spacing_audits(verdict, audits)
         reasons = [
             {

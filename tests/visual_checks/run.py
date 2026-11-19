@@ -165,7 +165,7 @@ def discover_images(inputs):
     return images
 
 
-def _check_image(image, evaluator):
+def _prepare_image(image):
     path = image["path"]
     size = path.stat().st_size
     if size > MAX_IMAGE_BYTES:
@@ -184,9 +184,7 @@ def _check_image(image, evaluator):
             comparison_data, _mime_type(comparison_path))
         context["_comparison_image"] = (
             comparison_data, comparison_mime)
-    result = evaluator.evaluate(
-        request_data, request_mime_type, context)
-    result["screenshot"] = {
+    screenshot = {
         "number": image["context"].get("number"),
         "label": image["context"].get("label"),
         "page": image["context"].get("page"),
@@ -209,14 +207,24 @@ def _check_image(image, evaluator):
                     "expectation", {}).get(section, ()))
         ],
     }
-    return result
+    return (request_data, request_mime_type, context), screenshot
 
 
 def run_checks(settings, images, evaluator=None, progress=None, clock=None):
     evaluator = evaluator or vision.VisualCheckEvaluator(settings)
     clock = clock or time.monotonic
     total = len(images)
-    workers = min(settings.review_workers, max(1, total)) if settings.enabled else 1
+    batch_size = settings.review_batch_size if settings.enabled else 1
+    batches = []
+    capacity = 0
+    for index, image in enumerate(images):
+        weight = 2 if image.get("comparison_path") is not None else 1
+        if not batches or capacity < weight:
+            batches.append([])
+            capacity = batch_size
+        batches[-1].append(index)
+        capacity -= weight
+    workers = min(settings.review_workers, max(1, len(batches))) if settings.enabled else 1
     records = [None] * total
     completed = 0
     frame_time = 0.0
@@ -232,11 +240,17 @@ def run_checks(settings, images, evaluator=None, progress=None, clock=None):
             "eta_seconds": None,
         })
 
-    def review(index, image):
-        frame_started = clock()
-        result = _check_image(image, evaluator)
+    def review(batch):
+        batch_started = clock()
+        requests, screenshots = zip(*(_prepare_image(images[index]) for index in batch))
+        if len(batch) == 1:
+            results = [evaluator.evaluate(*requests[0])]
+        else:
+            results = evaluator.evaluate_batch(requests)
         finished = clock()
-        return index, result, max(0.0, finished - frame_started), finished
+        duration = max(0.0, finished - batch_started) / len(batch)
+        return [(index, dict(result, screenshot=screenshot), duration, finished)
+                for index, result, screenshot in zip(batch, results, screenshots)]
 
     def collect(reviewed):
         nonlocal completed, frame_time, elapsed
@@ -261,14 +275,16 @@ def run_checks(settings, images, evaluator=None, progress=None, clock=None):
             })
 
     if workers == 1:
-        for index, image in enumerate(images):
-            collect(review(index, image))
+        for batch in batches:
+            for item in review(batch):
+                collect(item)
     else:
         pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="visual-review")
         try:
-            futures = [pool.submit(review, index, image) for index, image in enumerate(images)]
+            futures = [pool.submit(review, batch) for batch in batches]
             for future in as_completed(futures):
-                collect(future.result())
+                for item in future.result():
+                    collect(item)
         except BaseException:
             # Ctrl-C reaches the main thread. The shared signal also stops CLI
             # processes already running in workers before joining the pool.
@@ -329,7 +345,10 @@ def _arguments(argv):
         help="model reasoning effort (Codex default: high)")
     parser.add_argument(
         "--review-workers", type=int, default=os.environ.get("FF5M_VISUAL_REVIEW_WORKERS"),
-        help="parallel screenshot reviews (1-32; default: Codex 8, HTTP 1)")
+        help="parallel review batches (1-32; default: Codex 8, HTTP 1)")
+    parser.add_argument(
+        "--review-batch-size", type=int, default=os.environ.get("FF5M_VISUAL_REVIEW_BATCH_SIZE"),
+        help="screenshots per Codex request (1-%d; default: 1)" % vision.MAX_CODEX_BATCH_SIZE)
     parser.add_argument(
         "--api-key-env", default="FF5M_VISUAL_API_KEY",
         help="environment variable containing the optional API key")
@@ -351,7 +370,8 @@ def main(argv=None):
             enabled=args.enable, base_url=args.base_url, model=args.model,
             api_key=api_key, timeout=args.timeout, mode=args.mode,
             backend=args.backend, reasoning_effort=args.reasoning_effort,
-            codex_command=args.codex_command, review_workers=args.review_workers)
+            codex_command=args.codex_command, review_workers=args.review_workers,
+            review_batch_size=args.review_batch_size)
         images = discover_images(args.inputs)
         artifact = run_checks(settings, images)
         output = args.output

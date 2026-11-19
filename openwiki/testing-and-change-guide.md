@@ -818,7 +818,13 @@ starts `codex exec` in a temporary directory, attaches screenshots with
 `--image`, supplies `--output-schema`, and reads the JSON final answer from
 `--output-last-message`. Each standalone frame has a dedicated spacing audit
 and a full review; parity audits each image independently before the paired
-review. Codex uses its existing authentication; install the CLI and complete
+review. Set `--review-batch-size 6` or `--review-batch-size 9` to send several
+attachments per Codex invocation. Audits and full reviews use separate
+requests with one result per audit or case. The full review sends the shared
+checklist once per batch and retains each case's own expectation and verdict.
+Each parity pair uses two attachments and stays together in the full review.
+Only invalid or missing results are resubmitted on a corrective retry.
+Codex uses its existing authentication. Install the CLI and complete
 `codex login` before enabling this backend. The CLI must support
 `--ignore-user-config` and `--ephemeral` (check `codex exec --help`). The review
 uses a read-only sandbox, disables approval prompts and project instructions,
@@ -843,9 +849,13 @@ Connection settings are host-local:
 - `--codex-command` / `FF5M_VISUAL_CODEX_COMMAND` selects the CLI executable
   path (default `codex`);
 - `--review-workers` / `FF5M_VISUAL_REVIEW_WORKERS` selects concurrent
-  screenshot reviews (1–32; default 8 for Codex and 1 for HTTP). Use
-  `--review-workers 1` for sequential review. This is independent of
-  `--designer-workers`, which controls screenshot capture;
+  review batches (1–32, default 8 for Codex and 1 for HTTP). Use
+  `--review-workers 1` for sequential review. `--designer-workers` controls
+  screenshot capture independently;
+- `--review-batch-size` / `FF5M_VISUAL_REVIEW_BATCH_SIZE` sets the attachment
+  limit per Codex request (1–9, default 1). The default uses the single-case
+  protocol, so a parity verdict still receives both images. The HTTP backend
+  uses the single-case protocol;
 - `FF5M_VISUAL_API_KEY` is optional for HTTP and is never logged or serialized;
 - `--timeout` / `FF5M_VISUAL_TIMEOUT` bounds each HTTP request or CLI invocation
   (default 30 seconds for HTTP, 180 for Codex; allowed range 1–300);
@@ -942,6 +952,14 @@ changes Klipper settings. Both screenshot sources have textual expectations
 for model review. Unit tests retain selection, saving, cancellation, cache
 lifecycle and numerical spectrum contracts; layout and styling belong to
 these visual captures.
+
+The first-run wizard is included in `SUITE=UI` from Welcome through Calibration. The
+runner supplies disposable connection status, option values and calibration markers to
+the production pages. The two wizard confirmations are captured without accepting them.
+Designer also covers the declarative wizard pages, with extra state cases for connected
+Ethernet, an empty Wi-Fi scan, the second category page and completed calibration.
+Both sources provide per-frame expectations for layout, visible actions and status.
+
 Designer currently omits a page's additional standard-header action, so the
 FULL SCREEN entry button is required by the native printer expectations and
 an explicit allowed variation in the Designer graph expectations. Fullscreen

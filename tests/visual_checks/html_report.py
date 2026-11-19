@@ -795,6 +795,7 @@ def _run(report, views, names):
         ("Backend", configuration.get("backend", "openai-compatible")),
         ("Reasoning effort", configuration.get("reasoning_effort") or "server default"),
         ("Review workers", configuration.get("review_workers", 1)),
+        ("Review batch size", configuration.get("review_batch_size", 1)),
         ("Check mode", configuration.get("mode")),
         ("Designer theme", configuration.get("designer_theme") or "default"),
         ("Timeout", configuration.get("timeout")),

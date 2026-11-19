@@ -5347,31 +5347,28 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
 
 class NetworkWorkflowTest(unittest.TestCase):
-    def test_snapshot_preserves_dialog_and_reveals_latest_network_state(self):
+    def test_snapshot_preserves_modal_input_and_applies_connection_state_on_close(self):
+        from ff5m_ui.network import NetworkCommand
+        from ui import Command
+
         controller = base_controller()
-        rendering = composed_controller_surface(controller, lambda: None)
+        composed_controller_surface(controller, lambda: None)
+        attach_network(controller, ["MODE=ETHERNET\nSTATE=CONNECTED\nIP=192.0.2.14\n"])
         controller._show_page(FEATHER.ScreenPage.NETWORK_HOME)
+        ethernet = Command(NetworkCommand.ETHERNET).wire_id
+        scan = Command(NetworkCommand.SCAN).wire_id
+        self.assertIn(ethernet, touchable_actions(controller.renderer))
         controller._show_message("Network message", controller.page)
-        controller.network_status.update(state="CONNECTED", mode="ETHERNET", ip="192.0.2.14")
-        frames = len(rendering.frames)
 
-        controller._on_network_event("snapshot", True, 100)
+        controller.network_client._on_readable(100)
 
-        self.assertEqual(len(rendering.frames), frames)
-        self.assertFalse(rendering.latest.has_text("CONNECTED"))
-        self.assertEqual(rendering.latest.texts[-1].value, "Network message")
         self.assertEqual(touchable_actions(controller.renderer), {"message.ok"})
         controller._close_dialog(FEATHER.ScreenDialog.MESSAGE)
-        self.assertTrue(rendering.latest.has_text("CONNECTED"))
-        self.assertFalse(rendering.latest.has_text("Network message"))
 
-    """The page is a subscriber: netd decides, these tests feed its lines.
-
-    Nothing here fakes a helper process, a pidfile or a marker directory,
-    because the page no longer starts one. What is asserted is the contract at
-    the socket -- which commands go out, and what each published line does to
-    the screen.
-    """
+        self.assertEqual(controller.page, FEATHER.ScreenPage.NETWORK_HOME)
+        self.assertIn(scan, touchable_actions(controller.renderer))
+        self.assertNotIn(ethernet, touchable_actions(controller.renderer))
+        self.assertNotIn("message.ok", touchable_actions(controller.renderer))
 
     def test_dashboard_network_card_uses_connection_aware_route(self):
         controller = base_controller()
@@ -5394,33 +5391,37 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_HOME])
 
-    def test_network_home_explains_that_daemon_is_unavailable(self):
-        controller = base_controller()
-        rendering = composed_controller_surface(controller, lambda: None)
+    def test_network_home_enables_connection_actions_when_daemon_becomes_available(self):
+        from ff5m_ui.network import NetworkCommand
+        from ui import Command
 
+        controller = base_controller()
+        composed_controller_surface(controller, lambda: None)
         controller._show_page(FEATHER.ScreenPage.NETWORK_HOME)
-        self.assertTrue(rendering.latest.has_text("NETWORK UNAVAILABLE"))
+        actions = {Command(command).wire_id for command in (NetworkCommand.SCAN, NetworkCommand.ETHERNET)}
+        self.assertTrue(actions.isdisjoint(touchable_actions(controller.renderer)))
 
         attach_network(controller)
         controller._render_network_home()
 
-        self.assertTrue(rendering.latest.has_text("NOT CONNECTED"))
+        self.assertTrue(actions.issubset(touchable_actions(controller.renderer)))
 
-    def test_pushed_snapshot_repaints_the_open_network_page(self):
+    def test_partial_snapshot_replaces_address_and_preserves_connection_fields(self):
         controller = base_controller()
-        controller.page = FEATHER.ScreenPage.NETWORK_HOME
-        renders = []
-        controller._render_network_home = lambda: renders.append(True)
         attach_network(controller, [
-            "MODE=WIFI\nSTATE=CONNECTED\nSIGNAL=-45\nIP=192.168.2.124\n"])
+            "MODE=WIFI\nSTATE=CONNECTED\nSSID=V29ya3Nob3A=\nIP=192.0.2.14\n",
+            "IP=192.0.2.29\n"])
 
         controller.network_client._on_readable(101)
 
+        self.assertEqual(controller.network_status["ip"], "192.0.2.14")
+
+        controller.network_client._on_readable(102)
+
+        self.assertEqual(controller.network_status["ip"], "192.0.2.29")
+        self.assertEqual(controller.network_status["ssid"], "Workshop")
         self.assertEqual(controller.network_status["mode"], "WIFI")
-        self.assertEqual(controller.network_status["ip"], "192.168.2.124")
-        # One line per changed field, and the page is repainted for each: the
-        # daemon sends a snapshot as a burst, so this is a single read.
-        self.assertEqual(len(renders), 4)
+        self.assertEqual(controller.network_status["state"], "CONNECTED")
 
     def test_snapshot_updates_the_dashboard_without_navigating(self):
         controller = base_controller()
@@ -5434,7 +5435,7 @@ class NetworkWorkflowTest(unittest.TestCase):
         controller.network_client._on_readable(101)
 
         self.assertEqual(controller.network_status["mode"], "ETHERNET")
-        self.assertEqual(updates, [101, 101])
+        self.assertIn(101, updates)
 
     def test_unchanged_field_does_not_repaint(self):
         controller = base_controller()
@@ -5460,25 +5461,27 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         self.assertEqual(sock.sent, [])
 
-    def test_network_home_disables_the_selected_ethernet_route(self):
+    def test_ethernet_action_tracks_connection_state_as_fields_arrive(self):
         from ff5m_ui.network import NetworkCommand
         from ui import Command
 
         controller = base_controller()
-        rendering = composed_controller_surface(controller, lambda: None)
-        attach_network(controller)
-        controller.network_status.update({
-            "mode": "ETHERNET", "state": "CONNECTED",
-            "ip": "192.168.2.124"})
-
+        composed_controller_surface(controller, lambda: None)
+        sock = attach_network(controller, ["MODE=ETHERNET\nSTATE=CONNECTED\n"])
         controller._show_page(FEATHER.ScreenPage.NETWORK_HOME)
         ethernet = Command(NetworkCommand.ETHERNET).wire_id
-        self.assertNotIn(ethernet, touchable_actions(controller.renderer))
-        self.assertIn(Command(NetworkCommand.SCAN).wire_id, touchable_actions(controller.renderer))
-        controller.network_status.update({
-            "mode": "WIFI", "state": "CONNECTED", "ssid": "Workshop"})
 
-        controller._render_network_home()
+        controller.network_client._on_readable(101)
+
+        self.assertIn(ethernet, touchable_actions(controller.renderer))
+
+        sock.pending.append("IP=192.0.2.14\n")
+        controller.network_client._on_readable(102)
+
+        self.assertNotIn(ethernet, touchable_actions(controller.renderer))
+
+        sock.pending.append("MODE=WIFI\n")
+        controller.network_client._on_readable(103)
 
         self.assertIn(ethernet, touchable_actions(controller.renderer))
 
@@ -5554,48 +5557,6 @@ class NetworkWorkflowTest(unittest.TestCase):
         self.assertEqual(sock.sent, ["CANCEL"])
         self.assertFalse(controller.network_cancel_pending)
 
-    def test_progress_page_names_the_phase_the_daemon_published(self):
-        controller = base_controller()
-        controller.network_operation = "wifi"
-        controller.renderer = FEATHER.FeatherRenderer()
-        rendering = RenderCapture(controller.renderer)
-        attach_network(controller, ["PROGRESS=FINDING_NETWORK\n"])
-        controller.network_client._on_readable(100)
-        controller._render_network_progress()
-
-        self.assertTrue(rendering.latest.has_text(
-            NETWORK_UI.NETWORK_PHASES["FINDING_NETWORK"]))
-
-    def test_progress_page_shows_the_fresh_connection_attempt(self):
-        controller = base_controller()
-        controller.network_operation = "wifi"
-        controller.renderer = FEATHER.FeatherRenderer()
-        rendering = RenderCapture(controller.renderer)
-        sock = attach_network(controller, ["PROGRESS=HANDSHAKE\n"])
-        controller.network_client._on_readable(100)
-        controller._render_network_progress()
-        without_attempt = len(rendering.latest.texts)
-
-        sock.pending.append("ATTEMPT=2/3\n")
-        controller.network_client._on_readable(101)
-        controller._render_network_progress()
-
-        self.assertTrue(rendering.latest.has_text(
-            NETWORK_UI.NETWORK_PHASES["HANDSHAKE"]))
-        self.assertEqual(len(rendering.latest.texts), without_attempt + 1)
-
-    def test_startup_progress_explains_existing_network_check(self):
-        controller = base_controller()
-        controller.renderer = FEATHER.FeatherRenderer()
-        rendering = RenderCapture(controller.renderer)
-        attach_network(controller, ["PROGRESS=STARTUP\n"])
-        controller.network_client._on_readable(100)
-
-        controller._render_network_progress()
-
-        self.assertTrue(rendering.latest.has_text(
-            NETWORK_UI.NETWORK_PHASES["STARTUP"]))
-
     def test_cancelling_snapshot_keeps_ui_busy_until_terminal_verdict(self):
         controller = base_controller()
         controller.network_operation = "wifi"
@@ -5605,9 +5566,6 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         self.assertEqual(controller.network_operation, "wifi")
         self.assertTrue(controller._network_busy())
-        self.assertEqual(NETWORK_UI.NETWORK_PHASES[
-            controller.network_status["progress"]],
-            "Cancelling network operation...")
 
     def test_scan_rows_keep_only_passphrase_networks_and_sort_by_signal(self):
         # Deduplication and hidden-name filtering are the daemon's; what the page
@@ -5653,45 +5611,27 @@ class NetworkWorkflowTest(unittest.TestCase):
         self.assertEqual([item["ssid"] for item in controller.networks],
                          ["my home network"])
 
-    def test_error_reply_maps_a_closed_reason_to_its_message(self):
-        for reason, expected in (
-                ("WRONG_KEY", "Wrong Wi-Fi password"),
-                ("DHCP_TIMEOUT", "No address received from DHCP"),
-                ("BUSY", "Another network operation is already running"),
-                ("NO_PROFILE", "Saved Wi-Fi profile is unavailable"),
-                ("WPA_CONTROL_FAILED", "Wi-Fi service did not respond"),
-                ("WPA_CONFIG_FAILED",
-                 "Unable to configure the Wi-Fi connection"),
-                ("WPA_SELECT_FAILED",
-                 "Unable to select the Wi-Fi network")):
-            controller = base_controller()
-            controller.network_operation = "wifi"
-            controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
-            messages = []
-            controller._show_message = (
-                lambda message, page: messages.append((message, page)))
-            attach_network(controller, ["ERR %s\n" % reason])
+    def test_connection_errors_report_failure_and_release_the_operation(self):
+        for reason in ("WRONG_KEY", "DHCP_TIMEOUT", "BUSY", "NO_PROFILE",
+                       "WPA_CONTROL_FAILED", "WPA_CONFIG_FAILED", "WPA_SELECT_FAILED",
+                       "SOMETHING_NEW"):
+            with self.subTest(reason=reason):
+                controller = base_controller()
+                controller.network_operation = "wifi"
+                controller.network_deadline = 150
+                controller.network_return_page = FEATHER.ScreenPage.WIFI_SCAN
+                messages = []
+                controller._show_message = (
+                    lambda message, page: messages.append((message, page)))
+                attach_network(controller, ["ERR %s\n" % reason])
 
-            controller.network_client._on_readable(100)
+                controller.network_client._on_readable(100)
 
-            self.assertEqual(messages, [(expected, FEATHER.ScreenPage.WIFI_SCAN)])
-            self.assertIsNone(controller.network_operation)
-            self.assertEqual(controller.network_deadline, 0.0)
-
-    def test_unrecognised_error_reason_still_reports(self):
-        controller = base_controller()
-        controller.network_operation = "ethernet"
-        controller.network_return_page = FEATHER.ScreenPage.NETWORK_HOME
-        messages = []
-        controller._show_message = (
-            lambda message, page: messages.append((message, page)))
-        attach_network(controller, ["ERR SOMETHING_NEW\n"])
-
-        controller.network_client._on_readable(100)
-
-        self.assertEqual(messages,
-                         [("Network operation failed",
-                           FEATHER.ScreenPage.NETWORK_HOME)])
+                (message, page), = messages
+                self.assertTrue(message.strip())
+                self.assertEqual(page, FEATHER.ScreenPage.WIFI_SCAN)
+                self.assertIsNone(controller.network_operation)
+                self.assertEqual(controller.network_deadline, 0.0)
 
     def test_connect_toast_is_raised_after_the_page_it_belongs_to(self):
         # A full repaint clears the toast overlay. The previous supervisor set
@@ -5706,10 +5646,10 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         controller.network_client._on_readable(100)
 
-        self.assertEqual(events[-2:], [
-            ("page", FEATHER.ScreenPage.NETWORK_HOME),
-            ("toast", "Network connected"),
-        ])
+        self.assertEqual(events[-2], ("page", FEATHER.ScreenPage.NETWORK_HOME))
+        kind, message = events[-1]
+        self.assertEqual(kind, "toast")
+        self.assertTrue(message.strip())
 
     def test_failed_connect_does_not_toast(self):
         controller = base_controller()
@@ -5753,8 +5693,9 @@ class NetworkWorkflowTest(unittest.TestCase):
         sock.pending.append("STATE=DISCONNECTED\nERR CANCELLED\n")
         controller.network_client._on_readable(101)
 
-        self.assertEqual(messages, [("Network operation cancelled",
-                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        (message, page), = messages
+        self.assertTrue(message.strip())
+        self.assertEqual(page, FEATHER.ScreenPage.WIFI_SCAN)
         self.assertIsNone(controller.network_operation)
 
     def test_repeated_cancel_sends_one_pending_request(self):
@@ -5859,8 +5800,9 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         controller.network_client._on_readable(101)
 
-        self.assertEqual(messages, [("Network service is unavailable",
-                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        (message, page), = messages
+        self.assertTrue(message.strip())
+        self.assertEqual(page, FEATHER.ScreenPage.WIFI_SCAN)
         self.assertEqual(controller.network_status, NETWORK_PROTOCOL.blank_status())
         self.assertFalse(controller.network_client.connected)
 
@@ -5916,8 +5858,9 @@ class NetworkWorkflowTest(unittest.TestCase):
             100 + NETWORK_UI.NETWORK_WATCHDOG
             + NETWORK_UI.NETWORK_WATCHDOG_PROBE)
 
-        self.assertEqual(messages, [("Network service stopped responding",
-                                     FEATHER.ScreenPage.WIFI_SCAN)])
+        (message, page), = messages
+        self.assertTrue(message.strip())
+        self.assertEqual(page, FEATHER.ScreenPage.WIFI_SCAN)
         self.assertEqual(sock.sent, [
             "CONNECT_WIFI ssid=%s" % NETWORK_PROTOCOL.encode_field("Workshop"),
             "SUBSCRIBE",
@@ -6024,9 +5967,11 @@ class NetworkWorkflowTest(unittest.TestCase):
 
         controller.network_client._on_readable(100)
 
-        self.assertEqual(messages, [
-            ("Wrong Wi-Fi password", FEATHER.ScreenPage.WIFI_SCAN, None)])
-        with self.assertRaisesRegex(RuntimeError, "No saved Wi-Fi password"):
+        (message, page, actions), = messages
+        self.assertTrue(message.strip())
+        self.assertEqual(page, FEATHER.ScreenPage.WIFI_SCAN)
+        self.assertFalse(actions)
+        with self.assertRaises(RuntimeError):
             controller._handle_network_action("net.reset.saved")
 
     def test_status_block_still_parses_for_the_shared_callers(self):

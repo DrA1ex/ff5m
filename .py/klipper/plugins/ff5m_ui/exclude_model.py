@@ -38,28 +38,22 @@ def object_action(name):
     return Command(ExcludeCommand.SELECT, name).wire_id
 
 
-def object_style(selected, excluded):
-    """What an object's card and footprint show for its selection."""
-    return dict(
-        text_color=ThemeColor.DIM if excluded else ThemeColor.SECONDARY if selected else ThemeColor.PRIMARY,
-        border=ThemeColor.SECONDARY if selected else ThemeColor.DIM if excluded else ThemeColor.PRIMARY,
-        card_background=ThemeColor.PANEL if excluded else ThemeColor.BACKGROUND,
-        footprint_background=ThemeColor.PANEL if selected or excluded else ThemeColor.BACKGROUND,
-        line_width=4 if selected else 2,
-    )
-
+OBJECT_KINDS = {(False, False): "object", (True, False): "selected",
+                (False, True): "excluded", (True, True): "selected-excluded"}
 
 SELECT = ItemCommand(ExcludeCommand.SELECT, payload=item("name"))
 SAMPLE = dict(name="Sample_Model", kind="object", label="01  Sample Model",
-              note="TAP TO SELECT", marker="1", rectangle=[0.15, 0.2, 0.4, 0.35],
-              **object_style(False, False))
+              note="TAP TO SELECT", marker="1", rectangle=[0.15, 0.2, 0.4, 0.35])
 
-OBJECT_CARD = Template(
-    "object",
-    Frame(
+
+def _object_templates(kind, selected, excluded):
+    # Put typed theme colors in the template so the item data can travel as JSON.
+    text = ThemeColor.DIM if excluded else ThemeColor.SECONDARY if selected else ThemeColor.PRIMARY
+    border = ThemeColor.SECONDARY if selected else text
+    card = Frame(
         Overlay(
             Column(
-                Text(item("label"), font="JetBrainsMono Bold 8pt", color=item("text_color"),
+                Text(item("label"), font="JetBrainsMono Bold 8pt", color=text,
                      truncate=True).height(20).ref("name"),
                 Text(item("note"), font="JetBrainsMono 8pt", color=ThemeColor.DIM,
                      truncate=True).height(20).ref("status"),
@@ -67,28 +61,29 @@ OBJECT_CARD = Template(
             ).height(48).align(vertical="center").margin(left=12, right=12).ref("caption"),
             Hitbox(SELECT).ref("select"),
         ),
-        border=item("border"),
-        background=item("card_background"),
+        border=border,
+        background=ThemeColor.PANEL if excluded else ThemeColor.BACKGROUND,
         line_width=2,
-    ).height(60).ref("card"),
-    sample=SAMPLE,
-)
-
-FOOTPRINT = Template(
-    "object",
-    PlacedFrame(
+    ).height(60).ref("card")
+    footprint = PlacedFrame(
         Overlay(
             Text(item("marker"), font="JetBrainsMono Bold 10pt", truncate=True, fit=True,
-                 color=item("text_color")).ref("number"),
+                 color=text).ref("number"),
             Hitbox(SELECT).ref("select"),
         ),
         rectangle=item("rectangle"),
-        border=item("border"),
-        background=item("footprint_background"),
-        line_width=item("line_width"),
-    ).ref("footprint"),
-    sample=SAMPLE,
-)
+        border=border,
+        background=ThemeColor.PANEL if selected or excluded else ThemeColor.BACKGROUND,
+        line_width=4 if selected else 2,
+    ).ref("footprint")
+    sample = SAMPLE if kind == "object" else None
+    return Template(kind, card, sample=sample), Template(kind, footprint, sample=sample)
+
+
+OBJECT_CARDS, FOOTPRINTS = zip(*(
+    _object_templates(kind, selected, excluded) for (selected, excluded), kind in OBJECT_KINDS.items()
+))
+
 
 def create_page():
     page = PageTree(
@@ -102,7 +97,7 @@ def create_page():
                     Frame(Overlay(
                         StateCase(
                             ListView(items=bind(ExcludeState.OBJECTS), item_key=item("name"),
-                                     template_key=item("kind"), templates=(FOOTPRINT,), direction="overlay")
+                                     template_key=item("kind"), templates=FOOTPRINTS, direction="overlay")
                             .ref("exclude.footprints"),
                             selector=bind(ExcludeState.NO_GEOMETRY), expected=False,
                         ),
@@ -118,7 +113,7 @@ def create_page():
                         Overlay(
                             StateCase(
                                 ListView(items=bind(ExcludeState.ROWS), item_key=item("name"),
-                                         template_key=item("kind"), templates=(OBJECT_CARD,), gap=8)
+                                         template_key=item("kind"), templates=OBJECT_CARDS, gap=8)
                                 .ref("exclude.rows"),
                                 selector=bind(ExcludeState.EMPTY), expected=False,
                             ),

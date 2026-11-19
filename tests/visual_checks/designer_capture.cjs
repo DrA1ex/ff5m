@@ -106,9 +106,8 @@ async function main() {
           const item = plan.cases[index];
           activeScene = item.scene;
           await page.evaluate(
-            async (scenario) => window.FeatherDesignerV2Bridge.openScreen(
-              scenario.semantic_page_id, false),
-            item
+            async (pageId) => window.FeatherDesignerV2Bridge.openScreen(pageId, false),
+            item.semantic_page_id
           );
           await page.waitForFunction(
             (operations) => JSON.stringify(

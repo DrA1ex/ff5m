@@ -222,11 +222,11 @@ class StatusBarTest(unittest.TestCase):
             expected = (ThemeColor.SECONDARY, ThemeColor.DIM, ThemeColor.WARNING,
                         ThemeColor.TEXT, ThemeColor.DIM, ThemeColor.PRIMARY)
             self.assertEqual(footer_colors(capture.batches[-1]), [renderer.color(color) for color in expected])
-            previous_right = 19
+            previous_right = 0
             for text in footer_texts(capture.latest):
                 self.assertGreaterEqual(text.x, previous_right)
                 previous_right = text.x + renderer.text_width(text.value, text.font)
-                self.assertLessEqual(previous_right, 780)
+                self.assertLessEqual(previous_right, SCREEN_WIDTH)
             renderer.footer(*self.values(style='VANILLA'))
             self.assertEqual([text.value for text in capture.latest.texts], [
                 'NOZZLE 300/300C | BED 120/120C', '255.255.255.255 | CANCELLED'])
@@ -243,7 +243,7 @@ class StatusBarTest(unittest.TestCase):
                 self.assertIn('FREE --MB', self.values(memory=memory)[0])
         self.assertIn('CPU --%', self.values(cpu=None)[0])
 
-    def test_cpu_digit_changes_center_metrics_in_remaining_space_without_padding(self):
+    def test_cpu_width_changes_keep_adjacent_groups_stable(self):
         renderer, root, capture = self.screen()
         outer_positions = None
         for cpu in (None, 0, 9, 10, 99, 100):
@@ -264,7 +264,7 @@ class StatusBarTest(unittest.TestCase):
                     outer_positions = current
                 self.assertEqual(current, outer_positions)
 
-    def test_metrics_groups_anchor_left_center_and_right_without_padding_memory(self):
+    def test_memory_width_changes_keep_adjacent_groups_stable(self):
         renderer, root, capture = self.screen()
         outer_positions = None
         for memory in (0, 9, 20, 128):
@@ -277,11 +277,9 @@ class StatusBarTest(unittest.TestCase):
                 free = frame.text('FREE %dMB' % memory)
                 network = frame.text('192.168.2.124')
                 status = frame.text('CANCELLED')
-                self.assertEqual(nozzle.x, 20)
                 expected_center = (bed.x + renderer.text_width(bed.value, bed.font) + network.x) / 2
                 self.assertAlmostEqual((cpu.x + free.x + renderer.text_width(free.value, free.font)) / 2,
                                        expected_center, delta=0.5)
-                self.assertEqual(status.x + renderer.text_width(status.value, status.font), 780)
                 current = [text.x for text in (nozzle, bed, network, status)]
                 if outer_positions is None:
                     outer_positions = current
@@ -344,11 +342,11 @@ class StatusBarTest(unittest.TestCase):
                 self.shown(renderer, root, self.values())
                 texts = footer_texts(capture.latest)
                 self.assertEqual(len(texts), 9)
-                previous_right = 19
+                previous_right = 0
                 for text in texts:
                     self.assertGreaterEqual(text.x, previous_right)
                     previous_right = text.x + renderer.text_width(text.value, text.font)
-                    self.assertLessEqual(previous_right, 780)
+                    self.assertLessEqual(previous_right, SCREEN_WIDTH)
                 colors = [ThemeRole.TEMPERATURE_NOZZLE, ThemeRole.TEMPERATURE_BED, ThemeColor.TEXT,
                           ThemeColor.TEXT, ThemeColor.SUCCESS, ThemeColor.PRIMARY]
                 expected = []

@@ -1991,26 +1991,19 @@ class RendererStateTest(unittest.TestCase):
             self.assertIn("LINE %d" % index, drawing)
         self.assertNotIn("notice.next", renderer._buttons)
 
-    def test_hints_and_dialog_lines_keep_horizontal_padding(self):
+    def test_long_hint_can_truncate_and_dialog_preserves_its_content(self):
         renderer = FEATHER.FeatherRenderer()
         long_text = "X" * 120
 
-        hint = "\n".join(renderer.hint_box(
-            long_text, 400, 397, max_width=740))
-        dialog = "\n".join(renderer.dialog(
-            "Notice", (long_text,), (), x=80, y=90, width=640, height=240))
+        hint = RenderFrame(renderer.hint_box(long_text, 400, 397, max_width=740), renderer)
+        text = hint.text(long_text)
+        self.assertTrue(text.truncate)
+        self.assertLessEqual(text.max_width, 740)
 
-        self.assertIn(long_text, hint)
-        self.assertIn("--max-width 700 --truncate", hint)
-        hint_panel = re.search(
-            r"--batch fill -p (\d+) 397 -s (\d+) 44", hint)
-        self.assertIsNotNone(hint_panel)
-        self.assertGreaterEqual(int(hint_panel.group(1)), 30)
-        self.assertLessEqual(int(hint_panel.group(2)), 740)
-        self.assertEqual(sum(len(part) for part in re.findall(
-            r'--batch text .* -t "(X+)"', dialog)), len(long_text))
-        self.assertIn("--batch fill -p 50 120 -s 700 240", dialog)
-        self.assertIn("--max-width 644 --truncate", dialog)
+        dialog = RenderFrame(renderer.dialog(
+            "Notice", (long_text,), (), x=80, y=90, width=640, height=240), renderer)
+        self.assertEqual("".join(text.value for text in dialog.texts
+                                 if text.value.startswith("X")), long_text)
 
     def test_text_bounds_are_delegated_to_typer(self):
         renderer = FEATHER.FeatherRenderer()

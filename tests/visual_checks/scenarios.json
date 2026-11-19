@@ -228,8 +228,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -239,12 +237,10 @@
           },
           {
             "name": "Gear_Cover",
-            "kind": "object",
+            "kind": "selected",
             "label": "02  Gear Cover",
             "note": "SELECTED",
             "marker": "2",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -254,12 +250,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "excluded",
             "label": "03  Cable Clip",
             "note": "EXCLUDED",
             "marker": "3",
-            "selected": false,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -275,8 +269,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -286,12 +278,10 @@
           },
           {
             "name": "Gear_Cover",
-            "kind": "object",
+            "kind": "selected",
             "label": "02  Gear Cover",
             "note": "SELECTED",
             "marker": "2",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -301,12 +291,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "excluded",
             "label": "03  Cable Clip",
             "note": "EXCLUDED",
             "marker": "3",
-            "selected": false,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -338,8 +326,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -353,8 +339,6 @@
             "label": "02  Gear Cover",
             "note": "TAP TO SELECT",
             "marker": "2",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -364,12 +348,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "selected-excluded",
             "label": "03  Cable Clip",
             "note": "SELECTED / EXCLUDED",
             "marker": "3",
-            "selected": true,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -385,8 +367,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -400,8 +380,6 @@
             "label": "02  Gear Cover",
             "note": "TAP TO SELECT",
             "marker": "2",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -411,12 +389,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "selected-excluded",
             "label": "03  Cable Clip",
             "note": "SELECTED / EXCLUDED",
             "marker": "3",
-            "selected": true,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -448,8 +424,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -459,12 +433,10 @@
           },
           {
             "name": "Gear_Cover",
-            "kind": "object",
+            "kind": "selected",
             "label": "02  Gear Cover",
             "note": "SELECTED",
             "marker": "2",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -474,12 +446,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "excluded",
             "label": "03  Cable Clip",
             "note": "EXCLUDED",
             "marker": "3",
-            "selected": false,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -493,8 +463,6 @@
             "label": "04  Tiny Pin",
             "note": "TAP TO SELECT",
             "marker": "4",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.9090909090909091,
               0.1318181818181818,
@@ -510,8 +478,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -521,12 +487,10 @@
           },
           {
             "name": "Gear_Cover",
-            "kind": "object",
+            "kind": "selected",
             "label": "02  Gear Cover",
             "note": "SELECTED",
             "marker": "2",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -536,12 +500,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "excluded",
             "label": "03  Cable Clip",
             "note": "EXCLUDED",
             "marker": "3",
-            "selected": false,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -592,8 +554,6 @@
             "label": "01  Unknown Size",
             "note": "TAP TO SELECT / NO GEOMETRY",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": null
           }
         ],
@@ -620,8 +580,6 @@
             "label": "01  Bracket Main",
             "note": "TAP TO SELECT",
             "marker": "1",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.11363636363636363,
               0.5227272727272727,
@@ -635,8 +593,6 @@
             "label": "02  Gear Cover",
             "note": "TAP TO SELECT",
             "marker": "2",
-            "selected": false,
-            "excluded": false,
             "rectangle": [
               0.5227272727272727,
               0.22727272727272727,
@@ -646,12 +602,10 @@
           },
           {
             "name": "Cable_Clip",
-            "kind": "object",
+            "kind": "excluded",
             "label": "03  Cable Clip",
             "note": "EXCLUDED",
             "marker": "3",
-            "selected": false,
-            "excluded": true,
             "rectangle": [
               0.6818181818181818,
               0.7045454545454545,
@@ -661,12 +615,10 @@
           },
           {
             "name": "Tiny_Pin",
-            "kind": "object",
+            "kind": "selected",
             "label": "04  Tiny Pin",
             "note": "SELECTED",
             "marker": "4",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.9090909090909091,
               0.1318181818181818,
@@ -678,12 +630,10 @@
         "ui.pages.exclude_model.state.ExcludeState.ROWS": [
           {
             "name": "Tiny_Pin",
-            "kind": "object",
+            "kind": "selected",
             "label": "04  Tiny Pin",
             "note": "SELECTED",
             "marker": "4",
-            "selected": true,
-            "excluded": false,
             "rectangle": [
               0.9090909090909091,
               0.1318181818181818,
@@ -867,6 +817,57 @@
         "ff5m_ui.shaper.results.TICK_MIDDLE": "1e2",
         "ff5m_ui.shaper.results.TICK_LOW": "1e-1",
         "ff5m_ui.shaper.results.AXIS": "y"
+      }
+    },
+    {
+      "id": "setup-network-connected",
+      "label": "Setup network / connected over Ethernet",
+      "page": "ui.pages.keys.AppPage.NETWORK_HOME",
+      "state": {
+        "ff5m_ui.network.NetworkState.STATUS": "CONNECTED",
+        "ff5m_ui.network.NetworkState.DETAIL": "Ethernet - 192.0.2.14",
+        "ff5m_ui.network.NetworkState.CONNECTED": true,
+        "ff5m_ui.network.NetworkState.ETHERNET": "disabled",
+        "ff5m_ui.network.NetworkState.ACTION": "CONTINUE"
+      }
+    },
+    {
+      "id": "setup-wifi-empty",
+      "label": "Setup Wi-Fi / empty scan",
+      "page": "ui.pages.keys.AppPage.WIFI_SCAN",
+      "state": {
+        "ff5m_ui.network.ScanState.ROWS": [],
+        "ff5m_ui.network.ScanState.EMPTY": true
+      }
+    },
+    {
+      "id": "setup-groups-second",
+      "label": "Setup Additional Options / second page",
+      "page": "ui.pages.keys.AppPage.SETUP_OPTION_GROUPS",
+      "state": {
+        "ff5m.setup.option_groups.ROWS": [
+          {"id": "group:timelapse", "kind": "group", "title": "TIMELAPSE", "status": "Capture settings and intervals"},
+          {"id": "group:display", "kind": "group", "title": "DISPLAY", "status": "Brightness and ECO mode"},
+          {"id": "group:finishing", "kind": "group", "title": "PRINT FINISHING", "status": "Pause, parking and motor shutdown"},
+          {"id": "group:feather", "kind": "group", "title": "FEATHER", "status": "Appearance and Forge-X updates"}
+        ],
+        "ff5m.setup.option_groups.PAGE": 1,
+        "ff5m.setup.option_groups.PAGE_COUNT": 2,
+        "ff5m.setup.option_groups.PREVIOUS": "enabled"
+      }
+    },
+    {
+      "id": "setup-calibration-done",
+      "label": "Setup calibration / mesh and Safe Z done",
+      "page": "ui.pages.keys.AppPage.SETUP_CALIBRATION",
+      "state": {
+        "ff5m.setup.calibration.ROWS": [
+          {"id": "z_offset", "kind": "done", "title": "SAFE Z", "enabled": true, "status": "Saved Safe Z: 10.000 mm", "note": "Sets the height for safe travel over the bed.", "chip": "DONE"},
+          {"id": "mesh", "kind": "done", "title": "BED MESH", "enabled": true, "status": "Saved profile: auto", "note": "Measures the whole bed surface. Takes a few minutes.", "chip": "DONE"},
+          {"id": "shaper", "kind": "optional", "title": "INPUT SHAPER", "enabled": true, "status": "Not measured", "note": "Reduces ringing at higher speeds.", "chip": "OPTIONAL"}
+        ],
+        "ff5m.setup.calibration.ACTION": "FINISH SETUP",
+        "ff5m.setup.calibration.ACTION_STATE": "selected"
       }
     }
   ]

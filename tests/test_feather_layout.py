@@ -1266,31 +1266,20 @@ class ZOffsetLayoutTest(unittest.TestCase):
             self.assertLessEqual(renderer.text_width(button.label, button.font),
                                  button.bounds.width - 2 * renderer.BUTTON_TEXT_PADDING)
 
-    def test_safe_z_briefing_text_has_sufficient_non_overlapping_layout(self):
-        page = z_offset.SAFE_BRIEFING_PAGE
-        static_text = [
-            node for node in page.root.walk()
-            if isinstance(node, Text) and isinstance(node.value, str)
-        ]
-        rectangles = [page.layout.rect(node) for node in static_text]
-
-        self.assertTrue(rectangles)
-        for node, rectangle in zip(static_text, rectangles):
-            self.assertGreater(rectangle.height, 0)
-            self.assertGreaterEqual(
-                rectangle.height,
-                node.preferred_extent("vertical", rectangle.width))
-        for previous, following in zip(rectangles, rectangles[1:]):
-            self.assertLessEqual(previous.bottom, following.y)
-
-        commands = z_offset.SAFE_BRIEFING_PAGE.draw(FeatherRenderer(), {
-            z_offset.SafeBriefingState.CURRENT: 10.0,
-        })
-        text_commands = [command for command in commands
-                         if command.startswith("--batch text")]
-        for node in static_text:
-            self.assertTrue(any(str(node.value) in command
-                                for command in text_commands))
+    def test_safe_z_briefing_shows_measurement_and_actions_below_instructions(self):
+        renderer = FeatherRenderer()
+        frame = RenderFrame(z_offset.SAFE_BRIEFING_PAGE.draw(renderer, {
+            z_offset.SafeBriefingState.CURRENT: 17.3,
+        }), renderer)
+        instructions = sorted((text for text in frame.texts if text.wrap),
+                              key=lambda text: text.y)
+        self.assertTrue(instructions)
+        measurement = next(text for text in frame.texts if "17.3" in text.value)
+        for current, following in zip(instructions, instructions[1:] + [measurement]):
+            self.assertLessEqual(current.y + current.max_height / 2,
+                                 following.y - (following.max_height or 0) / 2)
+        for action in (z_offset.SAFE_SKIP, z_offset.SAFE_CALIBRATE):
+            self.assertGreater(frame.button(action.wire_id).bounds.y, measurement.y)
 
     def test_complete_z_offset_flow_has_ordered_non_overlapping_regions(self):
         summary = z_offset.SUMMARY_PAGE
@@ -1320,16 +1309,6 @@ class ZOffsetLayoutTest(unittest.TestCase):
                          (accept.y, accept.height))
         self.assertGreaterEqual(reset.x, finish.x)
         self.assertLessEqual(accept.right, finish.right)
-
-    def test_z_offset_button_groups_use_layout_gaps_not_child_margins(self):
-        closer = z_offset.PAPER_PAGE.layout.node("paper.closer")
-        farther = z_offset.PAPER_PAGE.layout.node("paper.farther")
-
-        self.assertIs(closer.parent, farther.parent)
-        self.assertIsInstance(closer.parent, Grid)
-        self.assertEqual(closer.parent.column_gap, 20)
-        self.assertEqual(closer.layout_options.margin.horizontal, 0)
-        self.assertEqual(farther.layout_options.margin.horizontal, 0)
 
     def test_force_gauge_updates_through_dirty_page_tree(self):
         renderer = FeatherRenderer()

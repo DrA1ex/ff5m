@@ -389,6 +389,16 @@ class ScenarioCatalog:
         self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HOME)
         self._add_tap(steps, "nav.settings", ScreenPage.SETTINGS)
         self._add_capture(steps, "ui-settings")
+        for kind in (
+                "welcome", "skip", "network-offline", "network-connected", "theme", "hub", "hub-pending",
+                "timezone", "timezone-letters", "timezone-cities", "timezone-fixed", "essentials",
+                "groups-first", "groups-second", "protection", "mesh", "preparation", "peripherals",
+                "timelapse", "display", "finishing", "feather", "calibration-required", "calibration-done",
+                "calibration-incomplete"):
+            self._add_render_capture(
+                steps, "ui-setup-" + kind,
+                lambda value=kind: self._render_setup_snapshot(value))
+        self._add_call(steps, "ui-setup-return", lambda: self._show(ScreenPage.SETTINGS))
         self._add_tap(steps, "settings.mod", ScreenPage.MOD_SETTINGS)
         self._add_capture(steps, "ui-mod-parameters")
         self._add_render_capture(
@@ -793,22 +803,24 @@ class ScenarioCatalog:
         return all(host._file_tile_view(entry).content != "loading" for entry in visible)
 
     def _render_empty_file_browser(self):
-        with _temporary_attributes(self.host, {
-                "file_entries": [], "file_page": 0,
-                "file_source": "internal", "file_view": "list",
-        }):
-            self.host._render_file_entries()
+        self._render_file_browser_snapshot("internal", [])
 
     def _render_usb_file_browser(self):
         entries = [
             FileEntry("USB_BENCHY.gcode", "/mnt/usb/USB_BENCHY.gcode"),
             FileEntry("CALIBRATION", "/mnt/usb/CALIBRATION", directory=True),
         ]
+        self._render_file_browser_snapshot("usb", entries)
+
+    def _render_file_browser_snapshot(self, source, entries):
+        host = self.host
+        storage = SimpleNamespace(available=True) if source == "usb" else host.usb_storage
         with _temporary_attributes(self.host, {
-                "file_entries": entries, "file_page": 0,
-                "file_source": "usb", "file_view": "list",
+                "file_entries": entries, "file_entry_cache": {source: entries}, "file_page": 0,
+                "file_source": source, "file_view": "list", "file_scan_loading": False,
+                "usb_storage": storage,
         }):
-            self.host._render_file_entries()
+            host._render_file_browser()
 
     def _render_calibration_guide(self):
         self._show(ScreenPage.CALIBRATION_GUIDE)
@@ -910,7 +922,7 @@ class ScenarioCatalog:
                 return parameter
         raise RuntimeError("No visible %s mod parameter" % (key or kind))
 
-    def _render_parameter_options(self, disabled_page=False):
+    def _render_parameter_options(self, disabled_page=False, setup=False):
         feature = self.host.feature_manager.get("settings")
         parameter = self._mod_parameter("str", key="feather_theme")
         entries = tuple(SimpleNamespace(
@@ -927,6 +939,7 @@ class ScenarioCatalog:
                 description="INVALID COLOR VALUE", enabled=False),)
         with _temporary_attributes(feature, {
                 "mod_parameter": parameter,
+                "mod_return_page": ScreenPage.SETUP_NETWORK if setup else ScreenPage.MOD_SETTINGS,
                 "selected_parameter_option": "DEFAULT",
                 "_parameter_options_snapshot": entries,
                 "parameter_options_page_index": 1 if disabled_page else 0,
@@ -973,19 +986,77 @@ class ScenarioCatalog:
         }
         self._render_component_case({"page": PAGE, "state": values})
 
-    def _render_network_home_snapshot(self, kind):
+    def _render_setup_snapshot(self, kind):
+        from feather import setup as model
+        from ff5m_ui.setup import SetupCommand
+        from ui import Command
+
+        if kind == "theme":
+            self._render_parameter_options(setup=True)
+            return
+        if kind in ("network-offline", "network-connected"):
+            self._render_network_home_snapshot(kind.split("-", 1)[1], ScreenPage.SETUP_NETWORK)
+            return
+
+        setup = self.host.feature_manager.get("setup")
+        saved_mesh = kind in ("calibration-done", "calibration-incomplete")
+        completed = ([model.SAFE_Z_STEP, "mesh"] if kind == "calibration-done"
+                     else ["mesh"] if saved_mesh else [])
+        draft = {"tune_config": 1} if kind == "hub-pending" else {}
+        progress = SimpleNamespace(complete=False, data=dict(completed=completed, draft=draft, skipped=False))
+        values = {key: setup.params.normalize_value(key, setup.params.params_map[key].default)
+                  for key in model.SETTING_KEYS}
+        values.update(camera=1, timelapse=1, bed_mesh_validation=0, disable_priming=0, use_kamp=0)
+        values.update(draft)
+        zone_levels = {"timezone": ("regions",), "timezone-letters": ("letters", "America"),
+                       "timezone-cities": ("cities", "Europe", "T"), "timezone-fixed": ("fixed",)}
+        if kind in ("welcome", "skip"):
+            page = ScreenPage.SETUP_WELCOME
+        elif kind in ("hub", "hub-pending"):
+            page = ScreenPage.SETUP
+        elif kind.startswith("calibration-"):
+            page = ScreenPage.SETUP_CALIBRATION
+        elif kind in zone_levels:
+            page = ScreenPage.SETUP_TIMEZONE
+        else:
+            page = ScreenPage.SETUP_OPTIONS
+
+        with _temporary_attributes(setup, {
+                "progress": progress,
+                "options_level": ("groups" if kind.startswith("groups-") else kind)
+                if page == ScreenPage.SETUP_OPTIONS else model.ESSENTIALS.id,
+                "options_page": int(kind == "groups-second"),
+                "zone_level": zone_levels.get(kind, ("regions",)), "zone_page": 0,
+                "_last_values": setup._last_values,
+                "_values": lambda: values,
+                "_timezone": lambda: ("Europe/Tallinn", "Europe/Tallinn", "UTC+02:00"),
+                "_mesh_profile": lambda: "auto" if saved_mesh else None,
+                "_shaper_summary": lambda: "",
+                "_camera_status": lambda: "Camera detected and streaming.",
+        }):
+            self._show(page)
+            if kind == "skip":
+                setup.handle_semantic_action(page, Command(SetupCommand.LEAVE))
+            elif kind == "calibration-incomplete":
+                setup.finish()
+            if kind in ("skip", "calibration-incomplete") and self.host._current_dialog() != ScreenDialog.MESSAGE:
+                raise RuntimeError("Unable to show setup confirmation %s" % kind)
+
+    def _render_network_home_snapshot(self, kind, page=ScreenPage.NETWORK_HOME):
         connected = kind != "unavailable"
         status = {
             "mode": "OFFLINE", "state": "DISCONNECTED",
             "ssid": "", "signal": "", "ip": "",
         }
+        if kind == "connected":
+            status.update(mode="ETHERNET", state="CONNECTED", ip="192.0.2.14")
         with _temporary_attributes(self.host, {
                 "network_client": SimpleNamespace(connected=connected),
                 "network_status": status,
                 "network_operation": None,
                 "network_cancel_pending": False,
         }):
-            self._show(ScreenPage.NETWORK_HOME)
+            self._show(page)
 
     def _render_wifi_scan_snapshot(self, empty=False):
         networks = [] if empty else [

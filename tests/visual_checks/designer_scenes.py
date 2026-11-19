@@ -104,6 +104,9 @@ def main(argv=None):
                 "viewport": viewport,
             })
             _assert_requested_state(case, case["scene"])
+            # The capture draws operations on the canvas. The authoring tree can
+            # embed megabytes of repeated component metadata on graph pages.
+            case["scene"].pop("tree", None)
             if case.get("composition_fixture") is not None:
                 fixture = case["composition_fixture"]
                 case["scene"]["title"] = fixture["title"]
