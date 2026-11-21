@@ -383,7 +383,7 @@ class PrusaSlicer(BaseSlicer):
 
     def parse_estimated_time(self) -> Optional[float]:
         time_match = re.search(
-            r';\sestimated\sprinting\stime.*', self.footer_data)
+            r'^[ \t]*;\sestimated\sprinting\stime.*', self.footer_data, re.MULTILINE)
         if not time_match:
             return None
         total_time = 0

@@ -245,9 +245,9 @@ class VirtualSD:
         footer_data = file.read(READ_SIZE)
 
         time_match = re.search(
-            r';\s*(?:OrcaSlicer\s+)?estimated\s+'
+            r'^[ \t]*;\s*(?:OrcaSlicer\s+)?estimated\s+'
             r'(?:printing|extrusion)\s+time[^\r\n]*',
-            footer_data, re.IGNORECASE)
+            footer_data, re.IGNORECASE | re.MULTILINE)
 
         if not time_match:
             return None
