@@ -6,7 +6,7 @@
       "sha256": "476b43ce5eeb766c418528d4cc7e2c5141269c8a435124df9fa11852feb405c3"
     }
   },
-  "commit": "15957dd34a675daa93630afd2dd2dc85d76108a0",
+  "commit": "5cfe60f5c658990cf4a1332282abe4dd9a82240f",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -83,7 +83,7 @@
     },
     "klippy/extras/virtual_sdcard.py": {
       "ff5m": ".py/klipper/patches/extras/virtual_sdcard.py",
-      "sha256": "449a5d1bef1cf29533b4138d39739160b98ed36b5dcff7f9fd2dc918cddc3245"
+      "sha256": "aa401d4297d1538acad965d51826ba05edbaa7d3009f34b1db092413c807bebb"
     },
     "klippy/gcode.py": {
       "ff5m": ".py/klipper/patches/gcode.py",
