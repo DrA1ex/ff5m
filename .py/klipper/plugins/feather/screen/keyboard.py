@@ -86,6 +86,7 @@ class TextKeyboard:
     """Stateless shared Feather keyboard renderer and editing policy."""
 
     max_length = 64
+    key_state = "keypad"
 
     @staticmethod
     def printable_ascii(character):
@@ -96,11 +97,24 @@ class TextKeyboard:
             return _PRINTABLE_ROWS[bool(symbols), bool(shift)]
         return keyboard_rows(symbols, shift, allowed_characters)
 
+    def controls(self, symbols=False, shift=False):
+        small, large = "JetBrainsMono 8pt", "JetBrainsMono 12pt"
+        bold = "JetBrainsMono Bold 8pt"
+        auxiliary, active = "keypad_aux", "keypad_confirm"
+        return (
+            (KEYBOARD_SHIFT, "SHIFT", active if shift else auxiliary, bold if shift else small),
+            (KEYBOARD_SYMBOLS, "ABC" if symbols else "123",
+             active if symbols else auxiliary, bold if symbols else small),
+            (KEYBOARD_LEFT, "<", auxiliary, large),
+            (KEYBOARD_SPACE, "SPACE", self.key_state, small),
+            (KEYBOARD_RIGHT, ">", auxiliary, large),
+            (KEYBOARD_BACKSPACE, "BACKSPACE", auxiliary, small),
+        )
+
     def render(self, renderer, symbols=False, shift=False,
                allowed_characters=None):
         # One batch: the renderer reads its colours and fonts once for
         # every key.
-        small, large = "JetBrainsMono 8pt", "JetBrainsMono 12pt"
         keys = []
         rows = self.rows(symbols, shift, allowed_characters)
         for row_index, row in enumerate(rows):
@@ -113,22 +127,11 @@ class TextKeyboard:
             for token, label in row:
                 keys.append((
                     KEY_ACTION_PREFIX + token, x, 181 + row_index * 49,
-                    key_width, 42, label, "enabled", small))
+                    key_width, 42, label, self.key_state, "JetBrainsMono 8pt"))
                 x += key_width + gap
-        controls_y = 328
-        keys += (
-            (KEYBOARD_SHIFT, 25, controls_y, 110, 43, "SHIFT",
-             "selected" if shift else "enabled", small),
-            (KEYBOARD_SYMBOLS, 145, controls_y, 90, 43,
-             "ABC" if symbols else "123",
-             "selected" if symbols else "enabled", small),
-            (KEYBOARD_LEFT, 245, controls_y, 60, 43, "<", "enabled", large),
-            (KEYBOARD_SPACE, 315, controls_y, 200, 43, "SPACE", "enabled",
-             small),
-            (KEYBOARD_RIGHT, 525, controls_y, 60, 43, ">", "enabled", large),
-            (KEYBOARD_BACKSPACE, 595, controls_y, 180, 43, "BACKSPACE",
-             "enabled", small),
-        )
+        control_bounds = ((25, 110), (145, 90), (245, 60), (315, 200), (525, 60), (595, 180))
+        for (x, width), (action, label, state, font) in zip(control_bounds, self.controls(symbols, shift)):
+            keys.append((action, x, 328, width, 43, label, state, font))
         return renderer.buttons(keys)
 
     def apply(self, value, cursor, action, shift=False, symbols=False,

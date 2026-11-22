@@ -471,13 +471,12 @@ def _text_keyboard(symbols, shift, width):
     rows = []
     for keys in TEXT_KEYBOARD.rows(symbols, shift):
         for start in range(0, len(keys), columns):
-            rows.append(Row(*(Button(TextKeyAction("key", token), label, font="JetBrainsMono 8pt").width(key_width)
-                              for token, label in keys[start:start + columns]), gap=gap).width("content").align(horizontal="center"))
-    def key(route, label, selected=False, font="JetBrainsMono 8pt"):
-        return Button(TextKeyAction(route), label, state="selected" if selected else "enabled", font=font)
-    controls = (key("shift", "SHIFT", shift), key("symbols", "ABC" if symbols else "123", symbols),
-                key("left", "<", font="JetBrainsMono 12pt"), key("space", "SPACE"),
-                key("right", ">", font="JetBrainsMono 12pt"), key("backspace", "BACKSPACE"))
+            buttons = (Button(TextKeyAction("key", token), label, state=TEXT_KEYBOARD.key_state,
+                              font="JetBrainsMono 8pt").width(key_width)
+                       for token, label in keys[start:start + columns])
+            rows.append(Row(*buttons, gap=gap).width("content").align(horizontal="center"))
+    controls = tuple(Button(TextKeyAction(action.split(".", 1)[1]), label, state=state, font=font)
+                     for action, label, state, font in TEXT_KEYBOARD.controls(symbols, shift))
     if compact:
         rows.extend((Grid(matrix=((controls[0], controls[1], controls[5]),), columns=Equal(3), rows=(FLEX,), gap=8),
                      Grid(matrix=((controls[2], controls[3], controls[4]),), columns=(Flex(1), Flex(3), Flex(1)), rows=(FLEX,), gap=8)))

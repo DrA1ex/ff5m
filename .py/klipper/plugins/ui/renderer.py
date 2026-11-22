@@ -240,13 +240,9 @@ class FeatherRenderer(RendererBase):
         "pressed": (ThemeColor.PRESSED_BACKGROUND, ThemeColor.BRIGHT, ThemeColor.BRIGHT),
         "toggle": (ThemeColor.PANEL, ThemeColor.PRIMARY, ThemeColor.PRIMARY),
         "toggle-disabled": (ThemeColor.PANEL, ThemeColor.MUTED, ThemeColor.DIM),
-        "keypad": (ThemeRole.ACCENT_BACKGROUND, ThemeRole.ACCENT_BORDER,
-                   ThemeRole.ACCENT_TEXT),
-        "keypad_aux": (ThemeColor.PANEL, ThemeColor.SECONDARY,
-                       ThemeColor.SECONDARY),
-        "keypad_confirm": (
-            ThemeRole.ACCENT_BACKGROUND, ThemeRole.ACCENT_BORDER,
-            ThemeRole.ACCENT_TEXT),
+        "keypad": (ThemeColor.PANEL, ThemeColor.DIM, ThemeColor.TEXT),
+        "keypad_aux": (ThemeColor.PANEL, ThemeColor.SECONDARY, ThemeColor.TEXT),
+        "keypad_confirm": (ThemeColor.PANEL, ThemeColor.PRIMARY, ThemeColor.BRIGHT),
     }
     BUTTON_TEXT_PADDING = 16
     HINT_TEXT_PADDING = 20

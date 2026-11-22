@@ -121,7 +121,7 @@ class NumericKeypadTest(unittest.TestCase):
         self.assertEqual(integer.count(":key.sign"), 1)
         self.assertNotIn(":key.dot", integer)
 
-    def test_theme_roles_create_readable_visual_hierarchy(self):
+    def test_labels_and_input_outline_follow_theme(self):
         renderer = FeatherRenderer()
         self.assertTrue(renderer.set_theme("SYNTH"))
         actions = dict((digit, "key.%s" % digit)
@@ -136,14 +136,8 @@ class NumericKeypadTest(unittest.TestCase):
         self.assertIn("-c %s" % renderer.color(ThemeColor.TEXT), drawing)
         self.assertIn("-c %s" % renderer.color(ThemeColor.DIM), drawing)
         self.assertIn("-c %s" % renderer.color(ThemeColor.SECONDARY), drawing)
-        keypad_style = (
-            "--background %s --border %s --text-color %s" % (
-                renderer.color(ThemeColor.PRIMARY_DARK),
-                renderer.color(ThemeColor.PRIMARY),
-                renderer.color(ThemeColor.BRIGHT)))
-        self.assertGreaterEqual(drawing.count(keypad_style), 11)
 
-    def test_specialized_light_themes_render_readable_digit_keys(self):
+    def test_specialized_light_themes_render_readable_key_labels(self):
         actions = dict((digit, "key.%s" % digit)
                        for digit in "0123456789")
         actions.update({"backspace": "key.back", "confirm": "key.save"})
@@ -155,15 +149,15 @@ class NumericKeypadTest(unittest.TestCase):
                 drawing = renderer.numeric_keypad(
                     18, 65, 764, 370, "VALUE", "15", actions,
                     mode="integer")
-                digit = next(
-                    line for line in drawing if '-t "1"' in line)
-                colors = re.search(
-                    r"--background ([0-9a-f]{6}).*"
-                    r"--text-color ([0-9a-f]{6})", digit)
-
-                self.assertIsNotNone(colors)
-                self.assertGreaterEqual(
-                    self._contrast_ratio(*colors.groups()), 4.5)
+                for label in ("1", "BACK", "CONFIRM"):
+                    with self.subTest(label=label):
+                        key = next(line for line in drawing if '-t "%s"' % label in line)
+                        colors = re.search(
+                            r"--background ([0-9a-f]{6}).*"
+                            r"--text-color ([0-9a-f]{6})", key)
+                        self.assertIsNotNone(colors)
+                        self.assertGreaterEqual(
+                            self._contrast_ratio(*colors.groups()), 4.5)
 
 
 if __name__ == "__main__":
