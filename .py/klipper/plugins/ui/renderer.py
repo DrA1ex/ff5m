@@ -32,7 +32,7 @@ from .layout_helpers import (
     DIALOG_LINE_SPACING, DIALOG_MULTILINE_GAP, DIALOG_ONE_LINE_GAP,
     DIALOG_PAGER_ABOVE_BODY, DIALOG_PAGER_MIN_HEIGHT, DIALOG_PAGER_RESERVE, DIALOG_PAGER_RIGHT, DIALOG_TITLE_FONT,
     DIALOG_TITLE_LINE_SPACING, DIALOG_TITLE_TOP, DIALOG_TOP, DIALOG_BOTTOM_INSET,
-    DIALOG_STATUS_FONT, DIALOG_STATUS_GAP,
+    DIALOG_STATUS_FONT, DIALOG_STATUS_GAP, dialog_body_offset,
     dialog_pager_bounds,
 )
 from .numeric_input import NumericInputSpec
@@ -1315,6 +1315,15 @@ class FeatherRenderer(RendererBase):
                     break
         return commands
 
+    def _layout_dialog(self, title, lines, buttons, button_groups, x, y, width, height,
+                       modal, custom_body, page, screen_width=SCREEN_WIDTH):
+        policy = self._dialog_policy
+        if screen_width != SCREEN_WIDTH:
+            index = len(_DIALOG_POLICY) + 2
+            policy = policy[:index] + (screen_width,) + policy[index + 1:]
+        return dialog_layout(self, policy, title, tuple(lines), tuple(buttons), button_groups,
+                             x, y, width, height, modal and not custom_body, custom_body, page)
+
     def dialog(self, title, lines, buttons, x=160, y=130, width=480,
                height=220, tone="warning", modal=True,
                preserve_header_action=True, page=0, page_actions=None,
@@ -1340,9 +1349,8 @@ class FeatherRenderer(RendererBase):
         border = tones.get(tone, ThemeColor.PRIMARY)
         button_groups = tuple(tuple(group) for group in button_groups if group)
         x, y, width, height, title_rows, visible_lines, page, page_count, has_footer, footer_height, rows = (
-            dialog_layout(
-                self, self._dialog_policy, title, tuple(lines), tuple(buttons), button_groups, x, y, width, height, modal and not custom_body,
-                custom_body, page))
+            self._layout_dialog(title, lines, buttons, button_groups, x, y, width, height,
+                                modal, custom_body, page))
         if page_count > 1 and (page_actions is None or len(page_actions) != 2):
             raise ValueError("Overflowing dialog requires previous and next actions")
         outer_x = max(0, x - 8)
@@ -1364,18 +1372,19 @@ class FeatherRenderer(RendererBase):
                 DIALOG_TITLE_FONT, "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING,
                 truncate=True))
+        body_y = dialog_body_offset(title_rows)
         pager_reserve = DIALOG_PAGER_RESERVE if page_count > 1 else 0
         for index, line in enumerate(visible_lines):
             commands.append(self.text(
                 x + (width - pager_reserve) // 2,
-                y + DIALOG_BODY_Y + index * DIALOG_LINE_SPACING,
+                y + body_y + index * DIALOG_LINE_SPACING,
                 str(line), ThemeColor.TEXT, DIALOG_BODY_FONT, "center", "middle",
                 max_width=width - 2 * self.DIALOG_TEXT_PADDING - pager_reserve,
                 truncate=True))
         if page_count > 1:
             commands += self.dialog_pager(
                 page, page_count, page_actions, x, y, width, height,
-                has_buttons=has_footer, footer_height=footer_height)
+                has_buttons=has_footer, footer_height=footer_height, body_y=body_y)
         for specs, font, bounds in rows:
             for (action, label, state), target in zip(specs, bounds):
                 commands += self.button(
@@ -1384,13 +1393,14 @@ class FeatherRenderer(RendererBase):
             commands += self._header_action_commands()
         return commands
 
-    def status_dialog(self, title, detail=None, buttons=(), *, description=None,
+    def status_dialog(self, title, detail=None, buttons=(), *, description=None, description_font=None,
                       note=None, note_color=ThemeColor.TEXT, tone="warning",
                       width=DIALOG_MIN_WIDTH, height=DIALOG_MIN_HEIGHT,
                       modal=True, preserve_header_action=True):
         """Render optional value, wrapped explanation, and note below a status.
 
-        Empty slots take no space. The explanation may be truncated to keep
+        Empty slots take no space. The explanation uses the body font unless
+        description_font is set. It may be truncated to keep
         the note and standard footer actions visible. Use ``dialog`` for
         instructions that need pagination or more than two rows of actions.
         """
@@ -1399,15 +1409,15 @@ class FeatherRenderer(RendererBase):
             (str(value), font, color, wrap)
             for value, font, color, wrap in (
                 (detail, DIALOG_STATUS_FONT, ThemeColor.TEXT, False),
-                (description, DIALOG_BODY_FONT, ThemeColor.TEXT, True),
+                (description, description_font or DIALOG_BODY_FONT, ThemeColor.TEXT, True),
                 (note, DIALOG_STATUS_FONT, note_color, False))
             if value is not None and str(value).strip())
         x, y, width, height, rows = status_dialog_layout(
             self, self._dialog_policy, title, buttons, tuple((text[0], text[3]) for text in texts),
-            int(width), int(height))
+            int(width), int(height), description_font or None)
         commands = self.dialog(
             title, (), buttons, x=x, y=y, width=width, height=height,
-            tone=tone, modal=modal, custom_body=True,
+            tone=tone, modal=modal, custom_body=bool(texts),
             preserve_header_action=preserve_header_action)
         if not commands:
             return commands
@@ -1419,7 +1429,7 @@ class FeatherRenderer(RendererBase):
         return commands
 
     def dialog_pager(self, page, page_count, actions, x, y, width, height,
-                     *, has_buttons=True, footer_height=DIALOG_BUTTON_HEIGHT):
+                     *, has_buttons=True, footer_height=DIALOG_BUTTON_HEIGHT, body_y=DIALOG_BODY_Y):
         """Draw the narrow vertical page controls shared by dialog panels."""
         if page_count <= 1:
             return []
@@ -1430,7 +1440,7 @@ class FeatherRenderer(RendererBase):
             previous, *prev_bounds, "up", active=page > 0)
         commands += self.arrow_button(
             following, *next_bounds, "down", active=page + 1 < page_count)
-        if has_buttons and footer_height > DIALOG_BUTTON_HEIGHT:
+        if body_y != DIALOG_BODY_Y or (has_buttons and footer_height > DIALOG_BUTTON_HEIGHT):
             commands.append(self.text(
                 counter[0], (prev_bounds[1] + prev_bounds[3] + next_bounds[1]) // 2,
                 "%d/%d" % (page + 1, page_count), ThemeColor.DIM,

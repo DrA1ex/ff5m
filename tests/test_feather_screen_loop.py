@@ -252,7 +252,7 @@ class ScreenLoopTest(unittest.TestCase):
             self.assertTrue(typer.drew("FIND A NETWORK"))
             self._tap_on_loop(controller, typer, Command(NetworkCommand.SCAN).wire_id,
                               FEATHER.ScreenPage.NETWORK_PROGRESS)
-            self.assertTrue(typer.drew("Scanning Wi-Fi"))
+            self.assertTrue(typer.drew("SCANNING WI-FI"))
             self.assertIn("SCAN", socket.sent)
             rows = [(5180, -41, 1, "Workshop"), (2437, -59, 0, "Home Wi-Fi"),
                     (2412, -63, 0, "Office"), (2412, -65, 0, "Printer Lab"),

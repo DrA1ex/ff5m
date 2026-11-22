@@ -1172,7 +1172,7 @@ class ScenarioCatalog:
                  "RESTART KLIPPER TO APPLY THEM."),
                 "SAVE SETTINGS AND RESTART"),
         }[kind]
-        self._show(ScreenPage.NETWORK_PROGRESS)
+        self._show(ScreenPage.MAIN_MENU)
         renderer = self.host.renderer
         commands = renderer.begin_page("Dialog layout")
         commands += renderer.dialog(

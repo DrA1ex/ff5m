@@ -1418,7 +1418,7 @@ def touch_warning_layer():
 
 
 class RendererStateTest(unittest.TestCase):
-    def test_touch_warning_wraps_body_and_invalidates_cached_footer(self):
+    def test_touch_warning_fits_body_and_invalidates_cached_footer(self):
         renderer = FEATHER.FeatherRenderer()
         batches = RenderCapture(renderer).batches
 
@@ -1438,11 +1438,15 @@ class RendererStateTest(unittest.TestCase):
 
         frame = RenderFrame(batches[-1], renderer)
         title = frame.text("TOUCH INPUT UNAVAILABLE")
-        body = frame.text(
-            "THE TOUCH DEVICE IS NOT AVAILABLE. "
-            "WAITING FOR AUTOMATIC RECONNECTION.")
+        body = frame.text("THE TOUCH DEVICE IS NOT AVAILABLE. WAITING FOR AUTOMATIC RECONNECTION.")
         self.assertIn(renderer.modal_scrim(), batches[-1])
+        self.assertEqual(body.font, "JetBrainsMono 12pt")
+        self.assertTrue(body.wrap)
         self.assertGreaterEqual(body.y - body.max_height // 2 - title.y, 30)
+        panel = next(shape.bounds for shape in reversed(frame.shapes) if shape.kind == "stroke")
+        bottom_padding = panel.bottom - body.y - (body.max_height + 1) // 2
+        self.assertGreaterEqual(bottom_padding, 20)
+        self.assertLessEqual(bottom_padding, 34)
 
         # The warning covers the footer: updates wait for the next page.
         drawn = len(batches)
@@ -1559,7 +1563,9 @@ class RendererStateTest(unittest.TestCase):
         two = renderer._buttons["two"]
         self.assertEqual((one.width, two.width), (144, 144))
         self.assertEqual(one.x + one.width + 12, two.x)
-        self.assertEqual(one.y + one.height, 330)
+        panel = renderer._dialog_bounds[0]
+        self.assertLess(panel[3], 240)
+        self.assertLess(one.y + one.height, panel[1] + panel[3])
 
     def test_title_only_dialog_moves_title_and_preserves_multiline_heading(self):
         renderer = FEATHER.FeatherRenderer()

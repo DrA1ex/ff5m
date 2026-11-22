@@ -330,7 +330,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.feature_manager = FeatureManager()
         for method in set(routes.values()):
             setattr(controller, method,
-                    lambda method=method: called.append(method))
+                    lambda method=method, **kwargs: called.append(method))
         controller._ensure_file_entries = lambda: None
         # Declarative pages are the screen content themselves.
         contents = {

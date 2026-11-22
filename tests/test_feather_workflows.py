@@ -5527,35 +5527,60 @@ class NetworkWorkflowTest(unittest.TestCase):
 
     def test_reconnect_replaces_disabled_home_with_cancelable_progress(self):
         controller = base_controller()
-        controller.page = FEATHER.ScreenPage.NETWORK_HOME
-        controller._render_network_home = lambda: None
-        controller._render_network_progress = lambda: None
-        pages = []
-
-        def show_page(page):
-            controller.page = page
-            pages.append(page)
-
-        controller._show_page = show_page
+        rendering = composed_controller_surface(controller, lambda: None)
+        controller.last_action_time = -1
         sock = attach_network(controller, [
             "MODE=WIFI\nSTATE=CONNECTING\nPROGRESS=RECOVERY\n"])
+        controller._show_page(FEATHER.ScreenPage.NETWORK_HOME)
         controller.network_client._on_readable(100)
 
-        self.assertEqual(pages, [FEATHER.ScreenPage.NETWORK_PROGRESS])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.NETWORK_PROGRESS)
         self.assertIsNone(controller.network_operation)
+        self.assertTrue(rendering.latest.has_text("RECOVERING WI-FI"))
+        self.assertEqual(touchable_actions(controller.renderer), {"net.keep", "net.cancel"})
 
-        controller._handle_network_action("net.cancel")
+        controller._dispatch_action("net.cancel")
         self.assertEqual(sock.sent, ["CANCEL"])
         self.assertTrue(controller.network_cancel_pending)
+        self.assertTrue(rendering.latest.has_text("CANCELLING NETWORK OPERATION"))
+        self.assertEqual(touchable_actions(controller.renderer), {"net.keep"})
 
         sock.pending.append(
             "STATE=DISCONNECTED\nREASON=CANCELLED\nOK CANCELLED\n")
         controller.network_client._on_readable(101)
 
-        self.assertEqual(pages, [
-            FEATHER.ScreenPage.NETWORK_PROGRESS, FEATHER.ScreenPage.NETWORK_HOME])
+        self.assertEqual(controller.page, FEATHER.ScreenPage.NETWORK_HOME)
+        self.assertIsNone(controller._current_dialog())
         self.assertEqual(sock.sent, ["CANCEL"])
         self.assertFalse(controller.network_cancel_pending)
+
+    def test_network_progress_resumes_after_message_and_keep_waiting_leaves_it_running(self):
+        controller = base_controller()
+        rendering = composed_controller_surface(controller, lambda: None)
+        controller.last_action_time = -1
+        sock = attach_network(controller, [
+            "MODE=WIFI\nSTATE=CONNECTING\nPROGRESS=HANDSHAKE\nATTEMPT=2/3\n"])
+        controller._show_page(FEATHER.ScreenPage.NETWORK_HOME)
+        controller._show_message("Network notice", controller.page)
+        controller.network_client._on_readable(100)
+
+        self.assertTrue(rendering.latest.has_text("Network notice"))
+        self.assertEqual(touchable_actions(controller.renderer), {"message.ok"})
+        controller._dispatch_action("message.ok")
+
+        self.assertTrue(rendering.latest.has_text("CHECKING THE PASSWORD"))
+        self.assertTrue(rendering.latest.has_text("ATTEMPT 2 OF 3"))
+        sock.pending.append("PROGRESS=DHCP_WAIT\n")
+        controller.network_client._on_readable(101)
+        self.assertTrue(rendering.latest.has_text("WAITING FOR AN ADDRESS"))
+
+        controller.reactor.now += 1
+        controller._dispatch_action("net.keep")
+
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MAIN_MENU)
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(controller.network_status["state"], "CONNECTING")
+        self.assertEqual(sock.sent, [])
 
     def test_cancelling_snapshot_keeps_ui_busy_until_terminal_verdict(self):
         controller = base_controller()

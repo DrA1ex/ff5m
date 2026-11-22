@@ -202,13 +202,20 @@ def layout_dialog_text(lines, y, width, height, has_buttons, *, page=0,
     return y, height, visible, page, page_count
 
 
+def dialog_body_offset(title_rows):
+    """The first body line follows the rows returned by the dialog layout."""
+    return DIALOG_BODY_Y + (len(title_rows) - 1) * DIALOG_TITLE_LINE_SPACING
+
+
 def dialog_pager_bounds(x, y, width, height, has_buttons,
-                        footer_height=DIALOG_BUTTON_HEIGHT):
+                        footer_height=DIALOG_BUTTON_HEIGHT, *, body_y=DIALOG_BODY_Y):
     """Stack page controls at the right edge, clear of the action row."""
     arrow_x = x + width - DIALOG_PAGER_RIGHT - 40
-    return ((arrow_x, y + DIALOG_BODY_Y - DIALOG_BODY_HALF_HEIGHT
-             - DIALOG_PAGER_ABOVE_BODY, 40, 44),
-            (arrow_x, y + height - (footer_height + 75 if has_buttons else 76), 40, 44),
+    next_y = y + height - (footer_height + 75 if has_buttons else 76)
+    first_y = y + body_y - DIALOG_BODY_HALF_HEIGHT - DIALOG_PAGER_ABOVE_BODY
+    previous_y = min(first_y, next_y - 44 - DIALOG_LINE_SPACING)
+    return ((arrow_x, previous_y, 40, 44),
+            (arrow_x, next_y, 40, 44),
             (arrow_x + 20, y + height // 2))
 
 

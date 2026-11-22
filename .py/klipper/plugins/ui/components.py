@@ -1691,14 +1691,16 @@ class StatusDialog(Dialog):
         if spec.name not in ("lines", "button_groups", "page", "page_actions")) + property_schema(
         _property("detail", (str, int, float), None, kind="text", nullable=True, group="Content"),
         _property("description", (str, int, float), None, kind="text", nullable=True, group="Content"),
+        _property("description_font", str, None, kind="font", nullable=True, group="Appearance"),
         _property("note", (str, int, float), None, kind="text", nullable=True, group="Content"),
         _color("note_color", ThemeColor.TEXT, group="Appearance"))
 
     def __init__(self, title, detail=None, buttons=(), tone="warning", modal=False, description=None, note=None,
-                 note_color=ThemeColor.TEXT, key=None, **kwargs):
+                 note_color=ThemeColor.TEXT, key=None, *, description_font=None, **kwargs):
         super().__init__(title, (), buttons, tone, modal, key=key, **kwargs)
         self.detail = detail
         self.description = description
+        self.description_font = description_font
         self.note = note
         self.note_color = note_color
 
@@ -1708,7 +1710,8 @@ class StatusDialog(Dialog):
             for name, value in self.kwargs.items())
         return renderer.status_dialog(
             resolve(self.title, state), resolve(self.detail, state), resolve_deep(self.buttons, state),
-            description=resolve(self.description, state), note=resolve(self.note, state),
+            description=resolve(self.description, state), description_font=resolve(self.description_font, state),
+            note=resolve(self.note, state),
             note_color=resolve(self.note_color, state), tone=resolve(self.tone, state),
             width=bounds.width, height=bounds.height, modal=resolve(self.modal, state), **kwargs)
 

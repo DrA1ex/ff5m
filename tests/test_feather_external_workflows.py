@@ -196,6 +196,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                 self.assertEqual(self.host.page, page)
                 self.assertIsNone(self.feature())
 
+        self.host._init_network_ui()
         for dialog in Dialog:
             with self.subTest(dialog=dialog):
                 blank_page(self.host)
@@ -207,6 +208,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                                      "actions": ((dialog_ui.OK, "OK", "enabled"),)},
                     Dialog.RENDER_ERROR: {"message": "Frame failed", "title": None,
                                           "actions": ((dialog_ui.RENDER_HOME, "HOME", "enabled"),)},
+                    Dialog.NETWORK_PROGRESS: {"external": True},
                     Dialog.ERROR: {"message": "Configuration failed", "category": "error",
                                    "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},

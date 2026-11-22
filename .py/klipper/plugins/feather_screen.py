@@ -103,7 +103,6 @@ EXACT_ACTIONS = {
     ScreenPage.SETUP_NETWORK: ("nav.back",),
     ScreenPage.WIFI_SCAN: ("nav.back", "net.prev", "net.next", "net.rescan"),
     ScreenPage.WIFI_PASSWORD: ("nav.back", "net.connect", "net.password.toggle"),
-    ScreenPage.NETWORK_PROGRESS: ("net.cancel", "net.keep"),
     ScreenPage.RECOVERY_PROMPT: (
         "recovery.restore", "recovery.cleanup", "recovery.later"),
     ScreenPage.RECOVERY_CONFIRM: ("nav.back", "recovery.confirm"),
@@ -147,6 +146,8 @@ DIALOGS = {
         "_action_prompt_page", 0, frozenset(), False, False),
     ScreenDialog.MESSAGE: DialogSpec(
         "_message_page", 0, frozenset((ScreenDialog.ACTION_PROMPT,)), False, False),
+    ScreenDialog.NETWORK_PROGRESS: DialogSpec(
+        "_network_progress_dialog_page", 0, frozenset(), False, False),
     ScreenDialog.RENDER_ERROR: DialogSpec(
         "_message_page", 0, frozenset(), False, False, backdrop=False),
     ScreenDialog.ERROR: DialogSpec(
@@ -1409,7 +1410,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         for layer in tuple(root.layers):
             root.close(layer, paint=False)
 
-    def _show_dialog(self, dialog, page=None, *, content):
+    def _show_dialog(self, dialog, page=None, *, content, paint=True):
         if not isinstance(dialog, ScreenDialog):
             raise TypeError("screen dialog must be a ScreenDialog member")
         spec = DIALOGS[dialog]
@@ -1441,19 +1442,21 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         if page is not None and page != self.page:
             self._show_page(page)
         self._sync_dialog_layers()
-        if not instance.suspended:
+        if paint and not instance.suspended:
             root.paint()
         return instance
 
-    def _close_dialog(self, dialog):
+    def _close_dialog(self, dialog, *, paint=True):
         root = self._ensure_screen_root()
         instance = (next((layer for layer in reversed(root.layers)
                           if layer.kind == dialog), None)
                     if isinstance(dialog, ScreenDialog) else dialog)
         was_visible = instance in root.visible_layers
         if instance is not None and root.close(instance, paint=False):
+            if paint and self.page == ScreenPage.NETWORK_PROGRESS:
+                self._render_network_progress(paint=False)
             self._sync_dialog_layers()
-            if was_visible or self.page != ScreenPage.OPERATION_CANCEL:
+            if paint and (was_visible or self.page != ScreenPage.OPERATION_CANCEL):
                 root.paint()
 
     def _render_dialog(self):
@@ -1507,6 +1510,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.page = page
         root = getattr(self, "_screen_root", None)
         if root is not None and old_page != page:
+            if old_page == ScreenPage.NETWORK_PROGRESS:
+                self._close_dialog(ScreenDialog.NETWORK_PROGRESS, paint=False)
             self._page_surface = self._new_page_surface()
         self._notify_features("on_page_changed", old_page, page)
         if page == ScreenPage.FILE_BROWSER:
@@ -1526,6 +1531,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
     def _render_screen(self, feature=None, force=False):
         root = self._ensure_screen_root()
         self._page_values_due = True
+        if self.page == ScreenPage.NETWORK_PROGRESS:
+            self._render_network_progress(paint=False)
         self._sync_dialog_layers()
         root.invalidate()
         accepted = root.paint(force=force)
@@ -1567,7 +1574,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         elif page == ScreenPage.WIFI_PASSWORD:
             self._render_keyboard()
         elif page == ScreenPage.NETWORK_PROGRESS:
-            self._render_network_progress()
+            self.renderer.send(self.renderer.begin_page("Network"))
         elif page == ScreenPage.RECOVERY_PROMPT:
             self._render_recovery_prompt()
         elif page == ScreenPage.RECOVERY_CONFIRM:
@@ -2164,7 +2171,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         height = content.get("min_height") or (220 if message else 194)
         return dialog_ui.dialog_page(
             title, (message,) if message else (), actions,
-            width=620, height=height, tone=content.get("tone", "info"))
+            width=620 if message else 480, height=height, tone=content.get("tone", "info"))
 
     @staticmethod
     def _classify_error(message, category=""):
@@ -2287,7 +2294,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         elif route == DialogRoute.CANCEL_HELD_PRINT:
             self._close_dialog(ScreenDialog.MESSAGE)
             self._request_print_cancel(confirmed=True)
-        elif route == DialogRoute.RESET_WIFI_PASSWORD:
+        elif route in (DialogRoute.RESET_WIFI_PASSWORD, DialogRoute.KEEP_WAITING_FOR_NETWORK,
+                       DialogRoute.CANCEL_NETWORK):
             self._handle_network_action(route.value)
         elif route == DialogRoute.CANCEL_COLD_PULL:
             self._open_operation_cancel(self.page)

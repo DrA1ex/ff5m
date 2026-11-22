@@ -38,6 +38,8 @@ class DialogRoute(Enum):
     SAVE_SHAPER = "shaper.save.confirm"
     LEAVE_SHAPER = "shaper.leave.confirm"
     RESET_WIFI_PASSWORD = "net.reset.saved"
+    KEEP_WAITING_FOR_NETWORK = "net.keep"
+    CANCEL_NETWORK = "net.cancel"
     RESTART = "error.restart"
     FIRMWARE_RESTART = "error.firmware_restart"
     CANCEL_COLD_PULL = "coldpull.cancel"
@@ -73,6 +75,8 @@ CANCEL_HELD_PRINT = DialogAction(DialogRoute.CANCEL_HELD_PRINT)
 SAVE_SHAPER = DialogAction(DialogRoute.SAVE_SHAPER)
 LEAVE_SHAPER = DialogAction(DialogRoute.LEAVE_SHAPER)
 RESET_WIFI_PASSWORD = DialogAction(DialogRoute.RESET_WIFI_PASSWORD)
+KEEP_WAITING_FOR_NETWORK = DialogAction(DialogRoute.KEEP_WAITING_FOR_NETWORK)
+CANCEL_NETWORK = DialogAction(DialogRoute.CANCEL_NETWORK)
 RESTART = DialogAction(DialogRoute.RESTART)
 FIRMWARE_RESTART = DialogAction(DialogRoute.FIRMWARE_RESTART)
 CANCEL_COLD_PULL = DialogAction(DialogRoute.CANCEL_COLD_PULL)
@@ -105,31 +109,28 @@ def dialog_page(title, lines, buttons, *, button_groups=(), width=480, height=22
         Rect(0, 0, 800, 480), page_id=AppPage.DIALOG)
 
 
-def status_page(values):
+def status_page(values, *, buttons=(), cancel_action=None, tone="warning", description=None,
+                description_font=None, preserve_header_action=True):
     """The page of a modal status dialog, showing DialogState values, which the screen writes while it shows. A
     tree holds the cancel button or not: when CANCELLABLE changes the dialog opens again."""
     from ui.components import StatusDialog
     from ui.layout import PageTree, Rect
     from ui.layout_helpers import DIALOG_MIN_HEIGHT, DIALOG_MIN_WIDTH
 
-    buttons = ((CANCEL_COLD_PULL, bind(DialogState.CANCEL_LABEL), bind(DialogState.CANCEL_STATE)),
-               ) if values.get(DialogState.CANCELLABLE) else ()
+    if cancel_action is not None and values.get(DialogState.CANCELLABLE):
+        buttons += ((cancel_action, bind(DialogState.CANCEL_LABEL), bind(DialogState.CANCEL_STATE)),)
     return PageTree(
-        StatusDialog(bind(DialogState.TITLE), bind(DialogState.DETAIL), buttons, modal=True).size(
-            DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT),
+        StatusDialog(bind(DialogState.TITLE), bind(DialogState.DETAIL), buttons, tone=tone, modal=True,
+                     description=description, description_font=description_font,
+                     preserve_header_action=preserve_header_action)
+        .size(DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT),
         Rect(0, 0, 800, 480), state=values, page_id=AppPage.DIALOG, state_schema=tuple(DialogState))
 
 
 def touch_unavailable_page():
-    """The warning that replaces an interactive surface until touch input reconnects: nothing on it takes input. A
-    layer keeps the header action only when a Dialog is its root, so this Overlay keeps none."""
-    from ui.components import Dialog, Text
-    from ui.layout import Overlay, PageTree, Rect
-    from ui.theme import ThemeColor
-
-    return PageTree(
-        Overlay(
-            Dialog("Touch input unavailable", (), (), modal=True, custom_body=True).offset(110, 110).size(580, 270),
-            Text("THE TOUCH DEVICE IS NOT AVAILABLE. WAITING FOR AUTOMATIC RECONNECTION.", ThemeColor.TEXT,
-                 "JetBrainsMono 12pt", wrap=True, truncate=True).offset(138, 191).size(524, 108)),
-        Rect(0, 0, 800, 480), page_id=AppPage.DIALOG)
+    """Keep the warning visible until touch returns, with the header action covered."""
+    return status_page(
+        {DialogState.TITLE: "Touch input unavailable"},
+        description="THE TOUCH DEVICE IS NOT AVAILABLE. WAITING FOR AUTOMATIC RECONNECTION.",
+        description_font="JetBrainsMono 12pt",
+        preserve_header_action=False)

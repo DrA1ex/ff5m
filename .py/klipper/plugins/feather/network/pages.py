@@ -19,7 +19,7 @@ from feather.screen.pagination import Pagination
 from ui import ThemeColor
 from ui.lazy import LazyModule
 from ff5m_ui import dialogs as dialog_ui
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 
 
 network_ui = LazyModule("ff5m_ui.network")
@@ -56,18 +56,18 @@ NETWORK_ERRORS = {
 }
 
 NETWORK_PHASES = {
-    "STARTUP": "Checking current network...",
-    "PREPARING": "Preparing Wi-Fi...",
-    "FINDING_NETWORK": "Looking for the selected network...",
-    "ASSOCIATING": "Associating...",
-    "HANDSHAKE": "Checking the password...",
-    "RETRYING": "Restarting Wi-Fi for a fresh attempt...",
-    "ASSOCIATED": "Associated, requesting an address...",
-    "DHCP_WAIT": "Waiting for an address...",
-    "ETHERNET_DHCP": "Ethernet: waiting for an address...",
-    "RECOVERY": "Recovering Wi-Fi...",
-    "NO_CARRIER": "Waiting for Ethernet carrier...",
-    "CANCELLING": "Cancelling network operation...",
+    "STARTUP": "Checking network",
+    "PREPARING": "Preparing Wi-Fi",
+    "FINDING_NETWORK": "Finding Wi-Fi network",
+    "ASSOCIATING": "Joining Wi-Fi",
+    "HANDSHAKE": "Checking the password",
+    "RETRYING": "Retrying Wi-Fi connection",
+    "ASSOCIATED": "Requesting Wi-Fi IP",
+    "DHCP_WAIT": "Waiting for an address",
+    "ETHERNET_DHCP": "Getting Ethernet address",
+    "RECOVERY": "Recovering Wi-Fi",
+    "NO_CARRIER": "Waiting for Ethernet link",
+    "CANCELLING": "Cancelling network operation",
 }
 
 
@@ -202,6 +202,8 @@ class FeatherNetworkPagesMixin:
             self._connect_wifi()
         elif action == "net.cancel":
             self._cancel_network_operation()
+            if self.page == ScreenPage.NETWORK_PROGRESS:
+                self._render_network_progress()
         elif action == "net.keep":
             self._show_page(getattr(
                 self, "network_parent_page", ScreenPage.IDLE_HOME))
@@ -413,38 +415,45 @@ class FeatherNetworkPagesMixin:
     def parse_network_status(text):
         return protocol.parse_status(text)
 
-    def _render_network_progress(self):
-        commands = self.renderer.begin_page("Network")
+    def _network_progress_values(self):
         if self.network_cancel_pending:
             label = NETWORK_PHASES["CANCELLING"]
         elif self.network_operation == "scan":
-            label = "Scanning Wi-Fi..."
+            label = "Scanning Wi-Fi"
         else:
             label = NETWORK_PHASES.get(
-                self.network_status.get("progress", ""), "Connecting...")
-        commands.append(self.renderer.text(
-            400, 230, label, ThemeColor.PRIMARY, "Roboto Bold 16pt",
-            "center", "middle"))
-        attempt = self.network_status.get("attempt", "")
-        attempt_parts = attempt.split("/", 1)
+                self.network_status.get("progress", ""), "Connecting")
+        attempt_parts = self.network_status.get("attempt", "").split("/", 1)
+        detail = ""
         if (len(attempt_parts) == 2
                 and all(part.isdigit() for part in attempt_parts)):
-            commands.append(self.renderer.text(
-                400, 280, "ATTEMPT %s OF %s" % tuple(attempt_parts),
-                ThemeColor.DIM, "JetBrainsMono 8pt", "center", "middle"))
+            detail = "ATTEMPT %s OF %s" % tuple(attempt_parts)
+        state = dialog_ui.DialogState
+        return {
+            state.TITLE: label,
+            state.DETAIL: detail,
+            state.CANCELLABLE: True,
+            state.CANCEL_LABEL: "CANCELLING..." if self.network_cancel_pending else "CANCEL",
+            state.CANCEL_STATE: "busy" if self.network_cancel_pending else "danger",
+        }
 
-        if self.network_operation is None:
-            commands += self.renderer.button(
-                "net.keep", 80, 340, 290, 70, "KEEP WAITING")
-            commands += self.renderer.button(
-                "net.cancel", 430, 340, 290, 70, "CANCEL",
-                state="disabled" if self.network_cancel_pending else "danger")
-        else:
-            commands += self.renderer.button(
-                "net.cancel", 270, 340, 260, 70,
-                "CANCELLING..." if self.network_cancel_pending else "CANCEL",
-                state="disabled" if self.network_cancel_pending else "danger")
-        self.renderer.send(commands)
+    def _network_progress_dialog_page(self, content):
+        buttons = ((dialog_ui.KEEP_WAITING_FOR_NETWORK, "KEEP WAITING", "enabled"),
+                   ) if content["external"] else ()
+        return dialog_ui.status_page(
+            self._network_progress_values(), buttons=buttons,
+            cancel_action=dialog_ui.CANCEL_NETWORK, tone="info")
+
+    def _render_network_progress(self, *, paint=True):
+        root = self._ensure_screen_root()
+        instance = self._find_dialog(ScreenDialog.NETWORK_PROGRESS)
+        external = self.network_operation is None
+        if instance is not None and instance.content["external"] == external:
+            if paint:
+                root.write_layer(instance, self._network_progress_values())
+        elif not root.layers or (instance is not None and instance is self._current_dialog_instance()):
+            self._show_dialog(
+                ScreenDialog.NETWORK_PROGRESS, content={"external": external}, paint=paint)
 
     def _wifi_scan_values(self):
         state = network_ui.ScanState

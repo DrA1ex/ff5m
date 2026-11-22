@@ -15,7 +15,8 @@ def _shown(button):
 class ActionPromptPagesMixin:
     def _action_prompt_page(self, content):
         if content["kind"] in prompt_titles.STATUS_KINDS:
-            return dialog_ui.status_page(self._status_prompt_values(content["kind"]))
+            return dialog_ui.status_page(
+                self._status_prompt_values(content["kind"]), cancel_action=dialog_ui.CANCEL_COLD_PULL)
         return dialog_ui.dialog_page(
             content["title"], tuple(content["text"]), tuple(_shown(button) for button in content["footer"]),
             button_groups=tuple(tuple(_shown(button) for button in row) for row in content["rows"]), tone="info")
