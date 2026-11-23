@@ -108,6 +108,16 @@ class FakeCommand:
         self.responses.append(message)
 
 
+def load_repository_context_registry(printer):
+    parser = configparser.RawConfigParser(inline_comment_prefixes=(";", "#"))
+    parser.read(MODULE_PATH.parents[3] / "macros" / "operation_context.cfg", encoding="utf-8")
+    manager = CONTEXT.load_config(FakeConfig(printer))
+    for section in parser.sections():
+        if section.startswith("operation_context_type "):
+            manager.register_context_type(FakeConfig(printer, section, dict(parser.items(section))))
+    return manager
+
+
 class OperationContextManagerTest(unittest.TestCase):
     def setUp(self):
         self.printer = FakePrinter()
@@ -126,8 +136,6 @@ class OperationContextManagerTest(unittest.TestCase):
         self.register_type(
             "protected", name="Protected task",
             cancel_mode="non_interruptible")
-        self.register_type(
-            "bed_screws", name="Bed Screws", cancel_mode="cancelable")
 
     def register_type(self, type_id, name=None,
                       cancel_mode="interruptible", on_cancel=None):
@@ -200,9 +208,11 @@ class OperationContextManagerTest(unittest.TestCase):
             self.printer.gcode.immediate_commands, ["_CONTEXT_CANCEL"])
 
     def test_fixture_snapshots_match_real_manager_semantics(self):
+        self.printer = FakePrinter()
+        self.manager = load_repository_context_registry(self.printer)
         actual = []
         commands = (
-            ("_CONTEXT_BEGIN", {"TYPE": "bed_screws"}),
+            ("_CONTEXT_BEGIN", {"TYPE": "bed_screws_cooldown"}),
             ("_CONTEXT_STATE", {"NAME": "HOMING"}),
             ("_CONTEXT_STATE", {"NAME": "HEATING"}),
             ("_CONTEXT_STATE", {"NAME": "PROBING"}),
@@ -244,18 +254,8 @@ class OperationContextManagerTest(unittest.TestCase):
             self.register_type("invalid", cancel_mode="sometimes")
 
     def test_repository_registry_applies_product_cancellation_policy(self):
-        parser = configparser.RawConfigParser(
-            inline_comment_prefixes=(";", "#"))
-        parser.read(
-            MODULE_PATH.parents[3] / "macros" / "operation_context.cfg",
-            encoding="utf-8")
         printer = FakePrinter()
-        manager = CONTEXT.OperationContextManager(FakeConfig(printer))
-        for section in parser.sections():
-            if not section.startswith("operation_context_type "):
-                continue
-            manager.register_context_type(FakeConfig(
-                printer, section, dict(parser.items(section))))
+        manager = load_repository_context_registry(printer)
 
         def run(name, **params):
             printer.gcode.commands[name][0](FakeCommand(**params))

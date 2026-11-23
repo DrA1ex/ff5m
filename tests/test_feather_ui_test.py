@@ -39,6 +39,7 @@ from tests.visual_checks import hybrid as HYBRID  # noqa: E402
 from ff5m_ui import state_screens as state_ui  # noqa: E402
 from tests.feather_render_test_helper import RenderCapture, prompt_wire, state_screen  # noqa: E402
 from tests.test_feather_screen import blank_page  # noqa: E402
+from tests.test_operation_context import FakePrinter, load_repository_context_registry  # noqa: E402
 
 
 class AsyncReactor:
@@ -1376,22 +1377,15 @@ class RunnerContractTest(unittest.TestCase):
                 self.assertIn(type_id, CONTEXT_FIXTURES.CONTEXT_TYPES)
 
     def test_operation_context_visual_validation_uses_runtime_registry(self):
-        registered = dict(
-            (type_id, type("Definition", (), {
-                "name": name, "cancel_mode": cancel_mode,
-            })())
-            for type_id, (name, cancel_mode)
-            in CONTEXT_FIXTURES.CONTEXT_TYPES.items())
+        manager = load_repository_context_registry(FakePrinter())
         host = type("Host", (), {
-            "operation_context": type("Manager", (), {
-                "context_types": registered,
-            })(),
+            "operation_context": manager,
         })()
         scenarios = SCENARIOS.ScenarioCatalog(
             type("Run", (), {"host": host})())
 
         scenarios._validate_operation_context_visuals()
-        del registered["bed_screws"]
+        del manager.context_types["bed_screws"]
         with self.assertRaisesRegex(
                 RuntimeError, "without visual coverage"):
             scenarios._validate_operation_context_visuals()

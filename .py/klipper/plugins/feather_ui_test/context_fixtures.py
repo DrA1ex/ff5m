@@ -11,6 +11,8 @@ CONTEXT_TYPES = {
     "print": ("Print", "cancelable"),
     "auto_bed_level": ("Bed Level", "cancelable"),
     "bed_screws": ("Bed Screws", "cancelable"),
+    "bed_screws_cooldown": ("Bed Screws", "cancelable"),
+    "bed_screws_repeat": ("Bed Screws", "cancelable"),
     "bed_level": ("Bed Mesh", "interruptible"),
     "kamp": ("KAMP", "interruptible"),
     "mesh_validation": ("Mesh Validation", "interruptible"),
@@ -51,6 +53,19 @@ VISUAL_CONTEXTS = (
             None, "HOMING", "HEATING", "HEATING NOZZLE",
             "COOLING NOZZLE", "PROBING",
         ),
+    },
+    {
+        "type": "bed_screws_cooldown", "path": ("bed_screws_cooldown",),
+        "surface": "calibration", "kind": "screws",
+        "states": (
+            None, "HOMING", "HEATING", "HEATING NOZZLE",
+            "COOLING NOZZLE", "PROBING",
+        ),
+    },
+    {
+        "type": "bed_screws_repeat", "path": ("bed_screws_repeat",),
+        "surface": "calibration", "kind": "screws",
+        "states": (None, "PROBING"),
     },
     {
         "type": "bed_level", "path": ("auto_bed_level", "bed_level"),
@@ -316,7 +331,7 @@ def expand_events(events, wait_variants=(), optional_variants=None):
 
 NO_CONTEXT = ()
 SCREWS = (
-    ("begin", "bed_screws"), ("optional_state", "HOMING"),
+    ("begin", "bed_screws_cooldown"), ("optional_state", "HOMING"),
     ("state", "HEATING"), ("wait", "NOZZLE"),
     ("state", "PROBING"), ("end",),
 )

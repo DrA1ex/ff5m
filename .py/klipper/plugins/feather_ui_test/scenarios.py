@@ -1437,10 +1437,11 @@ class ScenarioCatalog:
     def _render_operation_calibration(self, operation, kind,
                                       previous_states):
         feature = self.host.feature_manager.get("calibration")
+        context_type = operation["context_types"][0]
         values = {
             "calibration_kind": kind,
-            "calibration_repeat_probe": False,
-            "calibration_clean_nozzle": True,
+            "calibration_repeat_probe": context_type == "bed_screws_repeat",
+            "calibration_clean_nozzle": context_type != "bed_screws_cooldown",
             "calibration_cancel_requested": False,
             "calibration_progress_key": None,
             "calibration_seen_phases": set(),
