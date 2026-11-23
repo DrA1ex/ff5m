@@ -1,8 +1,9 @@
 ## Semantic actions for the declarative Heat/Fan page.
+##
+## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
+## This file may be distributed under the terms of the GNU GPLv3 license
 
-from enum import Enum
-
-from ui.actions import Command, CoolingHint, HeatingHint
+from ui.actions import Back, Command, CoolingHint, HeatingHint
 from ui.identity import CommandKey
 
 
@@ -14,6 +15,10 @@ class HeatCommand(CommandKey):
     BED_MINUS = "heat.bed.minus"
     BED_PLUS = "heat.bed.plus"
     BED_OFF = "heat.bed.off"
+    EDIT_NOZZLE_TARGET = "heat.nozzle.edit_target"
+    EDIT_BED_TARGET = "heat.bed.edit_target"
+    TARGET_KEY = "heat.target.key"
+    APPLY_TARGET = "heat.target.apply"
     FAN_0 = "heat.fan.0"
     FAN_50 = "heat.fan.50"
     FAN_100 = "heat.fan.100"
@@ -33,6 +38,10 @@ BED_PLUS = Command(
     HeatCommand.BED_PLUS, hint=HeatingHint("heater_bed", "+5"))
 BED_OFF = Command(
     HeatCommand.BED_OFF, hint=CoolingHint("heater_bed"))
+EDIT_NOZZLE_TARGET = Command(HeatCommand.EDIT_NOZZLE_TARGET)
+EDIT_BED_TARGET = Command(HeatCommand.EDIT_BED_TARGET)
+APPLY_TARGET = Command(HeatCommand.APPLY_TARGET)
+CANCEL_TARGET = Back()
 FAN_0 = Command(HeatCommand.FAN_0)
 FAN_50 = Command(HeatCommand.FAN_50)
 FAN_100 = Command(HeatCommand.FAN_100)
@@ -43,18 +52,4 @@ def preheat(material):
     return Command(
         HeatCommand.PREHEAT, str(material),
         hint=HeatingHint("material", str(material)))
-
-
-LEGACY_ACTIONS = {
-    HeatCommand.NOZZLE_MINUS: "heat.eminus",
-    HeatCommand.NOZZLE_PLUS: "heat.eplus",
-    HeatCommand.NOZZLE_OFF: "heat.eoff",
-    HeatCommand.BED_MINUS: "heat.bminus",
-    HeatCommand.BED_PLUS: "heat.bplus",
-    HeatCommand.BED_OFF: "heat.boff",
-    HeatCommand.FAN_0: "heat.fan0",
-    HeatCommand.FAN_50: "heat.fan50",
-    HeatCommand.FAN_100: "heat.fan100",
-    HeatCommand.COOLDOWN: "heat.alloff",
-}
 

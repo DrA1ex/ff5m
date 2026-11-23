@@ -24,6 +24,7 @@ from ui import (  # noqa: E402
 from ff5m_ui.move import runtime as move  # noqa: E402
 from ff5m_ui.move import geometry as move_geometry  # noqa: E402
 from ff5m_ui.heat import runtime as heat  # noqa: E402
+from ff5m_ui.heat.page import create_page as create_heat_page  # noqa: E402
 from ff5m_ui.filament import runtime as filament  # noqa: E402
 from ff5m_ui.printing import runtime as printing  # noqa: E402
 from ff5m_ui.printing.page import create_page as create_printing_page  # noqa: E402
@@ -919,63 +920,7 @@ class HeatLayoutTest(unittest.TestCase):
     MATERIALS = ("PLA", "PETG", "ABS", "ABS-PC", "TPU")
 
     def setUp(self):
-        self.page = heat.get_page(self.MATERIALS)
-
-    def assert_ordered_without_overlap(self, refs):
-        rectangles = [self.page.rect(ref) for ref in refs]
-        for previous, following in zip(rectangles, rectangles[1:]):
-            self.assertLessEqual(previous.right, following.x)
-
-    def test_fan_row_has_independent_non_overlapping_tracks(self):
-        refs = (
-            heat.HeatRef.FAN_LABEL, heat.HeatRef.FAN_VALUE,
-            heat.HeatRef.FAN_0, heat.HeatRef.FAN_50,
-            heat.HeatRef.FAN_100,
-        )
-
-        self.assert_ordered_without_overlap(refs)
-        label = self.page.rect(heat.HeatRef.FAN_LABEL)
-        self.assertGreaterEqual(
-            label.width,
-            FeatherRenderer.text_width("PART FAN", "JetBrainsMono 8pt"))
-        for ref in refs:
-            rectangle = self.page.rect(ref)
-            self.assertGreaterEqual(rectangle.x, self.page.bounds.x)
-            self.assertLessEqual(rectangle.right, self.page.bounds.right)
-
-    def test_heater_rows_share_the_same_grid_geometry(self):
-        nozzle = (
-            heat.HeatRef.NOZZLE_LABEL, heat.HeatRef.NOZZLE_VALUE,
-            heat.HeatRef.NOZZLE_MINUS, heat.HeatRef.NOZZLE_PLUS,
-            heat.HeatRef.NOZZLE_OFF,
-        )
-        bed = (
-            heat.HeatRef.BED_LABEL, heat.HeatRef.BED_VALUE,
-            heat.HeatRef.BED_MINUS, heat.HeatRef.BED_PLUS,
-            heat.HeatRef.BED_OFF,
-        )
-
-        self.assert_ordered_without_overlap(nozzle)
-        self.assert_ordered_without_overlap(bed)
-        self.assertEqual(
-            [self.page.rect(ref).x for ref in nozzle],
-            [self.page.rect(ref).x for ref in bed])
-        self.assertLess(
-            self.page.rect(heat.HeatRef.HEATERS).bottom,
-            self.page.rect(heat.HeatRef.FAN_ROW).y)
-
-    def test_five_presets_are_centered_inside_content(self):
-        presets = [self.page.rect("heat.preset.%d" % index)
-                   for index in range(5)]
-
-        for previous, following in zip(presets, presets[1:]):
-            self.assertLessEqual(previous.right, following.x)
-        self.assertEqual(
-            (presets[0].x + presets[-1].right) // 2,
-            self.page.bounds.center[0])
-        self.assertLess(
-            self.page.rect(heat.HeatRef.PRESETS).bottom,
-            self.page.rect(heat.HeatRef.COOLDOWN).y)
+        self.page = create_heat_page(self.MATERIALS)
 
     def test_actions_are_typed_and_preserve_material_order(self):
         preheats = [

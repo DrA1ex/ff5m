@@ -148,6 +148,8 @@ DIALOGS = {
         "_message_page", 0, frozenset((ScreenDialog.ACTION_PROMPT,)), False, False),
     ScreenDialog.NETWORK_PROGRESS: DialogSpec(
         "_network_progress_dialog_page", 0, frozenset(), False, False),
+    ScreenDialog.HEAT_TARGET: DialogSpec(
+        "_heat_target_page", 0, frozenset(), False, False, backdrop=False),
     ScreenDialog.RENDER_ERROR: DialogSpec(
         "_message_page", 0, frozenset(), False, False, backdrop=False),
     ScreenDialog.ERROR: DialogSpec(
@@ -1247,8 +1249,6 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                 self._handle_print_action(action)
             elif action.startswith("exclude."):
                 self._handle_exclude_action(action)
-            elif action.startswith("heat."):
-                self._handle_heat_action(action)
             elif action.startswith("recovery."):
                 self._handle_recovery_action(action)
             elif action.startswith("update."):
@@ -1512,6 +1512,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         if root is not None and old_page != page:
             if old_page == ScreenPage.NETWORK_PROGRESS:
                 self._close_dialog(ScreenDialog.NETWORK_PROGRESS, paint=False)
+            elif old_page == ScreenPage.CONTROL_HEAT:
+                self._close_dialog(ScreenDialog.HEAT_TARGET, paint=False)
             self._page_surface = self._new_page_surface()
         self._notify_features("on_page_changed", old_page, page)
         if page == ScreenPage.FILE_BROWSER:
@@ -1585,6 +1587,9 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
             self.update_notification.render()
 
     def _go_back(self):
+        if self._current_dialog() == ScreenDialog.HEAT_TARGET:
+            self._close_dialog(ScreenDialog.HEAT_TARGET)
+            return
         if self.page == ScreenPage.EXCLUDE_MODEL:
             self._show_page(self.page_for_print_state())
             return

@@ -60,6 +60,7 @@ UI_SUITE_LABELS = frozenset((
     "ui-control",
     "ui-move",
     "ui-heat",
+    "ui-heat-target",
     "ui-calibration",
     "ui-calibration-variants",
     "ui-calibration-guide-axes",

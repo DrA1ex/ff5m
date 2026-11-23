@@ -3172,35 +3172,44 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertEqual(controller._limited_preheat("ABS"), (250, 85))
 
     def test_first_manual_heat_tap_snaps_to_nearest_actual_temperature(self):
-        heaters = (
-            (HEAT_ACTIONS.NOZZLE_PLUS, HEAT_ACTIONS.NOZZLE_MINUS, "M104"),
-            (HEAT_ACTIONS.BED_PLUS, HEAT_ACTIONS.BED_MINUS, "M140"),
-        )
-        for plus, minus, command in heaters:
-            for temperature, expected in ((25.5, 25), (28.0, 30),
-                                          (68.0, 70), (22.5, 25)):
-                for action in (plus, minus):
-                    with self.subTest(action=action.key, temperature=temperature):
-                        controller = ScenarioController.__new__(ScenarioController)
-                        controller.reactor = DeferredReactor()
-                        controller.extruder = StatusObject({
-                            "temperature": 180.0, "target": 185.0})
-                        controller.extruder.heater = type(
-                            "Heater", (), {"min_temp": 0, "max_temp": 300})()
-                        controller.heater_bed = StatusObject({
-                            "temperature": 90.0, "target": 100.0})
-                        controller.heater_bed.min_temp = 0
-                        controller.heater_bed.max_temp = 130
-                        selected = (controller.extruder if command == "M104"
-                                    else controller.heater_bed)
-                        selected.status.update(
-                            temperature=temperature, target=0.0)
-                        commands = []
-                        controller._run_script = commands.append
+        for action, command in (
+            (HEAT_ACTIONS.NOZZLE_MINUS, "M104"),
+            (HEAT_ACTIONS.BED_PLUS, "M140"),
+            (HEAT_ACTIONS.BED_MINUS, "M140"),
+        ):
+            for temperature, expected in ((25.5, 25), (28.0, 30), (68.0, 70), (22.5, 25)):
+                with self.subTest(action=action.key, temperature=temperature):
+                    controller = ScenarioController.__new__(ScenarioController)
+                    controller.reactor = DeferredReactor()
+                    heater = StatusObject({"temperature": temperature, "target": 0})
+                    heater.min_temp, heater.max_temp = 0, 130
+                    heater.heater = heater
+                    controller.extruder = controller.heater_bed = heater
+                    commands = []
+                    controller._run_script = commands.append
 
-                        controller._handle_heat_command(action)
+                    controller._handle_heat_command(action)
 
-                        self.assertEqual(commands, ["%s S%d" % (command, expected)])
+                    self.assertEqual(commands, ["%s S%d" % (command, expected)])
+
+    def test_first_nozzle_increase_uses_cooldown_within_heater_limits(self):
+        for settings, max_temp, expected in (
+            ({}, 300, "M104 S150"),
+            ({"clear_cooldown_temp": 163}, 300, "M104 S163"),
+            ({"clear_cooldown_temp": 163}, 151, "M104 S150"),
+        ):
+            with self.subTest(settings=settings, max_temp=max_temp):
+                controller = ScenarioController.__new__(ScenarioController)
+                controller.reactor = DeferredReactor()
+                controller.params = SimpleNamespace(variables=settings)
+                controller.extruder = StatusObject({"temperature": 25.5, "target": 0})
+                controller.extruder.heater = SimpleNamespace(min_temp=0, max_temp=max_temp)
+                commands = []
+                controller._run_script = commands.append
+
+                controller._handle_heat_command(HEAT_ACTIONS.NOZZLE_PLUS)
+
+                self.assertEqual(commands, [expected])
 
     def test_manual_heat_taps_continue_from_target_and_obey_limits(self):
         for plus, minus, off, command in (

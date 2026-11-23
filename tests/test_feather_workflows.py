@@ -22,19 +22,22 @@ try:
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject, paint_home, paint_printing)
     from tests.feather_render_test_helper import (
         paint_content,
-        RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, touchable_actions, typer_events)
+        RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, shown_hitboxes, tapped_action,
+        touchable_actions, typer_events)
 except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject, paint_home, paint_printing)
     from feather_render_test_helper import (
         paint_content,
-        RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, touchable_actions, typer_events)
+        RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, shown_hitboxes, tapped_action,
+        touchable_actions, typer_events)
 
-from ui import CONTENT_BOTTOM, Increment
+from ui import CONTENT_BOTTOM, Command, Increment
 from ff5m_ui import dialogs as dialog_ui
 from ui.font_metrics import get_font_metrics
 from ff5m_ui.move import runtime as MOVE_UI
 from ff5m_ui.move.step import page as MOVE_STEP_PAGE
+from ff5m_ui.heat import actions as HEAT_ACTIONS
 from ff5m_ui.heat import runtime as HEAT_UI
 from ff5m_ui.printing import runtime as printing_ui
 from ff5m_ui.filament import runtime as FILAMENT_UI
@@ -3974,6 +3977,89 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller._update_heat_status(101)
         self.assertGreater(len(rendering.frames), 1)
 
+    def _heat_target_screen(self):
+        controller = base_controller()
+        controller.renderer = FEATHER.FeatherRenderer()
+        RenderCapture(controller.renderer)
+        controller.last_action_time = 0.0
+        controller.extruder = StatusObject({"temperature": 25.0, "target": 0})
+        controller.extruder.heater = SimpleNamespace(min_temp=10, max_temp=251)
+        controller.heater_bed = StatusObject({"temperature": 24.0, "target": 60})
+        controller.heater_bed.min_temp, controller.heater_bed.max_temp = 40, 91
+        controller.fan = None
+        controller._last_heat = None
+        controller._render_screen = lambda feature=None: FEATHER.FeatherScreen._render_screen(controller, feature)
+        controller._show_page(FEATHER.ScreenPage.CONTROL_HEAT)
+        return controller
+
+    def _tap_heat_control(self, controller, action):
+        wire = action if isinstance(action, str) else action.wire_id
+        self.assertIn(wire, controller.renderer.shown_actions())
+        controller.reactor.now += 1.0
+        controller._handle_touch_action(wire)
+
+    def _enter_heat_target_digits(self, controller, digits):
+        for digit in digits:
+            self._tap_heat_control(controller, Command(HEAT_ACTIONS.HeatCommand.TARGET_KEY, digit))
+
+    def test_exact_heat_targets_are_applied_to_the_selected_heater(self):
+        for edit, digits, expected in (
+            (HEAT_ACTIONS.EDIT_NOZZLE_TARGET, "237", "M104 S237"),
+            (HEAT_ACTIONS.EDIT_BED_TARGET, "73", "M140 S73"),
+        ):
+            with self.subTest(heater=edit.key):
+                controller = self._heat_target_screen()
+                self._tap_heat_control(controller, edit)
+                self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.HEAT_TARGET)
+                self._enter_heat_target_digits(controller, digits)
+                self.assertEqual(controller.gcode.commands, [])
+
+                self._tap_heat_control(controller, HEAT_ACTIONS.APPLY_TARGET)
+
+                self.assertEqual(controller.gcode.commands, [expected])
+                self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HEAT)
+                self.assertIsNone(controller._current_dialog())
+
+    def test_tapping_the_heater_heading_or_current_temperature_opens_the_target_editor(self):
+        for editor, refs in (
+            (HEAT_ACTIONS.EDIT_NOZZLE_TARGET, (HEAT_UI.HeatRef.NOZZLE_LABEL, HEAT_UI.HeatRef.NOZZLE_VALUE)),
+            (HEAT_ACTIONS.EDIT_BED_TARGET, (HEAT_UI.HeatRef.BED_LABEL, HEAT_UI.HeatRef.BED_VALUE)),
+        ):
+            for ref in refs:
+                with self.subTest(area=ref):
+                    controller = self._heat_target_screen()
+                    area = HEAT_UI.get_page(controller.heating_materials).rect(ref)
+                    action = tapped_action(shown_hitboxes(controller.renderer), *area.center)
+                    self.assertEqual(action, editor.wire_id)
+                    self._tap_heat_control(controller, action)
+                    self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.HEAT_TARGET)
+                    self._tap_heat_control(controller, "nav.back")
+                    self.assertIsNone(controller._current_dialog())
+                    self.assertEqual(controller.gcode.commands, [])
+
+    def test_out_of_range_heat_target_is_rejected_and_back_discards_the_draft(self):
+        controller = self._heat_target_screen()
+        apply_wire = HEAT_ACTIONS.APPLY_TARGET.wire_id
+        for digits in ("9", "251"):
+            with self.subTest(digits=digits):
+                self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_NOZZLE_TARGET)
+                self._enter_heat_target_digits(controller, digits)
+                self.assertNotIn(apply_wire, controller.renderer.shown_actions())
+                controller.reactor.now += 1.0
+                controller._dispatch_action(apply_wire)
+                self.assertEqual(controller.gcode.commands, [])
+                self._tap_heat_control(controller, "nav.back")
+                self.assertIsNone(controller._current_dialog())
+
+        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_NOZZLE_TARGET)
+        self.assertNotIn(apply_wire, controller.renderer.shown_actions())
+        self._enter_heat_target_digits(controller, "250")
+        self.assertIn(apply_wire, controller.renderer.shown_actions())
+        self._tap_heat_control(controller, "nav.back")
+        self.assertEqual(controller.gcode.commands, [])
+        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_NOZZLE_TARGET)
+        self.assertNotIn(apply_wire, controller.renderer.shown_actions())
+
     def test_heat_values_are_written_inside_the_screen_transaction(self):
         # A frame loop may take the screen's tree between transactions on its own thread.
         controller = base_controller()
@@ -4000,6 +4086,16 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller._update_heat_status(101)
 
         self.assertEqual(writes, [True, True])
+
+    def test_heat_page_shows_existing_telemetry_when_the_preset_list_changes(self):
+        controller = self._heat_target_screen()
+        rendering = RenderCapture(controller.renderer)
+
+        controller.heating_materials = ("TPU-95A", "PLA")
+        controller._render_screen()
+
+        self.assertTrue(rendering.latest.has_text("25.0 C"))
+        self.assertTrue(rendering.latest.has_text("24.0 C"))
 
     def test_empty_heating_keeps_manual_heat_controls_without_preset_hitboxes(self):
         controller = base_controller()
@@ -4203,9 +4299,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.heater_bed.max_temp = 91
         controller.fan = StatusObject({"speed": 0.0})
 
-        controller._handle_heat_action("heat.preheat.ABS")
-        controller._handle_heat_action("heat.fan50")
-        controller._handle_heat_action("heat.alloff")
+        controller._handle_heat_command(HEAT_ACTIONS.preheat("ABS"))
+        controller._handle_heat_command(HEAT_ACTIONS.FAN_50)
+        controller._handle_heat_command(HEAT_ACTIONS.COOLDOWN)
         self.assertEqual(controller.gcode.commands, [
             "PREHEAT_MATERIAL MATERIAL=ABS EXTRUDER_TEMP=250 BED_TEMP=85",
             "SET_FAN_SPEED FAN=fanM106 SPEED=0.50", "TURN_OFF_HEATERS"])

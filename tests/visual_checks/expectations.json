@@ -2140,6 +2140,26 @@
                 "configured presets"
             ]
         },
+        "printer:ui-heat-target":
+        {
+            "description": "Heat / Fan target entry using the standard Feather numeric editor.",
+            "required":
+            [
+                "nozzle target editor with an allowed temperature range",
+                "integer keypad with apply and the standard Back button"
+            ],
+            "forbidden":
+            [
+                "blank or corrupted framebuffer",
+                "overlapping controls",
+                "clipped important content"
+            ],
+            "allowed_variations":
+            [
+                "configured heater limits",
+                "theme colors"
+            ]
+        },
         "printer:ui-home":
         {
             "description": "Real-printer normal home screen.",

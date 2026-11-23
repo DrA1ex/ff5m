@@ -20,6 +20,7 @@ except ImportError:
 
 
 from ff5m_ui import dialogs as dialog_ui
+from ui import NumericInputSpec
 
 FEATHER = lazy_tests.FEATHER
 Page = FEATHER.ScreenPage
@@ -213,6 +214,7 @@ class ExternalWorkflowTest(unittest.TestCase):
                                    "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},
                     Dialog.PRINT_MORE: {},
+                    Dialog.HEAT_TARGET: {"nozzle": True, "spec": NumericInputSpec("integer", minimum=1, maximum=299)},
                 }[dialog]
                 self.host._show_dialog(dialog, content=content)
                 self.begin("pid_bed")

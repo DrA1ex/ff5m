@@ -9,7 +9,7 @@ import math
 import re
 from timelapse_state import TimelapsePhase
 from ui import (
-        Back, Command, Increment, Navigate, Replace, SetValue, ThemeColor,
+        Back, Command, Increment, Navigate, NumericInputSpec, Replace, SetValue, ThemeColor,
         Toggle,
     )
 from ui.lazy import LazyModule
@@ -24,6 +24,7 @@ from ff5m_ui.move.geometry import (
         JOYSTICK_Z_CENTER, JOYSTICK_Z_RADIUS,
     )
 from ff5m_ui.heat import runtime as heat_ui
+from ff5m_ui.heat.actions import HeatCommand
 from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
 from feather.control import joystick as joystick_ui
 from feather.screen.pagination import Pagination, pagination_footer
@@ -42,6 +43,19 @@ SAFE_Z_ADJUST_STEP = 1.0
 JOG_STEP_MINIMUM = 0.1
 JOG_STEP_MAXIMUM = 100.0
 
+HEATER_STEPS = {
+    HeatCommand.NOZZLE_MINUS: (True, -5),
+    HeatCommand.NOZZLE_PLUS: (True, 5),
+    HeatCommand.NOZZLE_OFF: (True, 0),
+    HeatCommand.BED_MINUS: (False, -5),
+    HeatCommand.BED_PLUS: (False, 5),
+    HeatCommand.BED_OFF: (False, 0),
+}
+PART_FAN_SPEEDS = {
+    HeatCommand.FAN_0: 0,
+    HeatCommand.FAN_50: 50,
+    HeatCommand.FAN_100: 100,
+}
 
 MOVE_SAFE_Z_MAX_MARGIN = 10.0
 Z_WEIGHT_GAUGE = (710, 72, 70, 358)
@@ -435,7 +449,7 @@ class FeatherControlsMixin:
         if self.page == ScreenPage.IDLE_HOME:
             return home_ui.PAGE
         if self.page == ScreenPage.CONTROL_HEAT:
-            return heat_ui.get_page(self.heating_materials)
+            return self._heat_page()
         if self.page in (ScreenPage.PRINTING, ScreenPage.PAUSED):
             return printing_ui.get_page()
         if self.page == ScreenPage.CONTROL_MOVE:
@@ -592,7 +606,7 @@ class FeatherControlsMixin:
                 return
             raise KeyError("Unsupported product increment: %s" % action.key)
         if isinstance(action, Command):
-            if isinstance(action.key, heat_ui.HeatCommand):
+            if isinstance(action.key, HeatCommand):
                 self._handle_heat_command(action)
                 return
             if isinstance(action.key, move_ui.MoveCommand):
@@ -604,17 +618,38 @@ class FeatherControlsMixin:
         raise TypeError("Unsupported semantic action: %r" % (action,))
 
     def _handle_heat_command(self, command):
-        if command.key == heat_ui.HeatCommand.PREHEAT:
+        key = command.key
+        if key in (HeatCommand.EDIT_NOZZLE_TARGET, HeatCommand.EDIT_BED_TARGET):
+            self._open_heat_target(nozzle=key == HeatCommand.EDIT_NOZZLE_TARGET)
+            return
+        if key in (HeatCommand.TARGET_KEY, HeatCommand.APPLY_TARGET):
+            self._handle_heat_target_command(command)
+            return
+        if key in HEATER_STEPS:
+            self._adjust_heat_target(*HEATER_STEPS[key])
+        elif key == HeatCommand.COOLDOWN:
+            self._run_script("TURN_OFF_HEATERS")
+            self._toast("Heaters turned off")
+        elif key == HeatCommand.PREHEAT:
             material = str(command.payload)
             if material not in self.heating_materials:
-                raise RuntimeError(
-                    "Unknown or inactive heating material: %s" % material)
-            self._handle_heat_action("heat.preheat.%s" % material)
-            return
-        action = heat_ui.LEGACY_ACTIONS.get(command.key)
-        if action is None:
-            raise KeyError("Unsupported Heat command: %s" % command.key)
-        self._handle_heat_action(action)
+                raise RuntimeError("Unknown or inactive heating material: %s" % material)
+            nozzle, bed = self._limited_preheat(material)
+            self.filament_material = material
+            self._run_script(
+                "PREHEAT_MATERIAL MATERIAL=%s EXTRUDER_TEMP=%.0f BED_TEMP=%.0f" %
+                (material, nozzle, bed))
+            self._toast("%s preheat: %.0f/%.0fC" % (material, nozzle, bed))
+        elif key in PART_FAN_SPEEDS:
+            if getattr(self, "fan", None) is None:
+                raise RuntimeError("Part fan is not configured")
+            percent = PART_FAN_SPEEDS[key]
+            self._run_script("SET_FAN_SPEED FAN=fanM106 SPEED=%.2f" % (percent / 100.0))
+            self._toast("Fan: %d%%" % percent)
+        else:
+            raise KeyError("Unsupported Heat command: %s" % key)
+        self.reactor.register_callback(self._refresh_heat_after_action,
+                                       self.reactor.monotonic() + 0.1)
 
     def _handle_move_command(self, command):
         self._require_idle()
@@ -739,8 +774,49 @@ class FeatherControlsMixin:
         else:
             raise KeyError("Unsupported Z-offset command: %s" % key)
 
+    def _heat_page(self):
+        return heat_ui.get_page(self.heating_materials, self.renderer)
+
     def _heat_content(self):
-        return heat_ui.get_page(self.heating_materials), "Heat / fan", True
+        return self._heat_page(), "Heat / fan", True
+
+    def _open_heat_target(self, nozzle):
+        self._require_idle()
+        heater = self.extruder.heater if nozzle else self.heater_bed
+        minimum, maximum = self._heater_target_limits(heater, 300 if nozzle else 130)
+        maximum = math.floor(maximum)
+        spec = NumericInputSpec("integer", minimum=max(1, math.ceil(minimum)),
+                                maximum=maximum, max_length=len(str(maximum)))
+        self._show_dialog(ScreenDialog.HEAT_TARGET, content={"nozzle": nozzle, "spec": spec})
+
+    def _heat_target_page(self, content):
+        return heat_ui.target_editor_page(content["nozzle"], content["spec"], self.renderer,
+                                          self._heat_page().bounds)
+
+    def _handle_heat_target_command(self, command):
+        instance = self._current_dialog_instance()
+        if self.page != ScreenPage.CONTROL_HEAT or instance is None or instance.kind != ScreenDialog.HEAT_TARGET:
+            return
+        spec = instance.content["spec"]
+        draft_key = heat_ui.HeatTargetState.DRAFT
+        draft = instance.node.state[draft_key]
+        if command.key == HeatCommand.TARGET_KEY:
+            value = spec.apply(draft, command.payload)
+            if value != draft:
+                self._ensure_screen_root().write_layer(instance, {draft_key: value})
+            return
+        try:
+            target = spec.parse(draft)
+        except ValueError:
+            return
+        self._require_idle()
+        self._set_heat_target(instance.content["nozzle"], target)
+        self._close_dialog(instance, paint=False)
+        if self.page == ScreenPage.CONTROL_HEAT:
+            self._paint_page_values()
+
+    def _set_heat_target(self, nozzle, target):
+        self._run_script("%s S%.0f" % ("M104" if nozzle else "M140", target))
 
     def _heat_ui_values(self, eventtime):
         extruder = self.extruder.get_status(eventtime)
@@ -765,63 +841,33 @@ class FeatherControlsMixin:
 
     def _write_heat_values(self, eventtime):
         """Write the heaters and fan into the page when they changed; return whether it did."""
+        page = self._heat_page()
         values, signature = self._heat_ui_values(eventtime)
-        if signature == self._last_heat:
+        snapshot = page, signature
+        if snapshot == self._last_heat:
             return False
-        self._last_heat = signature
-        heat_ui.get_page(self.heating_materials).state.update(values)
+        page.state.update(values)
+        self._last_heat = snapshot
         return True
 
     def _update_heat_status(self, eventtime):
-        if self._heat_ui_values(eventtime)[1] != self._last_heat:
+        if (self._heat_page(), self._heat_ui_values(eventtime)[1]) != self._last_heat:
             self._paint_page_values()
 
-    def _handle_heat_action(self, action):
-        now = self.reactor.monotonic()
-        if action.startswith("heat.e"):
-            status = self.extruder.get_status(now)
-            target = status["target"]
-            if action in ("heat.eplus", "heat.eminus"):
-                if target <= 0:
-                    target = int(float(status["temperature"]) / 5 + 0.5) * 5
-                else:
-                    target += 5 if action == "heat.eplus" else -5
-            else:
-                target = 0
-            target = self._clamp_heater_target(target, self.extruder.heater, 300)
-            self._run_script("M104 S%.0f" % target)
-        elif action.startswith("heat.b"):
-            status = self.heater_bed.get_status(now)
-            target = status["target"]
-            if action in ("heat.bplus", "heat.bminus"):
-                if target <= 0:
-                    target = int(float(status["temperature"]) / 5 + 0.5) * 5
-                else:
-                    target += 5 if action == "heat.bplus" else -5
-            else:
-                target = 0
-            target = self._clamp_heater_target(target, self.heater_bed, 130)
-            self._run_script("M140 S%.0f" % target)
-        elif action == "heat.alloff":
-            self._run_script("TURN_OFF_HEATERS")
-            self._toast("Heaters turned off")
-        elif action.startswith("heat.preheat."):
-            material = action.rsplit(".", 1)[1]
-            nozzle, bed = self._limited_preheat(material)
-            self.filament_material = material
-            self._run_script(
-                "PREHEAT_MATERIAL MATERIAL=%s EXTRUDER_TEMP=%.0f BED_TEMP=%.0f" %
-                (material, nozzle, bed))
-            self._toast("%s preheat: %.0f/%.0fC" % (material, nozzle, bed))
-        elif action.startswith("heat.fan"):
-            if getattr(self, "fan", None) is None:
-                raise RuntimeError("Part fan is not configured")
-            percent = int(action[len("heat.fan"):])
-            self._run_script(
-                "SET_FAN_SPEED FAN=fanM106 SPEED=%.2f" % (percent / 100.0))
-            self._toast("Fan: %d%%" % percent)
-        self.reactor.register_callback(self._refresh_heat_after_action,
-                                      self.reactor.monotonic() + 0.1)
+    def _adjust_heat_target(self, nozzle, step):
+        if step == 0:
+            self._set_heat_target(nozzle, 0)
+            return
+        device = self.extruder if nozzle else self.heater_bed
+        status = device.get_status(self.reactor.monotonic())
+        if status["target"] > 0:
+            target = status["target"] + step
+        elif nozzle and step > 0:
+            target = self._setting("clear_cooldown_temp", 150)
+        else:
+            target = int(float(status["temperature"]) / 5 + 0.5) * 5
+        heater = device.heater if nozzle else device
+        self._set_heat_target(nozzle, self._clamp_heater_target(target, heater, 300 if nozzle else 130))
 
     def _refresh_heat_after_action(self, eventtime):
         # The toast the action showed stays over the page's new frame.
@@ -829,11 +875,16 @@ class FeatherControlsMixin:
             self._render_screen()
 
     @staticmethod
-    def _clamp_heater_target(target, heater, default_max):
-        if target <= 0:
-            return 0
+    def _heater_target_limits(heater, default_max):
         minimum = max(0, getattr(heater, "min_temp", 0))
         maximum = max(minimum, getattr(heater, "max_temp", default_max) - 1)
+        return minimum, maximum
+
+    @classmethod
+    def _clamp_heater_target(cls, target, heater, default_max):
+        if target <= 0:
+            return 0
+        minimum, maximum = cls._heater_target_limits(heater, default_max)
         return max(minimum, min(target, maximum))
 
     def _limited_preheat(self, material):

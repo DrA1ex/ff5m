@@ -68,3 +68,4 @@ class ScreenDialog(Enum):
     PRINT_MORE = 6
     RENDER_ERROR = 7
     NETWORK_PROGRESS = 8
+    HEAT_TARGET = 9

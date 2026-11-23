@@ -23,7 +23,11 @@ VALUE = ComponentTemplate(
     HeatComponent.VALUE,
     parameters=(VALUE_TEXT, VALUE_COLOR),
     root=Frame(
-        Text(param(VALUE_TEXT), color=param(VALUE_COLOR)).style(UiStyle.VALUE),
-        background=ThemeColor.BACKGROUND, line_width=0,
+        Text(param(VALUE_TEXT), color=param(VALUE_COLOR)).style(UiStyle.TEXT_LEFT),
+        background=ThemeColor.PANEL, line_width=0,
     ).repaint_boundary(),
 )
+
+
+def target_label(target):
+    return "%.0f C" % target if target > 0 else "OFF"

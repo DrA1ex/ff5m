@@ -929,7 +929,7 @@ class RunnerContractTest(unittest.TestCase):
         host = type("Host", (), {"renderer": renderer, "_ensure_screen_root": lambda self: root})()
         scenarios = SCENARIOS.ScenarioCatalog(type("Run", (), {"host": host})())
 
-        tapped = {label: scenarios._action_for_label(label) for label in ("PLA", "petg", "ABS", "COOLDOWN")}
+        tapped = {label: scenarios._action_for_label(label) for label in ("PLA", "petg", "ABS", "STOP HEATING")}
 
         self.assertEqual(len(set(tapped.values())), 4)
         self.assertLessEqual(set(tapped.values()), renderer.shown_actions())

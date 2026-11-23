@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 from ff5m_ui import dialogs as dialog_ui
+from ff5m_ui.heat import actions as heat_actions
 from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
@@ -355,6 +356,9 @@ class ScenarioCatalog:
         self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HOME)
         self._add_tap(steps, "nav.heat", ScreenPage.CONTROL_HEAT)
         self._add_capture(steps, "ui-heat")
+        self._add_semantic_tap(steps, heat_actions.EDIT_NOZZLE_TARGET, ScreenDialog.HEAT_TARGET)
+        self._add_capture(steps, "ui-heat-target")
+        self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HEAT)
         self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HOME)
         self._add_tap(steps, "nav.calibration", ScreenPage.CALIBRATION_HOME)
         self._add_capture(steps, "ui-calibration")
@@ -1727,7 +1731,7 @@ class ScenarioCatalog:
         self._add_capture(steps, "heat-rising")
         self._add_wait(steps, "heat-stable", self._heat_is_stable, 900.0, 2.0)
         self._add_capture(steps, "heat-target-reached")
-        self._add_tap_label(steps, "COOLDOWN", ScreenPage.CONTROL_HEAT)
+        self._add_semantic_tap(steps, heat_actions.COOLDOWN, ScreenPage.CONTROL_HEAT)
         self._add_wait(steps, "heat-off", self._heaters_off, 10.0)
         self._add_capture(steps, "heat-cooldown-start")
 
