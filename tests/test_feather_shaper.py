@@ -500,8 +500,9 @@ class ShaperWorkflowTests(unittest.TestCase):
         self.assertTrue(self.feature.handle_semantic_action(self.host.page, action))
         self.assertEqual(len(callbacks), 1)
         callbacks.pop()(self.host.reactor.monotonic())
-        self.host._run_script.assert_called_once()
-        return self.host._run_script.call_args.args[0]
+        measurement, cleanup = self.host._run_script.call_args_list
+        self.assertEqual(cleanup, mock.call("_SCHEDULE_MOTOR_OFF"))
+        return measurement.args[0]
 
     def selected_vibrations(self):
         """The one vibration method the start page shows selected."""

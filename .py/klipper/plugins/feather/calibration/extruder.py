@@ -799,6 +799,12 @@ class FeatherExtruderCalibrationMixin:
             self._render_extruder_calibration()
             controller._run_script(
                 "_COLDPULL_LOAD_MATERIAL TEMP=%g COLD=%g" % (hot, cold))
+        except Exception:
+            try:
+                controller._run_script("M104 S0")
+            except Exception:
+                logging.exception("[feather_screen] unable to stop cold-pull heating")
+            raise
         finally:
             safety_lease.release()
             controller._refresh_emergency_stop()
@@ -896,7 +902,10 @@ class FeatherExtruderCalibrationMixin:
             self._render_extruder_calibration()
             return
         self._set_extruder_cooling_fan(False, best_effort=True)
-        self._restore_extruder_runtime()
+        try:
+            self._restore_extruder_runtime()
+        finally:
+            self._run_script("_SCHEDULE_MOTOR_OFF")
         session.clear()
         self._show_page(ScreenPage.CALIBRATION_HOME)
 
@@ -992,9 +1001,7 @@ class FeatherExtruderCalibrationMixin:
             self._cancel_extruder_calibration(confirm=False)
             return
         elif action == "extruder.done":
-            self._set_extruder_cooling_fan(False, best_effort=True)
-            session.clear()
-            self._show_page(ScreenPage.CALIBRATION_HOME)
+            self._cancel_extruder_calibration(confirm=False)
             return
         else:
             return

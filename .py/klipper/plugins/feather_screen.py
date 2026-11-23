@@ -1727,7 +1727,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
 
     def _adopt_external_operation(self, frame_id, context_type):
         kinds = {
-            "bed_screws": "screws", "auto_bed_level": "mesh",
+            "bed_screws": "screws", "bed_screws_cooldown": "screws",
+            "bed_screws_repeat": "screws", "auto_bed_level": "mesh",
             "bed_level": "mesh", "pid_bed": "pid_bed",
             "pid_extruder": "pid_extruder", "input_shaper": "shaper",
             "z_offset": "z", "recovery": "recovery",
@@ -1765,7 +1766,7 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                     or self.feature_manager.input_blocked):
                 return
             self.feature_manager.get("calibration").begin_external(
-                frame_id, kind)
+                frame_id, kind, context_type)
         except Exception:
             # A display failure must never abort the externally run macro.
             logging.exception("[feather_screen] unable to show external operation")

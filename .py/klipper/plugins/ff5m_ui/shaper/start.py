@@ -31,7 +31,7 @@ def _method(label, sweep):
 
 def _method_note(sweep):
     if sweep:
-        return "Klipper 0.13. Needs 20 mm each side."
+        return "Klipper 0.13. Short pulses while moving 20 mm side to side."
     return "Klipper 0.11. Short pulses in place."
 
 

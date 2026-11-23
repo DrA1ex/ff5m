@@ -723,9 +723,9 @@ class ControllerSafetyTest(unittest.TestCase):
     def test_pid_workflows_use_supported_macros(self):
         cases = (
             ("pid_bed",
-             ["PID_TUNE_BED TEMPERATURE=70", "TURN_OFF_HEATERS"]),
+             ["PID_TUNE_BED TEMPERATURE=70", "M140 S0", "_SCHEDULE_MOTOR_OFF"]),
             ("pid_extruder",
-             ["PID_TUNE_EXTRUDER TEMPERATURE=250", "TURN_OFF_HEATERS"]),
+             ["PID_TUNE_EXTRUDER TEMPERATURE=250", "M104 S0", "_SCHEDULE_MOTOR_OFF"]),
         )
         for kind, expected in cases:
             with self.subTest(kind=kind):
@@ -1474,7 +1474,8 @@ class ControllerSafetyTest(unittest.TestCase):
                 command = "\n".join(controller.gcode.commands)
                 self.assertIn(
                     "MOVE_SAFE Z=10 ABSOLUTE=1 F=600", command)
-                self.assertIn("TURN_OFF_HEATERS", command)
+                self.assertIn("_SCHEDULE_MOTOR_OFF", command)
+                self.assertNotIn("TURN_OFF_HEATERS", command)
                 self.assertIn(
                     "_SET_GCODE_OFFSET Z=+0.321000 MOVE=0", command)
                 self.assertIs(controller.bed_mesh.z_mesh, original)
@@ -1498,7 +1499,8 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertIn("_SET_GCODE_OFFSET Z=+0.123000 MOVE=0", command)
         self.assertIn("SET_MOD PARAM=z_offset VALUE=0.123", command)
         self.assertIn("SET_MOD PARAM=load_zoffset VALUE=1", command)
-        self.assertIn("TURN_OFF_HEATERS", command)
+        self.assertIn("_SCHEDULE_MOTOR_OFF", command)
+        self.assertNotIn("TURN_OFF_HEATERS", command)
 
     def test_z_pressure_dialog_is_suppressed_during_probe_then_rearms(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -1532,7 +1534,7 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.weight_sensor.status["temperature"] = 850.0
         self.assertTrue(controller._check_z_pressure(103.0))
 
-    def test_z_cancelled_preparation_turns_off_heaters_and_restores_state(self):
+    def test_z_cancelled_cooldown_turns_off_nozzle_and_restores_state(self):
         class AbortPreparation:
             def __init__(self):
                 self.commands = []
@@ -1567,9 +1569,11 @@ class ControllerSafetyTest(unittest.TestCase):
 
         controller._run_z_calibration_preparation(100.0)
 
-        self.assertEqual(len(controller.gcode.commands), 4)
         cleanup = "\n".join(controller.gcode.commands[1:])
-        self.assertIn("TURN_OFF_HEATERS", cleanup)
+        self.assertIn("M104 S0", cleanup)
+        self.assertNotIn("TURN_OFF_HEATERS", cleanup)
+        self.assertNotIn("M140 S0", cleanup)
+        self.assertIn("_SCHEDULE_MOTOR_OFF", cleanup)
         self.assertIn("_SET_GCODE_OFFSET Z=+0.111000 MOVE=0", cleanup)
         self.assertIs(controller.bed_mesh.z_mesh, original_mesh)
         self.assertEqual(controller.bed_mesh.profile_name, "adaptive")
@@ -3299,7 +3303,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._show_page = pages.append
         controller._run_calibration(0)
         self.assertEqual(controller.gcode.commands,
-                         ["AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=245 BED_TEMP=68 PROFILE=auto"])
+                         ["AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=245 BED_TEMP=68 PROFILE=auto",
+                          "_SCHEDULE_MOTOR_OFF"])
         self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_RESULT])
 
     def test_screw_calibration_passes_selected_cleaning_path(self):
@@ -3518,7 +3523,7 @@ class ControllerSafetyTest(unittest.TestCase):
 
                 self.assertEqual(
                     controller.gcode.commands,
-                    [start_command, cleanup_command])
+                    [start_command, cleanup_command, "_SCHEDULE_MOTOR_OFF"])
                 self.assertTrue(controller.calibration_cancelled)
                 self.assertIsNone(controller.calibration_error)
                 self.assertEqual(

@@ -77,6 +77,7 @@ class ZCalibrationSession:
     def __init__(self):
         self.active = False
         self.prepared = False
+        self.preparation_heater_off = None
         self.original_runtime_offset = 0.0
         self.original_mesh = None
         self.original_mesh_profile = ""
@@ -477,7 +478,10 @@ class FeatherZCalibrationMixin:
     def _run_z_calibration_preparation(self, eventtime):
         try:
             self._require_idle()
-            self._run_script(self._z_preparation_command())
+            command = self._z_preparation_command()
+            self.z_calibration.preparation_heater_off = (
+                "TURN_OFF_HEATERS" if self.calibration_clean_nozzle else "M104 S0")
+            self._run_script(command)
             self.z_calibration.prepared = True
             self._begin_z_weight_gauge()
             self._show_page(ScreenPage.Z_OFFSET_SUMMARY)
@@ -675,7 +679,9 @@ class FeatherZCalibrationMixin:
         homed, _position = self._z_offset_head_state()
         if homed:
             commands.append(self._safe_z_move_command())
-        commands.append("TURN_OFF_HEATERS")
+        if session.preparation_heater_off:
+            commands.append(session.preparation_heater_off)
+        commands.append("_SCHEDULE_MOTOR_OFF")
         state_commands = [
             "_SET_GCODE_OFFSET Z=%+.6f MOVE=0" % runtime]
         if saved_offset is not None:

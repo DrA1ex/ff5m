@@ -4709,7 +4709,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertFalse(controller.z_calibration.active)
         self.assertEqual(controller.gcode.commands, [
             "MOVE_SAFE Z=6 ABSOLUTE=1 F=600",
-            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.000000 MOVE=0"])
+            "_SCHEDULE_MOTOR_OFF", "_SET_GCODE_OFFSET Z=+0.000000 MOVE=0"])
         self.assertEqual(callbacks, [])
 
     def test_filament_page_cannot_replace_cancel_confirmation(self):
@@ -4748,7 +4748,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
                 self.assertEqual(shown, [FEATHER.ScreenPage.CALIBRATION_HOME])
                 controller._run_blocking_gcode.assert_not_called()
                 self.assertEqual(controller.gcode.commands, [
-                    "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+                    "_SCHEDULE_MOTOR_OFF", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
                 self.assertFalse(feature.z_calibration.active)
 
     def test_homing_timeout_keeps_measurements_for_saving_before_exit(self):
@@ -4787,7 +4787,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
                     if save:
                         feature._handle_z_offset_command(Z_OFFSET_UI.SAVE)
                         self.assertEqual(controller.gcode.commands, [
-                            "TURN_OFF_HEATERS",
+                            "_SCHEDULE_MOTOR_OFF",
                             "_SET_GCODE_OFFSET Z=+0.240000 MOVE=0\n"
                             "SET_MOD PARAM=z_offset VALUE=0.240\n"
                             "SET_MOD PARAM=load_zoffset VALUE=1"])
@@ -4797,7 +4797,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
                         self.assertEqual(controller.gcode.commands, [])
                         feature._handle_z_offset_command(Z_OFFSET_UI.DISCARD_CONFIRM)
                         self.assertEqual(controller.gcode.commands, [
-                            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+                            "_SCHEDULE_MOTOR_OFF", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
                     self.assertEqual(shown[-1], FEATHER.ScreenPage.CALIBRATION_HOME)
                     self.assertFalse(session.active)
                     controller._run_blocking_gcode.assert_not_called()
@@ -5218,7 +5218,7 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
         self.assertFalse(feature.z_calibration.active)
         self.assertEqual(shown, [FEATHER.ScreenPage.CALIBRATION_HOME])
         self.assertEqual(controller.gcode.commands, [
-            "TURN_OFF_HEATERS", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+            "_SCHEDULE_MOTOR_OFF", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
 
     def test_z_cleaning_choice_keeps_abort_visible_without_homing(self):
         controller = base_controller()
@@ -5423,6 +5423,67 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
             "SAVE_GCODE_STATE NAME=_feather_z_paper",
             "G90\nG1 Z-0.005000 F300",
             "RESTORE_GCODE_STATE NAME=_feather_z_paper MOVE=0"])
+
+    def test_z_preparation_exit_turns_off_heaters_used_by_preparation(self):
+        for clean, heater_off in ((True, "TURN_OFF_HEATERS"), (False, "M104 S0")):
+            with self.subTest(clean=clean):
+                controller = base_controller()
+                controller.feature_manager = FEATHER.LazyFeatureManager(
+                    controller, FEATHER.FEATURE_SPECS)
+                calibration = controller.feature_manager.get("calibration")
+                calibration.calibration_clean_nozzle = clean
+                feature = controller.feature_manager.get("z")
+                feature.z_calibration.begin(0.2, None, "", -0.25, False)
+                feature._z_preparation_command = lambda: "_PREPARE_TEST"
+                feature._begin_z_weight_gauge = mock.Mock()
+                controller._show_page = mock.Mock()
+
+                feature._run_z_calibration_preparation(0)
+                feature.cancel_calibration()
+
+                self.assertEqual(controller.gcode.commands[-3:], [
+                    heater_off, "_SCHEDULE_MOTOR_OFF", "_SET_GCODE_OFFSET Z=+0.200000 MOVE=0"])
+
+    def test_screw_exit_turns_off_only_calibration_heaters_after_repeat(self):
+        for clean, heater_off in ((True, "TURN_OFF_HEATERS"), (False, "M104 S0")):
+            with self.subTest(clean=clean):
+                controller = base_controller()
+                controller.feature_manager = FEATHER.LazyFeatureManager(
+                    controller, FEATHER.FEATURE_SPECS)
+                feature = controller.feature_manager.get("calibration")
+                feature.calibration_kind = "screws"
+                feature.calibration_clean_nozzle = clean
+                feature._limited_preheat = lambda material: (220, 60)
+                controller._show_page = mock.Mock()
+
+                feature._run_calibration(0)
+                feature.calibration_repeat_probe = True
+                feature._run_calibration(0)
+                self.assertEqual(controller.gcode.commands[-1], "BED_LEVEL_SCREWS_PROBE")
+
+                feature._handle_calibration_action("cal.done")
+                self.assertEqual(controller.gcode.commands[-2:], [
+                    heater_off, "_SCHEDULE_MOTOR_OFF"])
+
+    def test_pid_failure_stops_only_the_tuned_heater_and_schedules_motor_off(self):
+        controller = base_controller()
+        controller.feature_manager = FEATHER.LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
+        feature = controller.feature_manager.get("calibration")
+        feature.calibration_kind = "pid_bed"
+        feature._limited_preheat = lambda material: (220, 60)
+        controller._show_page = mock.Mock()
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            if command.startswith("PID_TUNE_BED"):
+                raise RuntimeError("PID tuning failed")
+
+        controller._run_script = run
+        feature._run_calibration(0)
+
+        self.assertEqual(commands, ["PID_TUNE_BED TEMPERATURE=60", "M140 S0", "_SCHEDULE_MOTOR_OFF"])
+        self.assertEqual(feature.calibration_error, "PID tuning failed")
 
     def test_screw_output_is_collected_only_during_workflow(self):
         controller = base_controller()

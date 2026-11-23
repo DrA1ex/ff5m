@@ -953,7 +953,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
 
         controller._cancel_extruder_calibration(confirm=False)
 
-        self.assertEqual(commands, ["M107"])
+        self.assertEqual(commands, ["M107", "_SCHEDULE_MOTOR_OFF"])
         self.assertFalse(controller.extruder_calibration.active)
 
     def test_exit_before_save_restores_runtime_value(self):
@@ -963,12 +963,15 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         session.nozzle_removed = True
         runtime = []
         pages = []
+        commands = []
+        controller._run_script = commands.append
         controller._set_extruder_runtime_rotation = runtime.append
         controller._show_page = pages.append
 
         controller._cancel_extruder_calibration(confirm=False)
 
         self.assertEqual(runtime, [4.38])
+        self.assertEqual(commands, ["_SCHEDULE_MOTOR_OFF"])
         self.assertFalse(session.active)
         self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_HOME])
 

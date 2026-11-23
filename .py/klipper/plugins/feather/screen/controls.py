@@ -1189,6 +1189,10 @@ class FeatherControlsMixin:
                 self.calibration_repeat_probe = False
                 self._show_page(ScreenPage.CALIBRATION_CONFIRM)
         elif action == "cal.done":
+            if (self.calibration_kind == "screws"
+                    and (getattr(self, "screw_heater_off", None)
+                         or not (self.calibration_error or self.calibration_cancelled))):
+                self._finish_screw_calibration()
             self._return_from_calibration()
         elif action == "cal.mesh.discard":
             if self._mesh_save_available():
@@ -1480,23 +1484,6 @@ class FeatherControlsMixin:
         self.calibration_cancel_requested = False
         self.calibration_cancel_dispatched = False
 
-    def _stop_cancelled_calibration_heating(self):
-        command = (
-            "M104 S0"
-            if (self.calibration_kind == "screws"
-                and not getattr(
-                    self, "calibration_clean_nozzle", True))
-            else "TURN_OFF_HEATERS")
-        try:
-            self._run_script(command)
-        except Exception:
-            # The original cancellation remains the user-visible result.
-            # Cleanup failure is still recorded for diagnostics.
-            logging.exception(
-                "[feather_screen] unable to stop calibration heating")
-            return False
-        return True
-
     def _calibration_stage_commands(self, label, operation=None):
         # Context paths contain workflow names such as BED LEVEL and NOZZLE
         # CLEANING. Only the trailing state describes the current phase.
@@ -1613,9 +1600,18 @@ class FeatherControlsMixin:
     def _shaper_calibration_script(self):
         return "ZSHAPER" if self._forge_shaper() is None else "FORGE_SHAPER_CALIBRATE"
 
+    def _finish_screw_calibration(self):
+        heater_off = getattr(self, "screw_heater_off", None)
+        try:
+            if heater_off:
+                self._run_script(heater_off)
+                self.screw_heater_off = None
+        finally:
+            self._run_script("_SCHEDULE_MOTOR_OFF")
+
     def _run_calibration(self, eventtime):
-        stop_heaters = self.calibration_kind in (
-            "pid_bed", "pid_extruder")
+        started = False
+        heater_off = None
         try:
             self._require_idle()
             if self.calibration_kind == "screws":
@@ -1632,26 +1628,37 @@ class FeatherControlsMixin:
                             "BED_TEMP=%.0f CLEAN=1" % (nozzle, bed))
                     else:
                         command = "BED_LEVEL_SCREWS_TUNE CLEAN=0"
+                    self.screw_heater_off = "TURN_OFF_HEATERS" if clean else "M104 S0"
+                started = True
                 self._run_script(command)
             elif self.calibration_kind == "mesh":
                 nozzle, bed = self._limited_preheat(
                     self.calibration_material)
                 command = ("AUTO_FULL_BED_LEVEL EXTRUDER_TEMP=%.0f BED_TEMP=%.0f "
                            "PROFILE=auto" % (nozzle, bed))
+                heater_off = "TURN_OFF_HEATERS"
+                started = True
                 self._run_script(command)
+                heater_off = None  # AUTO_FULL_BED_LEVEL already stopped heating.
                 self.calibration_mesh = self._read_mesh_matrix(eventtime)
             elif self.calibration_kind == "pid_bed":
                 _nozzle, bed = self._limited_preheat(
                     self.calibration_material)
+                heater_off = "M140 S0"
+                started = True
                 self._run_script(
                     "PID_TUNE_BED TEMPERATURE=%.0f" % bed)
             elif self.calibration_kind == "pid_extruder":
                 nozzle, _bed = self._limited_preheat(
                     self.calibration_material)
+                heater_off = "M104 S0"
+                started = True
                 self._run_script(
                     "PID_TUNE_EXTRUDER TEMPERATURE=%.0f" % nozzle)
             elif self.calibration_kind == "shaper":
-                self._run_script(self._shaper_calibration_script())
+                command = self._shaper_calibration_script()
+                started = True
+                self._run_script(command)
             else:
                 raise RuntimeError("Unsupported calibration")
         except Exception as exc:
@@ -1659,23 +1666,27 @@ class FeatherControlsMixin:
                     and getattr(
                         self, "calibration_cancel_dispatched", False)):
                 logging.info("[feather_screen] calibration heating cancelled")
-                if not self._stop_cancelled_calibration_heating():
-                    return
                 self.calibration_cancelled = True
                 self.calibration_error = None
             else:
                 logging.exception("[feather_screen] calibration failed")
                 self.calibration_error = str(exc)
         finally:
-            if stop_heaters:
+            if started:
                 try:
-                    self._run_script("TURN_OFF_HEATERS")
+                    if self.calibration_kind == "screws":
+                        if self.calibration_error or self.calibration_cancelled:
+                            self._finish_screw_calibration()
+                    else:
+                        try:
+                            if heater_off:
+                                self._run_script(heater_off)
+                        finally:
+                            self._run_script("_SCHEDULE_MOTOR_OFF")
                 except Exception:
-                    logging.exception(
-                        "[feather_screen] unable to stop PID heating")
+                    logging.exception("[feather_screen] calibration cleanup failed")
                     if not self.calibration_error:
-                        self.calibration_error = (
-                            "Unable to stop PID heating")
+                        self.calibration_error = "Unable to finish calibration cleanup"
         self._show_page(ScreenPage.CALIBRATION_RESULT)
 
     @staticmethod

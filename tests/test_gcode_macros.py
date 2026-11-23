@@ -637,6 +637,17 @@ class WorkflowMacroTest(unittest.TestCase):
                 "VARIABLE=%s VALUE=%s" % (variable, value),
                 result.commands)
 
+    def test_motor_off_timer_respects_the_setting(self):
+        for enabled, expected in (
+                (0, ()), (1, ("UPDATE_DELAYED_GCODE ID=_STOP_MOTOR DURATION=90",))):
+            with self.subTest(enabled=enabled):
+                result = render_macro(BASE, "_SCHEDULE_MOTOR_OFF", printer={
+                    "mod_params": {"variables": {"stop_motor": enabled}},
+                })
+                self.assertEqual(result.commands, expected)
+        result = render_macro(BASE, "_STOP_MOTOR", section="delayed_gcode")
+        self.assertIn("M84", result.commands)
+
     def test_tuning_macros_emit_their_lifecycle_in_order(self):
         cases = (
             ("PID_TUNE_BED", {}, (

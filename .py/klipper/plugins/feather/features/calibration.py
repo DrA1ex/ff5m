@@ -37,6 +37,7 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         self.calibration_clean_nozzle = True
         self._preparation = None
         self.calibration_repeat_probe = False
+        self.screw_heater_off = None
         self.calibration_results = []
         self.calibration_mesh = []
         self.calibration_error = None
@@ -245,11 +246,15 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         self.calibration_starting_text = "STARTING..."
         self._reset_calibration_progress()
 
-    def begin_external(self, frame_id, kind):
+    def begin_external(self, frame_id, kind, context_type):
         if self.external_context_id is not None:
             return
         self.external_context_id = frame_id
         self.calibration_kind = kind
+        self.screw_heater_off = {
+            "bed_screws": "TURN_OFF_HEATERS",
+            "bed_screws_cooldown": "M104 S0",
+        }.get(context_type)
         self.calibration_repeat_probe = False
         self._prepare_calibration_progress()
         try:
@@ -300,6 +305,12 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                     "Recovery interrupted" if failed else "Recovery data cleaned up",
                     ScreenPage.RECOVERY_PROMPT if failed else ScreenPage.IDLE_HOME)
                 return
+            if self.calibration_kind == "screws" and outcome != "completed":
+                try:
+                    self._finish_screw_calibration()
+                except Exception:
+                    logging.exception("[feather_screen] external screw calibration cleanup failed")
+                    self.calibration_error = self.calibration_error or "Unable to finish calibration cleanup"
             if self.calibration_kind == "mesh" and outcome == "completed":
                 self.calibration_mesh = self._read_mesh_matrix(eventtime)
             self._show_page(ScreenPage.CALIBRATION_RESULT)
