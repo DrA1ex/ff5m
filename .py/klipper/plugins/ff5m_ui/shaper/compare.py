@@ -10,9 +10,10 @@ from ui import (
 )
 from ui.bindings import bind, derived
 
+from ..calibration_layout import CONTENT, SIDE_INSET
 from ..keys import AppPage
 from .actions import ShaperAction
-from .page import CONTENT, FONT, apply_button, axes, save_button
+from .page import FONT, apply_button, axes, save_button
 from .state import ShaperState
 
 
@@ -78,7 +79,7 @@ footer = Grid(matrix=((
 ),), columns=(104, FLEX, FLEX), rows=(FLEX,), gap=12).height(44).ref("shaper.compare.footer")
 
 root = Column(Column(caption, header).height(44), rows, footer, gap=8) \
-    .padding(left=24, right=24, top=8, bottom=10).ref("shaper.compare.root")
+    .padding(left=SIDE_INSET, right=SIDE_INSET, top=8, bottom=10).ref("shaper.compare.root")
 
 
 def create_page(bounds=CONTENT):

@@ -8,9 +8,9 @@ from ui import Button, Column, PageTree, Spacer, When
 from ui.bindings import bind, derived, state
 from ui.identity import StateKey
 
+from ..calibration_layout import CONTENT, SIDE_INSET, VERTICAL_INSET
 from ..keys import AppPage
 from .actions import ShaperAction
-from .page import CONTENT
 
 
 class HistoryState(StateKey):
@@ -31,10 +31,10 @@ root = Column(
     *(When(derived(lambda entries, i=i: len(entries) > i, bind(HistoryState.ENTRIES)),
            Button(ShaperAction("record", str(i)),
                   derived(partial(_label, index=i), bind(HistoryState.ENTRIES)),
-                  font="JetBrainsMono 10pt").ref("shaper.history.record.%d" % i)).height(60)
+                  font="JetBrainsMono 10pt").ref("shaper.history.record.%d" % i)).height(56)
       for i in range(5)),
-    Spacer(), gap=10,
-).padding(left=24, right=24, top=18, bottom=18).ref("shaper.history.root")
+    Spacer(), gap=12,
+).padding(left=SIDE_INSET, right=SIDE_INSET, top=VERTICAL_INSET, bottom=VERTICAL_INSET).ref("shaper.history.root")
 
 PAGE = PageTree(root, CONTENT, page_id=AppPage.SHAPER_HISTORY, state_schema=tuple(HistoryState))
 PAGE.title = "Shaper results"

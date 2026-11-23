@@ -5,15 +5,15 @@ from copy import deepcopy
 from enum import Enum
 from functools import partial
 
-from ui import FLEX, Button, Column, Equal, Flex, Grid, PageTree, Rect, Spacer, Text, ThemeColor
+from ui import FLEX, Button, Column, Equal, Flex, Grid, PageTree, Spacer, Text, ThemeColor
 from ui.bindings import bind, derived
 
+from ..calibration_layout import CONTENT, SIDE_INSET, VERTICAL_INSET
 from ..keys import AppPage
 from .actions import ShaperAction
 from .components import SpectrumPlot
 from .state import ShaperState
 
-CONTENT = Rect(0, 56, 800, 386)
 FONT = "JetBrainsMono 8pt"
 EXPAND = ShaperAction("view", "fullscreen")
 
@@ -128,7 +128,7 @@ root = Grid(matrix=((toolbar,), (Column(legend, chart, x_ticks),),
                     (Grid(matrix=((metrics, apply_button(), save_button()),),
                           columns=(Flex(12), Flex(5), Flex(5)), rows=(FLEX,), gap=12),)),
             columns=(FLEX,), rows=(48, FLEX, 48), gap=12) \
-    .padding(left=24, right=24, top=18, bottom=18).ref(ShaperRef.ROOT)
+    .padding(left=SIDE_INSET, right=SIDE_INSET, top=VERTICAL_INSET, bottom=VERTICAL_INSET).ref(ShaperRef.ROOT)
 
 
 def create_page(bounds=CONTENT):

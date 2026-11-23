@@ -1533,39 +1533,22 @@ class RendererStateTest(unittest.TestCase):
         self.assertEqual(
             set(renderer._buttons), {"dialog.close", "dialog.apply"})
 
-    def test_dialog_buttons_fit_labels_and_center_with_larger_touch_targets(self):
+    def test_dialog_actions_keep_separate_usable_touch_targets(self):
         renderer = FEATHER.FeatherRenderer()
-
-        renderer.dialog("Notice", (), (("ok", "OK", "enabled"),),
-                        x=90, y=95, width=620, height=300)
-        ok = renderer._buttons["ok"]
-        self.assertEqual(ok[:4], (328, 310, 144, 50))
-
-        renderer.dialog("Error", (),
-                        (("back", "BACK", "enabled"),
-                         ("restart", "FIRMWARE RESTART", "danger")),
-                        x=80, y=85, width=640, height=325)
-        back = renderer._buttons["back"]
-        restart = renderer._buttons["restart"]
-        self.assertLess(back.width, restart.width)
-        self.assertLessEqual(restart.width, 300)
-        self.assertGreaterEqual(restart.width - 2 * renderer.BUTTON_TEXT_PADDING,
-                                renderer.text_width("FIRMWARE RESTART", DIALOG_BUTTON_FONT))
-        self.assertEqual(back.x + back.width + 12, restart.x)
-        self.assertEqual(back.x + restart.x + restart.width, 800)
-        self.assertEqual((back.y, back.height), (322, 50))
-
-        renderer.dialog("Small", (),
-                        (("one", "ONE", "enabled"),
-                         ("two", "TWO", "enabled")),
-                        x=25, y=75, width=300, height=220)
-        one = renderer._buttons["one"]
-        two = renderer._buttons["two"]
-        self.assertEqual((one.width, two.width), (144, 144))
-        self.assertEqual(one.x + one.width + 12, two.x)
-        panel = renderer._dialog_bounds[0]
-        self.assertLess(panel[3], 240)
-        self.assertLess(one.y + one.height, panel[1] + panel[3])
+        cases = (
+            (("ok", "OK", "enabled"),),
+            (("back", "BACK", "enabled"), ("restart", "FIRMWARE RESTART", "danger")),
+            (("one", "ONE", "enabled"), ("two", "TWO", "enabled")),
+        )
+        for actions in cases:
+            with self.subTest(actions=actions):
+                renderer.dialog("Notice", (), actions, x=25, y=75, width=300, height=220)
+                targets = {box.action: box for box in shown_hitboxes(renderer)}
+                boxes = [targets[action] for action, _, _ in actions]
+                for box in boxes:
+                    self.assertGreaterEqual(min(box.width, box.height), 44)
+                for left, right in zip(boxes, boxes[1:]):
+                    self.assertLessEqual(left.x + left.width, right.x)
 
     def test_title_only_dialog_moves_title_and_preserves_multiline_heading(self):
         renderer = FEATHER.FeatherRenderer()

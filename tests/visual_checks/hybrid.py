@@ -34,6 +34,7 @@ def _ui_test_module(name):
 # The printer runner hashes the same files the same way.
 FINGERPRINT = _ui_test_module("fingerprint")
 SHAPER_CASES = _ui_test_module("shaper_visuals").CASES
+PREPARATION_CASES = _ui_test_module("preparation_visuals").CASES
 UI_SUITE_LABELS = frozenset((
     "baseline",
     "ui-home-filled",
@@ -178,7 +179,8 @@ UI_SUITE_LABELS = frozenset((
     "ui-touch-unavailable",
     "ui-busy-notice",
     "ui-toast",
-)) | frozenset("ui-shaper-" + case for case in SHAPER_CASES)
+)) | frozenset("ui-shaper-" + case for case in SHAPER_CASES) | frozenset(
+    "ui-preparation-" + case for case, *_ in PREPARATION_CASES)
 CAPTURE_PROGRESS_PREFIX = "FF5M_CAPTURE_PROGRESS "
 
 

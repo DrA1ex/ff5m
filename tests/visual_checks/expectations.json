@@ -2,9 +2,351 @@
     "schema_version": 1,
     "cases":
     {
+        "printer:ui-preparation-z-offset": {
+            "description": "Z Offset Preparation using the shared calibration confirmation layout.",
+            "required": [
+                "Z OFFSET PREPARATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "PAPER TEST briefing that says to choose a zone after preparation",
+                "four material choices on one row with PLA selected",
+                "SKIP available on the material row with a neutral outline",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START PREPARATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-z-offset-preparation": {
+            "description": "Z Offset Preparation using the shared calibration confirmation layout.",
+            "required": [
+                "Z OFFSET PREPARATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "PAPER TEST briefing that says to choose a zone after preparation",
+                "four material choices on one row with PLA selected",
+                "SKIP available on the material row with a neutral outline",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START PREPARATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-z-offset-skip": {
+            "description": "Z Offset Preparation using the shared calibration confirmation layout.",
+            "required": [
+                "Z OFFSET PREPARATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "SKIP selected on the same row as the materials",
+                "nozzle cooldown target without a bed target",
+                "temperature labels and values share the same compact type size",
+                "START PREPARATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-screws": {
+            "description": "Bed Screw Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "BED SCREW LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "BED PROBING briefing",
+                "four material choices on one row with PLA selected",
+                "SKIP available on the material row with a neutral outline",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-bed-screws-preparation": {
+            "description": "Bed Screw Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "BED SCREW LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "BED PROBING briefing",
+                "four material choices on one row with PLA selected",
+                "SKIP available on the material row with a neutral outline",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-screws-skip": {
+            "description": "Bed Screw Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "BED SCREW LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "SKIP selected on the same row as the materials",
+                "nozzle cooldown target without a bed target",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-screws-empty": {
+            "description": "Bed Screw Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "BED SCREW LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "NO MATERIALS ENABLED and an available SKIP action",
+                "START CALIBRATION disabled until SKIP is selected"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-mesh": {
+            "description": "Auto Bed Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "AUTO BED LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing about cleaning and updating the auto mesh",
+                "four material choices on one row with PLA selected",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-bed-mesh-preparation": {
+            "description": "Auto Bed Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "AUTO BED LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing about cleaning and updating the auto mesh",
+                "four material choices on one row with PLA selected",
+                "compact nozzle and bed temperatures",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-mesh-empty": {
+            "description": "Auto Bed Leveling using the shared calibration confirmation layout.",
+            "required": [
+                "AUTO BED LEVELING title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "NO MATERIALS ENABLED",
+                "START CALIBRATION disabled"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP",
+                "sample material choices"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-bed-pid": {
+            "description": "Bed Pid Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "BED PID CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing about homing before heating",
+                "four material choices on one row with PLA selected",
+                "compact BED TARGET",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-bed-pid-preparation": {
+            "description": "Bed Pid Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "BED PID CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing about homing before heating",
+                "four material choices on one row with PLA selected",
+                "compact BED TARGET",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-hotend-pid": {
+            "description": "Hotend Pid Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "HOTEND PID CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing instructing the user to remove filament",
+                "four material choices on one row with PLA selected",
+                "compact NOZZLE TARGET",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-hotend-pid-preparation": {
+            "description": "Hotend Pid Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "HOTEND PID CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "briefing instructing the user to remove filament",
+                "four material choices on one row with PLA selected",
+                "compact NOZZLE TARGET",
+                "temperature labels and values share the same compact type size",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "printer:ui-preparation-legacy-shaper": {
+            "description": "Input Shaper Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "INPUT SHAPER CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "bed clearance briefing",
+                "STRONG VIBRATION EXPECTED",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "material selection",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
+        "default-legacy-shaper-preparation": {
+            "description": "Input Shaper Calibration using the shared calibration confirmation layout.",
+            "required": [
+                "INPUT SHAPER CALIBRATION title and Back",
+                "briefing card aligned with the controls and bottom action",
+                "bed clearance briefing",
+                "STRONG VIBRATION EXPECTED",
+                "START CALIBRATION"
+            ],
+            "forbidden": [
+                "clipped instructions",
+                "overlapping controls",
+                "material selection",
+                "SKIP"
+            ],
+            "allowed_variations": [
+                "theme colors",
+                "font rasterization",
+                "configured temperature targets"
+            ]
+        },
         "default-shaper-start": {
             "description": "Shaper start page with standard selected and no saved calibration.",
             "required": [
+                "STANDARD and SWEEPING grouped in one equal-width row under VIBRATIONS",
+                "full-width START CALIBRATION below LAST RESULTS with clear footer separation",
                 "INPUT SHAPER title and back action",
                 "BEFORE YOU START bed-clearance instructions",
                 "STANDARD and SWEEPING vibration choices",
@@ -25,6 +367,7 @@
         "default-shaper-history": {
             "description": "Saved shaper history example.",
             "required": [
+                "saved record rows aligned to the calibration page side margins",
                 "SHAPER RESULTS title and back action",
                 "dated calibration entries with axis labels",
                 "LATEST on the newest entry"
@@ -43,6 +386,7 @@
         "default-shaper-progress": {
             "description": "Shaper measurement example on X.",
             "required": [
+                "stage strip aligned to the calibration page side margins",
                 "calibration progress title, sweep or fit detail and elapsed/sample telemetry",
                 "requested X/Y sweep and fit stage indicators",
                 "CANCEL action while cancellation is available"
@@ -61,6 +405,7 @@
         "default-shaper-result": {
             "description": "Shaper result example before settings are selected.",
             "required": [
+                "toolbar and action bar sharing side margins, with readable plot and legend gutters",
                 "INPUT SHAPER title",
                 "X/Y, previous/next method, LINEAR or LOG and LIST controls",
                 "measured and after-shaper spectrum with frequency and PSD axes",
@@ -83,6 +428,7 @@
         "default-shaper-compare": {
             "description": "Full comparison including the reference-only ZVD row.",
             "required": [
+                "compact rows and matching side alignment between the table and action bar",
                 "input-shaper comparison table with SHAPER, Hz, VIB %, SM and ACCEL headings",
                 "all six method rows including 3HUMP_EI and ZVD [REF]",
                 "recommended method marker and selected viewed method",
@@ -102,6 +448,7 @@
         "default-shaper-fullscreen": {
             "description": "Fullscreen linear spectrum example.",
             "required": [
+                "header controls aligned with the chart content edges",
                 "chart occupying the screen below a compact header",
                 "header with BACK, wider previous/next buttons around method and frequency, LINEAR or LOG, and X/Y",
                 "measured and compensated curves with readable frequency and PSD axes",
@@ -353,6 +700,8 @@
         "printer:ui-shaper-start": {
             "description": "Sweeping start with saved results.",
             "required": [
+                "STANDARD and SWEEPING grouped in one equal-width row under VIBRATIONS",
+                "full-width START CALIBRATION below LAST RESULTS with clear footer separation",
                 "INPUT SHAPER title and back action",
                 "BEFORE YOU START bed-clearance instructions",
                 "STANDARD and SWEEPING vibration choices",
@@ -373,6 +722,8 @@
         "printer:ui-shaper-start-standard": {
             "description": "Standard start without saved results.",
             "required": [
+                "STANDARD and SWEEPING grouped in one equal-width row under VIBRATIONS",
+                "full-width START CALIBRATION below LAST RESULTS with clear footer separation",
                 "INPUT SHAPER title and back action",
                 "BEFORE YOU START bed-clearance instructions",
                 "STANDARD and SWEEPING vibration choices",
@@ -393,6 +744,7 @@
         "printer:ui-shaper-history": {
             "description": "Five saved records in native history.",
             "required": [
+                "saved record rows aligned to the calibration page side margins",
                 "SHAPER RESULTS title and back action",
                 "dated calibration entries with axis labels",
                 "LATEST on the newest entry",
@@ -412,6 +764,7 @@
         "printer:ui-shaper-progress": {
             "description": "X measurement in progress.",
             "required": [
+                "stage strip aligned to the calibration page side margins",
                 "calibration progress title, sweep or fit detail and elapsed/sample telemetry",
                 "requested X/Y sweep and fit stage indicators",
                 "CANCEL action while cancellation is available",
@@ -431,6 +784,7 @@
         "printer:ui-shaper-processing-y": {
             "description": "Y fit follows completed X measurement.",
             "required": [
+                "stage strip aligned to the calibration page side margins",
                 "calibration progress title, sweep or fit detail and elapsed/sample telemetry",
                 "requested X/Y sweep and fit stage indicators",
                 "PROCESSING Y MEASUREMENTS and active Y FIT"
@@ -449,6 +803,7 @@
         "printer:ui-shaper-cancelling": {
             "description": "Pending cancellation at a safe boundary.",
             "required": [
+                "stage strip aligned to the calibration page side margins",
                 "calibration progress title, sweep or fit detail and elapsed/sample telemetry",
                 "requested X/Y sweep and fit stage indicators",
                 "CANCELLING title, busy cancellation action and safe-boundary helper text"
@@ -467,6 +822,7 @@
         "printer:ui-shaper-graph": {
             "description": "Result with recommendations already selected.",
             "required": [
+                "toolbar and action bar sharing side margins, with readable plot and legend gutters",
                 "INPUT SHAPER title with FULL SCREEN at the top right",
                 "X/Y, previous/next method, LINEAR or LOG and LIST controls",
                 "measured and after-shaper spectrum with frequency and PSD axes",
@@ -488,6 +844,7 @@
         "printer:ui-shaper-graph-log-reference": {
             "description": "Logarithmic measured spectrum compared with an older record.",
             "required": [
+                "toolbar and action bar sharing side margins, with readable plot and legend gutters",
                 "INPUT SHAPER title with FULL SCREEN at the top right",
                 "X/Y, previous/next method, LINEAR or LOG and LIST controls",
                 "measured and after-shaper spectrum with frequency and PSD axes",
@@ -510,6 +867,7 @@
         "printer:ui-shaper-graph-single-axis": {
             "description": "Single-axis calibration result.",
             "required": [
+                "toolbar and action bar sharing side margins, with readable plot and legend gutters",
                 "INPUT SHAPER title with FULL SCREEN at the top right",
                 "X/Y, previous/next method, LINEAR or LOG and LIST controls",
                 "measured and after-shaper spectrum with frequency and PSD axes",
@@ -531,6 +889,7 @@
         "printer:ui-shaper-table": {
             "description": "Native shaper comparison.",
             "required": [
+                "compact rows and matching side alignment between the table and action bar",
                 "input-shaper comparison table with SHAPER, Hz, VIB %, SM and ACCEL headings",
                 "all six method rows including 3HUMP_EI and ZVD [REF]",
                 "recommended method marker and selected viewed method",
@@ -551,6 +910,7 @@
         "printer:ui-shaper-reference": {
             "description": "Reference-only ZVD in graph view.",
             "required": [
+                "toolbar and action bar sharing side margins, with readable plot and legend gutters",
                 "INPUT SHAPER title with FULL SCREEN at the top right",
                 "X/Y, previous/next method, LINEAR or LOG and LIST controls",
                 "measured and after-shaper spectrum with frequency and PSD axes",
@@ -573,6 +933,7 @@
         "printer:ui-shaper-fullscreen": {
             "description": "Native fullscreen X spectrum.",
             "required": [
+                "header controls aligned with the chart content edges",
                 "chart occupying the screen below a compact header",
                 "header with BACK, wider previous/next buttons around method and frequency, LINEAR or LOG, and X/Y",
                 "measured and compensated curves with readable frequency and PSD axes",
@@ -594,6 +955,7 @@
         "printer:ui-shaper-fullscreen-log": {
             "description": "Native fullscreen Y spectrum in log mode.",
             "required": [
+                "header controls aligned with the chart content edges",
                 "chart occupying the screen below a compact header",
                 "header with BACK, wider previous/next buttons around method and frequency, LINEAR or LOG, and X/Y",
                 "measured and compensated curves with readable frequency and PSD axes",

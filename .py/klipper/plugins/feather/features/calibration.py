@@ -19,6 +19,7 @@ PAGES = frozenset((
     ScreenPage.CALIBRATION_RESULT,
 ))
 calibration_screws_ui = LazyModule("ff5m_ui.calibration_screws.runtime")
+preparation_ui = LazyModule("ff5m_ui.calibration_preparation")
 shaper_calibration = LazyModule("feather.calibration.shaper")
 
 
@@ -34,6 +35,7 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         materials = getattr(host, "heating_materials", ())
         self.calibration_material = materials[0] if materials else "n/a"
         self.calibration_clean_nozzle = True
+        self._preparation = None
         self.calibration_repeat_probe = False
         self.calibration_results = []
         self.calibration_mesh = []
@@ -49,7 +51,6 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         {
             ScreenPage.CALIBRATION_HOME: self._render_calibration_home,
             ScreenPage.CALIBRATION_GUIDE: self._render_calibration_guide,
-            ScreenPage.CALIBRATION_CONFIRM: self._render_calibration_confirm,
             ScreenPage.CALIBRATION_PROGRESS: self._render_calibration_progress,
             ScreenPage.CALIBRATION_RESULT: self._render_calibration_result,
         }[page]()
@@ -64,7 +65,12 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         if self._screw_results_shown(page):
             return calibration_screws_ui.PAGE, "Calibration result", False
         shaper = self._active_shaper()
-        return None if shaper is None else shaper.page_content(page)
+        if shaper is not None:
+            return shaper.page_content(page)
+        if page == ScreenPage.CALIBRATION_CONFIRM:
+            tree = self._preparation_page()
+            return tree, tree.title, tree.show_back
+        return None
 
     def write_page_values(self, page):
         if self._screw_results_shown(page):
@@ -74,6 +80,30 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
         shaper = self._active_shaper()
         if shaper is not None:
             shaper.write_page_values(page)
+        elif page == ScreenPage.CALIBRATION_CONFIRM:
+            self._write_preparation_values()
+
+    def _preparation_page(self):
+        kind = self.calibration_kind
+        materials = () if kind == "shaper" else tuple(self.heating_materials)
+        key = (kind, materials)
+        if self._preparation is None or key != self._preparation[0]:
+            self._preparation = key, preparation_ui.create_page(kind, materials)
+        return self._preparation[1]
+
+    def _write_preparation_values(self):
+        tree = self._preparation_page()
+        kind = self.calibration_kind
+        material = self.calibration_material
+        skip = kind in preparation_ui.OPTIONAL_CLEANING and not self.calibration_clean_nozzle
+        nozzle = bed = None
+        if skip:
+            nozzle = self.params.variables["clear_cooldown_temp"]
+        elif kind != "shaper" and material in self.heating_materials:
+            nozzle, bed = self._limited_preheat(material)
+        tree.state.update(preparation_ui.values(
+            material, skip, nozzle, bed, kind == "shaper" or skip or bool(self.heating_materials),
+        ))
 
     def allows_action(self, page, action):
         exact = {

@@ -1,10 +1,11 @@
 # Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-from ui import FLEX, Button, Column, Flex, Frame, Grid, ListView, PageTree, Rect, Spacer, Template, Text, ThemeColor, When
+from ui import FLEX, Button, Column, Flex, Frame, Grid, ListView, PageTree, Spacer, Template, Text, ThemeColor, When
 from ui.bindings import bind, derived, item, state
 from ui.identity import StateKey
 
+from ..calibration_layout import CONTENT, SIDE_INSET, VERTICAL_INSET
 from ..keys import AppPage
 from ..styles import UI_STYLES, UiStyle
 from .actions import CANCEL
@@ -54,9 +55,9 @@ root = Column(
              columns=(FLEX, Flex(2), FLEX), rows=(FLEX,)).height(64),
         gap=12,
     ).height("content"),
-).padding(left=24, right=24, top=18, bottom=18).ref("shaper.progress.root")
+).padding(left=SIDE_INSET, right=SIDE_INSET, top=VERTICAL_INSET, bottom=VERTICAL_INSET).ref("shaper.progress.root")
 
-PAGE = PageTree(root, Rect(0, 56, 800, 386), page_id=AppPage.SHAPER_PROGRESS,
+PAGE = PageTree(root, CONTENT, page_id=AppPage.SHAPER_PROGRESS,
                 state_schema=tuple(ProgressState), styles=UI_STYLES)
 PAGE.title = "Input shaper calibration"
 PAGE.show_back = False

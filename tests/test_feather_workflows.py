@@ -5126,21 +5126,17 @@ class FilamentAndCalibrationWorkflowTest(unittest.TestCase):
 
     def test_z_cleaning_choice_keeps_abort_visible_without_homing(self):
         controller = base_controller()
-        controller.feature_manager = FEATHER.LazyFeatureManager(controller, FEATHER.FEATURE_SPECS)
         controller.toolhead.status["homed_axes"] = ""
         controller.page = FEATHER.ScreenPage.CALIBRATION_CONFIRM
-        controller.renderer = FEATHER.FeatherRenderer()
-        capture = RenderCapture(controller.renderer)
-        calibration = controller.feature_manager.get("calibration")
+        calibration, capture = feature_on_screen(controller, "calibration")
         calibration.calibration_kind = "z"
 
         controller._apply_safety_visibility(controller.page)
         calibration._limited_preheat = lambda material: (245, 75)
-        calibration.render(controller.page)
+        controller._render_screen()
 
         self.assertTrue(capture.latest.has_action("global.abort"))
-        self.assertTrue(capture.latest.has_text(
-            "CLEANING FOR %s (245 C / 75 C)" % calibration.calibration_material))
+        self.assertIn("cal.confirm", shown_actions(controller._screen_root))
 
     def _blocking_move_controller(self, run_script):
         controller = base_controller()

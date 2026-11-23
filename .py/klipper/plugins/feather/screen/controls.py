@@ -28,7 +28,6 @@ from ff5m_ui.z_offset.constants import Z_WEIGHT_DANGER
 from feather.control import joystick as joystick_ui
 from feather.screen.pagination import Pagination, pagination_footer
 from feather.screen import prompt_titles
-from feather.materials import render_material_selector
 
 
 home_ui = LazyModule("ff5m_ui.home.page")
@@ -1111,11 +1110,11 @@ class FeatherControlsMixin:
             self.calibration_material = material
             self.calibration_clean_nozzle = True
             self.calibration_repeat_probe = False
-            self._render_calibration_confirm()
+            self._paint_page_values()
         elif action == "cal.clean.skip":
             self.calibration_clean_nozzle = False
             self.calibration_repeat_probe = False
-            self._render_calibration_confirm()
+            self._paint_page_values()
         elif action == "cal.confirm":
             if (self.calibration_kind in (
                     "mesh", "pid_bed", "pid_extruder")
@@ -1125,7 +1124,7 @@ class FeatherControlsMixin:
                     and getattr(self, "calibration_clean_nozzle", True)
                     and not self.heating_materials):
                 raise RuntimeError(
-                    "Select WITHOUT CLEANING when no materials are enabled")
+                    "Select SKIP when no materials are enabled")
             if self.calibration_kind == "z":
                 self._start_z_calibration_preparation()
             else:
@@ -1341,94 +1340,6 @@ class FeatherControlsMixin:
             "\n".join(commands), "SAVING Z OFFSET...")
         self._render_live_z_offset()
         self._toast("Z offset saved %+.3f mm" % current)
-
-    def _render_calibration_confirm(self):
-        kind = self.calibration_kind
-        title = {
-            "z": "Z offset preparation",
-            "pid_bed": "Bed PID calibration",
-            "pid_extruder": "Hotend PID calibration",
-            "shaper": "Input shaper calibration",
-        }.get(kind, "Confirm calibration")
-        commands = self.renderer.begin_page(title, back=True)
-        if kind == "screws":
-            text = ("Select a material to clean the nozzle before probing, "
-                    "or choose WITHOUT CLEANING.")
-        elif kind == "z":
-            text = ("Safe Z is set. Select a material to clean the nozzle first, "
-                    "or choose WITHOUT CLEANING. The paper test starts after preparation.")
-        elif kind == "pid_bed":
-            text = ("Select the bed target temperature used for PID tuning. "
-                    "The printer will home before heating.")
-        elif kind == "pid_extruder":
-            text = ("Select the nozzle target temperature used for PID tuning. "
-                    "Remove filament from the nozzle before starting.")
-        elif kind == "shaper":
-            text = ("The toolhead will home and vibrate rapidly on both axes. "
-                    "Clear the bed and keep away from the printer.")
-        else:
-            text = ("The printer will heat up, clean the nozzle, home, "
-                    "and replace the 'auto' mesh profile.")
-        commands.append(self.renderer.text(
-            400, 85, text, ThemeColor.BRIGHT, "Roboto 10pt", "center", "middle",
-            max_width=572, max_height=70, wrap=True, truncate=True))
-        materials = (self.heating_materials
-                     if kind in ("screws", "mesh", "z",
-                                 "pid_bed", "pid_extruder") else ())
-        if materials:
-            width = 135
-            gap = 15
-            selected = (self.calibration_material
-                        if (kind not in ("screws", "z") or getattr(
-                            self, "calibration_clean_nozzle", True)) else None)
-            commands += render_material_selector(
-                self.renderer, "cal.material.", 25, 145, width, 55,
-                column_gap=gap, materials=materials, selected=selected,
-                area_width=750)
-        elif kind in ("screws", "mesh", "z", "pid_bed", "pid_extruder"):
-            commands.append(self.renderer.text(
-                400, 173, "NO MATERIALS ENABLED", ThemeColor.DIM,
-                "JetBrainsMono Bold 10pt", "center", "middle"))
-        if kind in ("screws", "z"):
-            commands += self.renderer.button(
-                "cal.clean.skip", 115, 215, 570, 52, "WITHOUT CLEANING",
-                state=("enabled" if getattr(
-                    self, "calibration_clean_nozzle", True) else "selected"))
-            if (getattr(self, "calibration_clean_nozzle", True)
-                    and materials):
-                nozzle, bed = self._limited_preheat(self.calibration_material)
-                mode_hint = (
-                    "CLEANING FOR %s (%.0f C / %.0f C)" %
-                    (self.calibration_material, nozzle, bed))
-            else:
-                mode_hint = (
-                    "SKIP CLEANING, HEAT UP TO %.0f C" %
-                    self.params.variables["clear_cooldown_temp"])
-            commands.append(self.renderer.text(
-                400, 290, mode_hint,
-                ThemeColor.DIM, "JetBrainsMono 8pt", "center"))
-        elif kind in ("pid_bed", "pid_extruder") and materials:
-            nozzle, bed = self._limited_preheat(
-                self.calibration_material)
-            target = bed if kind == "pid_bed" else nozzle
-            commands.append(self.renderer.text(
-                400, 255, "TARGET: %.0f C (%s)" % (
-                    target, self.calibration_material),
-                ThemeColor.WARNING, "JetBrainsMono Bold 10pt", "center"))
-        elif kind == "shaper":
-            commands.append(self.renderer.text(
-                400, 255, "STRONG MACHINE VIBRATION IS EXPECTED",
-                ThemeColor.WARNING, "JetBrainsMono Bold 10pt", "center"))
-        material_required = kind in ("mesh", "pid_bed", "pid_extruder")
-        cleaning_required = (kind in ("screws", "z") and getattr(
-            self, "calibration_clean_nozzle", True))
-        can_start = bool(materials) or not (
-            material_required or cleaning_required)
-        commands += self.renderer.button("cal.confirm", 220, 330, 360, 85,
-                                         "START",
-                                         state="enabled" if can_start else "disabled",
-                                         font="Roboto Bold 16pt")
-        self.renderer.send(commands)
 
     def _render_calibration_progress(self):
         operation = self._operation_context_status()

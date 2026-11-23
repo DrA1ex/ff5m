@@ -3,10 +3,11 @@
 
 import time
 
-from ui import FLEX, Button, Column, Frame, Grid, PageTree, Rect, Row, Spacer, Text
+from ui import FLEX, Button, Column, Grid, PageTree, Row, Spacer, Text
 from ui.bindings import bind, derived, state
 from ui.identity import StateKey
 
+from ..calibration_layout import CONTENT, SIDE_INSET, VERTICAL_INSET, briefing
 from ..keys import AppPage
 from ..styles import UI_STYLES, UiStyle
 from .actions import ShaperAction
@@ -35,26 +36,17 @@ def _method_note(sweep):
 
 
 root = Column(
-    Frame(Column(
-        Text("BEFORE YOU START").style(UiStyle.PRIMARY_LEFT).height(22),
-        Text("Remove prints and objects from the bed.", wrap=True).style(UiStyle.TEXT_LEFT),
-        gap=6,
-    )).style(UiStyle.FRAME_PANEL).height(82).padding(left=20, right=20, top=16, bottom=16),
-    Spacer().height(20),
-    Row(
-        Text("VIBRATIONS").width("content").style(UiStyle.TEXT_LEFT).ref("shaper.start.vibrations.label"),
-        Spacer(),
-        _method("STANDARD", False),
-        _method("SWEEPING", True),
+    briefing("BEFORE YOU START", "Remove prints and objects from the bed.", height=82),
+    Spacer().height(18),
+    Column(
+        Text("VIBRATIONS").style(UiStyle.TEXT_LEFT).height("content").ref("shaper.start.vibrations.label"),
+        Row(_method("STANDARD", False), _method("SWEEPING", True), gap=12).height(50),
         gap=8,
-    ).height(48),
-    Spacer().height(12),
+    ).height(80),
+    Spacer().height(18),
     Text(derived(_method_note, bind(StartState.SWEEP))).style(UiStyle.DIM_LEFT)
-        .height(24).ref("shaper.start.vibrations.note"),
-    Spacer().height(20),
-    Button(ShaperAction("start"), "START CALIBRATION")
-        .style(UiStyle.BUTTON_BOLD_12).height(56).ref("shaper.start.measure"),
-    Spacer().height(20),
+        .height("content").ref("shaper.start.vibrations.note"),
+    Spacer().height(12),
     Grid(matrix=((
         Button(ShaperAction("last"), "LAST RESULTS",
                state=derived(lambda ready: "enabled" if ready else "disabled", bind(StartState.HAS_LAST)))
@@ -62,10 +54,12 @@ root = Column(
         Text(bind(StartState.SUMMARY), truncate=True).style(UiStyle.DIM_LEFT).ref("shaper.start.summary"),
     ),), columns=(FLEX, FLEX), rows=(FLEX,), gap=(12, 0)).height(44),
     Spacer(),
-).padding(left=40, top=18, right=40, bottom=18) \
+    Button(ShaperAction("start"), "START CALIBRATION")
+        .style(UiStyle.BUTTON_BOLD_12).height(64).ref("shaper.start.measure"),
+).padding(left=SIDE_INSET, right=SIDE_INSET, top=VERTICAL_INSET, bottom=VERTICAL_INSET) \
     .ref("shaper.start.root")
 
-PAGE = PageTree(root, Rect(0, 56, 800, 386), page_id=AppPage.SHAPER_START,
+PAGE = PageTree(root, CONTENT, page_id=AppPage.SHAPER_START,
                 state_schema=tuple(StartState), styles=UI_STYLES)
 PAGE.title = "Input shaper"
 PAGE.show_back = True

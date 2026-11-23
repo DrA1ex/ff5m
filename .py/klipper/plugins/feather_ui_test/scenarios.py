@@ -24,6 +24,7 @@ from feather.screen.pagination import Pagination
 from timelapse_state import TimelapsePhase
 from ui import Button, StateStore, action_wire_id
 from . import memory
+from . import preparation_visuals
 from . import shaper_visuals
 from .context_fixtures import (
     CONTEXT_TYPES, VISUAL_CONTEXTS, visual_context_cases,
@@ -360,6 +361,10 @@ class ScenarioCatalog:
         self._add_call(steps, "ui-calibration-pages",
                        self._render_calibration_variants)
         self._add_capture(steps, "ui-calibration-variants")
+        for case, kind, skip, empty in preparation_visuals.CASES:
+            self._add_render_capture(
+                steps, "ui-preparation-" + case,
+                lambda k=kind, s=skip, e=empty: self._render_calibration_preparation(k, s, e))
         for kind in shaper_visuals.CASES:
             self._add_render_capture(
                 steps, "ui-shaper-" + kind,
@@ -821,6 +826,22 @@ class ScenarioCatalog:
                 "usb_storage": storage,
         }):
             host._render_file_browser()
+
+    def _render_calibration_preparation(self, kind, skip, empty):
+        calibration = self.host.feature_manager.get("calibration")
+        profiles = {} if empty else {
+            "PLA": (205, 60), "PETG": (240, 80), "ABS": (255, 100), "TPU": (225, 45),
+        }
+        with _temporary_attributes(self.host, {
+            "heating_materials": tuple(profiles),
+            "heating_profiles": profiles,
+        }), _temporary_attributes(calibration, {
+            "calibration_kind": kind,
+            "calibration_material": "PLA" if profiles else "n/a",
+            "calibration_clean_nozzle": not skip,
+            "_active_shaper": lambda: None,
+        }):
+            self._show(ScreenPage.CALIBRATION_CONFIRM)
 
     def _render_calibration_guide(self):
         self._show(ScreenPage.CALIBRATION_GUIDE)

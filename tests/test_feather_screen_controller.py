@@ -50,6 +50,7 @@ from feather.calibration.z import (
     FeatherZCalibrationMixin, ZCalibrationSession)
 from feather.calibration.extruder import FeatherExtruderCalibrationMixin
 from tests.feather_render_test_helper import Bounds, RenderCapture, RenderFrame, page_screen, prompt_wire, shown_actions
+from tests.test_feather_workflows import base_controller, feature_on_screen
 
 
 def z_page_screen(controller, page):
@@ -92,6 +93,32 @@ class BedMeshState(StatusObject):
 
 def drawn_toggle(controller, action):
     return RenderFrame(controller.draw_batches[-1], controller.renderer).toggle(action)
+
+
+def calibration_confirmation(kind, *, with_materials=True):
+    controller = base_controller()
+    controller.heating_profiles = (
+        {"PLA": (205, 60), "PETG": (245, 75), "ABS": (255, 95),
+         "TPU": (225, 45), "ABS-PC": (260, 100)}
+        if with_materials else {}
+    )
+    controller.heating_materials = tuple(controller.heating_profiles)
+    controller.extruder = SimpleNamespace(heater=SimpleNamespace(max_temp=280))
+    controller.heater_bed = SimpleNamespace(max_temp=120)
+    controller.params = SimpleNamespace(variables={"clear_cooldown_temp": 135})
+    controller._forge_shaper = lambda: None
+    controller.last_action_time = -100
+    controller.page = FEATHER.ScreenPage.CALIBRATION_CONFIRM
+    feature, capture = feature_on_screen(controller, "calibration")
+    feature.calibration_kind = kind
+    controller._render_screen()
+    return controller, feature, capture
+
+
+def tap_calibration(controller, action):
+    controller.reactor.now += 1
+    controller._dispatch_action(action)
+    controller._render_screen()
 
 
 class ControllerSafetyTest(unittest.TestCase):
@@ -294,7 +321,6 @@ class ControllerSafetyTest(unittest.TestCase):
             FEATHER.ScreenPage.SAFE_Z_BRIEFING: "_render_safe_z_briefing",
             FEATHER.ScreenPage.SAFE_Z_CALIBRATION: "_render_safe_z",
             FEATHER.ScreenPage.LIVE_Z_OFFSET: "_render_live_z_offset",
-            FEATHER.ScreenPage.CALIBRATION_CONFIRM: "_render_calibration_confirm",
             FEATHER.ScreenPage.CALIBRATION_PROGRESS: "_render_calibration_progress",
             FEATHER.ScreenPage.CALIBRATION_RESULT: "_render_calibration_result",
             FEATHER.ScreenPage.SETTINGS: "_render_settings",
@@ -681,19 +707,18 @@ class ControllerSafetyTest(unittest.TestCase):
         controller._handle_calibration_action("cal.axes")
         self.assertEqual(pages[-1], FEATHER.ScreenPage.CALIBRATION_GUIDE)
 
-    def test_pid_confirm_uses_selected_material_temperature(self):
-        controller = ScenarioController.__new__(ScenarioController)
-        controller.renderer = FEATHER.FeatherRenderer()
-        batches = RenderCapture(controller.renderer).batches
-        controller.calibration_kind = "pid_bed"
-        controller.calibration_material = "PETG"
-        controller._limited_preheat = lambda material: (250, 70)
+    def test_pid_confirmation_updates_the_target_when_material_changes(self):
+        for kind, first, alternative in (("pid_bed", "60 C", "75 C"),
+                                         ("pid_extruder", "205 C", "245 C")):
+            with self.subTest(kind=kind):
+                controller, feature, capture = calibration_confirmation(kind)
+                self.assertTrue(capture.latest.has_text(first))
+                self.assertNotIn("cal.clean.skip", shown_actions(controller._screen_root))
 
-        controller._render_calibration_confirm()
+                tap_calibration(controller, "cal.material.PETG")
 
-        drawing = "\n".join(batches[-1])
-        self.assertIn("cal.material.PETG", drawing)
-        self.assertNotIn("cal.clean.skip", drawing)
+                self.assertEqual(feature.calibration_material, "PETG")
+                self.assertTrue(capture.latest.has_text(alternative))
 
     def test_pid_workflows_use_supported_macros(self):
         cases = (
@@ -1115,80 +1140,52 @@ class ControllerSafetyTest(unittest.TestCase):
         self.assertTrue(
             any("-c %s" % danger_color in line for line in danger))
 
-    def test_screw_calibration_confirm_offers_clean_and_cooldown_paths(self):
-        controller = ScenarioController.__new__(ScenarioController)
-        controller.renderer = FEATHER.FeatherRenderer()
-        capture = RenderCapture(controller.renderer)
-        controller.calibration_kind = "screws"
-        controller.calibration_material = "PETG"
-        controller.params = SimpleNamespace(variables={"clear_cooldown_temp": 135})
-        controller._limited_preheat = lambda material: (245, 75)
+    def test_optional_cleaning_switches_to_cooldown_and_keeps_the_material(self):
+        for kind in ("screws", "z"):
+            with self.subTest(kind=kind):
+                controller, feature, capture = calibration_confirmation(kind)
+                tap_calibration(controller, "cal.material.PETG")
+                self.assertTrue(capture.latest.has_text("245 C"))
+                self.assertTrue(capture.latest.has_text("75 C"))
 
-        controller.calibration_clean_nozzle = True
-        controller._render_calibration_confirm()
-        self.assertEqual(
-            controller.renderer._buttons["cal.material.PETG"][5],
-            "selected")
-        self.assertEqual(
-            controller.renderer._buttons["cal.clean.skip"][5], "enabled")
-        self.assertIn("cal.material.ABS-PC", controller.renderer._buttons)
-        self.assertIn("cal.confirm", controller.renderer._buttons)
-        self.assertTrue(capture.latest.has_text("CLEANING FOR PETG (245 C / 75 C)"))
+                tap_calibration(controller, "cal.clean.skip")
 
-        controller.calibration_clean_nozzle = False
-        controller._render_calibration_confirm()
-        self.assertTrue(capture.latest.has_text("SKIP CLEANING, HEAT UP TO 135 C"))
-        self.assertEqual(
-            controller.renderer._buttons["cal.clean.skip"][5], "selected")
-        self.assertTrue(all(
-            spec[5] != "selected"
-            for action, spec in controller.renderer._buttons.items()
-            if action.startswith("cal.material.")))
-        controller.params.variables["clear_cooldown_temp"] = 165
-        controller._render_calibration_confirm()
-        self.assertTrue(capture.latest.has_text("SKIP CLEANING, HEAT UP TO 165 C"))
+                self.assertFalse(feature.calibration_clean_nozzle)
+                self.assertEqual(feature.calibration_material, "PETG")
+                self.assertTrue(capture.latest.has_text("135 C"))
+                self.assertFalse(capture.latest.has_text("75 C"))
 
-    def test_mesh_cleaning_uses_complete_shared_material_selector(self):
-        controller = ScenarioController.__new__(ScenarioController)
-        controller.renderer = FEATHER.FeatherRenderer()
-        RenderCapture(controller.renderer)
-        controller.calibration_kind = "mesh"
-        controller.calibration_material = "ABS-PC"
+                controller.params.variables["clear_cooldown_temp"] = 165
+                controller._render_screen()
+                self.assertTrue(capture.latest.has_text("165 C"))
 
-        controller._render_calibration_confirm()
+                tap_calibration(controller, "cal.material.PETG")
+                self.assertTrue(feature.calibration_clean_nozzle)
+                self.assertTrue(capture.latest.has_text("245 C"))
 
-        for material in controller.heating_materials:
-            self.assertIn(
-                "cal.material.%s" % material, controller.renderer._buttons)
-        self.assertEqual(
-            controller.renderer._buttons["cal.material.ABS-PC"][5],
-            "selected")
+    def test_mesh_confirmation_exposes_every_configured_material(self):
+        controller, feature, capture = calibration_confirmation("mesh")
+        actions = shown_actions(controller._screen_root)
+        self.assertTrue({f"cal.material.{material}" for material in controller.heating_materials} <= actions)
+        self.assertNotIn("cal.clean.skip", actions)
+        tap_calibration(controller, "cal.material.ABS-PC")
+        self.assertEqual(feature.calibration_material, "ABS-PC")
+        self.assertTrue(capture.latest.has_text("260 C"))
 
-    def test_empty_heating_disables_mesh_but_preserves_no_clean_screws(self):
-        controller = ScenarioController.__new__(ScenarioController)
-        controller.params = SimpleNamespace(variables={"clear_cooldown_temp": 135})
-        controller.heating_materials = ()
-        controller.heating_profiles = {}
-        controller.renderer = FEATHER.FeatherRenderer()
-        batches = RenderCapture(controller.renderer).batches
-        controller.calibration_material = "n/a"
-        controller.calibration_clean_nozzle = True
-
-        controller.calibration_kind = "mesh"
-        controller._render_calibration_confirm()
-        mesh = "\n".join(batches[-1])
-        self.assertNotIn("cal.material.", mesh)
-        self.assertNotIn(":cal.confirm", mesh)
-
-        controller.calibration_kind = "screws"
-        controller._render_calibration_confirm()
-        screws = "\n".join(batches[-1])
-        self.assertIn("cal.clean.skip", screws)
-        self.assertNotIn(":cal.confirm", screws)
-        controller.calibration_clean_nozzle = False
-        controller._render_calibration_confirm()
-        screws = "\n".join(batches[-1])
-        self.assertIn(":cal.confirm", screws)
+    def test_empty_heating_only_allows_starting_after_an_available_skip(self):
+        for kind in ("mesh", "pid_bed", "pid_extruder", "screws", "z"):
+            with self.subTest(kind=kind):
+                controller, feature, _ = calibration_confirmation(kind, with_materials=False)
+                actions = shown_actions(controller._screen_root)
+                self.assertNotIn("cal.confirm", actions)
+                self.assertFalse(any(action.startswith("cal.material.") for action in actions))
+                if kind in ("screws", "z"):
+                    self.assertIn("cal.clean.skip", actions)
+                    tap_calibration(controller, "cal.clean.skip")
+                    self.assertFalse(feature.calibration_clean_nozzle)
+                    self.assertIn("cal.confirm", shown_actions(controller._screen_root))
+                else:
+                    self.assertNotIn("cal.clean.skip", actions)
 
     def test_screw_calibration_marks_only_current_phase_with_accent(self):
         controller = ScenarioController.__new__(ScenarioController)

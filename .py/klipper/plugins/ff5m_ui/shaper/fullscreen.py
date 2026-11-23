@@ -7,6 +7,7 @@ from ui import FLEX, Button, Column, Equal, Flex, Frame, Grid, PageTree, Rect, T
 from ui.actions import Back
 from ui.bindings import bind, derived
 
+from ..calibration_layout import SIDE_INSET
 from ..keys import AppPage
 from .actions import ShaperAction
 from .page import FONT, ShaperRef, axes, chart, scale_button, x_ticks
@@ -14,6 +15,8 @@ from .state import ShaperState
 
 
 BOUNDS = Rect(0, 0, 800, 480)
+FRAME_INSET = 8
+CONTENT_INSET = SIDE_INSET - FRAME_INSET
 
 header = Frame(Grid(matrix=((
     Button(Back(), "BACK", font="JetBrainsMono Bold 8pt"),
@@ -24,7 +27,8 @@ header = Frame(Grid(matrix=((
     ),), columns=(64, FLEX, 64), rows=(FLEX,), gap=8),
     scale_button(),
     axes(),
-),), columns=(Flex(4), Flex(15), 112, Flex(5)), rows=(FLEX,), gap=12),
+),), columns=(Flex(4), Flex(15), 112, Flex(5)), rows=(FLEX,), gap=12)
+    .padding(left=CONTENT_INSET, right=CONTENT_INSET),
     background=ThemeRole.HEADER_BACKGROUND, border=ThemeRole.HEADER_BORDER).height(48)
 
 legend = Grid(matrix=((
@@ -44,10 +48,10 @@ body = Column(
     When(bind(ShaperState.REFERENCE_LABEL),
          Text(bind(ShaperState.REFERENCE_LABEL), font=FONT, color=ThemeColor.DIM,
               horizontal="left", truncate=True).padding(left=48)).height(22),
-).padding(left=16, right=16, top=12, bottom=10)
+).padding(left=CONTENT_INSET, right=CONTENT_INSET, top=12, bottom=10)
 
 root = Frame(Column(header, body), border=ThemeRole.HEADER_BORDER,
-             background=ThemeColor.BACKGROUND).padding(8).ref(ShaperRef.ROOT)
+             background=ThemeColor.BACKGROUND).padding(FRAME_INSET).ref(ShaperRef.ROOT)
 
 
 def create_page(bounds=BOUNDS):
