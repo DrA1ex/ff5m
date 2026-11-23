@@ -145,11 +145,13 @@ DIALOGS = {
     ScreenDialog.ACTION_PROMPT: DialogSpec(
         "_action_prompt_page", 0, frozenset(), False, False),
     ScreenDialog.MESSAGE: DialogSpec(
-        "_message_page", 0, frozenset((ScreenDialog.ACTION_PROMPT,)), False, False),
+        "_message_page", 0, frozenset((ScreenDialog.ACTION_PROMPT, ScreenDialog.NUMERIC_INPUT)), False, False),
     ScreenDialog.NETWORK_PROGRESS: DialogSpec(
         "_network_progress_dialog_page", 0, frozenset(), False, False),
     ScreenDialog.HEAT_TARGET: DialogSpec(
-        "_heat_target_page", 0, frozenset(), False, False, backdrop=False),
+        "_heat_target_page", 0, frozenset(), False, False),
+    ScreenDialog.NUMERIC_INPUT: DialogSpec(
+        "_numeric_input_page", 0, frozenset(), False, False),
     ScreenDialog.RENDER_ERROR: DialogSpec(
         "_message_page", 0, frozenset(), False, False, backdrop=False),
     ScreenDialog.ERROR: DialogSpec(
@@ -1176,7 +1178,9 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                 self._toast("UNAVAILABLE DURING PRINT")
                 return
             if semantic_action is not None:
-                if owner is not None:
+                if dialog == ScreenDialog.NUMERIC_INPUT:
+                    self._current_dialog_instance().content["handle"](semantic_action.wire_id)
+                elif owner is not None:
                     owner.handle_semantic_action(self.page, semantic_action)
                 elif network_content is not None:
                     self._handle_network_ui_action(semantic_action)
@@ -1463,6 +1467,9 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         if self._current_dialog_instance() is not None:
             self._ensure_screen_root().paint()
 
+    def _numeric_input_page(self, content):
+        return content["page"]
+
     def _touch_unavailable_page(self, content):
         return dialog_ui.touch_unavailable_page()
 
@@ -1510,6 +1517,9 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         self.page = page
         root = getattr(self, "_screen_root", None)
         if root is not None and old_page != page:
+            numeric = next((layer for layer in root.layers if layer.kind == ScreenDialog.NUMERIC_INPUT), None)
+            if numeric is not None:
+                self._close_dialog(numeric, paint=False)
             if old_page == ScreenPage.NETWORK_PROGRESS:
                 self._close_dialog(ScreenDialog.NETWORK_PROGRESS, paint=False)
             elif old_page == ScreenPage.CONTROL_HEAT:

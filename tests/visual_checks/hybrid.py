@@ -116,6 +116,7 @@ UI_SUITE_LABELS = frozenset((
     "ui-parameter-options",
     "ui-parameter-options-disabled",
     "ui-mod-value-numeric",
+    "ui-mod-value-numeric-sign",
     "ui-mod-value-text",
     "ui-applying-changes",
     "ui-render-benchmark-populated",

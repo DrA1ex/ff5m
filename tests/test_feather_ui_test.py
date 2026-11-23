@@ -1579,7 +1579,9 @@ class RunnerContractTest(unittest.TestCase):
         original_session = object()
         extruder = type("ExtruderFeature", (), {
             "extruder_calibration": original_session,
+            "_open_extruder_measurement_input": lambda self: dialogs.append(self.extruder_calibration),
         })()
+        dialogs = []
         manager = type("Manager", (), {
             "get": lambda self, name: extruder,
         })()
@@ -1603,10 +1605,13 @@ class RunnerContractTest(unittest.TestCase):
         for phase in phases:
             feature.scenarios._render_extruder_phase(phase)
 
-        self.assertEqual([item[1] for item in rendered], list(phases))
+        self.assertEqual([item[1] for item in rendered],
+                         ["measure_ready" if phase == "input" else phase for phase in phases])
         self.assertTrue(all(item[0] == FEATHER.ScreenPage.EXTRUDER_CALIBRATION
                             and item[2] for item in rendered))
         self.assertIs(extruder.extruder_calibration, original_session)
+        self.assertEqual(len(dialogs), 1)
+        self.assertEqual(dialogs[0].input_text, "98.750")
 
     def test_component_suite_discovers_declarative_pages_without_hardware(self):
         feature = UI_TEST.UITestRun(object())

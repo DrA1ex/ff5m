@@ -758,27 +758,50 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
         controller = calibration_controller()
         session = controller.extruder_calibration
         session.phase = "measure_ready"
-        pages = []
-        controller._show_page = pages.append
+        controller._paint_page = controller._render_extruder_calibration
+        controller._show_page = mock.Mock()
 
         controller._handle_extruder_calibration_action(
             "extruder.measure_ready")
 
-        self.assertEqual(session.phase, "input")
-        self.assertEqual(pages, [FEATHER.ScreenPage.EXTRUDER_CALIBRATION])
+        self.assertEqual(session.phase, "measure_ready")
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.NUMERIC_INPUT)
+        self.assertIn("extruder.key.dot", controller.renderer.shown_actions())
+        self.assertNotIn("extruder.unload_more", controller.renderer.shown_actions())
+        controller._show_page.assert_not_called()
 
     def test_measurement_uses_shared_decimal_keypad_constraints(self):
         controller = calibration_controller()
         session = controller.extruder_calibration
-        session.phase = "input"
-        batches = RenderCapture(controller.renderer).batches
+        session.phase = "measure_ready"
+        controller._paint_page = controller._render_extruder_calibration
+        controller._handle_extruder_calibration_action("extruder.measure_ready")
 
         for token in ("1", "0", "0", "dot", "5", "0", "0", "9"):
             controller._append_extruder_input(token)
 
         self.assertEqual(session.input_text, "100.500")
-        drawing = "\n".join(batches[-1])
-        self.assertIn("extruder.key.backspace", drawing)
+        self.assertIn("extruder.key.backspace", controller.renderer.shown_actions())
+
+    def test_measurement_cancel_discards_the_draft_without_exiting_calibration(self):
+        controller = calibration_controller()
+        capture = RenderCapture(controller.renderer)
+        session = controller.extruder_calibration
+        session.phase, session.input_text = "measure_ready", "99.5"
+        session.nozzle_removed = True
+        controller._run_script = mock.Mock()
+        controller._paint_page = controller._render_extruder_calibration
+        controller._handle_extruder_calibration_action("extruder.measure_ready")
+        self.assertIn("extruder.measure.cancel", controller.renderer.shown_actions())
+        controller._handle_extruder_calibration_action("extruder.measure.cancel")
+
+        self.assertEqual(session.phase, "measure_ready")
+        self.assertEqual(session.input_text, "")
+        self.assertTrue(session.active)
+        self.assertTrue(session.nozzle_removed)
+        self.assertIsNone(controller._current_dialog())
+        self.assertTrue(capture.latest.has_action("extruder.measure_ready"))
+        controller._run_script.assert_not_called()
 
     def test_failed_move_still_removes_override_and_restores_state(self):
         controller = calibration_controller()
@@ -1085,7 +1108,7 @@ class ExtruderCalibrationControllerTest(unittest.TestCase):
             session.file_snapshot = EXTRUDER_CAL.inspect_user_cfg(path)
             phases = (
                 "intro", "material", "cut", "cooling", "remove", "load",
-                "mark_first", "mark_second", "measure_ready", "input",
+                "mark_first", "mark_second", "measure_ready",
                 "warning", "result", "exit_warning", "saved")
             for phase in phases:
                 with self.subTest(phase=phase):

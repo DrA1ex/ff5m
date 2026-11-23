@@ -622,7 +622,7 @@ class FeatherControlsMixin:
         if key in (HeatCommand.EDIT_NOZZLE_TARGET, HeatCommand.EDIT_BED_TARGET):
             self._open_heat_target(nozzle=key == HeatCommand.EDIT_NOZZLE_TARGET)
             return
-        if key in (HeatCommand.TARGET_KEY, HeatCommand.APPLY_TARGET):
+        if key in (HeatCommand.TARGET_KEY, HeatCommand.APPLY_TARGET, HeatCommand.CANCEL_TARGET):
             self._handle_heat_target_command(command)
             return
         if key in HEATER_STEPS:
@@ -790,12 +790,14 @@ class FeatherControlsMixin:
         self._show_dialog(ScreenDialog.HEAT_TARGET, content={"nozzle": nozzle, "spec": spec})
 
     def _heat_target_page(self, content):
-        return heat_ui.target_editor_page(content["nozzle"], content["spec"], self.renderer,
-                                          self._heat_page().bounds)
+        return heat_ui.target_editor_page(content["nozzle"], content["spec"], self._heat_page().bounds)
 
     def _handle_heat_target_command(self, command):
         instance = self._current_dialog_instance()
         if self.page != ScreenPage.CONTROL_HEAT or instance is None or instance.kind != ScreenDialog.HEAT_TARGET:
+            return
+        if command.key == HeatCommand.CANCEL_TARGET:
+            self._close_dialog(instance)
             return
         spec = instance.content["spec"]
         draft_key = heat_ui.HeatTargetState.DRAFT

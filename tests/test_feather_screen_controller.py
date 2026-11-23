@@ -2506,7 +2506,8 @@ class ControllerSafetyTest(unittest.TestCase):
         param = mod_param("park_dz", int, 50, "Park offset")
         controller = mod_controller([param], {"park_dz": 50})
         controller._handle_mod_action("mod.item.0")
-        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_VALUE)
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_SETTINGS)
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.NUMERIC_INPUT)
         controller.mod_edit_value = ""
         controller._handle_mod_action("mod.key.7")
         controller._handle_mod_action("mod.dot")
@@ -2523,11 +2524,9 @@ class ControllerSafetyTest(unittest.TestCase):
         controller = mod_controller([param], {"speed": 5.0})
 
         controller._handle_mod_action("mod.item.0")
-        drawing = "\n".join(controller.draw_batches[-1])
-        self.assertIn("--id 1:mod.dot", drawing)
-        self.assertNotIn("--id 1:mod.sign", drawing)
-        self.assertNotIn("keyboard.left", controller.renderer._buttons)
-        self.assertNotIn("keyboard.right", controller.renderer._buttons)
+        actions = controller.renderer.shown_actions()
+        self.assertIn("mod.dot", actions)
+        self.assertTrue({"mod.sign", "keyboard.left", "keyboard.right"}.isdisjoint(actions))
         controller.mod_edit_value = ""
         for action in ("mod.key.9", "mod.dot", "mod.key.5", "mod.key.9"):
             controller._handle_mod_action(action)

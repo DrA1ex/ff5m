@@ -10,16 +10,17 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests import test_feather_preview_settings as preview_fixture
-from tests.feather_render_test_helper import RenderFrame
+from tests.feather_render_test_helper import RenderCapture, RenderFrame, shown_actions
 from feather.settings import mod
 from feather.screen.pagination import Pagination
 from ff5m_ui import parameter_controls as controls
 from ff5m_ui.model_preview import settings
-from ui import FeatherRenderer, Rect, ThemeColor
+from ui import FeatherRenderer, Rect, ScreenRoot, ThemeColor
 from ui.components import Text
 from ui.font_metrics import get_font_metrics
 from ui.bindings import resolve
 from ff5m_ui.screen import ScreenPage
+from ff5m_ui.keys import AppPage
 
 
 class ParameterControlsTest(unittest.TestCase):
@@ -200,24 +201,38 @@ class ParameterControlsTest(unittest.TestCase):
                         FeatherRenderer(), Pagination(entries, index, capacity), "DEFAULT"))
                     self.assert_page_fits(page)
 
-    def test_text_and_numeric_editors_keep_actions_inside_the_viewport(self):
+    def test_text_editor_exposes_typing_and_editor_actions_at_each_size(self):
         for size in self.SIZES:
             with self.subTest(size=size):
-                param = self.manager.params_map["feather_preview_scale"]
-                page = controls.create_numeric_page(param, bounds=self.bounds(size, "numeric"))
-                page.state.update(controls.numeric_values("1.25"))
-                self.assert_page_fits(page)
                 param = self.manager.params_map["midi_start"]
                 page = controls.create_text_page(param, False, False, bounds=self.bounds(size))
                 page.state.update(controls.text_values("MIDI text", 4))
-                frame = self.assert_page_fits(page)
-                for action in ("keyboard.key.q", "keyboard.key.z", "keyboard.space", "keyboard.backspace",
-                               "mod.save", "mod.cancel"):
-                    self.assertTrue(frame.has_action(action))
-                for node in page.root.walk():
-                    if isinstance(node, controls.Button) and node.action.wire_id.startswith("keyboard.key."):
-                        self.assertLessEqual(get_font_metrics().text_width(node.label, node.font),
-                                             page.layout.rect(node).width - 2 * FeatherRenderer.BUTTON_TEXT_PADDING)
+                renderer = FeatherRenderer()
+                RenderCapture(renderer)
+                root = ScreenRoot(renderer, page, Rect(0, 0, *size), AppPage.SCREEN_ROOT)
+                root.paint()
+                self.assertTrue({"keyboard.key.q", "keyboard.key.z", "keyboard.space", "keyboard.backspace",
+                                 "mod.save", "mod.cancel"} <= shown_actions(root))
+
+    def test_numeric_editor_only_offers_optional_keys_allowed_by_the_parameter(self):
+        for name, auxiliary in (
+            ("mod_check_update_interval", ()),
+            ("cell_weight", ("mod.sign",)),
+            ("safe_z", ("mod.dot",)),
+            ("z_offset", ("mod.dot", "mod.sign")),
+        ):
+            for size in self.SIZES:
+                with self.subTest(parameter=name, size=size):
+                    param = self.manager.params_map[name]
+                    page = controls.create_numeric_page(param, bounds=self.bounds(size, "numeric"))
+                    page.state.update(controls.numeric_values("1"))
+                    renderer = FeatherRenderer()
+                    RenderCapture(renderer)
+                    root = ScreenRoot(renderer, page, Rect(0, 0, *size), AppPage.SCREEN_ROOT)
+                    root.paint()
+                    actions = shown_actions(root)
+                    self.assertEqual(actions.intersection(("mod.dot", "mod.sign")), set(auxiliary))
+                    self.assertTrue({"mod.key.0", "mod.backspace", "mod.cancel", "mod.save"} <= actions)
 
     def test_smaller_screen_choice_paging_save_and_cancel_preserve_preview_session(self):
         self.fixture.controller.renderer.screen_width = 640

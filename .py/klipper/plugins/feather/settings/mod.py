@@ -8,10 +8,12 @@
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
 import enum
+import math
 
 from collections import namedtuple
 
 from ui import CONTENT_BOTTOM, NumericInputSpec
+from feather.calibration.rounding import written_fraction
 
 
 MAX_VALUE_LENGTH = 64
@@ -224,10 +226,33 @@ def enum_names(param):
 
 def current_edit_value(manager, param):
     value = manager.variables.get(param.key, param.default)
-    if parameter_kind(param) == "enum":
+    kind = parameter_kind(param)
+    if kind == "enum":
         return param.type(value).name
-    if parameter_kind(param) == "bool":
+    if kind == "bool":
         return "1" if value else "0"
+    if kind == "float":
+        if not math.isfinite(value):
+            return ""
+        digits = getattr(param, "fraction_digits", None)
+        if digits is not None:
+            negative, numerator, denominator = written_fraction(value)
+            scale = 10 ** digits
+            rounded = (2 * numerator * scale + denominator) // (2 * denominator)
+            whole, fraction = divmod(rounded, scale)
+            text = str(whole)
+            if fraction:
+                text += "." + str(fraction).zfill(digits).rstrip("0")
+            return "-" + text if negative and rounded else text
+        text = format(value, ".15g")
+        mantissa, separator, exponent = text.partition("e")
+        if separator:
+            places = max(0, len(mantissa.partition(".")[2]) - int(exponent))
+            places = min(places, MAX_VALUE_LENGTH - 2 - int(value < 0))
+            text = format(float(text), ".%df" % places)
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return "0" if text == "-0" else text
     return str(value)
 
 

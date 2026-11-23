@@ -6,8 +6,8 @@
 
 from dataclasses import dataclass
 
-from ui import (FLEX, ArrowButton, Button, ButtonSurface, Column, Command, CommandKey, Equal, Fill, Flex, Grid,
-                Hitbox, Image, ItemCommand, ListView, NumericKeypad, Overlay, PageTree, Panel, Rect, Row,
+from ui import (FLEX, PAGE_CHROME_CONTRACT, ArrowButton, Button, ButtonSurface, Column, Command, CommandKey, Equal,
+                Fill, Flex, Grid, Hitbox, Image, ItemCommand, ListView, Overlay, PageTree, Panel, Rect, Row,
                 ScrollIndicator, Spacer, StateKey, Stroke, Template, Text, TextField, ThemeColor, ThemeRole,
                 bind, item, state)
 from ui.bindings import Binding
@@ -20,6 +20,7 @@ from feather.screen.keyboard import TEXT_KEYBOARD, is_keyboard_action
 
 from . import icons
 from .keys import AppPage
+from .numeric_keypad import create_keypad_popup
 
 
 ROW_LABEL_FONT = "JetBrainsMono Bold 8pt"
@@ -105,8 +106,9 @@ def content_bounds(renderer=None, kind="editor"):
     footer_y = height - 36
     if kind == "list":
         return Rect(25, HEADER_BOTTOM + 21, width - 45, footer_y - 2 - HEADER_BOTTOM - 21)
-    inset, bottom = (18, 9) if kind == "numeric" else (25, 7)
-    return Rect(inset, HEADER_BOTTOM + 10, width - 2 * inset, footer_y - bottom - HEADER_BOTTOM - 10)
+    if kind == "numeric":
+        return Rect(*PAGE_CHROME_CONTRACT.content_bounds(width, height))
+    return Rect(25, HEADER_BOTTOM + 10, width - 50, footer_y - 7 - HEADER_BOTTOM - 10)
 
 
 def list_width(bounds):
@@ -428,16 +430,17 @@ def theme_values(renderer, pagination, selection):
 
 def create_numeric_page(param, bounds=None):
     """The numeric editor of param; its value is numeric_values'."""
+    bounds = bounds or content_bounds(kind="numeric")
     spec = mod.numeric_input_spec(param)
     actions = {digit: ParameterAction("key", int(digit)) for digit in "0123456789"}
-    actions.update({"backspace": ParameterAction("backspace"), "confirm": ParameterAction("save")})
+    actions.update({"backspace": ParameterAction("backspace"), "confirm": ParameterAction("save"),
+                    "cancel": ParameterAction("cancel")})
     if spec.allows_decimal:
         actions["decimal"] = ParameterAction("dot")
     if spec.allows_negative:
         actions["sign"] = ParameterAction("sign")
-    keypad = NumericKeypad(param.key, bind(ParameterValueState.VALUE), actions, subtitle=str(param.label), mode=spec,
-                           confirm_label="SAVE")
-    return PageTree(keypad, bounds or content_bounds(kind="numeric"), page_id=AppPage.MOD_VALUE)
+    return create_keypad_popup(param.key, bind(ParameterValueState.VALUE), actions, bounds,
+                               subtitle=str(param.label), spec=spec, confirm_label="SAVE")
 
 
 def numeric_values(value):
@@ -498,7 +501,7 @@ def create_text_page(param, symbols, shift, bounds=None):
         Row(Text(param.key, color=ThemeColor.DIM, font="JetBrainsMono 8pt", horizontal="left", truncate=True).grow(),
             Text(mod.description(param), color=ThemeColor.TEXT, font="JetBrainsMono 8pt", horizontal="left", truncate=True).grow(), gap=12).height(20),
         gap=0,
-    )
+    ).padding(bottom=8)
     field = Overlay(Panel(background=ThemeColor.PANEL, border=ThemeColor.PRIMARY, line_width=2),
                     TextField(bind(ParameterValueState.VALUE), bind(ParameterValueState.CURSOR),
                               color=ThemeColor.PRIMARY).margin(left=17, right=17, top=2, bottom=2))

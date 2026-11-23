@@ -127,7 +127,7 @@ class ModSettingsOnTheLoopTest(unittest.TestCase):
             self.assertNotEqual(self.selected_color(controller), default_color)
             self.assertEqual(self.checked(controller, typer), (option_action(amber), self.selected_color(controller)))
 
-    def test_the_loop_draws_the_value_keypad_and_a_key_changes_the_value(self):
+    def test_the_loop_removes_save_input_until_the_draft_is_valid(self):
         speed = mod_param("speed", float, 5.0, "Travel speed")
         speed.minimum, speed.maximum, speed.fraction_digits = 1.0, 10.0, 1
         controller, typer = self.settings([speed], {"speed": 5.0})
@@ -135,22 +135,38 @@ class ModSettingsOnTheLoopTest(unittest.TestCase):
             controller._show_page(FEATHER.ScreenPage.MOD_SETTINGS)
             self.assertTrue(wait_for(lambda: parameter_action("speed") in shown_actions(controller._screen_root)))
             self.assertTrue(self.tap(controller, typer, parameter_action("speed"),
-                                     lambda: controller.page == FEATHER.ScreenPage.MOD_VALUE))
+                                     lambda: controller._current_dialog() == FEATHER.ScreenDialog.NUMERIC_INPUT))
             feature = controller.feature_manager.get("settings")
             self.assertTrue(controller._screen_root.frames.attached)
-            self.assertTrue(self.drew_since(typer, 0, '-t "%s"' % feature.mod_edit_value))
             self.assertTrue(wait_for(lambda: {"mod.key.9", "mod.dot", "mod.save"} <= shown_actions(controller._screen_root)))
             # An empty value cannot be saved: the confirm key loses its input.
-            start = len(typer.history())
             while feature.mod_edit_value:
                 self.assertTrue(self.tap(controller, typer, "mod.backspace",
                                          lambda count=len(feature.mod_edit_value): len(feature.mod_edit_value) < count))
             self.assertTrue(wait_for(lambda: "mod.save" not in shown_actions(controller._screen_root)))
-            self.assertTrue(self.drew_since(typer, start, '-t "_"'))
-            start = len(typer.history())
             self.assertTrue(self.tap(controller, typer, "mod.key.9", lambda: feature.mod_edit_value == "9"))
             self.assertTrue(wait_for(lambda: "mod.save" in shown_actions(controller._screen_root)))
-            self.assertTrue(self.drew_since(typer, start, '-t "9"'))
+
+    def test_signed_setting_uses_the_sign_and_point_on_the_compact_keypad(self):
+        offset = mod_param("z_offset", float, 0.0, "Z offset")
+        offset.minimum, offset.maximum, offset.fraction_digits = -5.0, 5.0, 2
+        controller, typer = self.settings([offset], {"z_offset": 0.0})
+        controller._show_page(FEATHER.ScreenPage.MOD_SETTINGS)
+        self.assertTrue(wait_for(lambda: parameter_action("z_offset") in shown_actions(controller._screen_root)))
+        self.assertTrue(self.tap(controller, typer, parameter_action("z_offset"),
+                                 lambda: controller._current_dialog() == FEATHER.ScreenDialog.NUMERIC_INPUT))
+        feature = controller.feature_manager.get("settings")
+        self.assertTrue(wait_for(lambda: {"mod.sign", "mod.dot", "mod.cancel"} <= shown_actions(controller._screen_root)))
+        while feature.mod_edit_value:
+            self.assertTrue(self.tap(controller, typer, "mod.backspace",
+                                     lambda count=len(feature.mod_edit_value): len(feature.mod_edit_value) < count))
+        for action, text in (("mod.sign", "-"), ("mod.key.1", "-1"), ("mod.dot", "-1."), ("mod.key.2", "-1.2")):
+            self.assertTrue(self.tap(controller, typer, action, lambda: feature.mod_edit_value == text))
+        self.assertTrue(self.tap(controller, typer, "mod.save",
+                                 lambda: controller.params.variables["z_offset"] == -1.2))
+        controller.reactor.flush_callbacks()
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_SETTINGS)
+        self.assertIsNone(controller._current_dialog())
 
     def caret_x(self, typer):
         """Where the loop last drew the text field's caret, a 2x26 bar."""

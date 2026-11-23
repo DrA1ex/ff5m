@@ -7,7 +7,7 @@
 import logging
 
 from ui.lazy import LazyModule
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 
 
 
@@ -193,7 +193,8 @@ class ModSettingsPagesMixin:
         self.mod_edit_cursor = len(self.mod_edit_value)
         self.mod_keyboard_shift = False
         self.mod_keyboard_symbols = False
-        if mod_ui.parameter_kind(param) == "enum" or param.key == "feather_theme":
+        kind = mod_ui.parameter_kind(param)
+        if kind == "enum" or param.key == "feather_theme":
             if param.key == "feather_theme":
                 # User files are writable at runtime. Refresh them exactly once
                 # when entering the picker, then keep a stable option snapshot
@@ -214,9 +215,20 @@ class ModSettingsPagesMixin:
             self._set_parameter_options(
                 options, self.mod_edit_value, descriptions, disabled)
             self._show_page(ScreenPage.PARAMETER_OPTIONS)
+        elif kind in ("int", "float"):
+            bounds = parameter_ui.content_bounds(self.renderer, kind="numeric")
+            page = parameter_ui.create_numeric_page(param, bounds)
+            page.state.update(parameter_ui.numeric_values(self.mod_edit_value))
+            content = {"page": page, "handle": self._handle_numeric_parameter_action}
+            if self._show_dialog(ScreenDialog.NUMERIC_INPUT, content=content) is None:
+                self.mod_parameter = None
         else:
             self.selected_parameter_option = None
             self._show_page(ScreenPage.MOD_VALUE)
+
+    def _handle_numeric_parameter_action(self, action):
+        if not self.mod_update_pending:
+            self._handle_mod_action("mod.cancel" if action == "nav.back" else action)
 
     def _set_mod_value(self, param, value, complete=None,
                        minimum_duration=0.0):
@@ -251,6 +263,8 @@ class ModSettingsPagesMixin:
             self.mod_update_pending = False
             self.mod_update_token += 1
             self.mod_update_complete = None
+            if self._find_dialog(ScreenDialog.NUMERIC_INPUT) is not None:
+                self._ensure_screen_root().invalidate()
             raise
         changed = previous_value != self.params.variables.get(param.key)
         if changed and self._preview_parameter_context():
@@ -376,6 +390,8 @@ class ModSettingsPagesMixin:
                 self._toast("UPDATED: %s" % param.label)
 
             self._set_mod_value(param, value, complete)
+            if kind in ("int", "float"):
+                self._close_dialog(ScreenDialog.NUMERIC_INPUT)
             return
         if kind in ("int", "float") and (
                 action in ("mod.backspace", "mod.sign", "mod.dot")
@@ -384,8 +400,13 @@ class ModSettingsPagesMixin:
                       "mod.dot": "decimal"}.get(action))
             if token is None:
                 token = action[len("mod.key."):]
-            self.mod_edit_value = mod_ui.numeric_input_spec(param).apply(
-                self.mod_edit_value, token)
+            value = mod_ui.numeric_input_spec(param).apply(self.mod_edit_value, token)
+            if value != self.mod_edit_value:
+                self.mod_edit_value = value
+                instance = self._find_dialog(ScreenDialog.NUMERIC_INPUT)
+                if instance is not None:
+                    self._ensure_screen_root().write_layer(instance, parameter_ui.numeric_values(value))
+            return
         elif kind == "str" and keyboard_ui.is_keyboard_action(action):
             (self.mod_edit_value, self.mod_edit_cursor,
              self.mod_keyboard_shift,
@@ -416,6 +437,9 @@ class ModSettingsPagesMixin:
             self._refresh_status_bar(style=option.value)
 
     def _cancel_parameter_editor(self):
+        instance = self._find_dialog(ScreenDialog.NUMERIC_INPUT)
+        if instance is not None:
+            self._close_dialog(instance, paint=False)
         return_page = getattr(self, "mod_return_page", ScreenPage.MOD_SETTINGS)
         if return_page == ScreenPage.SETUP_NETWORK:
             self.feature_manager.get("setup").go_to_intro("network")

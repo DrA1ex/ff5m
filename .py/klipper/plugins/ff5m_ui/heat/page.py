@@ -7,11 +7,11 @@ from enum import Enum
 
 from ui import Command, PAGE_CHROME_CONTRACT, ThemeColor, ThemeRole
 from ui.bindings import bind, derived
-from ui.components import Button, ButtonSurface, Frame, Hitbox, NumericKeypad, Text
-from ui.header import WAKE
-from ui.layout import FLEX, Column, Equal, Grid, Overlay, PageTree, Rect, Row
+from ui.components import Button, ButtonSurface, Frame, Text
+from ui.layout import FLEX, Column, Equal, Grid, PageTree, Rect, Row
 
 from ..keys import AppPage
+from ..numeric_keypad import create_keypad_popup
 from ..styles import UI_STYLES, UiStyle
 from .actions import (
     APPLY_TARGET, BED_MINUS, BED_OFF, BED_PLUS, CANCEL_TARGET, COOLDOWN,
@@ -193,24 +193,15 @@ def create_page(materials=(), bounds=None):
         styles=UI_STYLES, component_templates=(VALUE,))
 
 
-def target_editor_page(nozzle, spec, renderer, bounds):
-    from ..parameter_controls import content_bounds
-
+def target_editor_page(nozzle, spec, bounds):
     actions = {key: Command(HeatCommand.TARGET_KEY, key) for key in "0123456789"}
     actions["backspace"] = Command(HeatCommand.TARGET_KEY, "backspace")
     actions["confirm"] = APPLY_TARGET
-    keypad = NumericKeypad(
-        "NOZZLE TARGET" if nozzle else "BED TARGET", bind(HeatTargetState.DRAFT), actions,
-        subtitle="RANGE %d-%d C" % (spec.minimum, spec.maximum), mode=spec, confirm_label="APPLY",
+    actions["cancel"] = CANCEL_TARGET
+    return create_keypad_popup(
+        "NOZZLE TARGET" if nozzle else "BED TARGET", bind(HeatTargetState.DRAFT), actions, bounds,
+        subtitle="RANGE %d-%d C" % (spec.minimum, spec.maximum), spec=spec, confirm_label="APPLY",
     )
-    keypad_bounds = content_bounds(renderer, kind="numeric")
-    surface = Frame(keypad, background=ThemeColor.BACKGROUND, line_width=0).padding(
-        left=keypad_bounds.x - bounds.x, top=keypad_bounds.y - bounds.y,
-        right=bounds.right - keypad_bounds.right, bottom=bounds.bottom - keypad_bounds.bottom,
-    )
-    # Consume input in the content area while the screen's Back and emergency actions stay available.
-    return PageTree(Overlay(Hitbox(WAKE), surface), bounds, page_id=AppPage.DIALOG,
-                    actions=(CANCEL_TARGET,))
 
 
 # Default declaration for framework page discovery; runtime factories retain their inputs.

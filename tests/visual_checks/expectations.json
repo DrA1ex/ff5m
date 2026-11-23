@@ -2142,14 +2142,17 @@
         },
         "printer:ui-heat-target":
         {
-            "description": "Heat / Fan target entry using the standard Feather numeric editor.",
+            "description": "Empty nozzle target editor displayed over Heat / Fan.",
             "required":
             [
-                "nozzle target editor with an allowed temperature range",
-                "integer keypad with apply and the standard Back button"
+                "centered modal with a nozzle target title, allowed temperature range and empty value field",
+                "dimmed Heat / Fan controls visible behind the modal",
+                "three columns of digits with a wide zero and a BACK key for deleting digits",
+                "danger-styled CANCEL and visibly disabled APPLY beside it"
             ],
             "forbidden":
             [
+                "decimal point or sign key",
                 "blank or corrupted framebuffer",
                 "overlapping controls",
                 "clipped important content"
@@ -2325,7 +2328,12 @@
         "printer:ui-extruder-mark-first": {"description": "Extruder calibration first-mark step.", "required": ["MARK THE FILAMENT instruction", "FEED 50 MORE action", "MARKED, FEED 100 MM action"], "forbidden": ["result values", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-extruder-mark-second": {"description": "Extruder calibration second-mark step.", "required": ["MAKE THE SECOND MARK instruction", "unload guidance", "MARKED, UNLOAD action"], "forbidden": ["result values", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-extruder-measure-ready": {"description": "Extruder calibration measurement preparation.", "required": ["REMOVE FILAMENT AND MEASURE instruction", "UNLOAD 50 MORE action", "ENTER MEASUREMENT action"], "forbidden": ["hidden measurement choice", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-extruder-input": {"description": "Extruder measured-distance keypad.", "required": ["distance value field", "numeric keypad", "CALCULATE action"], "forbidden": ["alphabetic keyboard", "overlapping keys", "clipped important content"], "allowed_variations": ["entered value", "theme colors"]},
+        "printer:ui-extruder-input": {
+            "description": "Extruder measurement in a modal over Remove and Measure.",
+            "required": ["centered keypad over the dimmed measurement instructions", "readable distance value and millimeter unit", "decimal point in the lower-left key slot", "danger-styled CANCEL beside enabled NEXT"],
+            "forbidden": ["sign key", "alphabetic keyboard", "overlapping keys", "clipped important content"],
+            "allowed_variations": ["theme colors"]
+        },
         "printer:ui-extruder-warning": {"description": "Suspicious extruder measurement warning.", "required": ["UNUSUAL VALUE warning", "measurement guidance", "EDIT and USE ANYWAY actions"], "forbidden": ["normal result without warning", "overlapping controls", "clipped important content"], "allowed_variations": ["measurement value", "theme colors"]},
         "printer:ui-extruder-result": {"description": "Calculated extruder rotation-distance result.", "required": ["measured, current and new-distance metrics", "user.cfg status", "SAVE and VERIFY actions"], "forbidden": ["missing candidate value", "overlapping controls", "clipped important content"], "allowed_variations": ["numeric formatting", "theme colors"]},
         "printer:ui-extruder-exit-warning": {"description": "Extruder calibration exit safety warning.", "required": ["INSTALL THE NOZZLE warning", "STAY action", "EXIT danger action"], "forbidden": ["silent discard", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
@@ -2333,8 +2341,24 @@
         "printer:ui-mod-parameters-next": {"description": "Later categorized Mod Settings page.", "required": ["category heading and parameter rows", "scroll rail showing non-first position", "back navigation"], "forbidden": ["first-page-only state", "overlapping controls", "clipped important content"], "allowed_variations": ["configured values", "theme colors"]},
         "printer:ui-parameter-options": {"description": "Paginated color-theme picker with a live component preview.", "required": ["compact selectable theme-name list", "status and button component preview", "cancel, save and page controls"], "forbidden": ["missing selection state", "overlapping controls", "clipped important content"], "allowed_variations": ["selected option", "theme colors"]},
         "printer:ui-parameter-options-disabled": {"description": "Theme picker page containing an invalid disabled option.", "required": ["disabled broken-theme row", "component preview", "pagination and save controls"], "forbidden": ["invalid option shown as selectable", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},
-        "printer:ui-mod-value-numeric": {"description": "Numeric Mod Settings editor.", "required": ["parameter value field", "numeric keypad", "SAVE action"], "forbidden": ["alphabetic keyboard", "overlapping keys", "clipped important content"], "allowed_variations": ["parameter label and value", "theme colors"]},
-        "printer:ui-mod-value-text": {"description": "Text Mod Settings editor.", "required": ["parameter label and value field", "text keyboard", "CANCEL and SAVE actions"], "forbidden": ["numeric-only keypad", "overlapping keys", "clipped important content"], "allowed_variations": ["parameter label and value", "theme colors"]},
+        "printer:ui-mod-value-numeric": {
+            "description": "Z Offset editor displayed over Mod Settings.",
+            "required": ["centered numeric modal over the dimmed parameter list", "readable Z Offset value field", "decimal point in the lower-left slot and a separate +/- key beside the value field", "danger-styled CANCEL beside SAVE"],
+            "forbidden": ["alphabetic keyboard", "overlapping keys", "clipped important content"],
+            "allowed_variations": ["stored Z Offset value", "theme colors"]
+        },
+        "printer:ui-mod-value-numeric-sign": {
+            "description": "Signed load-cell threshold editor displayed over Mod Settings.",
+            "required": ["centered numeric modal over the dimmed parameter list", "fully readable load-cell threshold label and value", "+/- in the lower-left key slot", "danger-styled CANCEL beside SAVE"],
+            "forbidden": ["decimal point key", "alphabetic keyboard", "overlapping keys", "clipped important content"],
+            "allowed_variations": ["stored load-cell threshold", "theme colors"]
+        },
+        "printer:ui-mod-value-text": {
+            "description": "Text Mod Settings editor.",
+            "required": ["parameter heading above a secondary line with the setting key and description", "visible vertical space between the secondary line and the value field", "text keyboard", "danger-styled CANCEL beside SAVE"],
+            "forbidden": ["numeric-only keypad", "overlapping keys", "clipped important content"],
+            "allowed_variations": ["parameter label and value", "theme colors"]
+        },
         "printer:ui-applying-changes": {"description": "Non-interactive settings apply modal.", "required": ["APPLYING CHANGES message", "PLEASE WAIT state", "progress accent"], "forbidden": ["active underlying controls", "blank modal", "clipped important content"], "allowed_variations": ["theme colors"]},
         "printer:ui-render-benchmark-populated": {"description": "Render benchmark with accumulated metrics.", "required": ["glyph stress area", "populated FPS, latency and CPU metrics", "UNLIMITED benchmark status"], "forbidden": ["all metrics blank", "unintended overlap outside stress area", "clipped metrics"], "allowed_variations": ["metric values", "glyph pattern", "theme colors"]},
         "printer:ui-network-offline": {"description": "Available network daemon with no connection.", "required": ["NOT CONNECTED status panel", "available Wi-Fi and Ethernet controls"], "forbidden": ["connected address", "wizard Continue button", "overlapping controls", "clipped important content"], "allowed_variations": ["theme colors"]},

@@ -3,7 +3,7 @@
 ## Copyright (C) 2026, Alexander K <https://github.com/drA1ex>
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-from ui.actions import Back, Command, CoolingHint, HeatingHint
+from ui.actions import Command, CoolingHint, HeatingHint
 from ui.identity import CommandKey
 
 
@@ -19,6 +19,7 @@ class HeatCommand(CommandKey):
     EDIT_BED_TARGET = "heat.bed.edit_target"
     TARGET_KEY = "heat.target.key"
     APPLY_TARGET = "heat.target.apply"
+    CANCEL_TARGET = "heat.target.cancel"
     FAN_0 = "heat.fan.0"
     FAN_50 = "heat.fan.50"
     FAN_100 = "heat.fan.100"
@@ -41,7 +42,7 @@ BED_OFF = Command(
 EDIT_NOZZLE_TARGET = Command(HeatCommand.EDIT_NOZZLE_TARGET)
 EDIT_BED_TARGET = Command(HeatCommand.EDIT_BED_TARGET)
 APPLY_TARGET = Command(HeatCommand.APPLY_TARGET)
-CANCEL_TARGET = Back()
+CANCEL_TARGET = Command(HeatCommand.CANCEL_TARGET)
 FAN_0 = Command(HeatCommand.FAN_0)
 FAN_50 = Command(HeatCommand.FAN_50)
 FAN_100 = Command(HeatCommand.FAN_100)

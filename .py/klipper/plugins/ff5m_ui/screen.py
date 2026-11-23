@@ -69,3 +69,4 @@ class ScreenDialog(Enum):
     RENDER_ERROR = 7
     NETWORK_PROGRESS = 8
     HEAT_TARGET = 9
+    NUMERIC_INPUT = 10

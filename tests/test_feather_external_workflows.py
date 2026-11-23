@@ -20,7 +20,9 @@ except ImportError:
 
 
 from ff5m_ui import dialogs as dialog_ui
-from ui import NumericInputSpec
+from ff5m_ui.numeric_keypad import create_keypad_popup
+from ff5m_ui.parameter_controls import ParameterValueState
+from ui import NumericInputSpec, Rect, bind
 
 FEATHER = lazy_tests.FEATHER
 Page = FEATHER.ScreenPage
@@ -202,6 +204,7 @@ class ExternalWorkflowTest(unittest.TestCase):
             with self.subTest(dialog=dialog):
                 blank_page(self.host)
                 self.host._clear_dialogs()
+                spec = NumericInputSpec("integer", minimum=1, maximum=299)
                 content = {
                     Dialog.ACTION_PROMPT: {"title": "Other operation", "text": [], "rows": [],
                                           "footer": [], "buttons": {}, "kind": None},
@@ -214,7 +217,12 @@ class ExternalWorkflowTest(unittest.TestCase):
                                    "recovery": "restart", "terminal": False},
                     Dialog.TOUCH_UNAVAILABLE: {},
                     Dialog.PRINT_MORE: {},
-                    Dialog.HEAT_TARGET: {"nozzle": True, "spec": NumericInputSpec("integer", minimum=1, maximum=299)},
+                    Dialog.HEAT_TARGET: {"nozzle": True, "spec": spec},
+                    Dialog.NUMERIC_INPUT: {
+                        "page": create_keypad_popup("Value", bind(ParameterValueState.VALUE), {}, Rect(12, 64, 776, 374),
+                                                    subtitle="", spec=spec, confirm_label="OK"),
+                        "handle": mock.Mock(),
+                    },
                 }[dialog]
                 self.host._show_dialog(dialog, content=content)
                 self.begin("pid_bed")

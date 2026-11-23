@@ -13,9 +13,11 @@ import stat
 import tempfile
 import time
 
-from ui import NumericInputSpec, ThemeColor
+from ui import NumericInputSpec, PAGE_CHROME_CONTRACT, Rect, SCREEN_HEIGHT, SCREEN_WIDTH, StateKey, ThemeColor, bind, state
+from ui.header import WireAction
 from feather.calibration.rounding import round_thousandths, written_fraction
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.numeric_keypad import create_keypad_popup
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from feather.materials import adaptive_grid_columns, render_material_selector
 
 
@@ -25,6 +27,10 @@ SUSPICIOUS_DEVIATION = 20
 MEASUREMENT_INPUT = NumericInputSpec(
     "decimal", minimum=0.001, max_length=10,
     fraction_digits=3)
+
+
+class MeasurementInputState(StateKey):
+    DRAFT = state(str, default="")
 
 _SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:[;#].*)?$")
 _ROTATION_RE = re.compile(
@@ -556,8 +562,6 @@ class FeatherExtruderCalibrationMixin:
                 "between the two marks with a caliper.",
                 (("extruder.unload_more", "UNLOAD 50 MORE", "enabled"),
                  ("extruder.measure_ready", "ENTER MEASUREMENT", "enabled")))
-        elif phase == "input":
-            self._render_extruder_measurement_input()
         elif phase == "warning":
             self._extruder_simple_page(
                 "Check measurement", "UNUSUAL VALUE: %.3f MM" % session.measured,
@@ -587,21 +591,27 @@ class FeatherExtruderCalibrationMixin:
                 tone=ThemeColor.SUCCESS,
                 note="THE NEW VALUE IS ACTIVE, NO RESTART NEEDED")
 
-    def _render_extruder_measurement_input(self):
+    def _open_extruder_measurement_input(self):
         session = self.extruder_calibration
-        commands = self.renderer.begin_page("Measured distance", back=True)
-        actions = dict((digit, "extruder.key.%s" % digit)
-                       for digit in "0123456789")
+        actions = {digit: WireAction("extruder.key.%s" % digit) for digit in "0123456789"}
         actions.update({
-            "decimal": "extruder.key.dot",
-            "backspace": "extruder.key.backspace",
-            "confirm": "extruder.measure",
+            "decimal": WireAction("extruder.key.dot"),
+            "backspace": WireAction("extruder.key.backspace"),
+            "confirm": WireAction("extruder.measure"),
+            "cancel": WireAction("extruder.measure.cancel"),
         })
-        commands += self.renderer.numeric_keypad(
-            18, 65, 764, 370, "Distance between marks",
-            session.input_text, actions, subtitle="mm",
-            mode=MEASUREMENT_INPUT, confirm_label="CALCULATE")
-        self.renderer.send(commands)
+        bounds = Rect(*PAGE_CHROME_CONTRACT.content_bounds(
+            getattr(self.renderer, "screen_width", SCREEN_WIDTH),
+            getattr(self.renderer, "screen_height", SCREEN_HEIGHT)))
+        page = create_keypad_popup(
+            "Distance between marks", bind(MeasurementInputState.DRAFT), actions, bounds,
+            subtitle="mm", spec=MEASUREMENT_INPUT, confirm_label="NEXT")
+        page.state.update({MeasurementInputState.DRAFT: session.input_text})
+        content = {"page": page, "handle": self._handle_measurement_input_action}
+        self._show_dialog(ScreenDialog.NUMERIC_INPUT, content=content)
+
+    def _handle_measurement_input_action(self, action):
+        self._handle_extruder_calibration_action("extruder.measure.cancel" if action == "nav.back" else action)
 
     def _refresh_extruder_file_snapshot(self):
         session = self.extruder_calibration
@@ -811,9 +821,11 @@ class FeatherExtruderCalibrationMixin:
 
     def _append_extruder_input(self, token):
         session = self.extruder_calibration
-        session.input_text = MEASUREMENT_INPUT.apply(
-            session.input_text, token)
-        self._render_extruder_measurement_input()
+        instance = self._find_dialog(ScreenDialog.NUMERIC_INPUT)
+        value = MEASUREMENT_INPUT.apply(session.input_text, token)
+        if instance is not None and value != session.input_text:
+            session.input_text = value
+            self._ensure_screen_root().write_layer(instance, {MeasurementInputState.DRAFT: value})
 
     def _set_extruder_runtime_rotation(self, value):
         self._run_script(
@@ -961,18 +973,22 @@ class FeatherExtruderCalibrationMixin:
         elif action == "extruder.unload_more":
             self._cold_extrusion_move(-50)
             session.phase = "measure_ready"
-        elif action == "extruder.measure_ready":
-            session.phase = "input"
+        elif action in ("extruder.measure_ready", "extruder.edit"):
+            self._open_extruder_measurement_input()
+            return
+        elif action == "extruder.measure.cancel":
+            session.input_text = ""
+            self._close_dialog(ScreenDialog.NUMERIC_INPUT)
+            return
         elif action.startswith("extruder.key."):
             self._append_extruder_input(action.rsplit(".", 1)[1])
             return
         elif action == "extruder.measure":
             session.set_measurement(session.input_text)
             session.phase = "warning" if session.suspicious else "result"
+            self._close_dialog(ScreenDialog.NUMERIC_INPUT, paint=False)
             if session.phase == "result":
                 self._refresh_extruder_file_snapshot()
-        elif action == "extruder.edit":
-            session.phase = "input"
         elif action == "extruder.warning_accept":
             session.warning_acknowledged = True
             session.phase = "result"

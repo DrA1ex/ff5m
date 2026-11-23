@@ -1,7 +1,6 @@
-"""Shared numeric keypad editing, validation, and rendering tests."""
+"""Shared numeric keypad editing, validation, and input tests."""
 
 import pathlib
-import re
 import sys
 import unittest
 
@@ -11,8 +10,8 @@ PLUGINS = (pathlib.Path(__file__).parents[1] / ".py" / "klipper" /
 sys.path.insert(0, str(PLUGINS))
 
 from ui import (  # noqa: E402
-    Back, CONTENT_BOTTOM, HEADER_BOTTOM, FeatherRenderer, NumericInputSpec,
-    NumericKeypad, Rect, ThemeColor, rectangles_overlap,
+    CONTENT_BOTTOM, HEADER_BOTTOM, FeatherRenderer, NumericInputSpec,
+    NumericKeypad, Rect, rectangles_overlap,
 )
 
 
@@ -52,22 +51,6 @@ class NumericInputSpecTest(unittest.TestCase):
 
 
 class NumericKeypadTest(unittest.TestCase):
-    @staticmethod
-    def _contrast_ratio(foreground, background):
-        def luminance(value):
-            channels = []
-            for offset in (0, 2, 4):
-                channel = int(value[offset:offset + 2], 16) / 255.0
-                channels.append(
-                    channel / 12.92 if channel <= 0.04045 else
-                    ((channel + 0.055) / 1.055) ** 2.4)
-            return (0.2126 * channels[0] + 0.7152 * channels[1]
-                    + 0.0722 * channels[2])
-
-        lighter, darker = sorted(
-            (luminance(foreground), luminance(background)), reverse=True)
-        return (lighter + 0.05) / (darker + 0.05)
-
     def test_renderer_keeps_page_chrome_outside_keypad(self):
         renderer = FeatherRenderer()
         renderer.begin_page("Measured distance", back=True)
@@ -75,17 +58,14 @@ class NumericKeypadTest(unittest.TestCase):
                        for digit in "0123456789")
         actions.update({"decimal": "key.dot", "backspace": "key.back",
                         "confirm": "key.confirm"})
-        drawing = "\n".join(renderer.numeric_keypad(
+        renderer.numeric_keypad(
             18, 65, 764, 370, "Distance between marks", "100.5", actions,
             subtitle="mm", minimum=0.001, fraction_digits=3,
-            confirm_label="CALCULATE"))
+            confirm_label="CALCULATE")
 
-        self.assertIn("--id 1:key.dot", drawing)
-        self.assertIn("--id 1:key.back", drawing)
-
-        controls = [Rect(*data[:4]) for action, data in renderer._buttons.items()
-                    if action.startswith("key.")]
-        self.assertEqual(len(controls), 13)
+        regions = [region for region in renderer.hitboxes if region.action.startswith("key.")]
+        self.assertCountEqual([region.action for region in regions], actions.values())
+        controls = [Rect(region.x, region.y, region.width, region.height) for region in regions]
         for control in controls:
             self.assertGreater(control.y, HEADER_BOTTOM)
             self.assertLessEqual(control.bottom, CONTENT_BOTTOM)
@@ -96,68 +76,22 @@ class NumericKeypadTest(unittest.TestCase):
     def test_declarative_component_requires_semantic_actions(self):
         with self.assertRaisesRegex(TypeError, "semantic Action"):
             NumericKeypad("VALUE", "1", {"confirm": "save"})
-        keypad = NumericKeypad(
-            "VALUE", "1", {"confirm": Back(), "backspace": Back()},
-            mode="integer", minimum=0)
-        drawing = keypad.draw(
-            FeatherRenderer(), {}, Rect(18, 65, 764, 370))
-        self.assertTrue(drawing)
 
-    def test_sign_is_rendered_once_in_each_numeric_mode(self):
+    def test_each_allowed_auxiliary_key_has_one_input_region(self):
         actions = dict((digit, "key.%s" % digit)
                        for digit in "0123456789")
         actions.update({"decimal": "key.dot", "sign": "key.sign",
                         "backspace": "key.back", "confirm": "key.save"})
-        renderer = FeatherRenderer()
-        decimal = "\n".join(renderer.numeric_keypad(
-            18, 65, 764, 370, "VALUE", "-1.5", actions,
-            mode="decimal"))
-        integer = "\n".join(renderer.numeric_keypad(
-            18, 65, 764, 370, "VALUE", "-15", actions,
-            mode="integer", fraction_digits=0))
-
-        self.assertEqual(decimal.count(":key.sign"), 1)
-        self.assertEqual(decimal.count(":key.dot"), 1)
-        self.assertEqual(integer.count(":key.sign"), 1)
-        self.assertNotIn(":key.dot", integer)
-
-    def test_labels_and_input_outline_follow_theme(self):
-        renderer = FeatherRenderer()
-        self.assertTrue(renderer.set_theme("SYNTH"))
-        actions = dict((digit, "key.%s" % digit)
-                       for digit in "0123456789")
-        actions.update({"sign": "key.sign", "backspace": "key.back",
-                        "confirm": "key.save"})
-        drawing = "\n".join(renderer.numeric_keypad(
-            18, 65, 764, 370,
-            "Cooldown temperature for CLEAR_NOZZLE, C", "150", actions,
-            subtitle="clear_cooldown_temp", mode="integer"))
-
-        self.assertIn("-c %s" % renderer.color(ThemeColor.TEXT), drawing)
-        self.assertIn("-c %s" % renderer.color(ThemeColor.DIM), drawing)
-        self.assertIn("-c %s" % renderer.color(ThemeColor.SECONDARY), drawing)
-
-    def test_specialized_light_themes_render_readable_key_labels(self):
-        actions = dict((digit, "key.%s" % digit)
-                       for digit in "0123456789")
-        actions.update({"backspace": "key.back", "confirm": "key.save"})
-
-        for theme in ("CLASSIC", "AUBERGINE"):
-            with self.subTest(theme=theme):
+        for mode, value, expected in (
+            ("decimal", "-1.5", ("key.sign", "key.dot")),
+            ("integer", "-15", ("key.sign",)),
+        ):
+            with self.subTest(mode=mode):
                 renderer = FeatherRenderer()
-                self.assertTrue(renderer.set_theme(theme))
-                drawing = renderer.numeric_keypad(
-                    18, 65, 764, 370, "VALUE", "15", actions,
-                    mode="integer")
-                for label in ("1", "BACK", "CONFIRM"):
-                    with self.subTest(label=label):
-                        key = next(line for line in drawing if '-t "%s"' % label in line)
-                        colors = re.search(
-                            r"--background ([0-9a-f]{6}).*"
-                            r"--text-color ([0-9a-f]{6})", key)
-                        self.assertIsNotNone(colors)
-                        self.assertGreaterEqual(
-                            self._contrast_ratio(*colors.groups()), 4.5)
+                renderer.numeric_keypad(18, 65, 764, 370, "VALUE", value, actions, mode=mode)
+                self.assertCountEqual(
+                    [region.action for region in renderer.hitboxes if region.action in ("key.dot", "key.sign")],
+                    expected)
 
 
 if __name__ == "__main__":

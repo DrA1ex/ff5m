@@ -4033,11 +4033,11 @@ class MotionHeatSettingsTest(unittest.TestCase):
                     self.assertEqual(action, editor.wire_id)
                     self._tap_heat_control(controller, action)
                     self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.HEAT_TARGET)
-                    self._tap_heat_control(controller, "nav.back")
+                    self._tap_heat_control(controller, HEAT_ACTIONS.CANCEL_TARGET)
                     self.assertIsNone(controller._current_dialog())
                     self.assertEqual(controller.gcode.commands, [])
 
-    def test_out_of_range_heat_target_is_rejected_and_back_discards_the_draft(self):
+    def test_out_of_range_heat_target_cannot_be_applied(self):
         controller = self._heat_target_screen()
         apply_wire = HEAT_ACTIONS.APPLY_TARGET.wire_id
         for digits in ("9", "251"):
@@ -4048,17 +4048,29 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 controller.reactor.now += 1.0
                 controller._dispatch_action(apply_wire)
                 self.assertEqual(controller.gcode.commands, [])
-                self._tap_heat_control(controller, "nav.back")
+                self._tap_heat_control(controller, HEAT_ACTIONS.CANCEL_TARGET)
                 self.assertIsNone(controller._current_dialog())
 
-        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_NOZZLE_TARGET)
-        self.assertNotIn(apply_wire, controller.renderer.shown_actions())
-        self._enter_heat_target_digits(controller, "250")
-        self.assertIn(apply_wire, controller.renderer.shown_actions())
-        self._tap_heat_control(controller, "nav.back")
+    def test_heat_keypad_blocks_background_actions_and_cancel_discards_the_draft(self):
+        controller = self._heat_target_screen()
+        renderer = controller.renderer
+        background_wire = HEAT_ACTIONS.NOZZLE_MINUS.wire_id
+        background = next(region for region in shown_hitboxes(renderer) if region.action == background_wire)
+        point = background.x + background.width // 2, background.y + background.height // 2
+        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_BED_TARGET)
+        self._enter_heat_target_digits(controller, "73")
+
+        self.assertIn(HEAT_ACTIONS.APPLY_TARGET.wire_id, renderer.shown_actions())
+        self.assertEqual(tapped_action(shown_hitboxes(renderer), *point), "global.wake")
+        self._tap_heat_control(controller, "global.wake")
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.HEAT_TARGET)
+        self._tap_heat_control(controller, HEAT_ACTIONS.CANCEL_TARGET)
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CONTROL_HEAT)
+        self.assertEqual(tapped_action(shown_hitboxes(renderer), *point), background_wire)
         self.assertEqual(controller.gcode.commands, [])
-        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_NOZZLE_TARGET)
-        self.assertNotIn(apply_wire, controller.renderer.shown_actions())
+        self._tap_heat_control(controller, HEAT_ACTIONS.EDIT_BED_TARGET)
+        self.assertNotIn(HEAT_ACTIONS.APPLY_TARGET.wire_id, renderer.shown_actions())
 
     def test_heat_values_are_written_inside_the_screen_transaction(self):
         # A frame loop may take the screen's tree between transactions on its own thread.

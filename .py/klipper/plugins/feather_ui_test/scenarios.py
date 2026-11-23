@@ -358,7 +358,7 @@ class ScenarioCatalog:
         self._add_capture(steps, "ui-heat")
         self._add_semantic_tap(steps, heat_actions.EDIT_NOZZLE_TARGET, ScreenDialog.HEAT_TARGET)
         self._add_capture(steps, "ui-heat-target")
-        self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HEAT)
+        self._add_semantic_tap(steps, heat_actions.CANCEL_TARGET, ScreenPage.CONTROL_HEAT)
         self._add_tap(steps, "nav.back", ScreenPage.CONTROL_HOME)
         self._add_tap(steps, "nav.calibration", ScreenPage.CALIBRATION_HOME)
         self._add_capture(steps, "ui-calibration")
@@ -419,10 +419,11 @@ class ScenarioCatalog:
             lambda: self._render_parameter_options(disabled_page=True))
         self._add_render_capture(
             steps, "ui-mod-value-numeric",
-            lambda: self._render_mod_value("numeric"))
+            lambda: self._render_numeric_mod_value("z_offset"))
         self._add_render_capture(
-            steps, "ui-mod-value-text",
-            lambda: self._render_mod_value("text"))
+            steps, "ui-mod-value-numeric-sign",
+            lambda: self._render_numeric_mod_value("cell_weight"))
+        self._add_render_capture(steps, "ui-mod-value-text", self._render_text_mod_value)
         self._add_render_capture(
             steps, "ui-applying-changes", self._render_applying_changes)
         self._add_render_capture(
@@ -898,7 +899,7 @@ class ScenarioCatalog:
         feature = self.host.feature_manager.get("extruder")
         session = ExtruderCalibrationSession("/tmp/feather-ui-test-user.cfg")
         session.begin(7.550)
-        session.phase = phase
+        session.phase = "measure_ready" if phase == "input" else phase
         session.temperature = 130.4 if phase == "cooling" else 42.4
         session.input_text = "98.750"
         if phase == "warning":
@@ -928,6 +929,8 @@ class ScenarioCatalog:
                 "_operation_context_status": lambda eventtime=None: operation,
         }):
             self._show(ScreenPage.EXTRUDER_CALIBRATION)
+            if phase == "input":
+                feature._open_extruder_measurement_input()
 
     def _render_next_mod_page(self):
         feature = self.host.feature_manager.get("settings")
@@ -971,11 +974,16 @@ class ScenarioCatalog:
         }):
             self._show(ScreenPage.PARAMETER_OPTIONS)
 
-    def _render_mod_value(self, kind):
+    def _render_numeric_mod_value(self, parameter_key):
+        self._show(ScreenPage.MOD_SETTINGS)
         feature = self.host.feature_manager.get("settings")
-        parameter_kind = "int" if kind == "numeric" else "str"
-        parameter = self._mod_parameter(parameter_kind)
-        value = "75" if kind == "numeric" else "STARTUP-TONE.MID"
+        feature.open_parameter_editor(self.host.params.params_map[parameter_key], ScreenPage.MOD_SETTINGS)
+        self._require_dialog_over(ScreenPage.MOD_SETTINGS, ScreenDialog.NUMERIC_INPUT)
+
+    def _render_text_mod_value(self):
+        feature = self.host.feature_manager.get("settings")
+        parameter = self._mod_parameter("str")
+        value = "STARTUP-TONE.MID"
         with _temporary_attributes(feature, {
                 "mod_parameter": parameter,
                 "mod_edit_value": value,

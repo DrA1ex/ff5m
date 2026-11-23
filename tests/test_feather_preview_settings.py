@@ -19,7 +19,8 @@ from tests.feather_render_test_helper import RenderCapture, touchable_actions
 from feather.features.manager import LazyFeatureManager
 from feather.files import FileEntry
 from feather.settings.mod import visible_parameters
-from ff5m_ui.screen import ScreenPage
+from ff5m_ui.dialogs import OK
+from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ui import FeatherRenderer
 from ui.renderer import BinaryCommand
 from feather.previews import decode_fxi1
@@ -243,9 +244,11 @@ class PreviewSettingsTest(unittest.TestCase):
     def test_numeric_cancel_and_save_use_the_mod_numeric_editor(self):
         self.open_settings()
         self.edit("scale")
-        self.assertEqual(self.controller.page, ScreenPage.MOD_VALUE)
+        self.assertEqual(self.controller.page, ScreenPage.PREVIEW_SETTINGS)
+        self.assertEqual(self.controller._current_dialog(), ScreenDialog.NUMERIC_INPUT)
         self.enter_number("1.5")
-        self.tap("nav.back")
+        self.tap("mod.cancel")
+        self.assertIsNone(self.controller._current_dialog())
         self.assertEqual(self.controller.page, ScreenPage.PREVIEW_SETTINGS)
         self.assertEqual(self.manager.variables["feather_preview_scale"], 1)
         self.edit("scale")
@@ -256,6 +259,41 @@ class PreviewSettingsTest(unittest.TestCase):
         self.style("STACKED")
         self.assertEqual(self.state["scale"], 1.5)
         self.manager._reload()
+        self.assertEqual(self.manager.variables["feather_preview_scale"], 1.5)
+
+    def test_numeric_dialog_formats_the_initial_calibration_value(self):
+        self.controller._show_page(ScreenPage.MOD_SETTINGS)
+        feature = self.controller.feature_manager.get("settings")
+        for key, stored, shown in (
+            ("safe_z", 3.7360000000000007, "3.736"),
+            ("safe_z", 4.0, "4"),
+            ("z_offset", -0.25000000000000006, "-0.25"),
+            ("z_offset", 0.1, "0.1"),
+            ("z_offset", -0.2505, "-0.251"),
+        ):
+            with self.subTest(key=key, value=stored):
+                self.manager.variables[key] = stored
+                feature.open_parameter_editor(self.manager.params_map[key], ScreenPage.MOD_SETTINGS)
+                self.assertEqual(self.controller._current_dialog(), ScreenDialog.NUMERIC_INPUT)
+                self.assertIn(shown, [text.value.strip() for text in self.capture.latest.texts])
+                self.assertTrue(self.capture.latest.has_action("mod.save"))
+                self.tap("mod.cancel")
+                self.assertEqual(self.manager.variables[key], stored)
+
+    def test_failed_numeric_save_returns_to_the_same_draft(self):
+        feature = self.open_settings()
+        self.edit("scale")
+        self.enter_number("1.5")
+        with mock.patch.object(self.manager, "set_value", side_effect=OSError("disk full")):
+            with self.assertLogs(level="ERROR"):
+                self.tap("mod.save")
+        self.assertEqual(self.controller._current_dialog(), ScreenDialog.MESSAGE)
+        self.tap(OK.wire_id)
+        self.assertEqual(self.controller._current_dialog(), ScreenDialog.NUMERIC_INPUT)
+        self.assertEqual(feature.mod_edit_value, "1.5")
+        self.assertIn("mod.save", self.controller.renderer.shown_actions())
+        self.tap("mod.save")
+        self.assertIsNone(self.controller._current_dialog())
         self.assertEqual(self.manager.variables["feather_preview_scale"], 1.5)
 
     def test_enum_cancel_returns_to_settings_without_saving(self):

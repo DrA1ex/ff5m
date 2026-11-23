@@ -240,7 +240,8 @@ class SetupTest(unittest.TestCase):
         self.assertFalse(self.feature.progress.data["draft"])
         self.feature._open_options("group:preparation")
         self.tap(SetupCommand.EDIT, "clear_cooldown_temp")
-        self.assertEqual(self.host.page, ScreenPage.MOD_VALUE)
+        self.assertEqual(self.host.page, ScreenPage.SETUP_OPTIONS)
+        self.assertEqual(self.host._current_dialog(), FEATHER.ScreenDialog.NUMERIC_INPUT)
         settings = self.host.feature_manager.get("settings")
         settings.mod_edit_value = "170"
         self.host.reactor.now += 1
@@ -469,7 +470,8 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(self.host.page, ScreenPage.SETUP_OPTIONS)
         self.assertEqual(self.manager.variables["chamber_light_mode"], "PRINT_ONLY")
         self.tap(SetupCommand.EDIT, "chamber_light")
-        self.assertEqual(self.host.page, ScreenPage.MOD_VALUE)
+        self.assertEqual(self.host.page, ScreenPage.SETUP_OPTIONS)
+        self.assertEqual(self.host._current_dialog(), FEATHER.ScreenDialog.NUMERIC_INPUT)
 
     def test_settings_opens_the_wizard_and_time_zone_returns_to_its_hub(self):
         self.host._show_page(ScreenPage.SETTINGS)

@@ -10,7 +10,6 @@ from ff5m_ui.screen import ScreenPage
 from feather.screen.pagination import Pagination
 
 
-mod_ui = LazyModule("feather.settings.mod")
 parameter_ui = LazyModule("ff5m_ui.parameter_controls")
 
 
@@ -58,27 +57,17 @@ class ModEditorPagesMixin:
         self._paint_page_values()
 
     def _mod_value_content(self):
-        """The value editor the screen shows: one tree per parameter, bounds
-        and, for text, the keyboard's layer."""
+        """The text editor the screen shows: one tree per parameter and keyboard layer."""
         param = self.mod_parameter
         if param is None:
             return None
-        if mod_ui.parameter_kind(param) in ("int", "float"):
-            variant = param.key, parameter_ui.content_bounds(self.renderer, kind="numeric")
-            create = lambda: parameter_ui.create_numeric_page(param, variant[1])
-        else:
-            variant = (param.key, parameter_ui.content_bounds(self.renderer), bool(self.mod_keyboard_symbols),
-                       bool(self.mod_keyboard_shift))
-            create = lambda: parameter_ui.create_text_page(param, variant[2], variant[3], variant[1])
+        variant = (param.key, parameter_ui.content_bounds(self.renderer), bool(self.mod_keyboard_symbols),
+                   bool(self.mod_keyboard_shift))
         if getattr(self, "_value_tree_variant", None) != variant:
-            self._value_tree = create()
+            self._value_tree = parameter_ui.create_text_page(param, variant[2], variant[3], variant[1])
             self._value_tree_variant = variant
         return self._value_tree, "Edit value", True
 
     def _write_mod_value_values(self):
         tree = self._mod_value_content()[0]
-        if mod_ui.parameter_kind(self.mod_parameter) in ("int", "float"):
-            values = parameter_ui.numeric_values(self.mod_edit_value)
-        else:
-            values = parameter_ui.text_values(self.mod_edit_value, self.mod_edit_cursor)
-        tree.state.update(values)
+        tree.state.update(parameter_ui.text_values(self.mod_edit_value, self.mod_edit_cursor))
