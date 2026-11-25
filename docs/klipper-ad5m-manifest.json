@@ -6,7 +6,7 @@
       "sha256": "476b43ce5eeb766c418528d4cc7e2c5141269c8a435124df9fa11852feb405c3"
     }
   },
-  "commit": "5cfe60f5c658990cf4a1332282abe4dd9a82240f",
+  "commit": "697d954f00e6580f9bee5fd01ba01858dd2244c6",
   "fork": "https://github.com/DrA1ex/klipper-ad5m",
   "sources": {
     "klippy/chelper/__init__.py": {
@@ -91,7 +91,7 @@
     },
     "klippy/kinematics/extruder.py": {
       "ff5m": ".py/klipper/patches/kinematics/extruder.py",
-      "sha256": "eb3df2c5399388018f277b0a6b103b4320c43b6a53312bb2a54b1c01b3fdbb09"
+      "sha256": "16b88bbf32b3d18feb6fcc06ae73dba4f1800be850921c9ba07a681c37307016"
     },
     "klippy/mcu.py": {
       "ff5m": ".py/klipper/patches/mcu.py",
@@ -107,7 +107,7 @@
     },
     "klippy/toolhead.py": {
       "ff5m": ".py/klipper/patches/toolhead.py",
-      "sha256": "38f5e4a33143fef81387cabd81ceec1281fed6f0603f352dd751f732a8bc4b76"
+      "sha256": "f9da6a1da7c4d121e0b374a7223dcede98fc88b806e6d665d204680f056bc51e"
     },
     "klippy/webhooks.py": {
       "ff5m": ".py/klipper/patches/webhooks.py",

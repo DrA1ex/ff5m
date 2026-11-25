@@ -646,11 +646,14 @@ class ToolHead:
                    self.max_velocity, self.max_accel,
                    self.requested_accel_to_decel,
                    self.square_corner_velocity))
-        self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
-        if (max_velocity is None and
-            max_accel is None and
-            square_corner_velocity is None and
-            requested_accel_to_decel is None):
+        is_query = all(v is None for v in (max_velocity, max_accel,
+                                            square_corner_velocity,
+                                            requested_accel_to_decel))
+        vsd = self.printer.lookup_object("virtual_sdcard", None)
+        quiet = not is_query and vsd is not None and vsd.is_cmd_from_sd()
+        self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,),
+                                       log=not quiet)
+        if is_query:
             gcmd.respond_info(msg, log=False)
     def cmd_M204(self, gcmd):
         # Use S for accel

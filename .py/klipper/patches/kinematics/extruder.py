@@ -20,6 +20,7 @@ class ExtruderStepper:
         self.sk_extruder = ffi_main.gc(ffi_lib.extruder_stepper_alloc(),
                                        ffi_lib.extruder_stepper_free)
         self.stepper.set_stepper_kinematics(self.sk_extruder)
+        self._espa = ffi_lib.extruder_set_pressure_advance
         # Register commands
         self.printer.register_event_handler("klippy:connect",
                                             self._handle_connect)
@@ -76,8 +77,7 @@ class ExtruderStepper:
         if new_smooth_time != old_smooth_time:
             toolhead.note_step_generation_scan_time(
                     new_smooth_time * .5, old_delay=old_smooth_time * .5)
-        ffi_main, ffi_lib = chelper.get_ffi()
-        espa = ffi_lib.extruder_set_pressure_advance
+        espa = self._espa
         toolhead.register_lookahead_callback(
             lambda print_time: espa(self.sk_extruder, print_time,
                                     pressure_advance, new_smooth_time))
@@ -102,8 +102,14 @@ class ExtruderStepper:
         msg = ("pressure_advance: %.6f\n"
                "pressure_advance_smooth_time: %.6f"
                % (pressure_advance, smooth_time))
-        self.printer.set_rollover_info(self.name, "%s: %s" % (self.name, msg))
-        gcmd.respond_info(msg, log=False)
+        params = gcmd.get_command_parameters()
+        vsd = self.printer.lookup_object("virtual_sdcard", None)
+        quiet = (vsd is not None and vsd.is_cmd_from_sd()
+                 and ("ADVANCE" in params or "SMOOTH_TIME" in params))
+        self.printer.set_rollover_info(self.name, "%s: %s" % (self.name, msg),
+                                       log=not quiet)
+        if not quiet:
+            gcmd.respond_info(msg, log=False)
     cmd_SET_E_ROTATION_DISTANCE_help = "Set extruder rotation distance"
     def cmd_SET_E_ROTATION_DISTANCE(self, gcmd):
         rotation_dist = gcmd.get_float('DISTANCE', None)
