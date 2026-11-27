@@ -37,7 +37,7 @@ from ff5m_ui.z_offset import runtime as Z_OFFSET_LAYOUT
 from feather.features.z import ZCalibrationFeature
 from tests.feather_render_test_helper import (
     RenderCapture, RenderFrame, page_screen, paint_content, press, prompt_wire, refused_render,
-    shown_hitboxes, state_screen)
+    shown_hitboxes, state_screen, tapped_action)
 
 # Unit controllers created with __new__ do not receive klippy:ready. Give
 # those isolated fixtures the same catalog that config/material.cfg provides;
@@ -2668,41 +2668,58 @@ class RendererStateTest(unittest.TestCase):
         self.assertTrue(all(not UI.rectangles_overlap(rect, footer)
                             for rect in rectangles))
 
-    def test_move_step_caption_clears_z_controls_and_screen_edge(self):
-        caption_width = UI.FeatherRenderer.text_width(
-            "JOG STEP (MM)", "JetBrainsMono 8pt")
-        caption_left = 680 - caption_width // 2
-        caption_right = caption_left + caption_width
-        self.assertGreaterEqual(caption_left, 590)
-        self.assertLessEqual(caption_right, UI.SCREEN_WIDTH - 24)
-
-    def test_move_page_has_combined_homing_and_live_toolhead_status(self):
+    def test_step_homing_controls_follow_live_axis_availability(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.boot_screen_held = False
         controller.touch_available = None
-        batches = RenderCapture(controller.renderer).batches
+        RenderCapture(controller.renderer)
         controller.reactor = Reactor()
         controller.jog_step = 1.0
+        controller.move_mode = "step"
         controller.toolhead = StatusObject({
-            "position": (103.45, 67.89, 4.2, 0.0),
-            "homed_axes": "xy",
+            "position": (103.45, 67.89, 20., 0.),
+            "homed_axes": "",
         })
         controller._require_idle = lambda: None
-
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
+
+        jogs = (
+            ("x", MOVE_LAYOUT.X_PLUS, MOVE_LAYOUT.X_MINUS),
+            ("y", MOVE_LAYOUT.Y_PLUS, MOVE_LAYOUT.Y_MINUS),
+            ("z", MOVE_LAYOUT.Z_PLUS, MOVE_LAYOUT.Z_MINUS),
+        )
+        homes = {action.wire_id for action in
+                 (MOVE_LAYOUT.HOME_XY, MOVE_LAYOUT.HOME_Z, MOVE_LAYOUT.HOME_ALL)}
+        movement = {action.wire_id for _, plus, minus in jogs
+                    for action in (plus, minus)} | homes
+
         controller._render_move()
-        drawing = "\n".join(command for batch in batches for command in batch)
+        # Exercise initial entry, partial homing, full homing and motor release
+        # on the same live page rather than constructing a fresh page each time.
+        for index, homed in enumerate(("", "x", "y", "z", "xy", "xz", "yz", "xyz", "")):
+            with self.subTest(homed=homed):
+                controller.toolhead.status["homed_axes"] = homed
+                controller._update_move_status(index + 1)
+                regions = shown_hitboxes(controller.renderer)
+                expected = homes | {action.wire_id for axis, plus, minus in jogs
+                                    if axis in homed for action in (plus, minus)}
+                active = [region for region in regions if region.action in movement]
+                self.assertCountEqual([region.action for region in active], expected)
 
-        actions = {region.action for region in shown_hitboxes(controller.renderer)}
-        self.assertIn(MOVE_LAYOUT.Z_MINUS.wire_id, actions)
-        self.assertIn(MOVE_LAYOUT.Z_PLUS.wire_id, actions)
-        self.assertNotIn(MOVE_LAYOUT.HOME_Z.wire_id, actions)
-        self.assertIn("NOT HOMED: Z", drawing)
-        self.assertIn("X  103.45   Y   67.89", drawing)
-        self.assertIn("Z    4.20", drawing)
+                for region in active:
+                    self.assertGreater(region.width, 0)
+                    self.assertGreater(region.height, 0)
+                    self.assertEqual(tapped_action(
+                        regions, region.x + region.width // 2,
+                        region.y + region.height // 2), region.action)
 
-    def test_move_status_redraws_only_after_toolhead_changes(self):
+                for first, second in itertools.combinations(active, 2):
+                    self.assertFalse(UI.rectangles_overlap(
+                        (first.x, first.y, first.width, first.height),
+                        (second.x, second.y, second.width, second.height)))
+
+    def test_move_status_does_not_repaint_unchanged_telemetry(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
@@ -2710,7 +2727,8 @@ class RendererStateTest(unittest.TestCase):
         controller.touch_available = None
         controller.reactor = Reactor()
         controller.jog_step = 1.0
-        batches = RenderCapture(controller.renderer).batches
+        controller.move_mode = "step"
+        capture = RenderCapture(controller.renderer)
         controller.toolhead = StatusObject({
             "position": (1.0, 2.0, 10.0, 0.0),
             "homed_axes": "xyz",
@@ -2718,24 +2736,18 @@ class RendererStateTest(unittest.TestCase):
         controller._last_move = None
 
         controller._update_move_status(0)
+        submitted = len(capture.submitted)
         controller._update_move_status(1)
+        self.assertEqual(len(capture.submitted), submitted)
+
         controller.toolhead.status["position"] = (1.0, 2.0, 10.1, 0.0)
         controller._update_move_status(2)
-        controller.toolhead.status["homed_axes"] = "xy"
-        controller._update_move_status(3)
+        self.assertGreater(len(capture.submitted), submitted)
+        numbers = {float(value) for text in capture.latest.texts
+                   for value in re.findall(r"[-+]?\d+(?:\.\d+)?", text.value)}
+        self.assertIn(10.1, numbers)
 
-        self.assertEqual(len(batches), 3)
-        position_update = "\n".join(batches[1])
-        self.assertIn("Z   10.10", position_update)
-        self.assertNotIn('-t "HOME"', position_update)
-        self.assertNotIn("--batch clear-hitboxes", position_update)
-
-        homing_update = "\n".join(batches[2])
-        self.assertIn("NOT HOMED: Z", homing_update)
-        self.assertIn('-t "HOME"', homing_update)
-        self.assertNotIn("--batch clear-hitboxes", homing_update)
-
-    def test_move_status_accepts_post_home_park_position(self):
+    def test_step_position_readouts_hide_unhomed_coordinates(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.page = FEATHER.ScreenPage.CONTROL_MOVE
@@ -2743,18 +2755,38 @@ class RendererStateTest(unittest.TestCase):
         controller.touch_available = None
         controller.reactor = Reactor()
         controller.jog_step = 1.0
-        batches = RenderCapture(controller.renderer).batches
+        controller.move_mode = "step"
+        capture = RenderCapture(controller.renderer)
+        controller._require_idle = lambda: None
+        # Homing can legitimately report positions outside the manual jog range.
         controller.toolhead = StatusObject({
-            "position": (120.0, 120.0, 230.0, 0.0),
+            "position": (120., 121., 230., 0.),
             "homed_axes": "xyz",
         })
-        controller._last_move = None
+        controller._render_move()
 
-        controller._update_move_status(0)
+        def readout_numbers():
+            card = MOVE_LAYOUT.STEP_PAGE.rect("status.card")
+            texts = [text for text in capture.latest.texts
+                     if card.x <= text.x < card.right and card.y <= text.y < card.bottom]
+            self.assertTrue(texts)
+            return {float(value) for text in texts
+                    for value in re.findall(r"[-+]?\d+(?:\.\d+)?", text.value)}
 
-        drawing = "\n".join(batches[0])
-        self.assertIn("X  120.00   Y  120.00", drawing)
-        self.assertIn("Z  230.00", drawing)
+        coordinates = {120., 121., 230.}
+        self.assertEqual(readout_numbers() & coordinates, coordinates)
+
+        controller.toolhead.status["homed_axes"] = ""
+        controller._update_move_status(1)
+        self.assertFalse(readout_numbers() & coordinates)
+
+        controller.toolhead.status["homed_axes"] = "xz"
+        controller._update_move_status(2)
+        self.assertEqual(readout_numbers() & coordinates, {120., 230.})
+
+        controller.toolhead.status["homed_axes"] = "xyz"
+        controller._update_move_status(3)
+        self.assertIn(121., readout_numbers())
 
     def test_periodic_update_contains_any_ui_failure_and_recovers(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
@@ -2864,7 +2896,7 @@ class RendererStateTest(unittest.TestCase):
         controller.move_mode = "joystick"
         controller.toolhead = StatusObject({
             "position": (1.0, 2.0, 10.0, 0.0), "homed_axes": "xyz"})
-        controller._last_move = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
+        controller._last_move = (1.0, 2.0, 10.0, True, True, True)
         cursor = (320, 180)
         controller.joystick_cursor = (
             MOVE_LAYOUT.JOYSTICK_XY.wire_id, cursor[0], cursor[1])
@@ -2917,7 +2949,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_joystick_knob_dirty_region_stays_inside_static_artwork(self):
         renderer = FEATHER.FeatherRenderer()
-        snapshot = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
+        snapshot = (1.0, 2.0, 10.0, True, True, True)
         page = MOVE_LAYOUT.JOYSTICK_PAGE
         xy_pad = page.rect("xy.pad")
         z_hitbox = page.node("z.panel").touch_bounds(page.rect("z.panel"))
@@ -2954,7 +2986,7 @@ class RendererStateTest(unittest.TestCase):
 
     def test_joystick_knob_move_clears_previous_position_without_ghost(self):
         renderer = FEATHER.FeatherRenderer()
-        snapshot = (1.0, 2.0, 10.0, "HOMED: XYZ", True, True)
+        snapshot = (1.0, 2.0, 10.0, True, True, True)
         old_cursor = (240, 229)
         new_cursor = (320, 180)
         MOVE_LAYOUT.JOYSTICK_PAGE.draw(
@@ -3182,7 +3214,7 @@ class RendererStateTest(unittest.TestCase):
         controller.bed_mesh = StatusObject({
             "profile_name": "auto", "profiles": {"auto": {"points": []}}})
         controller._last_move = (
-            1.0, 2.0, 4.9, "HOMED: XYZ", True, True)
+            1.0, 2.0, 4.9, True, True, True)
         controller.joystick_cursor = (MOVE_LAYOUT.JOYSTICK_Z.wire_id, 510, 150)
         controller.joystick_feedback_at = 0.0
         controller.joystick = type("Planner", (), {
@@ -3202,7 +3234,7 @@ class RendererStateTest(unittest.TestCase):
         self.assertIn('"  2.0"', drawing)
         self.assertIn('"   4.8"', drawing)
 
-    def test_step_mode_caution_uses_same_overlay_geometry_as_joystick(self):
+    def test_step_mode_caution_offers_acknowledgement_and_profile_unload(self):
         controller = FEATHER.FeatherScreen.__new__(FEATHER.FeatherScreen)
         controller.renderer = FEATHER.FeatherRenderer()
         controller.boot_screen_held = False
@@ -3216,14 +3248,19 @@ class RendererStateTest(unittest.TestCase):
         controller.bed_mesh = StatusObject({
             "profile_name": "auto", "profiles": {"auto": {"points": []}}})
         controller._require_idle = lambda: None
-        batches = RenderCapture(controller.renderer).batches
+        RenderCapture(controller.renderer)
         controller._render_move()
-        del batches[:]
 
         controller.toolhead.status["position"] = (0.0, 0.0, 4.9, 0.0)
         controller._update_move_status(1.0)
 
-        drawing = "\n".join(batches[0])
-        overlay = MOVE_LAYOUT.JOYSTICK_PAGE.rect("xy.pad")
-        self.assertIn('"CAUTION"', drawing)
-        self.assertIn("-p %d %d -s %d %d" % overlay.as_tuple(), drawing)
+        actions = {region.action for region in shown_hitboxes(controller.renderer)}
+        dismiss = UI.SetValue(MOVE_LAYOUT.MoveState.CAUTION_ACKNOWLEDGED, True)
+        self.assertIn(dismiss.wire_id, actions)
+        self.assertIn(MOVE_LAYOUT.CAUTION_UNLOAD.wire_id, actions)
+
+        controller._dispatch_semantic_ui_action(dismiss)
+        actions = {region.action for region in shown_hitboxes(controller.renderer)}
+        self.assertNotIn(dismiss.wire_id, actions)
+        self.assertNotIn(MOVE_LAYOUT.CAUTION_UNLOAD.wire_id, actions)
+        self.assertIn(MOVE_LAYOUT.X_PLUS.wire_id, actions)

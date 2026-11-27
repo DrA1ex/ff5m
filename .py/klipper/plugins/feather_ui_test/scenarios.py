@@ -19,11 +19,12 @@ from ff5m_ui.heat import actions as heat_actions
 from ff5m_ui.screen import ScreenDialog, ScreenPage
 from ff5m_ui.print_state import PrintState
 from ff5m_ui.move import actions as move_actions
+from ff5m_ui.move.state import MoveState
 from ff5m_ui.z_offset import actions as z_actions
 from feather.files import FileEntry
 from feather.screen.pagination import Pagination
 from timelapse_state import TimelapsePhase
-from ui import Button, StateStore, action_wire_id
+from ui import Button, SetValue, StateStore, action_wire_id
 from . import memory
 from . import preparation_visuals
 from . import shaper_visuals
@@ -86,6 +87,8 @@ class ScenarioCatalog:
         self.run = run
         self.motion_origin = None
         self.motion_expected = None
+        self.motion_rehome_z = None
+        self._motion_move_mode = None
         self.heat_initial = None
         self.heat_stable_since = None
         self._mesh_snapshot = None
@@ -1650,9 +1653,11 @@ class ScenarioCatalog:
         self.host.renderer.toast("SETTINGS UPDATED")
 
     def _steps_motion(self, steps):
-        self._add_call(steps, "motion-open", lambda: self._show(ScreenPage.CONTROL_MOVE))
+        self._add_call(steps, "motion-open", self._open_motion)
         self._add_capture(steps, "motion-before-home")
         self._add_call(steps, "motion-caution", self._dismiss_move_caution)
+        self._add_wait(steps, "motion-ready", self._motion_ready,
+                       MOTION_STEP_TIMEOUT, MOTION_STEP_INTERVAL)
         self._add_semantic_tap(
             steps, move_actions.HOME_ALL, ScreenPage.CONTROL_MOVE)
         self._add_call(steps, "motion-origin", self._save_motion_origin)
@@ -1672,6 +1677,12 @@ class ScenarioCatalog:
                 lambda axis=axis: self._motion_reached(axis),
                 MOTION_STEP_TIMEOUT, MOTION_STEP_INTERVAL)
             self._add_capture(steps, "motion-%s-return" % axis)
+        self._add_call(steps, "motion-disable-before-rehome", lambda: self.host._run_script("M84"))
+        self._add_wait(steps, "motion-motors-released", self._motion_motors_released,
+                       MOTION_STEP_TIMEOUT, MOTION_STEP_INTERVAL)
+        self._add_call(steps, "motion-rehome-origin", self._save_motion_rehome_z)
+        self._add_semantic_tap(steps, move_actions.HOME_XY, ScreenPage.CONTROL_MOVE)
+        self._add_call(steps, "motion-rehome-verify", self._verify_motion_rehome)
         self._add_call(steps, "motion-disable", lambda: self.host._run_script("M84"))
 
     def _steps_render(self, steps):
@@ -2277,6 +2288,9 @@ class ScenarioCatalog:
             self.host._update, self.reactor.NOW)
 
     def restore_synthetic_state(self):
+        if self._motion_move_mode is not None:
+            self.host.move_mode = self._motion_move_mode
+            self._motion_move_mode = None
         if self.frozen_error_shown:
             self._close_frozen_error()
         if self._ui_file_view_original is not None:
@@ -2353,17 +2367,45 @@ class ScenarioCatalog:
                 "Filament Back changed nozzle target: %.1f -> %.1f" %
                 (self.ui_filament_target, target))
 
+    def _open_motion(self):
+        self._motion_move_mode = self.host.move_mode
+        self.host._stop_joystick()
+        self.host.move_mode = "step"
+        self._show(ScreenPage.CONTROL_MOVE)
+
     def _dismiss_move_caution(self):
         # The frame loop draws the Move page, caution included.
         buttons = self.host.renderer.shown_actions()
         for action in (move_actions.CAUTION_AUTO.wire_id,
-                       move_actions.CAUTION_DISMISS.wire_id,
-                       move_actions.CAUTION_UNLOAD.wire_id):
+                       move_actions.CAUTION_UNLOAD.wire_id,
+                       SetValue(MoveState.CAUTION_ACKNOWLEDGED, True).wire_id):
             if action in buttons:
                 # Keep synthetic input on the same feedback and dispatch path
                 # as a real touch. The following Home tap is a separate step.
                 self.run._tap(action)
                 break
+
+    def _motion_ready(self):
+        return (not self.host.move_caution_signature[0]
+                and move_actions.HOME_ALL.wire_id in self.host.renderer.shown_actions())
+
+    def _motion_motors_released(self):
+        status = self.host.toolhead.get_status(self.reactor.monotonic())
+        return (not status.get("homed_axes")
+                and move_actions.HOME_XY.wire_id in self.host.renderer.shown_actions()
+                and move_actions.Z_PLUS.wire_id not in self.host.renderer.shown_actions())
+
+    def _save_motion_rehome_z(self):
+        self.motion_rehome_z = float(self.host.toolhead.get_status(
+            self.reactor.monotonic())["position"][2])
+
+    def _verify_motion_rehome(self):
+        status = self.host.toolhead.get_status(self.reactor.monotonic())
+        if set(status.get("homed_axes", "")) != {"x", "y"}:
+            raise RuntimeError("Home XY after M84 must home only XY")
+        if not math.isclose(float(status["position"][2]), self.motion_rehome_z,
+                            rel_tol=0.0, abs_tol=0.05):
+            raise RuntimeError("Home XY after M84 changed the safe Z position")
 
     def _save_motion_origin(self):
         status = self.host.toolhead.get_status(self.reactor.monotonic())

@@ -61,6 +61,7 @@ class Toolhead:
         self.homed_axes = homed_axes
         self.moves = []
         self.homes = []
+        self.home_positions = {}
         self.fail_axis = None
 
     def get_position(self):
@@ -70,11 +71,15 @@ class Toolhead:
         self.position = list(position)
         self.moves.append((list(position), speed))
 
+    def motor_off(self, gcmd):
+        self.homed_axes = ""
+
     def home(self, gcmd):
         axes = [axis for axis in "XYZ" if axis in gcmd.get_command_parameters()]
         for axis in axes or "XYZ":
             if axis == self.fail_axis:
                 raise gcmd.error("Homing failed on " + axis)
+            self.home_positions[axis] = tuple(self.position)
             index = "XYZ".index(axis)
             self.position[index] = [110., 110., 220.][index]
             self.homes.append(axis)
@@ -96,6 +101,7 @@ class HomingHarness:
         self.move = MOVE.GCodeMove(SimpleNamespace(get_printer=lambda: printer))
         self.gcode.register_command("G28.1", self.toolhead.home)
         self.gcode.register_command("G28", self.smart_home)
+        self.gcode.register_command("M84", self.toolhead.motor_off)
         for command in ("_CANCEL_DELAYED_COMMANDS", "M400", "RESPOND"):
             self.gcode.register_command(command, lambda gcmd: None)
         printer.send_event("klippy:ready")
@@ -188,6 +194,97 @@ class GcodeOriginTest(unittest.TestCase):
         harness.run("G28")
         self.assertEqual(harness.move.get_status(), after)
         self.assertEqual(harness.toolhead.homes, ["Z", "X", "Y"])
+
+    def test_force_rehomes_only_requested_axes_and_resets_their_origins(self):
+        cases = (
+            ("G28 FORCE=1", ["Z", "X", "Y"], (109., 108., 217.)),
+            ("G28 X Y FORCE=1", ["X", "Y"], (109., 108., 30.)),
+            ("G28 Z FORCE=1", ["Z"], (10., 20., 217.)),
+            ("G28 X FORCE=1", ["X"], (109., 20., 30.)),
+            ("G28 Y FORCE=1", ["Y"], (10., 108., 30.)),
+        )
+        for command, homes, expected in cases:
+            with self.subTest(command=command):
+                harness = HomingHarness()
+                before = harness.shifted_state()
+                harness.run(command)
+                after = harness.move.get_status()
+                self.assertEqual(harness.toolhead.homes, homes)
+                self.assertEqual(after["gcode_position"][:3], expected)
+                self.assert_preserved(before, after)
+                harness.run(command)
+                self.assertEqual(harness.toolhead.homes, homes * 2)
+
+    def test_force_zero_preserves_smart_homing(self):
+        harness = HomingHarness()
+        before = harness.shifted_state()
+        harness.run("G28 X Y FORCE=0")
+        self.assertEqual(harness.toolhead.homes, [])
+        self.assertEqual(harness.toolhead.moves, [])
+        after = harness.move.get_status()
+        self.assertEqual(after["gcode_position"][:3], (119., 128., 30.))
+        self.assert_preserved(before, after)
+
+    def test_forced_xy_uses_physical_clearance_despite_g92(self):
+        harness = HomingHarness()
+        harness.toolhead.position[:3] = [20., 30., 2.]
+        harness.printer.send_event("toolhead:set_position")
+        before = harness.shifted_state()
+        harness.run("G28 X Y FORCE=1")
+        self.assertEqual(harness.toolhead.homes, ["X", "Y"])
+        for axis in ("X", "Y"):
+            self.assertGreaterEqual(harness.toolhead.home_positions[axis][2], 10.)
+        self.assertEqual(harness.toolhead.home_positions["Y"][0], 110.)
+        self.assert_preserved(before, harness.move.get_status())
+
+    def test_forced_y_positions_x_without_rehoming_it(self):
+        harness = HomingHarness()
+        harness.toolhead.position[0] = 20.
+        harness.printer.send_event("toolhead:set_position")
+        before = harness.shifted_state()
+        harness.run("G28 Y FORCE=1")
+        self.assertEqual(harness.toolhead.homes, ["Y"])
+        self.assertEqual(harness.toolhead.home_positions["Y"][0], 110.)
+        self.assert_preserved(before, harness.move.get_status())
+
+    def test_forced_xy_preserves_known_safe_z_after_motor_release(self):
+        harness = HomingHarness("")
+        harness.run("G28")
+        harness.run("M84")
+        before = harness.shifted_state()
+        z = harness.toolhead.position[2]
+        harness.run("G28 X Y FORCE=1")
+
+        self.assertEqual(harness.toolhead.homes, ["Z", "X", "Y", "X", "Y"])
+        self.assertEqual(harness.toolhead.homed_axes, "xy")
+        self.assertEqual(harness.toolhead.position[2], z)
+        self.assertEqual(harness.toolhead.moves, [])
+        self.assertEqual(harness.move.get_status()["gcode_position"][:3],
+                         (109., 108., 30.))
+        self.assert_preserved(before, harness.move.get_status())
+
+    def test_forced_xy_homes_z_only_when_clearance_is_insufficient(self):
+        harness = HomingHarness("xy")
+        harness.toolhead.position[2] = 2.
+        harness.printer.send_event("toolhead:set_position")
+        before = harness.shifted_state()
+        harness.run("G28 X Y FORCE=1")
+
+        self.assertEqual(harness.toolhead.homes, ["Z", "X", "Y"])
+        for axis in ("X", "Y"):
+            self.assertGreaterEqual(harness.toolhead.home_positions[axis][2], 10.)
+        self.assertEqual(harness.move.get_status()["gcode_position"][:3],
+                         (109., 108., 217.))
+        self.assert_preserved(before, harness.move.get_status())
+
+    def test_failed_forced_homing_does_not_reset_origin(self):
+        harness = HomingHarness()
+        before = harness.shifted_state()
+        harness.toolhead.fail_axis = "X"
+        with self.assertRaises(GCODE.CommandError):
+            harness.run("G28 X FORCE=1")
+        self.assertEqual(harness.move.get_status(), before)
+        self.assertEqual(harness.toolhead.homes, [])
 
     def test_partial_homing_also_resets_axes_homed_for_clearance(self):
         cases = [

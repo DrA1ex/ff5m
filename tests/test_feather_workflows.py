@@ -23,16 +23,16 @@ try:
     from tests.feather_render_test_helper import (
         paint_content,
         RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, shown_hitboxes, tapped_action,
-        touchable_actions, typer_events)
+        state_screen, touchable_actions, typer_events)
 except ImportError:
     from test_feather_screen import (
         FEATHER, RESURRECTION, GCodeRecorder, Reactor, StatusObject, paint_home, paint_printing)
     from feather_render_test_helper import (
         paint_content,
         RenderCapture, press, prompt_wire, refresh_prompt, shown_actions, shown_hitboxes, tapped_action,
-        touchable_actions, typer_events)
+        state_screen, touchable_actions, typer_events)
 
-from ui import CONTENT_BOTTOM, Command, Increment
+from ui import CONTENT_BOTTOM, Command, Increment, SetValue
 from ff5m_ui import dialogs as dialog_ui
 from ui.font_metrics import get_font_metrics
 from ff5m_ui.move import runtime as MOVE_UI
@@ -4129,20 +4129,25 @@ class MotionHeatSettingsTest(unittest.TestCase):
         self.assertIn(HEAT_UI.HeatCommand.COOLDOWN, actions)
         self.assertNotIn(HEAT_UI.HeatCommand.PREHEAT, actions)
 
-    def test_move_offers_only_combined_homing_commands(self):
+    def test_manual_move_homing_forces_the_requested_axes(self):
         controller = ScenarioController.__new__(ScenarioController)
         controller.jog_step = 1.0
         controller._require_idle = lambda: None
         blocking = []
         controller._run_blocking_gcode = (
-            lambda command, message: blocking.append((command, message)))
+            lambda command, _message: blocking.append(shlex.split(command)))
         controller._toast = lambda message: None
 
-        controller._handle_move_command(MOVE_UI.HOME_ALL)
-        controller._handle_move_command(MOVE_UI.HOME_XY)
+        for action, axes in ((MOVE_UI.HOME_ALL, set()),
+                             (MOVE_UI.HOME_XY, {"X", "Y"}),
+                             (MOVE_UI.HOME_Z, {"Z"})):
+            with self.subTest(action=action):
+                controller._handle_move_command(action)
+                command = blocking[-1]
+                self.assertEqual(command[0], "G28")
+                self.assertCountEqual(command[1:], axes | {"FORCE=1"})
 
-        self.assertEqual([command for command, _message in blocking],
-                         ["G28", "G28 X Y"])
+        self.assertEqual(len(blocking), 3)
 
     def test_step_adjustment_uses_magnitude_bands_in_both_directions(self):
         controller = ScenarioController.__new__(ScenarioController)
@@ -4170,12 +4175,17 @@ class MotionHeatSettingsTest(unittest.TestCase):
                 self.assertEqual(controller.jog_step, result)
 
     def test_step_presets_follow_the_active_magnitude_band(self):
-        selected = MOVE_STEP_PAGE._step_preset_selected
+        for value, selected in ((0.9, 0.1), (2., 1.), (20., 10.)):
+            with self.subTest(value=value):
+                renderer = FEATHER.FeatherRenderer()
+                capture = RenderCapture(renderer)
+                page = MOVE_STEP_PAGE.create_page()
+                state_screen(renderer, page, {MOVE_UI.MoveState.JOG_STEP: value}, title="Move")
 
-        self.assertEqual(selected(0.9, 0.1), "selected")
-        self.assertEqual(selected(2.0, 1.0), "selected")
-        self.assertEqual(selected(20.0, 10.0), "selected")
-        self.assertEqual(selected(2.0, 0.1), "enabled")
+                for preset in (0.1, 1., 10.):
+                    action = SetValue(MOVE_UI.MoveState.JOG_STEP, preset)
+                    self.assertEqual(capture.latest.button(action.wire_id).state,
+                                     "selected" if preset == selected else "enabled")
 
     def test_move_requires_homed_axis_and_uses_conservative_speed(self):
         controller = base_controller()
@@ -4184,8 +4194,9 @@ class MotionHeatSettingsTest(unittest.TestCase):
             "homed_axes": "y", "position": (0.0, 0.0, 0.0)})
         controller.gcode_move = StatusObject({
             "gcode_position": (0.0, 0.0, 0.0)})
-        with self.assertRaisesRegex(RuntimeError, "Home X"):
+        with self.assertRaises(RuntimeError):
             controller._handle_move_command(MOVE_UI.X_PLUS)
+        self.assertEqual(controller.gcode.commands, [])
         controller.toolhead.status["homed_axes"] = "xyz"
         controller._handle_move_command(MOVE_UI.X_MINUS)
         controller._handle_move_command(MOVE_UI.Z_PLUS)
@@ -4293,13 +4304,21 @@ class MotionHeatSettingsTest(unittest.TestCase):
         controller.gcode_move = StatusObject({
             "gcode_position": (0.0, 0.0, 20.0)})
 
+        controller._run_blocking_gcode = mock.Mock()
         controller._handle_move_command(MOVE_UI.X_PLUS)
         controller._handle_move_command(MOVE_UI.Y_PLUS)
         controller._handle_move_command(MOVE_UI.HOME_ALL)
-        controller._handle_move_command(MOVE_UI.Z_MINUS)
+        controller._handle_move_command(MOVE_UI.HOME_XY)
+        controller._run_blocking_gcode.assert_not_called()
 
+        controller._handle_move_command(MOVE_UI.Z_MINUS)
         self.assertEqual(
             controller.gcode.commands, ["MOVE_SAFE Z=19 ABSOLUTE=1 F=600"])
+
+        controller._handle_move_command(MOVE_UI.HOME_Z)
+        controller._run_blocking_gcode.assert_called_once()
+        self.assertEqual(shlex.split(controller._run_blocking_gcode.call_args.args[0]),
+                         ["G28", "Z", "FORCE=1"])
 
     def test_preheat_fan_and_cooldown_commands(self):
         controller = base_controller()

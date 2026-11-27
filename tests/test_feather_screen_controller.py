@@ -287,8 +287,8 @@ class ControllerSafetyTest(unittest.TestCase):
         controller.bed_mesh = StatusObject({
             "profile_name": "", "profiles": {"auto": {"points": []}}})
         controller.move_caution_acknowledged = False
-        low = (0.0, 0.0, 4.99, "HOMED: XYZ", True, True)
-        safe = (0.0, 0.0, 5.0, "HOMED: XYZ", True, True)
+        low = (0.0, 0.0, 4.99, True, True, True)
+        safe = (0.0, 0.0, 5.0, True, True, True)
 
         self.assertEqual(controller._move_caution_state(low, 0),
                          (True, "available"))

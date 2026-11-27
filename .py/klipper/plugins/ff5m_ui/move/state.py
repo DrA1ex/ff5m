@@ -44,12 +44,12 @@ class MoveState(StateKey):
 
 def snapshot_values(snapshot):
     """Convert the existing controller snapshot into typed state values."""
-    x, y, z, _status, homed_xy, homed_z = snapshot
+    x, y, z, homed_x, homed_y, homed_z = snapshot
     return {
         ToolheadState.X: float(x),
         ToolheadState.Y: float(y),
         ToolheadState.Z: float(z),
-        ToolheadState.HOMED_X: bool(homed_xy),
-        ToolheadState.HOMED_Y: bool(homed_xy),
+        ToolheadState.HOMED_X: bool(homed_x),
+        ToolheadState.HOMED_Y: bool(homed_y),
         ToolheadState.HOMED_Z: bool(homed_z),
     }

@@ -617,6 +617,38 @@ class RunnerContractTest(unittest.TestCase):
         self.assertEqual(schedules, [0.02])
         self.assertEqual(step, {"kind": "tap", "label": "move.homeall"})
 
+    def test_motion_opens_step_mode_and_restores_previous_mode(self):
+        host = mock.Mock()
+        host.move_mode = "joystick"
+        host._show_page.side_effect = lambda page: setattr(host, "page", page)
+        scenarios = UI_TEST.UITestRun(host).scenarios
+        scenarios._open_motion()
+
+        self.assertEqual(host.move_mode, "step")
+        self.assertEqual(host.page, FEATHER.ScreenPage.CONTROL_MOVE)
+        host._stop_joystick.assert_called_once()
+
+        scenarios.restore_synthetic_state()
+        self.assertEqual(host.move_mode, "joystick")
+
+    def test_motion_rehome_verifies_only_xy_and_unchanged_machine_z(self):
+        status = {"homed_axes": "", "position": (110., 110., 220., 0.)}
+        host = mock.Mock()
+        host.toolhead.get_status.side_effect = lambda _: dict(status)
+        host.renderer.shown_actions.return_value = {
+            SCENARIOS.move_actions.HOME_XY.wire_id}
+        scenarios = UI_TEST.UITestRun(host).scenarios
+
+        self.assertTrue(scenarios._motion_motors_released())
+        scenarios._save_motion_rehome_z()
+        status.update(homed_axes="xy", position=(110., 110., 220., 0.))
+        scenarios._verify_motion_rehome()
+        for axes, z in (("xyz", 220.), ("x", 220.), ("xy", 219.)):
+            with self.subTest(axes=axes, z=z):
+                status.update(homed_axes=axes, position=(110., 110., z, 0.))
+                with self.assertRaises(RuntimeError):
+                    scenarios._verify_motion_rehome()
+
     def test_motion_return_clamps_homing_overshoot_to_ui_limits(self):
         position = [110.0, 109.1, 220.0]
         dispatched = []

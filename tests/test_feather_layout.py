@@ -1042,16 +1042,6 @@ class FilamentLayoutTest(unittest.TestCase):
 
 
 class MovementLayoutTest(unittest.TestCase):
-    def test_post_home_park_position_is_valid_telemetry(self):
-        renderer = FeatherRenderer()
-        values = move.snapshot_values(
-            (120.0, 120.0, 230.0, "HOMED: XYZ", True, True))
-
-        drawing = "\n".join(move.STEP_PAGE.draw(renderer, values))
-
-        self.assertIn("X  120.00   Y  120.00", drawing)
-        self.assertIn("Z  230.00", drawing)
-
     def test_joystick_columns_and_controls_derive_from_page_tree(self):
         page = move.JOYSTICK_PAGE
         xy_panel = page.rect("xy.panel")
@@ -1080,22 +1070,10 @@ class MovementLayoutTest(unittest.TestCase):
         self.assertEqual(move_geometry.JOYSTICK_Z_RADIUS,
                          (z_track.height - 3) // 2)
 
-    def test_step_grid_keeps_axis_buttons_symmetric(self):
-        page = move.STEP_PAGE
-
-        self.assertEqual(page.rect("xy.up").x, page.rect("xy.down").x)
-        self.assertEqual(page.rect("xy.left").y, page.rect("xy.right").y)
-        self.assertEqual(page.rect("xy.status").center_y,
-                         page.rect("z.status").center_y)
-        self.assertLessEqual(page.rect("xy.status").right,
-                             page.rect("z.status").x)
-        self.assertEqual(page.rect("preset.2").right,
-                         page.rect("control").right)
-
     def test_vertical_scale_is_rendered_from_arranged_track_geometry(self):
         renderer = FeatherRenderer()
         values = move.snapshot_values(
-            (0.0, 0.0, 0.0, "HOMED: XYZ", True, True))
+            (0.0, 0.0, 0.0, True, True, True))
         values[move.MoveState.INERTIA] = 0.0
         values[move.MoveState.CURSOR] = None
         drawing = "\n".join(move.JOYSTICK_PAGE.draw(renderer, values))
@@ -1124,7 +1102,7 @@ class MovementLayoutTest(unittest.TestCase):
                 renderer = FeatherRenderer()
                 batches = RenderCapture(renderer).batches
                 initial = move.snapshot_values(
-                    (0.0, 0.0, 30.0, "HOMED: XYZ", True, True))
+                    (0.0, 0.0, 30.0, True, True, True))
                 initial.update({move.MoveState.INERTIA: 0.0,
                                 move.MoveState.CURSOR: None})
                 root = state_screen(renderer, move.JOYSTICK_PAGE, initial, title="Move")
@@ -1144,21 +1122,19 @@ class MovementLayoutTest(unittest.TestCase):
                     self.assertLessEqual(shape.bounds.bottom, bounds.bottom)
 
     def test_dirty_state_replaces_all_movement_partial_trees(self):
-        self.assertFalse(hasattr(move, "STEP_STATUS_TREE"))
         self.assertFalse(hasattr(move, "JOYSTICK_POSITION_TREE"))
-        self.assertFalse(hasattr(move, "STEP_MOVE_LAYOUT"))
         self.assertFalse(hasattr(move, "JOYSTICK_MOVE_LAYOUT"))
 
         renderer = FeatherRenderer()
         initial = move.snapshot_values(
-            (0.0, 0.0, 0.0, "HOMED: XYZ", True, True))
+            (0.0, 0.0, 0.0, True, True, True))
         initial.update({
             move.MoveState.INERTIA: 0.0,
             move.MoveState.CURSOR: None,
         })
         move.JOYSTICK_PAGE.draw(renderer, initial)
         updated = move.snapshot_values(
-            (1.0, 2.0, 3.0, "HOMED: XYZ", True, True))
+            (1.0, 2.0, 3.0, True, True, True))
         updated.update({
             move.MoveState.INERTIA: 0.0,
             move.MoveState.CURSOR: None,
@@ -1171,25 +1147,15 @@ class MovementLayoutTest(unittest.TestCase):
         self.assertNotIn("--batch hitbox", drawing)
         self.assertNotIn("DISABLE MOTORS", drawing)
 
-    def test_movement_screen_is_a_nested_object_tree(self):
-        self.assertIsInstance(move.STEP_PAGE.root, object)
-        self.assertIn("xy.grid", move.STEP_PAGE.layout.keys())
-        self.assertIn("presets", move.STEP_PAGE.layout.keys())
+    def test_joystick_screen_is_a_nested_object_tree(self):
         self.assertIn("xy.pad", move.JOYSTICK_PAGE.layout.keys())
         self.assertIn("home.buttons", move.JOYSTICK_PAGE.layout.keys())
 
-    def test_movement_primary_columns_use_simple_visual_proportions(self):
-        axis = move.STEP_PAGE.rect("axis")
-        separator = move.STEP_PAGE.rect("separator.layout")
-        control = move.STEP_PAGE.rect("control")
+    def test_joystick_primary_columns_use_simple_visual_proportions(self):
         xy = move.JOYSTICK_PAGE.rect("xy.panel")
         z = move.JOYSTICK_PAGE.rect("z.panel")
         status = move.JOYSTICK_PAGE.rect("status.panel")
 
-        self.assertLessEqual(axis.right, separator.x)
-        self.assertLessEqual(separator.right, control.x)
-        self.assertGreater(axis.width, control.width)
-        self.assertLess(axis.width, control.width * 3 // 2)
         self.assertLessEqual(xy.right, z.x)
         self.assertLessEqual(z.right, status.x)
         self.assertGreater(xy.width, status.width)

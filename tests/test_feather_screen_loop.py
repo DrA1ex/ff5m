@@ -64,9 +64,19 @@ class MoveAndExcludeOnTheLoopTest(unittest.TestCase):
         controller.bed_mesh.status.update(profile_name=profile, profiles={name: {"points": []} for name in profiles})
         controller.move_caution_acknowledged = acknowledged
         controller.joystick_cursor = cursor
+        previous_frames = len(typer.history())
         controller._render_move()
-        self.assertTrue(typer.drew("%.1f" % z), "position %s not drawn" % z)
-        self._settle(controller, typer)
+        if controller.move_mode == "step" and "z" not in homed:
+            self.assertTrue(wait_for(lambda: len(typer.history()) > previous_frames))
+            self._settle(controller, typer)
+            drawing = "\n".join(str(command) for batch in typer.history()[previous_frames:]
+                                for command in batch)
+            self.assertNotIn("%.1f" % z, drawing)
+            self.assertNotIn(MOVE_UI.Z_PLUS.wire_id, controller.renderer.shown_actions())
+            self.assertNotIn(MOVE_UI.Z_MINUS.wire_id, controller.renderer.shown_actions())
+        else:
+            self.assertTrue(typer.drew("%.1f" % z), "position %s not drawn" % z)
+            self._settle(controller, typer)
 
     def test_both_move_modes_draw_every_state(self):
         for mode in ("step", "joystick"):
@@ -110,15 +120,19 @@ class MoveAndExcludeOnTheLoopTest(unittest.TestCase):
 
     def test_the_ui_test_answers_the_caution_the_loop_drew(self):
         controller, typer = self._move("step")
-        self._show_move(controller, typer, 1.2, "xyz", profiles=("auto",))
-        self.assertTrue(typer.drew("LOAD BED PROFILE 'AUTO'?"))
         tapped = []
         controller._start_touch_action = tapped.append
         run = UI_TEST.UITestRun(controller)
-
-        UI_TEST.ScenarioCatalog(run)._dismiss_move_caution()
-
-        self.assertEqual(tapped, [MOVE_UI.CAUTION_AUTO.wire_id])
+        for z, profile, profiles, expected in (
+                (1.2, "", ("auto",), MOVE_UI.CAUTION_AUTO),
+                (1.3, "auto", ("auto",), MOVE_UI.CAUTION_UNLOAD),
+                (1.4, "", (), SetValue(MOVE_UI.MoveState.CAUTION_ACKNOWLEDGED, True))):
+            with self.subTest(profile=profile, profiles=profiles):
+                self._show_move(controller, typer, z, "xyz", profile, profiles)
+                self.assertIn(expected.wire_id, controller.renderer.shown_actions())
+                tapped.clear()
+                run.scenarios._dismiss_move_caution()
+                self.assertEqual(tapped, [expected.wire_id])
 
     def test_step_size_changes_the_value_shown_by_the_loop(self):
         controller, typer = self._move("step")

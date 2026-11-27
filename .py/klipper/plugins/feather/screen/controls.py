@@ -348,11 +348,9 @@ class FeatherControlsMixin:
         if position is None:
             position = status.get("position", (0.0, 0.0, 0.0, 0.0))
         homed = str(status.get("homed_axes", "")).lower()
-        missing = "".join(axis.upper() for axis in "xyz" if axis not in homed)
-        state = "HOMED: XYZ" if not missing else "NOT HOMED: %s" % missing
         return (round(position[0], 2), round(position[1], 2),
-                round(position[2], 2), state,
-                "x" in homed and "y" in homed, "z" in homed)
+                round(position[2], 2),
+                "x" in homed, "y" in homed, "z" in homed)
 
     def _bed_mesh_profile_state(self, eventtime):
         mesh = getattr(self, "bed_mesh", None)
@@ -697,7 +695,7 @@ class FeatherControlsMixin:
             self._stop_joystick()
             axes = tuple(axis.value.upper() for axis in command.payload.axes)
             gcode = "G28" if len(axes) == 3 else "G28 %s" % " ".join(axes)
-            self._run_blocking_gcode(gcode, "HOMING...")
+            self._run_blocking_gcode(gcode + " FORCE=1", "HOMING...")
             self._toast("Homing started")
             return
         if isinstance(command.payload, move_ui.JogRequest):

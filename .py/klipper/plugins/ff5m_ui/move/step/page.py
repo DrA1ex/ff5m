@@ -6,18 +6,18 @@
 
 from enum import Enum
 
-from ui import ThemeColor, ThemeRole
+from ui import ThemeColor
 
 from ui.actions import Increment, Navigate, SetValue
 from ui.bindings import bind, derived
-from ui.components import Button, Fill, Stroke, Text
+from ui.components import Button, Fill, Text
 from ui.layout import (
     FLEX, Cell, Column, Equal, Flex, Grid, Overlay,
     PageTree as Page, Row, WrapPanel,
 )
 from ...keys import AppPage
 from ..actions import (
-    DISABLE_MOTORS, HOME_ALL, HOME_XY, X_MINUS, X_PLUS, Y_MINUS, Y_PLUS,
+    DISABLE_MOTORS, HOME_ALL, HOME_XY, HOME_Z, X_MINUS, X_PLUS, Y_MINUS, Y_PLUS,
     Z_MINUS, Z_PLUS,
 )
 from ..common import (
@@ -39,19 +39,11 @@ class StepRef(Enum):
     XY_UP = "xy.up"
     XY_LEFT = "xy.left"
     XY_STATUS = "xy.status"
-    XY_STATUS_BACKGROUND = "xy.status.background"
-    XY_STATUS_BORDER = "xy.status.border"
-    XY_STATUS_LABEL = "xy.status.label"
-    XY_STATUS_STATE = "xy.status.state"
     XY_RIGHT = "xy.right"
     XY_DOWN = "xy.down"
     Z_GRID = "z.grid"
     Z_DOWN = "z.down"
     Z_STATUS = "z.status"
-    Z_STATUS_BACKGROUND = "z.status.background"
-    Z_STATUS_BORDER = "z.status.border"
-    Z_STATUS_LABEL = "z.status.label"
-    Z_STATUS_STATE = "z.status.state"
     Z_UP = "z.up"
     MOTORS = "motors"
     MODE = "mode"
@@ -66,7 +58,6 @@ class StepRef(Enum):
     STATUS_Z = "status.z"
     HOME_BUTTONS = "home.buttons"
     HOME_ALL = "home.all"
-    HOME_XY = "home.xy"
     DIVIDER = "step.divider"
     STEP_LAYOUT = "step.layout"
     STEP_TITLE = "step.title"
@@ -92,12 +83,17 @@ def _status_label(homed_x, homed_y, homed_z):
                 "" if homed_z else "Z"))
 
 
-def _xy_position_label(x, y):
-    return "X %7.2f   Y %7.2f" % (x, y)
+def _position_value(value, homed):
+    return "%7.2f" % value if homed else "%7s" % "------"
 
 
-def _z_position_label(z):
-    return "Z %7.2f" % z
+def _xy_position_label(x, y, homed_x, homed_y):
+    return "X %s   Y %s" % (_position_value(x, homed_x),
+                             _position_value(y, homed_y))
+
+
+def _z_position_label(z, homed_z):
+    return "Z %s" % _position_value(z, homed_z)
 
 
 def _step_value_label(value):
@@ -109,20 +105,19 @@ def _step_preset_selected(current, preset):
     return "selected" if active == preset else "enabled"
 
 
-def _axis_status(label, homed, refs):
-    color = derived(
-        lambda ready: ThemeColor.PRIMARY if ready else ThemeColor.WARNING,
-        homed)
-    state_label = derived(
-        lambda ready: "HOMED" if ready else "HOME",
-        homed)
-    return Overlay(
-        Fill(ThemeColor.PANEL).ref(refs[0]),
-        Stroke(color, 2).ref(refs[1]),
-        Text(label, color=color).height(44).align(vertical="top").ref(refs[2]),
-        Text(state_label, color=color)
-        .margin(top=34, bottom=4).ref(refs[3]),
-    ).ref(refs[4]).repaint_boundary()
+def _home_button(action, label, homed):
+    return Button(
+        action, label, font=FONT,
+        state=derived(lambda ready: "enabled" if ready else "warning", homed),
+        accent=derived(
+            lambda ready: ThemeColor.SUCCESS if ready else ThemeColor.WARNING,
+            homed),
+    )
+
+
+def _jog_button(action, label, homed):
+    return Button(action, label, state=derived(
+        lambda ready: "enabled" if ready else "disabled", homed))
 
 
 def _status_card():
@@ -140,12 +135,12 @@ def _status_card():
         ).height(34).align(vertical="top").ref(StepRef.STATUS_STATE),
         Text(
             derived(_xy_position_label,
-                    bind(ToolheadState.X), bind(ToolheadState.Y)),
+                    bind(ToolheadState.X), bind(ToolheadState.Y), homed_x, homed_y),
             color=ThemeColor.TEXT,
         ).height(46).margin(top=34).align(vertical="top") \
          .ref(StepRef.STATUS_XY),
         Text(
-            derived(_z_position_label, bind(ToolheadState.Z)),
+            derived(_z_position_label, bind(ToolheadState.Z), homed_z),
             color=ThemeColor.TEXT,
         ).height(26).margin(top=70).align(vertical="top").allow_overflow() \
          .ref(StepRef.STATUS_Z),
@@ -153,41 +148,31 @@ def _status_card():
 
 
 def _axis_layout():
-    xy_homed = derived(
-        lambda x, y: x and y,
-        bind(ToolheadState.HOMED_X), bind(ToolheadState.HOMED_Y))
-    z_homed = bind(ToolheadState.HOMED_Z)
+    homed_x = bind(ToolheadState.HOMED_X)
+    homed_y = bind(ToolheadState.HOMED_Y)
+    homed_z = bind(ToolheadState.HOMED_Z)
+    homed_xy = derived(lambda x, y: x and y, homed_x, homed_y)
     xy_grid = Grid(
         cells=(
-            Cell(Button(Y_PLUS, "Y+").ref(StepRef.XY_UP), 1, 0),
-            Cell(Button(X_MINUS, "X-").ref(StepRef.XY_LEFT), 0, 1),
-            Cell(
-                _axis_status("X / Y", xy_homed, (
-                    StepRef.XY_STATUS_BACKGROUND, StepRef.XY_STATUS_BORDER,
-                    StepRef.XY_STATUS_LABEL, StepRef.XY_STATUS_STATE,
-                    StepRef.XY_STATUS,
-                )),
-                1, 1,
-            ),
-            Cell(Button(X_PLUS, "X+").ref(StepRef.XY_RIGHT), 2, 1),
-            Cell(Button(Y_MINUS, "Y-").ref(StepRef.XY_DOWN), 1, 2),
+            Cell(_jog_button(Y_PLUS, "Y+", homed_y).ref(StepRef.XY_UP), 1, 0),
+            Cell(_jog_button(X_MINUS, "X-", homed_x).ref(StepRef.XY_LEFT), 0, 1),
+            Cell(_home_button(HOME_XY, "HOME", homed_xy).ref(StepRef.XY_STATUS), 1, 1),
+            Cell(_jog_button(X_PLUS, "X+", homed_x).ref(StepRef.XY_RIGHT), 2, 1),
+            Cell(_jog_button(Y_MINUS, "Y-", homed_y).ref(StepRef.XY_DOWN), 1, 2),
         ),
         columns=Equal(3), rows=Equal(3), gap=(10, 12),
     ).ref(StepRef.XY_GRID)
     z_grid = Grid(
         matrix=(
-            (Button(Z_MINUS, "Z-").ref(StepRef.Z_DOWN),),
-            (_axis_status("Z", z_homed, (
-                StepRef.Z_STATUS_BACKGROUND, StepRef.Z_STATUS_BORDER,
-                StepRef.Z_STATUS_LABEL, StepRef.Z_STATUS_STATE,
-                StepRef.Z_STATUS)),),
-            (Button(Z_PLUS, "Z+").ref(StepRef.Z_UP),),
+            (_jog_button(Z_MINUS, "Z-", homed_z).ref(StepRef.Z_DOWN),),
+            (_home_button(HOME_Z, "HOME", homed_z).ref(StepRef.Z_STATUS),),
+            (_jog_button(Z_PLUS, "Z+", homed_z).ref(StepRef.Z_UP),),
         ),
         columns=Equal(1), rows=Equal(3), gap=(0, 12),
     ).ref(StepRef.Z_GRID)
     return Grid(
         matrix=((xy_grid, z_grid),),
-        columns=(FLEX, 65), rows=Equal(1), gap=(15, 0),
+        columns=(FLEX, 95), rows=Equal(1), gap=(15, 0),
     ).ref(StepRef.AXIS_LAYOUT)
 
 
@@ -201,11 +186,13 @@ def _axis_actions():
 
 
 def _control_layout():
-    home_buttons = compact(WrapPanel(
-        Button(HOME_ALL, "HOME ALL").ref(StepRef.HOME_ALL),
-        Button(HOME_XY, "HOME XY").ref(StepRef.HOME_XY),
-        item_width=145, item_height=50, horizontal_gap=15,
-    )).height(50).ref(StepRef.HOME_BUTTONS)
+    homed_all = derived(
+        lambda x, y, z: x and y and z,
+        bind(ToolheadState.HOMED_X), bind(ToolheadState.HOMED_Y),
+        bind(ToolheadState.HOMED_Z))
+    home_buttons = Row(
+        _home_button(HOME_ALL, "HOME ALL", homed_all).ref(StepRef.HOME_ALL),
+    ).height(50).ref(StepRef.HOME_BUTTONS)
     home_layout = Column(
         _status_card().height(95),
         home_buttons,
