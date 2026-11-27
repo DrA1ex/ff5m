@@ -120,6 +120,7 @@ def start_print_state(
         midi_start="",
         weight_check=False,
         nozzle_contact_check=False,
+        seal_nozzle_on_heat=False,
         weight_limit=1200,
         load_weight=0.0,
         load_zoffset=False,
@@ -165,6 +166,7 @@ def start_print_state(
             "weight_check": weight_check,
             "weight_check_max": weight_limit,
             "nozzle_contact_check": nozzle_contact_check,
+            "seal_nozzle_on_heat": seal_nozzle_on_heat,
             "disable_priming": disable_priming,
         }},
         "temperature_sensor weightValue": {"temperature": load_weight},
@@ -1805,6 +1807,48 @@ class StartPrintExecutionTest(unittest.TestCase):
         self.assertIn(
             'RESPOND PREFIX="//" MSG="Bed Mesh Validation Protection is '
             'skipped because no bed mesh profile is loaded."', bare)
+
+    def test_contact_heat_probes_at_the_normal_parking_position(self):
+        for use_kamp, park in ((False, "G1 X110 Y110 F6000"), (True, "SMART_PARK")):
+            with self.subTest(use_kamp=use_kamp):
+                commands = run_start_print(
+                    seal_nozzle_on_heat=True, use_kamp=use_kamp,
+                    disable_priming=False, nozzle_contact_check=True,
+                    mesh_validation=True, weight_check=True)
+                heat = "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0"
+
+                assert_order(self, commands, (
+                    park,
+                    "WAIT TIME=1000",
+                    "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+                    "PROBE",
+                    heat,
+                ))
+                if not use_kamp:
+                    assert_order(self, commands, (
+                        "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
+                        "_CHECK_BED_MESH_AFTER_HEATING",
+                        "PROBE",
+                    ))
+                assert_order(self, commands[commands.index(heat) + 1:], (
+                    "G1 Z10.0 F1800",
+                    "M400",
+                    "LOAD_CELL_TARE",
+                    "_CONTEXT_STATE NAME=PRIMING",
+                    "_CONTEXT_STATE NAME=PRINTING",
+                ))
+
+    def test_contact_heat_leaves_zero_target_and_default_parking_paths_available(self):
+        _, zero = run_headless_start_print(
+            {"EXTRUDER_TEMP": 0, "BED_TEMP": 80},
+            use_kamp=True, seal_nozzle_on_heat=True)
+        default = run_start_print(use_kamp=True)
+
+        for commands in (zero, default):
+            self.assertIn("SMART_PARK", commands)
+            self.assertNotIn("PROBE", commands)
+        self.assertIn("_WAIT_TEMPERATURE CMD=M104 VALUE=0.0", zero)
+        self.assertIn("_WAIT_TEMPERATURE CMD=M104 VALUE=245.0", default)
 
     def test_parking_and_priming_follow_the_leveling_mode(self):
         kamp = run_start_print(use_kamp=True, disable_priming=False)

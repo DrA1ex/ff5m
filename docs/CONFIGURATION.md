@@ -82,6 +82,8 @@ The mod supports a wide range of parameters to customize printer behavior. Below
 
 - **`nozzle_contact_check`**: Cancels the print at start if the parked nozzle already presses on the bed. On by default; set to `0` to disable. See [Printing](PRINTING.md#nozzle-contact-check-before-printing).  
 
+- **`seal_nozzle_on_heat`**: Reduces oozing during the final nozzle heating. The nozzle probes the bed at its parked position, stays in contact during the final temperature wait.
+
 - **`bed_mesh_validation`**: Enables bed mesh validation protection if set to `1`.  
 
 - **`bed_mesh_validation_action`**: On a mismatch, cancel the print (`CANCEL`, default) or generate a new mesh (`RECALIBRATE`). With `Z_OFFSET`, apply a temporary height correction whenever the signed average shift exceeds 0.05 mm in magnitude, even within the validation tolerance. Height correction requires a uniform shift (spread below the validation tolerance) and an offset within the Live Z safety limit; otherwise the print is canceled. Shown when validation is enabled.

@@ -28,8 +28,8 @@ OPTION_GROUPS = (
     OptionGroup("mesh", "BED MESH USE", "Leveling and mesh validation", (
         "print_leveling", "use_kamp", "bed_mesh_validation", "bed_mesh_validation_action",
         "bed_mesh_validation_z_offset_mode")),
-    OptionGroup("preparation", "PRINT PREPARATION", "Priming and nozzle cleaning", (
-        "disable_priming", "zclear", "clear_cooldown_temp")),
+    OptionGroup("preparation", "PRINT PREPARATION", "Nozzle heating, priming and cleaning", (
+        "seal_nozzle_on_heat", "disable_priming", "zclear", "clear_cooldown_temp")),
     OptionGroup("peripherals", "PERIPHERALS", "Camera, chamber light and screen sharing", (
         "camera", "screen_stream", "chamber_light", "chamber_light_mode")),
     OptionGroup("timelapse", "TIMELAPSE", "Capture settings and intervals", (

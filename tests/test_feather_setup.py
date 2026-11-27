@@ -229,6 +229,21 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(self.feature.progress.complete)
         self.assertEqual(self.feature.progress.data["draft"], {"tune_config": 1})
 
+    def test_contact_heating_is_the_first_print_preparation_option(self):
+        self.open_options("preparation")
+        frame = self.capture.latest
+        key = "seal_nozzle_on_heat"
+        toggle = frame.toggle(Command(SetupCommand.TOGGLE, key).wire_id)
+        self.assertFalse(toggle.active)
+        for other in ("disable_priming", "zclear", "clear_cooldown_temp"):
+            help_button = frame.button(Command(SetupCommand.HELP, other).wire_id)
+            self.assertLess(toggle.bounds.y, help_button.bounds.y)
+        self.assertFalse(frame.has_action(Command(SetupCommand.NEXT).wire_id))
+
+        self.tap(SetupCommand.TOGGLE, key)
+        self.manager._reload()
+        self.assertTrue(self.manager.variables[key])
+
     def test_shared_editors_return_to_setup_and_keep_enum_and_numeric_values(self):
         self.open_options("preparation")
         self.tap(SetupCommand.EDIT, "zclear")

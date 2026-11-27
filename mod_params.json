@@ -228,6 +228,7 @@
         "parameters": [
           "disable_cleaning",
           "clear_cooldown_temp",
+          "seal_nozzle_on_heat",
           "disable_skew",
           "check_md5"
         ]
@@ -920,6 +921,14 @@
       "label": "CLEAR_NOZZLE temperature, Cº",
       "ui": {"setup_help": "Nozzle-cleaning preparation cooldown temperature, not purge extrusion temperature. A lower temperature allows more cooling before cleaning; preserve your verified setting."},
       "description": "Set the nozzle cooldown temperature.",
+      "order": 20000
+    },
+    {
+      "key": "seal_nozzle_on_heat",
+      "type": "bool",
+      "default": 0,
+      "label": "Nozzle contact during final heating",
+      "description": "Hold nozzle on bed to reduce ooze.",
       "order": 20000
     },
     {

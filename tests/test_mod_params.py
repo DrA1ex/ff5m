@@ -90,6 +90,15 @@ class ModParameterTest(unittest.TestCase):
             self.manager._reload()
             self.assertIs(self.manager.variables["feather_preview_back_to_files"], enabled)
 
+    def test_seal_nozzle_on_heat_defaults_off_and_round_trips_through_storage(self):
+        param = self.manager.params_map["seal_nozzle_on_heat"]
+        self.assertEqual(param.ui_category, "print_start")
+        self.assertFalse(self.manager.variables["seal_nozzle_on_heat"])
+        for enabled in (True, False):
+            self.manager.set_value("seal_nozzle_on_heat", int(enabled))
+            self.manager._reload()
+            self.assertIs(self.manager.variables["seal_nozzle_on_heat"], enabled)
+
     def test_related_values_commit_once_and_notify_after_the_whole_snapshot(self):
         values = {"feather_preview_yaw": -45, "feather_preview_pitch": 20, "feather_preview_scale": 1.5}
         with mock.patch.object(self.manager, "_save_all", wraps=self.manager._save_all) as save:
