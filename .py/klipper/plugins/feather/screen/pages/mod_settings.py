@@ -280,6 +280,18 @@ class ModSettingsPagesMixin:
                 restart_effect, param.key)
             self._begin_restart_ui()
             return result
+
+        warning = getattr(param, "warning", None)
+        if changed and warning and self.mod_return_page == ScreenPage.MOD_SETTINGS:
+            def complete_with_warning():
+                if complete is not None:
+                    complete()
+                else:
+                    self._show_page(self.page)
+                self._show_message(warning, self.page, title="Warning", tone="warning")
+
+            self.mod_update_complete = complete_with_warning
+
         self.reactor.register_callback(
             lambda eventtime, operation=token:
             self._finish_mod_update(eventtime, operation))

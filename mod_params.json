@@ -686,7 +686,7 @@
       "description": "Set the Z height before lateral moves.",
       "minimum": 1.0,
       "fraction_digits": 3,
-      "warning": "Bed leveling and a non-standard nozzle can reduce the real nozzle-to-bed clearance. Use a value that is safe for your printer and verify Z-offset calibration after changing the bed or nozzle.",
+      "ui": {"setup_help": "Bed leveling and a non-standard nozzle can reduce the real nozzle-to-bed clearance. Use a value that is safe for your printer and verify Z-offset calibration after changing the bed or nozzle."},
       "order": 10003
     },
     {
@@ -928,7 +928,9 @@
       "type": "bool",
       "default": 0,
       "label": "Nozzle contact during final heating",
-      "description": "Hold nozzle on bed to reduce ooze.",
+      "description": "Reduce ooze during heating.",
+      "ui": {"setup_help": "During final nozzle heating before printing or nozzle cleaning, the nozzle may be held against the build plate to reduce filament ooze. This feature is intended for rigid, durable PEI build surfaces. Prolonged contact with a hot nozzle may leave dents or permanent marks on soft or delicate coatings. Keep this option disabled if your build surface is sensitive to heat or pressure."},
+      "warning": "!! If enabled, nozzle sealing may dent soft or delicate build surfaces. Use a rigid, durable, heat-resistant PEI plate.",
       "order": 20000
     },
     {

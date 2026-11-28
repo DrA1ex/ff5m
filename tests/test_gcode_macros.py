@@ -1684,7 +1684,7 @@ class StartPrintExecutionTest(unittest.TestCase):
             "BED_MESH_PROFILE LOAD=PLA_profile",
             "G1 X110 Y110 F6000",
             "CLEAR_NOZZLE EXTRUDER_TEMP=245.0 BED_TEMP=80.0",
-            "_CHECK_BED_MESH RETRACT=0",
+            "_CHECK_BED_MESH RETRACT=0 TARE=0",
             '_CONTEXT_STATE NAME="RESUMING HEAT"',
             "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
         ))
@@ -1812,35 +1812,53 @@ class StartPrintExecutionTest(unittest.TestCase):
             'RESPOND PREFIX="//" MSG="Bed Mesh Validation Protection is '
             'skipped because no bed mesh profile is loaded."', bare)
 
-    def test_contact_heat_probes_at_the_normal_parking_position(self):
+    def test_contact_heat_runs_after_parking_and_mesh_preparation(self):
         for use_kamp, park in ((False, "G1 X110 Y110 F6000"), (True, "SMART_PARK")):
             with self.subTest(use_kamp=use_kamp):
                 commands = run_start_print(
                     seal_nozzle_on_heat=True, use_kamp=use_kamp,
                     disable_priming=False, nozzle_contact_check=True,
                     mesh_validation=True, weight_check=True)
-                heat = "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0"
-
                 assert_order(self, commands, (
                     park,
                     "WAIT TIME=1000",
                     "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
-                    "PROBE",
-                    heat,
-                ))
-                if not use_kamp:
-                    assert_order(self, commands, (
-                        "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0 BELOW=5 ABOVE=5",
-                        "_CHECK_BED_MESH_AFTER_HEATING",
-                        "PROBE",
-                    ))
-                assert_order(self, commands[commands.index(heat) + 1:], (
-                    "G1 Z10.0 F1800",
-                    "M400",
-                    "LOAD_CELL_TARE",
+                    "M104 S245.0",
+                    "_NOZZLE_SEAL_TAKE TEMP=245.0",
+                    "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+                    "_NOZZLE_SEAL_RELEASE",
                     "_CONTEXT_STATE NAME=PRIMING",
                     "_CONTEXT_STATE NAME=PRINTING",
                 ))
+                if not use_kamp:
+                    assert_order(self, commands, (
+                        "_CHECK_BED_MESH_AFTER_HEATING",
+                        "_NOZZLE_SEAL_TAKE TEMP=245.0",
+                    ))
+                final = commands[commands.index("M104 S245.0"):]
+                self.assertNotIn("LOAD_CELL_TARE", final)
+
+    def test_final_tare_is_only_needed_without_mesh_preparation(self):
+        for scenario, expected in (
+                ({}, True),
+                ({"use_kamp": True}, False),
+                ({"zforce_leveling": True}, False),
+                ({"mesh_validation": True}, False),
+                ({"mesh_validation": True, "validation_clear": True}, False),
+                ({"zskip_leveling": True, "profiles": (), "profile_name": "",
+                  "mesh_validation": True}, True)):
+            with self.subTest(scenario=scenario):
+                commands = run_start_print(weight_check=True, **scenario)
+                final = commands[commands.index("M104 S245.0"):]
+                self.assertEqual(final.count("LOAD_CELL_TARE"), int(expected))
+                if expected:
+                    assert_order(self, final, (
+                        "M104 S245.0", "LOAD_CELL_TARE",
+                        "_NOZZLE_SEAL_TAKE TEMP=245.0"))
+        seal_only = run_start_print(seal_nozzle_on_heat=True)
+        self.assertIn("LOAD_CELL_TARE", seal_only)
+        contact_only = run_start_print(nozzle_contact_check=True)
+        self.assertNotIn("LOAD_CELL_TARE", contact_only)
 
     def test_contact_heat_leaves_zero_target_and_default_parking_paths_available(self):
         _, zero = run_headless_start_print(
@@ -1985,10 +2003,12 @@ class StartPrintExecutionTest(unittest.TestCase):
             with self.subTest(extruder_temperature=temperature):
                 rendered_commands = run_start_print(
                     extruder_temperature=temperature)
-                nozzle_commands = tuple(
-                    command for command in rendered_commands
-                    if command.partition(" ")[0] == "M104")
-                self.assertEqual(nozzle_commands, ("M104 S150",))
+                assert_order(self, rendered_commands, (
+                    "M104 S150",
+                    "_WAIT_TEMPERATURE CMD=M140 VALUE=80.0 BELOW=2 ABOVE=5",
+                    "M104 S245.0",
+                    "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
+                ))
 
     def test_chamber_light_is_shared_by_print_and_recovery_preparation(self):
         for mode in ("PRINT_ONLY", "AT_BOOT", "MANUAL"):
@@ -2042,9 +2062,10 @@ class StartPrintExecutionTest(unittest.TestCase):
         assert_order(self, run, (
             "LED_ON",
             "_SET_GCODE_OFFSET Z='0.1'",
+            "M104 S245.0",
+            "LOAD_CELL_TARE",
             "_WAIT_TEMPERATURE CMD=M104 VALUE=245.0",
             "PLAY_MIDI FILE=startup.mid",
-            "LOAD_CELL_TARE",
         ))
 
         verified = run_start_print(check_md5=1, preparation_done=False)

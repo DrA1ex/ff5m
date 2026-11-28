@@ -222,6 +222,36 @@ class ModSettingsOnTheLoopTest(unittest.TestCase):
         self.assertIsNotNone(toggle)
         self.assertFalse(toggle.active)
 
+    def test_changed_parameter_shows_its_declared_warning(self):
+        flag = mod_param("flag", bool, False, "Flag")
+        flag.warning = "Use a durable surface."
+        controller, typer = self.settings([flag], {"flag": False})
+        controller._show_page(FEATHER.ScreenPage.MOD_SETTINGS)
+        action = parameter_action("flag")
+        self.assertTrue(wait_for(lambda: action in shown_actions(controller._screen_root)))
+        self.assertTrue(self.tap(controller, typer, action,
+                                 lambda: controller.params.variables["flag"]))
+        controller.reactor.flush_callbacks()
+        self.assertEqual(controller._current_dialog(), FEATHER.ScreenDialog.MESSAGE)
+        self.assertTrue(self.drew_since(typer, 0, flag.warning))
+        self.assertTrue(wait_for(lambda: "message.ok" in shown_actions(controller._screen_root)))
+        self.assertTrue(self.tap(controller, typer, "message.ok",
+                                 lambda: controller._current_dialog() is None))
+        self.assertTrue(controller.params.variables["flag"])
+
+    def test_changed_parameter_without_warning_leaves_settings_open(self):
+        plain = mod_param("plain", bool, False, "Plain")
+        controller, typer = self.settings([plain], {"plain": False})
+        controller._show_page(FEATHER.ScreenPage.MOD_SETTINGS)
+        action = parameter_action("plain")
+        self.assertTrue(wait_for(lambda: action in shown_actions(controller._screen_root)))
+        self.assertTrue(self.tap(controller, typer, action,
+                                 lambda: controller.params.variables["plain"]))
+        controller.reactor.flush_callbacks()
+        self.assertIsNone(controller._current_dialog())
+        self.assertEqual(controller.page, FEATHER.ScreenPage.MOD_SETTINGS)
+        self.assertTrue(controller.params.variables["plain"])
+
     def test_a_toggle_moves_on_the_loop_while_its_save_takes_no_tap(self):
         flag = mod_param("camera", bool, False, "Camera")
         controller, typer = self.settings([flag], {"camera": False})

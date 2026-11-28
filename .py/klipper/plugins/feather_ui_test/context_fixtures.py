@@ -17,6 +17,7 @@ CONTEXT_TYPES = {
     "kamp": ("KAMP", "interruptible"),
     "mesh_validation": ("Mesh Validation", "interruptible"),
     "nozzle_clean": ("Nozzle Cleaning", "interruptible"),
+    "nozzle_seal": ("Nozzle Sealing", "interruptible"),
     "filament": ("Filament", "cancelable"),
     "cold_pull": ("Cold Pull", "cancelable"),
     "resume": ("Resume", "interruptible"),
@@ -97,6 +98,17 @@ VISUAL_CONTEXTS = (
             "HEATING NOZZLE", "COOLING NOZZLE", "PREPARING TO CLEAN",
             "CLEANING", "FINISHING",
         ),
+    },
+    {
+        "type": "nozzle_seal", "path": ("print", "nozzle_seal"),
+        "surface": "printing",
+        "states": (None, "HEATING NOZZLE", "COOLING NOZZLE"),
+    },
+    {
+        "type": "nozzle_seal", "label_type": "nozzle_clean_seal",
+        "path": ("auto_bed_level", "bed_level", "nozzle_clean", "nozzle_seal"),
+        "surface": "calibration", "kind": "mesh",
+        "states": (None, "HEATING NOZZLE", "COOLING NOZZLE"),
     },
     {
         "type": "bed_level", "label_type": "mesh_recalibration",
