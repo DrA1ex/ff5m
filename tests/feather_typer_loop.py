@@ -82,7 +82,9 @@ class TyperLoop:
         if not os.path.exists(self.log_path):
             return []
         with open(self.log_path) as source:
-            return [json.loads(line) for line in source]
+            # The fake Typer appends from another process. A final line
+            # without its newline has not been published completely yet.
+            return [json.loads(line) for line in source if line.endswith("\n")]
 
     def history(self, launch=None):
         """The command batches the launch drew, in order; a binary command as a BinaryCommand."""

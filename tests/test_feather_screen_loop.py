@@ -7,6 +7,7 @@
 import json
 import os
 import select
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -32,6 +33,37 @@ from ui.render_receipts import RenderReceipt
 from ui.components import Component, Fill
 from ui.layout import PageTree
 from ui import PageKey, Rect, ThemeColor
+
+
+class TyperLogTest(unittest.TestCase):
+    def test_incomplete_log_record_is_read_only_after_its_newline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            typer = TyperLoop.__new__(TyperLoop)
+            typer.log_path = os.path.join(directory, "log")
+            first = {"start": True, "pid": 1, "launch": 0}
+            second = {"commands": ["draw"], "pid": 1, "launch": 0}
+            encoded = json.dumps(second)
+            with open(typer.log_path, "w") as target:
+                target.write(json.dumps(first) + "\n" + encoded[:-1])
+
+            self.assertEqual(typer.entries(), [first])
+            self.assertEqual(typer.history(), [])
+            with open(typer.log_path, "a") as target:
+                target.write(encoded[-1:])
+            self.assertEqual(typer.entries(), [first])
+            with open(typer.log_path, "a") as target:
+                target.write("\n")
+            self.assertEqual(typer.entries(), [first, second])
+            self.assertEqual(typer.history(), [["draw"]])
+
+    def test_malformed_complete_log_record_is_not_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            typer = TyperLoop.__new__(TyperLoop)
+            typer.log_path = os.path.join(directory, "log")
+            with open(typer.log_path, "w") as target:
+                target.write('{"commands":\n')
+            with self.assertRaises(json.JSONDecodeError):
+                typer.entries()
 
 
 class MoveAndExcludeOnTheLoopTest(unittest.TestCase):
