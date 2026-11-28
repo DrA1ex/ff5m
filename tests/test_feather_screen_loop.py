@@ -75,7 +75,7 @@ class MoveAndExcludeOnTheLoopTest(unittest.TestCase):
             self.assertNotIn(MOVE_UI.Z_PLUS.wire_id, controller.renderer.shown_actions())
             self.assertNotIn(MOVE_UI.Z_MINUS.wire_id, controller.renderer.shown_actions())
         else:
-            self.assertTrue(typer.drew("%.1f" % z), "position %s not drawn" % z)
+            self.assertTrue(typer.drew("%.1f" % z, after=previous_frames), "position %s not drawn" % z)
             self._settle(controller, typer)
 
     def test_both_move_modes_draw_every_state(self):
@@ -460,15 +460,8 @@ class ScreenLoopTest(unittest.TestCase):
         steps["ui-toast-hide"]["callback"]()
         self.assertTrue(wait_for(lambda: dismiss not in shown_actions(root)))
 
-        def drew_home_without_toast():
-            frames = typer.history()
-            if len(frames) <= previous_frames:
-                return False
-            commands = [str(getattr(command, "command", command)) for command in frames[-1]]
-            return (any("192.168.2.124" in command for command in commands)
-                    and all("SETTINGS UPDATED" not in command for command in commands))
-
-        self.assertTrue(wait_for(drew_home_without_toast))
+        self.assertTrue(typer.drew("192.168.2.124", after=previous_frames,
+                                  without=("SETTINGS UPDATED",)))
 
     def test_a_toast_shows_over_home_until_it_expires_or_is_tapped(self):
         controller = home_controller()
@@ -480,29 +473,31 @@ class ScreenLoopTest(unittest.TestCase):
         typer.start()
         dismiss = DismissToast().wire_id
 
-        def last_frame_shows(text):
-            return any(text in str(getattr(command, "command", command)) for command in typer.history()[-1])
-
         with self.assertNoLogs(level="WARNING"):
             controller._render_screen()
             root = controller._screen_root
             self.assertTrue(typer.drew("192.168.2.124"))
             for hide in ("expiry", "tap", "page"):
                 with self.subTest(hide=hide):
+                    previous_frames = len(typer.history())
                     controller._toast("Load filament")
-                    self.assertTrue(typer.drew("LOAD FILAMENT"))
+                    self.assertTrue(typer.drew("LOAD FILAMENT", after=previous_frames))
                     # A new toast takes the old one's place.
+                    previous_frames = len(typer.history())
                     controller._toast("Fan: 50%")
-                    self.assertTrue(typer.drew("FAN: 50%"))
-                    self.assertFalse(last_frame_shows("LOAD FILAMENT"))
+                    self.assertTrue(typer.drew("FAN: 50%", after=previous_frames,
+                                              without=("LOAD FILAMENT",)))
                     self.assertTrue(wait_for(lambda: dismiss in shown_actions(root)))
                     # The page's own update keeps the toast over it.
+                    previous_frames = len(typer.history())
                     controller.extruder.status["temperature"] += 1.0
                     controller._render_screen()
-                    self.assertTrue(typer.drew("%.0f" % controller.extruder.status["temperature"]))
+                    self.assertTrue(typer.drew("%.0f" % controller.extruder.status["temperature"],
+                                              after=previous_frames))
                     typer.take(lambda events: False, timeout=0.1)
                     self.assertIn(dismiss, shown_actions(root))
 
+                    previous_frames = len(typer.history())
                     if hide == "expiry":
                         controller.reactor.now = controller.toast_until
                         controller._hide_toast()
@@ -514,8 +509,8 @@ class ScreenLoopTest(unittest.TestCase):
                         self.assertTrue(wait_for(lambda: controller._process_touch_events(controller.reactor.now)
                                                  or not controller.toast_message))
                     self.assertTrue(wait_for(lambda: dismiss not in shown_actions(root)))
-                    self.assertTrue(typer.drew("192.168.2.124"))
-                    self.assertFalse(last_frame_shows("FAN: 50%"))
+                    self.assertTrue(typer.drew("192.168.2.124", after=previous_frames,
+                                              without=("FAN: 50%",)))
                     self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
 
     def test_the_loop_draws_the_filament_material_page(self):
@@ -852,7 +847,7 @@ class ScreenLoopTest(unittest.TestCase):
             shown = len(typer.history())
             controller.busy_phase = 1
             controller._ensure_screen_root().paint()
-            typer.take(lambda events: False, timeout=0.05)
+            self.assertTrue(typer.drew("-p 338 280 -s 32 12", after=shown))
             turn = "\n".join(str(command) for batch in typer.history()[shown:] for command in batch)
             self.assertIn("-p 338 280 -s 32 12", turn)
             self.assertNotIn("HOMING", turn)
@@ -882,7 +877,7 @@ class ScreenLoopTest(unittest.TestCase):
             shown = len(typer.history())
             controller.startup_phase = 2
             controller._ensure_screen_root().paint()
-            typer.take(lambda events: False, timeout=0.05)
+            self.assertTrue(typer.drew("-p 384 232 -s 33 1", after=shown))
             pulse = "\n".join(str(command) for batch in typer.history()[shown:] for command in batch)
             self.assertIn("-p 384 232 -s 33 1", pulse)
             self.assertNotIn("-s 800", pulse)

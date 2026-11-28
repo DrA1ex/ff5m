@@ -2286,11 +2286,13 @@ class LevelingPreparationMacroTest(unittest.TestCase):
             BASE, "_PREPARE_LEVELING", printer=self._printer(),
             params={"EXTRUDER_TEMP": 240, "BED_TEMP": 80})
 
-        self.assertIn("CLEAR_NOZZLE EXTRUDER_TEMP=240.0 BED_TEMP=80.0",
-                      result.commands)
+        assert_order(self, result.commands, (
+            "CLEAR_NOZZLE EXTRUDER_TEMP=240.0 BED_TEMP=80.0",
+            "LOAD_CELL_TARE",
+        ))
         self.assertFalse(any(command.startswith("_WAIT_TEMPERATURE")
                              for command in result.commands))
-        self.assertNotIn("LOAD_CELL_TARE", result.commands)
+        self.assertEqual(result.commands.count("LOAD_CELL_TARE"), 1)
 
     def test_uncleanable_nozzle_heats_under_managed_waits(self):
         # A cold or disabled-clean nozzle must not be wiped: the heaters
@@ -2323,6 +2325,35 @@ class LevelingPreparationMacroTest(unittest.TestCase):
                 ))
                 self.assertFalse(any(command.startswith("CLEAR_NOZZLE")
                                      for command in result.commands))
+                self.assertEqual(result.commands.count("LOAD_CELL_TARE"), 1)
+
+    def test_mesh_calibration_tares_after_cleaning_and_before_probing(self):
+        for macro, calibration in (
+                ("_FULL_BED_LEVEL", 'BED_MESH_CALIBRATE PROFILE="default"'),
+                ("KAMP", "_KAMP_BED_MESH_CALIBRATE")):
+            for cleaning in (True, False):
+                with self.subTest(macro=macro, cleaning=cleaning):
+                    printer = start_print_state(profile_name="")
+                    printer["mod_params"]["variables"]["disable_cleaning"] = not cleaning
+                    commands = execute_macro_chain(
+                        [(BASE, name) for name in (macro, "_PREPARE_LEVELING", "CLEAR_NOZZLE")],
+                        macro, printer=printer,
+                        params={"EXTRUDER_TEMP": 240, "BED_TEMP": 80})
+                    self.assertEqual(commands.count("LOAD_CELL_TARE"), 2 if cleaning else 1)
+                    if cleaning:
+                        assert_order(self, commands, (
+                            "M104 S240.0", "LOAD_CELL_TARE",
+                            "_NOZZLE_SEAL_TAKE TEMP=240.0",
+                            "_WAIT_TEMPERATURE CMD=M104 VALUE=150 BELOW=3 ABOVE=3",
+                            "_CLEAR_NOZZLE_FINAL_MOVE",
+                            "RESTORE_GCODE_STATE NAME=_clear_nozzle",
+                        ))
+                        prepared = commands[commands.index("RESTORE_GCODE_STATE NAME=_clear_nozzle"):]
+                    else:
+                        prepared = commands
+                    assert_order(self, prepared, (
+                        "LOAD_CELL_TARE", "_CONTEXT_STATE NAME=LEVELING", calibration,
+                    ))
 
     def test_nozzle_cleaning_restores_the_mesh_it_cleared(self):
         # PROBE reports absolute Z while G1 moves relative to the active

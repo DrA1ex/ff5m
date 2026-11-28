@@ -91,10 +91,21 @@ class TyperLoop:
                 for entry in self.entries()
                 if "commands" in entry and (launch is None or entry["launch"] == launch)]
 
-    def drew(self, text, launch=None):
-        """Whether the launch's last batch drew text, once it did (or the timeout)."""
-        return bool(wait_for(lambda: any(text in str(getattr(command, "command", command))
-                                         for batch in self.history(launch)[-1:] for command in batch)))
+    def wait_for_batch(self, after, matches, launch=None):
+        """Return the matching new batch itself, not a later snapshot of the log."""
+        return wait_for(lambda: next((batch for batch in self.history(launch)[after:]
+                                      if matches(batch)), None))
+
+    def drew(self, text, launch=None, *, after=None, without=()):
+        """Wait for text in the last batch, or in a new batch after a history index."""
+        def matches(batch):
+            commands = [str(getattr(command, "command", command)) for command in batch]
+            return (any(text in command for command in commands)
+                    and all(excluded not in command for excluded in without for command in commands))
+
+        if after is not None:
+            return bool(self.wait_for_batch(after, matches, launch))
+        return bool(wait_for(lambda: any(matches(batch) for batch in self.history(launch)[-1:])))
 
     def wire(self, action):
         """The id Typer reports a tap of action with: the one the last frames gave it."""

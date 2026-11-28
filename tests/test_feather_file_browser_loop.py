@@ -101,9 +101,10 @@ class FileBrowserOnTheLoopTest(unittest.TestCase):
             self.assertTrue(typer.drew("LOADING..."))
             frames = len(typer.history())
             self.preview_done(controller, 0x0f)
-            self.assertTrue(wait_for(lambda: len(typer.history()) > frames))
+            drawn = typer.wait_for_batch(
+                frames, lambda batch: any(getattr(command, "payload", None) == mask(0x0f) for command in batch))
+            self.assertIsNotNone(drawn)
 
-        drawn = typer.history()[-1]
         panel = controller.renderer.panel(TILE_X[0], TILE_Y, TILE_WIDTH, TILE_HEIGHT,
                                           ThemeRole.BUTTON_BORDER, ThemeRole.BUTTON_BACKGROUND, 2)
         self.assertEqual(list(drawn[:2]), [str(command) for command in panel])
@@ -122,13 +123,16 @@ class FileBrowserOnTheLoopTest(unittest.TestCase):
         with self.assertNoLogs(level="WARNING"):
             controller._show_page(FEATHER.ScreenPage.FILE_BROWSER)
             self.assertTrue(typer.drew("LOADING..."))
+            frames = len(typer.history())
             typer.tell("button %s down" % typer.wire("file.item0"))
-            self.assertTrue(wait_for(lambda: list(typer.history()[-1][:2]) == expected))
+            self.assertIsNotNone(typer.wait_for_batch(
+                frames, lambda batch: list(batch[:2]) == expected))
             frames = len(typer.history())
             self.preview_done(controller, 0x3c)
-            self.assertTrue(wait_for(lambda: len(typer.history()) > frames))
+            drawn = typer.wait_for_batch(
+                frames, lambda batch: any(getattr(command, "payload", None) == mask(0x3c) for command in batch))
+            self.assertIsNotNone(drawn)
 
-        drawn = typer.history()[-1]
         self.assertEqual(list(drawn[:2]), expected)
         self.assertTrue(any(getattr(command, "payload", None) == mask(0x3c) for command in drawn))
 
