@@ -4,19 +4,11 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
-import enum, json, logging, math, os, queue, threading
+import enum, json, logging, math, os
 
-from .recovery import state as _state
+from .recovery.state import RecoveryParseError, _format_number
 from .object_exclusion import object_name_parameter
-
-GCodeStateParser = _state.GCodeStateParser
-GCodeStateReducer = _state.GCodeStateReducer
-MAX_GCODE_LINE_SIZE = _state.MAX_GCODE_LINE_SIZE
-PARSE_CHUNK_SIZE = _state.PARSE_CHUNK_SIZE
-RecoveryGCodeState = _state.RecoveryGCodeState
-RecoveryParseCancelled = _state.RecoveryParseCancelled
-RecoveryParseError = _state.RecoveryParseError
-_format_number = _state._format_number
+from .recovery import companion, snapshot
 
 class ResurrectorState(enum.Enum):
     UNKNOWN = 0
@@ -28,8 +20,6 @@ class ResurrectorState(enum.Enum):
 
     PRINTING = 30
     PAUSED = 40
-
-    ERROR = 50
 
     DESTROYED = 100
 
@@ -46,13 +36,13 @@ class Resurrector:
         self.dump_time = config.getfloat("dump_time", 3., minval=1.)
         self.file_path = config.get("filename")
         self.enabled = False
-        self._pause_checkpoint_active = False
-        self._resume_pending = False
         self._checkpoint_cache = None
         self._checkpoint_cache_loaded = False
+        self._objects_key = None
+        self._objects_ref = None
         self._recovery_active = False
-        self._worker = None
-        self._worker_cancel = None
+        self._legacy_loader = None
+        self.last_error = None
         self._timer = None
 
         self.printer.register_event_handler("klippy:ready", self._init)
@@ -87,7 +77,13 @@ class Resurrector:
             "bed_target": 0.0,
             "mesh": "",
         }
-        if not result["available"] or not os.path.isfile(self.file_path):
+        if self.state == ResurrectorState.LOADING:
+            loader = self._legacy_loader
+            result["parse_progress"] = loader.progress if loader is not None else None
+        if not result["available"]:
+            return result
+        if not os.path.isfile(self.file_path):
+            result["available"] = False
             return result
         try:
             if not self._checkpoint_cache_loaded:
@@ -95,17 +91,29 @@ class Resurrector:
                     self._checkpoint_cache = json.load(stream)
                 self._checkpoint_cache_loaded = True
             saved = self._checkpoint_cache
-            file_size = max(0, int(saved.get("file_size", 0)))
-            file_position = max(0, int(saved.get("file_position", 0)))
+            if not isinstance(saved, dict):
+                raise ValueError("Invalid checkpoint")
+            # File metadata is informational here: cleanup does not need it.
+            file_size = saved.get("file_size")
+            file_position = saved.get("file_position")
+            progress = 0.0
+            if (type(file_size) is int and file_size > 0
+                    and type(file_position) is int and file_position >= 0):
+                progress = min(file_position, file_size) / file_size
+            extruder_target = float(saved.get("extruder_temp", 0.0))
+            bed_target = float(saved.get("bed_temp", 0.0))
+            if not (math.isfinite(extruder_target) and math.isfinite(bed_target)):
+                raise ValueError("Invalid checkpoint temperature")
+            filename = saved.get("file_path")
+            mesh = saved.get("mesh")
             result.update({
-                "filename": os.path.basename(str(saved.get("file_path", ""))),
-                "progress": (min(file_position, file_size) / float(file_size)
-                             if file_size else 0.0),
-                "extruder_target": float(saved.get("extruder_temp", 0.0)),
-                "bed_target": float(saved.get("bed_temp", 0.0)),
-                "mesh": str(saved.get("mesh", "")),
+                "filename": os.path.basename(filename) if isinstance(filename, str) else "",
+                "progress": progress,
+                "extruder_target": extruder_target,
+                "bed_target": bed_target,
+                "mesh": mesh if isinstance(mesh, str) else "",
             })
-        except (AttributeError, ValueError, TypeError, IOError, OSError):
+        except (AttributeError, ValueError, TypeError, OverflowError, OSError):
             logging.exception("[resurrection] Unable to publish recovery status")
             result["available"] = False
             result["state"] = "error"
@@ -120,6 +128,10 @@ class Resurrector:
 
         self.printer.register_event_handler("klippy:shutdown", self._shutdown)
         self.printer.register_event_handler("klippy:disconnect", self._disconnect)
+        self.printer.register_event_handler(
+            "virtual_sdcard:print_start", self._handle_print_start)
+        self.printer.register_event_handler(
+            "virtual_sdcard:command_boundary", self._handle_command_boundary)
 
         self.toolhead = self.printer.lookup_object("toolhead")
         self.virtual_sdcard = self.printer.lookup_object("virtual_sdcard")
@@ -132,7 +144,6 @@ class Resurrector:
 
         self.start_print_macro = self.printer.lookup_object('gcode_macro _START_PRINT')
         self.enabled = True
-
         if os.path.isfile(self.file_path):
             logging.info("[resurrection] Resurrection file exists.")
             self._change_state(ResurrectorState.RESURRECTION)
@@ -160,7 +171,8 @@ class Resurrector:
 
     def _disconnect(self):
         logging.info("[resurrection] Disconnect...")
-        self._cancel_worker()
+        if self._legacy_loader is not None:
+            self._legacy_loader.cancel()
         if self._timer:
             self.reactor.unregister_timer(self._timer)
             self._timer = None
@@ -169,63 +181,81 @@ class Resurrector:
 
     def _shutdown(self):
         logging.info("[resurrection] Shutdown...")
-        if self.state == ResurrectorState.PRINTING:
-            self._dump(self.reactor.monotonic())
-        elif self.state == ResurrectorState.PAUSED:
-            self._refresh_paused_exclusions(self.reactor.monotonic())
-
-        self._disconnect()
+        try:
+            eventtime = self.reactor.monotonic()
+            # A yielding command can have partially updated live state.
+            if (self.state == ResurrectorState.PRINTING and not self._parked()
+                    and self.virtual_sdcard.is_active()
+                    and not self.virtual_sdcard.is_cmd_from_sd()
+                    and not self.gcode.get_mutex().test()
+                    and self.print_stats.get_status(eventtime)["state"] == "printing"):
+                self._dump(eventtime)
+            elif self.state == ResurrectorState.PAUSED:
+                self._refresh_paused_exclusions(eventtime)
+        finally:
+            self._disconnect()
 
     def _dump_timer_handler(self, eventtime):
         if self.state == ResurrectorState.DESTROYED:
             return
 
-        stats = self.print_stats.get_status(eventtime)
-        stats_state = stats["state"]
-
-        if (stats_state == "printing"
-                and self.start_print_macro.variables["print_started"]
-                and not self._pause_checkpoint_active):
-            self._resume_pending = False
-            self._change_state(ResurrectorState.PRINTING)
-        elif (stats_state in {"complete", "cancelled"}
-              and self.state in {
-                  ResurrectorState.PRINTING,
-                  ResurrectorState.PAUSED,
-                  ResurrectorState.ERROR,
-              }):
-            self._pause_checkpoint_active = False
-            self._resume_pending = False
-            self._change_state(ResurrectorState.IDLE)
-            self._clear(eventtime)
-
-        if self.state == ResurrectorState.PRINTING:
-            if stats_state == "printing":
-                self._dump(eventtime)
-            elif stats_state == "paused":
-                if self._resume_pending:
-                    return eventtime + self.dump_time
-                # Normally _RESURRECTION_PAUSE has already saved the exact
-                # pre-park position. If a custom PAUSE macro omitted the
-                # marker, keep the last periodic checkpoint instead of
-                # overwriting it with the parked toolhead coordinates.
-                self._pause_checkpoint_active = True
-                self._resume_pending = False
-                self._change_state(ResurrectorState.PAUSED)
-            elif stats_state == "error":
-                self._pause_checkpoint_active = False
-                self._resume_pending = False
-                self._change_state(ResurrectorState.IDLE)
-                self._dump(eventtime)
-            elif stats_state == "idle":
-                self._pause_checkpoint_active = False
-                self._resume_pending = False
-                self._change_state(ResurrectorState.IDLE)
-                self._clear(eventtime)
+        stats_state = self.print_stats.get_status(eventtime)["state"]
+        if self.state in {ResurrectorState.IDLE, ResurrectorState.PRINTING,
+                          ResurrectorState.PAUSED}:
+            if (stats_state == "printing" and self._print_has_started()
+                    and self.virtual_sdcard.is_active() and not self._parked()):
+                self._change_state(ResurrectorState.PRINTING)
+                self.virtual_sdcard.request_command_boundary()
+            elif self.state in {ResurrectorState.PRINTING, ResurrectorState.PAUSED}:
+                if stats_state in {"complete", "cancelled", "standby", "idle"}:
+                    self._change_state(ResurrectorState.IDLE)
+                    self._clear(eventtime)
+                elif stats_state == "error":
+                    # The failed line may have partially modified live state.
+                    self._change_state(ResurrectorState.IDLE)
+                elif (stats_state == "paused"
+                      and self.state == ResurrectorState.PRINTING
+                      and not self.virtual_sdcard.is_active()):
+                    # A custom or direct SD pause may omit the marker.
+                    # During resume the SD worker is already scheduled, even
+                    # if print_stats has not yet changed back to printing.
+                    self._change_state(ResurrectorState.PAUSED)
 
         if self.state == ResurrectorState.PAUSED:
             self._refresh_paused_exclusions(eventtime)
         return eventtime + self.dump_time
+
+    def _handle_command_boundary(self, eventtime):
+        # Virtual SD owns the one-shot notification request.
+        if (self.state != ResurrectorState.PRINTING
+                or not self._print_has_started() or self._parked()
+                or self.print_stats.get_status(eventtime)["state"] != "printing"):
+            return
+        try:
+            self._dump(eventtime)
+        except Exception:
+            # Recovery is optional; a failed snapshot must not interrupt SD.
+            logging.exception("[resurrection] Checkpoint boundary save failed")
+
+    def _handle_print_start(self):
+        # RESURRECT deliberately loads a file and resumes from a nonzero
+        # position. Its existing checkpoint must survive preparation errors.
+        if self._recovery_active:
+            return
+        # Recovery is optional: log a deletion failure, as before, and
+        # let the new print proceed. _clear retains the referenced companion
+        # if the main file could not be removed.
+        self._clear(self.reactor.monotonic())
+        # A failed previous print may have left this flag set. Only this
+        # job's completed preparation may enable checkpointing.
+        if self._print_has_started():
+            self.gcode.run_script_from_command(
+                "SET_GCODE_VARIABLE MACRO=_START_PRINT VARIABLE=print_started VALUE=False")
+        self._change_state(ResurrectorState.IDLE)
+
+    def _parked(self):
+        pause = self.printer.lookup_object("pause_resume", None)
+        return pause is not None and pause.is_paused
 
     def _change_state(self, new_state):
         if new_state in {
@@ -240,97 +270,108 @@ class Resurrector:
 
     def _handle_virtual_sd_reset(self):
         self._recovery_active = False
+        # The old checkpoint still owns its companion until a new one commits.
+        self._objects_key = self._objects_ref = None
 
     def _print_has_started(self):
         return bool(self.start_print_macro.variables["print_started"])
 
     def cmd_RESURRECTION_PAUSE(self, gcmd):
         if (not self.enabled or self.state == ResurrectorState.DESTROYED
-                or self._pause_checkpoint_active
                 or not self._print_has_started()):
             return
         eventtime = self.reactor.monotonic()
         stats_state = self.print_stats.get_status(eventtime)["state"]
-        if stats_state != "printing":
+        if stats_state not in {"printing", "paused"}:
             return
 
-        # Freeze checkpoint updates before PAUSE_BASE captures state and the
-        # surrounding macro parks the toolhead.  For a PAUSE command coming
-        # from the SD file, _dump() uses next_file_position and therefore
-        # resumes at the following line instead of pausing again.
-        self._dump(eventtime)
-        self._pause_checkpoint_active = True
-        self._resume_pending = False
+        # Freeze the pre-park checkpoint, even if the timer already observed PAUSE_BASE.
         self._change_state(ResurrectorState.PAUSED)
 
+        try:
+            # PAUSE_BASE has stopped SD. Capture the commanded endpoint
+            # before parking; a nested SD PAUSE resumes after its own line.
+            position = (self.virtual_sdcard.get_file_position()
+                        if self.virtual_sdcard.is_cmd_from_sd() else None)
+            self._dump(eventtime, position)
+        except Exception:
+            logging.exception("[resurrection] Unable to save pre-park checkpoint")
+
     def cmd_RESURRECTION_RESUME(self, gcmd):
-        if (not self.enabled or self.state == ResurrectorState.DESTROYED
-                or not self._pause_checkpoint_active):
-            return
-        if not self._print_has_started():
-            self._pause_checkpoint_active = False
-            self._resume_pending = False
+        if (not self.enabled or self.state != ResurrectorState.PAUSED
+                or not self._print_has_started()):
             return
 
-        # pause_resume restores PAUSE_STATE before virtual SD is resumed.
-        # Save that restored position before scheduling the next file line,
-        # then allow periodic checkpoints again.
-        eventtime = self.reactor.monotonic()
-        self._pause_checkpoint_active = False
-        self._resume_pending = True
+        # Save only after the next completed SD command, not during RESUME.
         self._change_state(ResurrectorState.PRINTING)
-        self._dump(eventtime)
+        if self._timer is not None:
+            self.reactor.update_timer(self._timer, self.reactor.NOW)
 
-    def _cancel_worker(self):
-        worker = self._worker
-        cancel_event = self._worker_cancel
-        if worker is None:
-            return
-        if cancel_event is not None:
-            cancel_event.set()
-        if worker is not threading.current_thread():
-            worker.join()
-        if self._worker is worker:
-            self._worker = None
-            self._worker_cancel = None
+    def _save_objects(self):
+        previous = getattr(self, "_objects_key", None)
+        key, data = companion.capture(self.printer, self.bed_mesh, previous)
+        if data is None: return
 
-    def _dump(self, eventtime):
+        # A restored job has new live object identities, but may still own
+        # the same immutable companion. Compare content only on its first save.
+        reference = None
+        if previous is None and getattr(self, "_recovery_active", False):
+            reference = (self._checkpoint_cache or {}).get("objects_ref")
+            if reference is not None:
+                try:
+                    if companion.read(self.file_path, reference) != data:
+                        reference = None
+                except RecoveryParseError:
+                    reference = None
+
+        self._objects_ref = reference or companion.write(self.file_path, data)
+        self._objects_key = key
+
+    def _dump(self, eventtime, file_position=None):
         stats = self.virtual_sdcard.get_status(eventtime)
         gcode_file = stats["file_path"]
 
-        if gcode_file and os.path.isfile(gcode_file):
-            file_position = stats["file_position"]
-            if self.virtual_sdcard.is_cmd_from_sd():
-                file_position = self.virtual_sdcard.get_file_position()
+        if gcode_file:
+            if file_position is None:
+                file_position = stats["file_position"]
             t_status = self.toolhead.get_status(eventtime)
             position = t_status["position"]
+            e_status = self.extruder.get_status(eventtime)
+            m_status = self.gcode_move.get_status(eventtime)
 
-            extruder_temp = self.extruder.get_status(eventtime)["target"]
+            extruder_temp = e_status["target"]
             bed_temp = self.heater_bed.get_status(eventtime)["target"]
             mesh = self.bed_mesh.get_status(eventtime)["profile_name"]
-            z_offset = self.gcode_move.get_status(eventtime)["homing_origin"][2]
 
             if extruder_temp == 0:
                 logging.info("[resurrection] Skip dump due to zeroed extruder temp")
                 return
 
+            try:
+                live_state, excluded = snapshot.capture(
+                    self.printer, m_status, t_status, e_status,
+                    self.print_stats, eventtime)
+                self._save_objects()
+            except (AttributeError, KeyError, TypeError, ValueError, OSError, RecoveryParseError):
+                logging.exception("[resurrection] Unable to capture checkpoint state")
+                return
+
             checkpoint = {
+                "version": snapshot.VERSION,
+                "file_mtime_ns": stats["file_mtime_ns"],
                 "file_path": gcode_file,
                 "file_position": file_position,
                 "file_size": stats["file_size"],
                 "position": position,
                 "extruder_temp": extruder_temp,
-                "z_offset": z_offset,
                 "bed_temp": bed_temp,
                 "mesh": mesh,
             }
-            excluded = self._excluded_objects(eventtime)
+            checkpoint.update(snapshot.encode(live_state))
+            checkpoint["objects_ref"] = self._objects_ref
             if excluded:
                 checkpoint["excluded_objects"] = excluded
             self._write_checkpoint(checkpoint)
-        else:
-            logging.info("[resurrection] Failed to save resurrection file. G-Code file is invalid")
-            self._change_state(ResurrectorState.ERROR)
 
     def _excluded_objects(self, eventtime):
         source = self.printer.lookup_object("exclude_object", None)
@@ -350,55 +391,106 @@ class Resurrector:
         self._write_checkpoint(checkpoint)
 
     def _write_checkpoint(self, checkpoint):
+        previous = getattr(self, "_checkpoint_cache", None)
+        old_ref = previous.get("objects_ref") if isinstance(previous, dict) else None
+        new_ref = checkpoint.get("objects_ref")
         temporary_path = self.file_path + ".tmp"
         try:
+            payload = json.dumps(checkpoint, separators=(",", ":"), allow_nan=False)
             with open(temporary_path, "w", encoding="utf-8") as stream:
-                json.dump(checkpoint, stream, separators=(",", ":"))
+                stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.file_path)
             self._checkpoint_cache = checkpoint
             self._checkpoint_cache_loaded = True
-        except (IOError, OSError) as e:
+            if new_ref != old_ref:
+                try:
+                    companion.prune(self.file_path, new_ref)
+                except OSError:
+                    # Main checkpoint already committed. Keep unused objects
+                    # rather than making recovery depend on successful cleanup.
+                    logging.exception("[resurrection] Unable to prune recovery objects")
+            return True
+        except (IOError, OSError, ValueError, TypeError) as e:
             logging.error(f"[resurrection] Failed to save resurrection file: {e}")
             try:
                 if os.path.isfile(temporary_path):
                     os.remove(temporary_path)
             except OSError:
                 logging.exception("[resurrection] Failed to remove temporary checkpoint")
+            return False
 
     def _clear(self, eventtime):
-        if os.path.isfile(self.file_path):
-            logging.info("[resurrection] Clear resurrection file")
-            try:
-                os.remove(self.file_path)
-            except (IOError, OSError) as e:
-                logging.error(f"[resurrection] Failed to remove resurrection file: {e}")
-                return
+        try:
+            os.remove(self.file_path)
+            logging.info("[resurrection] Cleared resurrection file")
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            logging.error("[resurrection] Failed to remove resurrection file: %s", error)
+            return error
+
         self._checkpoint_cache = None
         self._checkpoint_cache_loaded = True
+        self._objects_key = self._objects_ref = None
+        try:
+            companion.prune(self.file_path)
+        except OSError:
+            logging.exception("[resurrection] Unable to persist recovery cleanup")
 
-    def _load_resurrection_state(self, gcmd):
+    def _report_recovery_error(self, gcmd, message):
+        self.last_error = message
+        logging.error("[resurrection] %s", message)
+        gcmd.respond_raw("!! " + message)
+
+    def _load_resurrection_state(self, gcmd, cleanup=False):
         if not os.path.isfile(self.file_path):
-            gcmd.respond_raw("!! The resurrection file missing!")
+            self._report_recovery_error(gcmd, "The resurrection file missing!")
+            self._change_state(ResurrectorState.IDLE)
             return None
 
         try:
             with open(self.file_path, "r", encoding="utf-8") as stream:
                 state = json.load(stream)
         except (ValueError, IOError, OSError) as e:
-            gcmd.respond_raw(
-                f"!! Failed to resurrect. Invalid resurrection file: {str(e)}")
+            self._report_recovery_error(
+                gcmd, f"Failed to resurrect. Invalid resurrection file: {e}")
             return None
 
-        required = [
-            "file_path", "file_position", "file_size", "position", "z_offset",
-            "extruder_temp", "bed_temp", "mesh",
-        ]
+        if not isinstance(state, dict):
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Expected a JSON object")
+            return None
+
+        required = ["extruder_temp", "bed_temp"]
+        if not cleanup:
+            required += ["file_path", "file_position", "file_size",
+                         "position", "mesh"]
         for key in required:
             if key not in state:
-                gcmd.respond_raw(f"!! Failed to resurrect. Missing required field: {key!r}")
+                self._report_recovery_error(
+                    gcmd, f"Failed to resurrect. Missing required field: {key!r}")
                 return None
+
+        for key in ("extruder_temp", "bed_temp"):
+            try:
+                value = state[key]
+                if isinstance(value, bool):
+                    raise ValueError
+                value = float(value)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError
+                state[key] = value
+            except (TypeError, ValueError, OverflowError):
+                self._report_recovery_error(
+                    gcmd, f"Failed to resurrect. Invalid checkpoint temperature: {key}")
+                return None
+
+        # Cleanup only heats and homes. The original job and its parsing
+        # metadata are not needed to safely abandon it.
+        if cleanup:
+            return state
 
         excluded = state.get("excluded_objects", [])
         try:
@@ -407,12 +499,14 @@ class Resurrector:
             for name in excluded:
                 object_name_parameter(name)
         except RuntimeError as error:
-            gcmd.respond_raw("!! Failed to resurrect. Invalid excluded objects: %s" % error)
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Invalid excluded objects: %s" % error)
             return None
 
         gcode_file = state["file_path"]
         if not isinstance(gcode_file, str) or not os.path.isfile(gcode_file):
-            gcmd.respond_raw(f"!! Failed to resurrect. File missing: {gcode_file!r}")
+            self._report_recovery_error(
+                gcmd, f"Failed to resurrect. File missing: {gcode_file!r}")
             return None
 
         expected_file_size = state["file_size"]
@@ -424,32 +518,48 @@ class Resurrector:
                 or not isinstance(file_position, int)
                 or file_position < 0
                 or file_position > expected_file_size):
-            gcmd.respond_raw(
-                "!! Failed to resurrect. Invalid file size or position")
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Invalid file size or position")
             return None
 
         position = state["position"]
         if not isinstance(position, (list, tuple)) or len(position) < 4:
-            gcmd.respond_raw("!! Failed to resurrect. Invalid toolhead position")
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Invalid toolhead position")
             return None
         if not isinstance(state["mesh"], str):
-            gcmd.respond_raw("!! Failed to resurrect. Invalid mesh name")
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Invalid mesh name")
             return None
-        numeric_values = list(position[:4]) + [
-            state["z_offset"], state["extruder_temp"], state["bed_temp"]]
         try:
-            if not all(math.isfinite(float(value)) for value in numeric_values):
+            if not all(not isinstance(value, bool) and math.isfinite(float(value))
+                       for value in position[:4]):
                 raise ValueError
-        except (TypeError, ValueError):
-            gcmd.respond_raw(
-                "!! Failed to resurrect. Invalid numeric checkpoint value")
+        except (TypeError, ValueError, OverflowError):
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. Invalid numeric checkpoint value")
             return None
 
-        expected_file_size = state["file_size"]
-        actual_file_size = os.path.getsize(gcode_file)
-        if actual_file_size != expected_file_size:
-            gcmd.respond_raw(f"!! Failed to resurrect. File size mismatch: {actual_file_size} <> {expected_file_size}")
+        try:
+            file_stat = os.stat(gcode_file)
+            actual_file_size = file_stat.st_size
+        except OSError as error:
+            self._report_recovery_error(
+                gcmd, f"Failed to resurrect. Unable to read G-Code: {error}")
             return None
+        if actual_file_size != expected_file_size:
+            self._report_recovery_error(
+                gcmd, f"Failed to resurrect. File size mismatch: {actual_file_size} <> {expected_file_size}")
+            return None
+
+        if "version" in state:
+            if type(state["version"]) is not int or state["version"] != snapshot.VERSION:
+                self._report_recovery_error(gcmd, "Unsupported checkpoint version")
+                return None
+            if (type(state.get("file_mtime_ns")) is not int
+                    or state["file_mtime_ns"] != file_stat.st_mtime_ns):
+                self._report_recovery_error(gcmd, "G-Code modification time changed")
+                return None
 
         root = os.path.realpath(self.virtual_sdcard.sdcard_dirname)
         real_file = os.path.realpath(gcode_file)
@@ -458,8 +568,8 @@ class Resurrector:
         except ValueError:
             inside_sdcard = False
         if not inside_sdcard:
-            gcmd.respond_raw(
-                "!! Failed to resurrect. G-Code file is outside virtual SD")
+            self._report_recovery_error(
+                gcmd, "Failed to resurrect. G-Code file is outside virtual SD")
             return None
 
         if file_position:
@@ -468,12 +578,12 @@ class Resurrector:
                     stream.seek(file_position - 1)
                     valid_boundary = stream.read(1) == b"\n"
             except (IOError, OSError) as e:
-                gcmd.respond_raw(
-                    f"!! Failed to resurrect. Unable to read G-Code: {e}")
+                self._report_recovery_error(
+                    gcmd, f"Failed to resurrect. Unable to read G-Code: {e}")
                 return None
             if not valid_boundary:
-                gcmd.respond_raw(
-                    "!! Failed to resurrect. File position is not a line boundary")
+                self._report_recovery_error(
+                    gcmd, "Failed to resurrect. File position is not a line boundary")
                 return None
 
         state["_relative_path"] = os.path.relpath(real_file, root)
@@ -483,47 +593,28 @@ class Resurrector:
         return state
 
     def _load_state(self, stats):
-        cancel_event = threading.Event()
-        results = queue.Queue(maxsize=1)
-        parser = GCodeStateParser(
-            stats["file_path"], stats["file_position"],
-            stats["file_size"], cancel_event)
-
-        def _worker():
-            try:
-                results.put((True, parser.parse()))
-            except Exception as error:
-                results.put((False, error))
-
-        worker = threading.Thread(
-            target=_worker, name="resurrection-gcode-parser")
-        self._worker = worker
-        self._worker_cancel = cancel_event
-        worker.start()
+        if "version" in stats:
+            if type(stats["version"]) is not int or stats["version"] != snapshot.VERSION:
+                raise RecoveryParseError("Unsupported checkpoint version")
+            reference = stats.get("objects_ref")
+            return snapshot.decode(stats, companion.read(self.file_path, reference))
+        # The next regular post-resume save upgrades the old checkpoint.
+        from .recovery.legacy import LegacyCheckpointLoader
+        self._legacy_loader = LegacyCheckpointLoader(self.reactor)
         try:
-            while worker.is_alive():
-                self.reactor.pause(self.reactor.monotonic() + .050)
-                if self.state == ResurrectorState.DESTROYED:
-                    cancel_event.set()
-            worker.join()
-            if results.empty():
-                raise RecoveryParseError(
-                    "G-Code state parser stopped without a result")
-            success, result = results.get_nowait()
-            if not success:
-                raise result
-            return result
+            return self._legacy_loader.load(stats)
         finally:
-            if worker.is_alive():
-                cancel_event.set()
-                worker.join()
-            if self._worker is worker:
-                self._worker = None
-                self._worker_cancel = None
+            self._legacy_loader = None
+
+    def _reset_recovery_context(self):
+        try:
+            self.gcode.run_script_from_command("_CONTEXT_RESET")
+        except Exception:
+            logging.exception("[resurrection] Failed to reset recovery context")
 
     def _rollback_recovery(self, gcmd, message, file_loaded=False):
-        logging.error("[resurrection] Recovery failed: %s", message)
-        self._cancel_worker()
+        self.last_error = (self.last_error or "Failed to resurrect. %s" % message)
+        logging.error("[resurrection] %s", self.last_error)
         if self.state != ResurrectorState.DESTROYED:
             self._change_state(ResurrectorState.RESURRECTION)
         if file_loaded:
@@ -533,15 +624,26 @@ class Resurrector:
                 logging.exception(
                     "[resurrection] Failed to reset virtual SD after recovery")
         if self.state != ResurrectorState.DESTROYED:
-            try:
-                cleanup = ["_CONTEXT_RESET", "TURN_OFF_HEATERS", "M106 P1 S0"]
-                if file_loaded and self.printer.lookup_object("exclude_object", None) is not None:
-                    cleanup.append("EXCLUDE_OBJECT_DEFINE RESET=1")
-                self.gcode.run_script_from_command("\n".join(cleanup))
-            except Exception:
-                logging.exception(
-                    "[resurrection] Failed to apply recovery cleanup")
-        gcmd.respond_raw("!! Failed to resurrect. %s" % (message,))
+            cleanup = ["TURN_OFF_HEATERS", "M106 P1 S0"]
+            mod_params = getattr(self, "mod_params", None)
+            if (file_loaded and mod_params is not None
+                    and mod_params.variables.get("chamber_light_mode") == "PRINT_ONLY"):
+                cleanup.append("LED_OFF")
+            if file_loaded and self.printer.lookup_object("exclude_object", None) is not None:
+                cleanup.append("EXCLUDE_OBJECT_DEFINE RESET=1")
+            for command in cleanup:
+                try:
+                    self.gcode.run_script_from_command(command)
+                except Exception:
+                    logging.exception("[resurrection] Recovery cleanup failed: %s", command)
+            self._reset_recovery_context()
+        gcmd.respond_raw("!! " + self.last_error)
+
+    def _restore_coordinate_state(self, state):
+        self.gcode.run_script_from_command(
+            "_SET_GCODE_OFFSET X=%s Y=%s Z=%s MOVE=0"
+            % tuple(state.gcode_offsets))
+        self.gcode_move.base_position[:3] = state.base_xyz
 
     def _restore_physical_position(self, position):
         # Checkpoints contain the final toolhead coordinates after gcode
@@ -555,49 +657,61 @@ class Resurrector:
         self.toolhead.manual_move(
             [None, None, position[2]], 50.)
         self.toolhead.wait_moves()
-        restored = self.toolhead.get_position()
-        if any(abs(restored[axis] - position[axis]) > 1.e-6
-               for axis in range(3)):
-            raise RecoveryParseError(
-                "Toolhead did not reach the checkpoint position")
 
     def cmd_RESURRECT(self, gcmd):
+        self.last_error = None
         if self.state != ResurrectorState.RESURRECTION:
-            gcmd.respond_raw(f"!! The printer isn’t in a resurrection state!")
+            self._report_recovery_error(gcmd, "The printer isn’t in a resurrection state!")
             return
 
-        self.gcode.run_script_from_command("\n".join([
-            '_CONTEXT_BEGIN TYPE=recovery',
-            '_CONTEXT_STATE NAME="LOADING STATE"',
-        ]))
-        gcmd.respond_raw("// action:prompt_end")
+        logging.info("[resurrection] RESURRECT requested")
 
-        state = self._load_resurrection_state(gcmd)
-        if state is None:
-            self.gcode.run_script_from_command("_CONTEXT_RESET")
-            return
-
-        mesh_name = state["mesh"]
-        meshes = self.bed_mesh.get_status(self.reactor.monotonic())["profiles"]
-        if mesh_name not in meshes:
-            if 'auto' in meshes:
-                gcmd.respond_raw(f"!! Bed mesh missing: {mesh_name!r}. Using 'auto' instead...")
-                mesh_name = 'auto'
-            else:
-                gcmd.respond_raw(f"!! Failed to resurrect. Bed mesh missing: {mesh_name!r}")
-                self.gcode.run_script_from_command("_CONTEXT_RESET")
-                return
-
-        self._change_state(ResurrectorState.LOADING)
         file_loaded = False
         try:
+            self.gcode.run_script_from_command("\n".join([
+                '_CONTEXT_BEGIN TYPE=recovery',
+                '_CONTEXT_STATE NAME="LOADING STATE"',
+            ]))
+            gcmd.respond_raw("// action:prompt_end")
+
+            state = self._load_resurrection_state(gcmd)
+            if state is None:
+                self._reset_recovery_context()
+                return
+
+            mesh_name = state["mesh"]
+            self._change_state(ResurrectorState.LOADING)
             parsed_state = self._load_state(state)
             if self.state == ResurrectorState.DESTROYED:
                 return
 
+            # Validate an actual mesh before heating or moving. Old checkpoints
+            # contain only a profile name, so preserve the legacy fallback.
+            mesh_status = self.bed_mesh.get_status(self.reactor.monotonic())
+            saved_mesh = None
+            if parsed_state.mesh_snapshot is not None:
+                saved_mesh = companion.build_mesh(parsed_state.mesh_snapshot)
+            elif mesh_name and mesh_name not in mesh_status["profiles"]:
+                if 'auto' in mesh_status["profiles"]:
+                    gcmd.respond_raw(f"!! Bed mesh missing: {mesh_name!r}. Using 'auto' instead...")
+                    mesh_name = 'auto'
+                else:
+                    self._report_recovery_error(
+                        gcmd, f"Failed to resurrect. Bed mesh missing: {mesh_name!r}")
+                    self._change_state(ResurrectorState.RESURRECTION)
+                    self._reset_recovery_context()
+                    return
+
+            skew = None
+            if parsed_state.skew_factors is not None:
+                skew = self.printer.lookup_object("skew_correction", None)
+                if skew is None:
+                    raise RecoveryParseError("Skew correction is unavailable")
+
             excluded = state.get("excluded_objects", [])
             exclusion = self.printer.lookup_object("exclude_object", None)
-            if excluded and exclusion is None:
+            if (excluded or parsed_state.exclusion_transform is not None
+                    or parsed_state.objects) and exclusion is None:
                 raise RecoveryParseError("Object exclusion is unavailable")
             object_commands = parsed_state.exclusion_commands(excluded) if exclusion is not None else []
 
@@ -611,11 +725,20 @@ class Resurrector:
             toolhead_pos = [float(value) for value in state["position"][:4]]
             bed_temp = float(state["bed_temp"])
             extruder_temp = float(state["extruder_temp"])
-            z_offset = float(state["z_offset"])
             self.gcode.run_script_from_command("\n".join([
                 "_CONTEXT_STATE NAME=PREPARING",
-                "_START_PRINT_PREPARE",
-                f"BED_MESH_PROFILE LOAD={mesh_name}",
+                "_START_PRINT_PREPARE SKIP_SKEW=1" if skew is not None
+                else "_START_PRINT_PREPARE",
+            ]))
+            if skew is not None:
+                skew._update_skew(*parsed_state.skew_factors)
+            if parsed_state.mesh_snapshot is not None:
+                companion.restore(self.bed_mesh, saved_mesh, mesh_name)
+            elif mesh_name:
+                self.gcode.run_script_from_command(f"BED_MESH_PROFILE LOAD={mesh_name}")
+            else:
+                self.gcode.run_script_from_command("BED_MESH_CLEAR")
+            self.gcode.run_script_from_command("\n".join([
                 f"M26 S{state['file_position']}",
                 "_WAIT_TEMPERATURE CMD=M140 VALUE=%s BELOW=2 ABOVE=3"
                 % (_format_number(bed_temp),),
@@ -629,12 +752,13 @@ class Resurrector:
                 "G90",
                 "M83",
                 "_CONTEXT_STATE NAME=POSITIONING",
-                "_SET_GCODE_OFFSET Z=%s" % (_format_number(z_offset),),
             ]))
+            self._restore_coordinate_state(parsed_state)
 
-            skew_commands = parsed_state.skew_commands()
-            if skew_commands:
-                self.gcode.run_script_from_command("\n".join(skew_commands))
+            if skew is None:
+                skew_commands = parsed_state.skew_commands()
+                if skew_commands:
+                    self.gcode.run_script_from_command("\n".join(skew_commands))
 
             self._restore_physical_position(toolhead_pos)
             self.gcode.run_script_from_command("\n".join([
@@ -646,6 +770,19 @@ class Resurrector:
                 parsed_state.before_retraction_commands(
                     include_skew=False)))
 
+            # Register the exclusion transform after F-only G1, which otherwise
+            # could change the saved exclusion bookkeeping.
+            if parsed_state.exclusion_transform is not None:
+                if object_commands:
+                    self.gcode.run_script_from_command("\n".join(object_commands))
+                    object_commands = []
+                snapshot.restore_exclusion(
+                    exclusion, parsed_state, toolhead_pos[3],
+                    self.toolhead.get_position()[3])
+                self.gcode_move.reset_last_position()
+                self.gcode.run_script_from_command(
+                    "G92 E" + _format_number(parsed_state.logical_e))
+
             if parsed_state.has_retraction_state:
                 firmware_retraction = self.printer.lookup_object(
                     "firmware_retraction", None)
@@ -655,15 +792,18 @@ class Resurrector:
                 firmware_retraction.is_retracted = parsed_state.retracted
 
             final_commands = parsed_state.final_commands()
+            # Restoring layer metadata must not trigger pause/timelapse macros.
+            if self.printer.lookup_object("gcode_macro SET_PRINT_STATS_INFO", None) is not None:
+                final_commands = [
+                    command.replace("SET_PRINT_STATS_INFO ", "SET_PRINT_STATS_INFO_BASE ", 1)
+                    if command.startswith("SET_PRINT_STATS_INFO ") else command
+                    for command in final_commands]
             final_commands.extend(object_commands)
             final_commands.extend([
-                "_CONTEXT_END",
                 "SET_GCODE_VARIABLE MACRO=_START_PRINT "
                 "VARIABLE=print_active VALUE=True",
                 "SET_GCODE_VARIABLE MACRO=_START_PRINT "
                 "VARIABLE=print_started VALUE=True",
-                "_CONTEXT_BEGIN TYPE=print",
-                "_CONTEXT_STATE NAME=PRINTING",
             ])
             self.gcode.run_script_from_command("\n".join(final_commands))
 
@@ -673,32 +813,49 @@ class Resurrector:
                 # Klipper normally primes a new exclusion transform with five
                 # extrusion moves. Recovery has already restored the E state;
                 # those moves must not print a currently excluded object.
-                exclusion.initial_extrusion_moves = 0
+                if parsed_state.exclusion_transform is None:
+                    exclusion.initial_extrusion_moves = 0
 
+            # do_resume schedules SD work; it does not execute the next line.
+            # Publish the result before ending the recovery context.
             self.virtual_sdcard.do_resume()
             self._change_state(ResurrectorState.PRINTING)
-            self.gcode.respond_raw("// Resurrection finished!")
         except Exception as error:
             if self.state != ResurrectorState.DESTROYED:
                 self._rollback_recovery(
                     gcmd, str(error) or error.__class__.__name__, file_loaded)
-
-    def cmd_RESURRECT_ABORT(self, gcmd):
-        if self.state != ResurrectorState.RESURRECTION:
-            gcmd.respond_raw(f"!! The printer isn’t in a resurrection state!")
             return
 
-        self.gcode.run_script_from_command("\n".join([
-            '_CONTEXT_BEGIN TYPE=recovery',
-            '_CONTEXT_STATE NAME="LOADING STATE"',
-        ]))
-        gcmd.respond_raw("// action:prompt_end")
-        state = self._load_resurrection_state(gcmd)
-        if state is None:
-            self.gcode.run_script_from_command("_CONTEXT_RESET")
+        # SD has been scheduled successfully. A context or notification
+        # failure must not cancel the restored print or turn off its heaters.
+        try:
+            self.gcode.run_script_from_command("\n".join([
+                "_CONTEXT_END",
+                "_CONTEXT_BEGIN TYPE=print",
+                "_CONTEXT_STATE NAME=PRINTING",
+            ]))
+            self.gcode.respond_raw("// Resurrection finished!")
+        except Exception:
+            logging.exception("[resurrection] Failed to publish recovery completion")
+            self._reset_recovery_context()
+
+    def cmd_RESURRECT_ABORT(self, gcmd):
+        self.last_error = None
+        if self.state != ResurrectorState.RESURRECTION:
+            self._report_recovery_error(gcmd, "The printer isn’t in a resurrection state!")
             return
 
         try:
+            self.gcode.run_script_from_command("\n".join([
+                '_CONTEXT_BEGIN TYPE=recovery',
+                '_CONTEXT_STATE NAME="LOADING STATE"',
+            ]))
+            gcmd.respond_raw("// action:prompt_end")
+            state = self._load_resurrection_state(gcmd, cleanup=True)
+            if state is None:
+                self._reset_recovery_context()
+                return
+
             self.gcode.run_script_from_command("\n".join([
                 '_CONTEXT_STATE NAME=PREPARING',
                 f"_WAIT_TEMPERATURE CMD=M140 VALUE={state['bed_temp']} BELOW=2 ABOVE=3",
@@ -708,18 +865,26 @@ class Resurrector:
                 f"M400",
 
                 "_CONTEXT_STATE NAME=FINISHING",
-                f"TURN_OFF_HEATERS",
-                f"_CONTEXT_END",
+                "TURN_OFF_HEATERS",
             ]))
+            error = self._clear(self.reactor.monotonic())
+            if error is not None:
+                raise RecoveryParseError(
+                    "Failed to remove resurrection file: %s" % error)
         except Exception as error:
             if self.state != ResurrectorState.DESTROYED:
                 self._rollback_recovery(
                     gcmd, str(error) or error.__class__.__name__)
             return
 
-        self._clear(self.reactor.monotonic())
+        # Removing the checkpoint commits cleanup. A display/context failure
+        # afterwards cannot undo the deletion.
         self._change_state(ResurrectorState.IDLE)
-
+        try:
+            self.gcode.run_script_from_command("_CONTEXT_END")
+        except Exception:
+            logging.exception("[resurrection] Failed to end cleanup context")
+            self._reset_recovery_context()
         self.gcode.respond_raw("// Resurrection aborted!")
 
 

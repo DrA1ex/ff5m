@@ -24,6 +24,7 @@ class VirtualSD:
         self.sdcard_dirname = os.path.normpath(os.path.expanduser(sd))
         self.current_file = None
         self.file_position = self.file_size = 0
+        self.file_mtime_ns = None
         # Print Stat Tracking
         self.print_stats = self.printer.load_object(config, 'print_stats')
         # Work timer
@@ -31,6 +32,7 @@ class VirtualSD:
         self.must_pause_work = self.cmd_from_sd = False
         self.next_file_position = 0
         self.work_timer = None
+        self.boundary_requested = False
         self.estimate_print_time = None
         # Error handling
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
@@ -103,6 +105,7 @@ class VirtualSD:
             'is_active': self.is_active(),
             'file_position': self.file_position,
             'file_size': self.file_size,
+            'file_mtime_ns': self.file_mtime_ns,
             'estimate_print_time': self.estimate_print_time,
         }
     def file_path(self):
@@ -124,6 +127,9 @@ class VirtualSD:
     def do_resume(self):
         if self.work_timer is not None:
             raise self.gcode.error("SD busy")
+        if self.current_file is not None and self.print_stats.state == "standby":
+            # A selected file has not started yet; a resumed file is paused.
+            self.printer.send_event("virtual_sdcard:print_start")
         self.must_pause_work = False
         self.work_timer = self.reactor.register_timer(
             self.work_handler, self.reactor.NOW)
@@ -134,6 +140,8 @@ class VirtualSD:
             self.current_file = None
             self.print_stats.note_cancel()
         self.file_position = self.file_size = 0.
+        self.file_mtime_ns = None
+        self.boundary_requested = False
     # G-Code commands
     def cmd_error(self, gcmd):
         raise gcmd.error("SD write not supported")
@@ -143,6 +151,8 @@ class VirtualSD:
             self.current_file.close()
             self.current_file = None
         self.file_position = self.file_size = 0.
+        self.file_mtime_ns = None
+        self.boundary_requested = False
         self.print_stats.reset()
         self.printer.send_event("virtual_sdcard:reset_file")
     cmd_SDCARD_RESET_FILE_help = "Clears a loaded SD File. Stops the print "\
@@ -201,8 +211,8 @@ class VirtualSD:
                 fname = files_by_lower[fname.lower()]
             fname = os.path.join(self.sdcard_dirname, fname)
             f = io.open(fname, 'r', newline='')
-            f.seek(0, os.SEEK_END)
-            fsize = f.tell()
+            file_stat = os.fstat(f.fileno())
+            fsize = file_stat.st_size
             self.estimate_print_time = self.parse_estimated_time(f, fsize)
             f.seek(0)
         except:
@@ -213,6 +223,7 @@ class VirtualSD:
         self.current_file = f
         self.file_position = 0
         self.file_size = fsize
+        self.file_mtime_ns = file_stat.st_mtime_ns
         self.print_stats.set_current_file(filename)
     def cmd_M24(self, gcmd):
         # Start/resume SD print
@@ -266,6 +277,17 @@ class VirtualSD:
             return None
 
         return round(total_time, 2)
+
+    def request_command_boundary(self):
+        # A timer can request a notification while an SD command is yielding.
+        self.boundary_requested = True
+
+    def _notify_command_boundary(self, gcode_mutex):
+        if self.must_pause_work or gcode_mutex.test():
+            return
+        self.boundary_requested = False
+        self.printer.send_event("virtual_sdcard:command_boundary",
+                                self.reactor.monotonic())
 
     # Background work timer
     def work_handler(self, eventtime):
@@ -339,9 +361,14 @@ class VirtualSD:
                     return self.reactor.NEVER
                 lines = []
                 partial_input = ""
+            # Fast path: one boolean check per completed line, no event dispatch
+            # unless a subscriber requested it. Never notify on a failed line.
+            if self.boundary_requested:
+                self._notify_command_boundary(gcode_mutex)
         logging.info("Exiting SD card print (position %d)", self.file_position)
         self.work_timer = None
         self.cmd_from_sd = False
+        self.boundary_requested = False
         if error_message is not None:
             self.print_stats.note_error(error_message)
         elif self.current_file is not None:

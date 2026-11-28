@@ -347,6 +347,10 @@ class BedCollisionProtectionTest(unittest.TestCase):
 
 
 class WorkflowMacroTest(unittest.TestCase):
+    def test_resurrect_starts_recovery(self):
+        self.assertEqual(render_macro(HEADLESS, "RESURRECT").commands,
+                         ("RESURRECT_BASE",))
+
     def test_legacy_restart_macros_only_report_the_standard_command(self):
         for path, name, replacement in (
                 (BASE, "NEW_SAVE_CONFIG", "SAVE_CONFIG"),
@@ -1440,7 +1444,7 @@ class MotionAndIntegrationMacroTest(unittest.TestCase):
         })
 
         assert_order(self, pause, (
-            "_RESURRECTION_PAUSE", "PAUSE_BASE",
+            "PAUSE_BASE", "_RESURRECTION_PAUSE",
             "_TOOLHEAD_PARK_PAUSE_CANCEL   Z_MIN=50.0",
         ))
         self.assertIn(
@@ -1985,6 +1989,51 @@ class StartPrintExecutionTest(unittest.TestCase):
                     command for command in rendered_commands
                     if command.partition(" ")[0] == "M104")
                 self.assertEqual(nozzle_commands, ("M104 S150",))
+
+    def test_chamber_light_is_shared_by_print_and_recovery_preparation(self):
+        for mode in ("PRINT_ONLY", "AT_BOOT", "MANUAL"):
+            with self.subTest(mode=mode):
+                printer = start_print_state(chamber_light_mode=mode)
+                prepare = render_macro(BASE, "_START_PRINT_PREPARE", printer=printer)
+                recovery = render_macro(BASE, "_START_PRINT_PREPARE", printer=printer,
+                                        params={"SKIP_SKEW": 1})
+                normal = run_start_print(chamber_light_mode=mode)
+                expected = int(mode == "PRINT_ONLY")
+                self.assertEqual(prepare.commands.count("LED_ON"), expected)
+                self.assertEqual(recovery.commands.count("LED_ON"), expected)
+                self.assertEqual(normal.count("LED_ON"), expected)
+                cancel = "UPDATE_DELAYED_GCODE ID=_RESTORE_CHAMBER_LIGHT DURATION=0"
+                for commands in (prepare.commands, recovery.commands, normal):
+                    self.assertEqual(commands.count(cancel), expected)
+                    if expected:
+                        assert_order(self, commands, (cancel, "LED_ON"))
+
+    def test_queued_chamber_light_restore_does_not_turn_off_active_print(self):
+        printer = start_print_state(chamber_light_mode="PRINT_ONLY")
+        printer["gcode_macro _START_PRINT"]["print_active"] = False
+        # The delayed script is rendered before it obtains the G-code mutex.
+        queued = render_macro(BASE, "_RESTORE_CHAMBER_LIGHT",
+                              section="delayed_gcode", printer=printer)
+        self.assertEqual(tuple(queued.commands), ("_RESTORE_CHAMBER_LIGHT_STATE",))
+        # The recovery finishes while that script is waiting for the mutex.
+        printer["gcode_macro _START_PRINT"]["print_active"] = True
+        result = render_macro(BASE, queued.commands[0], printer=printer)
+        self.assertFalse(result.commands)
+
+    def test_boot_chamber_light_restore_respects_current_mode(self):
+        for mode, active, expected in (
+                ("PRINT_ONLY", False, ("_SET_LED LED=chamber_light WHITE=0 SYNC=0",)),
+                ("PRINT_ONLY", True, ()),
+                ("AT_BOOT", False, ("_SET_LED LED=chamber_light WHITE=0.5 SYNC=0",)),
+                ("AT_BOOT", True, ("_SET_LED LED=chamber_light WHITE=0.5 SYNC=0",)),
+                ("MANUAL", False, ()), ("MANUAL", True, ())):
+            with self.subTest(mode=mode, active=active):
+                printer = start_print_state(chamber_light_mode=mode)
+                printer["gcode_macro _START_PRINT"]["print_active"] = active
+                printer["mod_params"]["variables"]["chamber_light"] = 50
+                result = render_macro(BASE, "_RESTORE_CHAMBER_LIGHT_STATE",
+                                      printer=printer)
+                self.assertEqual(tuple(result.commands), expected)
 
     def test_environment_options_react_during_start(self):
         run = run_start_print(

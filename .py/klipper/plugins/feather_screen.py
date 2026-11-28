@@ -919,6 +919,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
         # Klipper keeps its final screen as the only display owner.
         if error is not None and error.content["terminal"]:
             self.renderer.freeze_output()
+        else:
+            self._flush_recovery_result()
 
     def _handle_continuous_touch(self, event):
         raw_action, phase, action = event.wire, event.phase, event.action
@@ -1766,6 +1768,8 @@ class FeatherScreen(ModelPreviewEntryMixin, FeatherPagesMixin, FeatherControlsMi
                        and self.page in (ScreenPage.CALIBRATION_CONFIRM, ScreenPage.CALIBRATION_RESULT))
         recovery_page = (kind == "recovery" and self.page in (
             ScreenPage.RECOVERY_PROMPT, ScreenPage.RECOVERY_CONFIRM))
+        # A local recovery already owns CALIBRATION_PROGRESS and finishes
+        # through _run_recovery. Adopt only genuinely external operations.
         if self.page not in pages and not (shaper_page or recovery_page):
             return
         try:

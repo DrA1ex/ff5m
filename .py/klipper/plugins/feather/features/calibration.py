@@ -266,8 +266,8 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
     def on_operation_end(self, frame_id, outcome):
         if frame_id != self.external_context_id:
             return
-        # Recovery starts the virtual SD and cleanup updates its status after
-        # ending the context. Observe those effects after the command returns.
+        # Observe the final effects of the external operation after the
+        # context event, outside the G-code command.
         self.reactor.register_callback(
             lambda eventtime: self._finish_external(frame_id, outcome, eventtime))
 
@@ -281,7 +281,14 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
                 self.page == ScreenPage.CALIBRATION_PROGRESS
                 or (cancel_page and self.operation_cancel_return_page
                     == ScreenPage.CALIBRATION_PROGRESS))
-            if not showing_calibration or self._safety_print_active(eventtime):
+            if not showing_calibration:
+                return
+            if self.calibration_kind == "recovery":
+                if cancel_page:
+                    self._reset_operation_cancel()
+                self._finish_recovery_ui()
+                return
+            if self._safety_print_active(eventtime):
                 return
             if cancel_page:
                 self._reset_operation_cancel()
@@ -294,17 +301,6 @@ class CalibrationFeature(FeatherControlsMixin, FeatureHostProxy):
             shaper = self._active_shaper()
             if shaper is not None:
                 shaper.apply_job_outcome()
-            if self.calibration_kind == "recovery":
-                status = (self.resurrection.get_status(eventtime)
-                          if self.resurrection is not None else {})
-                if status.get("state") == "printing":
-                    return
-                failed = (outcome != "completed"
-                          or status.get("state") != "idle")
-                self._show_message(
-                    "Recovery interrupted" if failed else "Recovery data cleaned up",
-                    ScreenPage.RECOVERY_PROMPT if failed else ScreenPage.IDLE_HOME)
-                return
             if self.calibration_kind == "screws" and outcome != "completed":
                 try:
                     self._finish_screw_calibration()

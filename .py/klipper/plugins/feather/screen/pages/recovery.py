@@ -8,6 +8,7 @@ import logging
 
 from ui import ThemeColor
 from ff5m_ui.screen import ScreenPage
+from ff5m_ui.print_state import PrintState
 
 
 class RecoveryPagesMixin:
@@ -34,53 +35,105 @@ class RecoveryPagesMixin:
         self.renderer.send(commands)
 
     def _render_recovery_confirm(self):
-        cleanup = self.recovery_action == "cleanup"
         commands = self.renderer.begin_page("Confirm recovery", back=True)
-        text = ("Cleanup will heat and home, then permanently remove recovery data."
-                if cleanup else
-                "Restore will heat, home and continue the interrupted print.")
+        text = "Cleanup will heat and home, then permanently remove recovery data."
         commands.append(self.renderer.text(
             400, 150, text, ThemeColor.BRIGHT, "JetBrainsMono 12pt", "center",
             "middle", max_width=640, max_height=100, wrap=True,
             truncate=True))
         commands += self.renderer.button("recovery.confirm", 220, 300, 360, 100,
-                                         "CLEANUP" if cleanup else "RESTORE",
-                                         state="danger" if cleanup else "enabled",
+                                         "CLEANUP",
+                                         state="danger",
                                          font="Roboto Bold 16pt")
         self.renderer.send(commands)
 
     def _handle_recovery_action(self, action):
+        logging.info("[resurrection-ui] action=%s page=%s", action, self.page)
         if action == "recovery.later":
             self._run_script(
                 "RESPOND TYPE=command MSG=action:prompt_end")
-        elif action in ("recovery.restore", "recovery.cleanup"):
-            self.recovery_action = action.split(".", 1)[1]
+        elif action == "recovery.restore":
+            self.recovery_action = "restore"
+            self._begin_recovery_action("RESURRECT")
+        elif action == "recovery.cleanup":
+            self.recovery_action = "cleanup"
             self._show_page(ScreenPage.RECOVERY_CONFIRM)
-        elif action == "recovery.confirm":
-            command = "RESURRECT" if self.recovery_action == "restore" else "RESURRECT_ABORT"
-            manager = getattr(self, "feature_manager", None)
-            if manager is not None:
-                manager.get("calibration").begin_recovery()
-            else:
-                self.calibration_kind = "recovery"
-                self.calibration_starting_text = "STARTING..."
-                self._reset_calibration_progress()
-            self._show_page(ScreenPage.CALIBRATION_PROGRESS)
-            self.reactor.register_callback(
-                lambda eventtime, cmd=command: self._run_recovery(eventtime, cmd))
+        elif action == "recovery.confirm" and self.recovery_action == "cleanup":
+            self._begin_recovery_action("RESURRECT_ABORT")
+
+    def _begin_recovery_action(self, command):
+        manager = getattr(self, "feature_manager", None)
+        if manager is not None:
+            manager.get("calibration").begin_recovery()
+        else:
+            self.calibration_kind = "recovery"
+            self.calibration_starting_text = "STARTING..."
+            self._reset_calibration_progress()
+        self._show_page(ScreenPage.CALIBRATION_PROGRESS)
+        self.reactor.register_callback(
+            lambda eventtime, cmd=command: self._run_recovery(eventtime, cmd))
+
+    def _recovery_ui_stopped(self):
+        return (getattr(self, "shutdown_active", False)
+                or getattr(self, "system_shutdown_active", False)
+                or getattr(self, "restart_pending", False)
+                or self.print_state in (PrintState.INACTIVE, PrintState.DESTROYED))
+
+    def _show_recovery_result(self, message, page):
+        if self._recovery_ui_stopped():
+            return
+        # A temporarily unavailable touch device freezes output. Apply the
+        # result once it reconnects, rather than leaving the progress page.
+        if self.renderer.output_frozen:
+            self._pending_recovery_result = (message, page)
+            return
+        if self.page == ScreenPage.CALIBRATION_PROGRESS:
+            self._show_page(page)
+        if message is not None:
+            self._show_message(message, page)
+
+    def _flush_recovery_result(self):
+        result = getattr(self, "_pending_recovery_result", None)
+        if result is not None and not self.renderer.output_frozen:
+            self._pending_recovery_result = None
+            self._show_recovery_result(*result)
+
+    def _finish_recovery_ui(self, command=None, error=None):
+        if self._recovery_ui_stopped():
+            return
+        try:
+            status = (self.resurrection.get_status(self.reactor.monotonic())
+                      if self.resurrection is not None else {})
+        except Exception as exc:
+            logging.exception("[feather_screen] recovery status failed")
+            status = {}
+            error = error or str(exc) or exc.__class__.__name__
+        state = status.get("state")
+        error = getattr(self.resurrection, "last_error", None) or error
+        logging.info("[resurrection-ui] finished command=%s state=%s page=%s error=%r",
+                     command, state, self.page, error)
+
+        if state == "printing" and error is None:
+            self._show_recovery_result(None, ScreenPage.PRINTING)
+            return
+        if state == "idle" and error is None and command != "RESURRECT":
+            self._show_recovery_result("Recovery data cleaned up", ScreenPage.IDLE_HOME)
+            return
+
+        fallback = ("Restore did not start printing" if command == "RESURRECT"
+                    else "Recovery cleanup failed" if command == "RESURRECT_ABORT"
+                    else "Recovery interrupted")
+        self._show_recovery_result(
+            error or fallback,
+            ScreenPage.IDLE_HOME if state == "idle" else ScreenPage.RECOVERY_PROMPT)
 
     def _run_recovery(self, eventtime, command):
+        if self._recovery_ui_stopped():
+            return
+        error = None
         try:
             self._run_script(command)
         except Exception as exc:
             logging.exception("[feather_screen] recovery failed")
-            self._show_message(str(exc), ScreenPage.RECOVERY_PROMPT)
-            return
-        status = (self.resurrection.get_status(self.reactor.monotonic())
-                  if self.resurrection is not None else {})
-        if command == "RESURRECT_ABORT" and status.get("available"):
-            self._show_message("Recovery cleanup failed", ScreenPage.RECOVERY_PROMPT)
-        elif command == "RESURRECT_ABORT":
-            self._show_message("Recovery data cleaned up", ScreenPage.IDLE_HOME)
-        elif status.get("state") != "printing":
-            self._show_message("Restore did not start printing", ScreenPage.RECOVERY_PROMPT)
+            error = str(exc) or exc.__class__.__name__
+        self._finish_recovery_ui(command=command, error=error)

@@ -12,6 +12,7 @@ import queue
 import shlex
 import tempfile
 import threading
+import json
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -6442,6 +6443,22 @@ class RecoveryRobustnessTest(unittest.TestCase):
         self.assertEqual(status["state"], "error")
         self.assertNotIn("file_path", status)
 
+    def test_checkpoint_with_invalid_optional_metadata_still_offers_cleanup(self):
+        with tempfile.NamedTemporaryFile(mode="w") as stream:
+            json.dump({"file_path": "/missing.gcode", "file_position": "invalid",
+                       "file_size": -1, "extruder_temp": 220, "bed_temp": 60}, stream)
+            stream.flush()
+            resurrector = RESURRECTION.Resurrector.__new__(RESURRECTION.Resurrector)
+            resurrector.state = RESURRECTION.ResurrectorState.RESURRECTION
+            resurrector._recovery_active = False
+            resurrector._checkpoint_cache_loaded = False
+            resurrector.file_path = stream.name
+            status = resurrector.get_status(0)
+        self.assertTrue(status["available"])
+        self.assertEqual(status["state"], "resurrection")
+        self.assertEqual(status["progress"], 0.0)
+        self.assertEqual(status["extruder_target"], 220)
+
     def test_later_keeps_recovery_data_and_closes_shared_prompt(self):
         controller = base_controller()
         pages = []
@@ -6450,6 +6467,42 @@ class RecoveryRobustnessTest(unittest.TestCase):
         self.assertEqual(pages, [])
         self.assertEqual(controller.gcode.commands, [
             "RESPOND TYPE=command MSG=action:prompt_end"])
+
+    def test_restore_starts_directly_and_cleanup_requires_confirmation(self):
+        controller = base_controller()
+        controller.page = FEATHER.ScreenPage.RECOVERY_PROMPT
+        pages, callbacks, commands = [], [], []
+        calibration = mock.Mock()
+        controller.feature_manager = mock.Mock()
+        controller.feature_manager.get.return_value = calibration
+
+        def show_page(page):
+            controller.page = page
+            pages.append(page)
+
+        controller._show_page = show_page
+        controller.reactor.register_callback = callbacks.append
+        controller._run_recovery = lambda eventtime, command: commands.append(command)
+
+        controller._handle_recovery_action("recovery.restore")
+        self.assertEqual(pages, [FEATHER.ScreenPage.CALIBRATION_PROGRESS])
+        self.assertEqual(controller.recovery_action, "restore")
+        calibration.begin_recovery.assert_called_once_with()
+        self.assertEqual(len(callbacks), 1)
+        callbacks.pop()(0.)
+        self.assertEqual(commands, ["RESURRECT"])
+
+        controller.page = FEATHER.ScreenPage.RECOVERY_PROMPT
+        pages.clear()
+        controller._handle_recovery_action("recovery.cleanup")
+        self.assertEqual(pages, [FEATHER.ScreenPage.RECOVERY_CONFIRM])
+        self.assertEqual(controller.recovery_action, "cleanup")
+        self.assertFalse(callbacks)
+        controller._handle_recovery_action("recovery.confirm")
+        self.assertEqual(pages[-1], FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        self.assertEqual(len(callbacks), 1)
+        callbacks.pop()(0.)
+        self.assertEqual(commands, ["RESURRECT", "RESURRECT_ABORT"])
 
     def test_restore_uses_owned_recovery_state_while_print_stats_lags(self):
         controller = base_controller(state="idle")
@@ -6465,6 +6518,78 @@ class RecoveryRobustnessTest(unittest.TestCase):
 
         self.assertEqual(commands, ["RESURRECT"])
         self.assertEqual(messages, [])
+
+    def test_recovery_failure_leaves_progress_page_with_original_error(self):
+        for command in ("RESURRECT", "RESURRECT_ABORT"):
+            with self.subTest(command=command):
+                controller = base_controller(state="idle")
+                controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+                controller.resurrection = StatusObject({
+                    "state": "resurrection", "available": True})
+                controller.resurrection.last_error = "File size mismatch"
+                controller._run_script = mock.Mock()
+                controller._show_page = lambda page: setattr(controller, "page", page)
+                controller._show_message = mock.Mock()
+                controller._run_recovery(0., command)
+                self.assertEqual(controller.page, FEATHER.ScreenPage.RECOVERY_PROMPT)
+                controller._show_message.assert_called_once_with(
+                    "File size mismatch", FEATHER.ScreenPage.RECOVERY_PROMPT)
+
+    def test_original_recovery_error_takes_priority_over_secondary_exception(self):
+        controller = base_controller(state="idle")
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.resurrection = StatusObject({"state": "resurrection"})
+        controller.resurrection.last_error = "Invalid checkpoint"
+        controller._run_script = mock.Mock(side_effect=RuntimeError("context reset failed"))
+        controller._show_page = lambda page: setattr(controller, "page", page)
+        controller._show_message = mock.Mock()
+        controller._run_recovery(0., "RESURRECT")
+        controller._show_message.assert_called_once_with(
+            "Invalid checkpoint", FEATHER.ScreenPage.RECOVERY_PROMPT)
+
+    def test_status_error_leaves_recovery_progress(self):
+        controller = base_controller(state="idle")
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.resurrection = StatusObject({})
+        controller.resurrection.get_status = mock.Mock(
+            side_effect=RuntimeError("status failed"))
+        controller._run_script = mock.Mock()
+        controller._show_page = lambda page: setattr(controller, "page", page)
+        controller._show_message = mock.Mock()
+        controller._run_recovery(0., "RESURRECT")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.RECOVERY_PROMPT)
+        controller._show_message.assert_called_once_with(
+            "status failed", FEATHER.ScreenPage.RECOVERY_PROMPT)
+
+    def test_recovery_completion_preserves_shutdown_screen(self):
+        controller = base_controller(state="idle")
+        controller.resurrection = StatusObject({"state": "destroyed"})
+        def shutdown(command):
+            controller.shutdown_active = True
+            raise RuntimeError("MCU shutdown")
+        controller._run_script = shutdown
+        controller._show_message = mock.Mock()
+        controller._show_page = mock.Mock()
+        controller._run_recovery(0., "RESURRECT")
+        controller._show_message.assert_not_called()
+        controller._show_page.assert_not_called()
+
+    def test_recovery_result_waits_for_touch_reconnection(self):
+        controller = base_controller(state="idle")
+        controller.page = FEATHER.ScreenPage.CALIBRATION_PROGRESS
+        controller.resurrection = StatusObject({"state": "idle"})
+        controller._run_script = mock.Mock()
+        controller._show_page = lambda page: setattr(controller, "page", page)
+        controller._show_message = mock.Mock()
+        controller.renderer.output_frozen = True
+        controller._run_recovery(0., "RESURRECT_ABORT")
+        self.assertEqual(controller.page, FEATHER.ScreenPage.CALIBRATION_PROGRESS)
+        controller._show_message.assert_not_called()
+        controller.renderer.output_frozen = False
+        controller._flush_recovery_result()
+        self.assertEqual(controller.page, FEATHER.ScreenPage.IDLE_HOME)
+        controller._show_message.assert_called_once_with(
+            "Recovery data cleaned up", FEATHER.ScreenPage.IDLE_HOME)
 
     def test_restore_reports_recovery_rollback(self):
         controller = base_controller(state="idle")
@@ -7263,7 +7388,7 @@ class ActionPromptProtocolTest(unittest.TestCase):
     def test_prompt_end_closes_recovery_page_without_prompt_buffer(self):
         controller, shown = self.controller()
         controller.page = FEATHER.ScreenPage.RECOVERY_CONFIRM
-        controller.recovery_action = "restore"
+        controller.recovery_action = "cleanup"
         controller.print_stats.status["state"] = "standby"
 
         controller._handle_gcode_output("// action:prompt_end")

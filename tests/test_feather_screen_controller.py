@@ -4597,13 +4597,22 @@ class ResurrectionStatusTest(unittest.TestCase):
         resurrector._change_state(RESURRECTION.ResurrectorState.PAUSED)
         self.assertTrue(resurrector.get_status(1)["restored"])
 
-        resurrector._change_state(RESURRECTION.ResurrectorState.ERROR)
-        self.assertTrue(resurrector.get_status(2)["restored"])
+        stats["state"] = "error"
+        self.assertFalse(resurrector.get_status(2)["restored"])
+        resurrector.dump_time = 3.
+        resurrector._dump = mock.Mock()
+        resurrector._dump_timer_handler(2.)
+        self.assertEqual(resurrector.state, RESURRECTION.ResurrectorState.IDLE)
+        self.assertFalse(resurrector._recovery_active)
+        resurrector._dump.assert_not_called()
 
+        resurrector._change_state(RESURRECTION.ResurrectorState.PRINTING)
+        resurrector._recovery_active = True
         stats["state"] = "complete"
         self.assertFalse(resurrector.get_status(3)["restored"])
 
         stats["state"] = "paused"
+        self.assertTrue(resurrector.get_status(4)["restored"])
         resurrector._handle_virtual_sd_reset()
         self.assertFalse(resurrector.get_status(4)["restored"])
 

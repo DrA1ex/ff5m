@@ -35,6 +35,7 @@ class ParkedPrint:
         self.sd_paused = False
         self.moves = []
         self.sd_starts = []
+        self.recovery_markers = []
         self.firmware_retracted = False
         self.gcode = mock.Mock(Coord=GCODE.Coord)
         self.toolhead = mock.Mock()
@@ -121,6 +122,9 @@ class ParkedPrint:
             if self.sd_paused:
                 self.execute("M24.1")
             self.paused = self.sd_paused = False
+        elif name in ("_RESURRECTION_PAUSE", "_RESURRECTION_RESUME"):
+            self.recovery_markers.append((name, self.move.get_status(),
+                                          self.paused))
         elif name == "CANCEL_PRINT_BASE":
             self.paused = self.sd_paused = False
             self.status["virtual_sdcard"]["is_active"] = False
@@ -343,6 +347,39 @@ class TimelapsePauseStateTest(unittest.TestCase):
             self.assertEqual(status[key], job.original[key], key)
         for actual, original in zip(status["gcode_position"], job.original["gcode_position"]):
             self.assertAlmostEqual(actual, original)
+
+    def test_layer_metadata_is_updated_before_forced_pause(self):
+        for variables in (
+                {"pause_next_layer": {"enable": True, "call": "PAUSE"}},
+                {"pause_at_layer": {"enable": True, "layer": 5, "call": "PAUSE"}}):
+            with self.subTest(variables=variables):
+                result = render_macro(ROOT / "macros/client.cfg", "SET_PRINT_STATS_INFO",
+                    printer={"mod_params": {"variables": {"timelapse": False}}},
+                    params={"CURRENT_LAYER": "5"}, rawparams="CURRENT_LAYER=5",
+                    variables=variables)
+                self.assertLess(result.commands.index("SET_PRINT_STATS_INFO_BASE CURRENT_LAYER=5"),
+                                result.commands.index("PAUSE"))
+
+    def test_timelapse_does_not_invoke_recovery_markers(self):
+        for held in (False, True):
+            for handoff in (False, True):
+                with self.subTest(held=held, handoff=handoff):
+                    job = ParkedPrint(held=held, relative_axes=True)
+                    job.status["resurrection"] = {"supports_pause_markers": True}
+                    job.capture()
+                    self.assertFalse(job.recovery_markers)
+                    if handoff:
+                        job.runtime.run("PAUSE")
+                    job.finish()
+                    self.assertFalse(job.recovery_markers)
+                    if handoff:
+                        self.assertTrue(job.paused)
+                        job.runtime.run("RESUME")
+                        # Ordinary user RESUME still owns its existing marker.
+                        self.assertEqual(len(job.recovery_markers), 1)
+                        self.assertEqual(job.recovery_markers[0][0], "_RESURRECTION_RESUME")
+                    self.assertTrue(job.status["virtual_sdcard"]["is_active"])
+                    self.assertEqual(len(job.sd_starts), 1)
 
     def test_user_pause_handoff_and_resume_restores_full_state(self):
         for held in (False, True):

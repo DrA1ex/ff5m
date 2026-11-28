@@ -1396,11 +1396,22 @@ class FeatherControlsMixin:
         self._render_live_z_offset()
         self._toast("Z offset saved %+.3f mm" % current)
 
-    def _render_calibration_progress(self):
-        operation = self._operation_context_status()
+    def _calibration_progress_label(self, operation):
         label = (self._operation_context_text(status=operation)
                  or getattr(
                      self, "calibration_starting_text", "STARTING..."))
+        if self.calibration_kind == "recovery":
+            resurrection = getattr(self, "resurrection", None)
+            if resurrection is not None:
+                status = resurrection.get_status(self.reactor.monotonic())
+                progress = status.get("parse_progress")
+                if status.get("state") == "loading" and progress is not None:
+                    return "PARSING G-CODE: %d%%" % progress
+        return label
+
+    def _render_calibration_progress(self):
+        operation = self._operation_context_status()
+        label = self._calibration_progress_label(operation)
         title = "Recovery" if self.calibration_kind == "recovery" else "Calibration"
         commands = self.renderer.begin_page(title)
         commands.append(self.renderer.text(
@@ -1424,9 +1435,7 @@ class FeatherControlsMixin:
 
     def _update_calibration_progress(self):
         operation = self._operation_context_status()
-        label = (self._operation_context_text(status=operation)
-                 or getattr(
-                     self, "calibration_starting_text", "STARTING..."))
+        label = self._calibration_progress_label(operation)
         cancel_visible = self._calibration_cancel_visible()
         if (label == self._last_calibration_label
                 and cancel_visible == getattr(
@@ -1859,6 +1868,8 @@ class FeatherControlsMixin:
                 recovery.get_status(self.reactor.monotonic())
                 if recovery is not None else {})
             self.recovery_status = status
+            logging.info("[resurrection-ui] action_prompt page=%s state=%s available=%s",
+                         self.page, status.get("state"), status.get("available"))
             if not status.get("available"):
                 self._prompt_draft = None
                 return

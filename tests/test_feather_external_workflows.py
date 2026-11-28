@@ -382,12 +382,69 @@ class ExternalWorkflowTest(unittest.TestCase):
         self.host._show_message.assert_called_once_with(
             "Recovery data cleaned up", Page.IDLE_HOME)
 
+    def test_cleanup_committed_before_context_reset_is_successful(self):
+        self.begin("recovery")
+        self.host.resurrection = StatusObject({"state": "idle", "available": False})
+        self.context.cmd_CONTEXT_RESET(FakeCommand())
+        self.flush()
+        self.host._show_message.assert_called_once_with(
+            "Recovery data cleaned up", Page.IDLE_HOME)
+
     def test_failed_recovery_returns_to_recovery_prompt(self):
         self.begin("recovery")
         self.context.cmd_CONTEXT_RESET(FakeCommand())
         self.flush()
         self.host._show_message.assert_called_once_with(
             "Recovery interrupted", Page.RECOVERY_PROMPT)
+
+    def test_external_recovery_reports_original_failure_and_leaves_progress(self):
+        self.begin("recovery")
+        self.host.resurrection.last_error = "Missing required field: mesh"
+        self.context.cmd_CONTEXT_RESET(FakeCommand())
+        self.flush()
+        self.assertEqual(self.host.page, Page.RECOVERY_PROMPT)
+        self.host._show_message.assert_called_once_with(
+            "Missing required field: mesh", Page.RECOVERY_PROMPT)
+
+    def test_local_recovery_context_does_not_finish_ui_twice(self):
+        for frozen in (False, True):
+            with self.subTest(frozen=frozen):
+                feature = self.host.feature_manager.get("calibration")
+                feature.begin_recovery()
+                self.host.page = Page.CALIBRATION_PROGRESS
+                if frozen:
+                    self.host.renderer.freeze_output()
+                else:
+                    self.host.renderer.thaw_output()
+                self.assertEqual(self.host.renderer.output_frozen, frozen)
+                self.host._show_message.reset_mock()
+                self.host.resurrection = StatusObject({"state": "resurrection"})
+
+                def run(command):
+                    self.begin("recovery")
+                    self.finish()
+                    self.flush()
+                    self.host._show_message.assert_not_called()
+                    self.host.resurrection = StatusObject({"state": "idle"})
+
+                self.host._run_script = run
+                self.host._run_recovery(0., "RESURRECT_ABORT")
+                self.flush()
+                if frozen:
+                    self.host._show_message.assert_not_called()
+                    self.host.renderer.thaw_output()
+                    self.host._flush_recovery_result()
+                self.host._show_message.assert_called_once_with(
+                    "Recovery data cleaned up", Page.IDLE_HOME)
+                self.assertIsNone(self.feature().external_context_id)
+
+    def test_recovery_progress_uses_existing_label(self):
+        self.begin("recovery")
+        self.host.resurrection = StatusObject({
+            "state": "loading", "parse_progress": 42})
+        feature = self.feature()
+        self.assertEqual(feature._calibration_progress_label(
+            self.host._operation_context_status()), "PARSING G-CODE: 42%")
 
     def test_recovery_failure_after_context_end_is_not_cleanup_success(self):
         self.begin("recovery")
