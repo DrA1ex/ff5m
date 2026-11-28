@@ -58,8 +58,8 @@ Managed operations such as `START_PRINT`, `CLEAR_NOZZLE`, bed-mesh validation, f
   - **Parameters**: Same as `FORGE_SHAPER`.
 
 - **FORGE_SHAPER_RESULTS**
-  - **Description**: Displays a saved measurement. Add `PLOT=1` to generate PNG graphs.
-  - **Parameters**: `RESULT=<id>` (optional); `AXIS=x|y|xy` (default: all measured axes); `PLOT=0|1` (default: `0`).
+  - **Description**: Displays a saved measurement. Add `PLOT=1` to generate PNG graphs or `CSV=1` to export Klipper-format spectra to **Configuration → mod_data → shaper → csv**.
+  - **Parameters**: `RESULT=<id>` (optional); `AXIS=x|y|xy` (default: all measured axes); `PLOT=0|1`, `CSV=0|1` (both default: `0`).
 
 - **FORGE_SHAPER_HISTORY**
   - **Description**: Lists up to five saved measurements and their IDs for use with RESULTS or APPLY.

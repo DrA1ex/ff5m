@@ -3,6 +3,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import collections
+import csv
 import importlib
 import logging
 import math
@@ -304,12 +305,18 @@ class ForgeShaper:
 
     def cmd_RESULTS(self, gcmd):
         plot = gcmd.get_int("PLOT", 0, minval=0, maxval=1)
+        export_csv = gcmd.get_int("CSV", 0, minval=0, maxval=1)
         try:
             record = self._read_result(gcmd.get("RESULT", None))
             axes = self._result_axes(gcmd.get("AXIS", ""), record)
             gcmd.respond_info(format_results(record, axes))
-            if plot:
+            if plot or export_csv:
                 self._require_idle(gcmd)
+            if export_csv:
+                paths = self._export_csv(record, axes)
+                gcmd.respond_info("CSV files created:\n%s\nOpen Configuration -> mod_data -> shaper -> csv." %
+                                  "\n".join(paths))
+            if plot:
                 gcmd.respond_info("Generating PNG graphs; this may take a minute. Please wait...")
                 plots = self._export_plots(record, axes)
                 gcmd.respond_info("PNG graphs created:\n%s\nOpen Configuration -> mod_data -> shaper -> plots." %
@@ -329,6 +336,32 @@ class ForgeShaper:
             e["id"], result_date(e["saved_at"]), "".join(e["axes"]).upper(),
             " latest" if e["latest"] else "", " open" if self.record and e["id"] == self.record.id else "")
             for e in entries))
+
+    def _export_csv(self, record, axes):
+        directory = os.path.join(disk_directory(self.directory), "csv")
+        os.makedirs(directory, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime(record.saved_at))
+        created = []
+        for axis in axes:
+            result = record.results[axis]
+            fits = [fit for fit in result["shapers"] if not fit.get("reference_only", False)]
+            path = os.path.join(directory, "calibration_data_%s_%s_%s.csv" % (axis, stamp, record.id))
+            fd, temporary = tempfile.mkstemp(prefix=".csv-", suffix=".part", dir=directory)
+            try:
+                with os.fdopen(fd, "w", newline="") as stream:
+                    writer = csv.writer(stream, lineterminator="\n")
+                    writer.writerow(["freq", "psd_x", "psd_y", "psd_z", "psd_xyz"] +
+                                    ["%s(%.1f)" % (fit["name"], fit["freq"]) for fit in fits])
+                    # Match the AD5M axis correction used by the PNG renderer.
+                    writer.writerows(zip(result["freq_bins"], result["psd_y"], result["psd_x"],
+                                         result["psd_z"], result["psd_sum"],
+                                         *(fit["response"] for fit in fits)))
+                os.replace(temporary, path)
+                created.append(path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+        return created
 
     def _export_plots(self, record, axes):
         if self.worker is not None:

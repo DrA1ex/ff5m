@@ -3,6 +3,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import copy
+import csv
 import json
 import os
 from pathlib import Path
@@ -112,6 +113,46 @@ class ShaperConsoleTests(unittest.TestCase):
         self.assertEqual(self.settings, [])
         self.gcode.run_script_from_command.assert_not_called()
 
+    def test_csv_export_is_optional_and_reads_selected_saved_axis_without_side_effects(self):
+        older = self.save(1.)
+        expected = copy.deepcopy(self.results["x"])
+        self.results["x"]["psd_sum"] = [v * 100 for v in expected["psd_sum"]]
+        self.save(2.)
+        self.instance.restore_saved()
+        opened, reference, revision = self.instance.record, self.instance.reference, self.instance.revision
+        before = (self.directory / storage.LAST_RESULT).read_bytes()
+        self.inspect("FORGE_SHAPER_RESULTS", CSV=0)
+        self.assertFalse((self.directory / "csv").exists())
+        with mock.patch.object(plugin, "NativeProcess", side_effect=AssertionError("Started worker")):
+            report = self.inspect("FORGE_SHAPER_RESULTS", CSV=1, RESULT=older["id"], AXIS="x")
+        path, = (self.directory / "csv").glob("*.csv")
+        self.assertIn(str(path), report)
+        with path.open(newline="") as stream:
+            header, *rows = csv.reader(stream)
+        fits = expected["shapers"]
+        self.assertEqual(header, ["freq", "psd_x", "psd_y", "psd_z", "psd_xyz"] +
+                         ["%s(%.1f)" % (fit["name"], fit["freq"]) for fit in fits])
+        self.assertEqual([tuple(map(float, row)) for row in rows],
+                         list(zip(expected["freq_bins"], expected["psd_y"], expected["psd_x"],
+                                  expected["psd_z"], expected["psd_sum"],
+                                  *(fit["response"] for fit in fits))))
+        self.assertIs(self.instance.record, opened)
+        self.assertIs(self.instance.reference, reference)
+        self.assertEqual(self.instance.revision, revision)
+        self.assertEqual((self.directory / storage.LAST_RESULT).read_bytes(), before)
+        self.assertEqual(self.settings, [])
+        self.gcode.run_script_from_command.assert_not_called()
+
+    def test_csv_and_plot_can_be_requested_together(self):
+        self.save()
+        with mock.patch.object(self.instance, "_export_plots", return_value=["graph.png"]) as plot:
+            report = self.inspect("FORGE_SHAPER_RESULTS", CSV=1, PLOT=1)
+        self.assertEqual(set(p.name.split("_")[2] for p in (self.directory / "csv").glob("*.csv")), {"x", "y"})
+        self.assertIn("graph.png", report)
+        plot.assert_called_once()
+        with self.assertRaises(RuntimeError):
+            self.inspect("FORGE_SHAPER_RESULTS", CSV=2)
+
     def test_apply_without_parameters_uses_saved_recommendations_after_restart(self):
         self.save()
         self.inspect("FORGE_SHAPER_APPLY")
@@ -165,6 +206,9 @@ class ShaperConsoleTests(unittest.TestCase):
                     plugin, "NativeProcess", side_effect=AssertionError("Started export")):
                 with self.assertRaises(RuntimeError):
                     self.inspect("FORGE_SHAPER_RESULTS", PLOT="1")
+                with self.assertRaises(RuntimeError):
+                    self.inspect("FORGE_SHAPER_RESULTS", CSV="1")
+        self.assertFalse((self.directory / "csv").exists())
 
     def test_failed_export_preserves_previous_images_measurements_and_selections(self):
         entry = self.save()
