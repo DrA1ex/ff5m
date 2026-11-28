@@ -14,6 +14,7 @@ flush (from 1) after which it exits without an answer, as a crashing Typer.
 Usage: fake_typer.py CONFIG LOG --event-pipe EVENTS batch --pipe DRAW
 """
 
+import fcntl
 import json
 import os
 import select
@@ -29,12 +30,14 @@ def main():
     launch = 0
     if os.path.exists(log_path):
         with open(log_path) as source:
+            fcntl.flock(source, fcntl.LOCK_SH)
             launch = sum(1 for line in source if json.loads(line).get("start"))
     behaviour = launches[min(launch, len(launches) - 1)]
 
     def log(entry):
         entry.update(pid=os.getpid(), launch=launch)
         with open(log_path, "a") as target:
+            fcntl.flock(target, fcntl.LOCK_EX)
             target.write(json.dumps(entry) + "\n")
 
     log({"start": True})

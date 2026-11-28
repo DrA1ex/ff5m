@@ -4,6 +4,7 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import fcntl
 import json
 import os
 import re
@@ -82,7 +83,9 @@ class TyperLoop:
         if not os.path.exists(self.log_path):
             return []
         with open(self.log_path) as source:
-            return [json.loads(line) for line in source]
+            # Read a stable snapshot while the fake Typer cannot append.
+            fcntl.flock(source, fcntl.LOCK_SH)
+            return [json.loads(line) for line in source if line.endswith("\n")]
 
     def history(self, launch=None):
         """The command batches the launch drew, in order; a binary command as a BinaryCommand."""

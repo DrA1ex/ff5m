@@ -1665,6 +1665,30 @@ class RunnerContractTest(unittest.TestCase):
             label == "baseline" or label.startswith("component-default-")
             for label in captures))
 
+    def test_component_preview_renders_case_state_and_restores_defaults(self):
+        from tests.test_feather_screen_loop import home_controller
+        from ff5m_ui.z_offset.safe_briefing.page import SafeBriefingState
+
+        host = home_controller()
+        capture = RenderCapture(host.renderer)
+        host.feature_manager = FEATHER.LazyFeatureManager(host, FEATHER.FEATURE_SPECS)
+        host._render_screen()
+        feature = host.feature_manager.get("ui_test")
+        feature.current_run = run = UI_TEST.UITestRun(host)
+        page = next(page for page in run.scenarios._component_pages()
+                    if page.page_id.endswith(".SAFE_Z_BRIEFING"))
+
+        with self.assertNoLogs(level="WARNING"):
+            before = len(capture.frames)
+            run.scenarios._render_component_case({"page": page, "state": {SafeBriefingState.CURRENT: 12.5}})
+            self.assertEqual(host.page, FEATHER.ScreenPage.UI_TEST_PREVIEW)
+            self.assertTrue(any(frame.has_text("SAVED SAFE Z: 12.5 MM") for frame in capture.frames[before:]))
+
+            before = len(capture.frames)
+            run.scenarios._render_component_default(page)
+            self.assertTrue(any(frame.has_text("SAVED SAFE Z: 10.0 MM") for frame in capture.frames[before:]))
+            self.assertFalse(any(frame.has_text("SAVED SAFE Z: 12.5 MM") for frame in capture.frames[before:]))
+
     def test_component_cases_accept_only_known_mutable_typed_state(self):
         feature = UI_TEST.UITestRun(object())
         payload = [{

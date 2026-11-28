@@ -605,16 +605,20 @@ class SetupTest(unittest.TestCase):
                     tap_when_shown(SetupCommand.OPEN, "timezone")
                     tap_when_shown(SetupCommand.ZONE, region)
                     self.assertTrue(typer.drew(labels[0]))
-                    wire = typer.wire(Command(SetupCommand.ZONE, value).wire_id)
+                    action = Command(SetupCommand.ZONE, value).wire_id
+                    self.assertTrue(wait_for(lambda: action in shown_actions(self.host._screen_root)))
+                    wire = typer.wire(action)
+
+                    def draws_labels(batch):
+                        commands = [shlex.split(str(command)) for command in batch]
+                        drawn = {tokens[tokens.index("-t") + 1] for tokens in commands if "-t" in tokens}
+                        return set(labels) <= drawn
 
                     for phase in ("down", "up"):
                         with self.subTest(phase=phase):
                             before = len(typer.history())
                             typer.tell("button %s %s" % (wire, phase))
-                            self.assertTrue(wait_for(lambda: len(typer.history()) > before))
-                            commands = [shlex.split(str(command)) for command in typer.history()[-1]]
-                            drawn = {tokens[tokens.index("-t") + 1] for tokens in commands if "-t" in tokens}
-                            self.assertTrue(set(labels) <= drawn, drawn)
+                            self.assertIsNotNone(typer.wait_for_batch(before, draws_labels), labels)
                     self.assertEqual(self.host.page, ScreenPage.SETUP_TIMEZONE)
         self.assertEqual(self.events, [])
 
