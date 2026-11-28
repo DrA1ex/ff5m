@@ -4,12 +4,14 @@
 ##
 ## This file may be distributed under the terms of the GNU GPLv3 license
 
+import fcntl
 import json
 import os
 import select
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from types import SimpleNamespace
 
 # Puts the plugins on the import path first.
@@ -55,6 +57,24 @@ class TyperLogTest(unittest.TestCase):
                 target.write("\n")
             self.assertEqual(typer.entries(), [first, second])
             self.assertEqual(typer.history(), [["draw"]])
+
+    def test_log_reader_waits_for_the_writer_to_publish_the_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            typer = TyperLoop.__new__(TyperLoop)
+            typer.log_path = os.path.join(directory, "log")
+            entry = {"commands": ["draw"], "pid": 1, "launch": 0}
+            encoded = json.dumps(entry)
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with open(typer.log_path, "w") as target:
+                    fcntl.flock(target, fcntl.LOCK_EX)
+                    target.write(encoded[:-1])
+                    target.flush()
+                    result = pool.submit(typer.entries)
+                    with self.assertRaises(TimeoutError):
+                        result.result(timeout=0.05)
+                    target.write(encoded[-1:] + "\n")
+                self.assertEqual(result.result(timeout=5), [entry])
 
     def test_malformed_complete_log_record_is_not_ignored(self):
         with tempfile.TemporaryDirectory() as directory:
