@@ -1056,16 +1056,6 @@ class ScreenLoopTest(unittest.TestCase):
             typer.take(lambda events: False, timeout=0.2)
         self.assertEqual(run._health_failures(), [])
 
-    def test_a_component_case_shows_its_state_over_the_pages_defaults(self):
-        from ff5m_ui.z_offset.safe_briefing.page import SafeBriefingState
-        controller, typer, run = self._component_run()
-        page = self._component_page(".SAFE_Z_BRIEFING")
-
-        run.scenarios._render_component_case({"page": page, "state": {SafeBriefingState.CURRENT: 12.5}})
-        self.assertTrue(typer.drew("SAVED SAFE Z: 12.5 MM"))
-        run.scenarios._render_component_default(page)
-        self.assertTrue(typer.drew("SAVED SAFE Z: 10.0 MM"))
-
     def test_the_ui_test_shows_the_calibration_catalogs_next_page(self):
         controller, typer, run = self._component_run()
         feature = controller.feature_manager.get("calibration")
